@@ -8,7 +8,9 @@ Read [CONCEPT.md](CONCEPT.md), then [ARCHITECTURE.md](ARCHITECTURE.md). These ar
 
 ## Next step
 
-Make the SDK design concrete with Casper before starting a full implementation. Sketch one small composer-facing tool and trace its lifecycle: registration, creation, connections, edits, saving, reload and deletion. Use an example to test the core contracts, not to prescribe a bundled extension roadmap.
+First, measure the extension build loop. Create a throwaway Rust workspace with a runtime crate that depends on GPUI and one extension crate compiled into it. Change one line in the extension and time the incremental build, relink and restart on Casper's Mac. Also have an agent build a small custom GPUI view from the docs and count the attempts. Record the numbers in ARCHITECTURE.md. This decides whether the all-Rust plan holds before any SDK design.
+
+Then make the SDK design concrete with Casper before starting a full implementation. Sketch one small composer-facing tool and trace its lifecycle: registration, creation, connections, edits from the interface and from a file change, reload and deletion. Use an example to test the core contracts, not to prescribe a bundled extension roadmap.
 
 The sketch should answer:
 
@@ -16,7 +18,7 @@ The sketch should answer:
 - How do views and agents edit the same typed state through SDK services?
 - How are owned child instances distinguished from references to existing tools?
 - How do declared ports and parameters reach the audio engine?
-- How does the outer application invoke those operations in the project runtime?
+- How does an extension apply a replaced record while running?
 
 Keep the exact Rust APIs provisional. Identify the smallest prototype that can test them, especially agent-authored GPUI interfaces and build/reload time. Agree its scope before expanding into implementation.
 
@@ -28,9 +30,11 @@ Keep the exact Rust APIs provisional. Identify the smallest prototype that can t
 - The outer process manages the agent and builds; the inner Rust runtime owns live project state and audio. One open project at a time.
 - One visible window: agent sidebar and musical workspace. GPUI is provisional. Rendering the whole window in the runtime is a proposal to test, not a validated solution.
 - Using Pi is acceptable. Users need provider logins and supported subscriptions, not interchangeable coding-agent software. Verify actual provider support.
-- Existing code keeps running during builds. Successful builds trigger automatic save and reload with playback stopped. Seamless code or graph replacement is not required.
-- Parameter and other project-state edits need no rebuild. Agent and composer writes use last-write-wins. Undo history resets on close or reload.
-- Projects own editable extension copies and imported samples. Later extension updates are explicit.
+- Existing code keeps running during builds. Successful builds trigger automatic reload with playback stopped. Seamless code or graph replacement is not required.
+- Two speed budgets: extension work compiles and reloads; project work applies instantly and never compiles. Bundled extensions should make most composer requests project edits.
+- The project folder is always live and, with the extensions, fully describes the work. The runtime writes records after finished edits and applies an outside file change as a whole-record replace, one typed action and one undo step. Agents edit files, not an edit API. No explicit save; versions via git or snapshots.
+- Agent and composer writes use last-write-wins. Undo history resets on close or reload.
+- Projects own editable extension copies and imported samples. No extension or schema version numbers; the code in the folder is the version. Later extension updates are explicit copies.
 - Target desktop macOS, Windows and Linux; develop and validate primarily on Mac. Sound Tools itself is standalone.
 
 ## How to continue the discussion

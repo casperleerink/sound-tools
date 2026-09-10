@@ -43,9 +43,9 @@ Support one open project at a time for now, with one active project runtime and 
 
 The project runtime runs the Rust core and enabled extensions. It owns live musical state, the audio engine and the tools' custom interfaces. It can also run without graphical interfaces for project inspection, editing and audio rendering by agents.
 
-A defined API connects the two processes. The outer application can request project edits, transport operations and saves; the runtime reports state and errors. API edits use the same typed actions as musical interfaces. External agents can use this access without opening the graphical application.
+A small protocol connects the two processes: start, stop and reload the runtime, transport operations, and reporting of state and errors. Project edits do not go through this protocol. Agents edit the project files directly and the runtime applies the changes live, so external agents can edit a project without opening the graphical application.
 
-The runtime is the single owner of live musical state. The outer application requests a save before reload, and the replacement runtime restores the saved project. Agent conversation state survives the reload in the outer application.
+The runtime is the single owner of live musical state and keeps the project folder current. On reload the replacement runtime restores the project from the folder. Agent conversation state survives the reload in the outer application.
 
 The provisional rendering approach lets the runtime draw the entire window, including the agent sidebar. The outer application manages the agent session in the background and supplies conversation data to that sidebar. This keeps the visible interface in one process while preserving agent sessions across runtime restarts. The window may briefly close and reopen on reload; validate the presentation and reload mechanics with a prototype. The communication protocol remains open.
 
@@ -53,11 +53,13 @@ Users should be able to sign in to different AI providers and use their supporte
 
 ## Builds and reloads
 
+Two kinds of work have different speed requirements. Composing within a project edits project state: instances, connections, parameters and extension-defined content. These edits apply immediately in the running runtime, whether they come from an interface or from the agent, and never require compilation. Building or changing an extension changes code and uses the build and reload workflow; build time and a restart are acceptable there. Bundled extensions should cover common musical needs with compiled processors and helpers, so most composer requests are project edits rather than code changes.
+
 Changes to extension code, enabled extensions or runtime structure may stop playback and use the project reload workflow. Seamless replacement of running code or audio graphs is not required. Recompile when code or build dependencies change; reloading existing compiled functionality does not inherently require compilation. Parameter changes during playback must work without compilation or project reload.
 
 The proposed build structure separates the engine, SDK and application UI, with one crate per extension initially. Reuse cached dependencies across builds.
 
-Compile enabled extensions into the project runtime executable. The composer can keep using the current runtime while the agent edits source and builds. After a successful build, the outer application automatically stops playback, requests preservation of the latest project state, then restarts the runtime and reopens the project with playback stopped. A failed build reports errors and retains the previous working executable. Changes using already compiled functionality need no compilation. Validate build and restart behaviour with a prototype.
+Compile enabled extensions into the project runtime executable. The composer can keep using the current runtime while the agent edits source and builds. After a successful build, the outer application automatically stops playback, waits for the runtime to finish writing the project folder, then restarts the runtime and reopens the project with playback stopped. A failed build reports errors and retains the previous working executable. Changes using already compiled functionality need no compilation. Validate build and restart behaviour with a prototype.
 
 ## Tools and extension composition
 
@@ -79,7 +81,7 @@ Existing audio plugin hosting, including plugin interfaces, belongs entirely to 
 
 ## Project storage
 
-A project is a folder containing JSON state and separate assets. This layout is illustrative:
+A project is a folder containing JSON state and separate assets. The project's text files together with its extensions fully describe the work; nothing needed to restore it lives outside them. This layout is illustrative:
 
 ```text
 my-piece/
@@ -95,13 +97,17 @@ my-piece/
   workspace.json
 ```
 
-`project.json` records the project format version, enabled extensions and their versions, saved instance index, and core-owned connections. Stable identifiers link records independently of display names.
+`project.json` records the project format version, enabled extensions by name, saved instance index, and core-owned connections. Extensions have no version numbers: the code in the project's extensions folder is the version, and updating from a newer bundled copy is an explicit copy. Stable identifiers link records independently of display names.
 
 Each extension defines its saved data using Rust types. The core normally handles serialization, writing and loading. JSON is the storage format; live extension code works with typed state.
 
+The project folder is always live. The runtime writes each affected record atomically after an edit finishes, so the files on disk match the running project. The runtime also watches the folder: when a file changes underneath it, it applies the whole record as one typed action and one undo step, through the same path that interfaces use. No field-level diffing; if an interface edit and a file edit touch the same record at the same moment, the last one applied wins for that record. Agent edits and interface edits therefore share one path, including undo and view notifications. The runtime's own writes do not re-apply. There is no separate save step; versions come from git or explicit snapshots.
+
+Extensions must be able to apply new state while running, not only at load. Loading is applying state from empty.
+
 Save separate records for independently persisted instances. An arrangement may contain all its tracks, clips and notes in one record. Individual notes and parameters do not require separate files.
 
-Each record identifies its type and schema version. Extensions can register additional asset files for large or unusual data.
+Each record identifies its type. There are no schema versions; keeping code and saved data compatible is the composer's and their agent's responsibility. Extensions can register additional asset files for large or unusual data.
 
 Importing a sample copies it into the project's assets by default. Saved references use that project-owned copy, so moving or deleting the original file does not break the project and its samples travel with it.
 
@@ -109,7 +115,7 @@ Each project keeps its own editable copies of the extensions it uses. Agent chan
 
 Preserve musical meaning, such as frequency ratios and rhythm groupings, in saved state. Keep workspace layout separate from musical content. Closing a view does not remove its instrument.
 
-Missing extensions leave their saved data intact. Saving must protect the last complete save if writing fails. The mechanisms for coordinated file writes and extension version resolution remain open.
+Missing extensions leave their saved data intact. A failed write must leave the previous file complete. The runtime writes each record to a temporary file and renames it into place, so every file is atomic on its own. An edit that touches several files writes them in dependency order: instance records first, then the index in `project.json`. A crash between renames leaves a valid project with at most one stale record, which normal loading errors surface. Fully atomic multi-file commits are not required.
 
 Compatibility between an extension's code and its saved data is the user's or their agent's responsibility. If a code change requires updating project files, they perform that update themselves. The core and SDK do not provide a migration framework or automatically run extension data conversions. Normal loading errors can be reported for diagnosis.
 
@@ -164,7 +170,7 @@ Exact reconstruction of stateful audio at a seek destination is a separate capab
 
 ## Editing and system services
 
-The core implements saving, undo/redo and notification delivery. The SDK exposes these services; extension authors choose when to call them and how they fit their tool's workflow.
+The core implements project file writing and watching, undo/redo and notification delivery. The SDK exposes these services; extension authors choose when to call them and how they fit their tool's workflow.
 
 Interfaces and agents use the same typed editing actions. Authors choose meaningful edit boundaries and can group multiple actions into one undo step. The SDK records affected project state and handles restoration, so authors do not need to implement the reverse of each state edit.
 
@@ -172,9 +178,9 @@ Agents and composers can edit project state concurrently through existing action
 
 For a drag gesture, begin an edit, publish updates during the drag, then finish it as one named undo step. Cancellation restores the original state. Playback and other views can respond to published updates before the gesture finishes.
 
-Publishing a state edit through the SDK automatically notifies affected views. User-facing messages remain an explicit extension choice. Finishing an edit does not itself require saving to disk.
+Publishing a state edit through the SDK automatically notifies affected views. User-facing messages remain an explicit extension choice. Finishing an edit writes the affected records to the project folder; updates published during a gesture do not.
 
-Undo and redo history are session-only and reset when the project closes or the runtime reloads. Preserve current musical content and settings through the normal save/reload workflow; persisting edit history is not required.
+Undo and redo history are session-only and reset when the project closes or the runtime reloads. Current musical content and settings survive through the project folder; persisting edit history is not required.
 
 Provide recommended patterns and the underlying operations for custom workflows. The exact edit API, undo storage mechanism and grouping of overlapping edits remain open within the last-write-wins policy.
 
@@ -191,11 +197,12 @@ Provide recommended patterns and the underlying operations for custom workflows.
 - A composite tool reuses child tools, exposes selected ports and restores their state without duplication. An alternative view edits the same musical content.
 - Editing one extension reuses unchanged build dependencies; measure build and restart time.
 - Reload restores musical content and settings. Compilation failure leaves the previous executable usable.
-- Reloading the project runtime preserves the outer application's agent conversation. An external agent can inspect, edit and render a project without opening graphical interfaces, using the same editing actions as the UI.
+- Reloading the project runtime preserves the outer application's agent conversation. An external agent can inspect, edit and render a project without opening graphical interfaces by reading and editing project files.
 - Parameters change during playback without rebuilding.
 - A drag updates playback and shared views, creates one undo step, and can be cancelled. Undo/redo restores grouped project edits made through either an interface or the agent.
 - Modulation changes the effective parameter value while preserving its saved base value; reopening restores modulation connections and settings.
 - Compatible event and signal ports connect, incompatible contracts produce useful errors, and scheduled events reach processors at the intended sample positions.
 - Independent musical clocks schedule precisely on the shared engine. Core transport controls apply consistently, and open-ended projects do not require preparing their entire duration.
 - Pause holds position, play resumes, stop returns to zero, and seeking preserves whether playback is running. Seeking clears obsolete scheduled events without replaying skipped events and notifies tools of the position change.
-- Saving and reopening restores instances, connections, assets and extension-defined musical data. Missing extensions and failed saves preserve existing work.
+- Reopening restores instances, connections, assets and extension-defined musical data. Missing extensions and failed writes preserve existing work.
+- Editing a project file on disk applies live in the running project and creates an undo step. A finished interface edit appears on disk, and the runtime does not re-apply its own writes.
