@@ -1,6 +1,6 @@
 # Technical architecture
 
-This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). No implementation has been validated yet.
+This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). The small GPUI build-loop experiment below has been validated on macOS. The application and SDK remain unimplemented.
 
 ## Terms
 
@@ -60,6 +60,12 @@ Changes to extension code, enabled extensions or runtime structure may stop play
 The proposed build structure separates the engine, SDK and application UI, with one crate per extension initially. Reuse cached dependencies across builds.
 
 Compile enabled extensions into the project runtime executable. The composer can keep using the current runtime while the agent edits source and builds. After a successful build, the outer application automatically stops playback, waits for the runtime to finish writing the project folder, then restarts the runtime and reopens the project with playback stopped. A failed build reports errors and retains the previous working executable. Changes using already compiled functionality need no compilation. Validate build and restart behaviour with a prototype.
+
+### Build-loop experiment, September 9, 2026
+
+A throwaway workspace with one GPUI runtime crate and one statically compiled extension measured the loop on Casper's Mac. A one-line extension edit reached the replacement runtime's first frame in a median 2.2 seconds, with 1.3 seconds of that in the incremental build and link. A failed build kept the old process alive and the executable unchanged. An agent wrote a two-instance custom GPUI view that compiled on its first attempt from public docs.
+
+This supports keeping Rust and GPUI. Not yet measured: optimized audio code in the changed crate, larger extension sets, and accessible custom controls. A build into an empty target directory took 56 seconds, so dependency builds must be shared across projects rather than repeated per project. Method, setup failures and raw evidence are in [the experiment folder](experiments/gpui-build-loop/README.md).
 
 ## Tools and extension composition
 

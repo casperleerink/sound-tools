@@ -1,0 +1,37 @@
+{
+  "baseline": {
+    "seconds": 4.079146709002089,
+    "exit_code": 0,
+    "rebuilt": [
+      "timing_extension",
+      "sound-tools-timing"
+    ],
+    "links": [
+      {
+        "seconds": 0.659112915978767,
+        "exit_code": 0
+      }
+    ]
+  },
+  "noop": {
+    "seconds": 0.3629731250111945,
+    "exit_code": 0,
+    "rebuilt": [],
+    "links": []
+  },
+  "failed_build": {
+    "seconds": 0.48628395798732527,
+    "exit_code": 101,
+    "rebuilt": [],
+    "links": []
+  },
+  "binary_sha256_before": "0702d8a25bbe0112495973ec8a92f028cbc357051376a0ed592dd9e1c9ca04b8",
+  "binary_sha256_after": "0702d8a25bbe0112495973ec8a92f028cbc357051376a0ed592dd9e1c9ca04b8",
+  "binary_unchanged": true,
+  "previous_runtime_alive_after_failure": true,
+  "previous_binary_relaunch": {
+    "seconds": 0.2888925000152085,
+    "marker": "FIRST_FRAME revision-0",
+    "pid": 28592
+  }
+}

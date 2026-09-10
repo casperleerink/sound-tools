@@ -2,15 +2,15 @@
 
 ## Where we are
 
-Sound Tools is a music environment composers shape through an integrated agent. We have discussed and documented the concept and architectural boundaries. No application code or Rust workspace exists yet.
+Sound Tools is a music environment composers shape through an integrated agent. We have discussed and documented the concept and architectural boundaries. No application code exists yet. An isolated Rust/GPUI experiment is retained in `experiments/gpui-build-loop/`.
 
 Read [CONCEPT.md](CONCEPT.md), then [ARCHITECTURE.md](ARCHITECTURE.md). These are the source of truth. The first commit is `Document initial concept and architecture`.
 
 ## Next step
 
-First, measure the extension build loop. Create a throwaway Rust workspace with a runtime crate that depends on GPUI and one extension crate compiled into it. Change one line in the extension and time the incremental build, relink and restart on Casper's Mac. Also have an agent build a small custom GPUI view from the docs and count the attempts. Record the numbers in ARCHITECTURE.md. This decides whether the all-Rust plan holds before any SDK design.
+The build-loop experiment is done: an extension edit reaches a new window in about 2.2 seconds, a failed build keeps the old runtime, and an agent's small GPUI view compiled first try. Rust and GPUI stay. See [the result](ARCHITECTURE.md#build-loop-experiment-september-9-2026) and [the experiment folder](experiments/gpui-build-loop/README.md). Still unmeasured: optimized audio code in the edited crate, larger extension sets, accessible controls.
 
-Then make the SDK design concrete with Casper before starting a full implementation. Sketch one small composer-facing tool and trace its lifecycle: registration, creation, connections, edits from the interface and from a file change, reload and deletion. Use an example to test the core contracts, not to prescribe a bundled extension roadmap.
+Next, make the SDK design concrete with Casper before starting a full implementation. Sketch one small composer-facing tool and trace its lifecycle: registration, creation, connections, edits from the interface and from a file change, reload and deletion. Use an example to test the core contracts, not to prescribe a bundled extension roadmap.
 
 The sketch should answer:
 

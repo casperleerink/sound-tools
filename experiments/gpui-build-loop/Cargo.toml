@@ -1,0 +1,9 @@
+[workspace]
+members = ["runtime", "extension"]
+resolver = "2"
+
+[workspace.dependencies]
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+
+[profile.dev]
+debug = 0

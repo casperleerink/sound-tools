@@ -1,0 +1,28 @@
+   Compiling gpui v0.2.2
+   Compiling gpui_media v0.2.2
+   Compiling timing-extension v0.1.0 (/private/tmp/sound-tools-timing/extension)
+   Compiling sound-tools-timing v0.1.0 (/private/tmp/sound-tools-timing/runtime)
+error[E0560]: struct `WindowOptions` has no field named `title`
+ --> runtime/src/main.rs:7:13
+  |
+7 |             title: Some("Sound Tools timing experiment".into()),
+  |             ^^^^^ `WindowOptions` does not have this field
+  |
+  = note: available fields are: `titlebar`, `focus`, `show`, `kind`, `is_movable` ... and 8 others
+
+error[E0599]: no method named `new` found for mutable reference `&mut App` in the current scope
+ --> runtime/src/main.rs:9:23
+  |
+9 |         }, |_, cx| cx.new(|_| timing_extension::TimingView)).unwrap();
+  |                       ^^^ method not found in `&mut App`
+  |
+  = help: items from traits can only be used if the trait is in scope
+help: trait `AppContext` which provides `new` is implemented but not in scope; perhaps you want to import it
+  |
+1 + use gpui::AppContext;
+  |
+
+Some errors have detailed explanations: E0560, E0599.
+For more information about an error, try `rustc --explain E0560`.
+error: could not compile `sound-tools-timing` (bin "sound-tools-timing") due to 2 previous errors
+      Timing report saved to /private/tmp/sound-tools-timing/target/cargo-timings/cargo-timing-20260910T040547512Z-f856864a4844d784.html
