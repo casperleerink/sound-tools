@@ -1,6 +1,6 @@
 # Technical architecture
 
-This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). The small GPUI build-loop experiment below has been validated on macOS. The application and SDK remain unimplemented.
+This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The full application remains unimplemented.
 
 ## Terms
 
@@ -31,9 +31,19 @@ Sound Tools is a standalone application. Running Sound Tools itself as a plugin 
 
 GPUI is the provisional UI choice. Validate whether an external coding agent can create and modify extension interfaces using the SDK documentation and examples.
 
-The proposed SDK provides shared components and recommended patterns, with direct GPUI access for custom interfaces. The exact set of helpers remains open. Audio execution and saved musical data remain independent of GPUI.
+The UI SDK includes a small design system and built-in UI components for extension authors and agents. Direct GPUI access remains available for custom musical interfaces. Audio execution and saved musical data remain independent of GPUI.
 
 Use one window with an agent sidebar and the project's musical application in the main area. The application supplies this basic layout; extensions define the musical workspace and can provide transport controls. A fixed top bar is not required.
+
+### UI design system
+
+Agents should start from shared UI guidance, components and examples. The lifecycle probe demonstrated extension authoring, but its ad hoc styling and controls are not the intended design baseline.
+
+Start with shared colours, typography, spacing and interaction states, plus buttons, labelled controls, numeric inputs and parameter sliders. Shared controls should provide consistent keyboard behaviour, visible focus and accessible labels. Extensions should use them for ordinary interactions and use direct GPUI when a custom musical interface needs it.
+
+Keep the components general. A slider belongs in the UI SDK; a prescribed track editor or piano roll belongs to an extension. Exact styling and component APIs remain to be tested through real tools.
+
+Verify the first small set by using it in Tone, then asking a Codex subagent to adapt Tremolo using the same components and guidance. Check visual consistency, keyboard operation, focus, accessible labels and whether extension UI code gets smaller. Grow the set from demonstrated needs. The design system is an agreed direction, not implemented functionality yet.
 
 ## Outer application and project runtime
 
@@ -65,7 +75,17 @@ Compile enabled extensions into the project runtime executable. The composer can
 
 A throwaway workspace with one GPUI runtime crate and one statically compiled extension measured the loop on Casper's Mac. A one-line extension edit reached the replacement runtime's first frame in a median 2.2 seconds, with 1.3 seconds of that in the incremental build and link. A failed build kept the old process alive and the executable unchanged. An agent wrote a two-instance custom GPUI view that compiled on its first attempt from public docs.
 
-This supports keeping Rust and GPUI. Not yet measured: optimized audio code in the changed crate, larger extension sets, and accessible custom controls. A build into an empty target directory took 56 seconds, which is the one-time cost of the shared target directory. Method, setup failures and raw evidence are in [the experiment folder](experiments/gpui-build-loop/README.md).
+A follow-up put a small oscillator and filter in the edited extension crate with `opt-level = 3`. Seven DSP gain edits reached the replacement frame in a median 2.23 seconds, including 1.35 seconds for build and link. Each replacement rendered 48,000 samples before opening its window, verified finite bounded output, and reported the changed gain. Only the extension and runtime rebuilt; the old runtime survived every build. This measures a small offline DSP workload, not an audio callback or full release build.
+
+This supports keeping Rust and GPUI. Not yet measured: larger DSP workloads and extension sets, live audio readiness, and accessible custom controls. A build into an empty target directory took 56 seconds, which is the one-time cost of the shared target directory. Method, setup failures and raw evidence are in [the experiment folder](experiments/gpui-build-loop/README.md).
+
+### Core lifecycle prototype, September 9, 2026
+
+[The isolated prototype](experiments/core-lifecycle/README.md) implements a small core alongside Tone, then tests its SDK by having a Codex subagent author Tremolo with its own custom view. The author compiled it and passed its two integration tests on the first attempt, without changing the core or UI bridge. A documentation gap in the public project lifecycle signatures was found and filled.
+
+Five integration tests cover editing, offline processing, persistence, last-write-wins, undo/redo and restoration. A successful optimized DSP edit took 2.14 seconds through the replacement frame and preserved saved records and routing; an intentional compile failure retained the old runtime and executable. No built-in agent, provider login or agent sidebar was needed for this authoring test.
+
+Native automated interaction exposed a repaint issue: records and notifications update, but screenshots remain stale until resizing the window. Automatic visible refresh and accessible controls remain unverified. The engine in this slice only renders offline on one thread; it does not validate device output or realtime processing. These findings guide the next core work rather than fixing the SDK in advance.
 
 ## Tools and extension composition
 
@@ -180,7 +200,7 @@ The core implements project file writing and watching, undo/redo and notificatio
 
 Interfaces and agents use the same typed editing actions. Authors choose meaningful edit boundaries and can group multiple actions into one undo step. The SDK records affected project state and handles restoration, so authors do not need to implement the reverse of each state edit.
 
-Agents and composers can edit project state concurrently through existing actions without rebuilding. Conflicting writes use last-write-wins semantics, ordered by application in the runtime. Stale edits do not require conflict rejection or agent reapproval. The exact write granularity and interaction with grouped undo remain implementation decisions.
+Agents and composers can edit project state concurrently through existing actions without rebuilding. Conflicting writes use last-write-wins semantics, ordered by application in the runtime. Stale edits do not require conflict rejection or agent reapproval. An outside file edit applies immediately without ending an active interface drag. Later drag updates may overwrite the file edit. Undo, redo and cancellation also apply as later writes and may overwrite intervening changes. Last write wins throughout; no special conflict handling is required.
 
 For a drag gesture, begin an edit, publish updates during the drag, then finish it as one named undo step. Cancellation restores the original state. Playback and other views can respond to published updates before the gesture finishes.
 
@@ -188,12 +208,14 @@ Publishing a state edit through the SDK automatically notifies affected views. U
 
 Undo and redo history are session-only and reset when the project closes or the runtime reloads. Current musical content and settings survive through the project folder; persisting edit history is not required.
 
-Provide recommended patterns and the underlying operations for custom workflows. The exact edit API, undo storage mechanism and grouping of overlapping edits remain open within the last-write-wins policy.
+Provide recommended patterns and the underlying operations for custom workflows. The exact edit API and undo storage mechanism remain implementation choices. Overlapping edits follow the same last-write-wins rule.
 
 ## Next decisions
 
+[The SDK sketch](SDK_SKETCH.md) proposes a Tone lifecycle and a small next prototype. Its APIs remain provisional. Last-write-wins also applies to active drags, undo, redo and cancellation, as agreed above.
+
 - Tool registration and lifecycle APIs, including child instances and shared state references.
-- Editing API and undo implementation, including overlapping edits.
+- Editing API and undo implementation under the settled last-write-wins rule.
 - Audio graph execution, scheduling and transport notification APIs.
 - Agent integration, the outer application/runtime protocol and window/workspace composition.
 

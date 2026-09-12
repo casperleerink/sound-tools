@@ -1,0 +1,77 @@
+   Compiling sound-core v0.1.0 (/Users/casperleerink/Desktop/code/sound-tools/experiments/core-lifecycle/core)
+   Compiling sound-ui v0.1.0 (/Users/casperleerink/Desktop/code/sound-tools/experiments/core-lifecycle/ui)
+   Compiling tremolo v0.1.0 (/Users/casperleerink/Desktop/code/sound-tools/experiments/core-lifecycle/tremolo)
+   Compiling tone v0.1.0 (/Users/casperleerink/Desktop/code/sound-tools/experiments/core-lifecycle/tone)
+   Compiling lifecycle-runtime v0.1.0 (/Users/casperleerink/Desktop/code/sound-tools/experiments/core-lifecycle/runtime)
+    Finished `test` profile [unoptimized] target(s) in 1.64s
+     Running unittests src/main.rs (/private/tmp/sound-tools-timing/target/debug/deps/lifecycle_runtime-1fc6ac1a4e461e27)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/private/tmp/sound-tools-timing/target/debug/deps/sound_core-379e66f584fa0236)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lifecycle.rs (/private/tmp/sound-tools-timing/target/debug/deps/lifecycle-02f7c7a853dcde1a)
+
+running 3 tests
+test invalid_file_keeps_live_state_and_remains_available_for_correction ... ok
+test drag_file_undo_and_cancel_are_all_last_write_wins ... ok
+test edits_update_existing_processor_and_restore_from_disk ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (/private/tmp/sound-tools-timing/target/debug/deps/sound_ui-e4c3cefb778a1ea4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/private/tmp/sound-tools-timing/target/debug/deps/tone-4c1a5579c1e7519c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/private/tmp/sound-tools-timing/target/debug/deps/tremolo-eed791fa5c0b6d9e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lifecycle.rs (/private/tmp/sound-tools-timing/target/debug/deps/lifecycle-4308bb77377f3889)
+
+running 2 tests
+test parameter_replacement_preserves_both_runtime_phases ... ok
+test independent_instances_follow_edits_files_undo_and_reopen ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests sound_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sound_ui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tone
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tremolo
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

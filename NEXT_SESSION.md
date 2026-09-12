@@ -2,25 +2,21 @@
 
 ## Where we are
 
-Sound Tools is a music environment composers shape through an integrated agent. We have discussed and documented the concept and architectural boundaries. No application code exists yet. An isolated Rust/GPUI experiment is retained in `experiments/gpui-build-loop/`.
+The concept and architecture are documented. Two isolated Rust/GPUI experiments are retained: [build-loop timing](experiments/gpui-build-loop/README.md) and [the core lifecycle prototype](experiments/core-lifecycle/README.md).
 
-Read [CONCEPT.md](CONCEPT.md), then [ARCHITECTURE.md](ARCHITECTURE.md). These are the source of truth. The first commit is `Document initial concept and architecture`.
+The lifecycle prototype builds a small real core alongside Tone. A Codex subagent then authored Tremolo and its custom GPUI editor from the SDK notes and example, without changing the core. First compile and both extension tests passed. Five integration tests pass across the workspace. Successful/failed code reload and state restoration are verified.
+
+Read [CONCEPT.md](CONCEPT.md), [ARCHITECTURE.md](ARCHITECTURE.md), then the prototype README and SDK.md. [SDK_SKETCH.md](SDK_SKETCH.md) is a hypothesis tested by implementation, not an API to approve before core work.
 
 ## Next step
 
-The build-loop experiment is done: an extension edit reaches a new window in about 2.2 seconds, a failed build keeps the old runtime, and an agent's small GPUI view compiled first try. Rust and GPUI stay. See [the result](ARCHITECTURE.md#build-loop-experiment-september-9-2026) and [the experiment folder](experiments/gpui-build-loop/README.md). Still unmeasured: optimized audio code in the edited crate, larger extension sets, accessible controls.
+Resolve native repaint validation before expanding the GUI. Automated clicks and file edits update records and trigger observers, but screenshots only show changes after resizing. Accessible controls also remain unverified.
 
-Next, make the SDK design concrete with Casper before starting a full implementation. Sketch one small composer-facing tool and trace its lifecycle: registration, creation, connections, edits from the interface and from a file change, reload and deletion. Use an example to test the core contracts, not to prescribe a bundled extension roadmap.
+The next UI experiment is a small [design system in the UI SDK](ARCHITECTURE.md#ui-design-system). Use shared styling and accessible controls in Tone, then have a Codex subagent adapt Tremolo with the same components. Verify consistency, keyboard/focus behaviour, accessible labels and simpler extension code. Direct GPUI remains available for custom musical interfaces.
 
-The sketch should answer:
+Further core work should test live device output and the control-to-audio handoff against these extensions. Offline sample rendering works; realtime audio does not exist yet. Keep building core capabilities with real extension examples and adjust the SDK from evidence. Do not build the integrated agent yet; Codex subagents can run authoring tests.
 
-- How does a tool associate its optional state, behaviour, views, actions and ports without one oversized interface?
-- How do views and agents edit the same typed state through SDK services?
-- How are owned child instances distinguished from references to existing tools?
-- How do declared ports and parameters reach the audio engine?
-- How does an extension apply a replaced record while running?
-
-Keep the exact Rust APIs provisional. Identify the smallest prototype that can test them, especially agent-authored GPUI interfaces and build/reload time. Agree its scope before expanding into implementation.
+Last write wins for file edits, active drags, undo, redo and cancellation. Do not reopen this as a synchronization problem.
 
 ## Constraints to carry forward
 
@@ -39,7 +35,7 @@ Keep the exact Rust APIs provisional. Identify the smallest prototype that can t
 
 ## How to continue the discussion
 
-Ask concrete questions one at a time until remaining requirements are understood. Record accepted decisions in the architecture document as the discussion proceeds. Check the document before reopening a question. Distinguish settled requirements, proposed implementations and work that still needs verification. Keep language simple and avoid adding infrastructure for hypothetical extension mistakes.
+Ask only about choices that materially change the product or core contracts. Resolve small edge cases using the settled rules, especially last-write-wins. When a question is needed, ask one concrete question at a time. Record accepted decisions in the architecture document as the discussion proceeds. Check the document before reopening a question. Distinguish settled requirements, proposed implementations and work that still needs verification. Keep language simple and avoid adding infrastructure for hypothetical extension mistakes.
 
 ## Reference code
 

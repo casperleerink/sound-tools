@@ -1,0 +1,112 @@
+{
+  "bootstrap": {
+    "seconds": 0.3635753749986179,
+    "exit_code": 0,
+    "rebuilt": [],
+    "tone_profiles": [
+      {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": false
+      }
+    ]
+  },
+  "initial": {
+    "seconds": 0.19846804198459722,
+    "marker": "FIRST_FRAME core-1"
+  },
+  "failed_build": {
+    "seconds": 0.5211480830039363,
+    "exit_code": 101,
+    "rebuilt": [],
+    "tone_profiles": []
+  },
+  "failure_kept_process_and_binary": true,
+  "successful_build": {
+    "seconds": 1.3852321669983212,
+    "exit_code": 0,
+    "rebuilt": [
+      "tone",
+      "lifecycle-runtime"
+    ],
+    "tone_profiles": [
+      {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": false
+      }
+    ]
+  },
+  "replacement": {
+    "seconds": 0.7053706249862444,
+    "marker": "FIRST_FRAME core-1"
+  },
+  "edit_to_frame_seconds": 2.1361430419783574,
+  "restored": {
+    "playing": false,
+    "undo": 0,
+    "records": {
+      "tone-a": {
+        "tool": "example.tone",
+        "state": {
+          "frequency_hz": 660.0,
+          "gain": 0.3499999940395355
+        }
+      },
+      "tone-b": {
+        "tool": "example.tone",
+        "state": {
+          "frequency_hz": 440.0,
+          "gain": 0.10000000149011612
+        }
+      },
+      "tremolo-a": {
+        "tool": "example.tremolo",
+        "state": {
+          "frequency_hz": 220.0,
+          "gain": 0.20000000298023224,
+          "rate_hz": 4.0,
+          "depth": 0.75
+        }
+      },
+      "tremolo-b": {
+        "tool": "example.tremolo",
+        "state": {
+          "frequency_hz": 330.0,
+          "gain": 0.20000000298023224,
+          "rate_hz": 4.0,
+          "depth": 0.75
+        }
+      }
+    },
+    "connections": [
+      {
+        "instance": "tone-a",
+        "port": "audio"
+      }
+    ],
+    "revision": "core-1"
+  },
+  "old_runtime_survived_successful_build": true,
+  "restore_build": {
+    "seconds": 1.4185666669800412,
+    "exit_code": 0,
+    "rebuilt": [
+      "tone",
+      "lifecycle-runtime"
+    ],
+    "tone_profiles": [
+      {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,233 @@
+[
+  {
+    "run": 1,
+    "build": {
+      "seconds": 1.3797791250108276,
+      "exit_code": 0,
+      "rebuilt": [
+        "timing_extension",
+        "sound-tools-timing"
+      ],
+      "links": [
+        {
+          "seconds": 0.2894954579824116,
+          "exit_code": 0
+        }
+      ]
+    },
+    "extension_profile": {
+      "opt_level": "3",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "launch": {
+      "seconds": 0.8970482909935527,
+      "marker": "FIRST_FRAME optimized-1",
+      "pid": 34493
+    },
+    "dsp": "DSP gain=0.21 energy=1026.248779",
+    "stop_to_frame_seconds": 0.9009662080206908,
+    "edit_to_frame_seconds": 2.289145999995526,
+    "previous_runtime_survived_build": true
+  },
+  {
+    "run": 2,
+    "build": {
+      "seconds": 1.3729436669964343,
+      "exit_code": 0,
+      "rebuilt": [
+        "timing_extension",
+        "sound-tools-timing"
+      ],
+      "links": [
+        {
+          "seconds": 0.3336557089933194,
+          "exit_code": 0
+        }
+      ]
+    },
+    "extension_profile": {
+      "opt_level": "3",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "launch": {
+      "seconds": 0.8315276670036837,
+      "marker": "FIRST_FRAME optimized-2",
+      "pid": 34529
+    },
+    "dsp": "DSP gain=0.22 energy=1126.329468",
+    "stop_to_frame_seconds": 0.8354894170188345,
+    "edit_to_frame_seconds": 2.2160727080190554,
+    "previous_runtime_survived_build": true
+  },
+  {
+    "run": 3,
+    "build": {
+      "seconds": 1.334065292001469,
+      "exit_code": 0,
+      "rebuilt": [
+        "timing_extension",
+        "sound-tools-timing"
+      ],
+      "links": [
+        {
+          "seconds": 0.30037112499121577,
+          "exit_code": 0
+        }
+      ]
+    },
+    "extension_profile": {
+      "opt_level": "3",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "launch": {
+      "seconds": 0.885768125008326,
+      "marker": "FIRST_FRAME optimized-3",
+      "pid": 34562
+    },
+    "dsp": "DSP gain=0.23 energy=1231.018921",
+    "stop_to_frame_seconds": 0.8898127919819672,
+    "edit_to_frame_seconds": 2.2331750000012107,
+    "previous_runtime_survived_build": true
+  },
+  {
+    "run": 4,
+    "build": {
+      "seconds": 1.4341563750058413,
+      "exit_code": 0,
+      "rebuilt": [
+        "timing_extension",
+        "sound-tools-timing"
+      ],
+      "links": [
+        {
+          "seconds": 0.37349195798742585,
+          "exit_code": 0
+        }
+      ]
+    },
+    "extension_profile": {
+      "opt_level": "3",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "launch": {
+      "seconds": 0.9031693750002887,
+      "marker": "FIRST_FRAME optimized-4",
+      "pid": 34635
+    },
+    "dsp": "DSP gain=0.24 energy=1340.430054",
+    "stop_to_frame_seconds": 0.9071351249876898,
+    "edit_to_frame_seconds": 2.3494987500016578,
+    "previous_runtime_survived_build": true
+  },
+  {
+    "run": 5,
+    "build": {
+      "seconds": 1.2852149579848628,
+      "exit_code": 0,
+      "rebuilt": [
+        "timing_extension",
+        "sound-tools-timing"
+      ],
+      "links": [
+        {
+          "seconds": 0.2677290000137873,
+          "exit_code": 0
+        }
+      ]
+    },
+    "extension_profile": {
+      "opt_level": "3",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "launch": {
+      "seconds": 0.8334186249994673,
+      "marker": "FIRST_FRAME optimized-5",
+      "pid": 34669
+    },
+    "dsp": "DSP gain=0.25 energy=1454.447998",
+    "stop_to_frame_seconds": 0.8373674579779617,
+    "edit_to_frame_seconds": 2.1307476249930914,
+    "previous_runtime_survived_build": true
+  },
+  {
+    "run": 6,
+    "build": {
+      "seconds": 1.3188812079897616,
+      "exit_code": 0,
+      "rebuilt": [
+        "timing_extension",
+        "sound-tools-timing"
+      ],
+      "links": [
+        {
+          "seconds": 0.2636521249951329,
+          "exit_code": 0
+        }
+      ]
+    },
+    "extension_profile": {
+      "opt_level": "3",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "launch": {
+      "seconds": 0.9098854160110932,
+      "marker": "FIRST_FRAME optimized-6",
+      "pid": 34707
+    },
+    "dsp": "DSP gain=0.26 energy=1573.126587",
+    "stop_to_frame_seconds": 0.9138699999894015,
+    "edit_to_frame_seconds": 2.2409984999976587,
+    "previous_runtime_survived_build": true
+  },
+  {
+    "run": 7,
+    "build": {
+      "seconds": 1.3493343330046628,
+      "exit_code": 0,
+      "rebuilt": [
+        "timing_extension",
+        "sound-tools-timing"
+      ],
+      "links": [
+        {
+          "seconds": 0.33034916600445285,
+          "exit_code": 0
+        }
+      ]
+    },
+    "extension_profile": {
+      "opt_level": "3",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "launch": {
+      "seconds": 0.8372248749947175,
+      "marker": "FIRST_FRAME optimized-7",
+      "pid": 34774
+    },
+    "dsp": "DSP gain=0.27 energy=1696.459106",
+    "stop_to_frame_seconds": 0.8413285000133328,
+    "edit_to_frame_seconds": 2.198598540999228,
+    "previous_runtime_survived_build": true
+  }
+]

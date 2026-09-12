@@ -1,0 +1,8 @@
+[package]
+name = "sound-ui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sound-core.workspace = true
+gpui.workspace = true

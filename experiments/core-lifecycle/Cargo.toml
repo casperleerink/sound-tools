@@ -1,0 +1,17 @@
+[workspace]
+members = ["core", "ui", "tone", "tremolo", "runtime"]
+resolver = "2"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+sound-core = { path = "core" }
+sound-ui = { path = "ui" }
+tone = { path = "tone" }
+
+[profile.dev]
+debug = 0
+
+[profile.dev.package.tone]
+opt-level = 3

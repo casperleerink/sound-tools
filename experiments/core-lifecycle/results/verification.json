@@ -1,0 +1,16 @@
+{
+  "core_tests": 3,
+  "extension_tests": 2,
+  "native_checks": {
+    "tone_shared_views_after_forced_frame": true,
+    "tone_a_hz": 330,
+    "tone_b_hz": 440,
+    "authored_editor_rate_a": 4.5,
+    "authored_editor_rate_b": 4,
+    "close_view_preserved_record": true,
+    "automatic_repaint_verified": false,
+    "reason": "Snapshots remain stale until a native resize; state changes and observer notifications were verified. Native frame delivery or occlusion is suspected, not confirmed."
+  },
+  "clippy": "passed --workspace --all-targets -- -D warnings",
+  "format": "passed"
+}

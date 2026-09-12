@@ -2,7 +2,7 @@
 
 Run on Casper's Mac on September 9, 2026. This is an isolated experiment, not the Sound Tools SDK or application.
 
-The small all-Rust extension loop is workable on this machine. Seven one-line extension edits took a median 2.24 seconds from writing source to the replacement runtime's first GPUI frame callback. This supports continuing with Rust and GPUI provisionally. It does not establish build times for a large runtime or optimized audio code.
+The small all-Rust extension loop is workable on this machine. Seven one-line extension edits took a median 2.24 seconds from writing source to the replacement runtime's first GPUI frame callback. This supports continuing with Rust and GPUI provisionally. A follow-up with optimized DSP in the edited crate took 2.23 seconds. Neither result establishes build times for a large runtime.
 
 | Measurement | Median | Range |
 | --- | ---: | ---: |
@@ -27,6 +27,31 @@ A no-change build took 0.363 seconds and rebuilt nothing. A later restoration bu
 - `linker.py` wraps `/usr/bin/clang` and measures its elapsed time. Its duration is part of the total Cargo build time. The remainder also includes Cargo, Rust compilation, process startup and wrapper overhead.
 - All seven runs rebuilt only `timing_extension` and `sound-tools-timing`; GPUI and other dependencies were fresh. See [dependency reuse](results/dependency-reuse.json) and [raw measurements](results/measurements.json).
 
+## Optimized DSP follow-up
+
+Seven more edits used the same cached workspace on the same Mac. A package override set `timing-extension` to `opt-level = 3`; the host and dependencies retained the original dev profile. Cargo's per-artifact metadata confirms the extension optimization level in every run. The overall build banner still says `dev` and `unoptimized`, because the workspace profile is unchanged.
+
+The extension contains a sine oscillator and one-pole filter. Before opening its window, each replacement renders 48,000 samples, checks that all samples are finite and bounded, and reports energy and gain. Each edit changes the DSP gain constant, from 0.21 through 0.27, plus the visible revision marker. The changed gain is checked in the runtime log. The changed crate includes both DSP and its GPUI view.
+
+| Measurement | Median | Range |
+| --- | ---: | ---: |
+| Incremental build including relink | 1.349 s | 1.285–1.434 s |
+| Linker driver, included above | 0.300 s | 0.264–0.373 s |
+| Stop old process through new first-frame callback | 0.890 s | 0.835–0.914 s |
+| Source edits through new first-frame callback | 2.233 s | 2.131–2.349 s |
+
+All seven runs rebuilt only the extension and runtime. The old process survived every build. See [raw measurements and optimization metadata](results/optimized-measurements.json), [bootstrap build](results/optimized-bootstrap.json), [DSP source](optimized_dsp.rs) and [runner](measure_optimized.py). The initial sandboxed launch rendered samples but timed out waiting for the window; the successful series ran with desktop access.
+
+The difference from the earlier 2.243-second median is too small to claim a speed improvement. This small optimized workload did not materially change the observed build loop. It does not establish full release/LTO build time, large DSP compile time, callback deadline performance or live audio readiness. Rendering runs once before the window, with no audio device. Failure retention was verified in the earlier experiment and was not repeated under this profile.
+
+To reproduce in the throwaway copy after the original setup:
+
+```sh
+python3 measure_optimized.py
+```
+
+The runner performs its bootstrap build, then seven edits, and restores the manifest and Rust sources on exit. Results use `optimized-*` filenames so the baseline measurements remain intact. The final executable retains the last measured revision until rebuilt. As with the baseline runner, do not edit the throwaway sources concurrently.
+
 ## Editor authoring and verification
 
 A separate agent read the official [GPUI overview](https://docs.rs/gpui/0.2.2/gpui/), [Hello World example](https://gpui.rs/), and versioned Context and StatefulInteractiveElement documentation. It produced two independently editable pulse cards with step toggles and level controls in about 1.5 minutes of reading and authoring.
@@ -41,7 +66,7 @@ An intentional `compile_error!` failed in 0.486 seconds. The existing process st
 
 The sandbox initially blocked registry DNS access and native window startup. Retrying with approved network/desktop access allowed both. The first dependency build then failed after 84.321 seconds because the Metal Toolchain was missing. Enabling the crate's existing `runtime_shaders` feature resolved that failure. The next build reached the host API errors after 11.675 seconds; the corrected host and first custom view then compiled successfully. These failed setup runs are not the clean-build result.
 
-There is no audio engine, project restoration, outer agent process, shutdown flush protocol or SDK in this experiment. Restart uses process termination and resets editor state. It verifies the requested compile/relink/window-restart loop, not the complete future reload contract. Rich editor gestures, large extension sets, release optimization, Windows and Linux remain untested.
+There is no audio engine, project restoration, outer agent process, shutdown flush protocol or SDK in this experiment. Restart uses process termination and resets editor state. It verifies the requested compile/relink/window-restart loop, not the complete future reload contract. Rich editor gestures, large extension sets, full release optimization, Windows and Linux remain untested.
 
 ## Reproduce
 

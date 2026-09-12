@@ -1,0 +1,205 @@
+/* Sound Tools design tokens. Hooman Studio scale recoloured to Catppuccin Mocha.
+   gray-50 is the darkest background, gray-950 is the text colour (Hooman dark convention). */
+@import "tailwindcss";
+
+@font-face {
+  font-family: "InterDisplay";
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "InterDisplay";
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "InterDisplay";
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/semibold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "InterDisplay";
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/bold.woff2") format("woff2");
+}
+
+:root {
+  color-scheme: dark;
+  --alpha: #ffffff;
+  --gray-50: #11111b; /* crust: window + sidebar */
+  --gray-100: #181825; /* mantle: canvas */
+  --gray-200: #1e1e2e; /* base: cards, pills, raised surfaces */
+  --gray-300: #313244; /* surface0 */
+  --gray-400: #45475a; /* surface1 */
+  --gray-500: #585b70; /* surface2 */
+  --gray-600: #6c7086; /* overlay0 */
+  --gray-700: #7f849c; /* overlay1 */
+  --gray-800: #9399b2; /* overlay2 */
+  --gray-900: #a6adc8; /* subtext0 */
+  --gray-950: #cdd6f4; /* text */
+  --blue-500: #89b4fa;
+  --blue-600: #74c7ec;
+  --cyan-500: #89dceb;
+  --teal-500: #94e2d5;
+  --green-500: #a6e3a1;
+  --yellow-500: #f9e2af;
+  --orange-500: #fab387;
+  --red-500: #f38ba8;
+  --maroon-500: #eba0ac;
+  --purple-500: #cba6f7;
+  --pink-500: #f5c2e7;
+  --lavender-500: #b4befe;
+  --rosewater-500: #f5e0dc;
+  --flamingo-500: #f2cdcd;
+  --ink: #1e1e2e; /* dark text on solid colour fills */
+}
+
+@theme {
+  --font-sans: "InterDisplay", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --text-2xs: 0.625rem;
+  --text-2xs--line-height: 0.875rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 1rem;
+  --text-base--line-height: 1.25rem;
+  --text-lg: 1.25rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.5rem;
+  --text-xl--line-height: 1.75rem;
+  --text-xl--letter-spacing: -0.01em;
+
+  --shadow-dropdown: 0 4px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 8px 16px -8px rgba(0, 0, 0, 0.35);
+  --shadow-pill: 0 8px 24px -8px rgba(0, 0, 0, 0.6), 0 1px 0 0 rgba(255, 255, 255, 0.04) inset;
+
+  --color-alpha: var(--alpha);
+  --color-ink: var(--ink);
+  --color-gray-50: var(--gray-50);
+  --color-gray-100: var(--gray-100);
+  --color-gray-200: var(--gray-200);
+  --color-gray-300: var(--gray-300);
+  --color-gray-400: var(--gray-400);
+  --color-gray-500: var(--gray-500);
+  --color-gray-600: var(--gray-600);
+  --color-gray-700: var(--gray-700);
+  --color-gray-800: var(--gray-800);
+  --color-gray-900: var(--gray-900);
+  --color-gray-950: var(--gray-950);
+  --color-blue-500: var(--blue-500);
+  --color-blue-600: var(--blue-600);
+  --color-cyan-500: var(--cyan-500);
+  --color-teal-500: var(--teal-500);
+  --color-green-500: var(--green-500);
+  --color-yellow-500: var(--yellow-500);
+  --color-orange-500: var(--orange-500);
+  --color-red-500: var(--red-500);
+  --color-maroon-500: var(--maroon-500);
+  --color-purple-500: var(--purple-500);
+  --color-pink-500: var(--pink-500);
+  --color-lavender-500: var(--lavender-500);
+  --color-rosewater-500: var(--rosewater-500);
+  --color-flamingo-500: var(--flamingo-500);
+
+  /* Semantic accents */
+  --color-agent: var(--lavender-500);
+  --color-play: var(--green-500);
+  --color-warn: var(--orange-500);
+  --color-error: var(--red-500);
+
+  --ease-fluid: cubic-bezier(0.08, 0.82, 0.17, 1);
+  --animate-pulse-subtle: pulse-subtle 3.5s ease-in-out infinite;
+  --animate-spin-slow: spin 1.6s linear infinite;
+
+  @keyframes pulse-subtle {
+    50% {
+      opacity: 0.7;
+    }
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-gray-400) transparent;
+  }
+  body {
+    margin: 0;
+    background: var(--color-gray-50);
+    color: var(--color-gray-950);
+    font-family: var(--font-sans);
+    font-feature-settings:
+      "ss03" on,
+      "cv01" on;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--color-lavender-500) 30%, transparent);
+  }
+}
+
+@utility tabular {
+  font-feature-settings:
+    "tnum" on,
+    "lnum" on,
+    "cv01" on,
+    "ss03" on;
+}
+
+/* Forced states for the primitives gallery: data-hover / data-focus. */
+@custom-variant hover (&:hover, &[data-hover]);
+@custom-variant focus-visible (&:focus-visible, &[data-focus]);
+
+@utility focus-ring {
+  &:focus-visible,
+  &[data-focus] {
+    outline: 2px solid var(--color-lavender-500);
+    outline-offset: 1px;
+  }
+}
+
+@utility scrollbar-hidden {
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  & {
+    scrollbar-width: none;
+  }
+}
+
+@utility app-drag-region {
+  -webkit-app-region: drag;
+}
+@utility app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Canvas dot grid: mantle background with surface0 dots every 24px. */
+@utility canvas-grid {
+  background-color: var(--color-gray-100);
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    color-mix(in oklab, var(--color-gray-400) 55%, transparent) 1px,
+    transparent 1.5px
+  );
+  background-size: var(--grid-size, 24px) var(--grid-size, 24px);
+  background-position: var(--grid-x, 0px) var(--grid-y, 0px);
+}

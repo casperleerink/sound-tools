@@ -1,0 +1,4 @@
+/target/
+/demo-project/
+/__pycache__/
+/results/*.log
