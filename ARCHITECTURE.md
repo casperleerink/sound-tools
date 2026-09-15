@@ -1,13 +1,15 @@
 # Technical architecture
 
-This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The full application remains unimplemented.
+This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The full application remains unimplemented.
 
 ## Terms
 
 | Term | Meaning |
 | --- | --- |
 | Sound Tools | The application, consisting of the core and installed extensions. |
-| Extension | A Rust package that provides tools and supporting functionality, such as shared types and UI components. Projects choose which extensions they use. |
+| Extension | A Rust package that provides tools and supporting functionality, such as shared types and UI components. Compiled into the project runtime with the SDK; its source travels with the project. Projects choose which extensions they use. |
+| Bundled extension | An extension that ships with Sound Tools and is part of the default project template. It uses the same SDK as user extensions. |
+| Plugin | A third-party audio plugin (VST, AU, CLAP): a separate binary with a fixed interface loaded by a host. Sound Tools does not use this word for its own extensions. Plugin hosting belongs to an extension. |
 | Tool | A composer-facing capability defined by an extension, ranging from a small building block to a complete composition workflow. |
 | Project template | A starting configuration for new projects, including a selection of extensions and optionally initial content and workspace layout. |
 | Project | A saved musical workspace containing its extension selection, content, settings and assets. |
@@ -103,7 +105,37 @@ Fixed internal processing structure can be reconstructed from extension code and
 
 The project manages tool instances. A composite tool can explicitly own child tool instances; deleting the parent also deletes those children. Connections and references do not establish ownership, so deleting a connected tool does not delete its peers. Views reference musical content without owning a second copy, and closing a view does not delete that content. The exact APIs for registration, ownership and shared references remain open.
 
-Existing audio plugin hosting, including plugin interfaces, belongs entirely to extensions. A reusable hosting helper is a possible extension idea, not a core feature or a hosting design to specify here.
+Audio plugin hosting belongs entirely to extensions. A bundled plugin host extension provides it for the v0 DAW; the core has no plugin interface. The hosting design is not specified here.
+
+## v0: DAW workspace from bundled extensions
+
+The v0 workspace is a small DAW. Its parts are bundled extensions that ship with the product and are part of the default project template. They use the public SDK only; nothing in them is a core feature.
+
+| Bundled extension | Provides |
+| --- | --- |
+| Arrangement | Tracks, clips, notes and automation on the core timeline, with an arrangement view and a clip or note editor. |
+| Mixer | Track levels, pan, sends and the mixer view. |
+| Instrument | One subtractive synth with a few parameters. |
+| Sampler | Plays imported samples from project assets. |
+| Effects | Two or three, such as delay, filter and reverb. |
+| MIDI input | Maps MIDI devices to instrument tracks. |
+| Plugin host | Loads third-party audio plugins (VST3, AU, CLAP) as instruments and effects on tracks. |
+
+Build the core and these extensions together. Each extension should be small and finished before starting the next. Order: arrangement and instrument first, since they prove the note contract, the musical clock and live agent edits. Plugin host last, since it depends on the note and audio contracts being stable.
+
+The arrangement extension's saved format becomes the de facto note and clip contract other extensions read. It lives in a bundled contract crate, not in the core. The core stays independent of notes, tracks and clips.
+
+Agent-authored extensions remain supported and use the same SDK. They are a later capability, not the v0 headline. Codex subagents can keep running authoring tests against the SDK until the integrated agent exists.
+
+### Agent context and tools
+
+The agent works through the live project folder and the runtime protocol, not a separate edit API.
+
+- Context: the project files, the enabled extensions' SDK docs and source, and the current transport position.
+- Project tools: read and write records, which the runtime applies live. Transport operations and offline rendering through the protocol.
+- Extension tools: edit extension source, build, reload.
+
+The verification for v0 is one composition task, such as adding a part in a bar range, completed by an agent with only these tools and seen live by the composer without a build.
 
 ## Project storage
 
@@ -171,11 +203,11 @@ MIDI device integration belongs to extensions. The core provides precise event t
 
 Support feedback connections in the audio graph. Each feedback loop requires an explicit delay so execution order is defined. Tools may keep this routing internal. Delay-buffer APIs, minimum delay and processing granularity remain implementation decisions.
 
-The timeline provides a common time coordinate and scheduling facilities for all tools. It does not require bars, beats, a global tempo, tracks or clips. Timeline views and arrangement workflows remain extension functionality.
+The timeline provides a common time coordinate and scheduling facilities for all tools. Decided September 14, 2026: the core timeline also owns a musical clock, meaning a tempo map and time signature, with conversion between bars and beats, seconds and samples. Every bundled tool and most agent requests refer to bars and beats, so one clock lives in the core rather than in each extension. Tracks and clips remain extension functionality, as do timeline views and arrangement workflows.
 
 Projects can have a finite duration or run without a predetermined end. The runtime must not require preparing the entire duration before playback.
 
-Extensions define musical divisions of time and can maintain independent musical clocks. Their timing must ultimately translate into scheduling on the shared audio engine. The SDK should provide the timing information and conversion facilities needed to do this precisely.
+Extensions may still define other divisions of time or keep independent musical clocks. Their timing must ultimately translate into scheduling on the shared audio engine. The SDK provides the core clock's conversion facilities so extensions do this precisely.
 
 Project position is distinct from the engine's advancing sample count. Audio processing can continue while project playback is paused or stopped, allowing live instruments and effect tails to continue. The exact time representation remains open.
 
@@ -212,15 +244,28 @@ Provide recommended patterns and the underlying operations for custom workflows.
 
 ## Next decisions
 
-[The SDK sketch](SDK_SKETCH.md) proposes a Tone lifecycle and a small next prototype. Its APIs remain provisional. Last-write-wins also applies to active drags, undo, redo and cancellation, as agreed above.
+[The SDK sketch](SDK_SKETCH.md) proposes a Tone lifecycle and a small next prototype. Its APIs remain provisional. Last write wins for file edits, active drags, undo, redo and cancellation; do not reopen this as a synchronization problem.
+
+Immediate next work:
+
+- Resolve native repaint validation before expanding the GUI. Automated clicks and file edits update records, but screenshots only show changes after resizing. Accessible controls remain unverified.
+- The design system in the UI SDK, tested by using it in Tone and then having a Codex subagent adapt Tremolo.
+- Live device output and the control-to-audio handoff. Offline rendering works; realtime audio does not exist yet.
+- The musical clock in the core timeline, then the arrangement and instrument extensions on top of it.
+
+Open:
 
 - Tool registration and lifecycle APIs, including child instances and shared state references.
 - Editing API and undo implementation under the settled last-write-wins rule.
 - Audio graph execution, scheduling and transport notification APIs.
 - Agent integration, the outer application/runtime protocol and window/workspace composition.
 
+Reference code: `/Users/casperleerink/hooman/reference-repos/pi-mono` for extension registration and agent access to docs, and `/Users/casperleerink/hooman/reference-repos/pure-data` for processor composition and scheduling. Neither dictates the product's UI or musical model.
+
 ## Verification
 
+- An agent with only file access and the runtime protocol completes a composition task on the bundled arrangement, such as adding a part in a bar range, and the composer sees and hears it live without a build.
+- Bars and beats from the core clock convert exactly to samples, and a tempo change moves scheduled events accordingly.
 - An external agent builds a custom GPUI editor from SDK docs and examples, and embeds it twice with independent state.
 - A composite tool reuses child tools, exposes selected ports and restores their state without duplication. An alternative view edits the same musical content.
 - Editing one extension reuses unchanged build dependencies; measure build and restart time.
