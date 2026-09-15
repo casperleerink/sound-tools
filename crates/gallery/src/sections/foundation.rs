@@ -341,6 +341,28 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                             .into_any_element(),
                     ],
                 ),
+                row(
+                    "removable sizes",
+                    cx,
+                    [
+                        Badge::new("xs")
+                            .size(BadgeSize::Xs)
+                            .on_remove("rm-xs", |_, _, _| {})
+                            .into_any_element(),
+                        Badge::new("sm")
+                            .size(BadgeSize::Sm)
+                            .on_remove("rm-sm", |_, _, _| {})
+                            .into_any_element(),
+                        Badge::new("md")
+                            .size(BadgeSize::Md)
+                            .on_remove("rm-md", |_, _, _| {})
+                            .into_any_element(),
+                        Badge::new("lg")
+                            .size(BadgeSize::Lg)
+                            .on_remove("rm-lg", |_, _, _| {})
+                            .into_any_element(),
+                    ],
+                ),
             ],
         ))
         .child(block(

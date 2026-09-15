@@ -96,14 +96,17 @@ impl BadgeSize {
         }
     }
 
-    /// Square remove button.
-    fn remove_size(self) -> f32 {
+    /// Space between the remove button and the badge edge, equal on top, bottom and right.
+    fn remove_inset(self) -> f32 {
         match self {
-            Self::Xs => 16.,
-            Self::Sm => 20.,
-            Self::Md => 24.,
-            Self::Lg => 32.,
+            Self::Xs | Self::Sm => 2.,
+            Self::Md | Self::Lg => 4.,
         }
+    }
+
+    /// Square remove button. The 1 px border counts towards the height.
+    fn remove_size(self) -> f32 {
+        self.height() - 2. * (self.remove_inset() + 1.)
     }
 }
 
@@ -216,10 +219,11 @@ impl RenderOnce for Badge {
         } = look(self.variant, cx);
         let size = self.size;
         let rounded = self.rounded;
+        let has_remove = self.remove.is_some();
         let remove_radius = if rounded {
             size.remove_size() / 2.
         } else {
-            (size.radius() - 2.).max(2.)
+            (size.radius() - size.remove_inset()).max(2.)
         };
 
         self.base
@@ -229,7 +233,12 @@ impl RenderOnce for Badge {
             .justify_center()
             .gap(px(size.gap()))
             .h(px(size.height()))
-            .px(px(size.pad_x()))
+            .pl(px(size.pad_x()))
+            .pr(px(if has_remove {
+                size.remove_inset()
+            } else {
+                size.pad_x()
+            }))
             .map(|b| {
                 if rounded {
                     b.rounded_full()
@@ -262,7 +271,7 @@ impl RenderOnce for Badge {
                         .rounded(px(remove_radius))
                         .bg(remove_bg)
                         .cursor_pointer()
-                        .child(Icon::new("x").size(14.).color(fg.opacity(0.7)))
+                        .child(Icon::new("x").size(size.icon_size()).color(fg.opacity(0.7)))
                         .on_click(move |event, window, cx| {
                             cx.stop_propagation();
                             f(event, window, cx)
