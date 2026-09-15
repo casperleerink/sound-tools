@@ -1,5 +1,6 @@
 //! Shared components. Each file is one component; the gallery shows every variant.
 
+pub mod icon;
 pub mod button;
 pub mod badge;
 pub mod chip;

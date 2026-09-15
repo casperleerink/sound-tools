@@ -2,7 +2,7 @@ use gpui::{
     App, Application, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px,
     size,
 };
-use sound_ui::theme::ActiveTheme;
+use sound_ui::{ActiveTheme, Assets, components::icon::Icon, typography};
 
 struct Gallery;
 
@@ -13,14 +13,20 @@ impl Render for Gallery {
             .size_full()
             .bg(theme.gray_100)
             .text_color(theme.gray_950)
+            .font(typography::ui_font())
+            .text_size(px(14.))
             .p(px(24.))
-            .child("Sound Tools UI")
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(Icon::new("music"))
+            .child("Sound Tools UI 0123456789")
     }
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        sound_ui::theme::install(cx);
+    Application::new().with_assets(Assets).run(|cx: &mut App| {
+        sound_ui::init(cx);
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
                 cx.quit();
