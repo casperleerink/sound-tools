@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/ui", "crates/gallery"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+
+[workspace.dependencies]
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+sound-ui = { path = "crates/ui" }
+
+[profile.dev]
+debug = 0
