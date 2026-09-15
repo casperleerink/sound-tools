@@ -56,19 +56,27 @@ impl ButtonSize {
         }
     }
 
+    /// Outer horizontal padding; the label adds `label_pad_x` on each side.
     fn pad_x(self) -> f32 {
         match self {
-            Self::Xs => 8.,
-            Self::Sm => 10.,
-            Self::Md => 12.,
-            Self::Lg => 14.,
+            Self::Xs => 2.,
+            Self::Sm => 6.,
+            Self::Md => 8.,
+            Self::Lg => 12.,
+        }
+    }
+
+    fn label_pad_x(self) -> f32 {
+        match self {
+            Self::Xs | Self::Sm => 2.,
+            Self::Md | Self::Lg => 4.,
         }
     }
 
     fn gap(self) -> f32 {
         match self {
-            Self::Xs | Self::Sm => 4.,
-            Self::Md => 6.,
+            Self::Xs | Self::Sm => 2.,
+            Self::Md => 4.,
             Self::Lg => 8.,
         }
     }
@@ -80,9 +88,10 @@ impl ButtonSize {
         }
     }
 
-    fn icon_size(self) -> f32 {
-        match self {
-            Self::Xs => 14.,
+    /// Icons next to a label are always 16; icon-only buttons shrink to 14 at xs and sm.
+    fn icon_size(self, icon_only: bool) -> f32 {
+        match (self, icon_only) {
+            (Self::Xs | Self::Sm, true) => 14.,
             _ => 16.,
         }
     }
@@ -186,46 +195,73 @@ impl InteractiveElement for Button {
     }
 }
 
-/// Background, foreground, hover background and border for a variant.
-fn look(variant: ButtonVariant, cx: &App) -> (Hsla, Hsla, Hsla, Hsla) {
+struct Look {
+    bg: Hsla,
+    fg: Hsla,
+    border: Hsla,
+    hover_bg: Hsla,
+    hover_fg: Hsla,
+}
+
+/// Colours per variant, following Hooman Studio's button variants.
+fn look(variant: ButtonVariant, cx: &App) -> Look {
     let theme = cx.theme();
     let clear = Hsla::transparent_black();
-    match variant {
+    let (bg, fg, border, hover_bg, hover_fg) = match variant {
         ButtonVariant::Primary => (
             theme.gray_950,
-            theme.gray_200,
-            theme.gray_900,
+            theme.gray_50,
             theme.gray_950,
+            theme.gray_900,
+            theme.gray_50,
         ),
         ButtonVariant::Subtle => (
             theme.alpha_at(0.05),
             theme.gray_950,
-            theme.alpha_at(0.10),
             clear,
+            theme.alpha_at(0.10),
+            theme.gray_950,
         ),
         ButtonVariant::Outline => (
-            theme.gray_50,
+            clear,
             theme.gray_950,
             theme.alpha_at(0.10),
-            theme.alpha_at(0.10),
+            theme.alpha_at(0.05),
+            theme.gray_950,
         ),
-        ButtonVariant::Ghost => (clear, theme.gray_950, theme.alpha_at(0.10), clear),
-        ButtonVariant::Solid(accent) => (accent, theme.gray_200, accent.opacity(0.85), accent),
-        ButtonVariant::SubtleColor(accent) => {
-            (accent.opacity(0.10), accent, accent.opacity(0.20), clear)
+        ButtonVariant::Ghost => (clear, theme.gray_950, clear, theme.alpha_at(0.05), theme.gray_950),
+        ButtonVariant::Solid(accent) => {
+            (accent, theme.gray_50, accent, accent.opacity(0.85), theme.gray_50)
         }
-        ButtonVariant::OutlineColor(accent) => (clear, accent, accent.opacity(0.10), accent),
-        ButtonVariant::GhostColor(accent) => (clear, accent, accent.opacity(0.10), clear),
+        ButtonVariant::SubtleColor(accent) => {
+            (accent.opacity(0.10), accent, clear, accent.opacity(0.20), accent)
+        }
+        ButtonVariant::OutlineColor(accent) => (clear, accent, accent, accent, theme.gray_50),
+        ButtonVariant::GhostColor(accent) => (clear, accent, clear, accent, theme.gray_50),
+    };
+    Look {
+        bg,
+        fg,
+        border,
+        hover_bg,
+        hover_fg,
     }
 }
 
 impl RenderOnce for Button {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let (bg, fg, hover_bg, border) = look(self.variant, cx);
+        let Look {
+            bg,
+            fg,
+            border,
+            hover_bg,
+            hover_fg,
+        } = look(self.variant, cx);
         let ring = cx.theme().lavender;
         let size = self.size;
         let disabled = self.disabled;
         let icon_only = self.label.is_none();
+        let icon_size = size.icon_size(icon_only);
 
         self.base
             .id(self.id)
@@ -258,17 +294,17 @@ impl RenderOnce for Button {
             .when(disabled, |b| b.opacity(0.4).cursor_not_allowed())
             .when(!disabled, |b| {
                 b.cursor_pointer()
-                    .hover(|s| s.bg(hover_bg))
-                    .active(|s| s.bg(hover_bg.opacity(0.7)))
+                    .hover(move |s| s.bg(hover_bg).text_color(hover_fg))
+                    .active(move |s| s.bg(hover_bg.opacity(0.7)).text_color(hover_fg))
             })
             .when_some(self.focus_handle.as_ref(), |b, handle| {
                 b.track_focus(handle).focus(|s| s.border_color(ring))
             })
             .when_some(self.icon, |b, name| {
-                b.child(Icon::new(name).size(size.icon_size()).color(fg))
+                b.child(Icon::new(name).size(icon_size))
             })
             .when_some(self.label, |b, label| {
-                b.child(div().px(px(2.)).child(label))
+                b.child(div().px(px(size.label_pad_x())).child(label))
             })
             .when_some(self.on_click.filter(|_| !disabled), |b, f| {
                 b.on_click(move |event, window, cx| {

@@ -122,9 +122,45 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                             .variant(ButtonVariant::SubtleColor(lavender))
                             .into_any_element(),
                         Button::new("b-coutline", "Outline")
-                            .variant(ButtonVariant::OutlineColor(green))
+                            .variant(ButtonVariant::OutlineColor(lavender))
                             .into_any_element(),
                         Button::new("b-cghost", "Ghost")
+                            .variant(ButtonVariant::GhostColor(lavender))
+                            .into_any_element(),
+                    ],
+                ),
+                row(
+                    "green",
+                    cx,
+                    [
+                        Button::new("b-gsolid", "Solid")
+                            .variant(ButtonVariant::Solid(green))
+                            .into_any_element(),
+                        Button::new("b-gsubtle", "Subtle")
+                            .variant(ButtonVariant::SubtleColor(green))
+                            .into_any_element(),
+                        Button::new("b-goutline", "Outline")
+                            .variant(ButtonVariant::OutlineColor(green))
+                            .into_any_element(),
+                        Button::new("b-gghost", "Ghost")
+                            .variant(ButtonVariant::GhostColor(green))
+                            .into_any_element(),
+                    ],
+                ),
+                row(
+                    "red",
+                    cx,
+                    [
+                        Button::new("b-rsolid", "Solid")
+                            .variant(ButtonVariant::Solid(red))
+                            .into_any_element(),
+                        Button::new("b-rsubtle", "Subtle")
+                            .variant(ButtonVariant::SubtleColor(red))
+                            .into_any_element(),
+                        Button::new("b-routline", "Outline")
+                            .variant(ButtonVariant::OutlineColor(red))
+                            .into_any_element(),
+                        Button::new("b-rghost", "Ghost")
                             .variant(ButtonVariant::GhostColor(red))
                             .into_any_element(),
                     ],

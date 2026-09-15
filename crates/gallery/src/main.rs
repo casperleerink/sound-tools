@@ -1,6 +1,7 @@
 //! Storybook for the UI SDK. Shows every component and variant.
 //! `GALLERY_SECTION=inputs cargo run -p gallery` shows one section only.
 
+mod composed;
 mod sections;
 
 use gpui::{

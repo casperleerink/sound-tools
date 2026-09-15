@@ -7,11 +7,12 @@ use std::rc::Rc;
 
 use gpui::{
     App, Context, Div, FocusHandle, FontWeight, IntoElement, KeyDownEvent, MouseDownEvent, Render,
-    RenderOnce, SharedString, StyleRefinement, Styled, Window, div, prelude::*, px,
+    RenderOnce, SharedString, Stateful, StyleRefinement, Styled, Window, div, prelude::*, px,
 };
 
 use crate::components::icon::Icon;
-use crate::components::popover::{Align, Side, anchor, surface, trigger};
+use crate::components::kbd::Kbd;
+use crate::components::popover::{Align, Side, TRIGGER_HEIGHT, anchor, surface, trigger};
 use crate::theme::ActiveTheme;
 
 const ROW_HEIGHT: f32 = 32.;
@@ -22,7 +23,9 @@ pub struct MenuItem {
     label: SharedString,
     description: Option<SharedString>,
     icon: Option<SharedString>,
+    shortcut: Option<SharedString>,
     disabled: bool,
+    selectable: bool,
 }
 
 impl MenuItem {
@@ -32,7 +35,9 @@ impl MenuItem {
             label: label.into(),
             description: None,
             icon: None,
+            shortcut: None,
             disabled: false,
+            selectable: true,
         }
     }
 
@@ -48,8 +53,21 @@ impl MenuItem {
         self
     }
 
+    /// Keyboard hint drawn at the end of the row, e.g. `"mod+z"`.
+    pub fn shortcut(mut self, shortcut: impl Into<SharedString>) -> Self {
+        self.shortcut = Some(shortcut.into());
+        self
+    }
+
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Commands (`Undo`, `Reveal project folder`) run and close the menu without becoming the
+    /// menu's selected value; only radio-style items do.
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
         self
     }
 
@@ -228,6 +246,9 @@ impl RenderOnce for MenuList {
                                             )
                                         }),
                                 )
+                                .when_some(item.shortcut.clone(), |d, shortcut| {
+                                    d.child(Kbd::new(shortcut))
+                                })
                                 .when(is_selected, |d| {
                                     d.child(Icon::new("check").size(16.).color(text))
                                 })
@@ -280,6 +301,26 @@ impl RenderOnce for MenuList {
     }
 }
 
+/// Quiet version of the shared trigger: no border or fill, just a hover wash.
+fn ghost_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    let (hover, text) = (theme.alpha_at(0.05), theme.gray_950);
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(6.))
+        .h(px(TRIGGER_HEIGHT))
+        .px(px(8.))
+        .rounded(px(8.))
+        .text_size(px(14.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(text)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+}
+
 pub struct DropdownMenu {
     focus_handle: FocusHandle,
     label: SharedString,
@@ -290,6 +331,7 @@ pub struct DropdownMenu {
     side: Side,
     align: Align,
     width: f32,
+    ghost: bool,
 }
 
 impl DropdownMenu {
@@ -308,6 +350,7 @@ impl DropdownMenu {
             side: Side::default(),
             align: Align::default(),
             width: 320.,
+            ghost: false,
         }
     }
 
@@ -331,6 +374,12 @@ impl DropdownMenu {
         self
     }
 
+    /// Quiet trigger: no border or fill, muted label. For the project name and the model picker.
+    pub fn ghost(mut self, ghost: bool) -> Self {
+        self.ghost = ghost;
+        self
+    }
+
     pub fn value(&self) -> Option<&SharedString> {
         self.selected.as_ref()
     }
@@ -347,7 +396,13 @@ impl DropdownMenu {
     }
 
     fn pick(&mut self, value: SharedString, cx: &mut Context<Self>) {
-        self.selected = Some(value);
+        let selectable = flat(&self.entries)
+            .iter()
+            .find(|item| item.value == value)
+            .is_none_or(|item| item.selectable);
+        if selectable {
+            self.selected = Some(value);
+        }
         self.open = false;
         cx.notify();
     }
@@ -395,15 +450,19 @@ impl DropdownMenu {
 impl Render for DropdownMenu {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (side, align, width) = (self.side, self.align, self.width);
-        let theme = cx.theme();
-        let muted = theme.gray_700;
+        let trigger_element = if self.ghost {
+            ghost_trigger("dropdown-trigger", cx)
+        } else {
+            trigger("dropdown-trigger", cx)
+        };
+        let muted = cx.theme().gray_700;
 
         div()
             .relative()
             .flex()
             .flex_none()
             .child(
-                trigger("dropdown-trigger", cx)
+                trigger_element
                     .child(self.label.clone())
                     .child(Icon::new("chevron-down").size(14.).color(muted))
                     .on_click(cx.listener(|this, _, window, cx| {

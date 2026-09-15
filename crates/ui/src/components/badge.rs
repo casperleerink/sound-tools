@@ -134,7 +134,7 @@ fn look(variant: BadgeVariant, cx: &App) -> (Hsla, Hsla, Hsla) {
         BadgeVariant::Primary => (theme.gray_950, theme.gray_200, theme.alpha_at(0.10)),
         BadgeVariant::Subtle => (theme.alpha_at(0.05), theme.gray_950, clear),
         BadgeVariant::Ghost => (clear, theme.gray_950, clear),
-        BadgeVariant::Outline => (theme.gray_50, theme.gray_950, theme.alpha_at(0.10)),
+        BadgeVariant::Outline => (clear, theme.gray_950, theme.alpha_at(0.10)),
         BadgeVariant::Solid(accent) => (accent, theme.gray_200, clear),
         BadgeVariant::SubtleColor(accent) => (accent.opacity(0.10), accent, clear),
         BadgeVariant::GhostColor(accent) => (clear, accent, clear),

@@ -107,6 +107,7 @@ pub struct TextInput {
     is_selecting: bool,
     size: InputSize,
     lines: usize,
+    bare: bool,
     disabled: bool,
     on_submit: Option<SubmitHandler>,
     on_cancel: Option<SubmitHandler>,
@@ -127,6 +128,7 @@ impl TextInput {
             is_selecting: false,
             size: InputSize::default(),
             lines: 1,
+            bare: false,
             disabled: false,
             on_submit: None,
             on_cancel: None,
@@ -146,6 +148,13 @@ impl TextInput {
     /// Taller box for the composer. Editing stays single-line; only the box grows.
     pub fn lines(mut self, lines: usize) -> Self {
         self.lines = lines.max(1);
+        self
+    }
+
+    /// Drop the field's own surface, border, padding and focus ring, for use inside a card
+    /// that already provides them (the agent composer).
+    pub fn bare(mut self, bare: bool) -> Self {
+        self.bare = bare;
         self
     }
 
@@ -697,19 +706,26 @@ impl Render for TextInput {
         let focused = self.focus_handle.is_focused(window);
         let size = self.size;
         let disabled = self.disabled;
-        let height = size.height() + (self.lines as f32 - 1.) * 20.;
+        let bare = self.bare;
+        let height = if bare {
+            20. * self.lines as f32
+        } else {
+            size.height() + (self.lines as f32 - 1.) * 20.
+        };
 
         div()
             .w_full()
             .h(px(height))
-            .px(px(size.pad_x()))
-            .py(px((size.height() - 20.) / 2.))
+            .when(!bare, |d| {
+                d.px(px(size.pad_x()))
+                    .py(px((size.height() - 20.) / 2.))
+                    .rounded(px(size.radius()))
+                    .bg(surface)
+                    .border_1()
+                    .border_color(border)
+            })
             .flex()
             .flex_col()
-            .rounded(px(size.radius()))
-            .bg(surface)
-            .border_1()
-            .border_color(border)
             .text_color(text)
             .text_size(px(size.text_size()))
             .line_height(px(20.))
@@ -718,7 +734,7 @@ impl Render for TextInput {
                 d.key_context("TextInput")
                     .track_focus(&self.focus_handle)
                     .cursor(CursorStyle::IBeam)
-                    .when(focused, |d| {
+                    .when(focused && !bare, |d| {
                         d.border_color(ring.opacity(0.7)).shadow(vec![BoxShadow {
                             color: ring.opacity(0.18),
                             offset: point(px(0.), px(0.)),
