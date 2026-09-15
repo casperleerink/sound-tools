@@ -24,6 +24,7 @@ impl Render for Gallery {
             .track_scroll(&self.scroll)
             .overflow_y_scroll()
             .size_full()
+            .child(div().mt(px(-scroll_offset())))
             .bg(theme.gray_100)
             .text_color(theme.gray_950)
             .font(typography::ui_font())
@@ -68,4 +69,12 @@ fn main() {
         .unwrap();
         cx.activate(true);
     });
+}
+
+/// `GALLERY_SCROLL=<px>` lifts the page so lower blocks fit in a screenshot.
+fn scroll_offset() -> f32 {
+    std::env::var("GALLERY_SCROLL")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0.)
 }

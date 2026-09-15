@@ -3,7 +3,6 @@
 pub mod icon;
 pub mod button;
 pub mod badge;
-pub mod chip;
 pub mod kbd;
 pub mod separator;
 pub mod label;

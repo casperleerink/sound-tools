@@ -1,7 +1,13 @@
-//! Badge: a static label with an optional icon. Variants `primary`, `subtle`, `ghost`, `outline`
-//! and the same solid/subtle/ghost styles on any accent. Heights 20/24/32/40 px, pill `rounded`.
+//! Badge: a label with an optional icon and an optional remove button (Hooman Studio's badge
+//! and chip merged). Variants `primary`, `subtle`, `ghost`, `outline` and solid/subtle/ghost on
+//! any accent. Heights 20/28/32/40 px, pill `rounded`.
 
-use gpui::{App, Div, FontWeight, Hsla, SharedString, StyleRefinement, Window, div, prelude::*, px};
+use std::rc::Rc;
+
+use gpui::{
+    App, ClickEvent, Div, ElementId, FontWeight, Hsla, SharedString, StyleRefinement, Window, div,
+    prelude::*, px,
+};
 
 use crate::components::icon::Icon;
 use crate::theme::ActiveTheme;
@@ -34,7 +40,7 @@ impl BadgeSize {
     fn height(self) -> f32 {
         match self {
             Self::Xs => 20.,
-            Self::Sm => 24.,
+            Self::Sm => 28.,
             Self::Md => 32.,
             Self::Lg => 40.,
         }
@@ -49,19 +55,35 @@ impl BadgeSize {
         }
     }
 
+    /// Outer horizontal padding; the label adds `label_pad_x` on each side.
     fn pad_x(self) -> f32 {
         match self {
-            Self::Xs => 6.,
-            Self::Sm => 8.,
-            Self::Md => 10.,
+            Self::Xs => 4.,
+            Self::Sm => 5.,
+            Self::Md => 8.,
             Self::Lg => 12.,
+        }
+    }
+
+    fn label_pad_x(self) -> f32 {
+        match self {
+            Self::Lg => 4.,
+            _ => 2.,
+        }
+    }
+
+    fn gap(self) -> f32 {
+        match self {
+            Self::Xs => 1.,
+            Self::Sm => 2.,
+            Self::Md | Self::Lg => 4.,
         }
     }
 
     fn text_size(self) -> f32 {
         match self {
-            Self::Xs | Self::Sm => 12.,
-            Self::Md => 14.,
+            Self::Xs => 12.,
+            Self::Sm | Self::Md => 14.,
             Self::Lg => 16.,
         }
     }
@@ -70,10 +92,22 @@ impl BadgeSize {
         match self {
             Self::Xs => 12.,
             Self::Sm => 14.,
-            _ => 16.,
+            Self::Md | Self::Lg => 16.,
+        }
+    }
+
+    /// Square remove button.
+    fn remove_size(self) -> f32 {
+        match self {
+            Self::Xs => 16.,
+            Self::Sm => 20.,
+            Self::Md => 24.,
+            Self::Lg => 32.,
         }
     }
 }
+
+type RemoveHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct Badge {
@@ -83,6 +117,7 @@ pub struct Badge {
     variant: BadgeVariant,
     size: BadgeSize,
     rounded: bool,
+    remove: Option<(ElementId, RemoveHandler)>,
 }
 
 impl Badge {
@@ -94,6 +129,7 @@ impl Badge {
             variant: BadgeVariant::default(),
             size: BadgeSize::default(),
             rounded: false,
+            remove: None,
         }
     }
 
@@ -118,6 +154,16 @@ impl Badge {
         self.rounded = rounded;
         self
     }
+
+    /// Show a remove button after the label. The id must be unique among siblings.
+    pub fn on_remove(
+        mut self,
+        id: impl Into<ElementId>,
+        f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.remove = Some((id.into(), Rc::new(f)));
+        self
+    }
 }
 
 impl Styled for Badge {
@@ -126,36 +172,66 @@ impl Styled for Badge {
     }
 }
 
-/// Background, foreground and border for a variant.
-fn look(variant: BadgeVariant, cx: &App) -> (Hsla, Hsla, Hsla) {
+struct Look {
+    bg: Hsla,
+    fg: Hsla,
+    border: Hsla,
+    remove_bg: Hsla,
+}
+
+fn look(variant: BadgeVariant, cx: &App) -> Look {
     let theme = cx.theme();
     let clear = Hsla::transparent_black();
-    match variant {
-        BadgeVariant::Primary => (theme.gray_950, theme.gray_200, theme.alpha_at(0.10)),
-        BadgeVariant::Subtle => (theme.alpha_at(0.05), theme.gray_950, clear),
-        BadgeVariant::Ghost => (clear, theme.gray_950, clear),
-        BadgeVariant::Outline => (clear, theme.gray_950, theme.alpha_at(0.10)),
-        BadgeVariant::Solid(accent) => (accent, theme.gray_200, clear),
-        BadgeVariant::SubtleColor(accent) => (accent.opacity(0.10), accent, clear),
-        BadgeVariant::GhostColor(accent) => (clear, accent, clear),
+    let (bg, fg, border, remove_bg) = match variant {
+        BadgeVariant::Primary => (
+            theme.gray_950,
+            theme.gray_50,
+            theme.alpha_at(0.10),
+            theme.gray_50.opacity(0.10),
+        ),
+        BadgeVariant::Subtle => (theme.alpha_at(0.05), theme.gray_950, clear, theme.alpha_at(0.05)),
+        BadgeVariant::Ghost => (clear, theme.gray_950, clear, theme.alpha_at(0.05)),
+        BadgeVariant::Outline => (clear, theme.gray_950, theme.alpha_at(0.10), theme.alpha_at(0.05)),
+        BadgeVariant::Solid(accent) => (accent, theme.gray_50, clear, theme.gray_50.opacity(0.10)),
+        BadgeVariant::SubtleColor(accent) => {
+            (accent.opacity(0.10), accent, clear, accent.opacity(0.10))
+        }
+        BadgeVariant::GhostColor(accent) => (clear, accent, clear, accent.opacity(0.10)),
+    };
+    Look {
+        bg,
+        fg,
+        border,
+        remove_bg,
     }
 }
 
 impl RenderOnce for Badge {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let (bg, fg, border) = look(self.variant, cx);
+        let Look {
+            bg,
+            fg,
+            border,
+            remove_bg,
+        } = look(self.variant, cx);
         let size = self.size;
+        let rounded = self.rounded;
+        let remove_radius = if rounded {
+            size.remove_size() / 2.
+        } else {
+            (size.radius() - 2.).max(2.)
+        };
 
         self.base
             .flex()
             .flex_none()
             .items_center()
             .justify_center()
-            .gap(px(4.))
+            .gap(px(size.gap()))
             .h(px(size.height()))
             .px(px(size.pad_x()))
             .map(|b| {
-                if self.rounded {
+                if rounded {
                     b.rounded_full()
                 } else {
                     b.rounded(px(size.radius()))
@@ -167,9 +243,31 @@ impl RenderOnce for Badge {
             .text_color(fg)
             .text_size(px(size.text_size()))
             .font_weight(FontWeight::MEDIUM)
-            .when_some(self.icon, |b, name| {
-                b.child(Icon::new(name).size(size.icon_size()).color(fg))
+            .when_some(self.icon, |b, name| b.child(Icon::new(name).size(size.icon_size())))
+            .child(
+                div()
+                    .px(px(size.label_pad_x()))
+                    .whitespace_nowrap()
+                    .child(self.label),
+            )
+            .when_some(self.remove, |b, (id, f)| {
+                b.child(
+                    div()
+                        .id(id)
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .justify_center()
+                        .size(px(size.remove_size()))
+                        .rounded(px(remove_radius))
+                        .bg(remove_bg)
+                        .cursor_pointer()
+                        .child(Icon::new("x").size(14.).color(fg.opacity(0.7)))
+                        .on_click(move |event, window, cx| {
+                            cx.stop_propagation();
+                            f(event, window, cx)
+                        }),
+                )
             })
-            .child(div().whitespace_nowrap().child(self.label))
     }
 }

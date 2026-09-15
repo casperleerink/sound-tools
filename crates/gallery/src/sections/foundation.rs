@@ -1,4 +1,4 @@
-//! Foundation section: button, badge, chip, kbd, separator, label, loader, indicator, card,
+//! Foundation section: button, badge, kbd, separator, label, loader, indicator, card,
 //! empty state and alert, with every variant, size and state.
 
 use gpui::{AnyElement, App, FontWeight, IntoElement, ParentElement, SharedString, Styled, Window, div, px};
@@ -6,7 +6,6 @@ use sound_ui::components::alert::{Alert, AlertVariant};
 use sound_ui::components::badge::{Badge, BadgeSize, BadgeVariant};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::card::{Card, CardRow};
-use sound_ui::components::chip::{Chip, ChipSize, ChipVariant};
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::kbd::Kbd;
@@ -268,13 +267,28 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     cx,
                     [
                         Badge::new("Solid")
+                            .variant(BadgeVariant::Solid(lavender))
+                            .into_any_element(),
+                        Badge::new("Subtle")
+                            .variant(BadgeVariant::SubtleColor(lavender))
+                            .into_any_element(),
+                        Badge::new("Ghost")
+                            .variant(BadgeVariant::GhostColor(lavender))
+                            .into_any_element(),
+                    ],
+                ),
+                row(
+                    "green",
+                    cx,
+                    [
+                        Badge::new("Solid")
                             .variant(BadgeVariant::Solid(green))
                             .into_any_element(),
                         Badge::new("Subtle")
-                            .variant(BadgeVariant::SubtleColor(peach))
+                            .variant(BadgeVariant::SubtleColor(green))
                             .into_any_element(),
                         Badge::new("Ghost")
-                            .variant(BadgeVariant::GhostColor(red))
+                            .variant(BadgeVariant::GhostColor(green))
                             .into_any_element(),
                     ],
                 ),
@@ -309,65 +323,21 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                             .into_any_element(),
                     ],
                 ),
-            ],
-        ))
-        .child(block(
-            "Chip",
-            cx,
-            [
-                row(
-                    "variants",
-                    cx,
-                    [
-                        Chip::new("c-primary", "Primary").into_any_element(),
-                        Chip::new("c-subtle", "Subtle")
-                            .variant(ChipVariant::Subtle)
-                            .into_any_element(),
-                        Chip::new("c-solid", "Solid")
-                            .variant(ChipVariant::Solid(lavender))
-                            .into_any_element(),
-                        Chip::new("c-csubtle", "Subtle")
-                            .variant(ChipVariant::SubtleColor(lavender))
-                            .into_any_element(),
-                    ],
-                ),
-                row(
-                    "sizes",
-                    cx,
-                    [
-                        Chip::new("c-xs", "xs")
-                            .size(ChipSize::Xs)
-                            .variant(ChipVariant::Subtle)
-                            .into_any_element(),
-                        Chip::new("c-sm", "sm")
-                            .size(ChipSize::Sm)
-                            .variant(ChipVariant::Subtle)
-                            .into_any_element(),
-                        Chip::new("c-md", "md")
-                            .size(ChipSize::Md)
-                            .variant(ChipVariant::Subtle)
-                            .into_any_element(),
-                        Chip::new("c-lg", "lg")
-                            .size(ChipSize::Lg)
-                            .variant(ChipVariant::Subtle)
-                            .into_any_element(),
-                    ],
-                ),
                 row(
                     "removable",
                     cx,
                     [
-                        Chip::new("c-rm", "Polyrhythm")
-                            .on_remove(|_, _, _| {})
+                        Badge::new("Polyrhythm")
+                            .on_remove("rm-primary", |_, _, _| {})
                             .into_any_element(),
-                        Chip::new("c-rm-subtle", "Reverb")
-                            .variant(ChipVariant::Subtle)
-                            .on_remove(|_, _, _| {})
+                        Badge::new("Reverb")
+                            .variant(BadgeVariant::Subtle)
+                            .on_remove("rm-subtle", |_, _, _| {})
                             .into_any_element(),
-                        Chip::new("c-rm-pill", "Sampler")
-                            .variant(ChipVariant::SubtleColor(green))
+                        Badge::new("Sampler")
+                            .variant(BadgeVariant::SubtleColor(green))
                             .rounded(true)
-                            .on_remove(|_, _, _| {})
+                            .on_remove("rm-pill", |_, _, _| {})
                             .into_any_element(),
                     ],
                 ),

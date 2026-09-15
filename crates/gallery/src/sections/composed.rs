@@ -1,8 +1,7 @@
 //! Composed examples: agent sidebar, transport pill, project menu, mixer strip.
 //!
 //! `GALLERY_STATE=idle|working|done|failed` preselects the sidebar state,
-//! `GALLERY_OPEN=project|model` opens a menu at startup, and `GALLERY_SCROLL=<px>` lifts the
-//! section so the lower blocks fit in a screenshot.
+//! `GALLERY_OPEN=project|model` opens a menu at startup.
 
 use gpui::{
     AnyElement, App, Entity, FontWeight, IntoElement, ParentElement, Styled, Subscription, Window,
@@ -96,11 +95,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         state.project.clone(),
         state.mixer.clone(),
     );
-    let scroll: f32 = std::env::var("GALLERY_SCROLL")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0.);
-
     let state_control = SegmentedControl::new("sidebar-state", sidebar.read(cx).state().value())
         .options([
             ("idle", "Idle"),
@@ -129,7 +123,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap(px(24.))
-        .mt(px(-scroll))
         .child(block("Agent sidebar", cx, Some(state_control), sidebar))
         .child(block("Transport", cx, Some(reload_control), transport))
         .child(block("Project menu", cx, None, project))
