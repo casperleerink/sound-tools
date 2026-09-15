@@ -59,3 +59,16 @@ Every element must earn its keep. Reference feel: Hooman Studio and Hive. Lots o
 - Chrome: project name top-left as a quiet menu holding add, undo/redo, output device and project folder. No legends, no zoom controls, no grid.
 - Cards and panels: 16 px padding, no meta chips in headers, port labels on hover only, secondary parameters behind a disclosure or a second view.
 - Accessible: visible focus rings, labelled controls, full keyboard reach. This is a product requirement.
+
+## GPUI notes from the first port, September 14, 2026
+
+The UI SDK lives in `crates/ui`; the gallery in `crates/gallery` shows every component (`GALLERY_SECTION=foundation|inputs|overlays|composed cargo run -p gallery`). GPUI 0.2.2 limits that shaped the components:
+
+- No CSS transitions. Hover and active states swap instantly. Only the switch thumb and the working indicator animate, through `with_animation`.
+- No focus-visible. Focus rings show on mouse focus too. Stateless components take an optional `FocusHandle` to show a ring.
+- No built-in text widget. `text_input.rs` implements shaping, cursor, selection and IME itself. It is single-line; `.lines(n)` only makes the box taller. Real multi-line editing is future work.
+- Key bindings are registered by the component on first use, scoped to a key context, since the app binds none globally yet.
+- Draggable controls use drag events with a delta, so a plain click on a slider track does not jump the handle.
+- SVG icons take an explicit colour; `Icon` reads the inherited text colour at render time. Colour buttons therefore tint rather than invert on hover.
+- Overlays anchor to a zero-size box on the trigger edge and snap to the window with a margin. Side is explicit, not collision-aware. Click-outside uses `on_mouse_down_out` with an occluding surface.
+- No arc primitive; the knob draws its value ring with dots.
