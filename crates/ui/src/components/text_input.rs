@@ -7,7 +7,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    App, Bounds, BoxShadow, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
+    App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
     Entity, EntityInputHandler, FocusHandle, Focusable, Global, GlobalElementId, KeyBinding,
     LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div,
@@ -697,11 +697,11 @@ impl Element for TextElement {
 impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (surface, border, text, ring) = (
+        let (surface, border, border_active, text) = (
             theme.alpha_at(0.05),
             theme.alpha_at(0.10),
+            theme.alpha_at(0.20),
             theme.gray_950,
-            theme.blue,
         );
         let focused = self.focus_handle.is_focused(window);
         let size = self.size;
@@ -734,14 +734,8 @@ impl Render for TextInput {
                 d.key_context("TextInput")
                     .track_focus(&self.focus_handle)
                     .cursor(CursorStyle::IBeam)
-                    .when(focused && !bare, |d| {
-                        d.border_color(ring.opacity(0.7)).shadow(vec![BoxShadow {
-                            color: ring.opacity(0.18),
-                            offset: point(px(0.), px(0.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(3.),
-                        }])
-                    })
+                    .when(!bare, |d| d.hover(move |s| s.border_color(border_active)))
+                    .when(focused && !bare, |d| d.border_color(border_active))
                     .on_action(cx.listener(Self::backspace))
                     .on_action(cx.listener(Self::delete))
                     .on_action(cx.listener(Self::left))
