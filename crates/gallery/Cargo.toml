@@ -1,0 +1,8 @@
+[package]
+name = "gallery"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+sound-ui.workspace = true

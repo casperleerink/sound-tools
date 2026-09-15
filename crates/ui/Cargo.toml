@@ -1,0 +1,7 @@
+[package]
+name = "sound-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
