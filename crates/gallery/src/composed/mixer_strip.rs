@@ -114,20 +114,18 @@ impl Render for MixerStrip {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(
-                        self.toggle("M", "mute", self.mute)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.mute = !this.mute;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        self.toggle("S", "solo", self.solo)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.solo = !this.solo;
-                                cx.notify();
-                            })),
-                    ),
+                    .child(self.toggle("M", "mute", self.mute).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.mute = !this.mute;
+                            cx.notify();
+                        },
+                    )))
+                    .child(self.toggle("S", "solo", self.solo).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.solo = !this.solo;
+                            cx.notify();
+                        },
+                    ))),
             )
     }
 }

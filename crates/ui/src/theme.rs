@@ -1,6 +1,6 @@
 use gpui::{App, Global, Hsla, Rgba, rgb};
 
-/// Catppuccin Mocha mapped onto the Hooman Studio grey scale. See DESIGN.md.
+/// Catppuccin Mocha mapped onto the source design system's grey scale. See DESIGN.md.
 #[derive(Clone, Debug)]
 pub struct Theme {
     pub gray_50: Hsla,

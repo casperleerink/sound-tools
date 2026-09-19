@@ -1,4 +1,4 @@
-//! Embedded assets: fonts and icons. Register with `Application::new().with_assets(Assets)`.
+//! Embedded assets: fonts and icons. Register with `gpui_platform::application().with_assets(Assets)`.
 
 use std::borrow::Cow;
 
@@ -13,12 +13,50 @@ macro_rules! icons {
 }
 
 icons!(
-    "arrow-left", "arrow-right", "arrow-up", "bot", "check", "chevron-down", "chevron-left",
-    "chevron-right", "chevron-up", "circle", "circle-alert", "circle-check", "copy", "ellipsis",
-    "eye", "eye-off", "folder", "info", "loader-circle", "lock", "mic", "minus", "music", "pause",
-    "pencil", "piano", "play", "plus", "redo-2", "search", "send", "settings", "skip-back",
-    "skip-forward", "sliders-horizontal", "sparkles", "square", "trash-2", "triangle-alert",
-    "undo-2", "volume-2", "volume-x", "x", "zap",
+    "arrow-left",
+    "arrow-right",
+    "arrow-up",
+    "bot",
+    "check",
+    "chevron-down",
+    "chevron-left",
+    "chevron-right",
+    "chevron-up",
+    "circle",
+    "circle-alert",
+    "circle-check",
+    "copy",
+    "ellipsis",
+    "eye",
+    "eye-off",
+    "folder",
+    "info",
+    "loader-circle",
+    "lock",
+    "mic",
+    "minus",
+    "music",
+    "pause",
+    "pencil",
+    "piano",
+    "play",
+    "plus",
+    "redo-2",
+    "search",
+    "send",
+    "settings",
+    "skip-back",
+    "skip-forward",
+    "sliders-horizontal",
+    "sparkles",
+    "square",
+    "trash-2",
+    "triangle-alert",
+    "undo-2",
+    "volume-2",
+    "volume-x",
+    "x",
+    "zap",
 );
 
 pub const FONT_REGULAR: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Regular.ttf");
@@ -29,7 +67,9 @@ pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
-        let name = path.strip_prefix("icons/").and_then(|p| p.strip_suffix(".svg"));
+        let name = path
+            .strip_prefix("icons/")
+            .and_then(|p| p.strip_suffix(".svg"));
         Ok(name
             .and_then(|n| ICONS.iter().find(|(k, _)| *k == n))
             .map(|(_, bytes)| Cow::Borrowed(*bytes)))
@@ -37,7 +77,10 @@ impl AssetSource for Assets {
 
     fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
         Ok(if path == "icons" {
-            ICONS.iter().map(|(k, _)| format!("{k}.svg").into()).collect()
+            ICONS
+                .iter()
+                .map(|(k, _)| format!("{k}.svg").into())
+                .collect()
         } else {
             vec![]
         })

@@ -1,13 +1,13 @@
 //! Popover: a trigger plus floating content. Stateful view, because it owns
 //! `open`. Also holds the anchoring and surface helpers the other overlays use
-//! (dropdown menu, select, dialog). Ported from Hooman Studio `popover.tsx`.
+//! (dropdown menu, select, dialog). Ported from the source design system's `popover.tsx`.
 
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, BoxShadow, Context, Corner, Div, FocusHandle, FontWeight, KeyDownEvent,
-    MouseDownEvent, Render, SharedString, Stateful, Window, anchored, deferred, div, hsla,
-    point, prelude::*, px,
+    Anchor, AnyElement, App, BoxShadow, Context, Div, FocusHandle, FontWeight, KeyDownEvent,
+    MouseDownEvent, Render, SharedString, Stateful, Window, anchored, deferred, div, hsla, point,
+    prelude::*, px,
 };
 
 use crate::theme::ActiveTheme;
@@ -47,6 +47,7 @@ pub(crate) fn surface(cx: &App) -> Div {
             offset: point(px(0.), px(4.)),
             blur_radius: px(24.),
             spread_radius: px(-8.),
+            inset: false,
         }])
 }
 
@@ -54,10 +55,10 @@ pub(crate) fn surface(cx: &App) -> Div {
 /// content hangs off it, so alignment does not depend on the trigger's size.
 pub(crate) fn anchor(side: Side, align: Align, content: impl IntoElement) -> Div {
     let corner = match (side, align) {
-        (Side::Bottom, Align::Start) => Corner::TopLeft,
-        (Side::Bottom, Align::End) => Corner::TopRight,
-        (Side::Top, Align::Start) => Corner::BottomLeft,
-        (Side::Top, Align::End) => Corner::BottomRight,
+        (Side::Bottom, Align::Start) => Anchor::TopLeft,
+        (Side::Bottom, Align::End) => Anchor::TopRight,
+        (Side::Top, Align::Start) => Anchor::BottomLeft,
+        (Side::Top, Align::End) => Anchor::BottomRight,
     };
     let offset = match side {
         Side::Bottom => point(px(0.), px(6.)),
@@ -153,7 +154,7 @@ impl Popover {
 
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -192,9 +193,9 @@ impl Render for Popover {
                         .track_focus(&self.focus_handle)
                         .w(px(width))
                         .p(px(12.))
-                        .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                            this.close(cx)
-                        }))
+                        .on_mouse_down_out(
+                            cx.listener(|this, _: &MouseDownEvent, _, cx| this.close(cx)),
+                        )
                         .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
                             if ev.keystroke.key == "escape" {
                                 this.close(cx);

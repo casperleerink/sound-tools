@@ -75,7 +75,7 @@ Compile enabled extensions into the project runtime executable. The composer can
 
 ### Build-loop experiment, September 9, 2026
 
-A throwaway workspace with one GPUI runtime crate and one statically compiled extension measured the loop on Casper's Mac. A one-line extension edit reached the replacement runtime's first frame in a median 2.2 seconds, with 1.3 seconds of that in the incremental build and link. A failed build kept the old process alive and the executable unchanged. An agent wrote a two-instance custom GPUI view that compiled on its first attempt from public docs.
+A throwaway workspace with one GPUI runtime crate and one statically compiled extension measured the loop on a development Mac. A one-line extension edit reached the replacement runtime's first frame in a median 2.2 seconds, with 1.3 seconds of that in the incremental build and link. A failed build kept the old process alive and the executable unchanged. An agent wrote a two-instance custom GPUI view that compiled on its first attempt from public docs.
 
 A follow-up put a small oscillator and filter in the edited extension crate with `opt-level = 3`. Seven DSP gain edits reached the replacement frame in a median 2.23 seconds, including 1.35 seconds for build and link. Each replacement rendered 48,000 samples before opening its window, verified finite bounded output, and reported the changed gain. Only the extension and runtime rebuilt; the old runtime survived every build. This measures a small offline DSP workload, not an audio callback or full release build.
 
@@ -260,7 +260,7 @@ Open:
 - Audio graph execution, scheduling and transport notification APIs.
 - Agent integration, the outer application/runtime protocol and window/workspace composition.
 
-Reference code: `/Users/casperleerink/hooman/reference-repos/pi-mono` for extension registration and agent access to docs, and `/Users/casperleerink/hooman/reference-repos/pure-data` for processor composition and scheduling. Neither dictates the product's UI or musical model.
+Reference code: [pi-mono](https://github.com/badlogic/pi-mono) for extension registration and agent access to docs, and [Pure Data](https://github.com/pure-data/pure-data) for processor composition and scheduling. Neither dictates the product's UI or musical model. [ENGINEERING.md](ENGINEERING.md) records tooling, dependency and audio engine recommendations drawn from Zed, Pure Data and Elementary.
 
 ## Verification
 

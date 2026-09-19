@@ -1,14 +1,14 @@
-//! Compiles against gpui = "=0.2.2". Shows: App/Window/Entity/Context, notify/observe/subscribe,
+//! Compiles against gpui at Zed v1.20.2 (see root Cargo.toml). Shows: App/Window/Entity/Context, notify/observe/subscribe,
 //! actions + key bindings + focus/tab order, click/key/hover events, scroll + uniform_list,
 //! anchored/deferred popover, svg icons via AssetSource, custom font bytes + font features,
 //! and a background timer that updates the view.
 use std::{borrow::Cow, sync::Arc, time::Duration};
 
 use gpui::{
-    AnyView, App, AppContext, Application, AssetSource, Bounds, ClickEvent, Context, Corner,
+    AnyView, App, AppContext, AssetSource, Bounds, ClickEvent, Context, Anchor,
     Entity, EventEmitter, FocusHandle, Focusable, Font, FontFeatures, FontStyle, FontWeight,
     KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent, Render, ScrollHandle, SharedString,
-    Subscription, Timer, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
     WindowOptions, actions, anchored, deferred, div, hsla, prelude::*, px, rems, rgb, size, svg,
     uniform_list,
 };
@@ -72,7 +72,7 @@ impl Root {
         // background timer: only the view's own notify makes it repaint
         cx.spawn(async move |this, cx| {
             loop {
-                Timer::after(Duration::from_millis(500)).await;
+                cx.background_executor().timer(Duration::from_millis(500)).await;
                 let alive = this.update(cx, |this, cx| {
                     this.ticks += 1;
                     cx.notify();
@@ -85,7 +85,7 @@ impl Root {
         .detach();
 
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
 
         Self {
             focus_handle,
@@ -114,11 +114,11 @@ impl Root {
         self.menu_open = !self.menu_open;
         cx.notify();
     }
-    fn on_tab(&mut self, _: &Tab, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_next();
+    fn on_tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_next(cx);
     }
-    fn on_tab_prev(&mut self, _: &TabPrev, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_prev();
+    fn on_tab_prev(&mut self, _: &TabPrev, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_prev(cx);
     }
 }
 
@@ -176,7 +176,7 @@ impl Render for Root {
                     .items_center()
                     .gap_2()
                     .child(svg().path("icons/play.svg").size_4().text_color(rgb(0x7dd3fc)))
-                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("GPUI 0.2.2 basics"))
+                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("GPUI basics"))
                     .child(div().text_color(rgb(0x8b9098)).child(format!("ticks {}", self.ticks))),
             )
             // ---- counter row: on_click needs .id() ----
@@ -206,7 +206,7 @@ impl Render for Root {
                         this.child(
                             deferred(
                                 anchored()
-                                    .anchor(Corner::TopLeft)
+                                    .anchor(Anchor::TopLeft)
                                     .snap_to_window_with_margin(px(8.))
                                     .child(
                                         div()
@@ -245,7 +245,7 @@ impl Render for Root {
                         .focus(|s| s.border_color(rgb(0x7dd3fc))) // style when focused
                         .on_mouse_down(MouseButton::Left, {
                             let handle = handle.clone();
-                            move |_, window, _| window.focus(&handle)
+                            move |_, window, cx| window.focus(&handle, cx)
                         })
                         .child(format!("tab {}", handle.tab_index))
                         .when(handle.is_focused(window), |d| d.bg(rgb(0x1f2329)))
@@ -279,7 +279,7 @@ impl Render for Root {
                                 .collect()
                         }),
                     )
-                    .track_scroll(self.list_scroll.clone())
+                    .track_scroll(&self.list_scroll)
                     .h_full(),
                 ),
             )
@@ -327,7 +327,7 @@ fn tooltip(text: impl Into<SharedString>, cx: &mut App) -> AnyView {
 }
 
 fn main() {
-    Application::new().with_assets(Assets).run(|cx: &mut App| {
+    gpui_platform::application().with_assets(Assets).run(|cx: &mut App| {
         // Load a font from bytes (TTF/OTF). Here from disk; in an app use include_bytes!.
         if let Ok(bytes) = std::fs::read("/System/Library/Fonts/Supplemental/Verdana.ttf") {
             cx.text_system().add_fonts(vec![Cow::Owned(bytes)]).ok();
@@ -342,7 +342,7 @@ fn main() {
             KeyBinding::new("cmd-q", Quit, None),
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _window_id| {
             if cx.windows().is_empty() {
                 cx.quit();
             }

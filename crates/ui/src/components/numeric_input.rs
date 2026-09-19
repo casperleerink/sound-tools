@@ -142,7 +142,7 @@ impl NumericInput {
             input.set_text(text, cx);
             input.select_all_text(cx);
         });
-        window.focus(&handle);
+        window.focus(&handle, cx);
         cx.notify();
     }
 
@@ -151,7 +151,7 @@ impl NumericInput {
         if let Some(value) = value {
             self.set_value(value, window, cx);
         }
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -160,7 +160,7 @@ impl NumericInput {
             self.start_editing(window, cx);
             return;
         }
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         self.drag_start = Some((f32::from(ev.position.y), self.value));
         cx.notify();
     }
@@ -179,7 +179,11 @@ impl NumericInput {
     }
 
     fn on_key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let multiplier = if ev.keystroke.modifiers.shift { 10. } else { 1. };
+        let multiplier = if ev.keystroke.modifiers.shift {
+            10.
+        } else {
+            1.
+        };
         let delta = match ev.keystroke.key.as_str() {
             "down" => -self.step,
             "up" => self.step,
@@ -214,36 +218,33 @@ impl Render for NumericInput {
             return div().w(px(width)).flex_none().child(self.input.clone());
         }
 
-        div()
-            .w(px(width))
-            .flex_none()
-            .child(
-                div()
-                    .id("numeric-input")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .h(px(28.))
-                    .w(px(width))
-                    .rounded(px(6.))
-                    .bg(surface)
-                    .border_1()
-                    .border_color(border)
-                    .font(typography::tabular())
-                    .text_size(px(14.))
-                    .text_color(text)
-                    .when(disabled, |d| d.opacity(0.4).cursor_not_allowed())
-                    .when(!disabled, |d| {
-                        d.cursor(CursorStyle::ResizeUpDown)
-                            .track_focus(&self.focus_handle)
-                            .when(focused, |d| d.border_color(ring.opacity(0.7)))
-                            .hover(|s| s.bg(hover_bg))
-                            .on_key_down(cx.listener(Self::on_key_down))
-                            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-                            .on_drag(NumberDrag, |_, _, _, cx| cx.new(|_| DragGhost))
-                            .on_drag_move(cx.listener(Self::on_drag_move))
-                    })
-                    .child(format!("{:.*}{}", self.decimals, self.value, self.unit)),
-            )
+        div().w(px(width)).flex_none().child(
+            div()
+                .id("numeric-input")
+                .flex()
+                .items_center()
+                .justify_center()
+                .h(px(28.))
+                .w(px(width))
+                .rounded(px(6.))
+                .bg(surface)
+                .border_1()
+                .border_color(border)
+                .font(typography::tabular())
+                .text_size(px(14.))
+                .text_color(text)
+                .when(disabled, |d| d.opacity(0.4).cursor_not_allowed())
+                .when(!disabled, |d| {
+                    d.cursor(CursorStyle::ResizeUpDown)
+                        .track_focus(&self.focus_handle)
+                        .when(focused, |d| d.border_color(ring.opacity(0.7)))
+                        .hover(|s| s.bg(hover_bg))
+                        .on_key_down(cx.listener(Self::on_key_down))
+                        .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+                        .on_drag(NumberDrag, |_, _, _, cx| cx.new(|_| DragGhost))
+                        .on_drag_move(cx.listener(Self::on_drag_move))
+                })
+                .child(format!("{:.*}{}", self.decimals, self.value, self.unit)),
+        )
     }
 }

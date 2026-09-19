@@ -5,8 +5,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, DragMoveEvent, FocusHandle, Focusable, KeyDownEvent, MouseButton,
-    MouseDownEvent, Render, SharedString, Window, div, prelude::*, px,
+    App, Context, DragMoveEvent, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
+    Render, SharedString, Window, div, prelude::*, px,
 };
 
 use crate::theme::ActiveTheme;
@@ -126,7 +126,7 @@ impl Slider {
     }
 
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         self.drag_start = Some((f32::from(ev.position.x), self.value));
         cx.notify();
     }
@@ -146,7 +146,11 @@ impl Slider {
     }
 
     fn on_key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let multiplier = if ev.keystroke.modifiers.shift { 10. } else { 1. };
+        let multiplier = if ev.keystroke.modifiers.shift {
+            10.
+        } else {
+            1.
+        };
         let delta = match ev.keystroke.key.as_str() {
             "left" | "down" => -self.step,
             "right" | "up" => self.step,

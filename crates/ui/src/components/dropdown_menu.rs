@@ -1,5 +1,5 @@
 //! Dropdown menu: labelled groups, radio items with an optional second line,
-//! separators and a group that scrolls. Ported from Hooman Studio
+//! separators and a group that scrolls. Ported from the source design system's
 //! `dropdown-menu.tsx` and the desktop app's model picker. The list itself
 //! (`MenuList`) is reused by `select.rs`.
 
@@ -252,14 +252,9 @@ impl RenderOnce for MenuList {
                                 .when(is_selected, |d| {
                                     d.child(Icon::new("check").size(16.).color(text))
                                 })
-                                .when_some(
-                                    on_select.filter(|_| !item.disabled),
-                                    |d, f| {
-                                        d.on_click(move |_, window, cx| {
-                                            f(value.clone(), window, cx)
-                                        })
-                                    },
-                                )
+                                .when_some(on_select.filter(|_| !item.disabled), |d, f| {
+                                    d.on_click(move |_, window, cx| f(value.clone(), window, cx))
+                                })
                         })
                         .collect();
 
@@ -386,7 +381,7 @@ impl DropdownMenu {
 
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -483,9 +478,9 @@ impl Render for DropdownMenu {
                         .on_mouse_down_out(
                             cx.listener(|this, _: &MouseDownEvent, _, cx| this.close(cx)),
                         )
-                        .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
-                            this.on_key(ev, cx)
-                        }))
+                        .on_key_down(
+                            cx.listener(|this, ev: &KeyDownEvent, _, cx| this.on_key(ev, cx)),
+                        )
                         .child(
                             MenuList::new(self.entries.clone())
                                 .selected(self.selected.clone())

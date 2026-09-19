@@ -47,7 +47,7 @@ The project service owns the current typed record. Views hold an instance handle
 
 The extension's state application hook accepts the previous state, if any, and the next state. Loading calls it with no previous state. It must handle any valid replacement, not only changes made by its own controls. Decoding and validation happen before publishing; an invalid outside record reports an error and leaves the live state unchanged. The outside file remains available for correction.
 
-Decided with Casper: last write wins, always. File edits apply immediately and drags stay active. Later drag updates, undo, redo or cancellation apply as later writes and may overwrite intervening changes. No merging, conflict handling or special synchronization rules.
+Decided: last write wins, always. File edits apply immediately and drags stay active. Later drag updates, undo, redo or cancellation apply as later writes and may overwrite intervening changes. No merging, conflict handling or special synchronization rules.
 
 ## Get parameters and ports to audio
 

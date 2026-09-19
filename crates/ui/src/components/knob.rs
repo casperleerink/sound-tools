@@ -5,8 +5,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, CursorStyle, DragMoveEvent, FocusHandle, Focusable, KeyDownEvent,
-    MouseButton, MouseDownEvent, Render, SharedString, Window, div, prelude::*, px,
+    App, Context, CursorStyle, DragMoveEvent, FocusHandle, Focusable, KeyDownEvent, MouseButton,
+    MouseDownEvent, Render, SharedString, Window, div, prelude::*, px,
 };
 
 use crate::theme::ActiveTheme;
@@ -133,7 +133,7 @@ impl Knob {
     }
 
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         self.drag_start = Some((f32::from(ev.position.y), self.value));
         cx.notify();
     }
@@ -152,7 +152,11 @@ impl Knob {
     }
 
     fn on_key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let multiplier = if ev.keystroke.modifiers.shift { 10. } else { 1. };
+        let multiplier = if ev.keystroke.modifiers.shift {
+            10.
+        } else {
+            1.
+        };
         let delta = match ev.keystroke.key.as_str() {
             "down" | "left" => -self.step,
             "up" | "right" => self.step,

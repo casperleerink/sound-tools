@@ -1,6 +1,8 @@
 //! EmptyState: centred title, one muted line of body text and an optional action element.
 
-use gpui::{AnyElement, App, Div, FontWeight, SharedString, StyleRefinement, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, App, Div, FontWeight, SharedString, StyleRefinement, Window, div, prelude::*, px,
+};
 
 use crate::theme::ActiveTheme;
 

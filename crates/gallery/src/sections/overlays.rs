@@ -46,13 +46,11 @@ fn menu_entries() -> Vec<MenuEntry> {
                 .items(models()),
         ),
         MenuEntry::Separator,
-        MenuEntry::Group(
-            MenuGroup::new().label("Effort").items([
-                MenuItem::new("low", "low"),
-                MenuItem::new("medium", "medium"),
-                MenuItem::new("high", "high").disabled(true),
-            ]),
-        ),
+        MenuEntry::Group(MenuGroup::new().label("Effort").items([
+            MenuItem::new("low", "low"),
+            MenuItem::new("medium", "medium"),
+            MenuItem::new("high", "high").disabled(true),
+        ])),
     ]
 }
 
@@ -94,7 +92,9 @@ fn install(window: &mut Window, cx: &mut App) {
                 MenuItem::new("major", "Major").icon("music"),
                 MenuItem::new("minor", "Minor").icon("music"),
                 MenuItem::new("dorian", "Dorian").icon("music"),
-                MenuItem::new("locrian", "Locrian").icon("music").disabled(true),
+                MenuItem::new("locrian", "Locrian")
+                    .icon("music")
+                    .disabled(true),
             ],
             cx,
         )

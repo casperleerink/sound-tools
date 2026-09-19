@@ -7,9 +7,9 @@ use gpui::{
     AnyElement, App, Entity, FontWeight, IntoElement, ParentElement, Styled, Subscription, Window,
     div, prelude::*, px,
 };
+use sound_ui::ActiveTheme;
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::switch::Switch;
-use sound_ui::ActiveTheme;
 
 use crate::composed::mixer_strip::MixerStrip;
 use crate::composed::project_menu::ProjectMenu;

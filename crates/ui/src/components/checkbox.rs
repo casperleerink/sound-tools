@@ -5,8 +5,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, ClickEvent, Div, ElementId, FocusHandle, Hsla, Interactivity, KeyDownEvent, StyleRefinement,
-    Window, div, prelude::*, px,
+    App, ClickEvent, Div, ElementId, FocusHandle, Hsla, Interactivity, KeyDownEvent,
+    StyleRefinement, Window, div, prelude::*, px,
 };
 
 use crate::components::icon::Icon;

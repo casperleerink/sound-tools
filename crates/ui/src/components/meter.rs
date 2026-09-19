@@ -66,8 +66,12 @@ fn position(db: f32) -> f32 {
 impl RenderOnce for Meter {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (track, fill, hot, peak_color) =
-            (theme.alpha_at(0.05), theme.gray_800, theme.red, theme.gray_950);
+        let (track, fill, hot, peak_color) = (
+            theme.alpha_at(0.05),
+            theme.gray_800,
+            theme.red,
+            theme.gray_950,
+        );
         let height = self.height;
         let level = position(self.level);
         let hot_start = position(HOT);

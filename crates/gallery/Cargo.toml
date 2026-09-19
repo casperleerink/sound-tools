@@ -5,4 +5,16 @@ edition.workspace = true
 
 [dependencies]
 gpui.workspace = true
+gpui_platform.workspace = true
 sound-ui.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+image.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+gpui_platform = { workspace = true, features = ["test-support"] }
+
+# Runs on the main thread (no test harness) because the Metal renderer and text system need it.
+[[test]]
+name = "snapshots"
+harness = false

@@ -1,6 +1,6 @@
 # GPUI build-loop experiment
 
-Run on Casper's Mac on September 9, 2026. This is an isolated experiment, not the Sound Tools SDK or application.
+Run on a development Mac on September 9, 2026. This is an isolated experiment, not the Sound Tools SDK or application.
 
 The small all-Rust extension loop is workable on this machine. Seven one-line extension edits took a median 2.24 seconds from writing source to the replacement runtime's first GPUI frame callback. This supports continuing with Rust and GPUI provisionally. A follow-up with optimized DSP in the edited crate took 2.23 seconds. Neither result establishes build times for a large runtime.
 

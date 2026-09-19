@@ -161,6 +161,7 @@ impl Transport {
                 offset: point(px(0.), px(8.)),
                 blur_radius: px(24.),
                 spread_radius: px(-8.),
+                inset: false,
             }])
             .child(
                 Button::icon_only("play", if playing { "pause" } else { "play" })

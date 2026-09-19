@@ -47,13 +47,9 @@ impl InputsState {
                 .size(InputSize::Md)
         });
         let handle = text_md.read(cx).focus_handle(cx);
-        window.focus(&handle);
+        window.focus(&handle, cx);
         Self {
-            text_sm: cx.new(|cx| {
-                TextInput::new(cx)
-                    .placeholder("Small")
-                    .size(InputSize::Sm)
-            }),
+            text_sm: cx.new(|cx| TextInput::new(cx).placeholder("Small").size(InputSize::Sm)),
             text_md,
             text_lg: cx.new(|cx| TextInput::new(cx).placeholder("Large").size(InputSize::Lg)),
             text_disabled: cx.new(|cx| TextInput::new(cx).placeholder("Disabled").disabled(true)),
@@ -165,11 +161,17 @@ fn row(
 
 /// A fixed-width wrapper so full-width inputs do not stretch across the gallery.
 fn boxed(width: f32, child: impl IntoElement) -> AnyElement {
-    div().w(px(width)).flex_none().child(child).into_any_element()
+    div()
+        .w(px(width))
+        .flex_none()
+        .child(child)
+        .into_any_element()
 }
 
 pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
-    let state = window.use_keyed_state("inputs-state", cx, |window, cx| InputsState::new(window, cx));
+    let state = window.use_keyed_state("inputs-state", cx, |window, cx| {
+        InputsState::new(window, cx)
+    });
     let s = state.read(cx);
     let (checked, indeterminate, switched) = (s.checked, s.indeterminate, s.switched);
     let (segment, tab) = (s.segment.clone(), s.tab.clone());
@@ -331,7 +333,9 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     "disabled",
                     cx,
                     [
-                        Switch::new("sw-d-on", true).disabled(true).into_any_element(),
+                        Switch::new("sw-d-on", true)
+                            .disabled(true)
+                            .into_any_element(),
                         Switch::new("sw-d-off", false)
                             .disabled(true)
                             .into_any_element(),

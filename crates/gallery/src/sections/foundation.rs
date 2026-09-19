@@ -1,7 +1,9 @@
 //! Foundation section: button, badge, kbd, separator, label, loader, indicator, card,
 //! empty state and alert, with every variant, size and state.
 
-use gpui::{AnyElement, App, FontWeight, IntoElement, ParentElement, SharedString, Styled, Window, div, px};
+use gpui::{
+    AnyElement, App, FontWeight, IntoElement, ParentElement, SharedString, Styled, Window, div, px,
+};
 use sound_ui::components::alert::{Alert, AlertVariant};
 use sound_ui::components::badge::{Badge, BadgeSize, BadgeVariant};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -73,7 +75,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let focus = window
         .use_keyed_state("foundation-focus", cx, |window, cx| {
             let handle = cx.focus_handle();
-            window.focus(&handle);
+            window.focus(&handle, cx);
             handle
         })
         .read(cx)
@@ -525,9 +527,11 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             [row(
                 "empty",
                 cx,
-                [EmptyState::new("No tools yet", "Ask the agent to build one.")
-                    .action(Button::new("es-action", "New tool").icon("plus"))
-                    .into_any_element()],
+                [
+                    EmptyState::new("No tools yet", "Ask the agent to build one.")
+                        .action(Button::new("es-action", "New tool").icon("plus"))
+                        .into_any_element(),
+                ],
             )],
         ))
         .child(block(
@@ -537,8 +541,11 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                 "variants",
                 cx,
                 [
-                    Alert::new("Save changes?", "Your edits will be written to the project.")
-                        .into_any_element(),
+                    Alert::new(
+                        "Save changes?",
+                        "Your edits will be written to the project.",
+                    )
+                    .into_any_element(),
                     Alert::new("Delete tool?", "This removes the tool and its presets.")
                         .variant(AlertVariant::Danger)
                         .action_label("Delete")

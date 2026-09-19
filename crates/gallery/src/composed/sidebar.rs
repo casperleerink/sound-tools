@@ -13,12 +13,12 @@ use gpui::{
     BoxShadow, Context, Entity, FontWeight, IntoElement, ParentElement, SharedString, Styled,
     Subscription, Window, div, hsla, point, prelude::*, px,
 };
+use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem};
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::popover::Align;
 use sound_ui::components::text_input::TextInput;
-use sound_ui::ActiveTheme;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum AgentState {
@@ -51,8 +51,7 @@ impl AgentState {
 
 const FIRST_MESSAGE: &str =
     "Give these three voices independent rhythms and let me stretch each pattern by dragging it.";
-const RESULT: &str =
-    "Done. Each voice has its own length now: A 2.0 s, B 3.0 s, C 2.4 s. Drag a bar's right edge to stretch it.";
+const RESULT: &str = "Done. Each voice has its own length now: A 2.0 s, B 3.0 s, C 2.4 s. Drag a bar's right edge to stretch it.";
 const FAILURE: &str = "Polyrhythm does not compile: the pattern length wants a Duration.";
 const HISTORY: [&str; 4] = [
     "Read arrangement.json",
@@ -253,9 +252,7 @@ impl AgentSidebar {
                                 .child("Building Polyrhythm"),
                         ),
                 ),
-                AgentState::Done => d
-                    .child(self.worked_line(cx))
-                    .child(body(RESULT, text)),
+                AgentState::Done => d.child(self.worked_line(cx)).child(body(RESULT, text)),
                 AgentState::Failed => d
                     .child(
                         div()
@@ -272,45 +269,40 @@ impl AgentSidebar {
         let (border, fill) = (theme.alpha_at(0.10), theme.gray_50);
         let can_send = !self.input.read(cx).text().trim().is_empty();
 
-        div()
-            .flex_none()
-            .p(px(24.))
-            .pt(px(8.))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .p(px(16.))
-                    .rounded(px(16.))
-                    .border_1()
-                    .border_color(border)
-                    .bg(fill)
-                    .shadow(vec![BoxShadow {
-                        color: hsla(0., 0., 0., 0.25),
-                        offset: point(px(0.), px(8.)),
-                        blur_radius: px(24.),
-                        spread_radius: px(-8.),
-                    }])
-                    .child(self.input.clone())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(self.model.clone())
-                            .child(
-                                Button::icon_only("send", "arrow-up")
-                                    .variant(ButtonVariant::Subtle)
-                                    .size(ButtonSize::Sm)
-                                    .rounded(true)
-                                    .disabled(!can_send)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.send_from_button(cx)
-                                    })),
-                            ),
-                    ),
-            )
+        div().flex_none().p(px(24.)).pt(px(8.)).child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .p(px(16.))
+                .rounded(px(16.))
+                .border_1()
+                .border_color(border)
+                .bg(fill)
+                .shadow(vec![BoxShadow {
+                    color: hsla(0., 0., 0., 0.25),
+                    offset: point(px(0.), px(8.)),
+                    blur_radius: px(24.),
+                    spread_radius: px(-8.),
+                    inset: false,
+                }])
+                .child(self.input.clone())
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(self.model.clone())
+                        .child(
+                            Button::icon_only("send", "arrow-up")
+                                .variant(ButtonVariant::Subtle)
+                                .size(ButtonSize::Sm)
+                                .rounded(true)
+                                .disabled(!can_send)
+                                .on_click(cx.listener(|this, _, _, cx| this.send_from_button(cx))),
+                        ),
+                ),
+        )
     }
 }
 

@@ -40,11 +40,7 @@ fn key_label(key: &str) -> String {
 impl RenderOnce for Kbd {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (bg, border, text) = (
-            theme.alpha_at(0.04),
-            theme.alpha_at(0.05),
-            theme.gray_900,
-        );
+        let (bg, border, text) = (theme.alpha_at(0.04), theme.alpha_at(0.05), theme.gray_900);
 
         self.base
             .flex()

@@ -42,9 +42,12 @@ impl Styled for Separator {
 impl RenderOnce for Separator {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let line = cx.theme().alpha_at(0.10);
-        self.base.flex_none().bg(line).map(|d| match self.orientation {
-            SeparatorOrientation::Horizontal => d.h(px(1.)).w_full(),
-            SeparatorOrientation::Vertical => d.w(px(1.)).h_full(),
-        })
+        self.base
+            .flex_none()
+            .bg(line)
+            .map(|d| match self.orientation {
+                SeparatorOrientation::Horizontal => d.h(px(1.)).w_full(),
+                SeparatorOrientation::Vertical => d.w(px(1.)).h_full(),
+            })
     }
 }

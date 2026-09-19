@@ -68,6 +68,7 @@ impl RenderOnce for Card {
                 offset: point(px(0.), px(8.)),
                 blur_radius: px(16.),
                 spread_radius: px(-8.),
+                inset: false,
             }])
             .when_some(self.title, |card, title| {
                 card.child(

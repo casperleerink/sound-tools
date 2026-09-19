@@ -1,9 +1,9 @@
 ---
 name: gpui-components
-description: How to build a reusable component library in gpui 0.2.2 (RenderOnce builder components, when to use stateful Entity views, exposing Styled/InteractiveElement on custom types, ElementId rules, theme Global, variants/sizes/disabled, hover/active/focus styling, tooltips, group hover, animation, colors, borders/shadows, and a storybook gallery). Use when porting a React/Tailwind design-system component into crates/ui.
+description: How to build a reusable component library in gpui (Zed v1.20.2) (RenderOnce builder components, when to use stateful Entity views, exposing Styled/InteractiveElement on custom types, ElementId rules, theme Global, variants/sizes/disabled, hover/active/focus styling, tooltips, group hover, animation, colors, borders/shadows, and a storybook gallery). Use when porting a React/Tailwind design-system component into crates/ui.
 ---
 
-# gpui 0.2.2 components
+# gpui (Zed v1.20.2) components
 
 Compiling reference: `examples/components.rs` (Theme, Button, Switch, LiveBadge, Tooltip, Popover)
 and `examples/gallery.rs` (storybook). Project: components live in `crates/ui/src/components/*.rs`,
@@ -113,7 +113,7 @@ Popover pattern (stateful; full code in `examples/components.rs`):
 div().relative()
     .child(Button::new("trigger", label).on_click(cx.listener(|this, _, _, cx| { this.open = !this.open; cx.notify(); })))
     .when(self.open, |d| d.child(
-        deferred(anchored().anchor(Corner::TopLeft).snap_to_window_with_margin(px(8.)).child(
+        deferred(anchored().anchor(Anchor::TopLeft).snap_to_window_with_margin(px(8.)).child(
             div().occlude().mt_1().w(px(180.)).p_1().rounded_md().bg(surface).border_1().border_color(border).shadow_lg()
                 .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| { this.open = false; cx.notify(); }))
                 .children(items),
@@ -150,7 +150,7 @@ building the element tree so the immutable borrow of `cx` ends. Add non-color to
 - Radius: `.rounded_xs/sm/md/lg/xl/2xl/3xl/full()` (2/4/6/8/12/16/24/9999 px), `.rounded(px(5.))`,
   per-corner `.rounded_tl_md()`, per-side `.rounded_t_md()`.
 - Borders: `.border_1() .border_2() .border_t_1() .border_x_1() .border(px(1.5))`, `.border_color(c)`, `.border_dashed()`.
-- Shadows: `.shadow_2xs/xs/sm/md/lg/xl/2xl()` or `.shadow(vec![BoxShadow { color, offset: point(px(0.), px(2.)), blur_radius: px(8.), spread_radius: px(0.) }])`.
+- Shadows: `.shadow_2xs/xs/sm/md/lg/xl/2xl()` or `.shadow(vec![BoxShadow { color, offset: point(px(0.), px(2.)), blur_radius: px(8.), spread_radius: px(0.), inset: false }])`.
 - Opacity: `.opacity(0.5)` on any element (children included).
 - States: `.hover(|s| ..)` (any element), `.active(|s| ..)` (stateful), `.focus(|s| ..)` and
   `.in_focus(|s| ..)` (element or descendant focused; both need `track_focus`), `.group("g")` on
