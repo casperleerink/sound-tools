@@ -4,12 +4,17 @@
 //! Those belong to extensions. See ARCHITECTURE.md and ENGINEERING.md section 3.
 //! `README.md` in this crate explains the engine API for extension authors.
 
+mod clock;
 mod control;
 mod device;
 mod engine;
 mod graph;
 mod processor;
 
+pub use clock::{
+    BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, TICKS_PER_QUARTER, Tempo,
+    TempoChange, TempoMap, Ticks, TimeSignature,
+};
 pub use control::{Edit, EngineConfig, EngineControl, EngineStopped, Node};
 pub use device::{DeviceError, DeviceStatus, OutputDevice, OutputStream};
 pub use engine::{Engine, EngineStatus};

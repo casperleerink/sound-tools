@@ -12,8 +12,10 @@ cpal.workspace = true
 no_denormals.workspace = true
 rtrb.workspace = true
 rtsan-standalone.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 triple_buffer.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+serde_json.workspace = true

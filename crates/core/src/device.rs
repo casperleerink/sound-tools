@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+use crate::clock::MIN_EXACT_SAMPLE_RATE;
 use crate::engine::Engine;
 
 #[derive(Debug, thiserror::Error)]
@@ -15,6 +16,8 @@ pub enum DeviceError {
     NoOutputDevice,
     #[error("the output device wants {0} samples, only f32 is supported")]
     UnsupportedSampleFormat(cpal::SampleFormat),
+    #[error("the output device runs at {0} Hz, the clock needs {MIN_EXACT_SAMPLE_RATE} Hz or more")]
+    SampleRateTooLow(u32),
     #[error("the engine has {engine} channels, the device has {device}")]
     ChannelMismatch { engine: usize, device: usize },
     #[error(transparent)]
@@ -39,6 +42,9 @@ impl OutputDevice {
             ));
         }
         let config = supported.config();
+        if config.sample_rate < MIN_EXACT_SAMPLE_RATE {
+            return Err(DeviceError::SampleRateTooLow(config.sample_rate));
+        }
         Ok(Self { device, config })
     }
 

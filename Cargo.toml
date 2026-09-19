@@ -25,6 +25,9 @@ proptest = "1"
 rtrb = "0.4"
 # Does nothing unless the build sets RTSAN_ENABLE=1. See ENGINEERING.md section 3.
 rtsan-standalone = "0.3"
+serde = { version = "1", features = ["derive"] }
+# `preserve_order` keeps key order stable, so agent diffs of project files stay small.
+serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 triple_buffer = "9"
 
