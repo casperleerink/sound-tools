@@ -4,6 +4,7 @@
 //! it stops using travels back to the control side inside the batch that replaced it.
 
 use std::any::Any;
+use std::cell::Cell;
 
 use rtsan_standalone::nonblocking;
 
@@ -65,6 +66,10 @@ pub struct EngineStatus {
     pub event_overflows: u64,
     /// Times an edit had to wait a block because the return ring was full.
     pub return_ring_full: u64,
+    /// Times a processor used a port handle that matches none of its declared ports: a wrong
+    /// index or a wrong event type. Such reads are empty and such writes go nowhere, so
+    /// anything above zero is a bug in that processor.
+    pub port_misuses: u64,
 }
 
 pub struct Engine {
@@ -81,7 +86,6 @@ impl Engine {
     pub(crate) fn from_parts(
         channels: usize,
         slot_count: usize,
-        schedule: Schedule,
         commands: rtrb::Consumer<Batch>,
         returns: rtrb::Producer<Batch>,
         status_writer: triple_buffer::Input<EngineStatus>,
@@ -89,7 +93,7 @@ impl Engine {
         Self {
             channels,
             slots: std::iter::repeat_with(|| None).take(slot_count).collect(),
-            schedule: Box::new(schedule),
+            schedule: Box::default(),
             commands,
             returns,
             status: EngineStatus::default(),
@@ -181,6 +185,7 @@ impl Engine {
             device_sources,
         } = &mut *self.schedule;
 
+        let port_misuses = Cell::new(0);
         for step in steps.iter() {
             for (input, sources) in audio_scratch.iter_mut().zip(&step.audio_sources) {
                 input.fill(0.0);
@@ -222,17 +227,21 @@ impl Engine {
                             .get(..step.audio_sources.len())
                             .unwrap_or_default(),
                         frames,
+                        misuses: &port_misuses,
                     },
                     audio_outputs: AudioOutputs {
                         buffers: &mut *step_audio_outputs,
                         frames,
+                        misuses: &port_misuses,
                     },
                     event_inputs: EventInputs {
                         buffers: step_event_inputs,
+                        misuses: &port_misuses,
                     },
                     event_outputs: EventOutputs {
                         buffers: &mut *step_event_outputs,
                         frames,
+                        misuses: &port_misuses,
                     },
                 });
             }
@@ -251,5 +260,6 @@ impl Engine {
             }
         }
         self.status.frames += frames as u64;
+        self.status.port_misuses += port_misuses.get();
     }
 }

@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 use crate::engine::{Batch, Command, Engine, EngineStatus};
 use crate::graph::{Connection, Graph, GraphError, NodeId};
-use crate::processor::{MAX_BLOCK, PrepareConfig, Processor};
+use crate::processor::{PrepareConfig, Processor};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct EngineConfig {
@@ -44,7 +44,6 @@ impl Engine {
         let engine = Engine::from_parts(
             config.channels,
             config.processor_slots,
-            Default::default(),
             command_consumer,
             return_producer,
             status_writer,
@@ -52,6 +51,7 @@ impl Engine {
         let control = EngineControl {
             config,
             graph,
+            next_node: 0,
             pending: VecDeque::new(),
             commands: command_producer,
             returns: return_consumer,
@@ -61,6 +61,11 @@ impl Engine {
         (control, engine)
     }
 }
+
+/// The audio half of the engine was dropped. Edits no longer reach anything.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("the audio engine has stopped")]
+pub struct EngineStopped;
 
 /// Handle to a processor of type `P` in the graph. It types the updates sent to it.
 pub struct Node<P> {
@@ -85,6 +90,9 @@ impl<P> Copy for Node<P> {}
 pub struct EngineControl {
     config: EngineConfig,
     graph: Graph,
+    /// Lives outside the graph, which edits copy and may throw away. So an id handed out by a
+    /// failed edit is never given to another processor.
+    next_node: u64,
     /// Batches the command ring had no room for yet, oldest first.
     pending: VecDeque<Batch>,
     commands: rtrb::Producer<Batch>,
@@ -120,13 +128,17 @@ impl EngineControl {
     }
 
     /// Call this regularly. It sends edits that were waiting for ring space, drops everything
-    /// the audio thread returned, and gives the latest status.
-    pub fn poll(&mut self) -> EngineStatus {
+    /// the audio thread returned, and gives the latest status. Fails once the `Engine` is gone,
+    /// for example after its stream stopped.
+    pub fn poll(&mut self) -> Result<EngineStatus, EngineStopped> {
         while let Ok(returned) = self.returns.pop() {
             drop(returned);
         }
         self.flush();
-        *self.status.read()
+        if self.commands.is_abandoned() {
+            return Err(EngineStopped);
+        }
+        Ok(*self.status.read())
     }
 
     /// Edits still waiting on the control side for ring space.
@@ -140,6 +152,10 @@ impl EngineControl {
     }
 
     fn flush(&mut self) {
+        // Nobody will ever take these. Drop them here so they do not pile up.
+        if self.commands.is_abandoned() {
+            self.pending.clear();
+        }
         while let Some(batch) = self.pending.pop_front() {
             if let Err(rtrb::PushError::Full(batch)) = self.commands.push(batch) {
                 self.pending.push_front(batch);
@@ -171,10 +187,11 @@ impl Edit<'_> {
         name: &str,
         mut processor: P,
     ) -> Result<Node<P>, GraphError> {
-        let (id, slot, grown) = self.graph_mut().add_node(name, processor.ports())?;
+        let id = NodeId(self.control.next_node);
+        self.control.next_node += 1;
+        let (slot, grown) = self.graph_mut().add_node(id, name, processor.ports())?;
         processor.prepare(&PrepareConfig {
             sample_rate: self.control.config.sample_rate,
-            max_block_frames: MAX_BLOCK,
         });
         if let Some(slot_count) = grown {
             let table = std::iter::repeat_with(|| None).take(slot_count).collect();

@@ -179,7 +179,7 @@ fn odd_device_buffers_skip_no_frames_and_never_exceed_the_block_size() {
         let output = render(&mut engine, 2_000, device_buffer);
         let expected: Vec<f32> = (0..2_000).map(|frame| frame as f32).collect();
         assert_eq!(output, expected, "device buffer {device_buffer}");
-        assert_eq!(control.poll().frames, 2_000);
+        assert_eq!(control.poll().unwrap().frames, 2_000);
     }
 }
 
@@ -250,7 +250,7 @@ fn a_cycle_is_rejected_by_name_and_leaves_the_engine_unchanged() {
 
     // Nothing of the failed edit was sent, not even its valid update.
     assert_eq!(render(&mut engine, 10, 10), [1.0; 10]);
-    assert_eq!(control.poll().batches_applied, 1);
+    assert_eq!(control.poll().unwrap().batches_applied, 1);
     // The graph still has no cycle, so a later edit compiles.
     control.edit().disconnect(&closing).unwrap_err();
     control.update(source, 2.0).unwrap();
@@ -374,7 +374,7 @@ fn events_arrive_at_exact_frames_across_sub_blocks() {
             expected[frame] += 10.0;
         }
         assert_eq!(output, expected, "device buffer {device_buffer}");
-        assert_eq!(control.poll().event_overflows, 0);
+        assert_eq!(control.poll().unwrap().event_overflows, 0);
     }
 }
 
@@ -404,7 +404,7 @@ fn event_overflow_is_counted_not_allocated() {
     // Frame 10 is in the first block: 4 of 7 pings fit. Frame 100 is in the second: all 3 fit.
     assert_eq!(output[10], 4.0);
     assert_eq!(output[100], 3.0);
-    assert_eq!(control.poll().event_overflows, 3);
+    assert_eq!(control.poll().unwrap().event_overflows, 3);
 }
 
 #[test]
@@ -460,12 +460,12 @@ fn a_full_command_ring_loses_no_edit_and_keeps_their_order() {
     let mut blocks = 0;
     while control.pending_edits() > 0 {
         render(&mut engine, 1, 1);
-        control.poll();
+        control.poll().unwrap();
         blocks += 1;
         assert!(blocks < 100, "the pending edits never drained");
     }
     assert_eq!(render(&mut engine, 1, 1), [20.0]);
-    assert_eq!(control.poll().batches_applied, 21);
+    assert_eq!(control.poll().unwrap().batches_applied, 21);
 }
 
 #[test]
@@ -483,7 +483,7 @@ fn a_full_return_ring_delays_edits_instead_of_dropping_on_the_audio_thread() {
     // fits in the command ring but must wait there.
     control.update(node, 2.0).unwrap();
     assert_eq!(render(&mut engine, 1, 1), [1.0]);
-    let status = control.poll();
+    let status = control.poll().unwrap();
     assert!(status.return_ring_full > 0);
     assert_eq!(render(&mut engine, 1, 1), [2.0]);
 }
@@ -516,7 +516,7 @@ fn the_slot_table_grows_and_survivors_keep_their_state_across_schedule_swaps() {
         let mut edit = control.edit();
         edit.remove_processor(node.id()).unwrap();
         edit.commit().unwrap();
-        control.poll();
+        control.poll().unwrap();
         // A removed processor's handle is dead, and its slot is free for the next one.
         assert_eq!(
             control.update(*node, 0.0),
@@ -539,6 +539,198 @@ fn the_slot_table_grows_and_survivors_keep_their_state_across_schedule_swaps() {
             "frame {frame}"
         );
     }
+}
+
+#[test]
+fn a_failed_edit_does_not_free_its_node_ids_for_reuse() {
+    let (mut control, _engine) = mono();
+    let mut edit = control.edit();
+    let first = edit.add_processor("first", Through).unwrap();
+    let second = edit.add_processor("second", Through).unwrap();
+    edit.connect(Connection::new(first.id(), OUTPUT, second.id(), INPUT))
+        .unwrap();
+    edit.connect(Connection::new(second.id(), OUTPUT, first.id(), INPUT))
+        .unwrap();
+    assert!(matches!(edit.commit(), Err(GraphError::Cycle { .. })));
+
+    let mut edit = control.edit();
+    let dropped = edit.add_processor("dropped", Through).unwrap();
+    drop(edit);
+
+    let mut edit = control.edit();
+    let kept = edit.add_processor("kept", Through).unwrap();
+    edit.commit().unwrap();
+    assert!(![first.id(), second.id(), dropped.id()].contains(&kept.id()));
+    // The handles of the edits that never happened stay dead.
+    for stale in [first, second, dropped] {
+        assert_eq!(
+            control.update(stale, ()),
+            Err(GraphError::UnknownNode(stale.id()))
+        );
+    }
+}
+
+const LEFT: AudioOutput = AudioOutput::new(0);
+const RIGHT: AudioOutput = AudioOutput::new(1);
+
+/// Writes two outputs in one loop, the way a stereo synth does.
+struct Stereo;
+
+impl Processor for Stereo {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        Ports::new().audio_output(LEFT).audio_output(RIGHT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, _: &mut ()) {}
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let [left, right] = context.audio_outputs.get_many([LEFT, RIGHT]);
+        for (frame, (left, right)) in left.iter_mut().zip(right).enumerate() {
+            *left = frame as f32;
+            *right = -(frame as f32);
+        }
+    }
+}
+
+#[test]
+fn a_processor_writes_two_outputs_in_one_loop() {
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 2));
+    let mut edit = control.edit();
+    let stereo = edit.add_processor("stereo", Stereo).unwrap();
+    edit.connect(Connection::to_device(stereo.id(), LEFT, 0))
+        .unwrap();
+    edit.connect(Connection::to_device(stereo.id(), RIGHT, 1))
+        .unwrap();
+    edit.commit().unwrap();
+
+    let mut output = [f32::NAN; 2 * 50];
+    engine.process_block(&mut output);
+    for (frame, samples) in output.chunks(2).enumerate() {
+        assert_eq!(samples, [frame as f32, -(frame as f32)]);
+    }
+    assert_eq!(control.poll().unwrap().port_misuses, 0);
+}
+
+#[test]
+fn port_handles_that_match_no_declared_port_are_counted() {
+    #[derive(Copy, Clone)]
+    struct Other;
+    /// Declares `Ping` ports and one audio output, then uses handles that do not match.
+    struct Confused;
+    impl Processor for Confused {
+        type Update = ();
+        fn ports(&self) -> Ports {
+            Ports::new()
+                .event_input(PINGS_IN)
+                .event_output(PINGS_OUT)
+                .audio_output(OUTPUT)
+        }
+        fn prepare(&mut self, _: &PrepareConfig) {}
+        fn update(&mut self, _: &mut ()) {}
+        fn process(&mut self, context: &mut ProcessContext<'_>) {
+            // Wrong event type on a declared index, in and out.
+            assert!(
+                context
+                    .event_inputs
+                    .get(EventInput::<Other>::new(0))
+                    .is_empty()
+            );
+            context
+                .event_outputs
+                .push(EventOutput::<Other>::new(0), 0, Other);
+            // Undeclared indices, and the same output twice.
+            assert!(context.audio_inputs.get(INPUT).is_empty());
+            assert!(context.audio_outputs.get(RIGHT).is_empty());
+            let [first, second] = context.audio_outputs.get_many([OUTPUT, OUTPUT]);
+            assert!(first.is_empty() && second.is_empty());
+            // Correct use counts nothing.
+            assert!(context.event_inputs.get(PINGS_IN).is_empty());
+            context
+                .event_outputs
+                .push(PINGS_OUT, 0, Ping { level: 1.0 });
+            context.audio_outputs.get(OUTPUT).fill(1.0);
+        }
+    }
+
+    let (mut control, mut engine) = mono();
+    let mut edit = control.edit();
+    let confused = edit.add_processor("confused", Confused).unwrap();
+    to_device(&mut edit, confused.id());
+    edit.commit().unwrap();
+    // Two blocks: 64 frames and 36 frames.
+    assert_eq!(render(&mut engine, 100, 100), [1.0; 100]);
+    assert_eq!(control.poll().unwrap().port_misuses, 2 * 5);
+}
+
+#[test]
+fn a_stopped_engine_is_reported_and_edits_do_not_pile_up() {
+    let mut config = EngineConfig::new(48_000, 1);
+    config.ring_capacity = 2;
+    let (mut control, engine) = Engine::new(config);
+    let mut edit = control.edit();
+    let node = edit.add_processor("constant", Constant(0.0)).unwrap();
+    edit.commit().unwrap();
+    assert!(control.poll().is_ok());
+
+    drop(engine);
+    for number in 0..10 {
+        control.update(node, number as f32).unwrap();
+    }
+    assert_eq!(control.pending_edits(), 0);
+    assert_eq!(control.poll(), Err(sound_core::EngineStopped));
+}
+
+#[test]
+fn merged_event_inputs_count_their_overflow() {
+    let mut config = EngineConfig::new(48_000, 1);
+    config.event_capacity = 4;
+    let (mut control, mut engine) = Engine::new(config);
+    let mut edit = control.edit();
+    let receiver = edit.add_processor("receiver", Receiver).unwrap();
+    for name in ["emitter-a", "emitter-b"] {
+        // Four pings fit in each output port. Eight do not fit in the input they merge into.
+        let emitter = Emitter {
+            level: 1.0,
+            pings: vec![(5, 4)],
+        };
+        let emitter = edit.add_processor(name, emitter).unwrap();
+        edit.connect(Connection::new(
+            emitter.id(),
+            PINGS_OUT,
+            receiver.id(),
+            PINGS_IN,
+        ))
+        .unwrap();
+    }
+    to_device(&mut edit, receiver.id());
+    edit.commit().unwrap();
+
+    assert_eq!(render(&mut engine, 64, 64)[5], 4.0);
+    assert_eq!(control.poll().unwrap().event_overflows, 4);
+}
+
+#[test]
+fn three_channels_and_a_trailing_partial_frame() {
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 3));
+    let mut edit = control.edit();
+    let constant = edit.add_processor("constant", Constant(1.0)).unwrap();
+    edit.connect(Connection::to_device(constant.id(), OUTPUT, 2))
+        .unwrap();
+    edit.commit().unwrap();
+
+    // 70 whole frames, so two sub-blocks, plus two samples that belong to no frame.
+    let mut output = [f32::NAN; 3 * 70 + 2];
+    engine.process_block(&mut output);
+    let (frames, rest) = output.split_at(3 * 70);
+    for frame in frames.chunks(3) {
+        assert_eq!(frame, [0.0, 0.0, 1.0]);
+    }
+    assert_eq!(rest, [0.0, 0.0]);
+    assert_eq!(control.poll().unwrap().frames, 70);
 }
 
 thread_local! {
@@ -620,7 +812,7 @@ fn removed_processors_and_old_snapshots_are_dropped_on_the_control_side() {
     control.update(reader, snapshot(2.0)).unwrap();
     assert_eq!(render_watching_drops(&mut engine, 100), [2.0; 100]);
     assert_eq!(DROPS.get(), 0, "the old snapshot waits in the return ring");
-    control.poll();
+    control.poll().unwrap();
     assert_eq!(DROPS.get(), 1, "poll dropped the old snapshot");
 
     // Remove the processor. It comes back with its current snapshot, and so does the schedule.
@@ -629,7 +821,7 @@ fn removed_processors_and_old_snapshots_are_dropped_on_the_control_side() {
     edit.commit().unwrap();
     assert_eq!(render_watching_drops(&mut engine, 100), [0.0; 100]);
     assert_eq!(DROPS.get(), 1);
-    control.poll();
+    control.poll().unwrap();
     assert_eq!(
         DROPS.get(),
         3,

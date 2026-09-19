@@ -9,7 +9,7 @@ The Sound Tools core. Today it holds the realtime audio engine. The design and i
 - `Engine` is the audio side. Give it to `OutputDevice::start`, or call `engine.process_block(&mut interleaved_samples)` yourself to render offline or in tests. Same code path either way.
 - `EngineControl` is the control side. It stays on a normal thread. It owns the graph, sends edits and drops everything the audio thread hands back.
 
-Call `control.poll()` regularly (a UI frame or a few milliseconds). It retries edits that did not fit in the ring, drops returned processors, schedules and snapshots, and returns the latest `EngineStatus` counters.
+Call `control.poll()` regularly (a UI frame or a few milliseconds). It retries edits that did not fit in the ring, drops returned processors, schedules and snapshots, and returns the latest `EngineStatus` counters. Once the `Engine` is gone, for example because its stream stopped, `poll` returns `Err(EngineStopped)` and waiting edits are dropped instead of piling up.
 
 Extensions never touch threads, rings or the engine value. They write processors.
 
@@ -48,9 +48,12 @@ In `process`:
 
 - `context.audio_inputs.get(port)` gives `&[f32]`. Unconnected inputs are silent. Several connections to one input arrive summed.
 - `context.audio_outputs.get(port)` gives `&mut [f32]`. Outputs start silent.
+- `let [left, right] = context.audio_outputs.get_many([Self::LEFT, Self::RIGHT]);` gives several outputs at once, to write them in one loop.
 - `context.event_inputs.get(port)` gives `&[Timed<E>]`, sorted by `offset`, the frame offset within this block. Several connections arrive merged.
 - `context.event_outputs.push(port, offset, event)` sends an event.
 - `context.frames` is 1 to `MAX_BLOCK` (64). `context.start_frame` is the engine time of the block's first frame.
+
+A handle that matches no declared port (wrong index, wrong event type, or the same output twice in `get_many`) never panics on the audio thread. Reads are empty, writes go nowhere, and each use counts in `EngineStatus::port_misuses`. Anything above zero there is a bug in a processor.
 
 Transport info (playing, position, tempo) will be added to `ProcessContext` with the musical clock.
 

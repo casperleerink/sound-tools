@@ -167,5 +167,5 @@ fn phase_continues_across_schedule_swaps() {
     assert_eq!(peak(&other[..10_001]), 0.0);
     assert!(peak(&other[10_001..20_000]) > 0.2499);
     assert_eq!(peak(&other[20_000..]), 0.0);
-    assert_eq!(control.poll().batches_applied, 3);
+    assert_eq!(control.poll().unwrap().batches_applied, 3);
 }

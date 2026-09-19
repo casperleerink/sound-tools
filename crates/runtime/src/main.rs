@@ -113,14 +113,14 @@ fn play() -> Result<()> {
     let started = Instant::now();
     for (seconds, step) in SCENARIO {
         while started.elapsed() < Duration::from_secs_f64(seconds) {
-            control.poll();
+            control.poll()?;
             std::thread::sleep(Duration::from_millis(5));
         }
         tones.apply(step, &mut control)?;
     }
     // Let the last batches come back before the final numbers are read.
     std::thread::sleep(Duration::from_millis(100));
-    let status = control.poll();
+    let status = control.poll()?;
     let device_status = stream.status();
     let errors = stream.take_errors();
     drop(stream);
@@ -166,12 +166,12 @@ fn render(path: &Path) -> Result<()> {
                 writer.write_sample(*sample)?;
             }
             rendered_frames += frames;
-            control.poll();
+            control.poll()?;
         }
         tones.apply(step, &mut control)?;
     }
     writer.finalize()?;
-    report(&control.poll(), &control);
+    report(&control.poll()?, &control);
     Ok(())
 }
 

@@ -10,7 +10,8 @@ use crate::processor::{
     AudioBuffer, ErasedEventBuffer, EventType, InputPort, MAX_BLOCK, OutputPort, Ports,
 };
 
-/// Identifies a processor in the graph. Never reused within one engine.
+/// Identifies a processor in the graph. Never reused within one engine, also not after a
+/// failed or dropped edit.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(pub(crate) u64);
 
@@ -101,7 +102,6 @@ enum Carries {
 pub(crate) struct Graph {
     nodes: BTreeMap<NodeId, GraphNode>,
     connections: BTreeSet<Connection>,
-    next_node: u64,
     slot_count: usize,
     free_slots: Vec<usize>,
 }
@@ -115,13 +115,14 @@ impl Graph {
         }
     }
 
-    /// Returns the new node, its slot, and the slot table size the audio side needs when the
-    /// current table is too small.
+    /// Returns the slot of the new node, and the slot table size the audio side needs when
+    /// the current table is too small. The caller supplies a fresh id.
     pub fn add_node(
         &mut self,
+        id: NodeId,
         name: &str,
         ports: Ports,
-    ) -> Result<(NodeId, usize, Option<usize>), GraphError> {
+    ) -> Result<(usize, Option<usize>), GraphError> {
         if self.nodes.values().any(|node| node.name == name) {
             return Err(GraphError::DuplicateName(name.to_string()));
         }
@@ -136,11 +137,9 @@ impl Graph {
             grown = Some(new_count);
         }
         let slot = self.free_slots.pop().unwrap_or_default();
-        let id = NodeId(self.next_node);
-        self.next_node += 1;
         let name = name.to_string();
         self.nodes.insert(id, GraphNode { name, slot, ports });
-        Ok((id, slot, grown))
+        Ok((slot, grown))
     }
 
     /// Removes the node and every connection that touches it. Returns its slot.
@@ -455,8 +454,9 @@ mod tests {
         let mut graph = Graph::with_slots(1);
         let mut ids = BTreeMap::new();
         for number in creation_order {
-            let (id, _, _) = graph
-                .add_node(&format!("node-{number:02}"), ports())
+            let id = NodeId(ids.len() as u64);
+            graph
+                .add_node(id, &format!("node-{number:02}"), ports())
                 .unwrap();
             ids.insert(*number, id);
         }

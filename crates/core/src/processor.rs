@@ -3,6 +3,7 @@
 //! Extensions never see threads or queues. See `crates/core/README.md` for a walkthrough.
 
 use std::any::{Any, TypeId};
+use std::cell::Cell;
 use std::marker::PhantomData;
 
 /// Processors never see more frames than this in one `process` call.
@@ -14,7 +15,6 @@ pub(crate) type AudioBuffer = [f32; MAX_BLOCK];
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PrepareConfig {
     pub sample_rate: u32,
-    pub max_block_frames: usize,
 }
 
 /// A unit of realtime work in the engine graph.
@@ -305,47 +305,72 @@ impl<E: Event> ErasedEventBuffer for EventBuffer<E> {
 pub struct AudioInputs<'a> {
     pub(crate) buffers: &'a [AudioBuffer],
     pub(crate) frames: usize,
+    pub(crate) misuses: &'a Cell<u64>,
 }
 
 impl AudioInputs<'_> {
-    /// An undeclared port reads as an empty slice.
+    /// An undeclared port reads as an empty slice and counts in `EngineStatus::port_misuses`.
     pub fn get(&self, port: AudioInput) -> &[f32] {
-        self.buffers
+        let samples = self
+            .buffers
             .get(port.0)
-            .and_then(|buffer| buffer.get(..self.frames))
-            .unwrap_or_default()
+            .and_then(|buffer| buffer.get(..self.frames));
+        samples.unwrap_or_else(|| misused(self.misuses))
     }
+}
+
+/// Counts one use of a handle that matches no declared port, and gives the empty stand-in.
+fn misused<T: Default>(misuses: &Cell<u64>) -> T {
+    misuses.set(misuses.get() + 1);
+    T::default()
 }
 
 /// The audio outputs of one block. They start silent.
 pub struct AudioOutputs<'a> {
     pub(crate) buffers: &'a mut [AudioBuffer],
     pub(crate) frames: usize,
+    pub(crate) misuses: &'a Cell<u64>,
 }
 
 impl AudioOutputs<'_> {
-    /// An undeclared port gives an empty slice.
+    /// An undeclared port gives an empty slice and counts in `EngineStatus::port_misuses`.
     pub fn get(&mut self, port: AudioOutput) -> &mut [f32] {
-        self.buffers
-            .get_mut(port.0)
-            .and_then(|buffer| buffer.get_mut(..self.frames))
-            .unwrap_or_default()
+        let [samples] = self.get_many([port]);
+        samples
+    }
+
+    /// Several outputs at once, for example left and right in one loop. An undeclared port or
+    /// the same port twice gives empty slices and counts in `EngineStatus::port_misuses`.
+    pub fn get_many<const N: usize>(&mut self, ports: [AudioOutput; N]) -> [&mut [f32]; N] {
+        let frames = self.frames;
+        match self.buffers.get_disjoint_mut(ports.map(|port| port.0)) {
+            Ok(buffers) => buffers.map(|buffer| buffer.get_mut(..frames).unwrap_or_default()),
+            Err(_) => {
+                misused::<()>(self.misuses);
+                std::array::from_fn(|_| Default::default())
+            }
+        }
     }
 }
 
 /// The event inputs of one block, sorted by offset. Several connections to one input arrive merged.
 pub struct EventInputs<'a> {
     pub(crate) buffers: &'a [Box<dyn ErasedEventBuffer>],
+    pub(crate) misuses: &'a Cell<u64>,
 }
 
 impl EventInputs<'_> {
-    /// An undeclared port reads as an empty slice.
+    /// A handle with an undeclared index or another event type than declared reads as an empty
+    /// slice and counts in `EngineStatus::port_misuses`.
     pub fn get<E: Event>(&self, port: EventInput<E>) -> &[Timed<E>] {
-        self.buffers
+        let buffer = self
+            .buffers
             .get(port.index)
-            .and_then(|buffer| buffer.as_any().downcast_ref::<EventBuffer<E>>())
-            .map(|buffer| buffer.events.as_slice())
-            .unwrap_or_default()
+            .and_then(|buffer| buffer.as_any().downcast_ref::<EventBuffer<E>>());
+        match buffer {
+            Some(buffer) => &buffer.events,
+            None => misused(self.misuses),
+        }
     }
 }
 
@@ -353,20 +378,23 @@ impl EventInputs<'_> {
 pub struct EventOutputs<'a> {
     pub(crate) buffers: &'a mut [Box<dyn ErasedEventBuffer>],
     pub(crate) frames: usize,
+    pub(crate) misuses: &'a Cell<u64>,
 }
 
 impl EventOutputs<'_> {
     /// Sends `event` at `offset` frames into this block. Offsets past the block end land on its
     /// last frame. When the port's buffer is full the event is dropped and counted in
-    /// `EngineStatus::event_overflows`.
+    /// `EngineStatus::event_overflows`. A handle with an undeclared index or another event type
+    /// than declared sends nothing and counts in `EngineStatus::port_misuses`.
     pub fn push<E: Event>(&mut self, port: EventOutput<E>, offset: usize, event: E) {
         let offset = offset.min(self.frames.saturating_sub(1));
-        if let Some(buffer) = self
+        let buffer = self
             .buffers
             .get_mut(port.index)
-            .and_then(|buffer| buffer.as_any_mut().downcast_mut::<EventBuffer<E>>())
-        {
-            buffer.insert(Timed { offset, event });
+            .and_then(|buffer| buffer.as_any_mut().downcast_mut::<EventBuffer<E>>());
+        match buffer {
+            Some(buffer) => buffer.insert(Timed { offset, event }),
+            None => misused(self.misuses),
         }
     }
 }

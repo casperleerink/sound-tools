@@ -222,11 +222,11 @@ Two `rtrb` rings, created once with fixed capacity:
 
 One batch in gives one batch out. The audio thread takes a batch only when the return ring has room. Otherwise the batch waits in the command ring for a later block. This is why a full return ring can never force a drop on the audio thread.
 
-Plus a `triple_buffer` for values the control side or UI reads at its own pace. Today it carries `EngineStatus`: blocks and frames processed, edits applied, event overflows, full-ring counts. Playhead and meters join it later.
+Plus a `triple_buffer` for values the control side or UI reads at its own pace. Today it carries `EngineStatus`: blocks and frames processed, edits applied, event overflows, port handle misuses, full-ring counts. Playhead and meters join it later.
 
 Simpler than first designed: reports are not messages on the return ring. They are counters that only grow, published through the triple buffer. Reading the latest value never misses a count, and the return ring keeps its one in, one out rule. Device xruns and late callbacks are counted the same way in `OutputStream::status`.
 
-A full ring must not lose edits. `EngineControl` keeps batches that did not fit and sends them, in order, on the next `poll` or commit. Elementary silently drops a schedule when its queue is full; do not copy that.
+A full ring must not lose edits. `EngineControl` keeps batches that did not fit and sends them, in order, on the next `poll` or commit. When the `Engine` is dropped, `poll` returns `EngineStopped` and the waiting batches are dropped. Elementary silently drops a schedule when its queue is full; do not copy that.
 
 Every `Arc` the audio thread might release must come back through the return ring. Elementary frees sample buffers on the audio thread in one edge case because it relied on a registry holding a reference.
 

@@ -10,7 +10,7 @@ mod engine;
 mod graph;
 mod processor;
 
-pub use control::{Edit, EngineConfig, EngineControl, Node};
+pub use control::{Edit, EngineConfig, EngineControl, EngineStopped, Node};
 pub use device::{DeviceError, DeviceStatus, OutputDevice, OutputStream};
 pub use engine::{Engine, EngineStatus};
 pub use graph::{Connection, Destination, GraphError, NodeId};
