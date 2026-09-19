@@ -61,4 +61,14 @@ fn ten_thousand_child_records_open_and_one_edit_applies_live() {
         "apply one deleted folder of {CHILDREN} children: {:?}",
         started.elapsed()
     );
+
+    // Undo writes the folder again: 101 files, each a temporary file and a rename.
+    let started = Instant::now();
+    harness.project.undo().unwrap();
+    println!(
+        "undo it, which writes {} files: {:?}",
+        CHILDREN + 1,
+        started.elapsed()
+    );
+    assert!(harness.path("state/bank-099/level-099.json").exists());
 }

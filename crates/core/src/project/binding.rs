@@ -225,7 +225,8 @@ impl BehaviourContext<'_> {
 
     /// The owned children that hold state of type `C`, as (name, state), in name order.
     pub fn children<C: State>(&self) -> impl Iterator<Item = (&str, &C)> {
-        children_of(self.instances, self.id)
+        self.id
+            .children_in(self.instances)
             .filter_map(|(id, record)| Some((id.name(), record.state::<C>()?)))
     }
 
@@ -244,17 +245,6 @@ impl BehaviourContext<'_> {
         let binding = self.bindings.get(&self.id.child(name).ok()?)?;
         binding.inputs.get(port).copied()
     }
-}
-
-/// The direct children of `parent`, in name order.
-pub(crate) fn children_of<'a>(
-    instances: &'a BTreeMap<InstanceId, Record>,
-    parent: &InstanceId,
-) -> impl Iterator<Item = (&'a InstanceId, &'a Record)> {
-    let depth = parent.depth() + 1;
-    parent
-        .inside(instances)
-        .filter(move |(id, _)| id.depth() == depth)
 }
 
 /// One state application, as the engine binding sees it.
@@ -276,6 +266,33 @@ pub(crate) struct Bindings {
     saved: BTreeSet<Connection>,
     /// One message per `project.json` connection that is not in the graph, and why.
     connection_problems: Vec<String>,
+    /// Resolved `project.json` connections that are left out because they close a cycle.
+    cycle_closing: BTreeSet<Connection>,
+}
+
+/// What one attempt at an engine edit works with and collects.
+#[derive(Default)]
+struct Run {
+    device_channels: usize,
+    /// `project.json` connections, by index, that closed a cycle in an earlier attempt of the
+    /// same edit. Not by value: a new processor has another id in every attempt.
+    skipped: BTreeSet<usize>,
+    /// The bindings as they were, to put back when the attempt fails.
+    backups: Vec<(InstanceId, Option<Binding>)>,
+    /// Every `project.json` connection that resolved, used or not, with its index.
+    resolved: BTreeMap<Connection, usize>,
+    saved: BTreeSet<Connection>,
+    cycle_closing: BTreeSet<Connection>,
+    /// By index in `project.json`.
+    problems: Vec<(usize, String)>,
+}
+
+impl Run {
+    fn leave_out_cycle(&mut self, index: usize, connection: Connection) {
+        self.cycle_closing.insert(connection);
+        let message = format!("connections[{index}]: not used, because it closes a cycle");
+        self.problems.push((index, message));
+    }
 }
 
 fn touches(connection: &Connection, removed: &BTreeSet<NodeId>) -> bool {
@@ -290,34 +307,67 @@ impl Bindings {
 
     /// Runs the whole change as one engine edit: one batch and at most one compile. On an
     /// error the engine and the bindings stay as they were.
+    ///
+    /// A `project.json` connection that closes a cycle does not fail the edit. It stays saved,
+    /// unused and reported, like a connection to an instance that does not exist.
     pub fn apply(
         &mut self,
         control: &mut EngineControl,
         change: EngineChange<'_>,
     ) -> Result<(), BindError> {
-        let mut backups = Vec::new();
         let device_channels = control.config().channels;
-        let mut edit = control.edit();
-        let result = self
-            .run(&mut edit, device_channels, &change, &mut backups)
-            .and_then(|resolved| {
-                edit.commit()?;
-                Ok(resolved)
-            });
-        match result {
-            Ok((saved, problems)) => {
-                self.saved = saved;
-                self.connection_problems = problems;
-                Ok(())
-            }
-            Err(error) => {
-                for (id, binding) in backups.into_iter().rev() {
-                    match binding {
-                        Some(binding) => self.by_instance.insert(id, binding),
-                        None => self.by_instance.remove(&id),
-                    };
+        let mut skipped = BTreeSet::new();
+        loop {
+            let mut run = Run {
+                device_channels,
+                skipped: skipped.clone(),
+                ..Run::default()
+            };
+            let mut edit = control.edit();
+            let result = self
+                .run(&mut edit, &change, &mut run)
+                .and_then(|()| Ok(edit.commit()?));
+            let error = match result {
+                Ok(()) => {
+                    self.saved = run.saved;
+                    self.cycle_closing = run.cycle_closing;
+                    run.problems.sort();
+                    let problems = run.problems.into_iter();
+                    self.connection_problems = problems.map(|(_, message)| message).collect();
+                    return Ok(());
                 }
-                Err(error)
+                Err(error) => error,
+            };
+            // Who made the connection, before the bindings go back to how they were.
+            let cycle = match &error {
+                BindError::Graph(GraphError::Cycle { connection, .. }) => Some(*connection),
+                _ => None,
+            };
+            let declared_by = cycle.and_then(|cycle| {
+                let declares =
+                    |(_, binding): &(&InstanceId, &Binding)| binding.connections.contains(&cycle);
+                let (id, _) = self.by_instance.iter().find(declares)?;
+                Some(id.clone())
+            });
+            for (id, binding) in run.backups.into_iter().rev() {
+                match binding {
+                    Some(binding) => self.by_instance.insert(id, binding),
+                    None => self.by_instance.remove(&id),
+                };
+            }
+            match (cycle, declared_by, error) {
+                (Some(cycle), _, _)
+                    if run
+                        .resolved
+                        .get(&cycle)
+                        .is_some_and(|index| skipped.insert(*index)) => {}
+                (Some(_), Some(instance), BindError::Graph(error)) => {
+                    return Err(BindError::Behaviour {
+                        instance,
+                        source: error.into(),
+                    });
+                }
+                (_, _, error) => return Err(error),
             }
         }
     }
@@ -325,19 +375,27 @@ impl Bindings {
     fn run(
         &mut self,
         edit: &mut Edit<'_>,
-        device_channels: usize,
         change: &EngineChange<'_>,
-        backups: &mut Vec<(InstanceId, Option<Binding>)>,
-    ) -> Result<(BTreeSet<Connection>, Vec<String>), BindError> {
+        run: &mut Run,
+    ) -> Result<(), BindError> {
         // Removing a processor also removes its connections from the graph.
         let mut removed = BTreeSet::new();
+        let first_unbound = run.backups.len();
         for id in change.unbound {
             if let Some(binding) = self.by_instance.remove(id) {
                 for (node, _) in binding.nodes.values() {
                     edit.remove_processor(*node)?;
                     removed.insert(*node);
                 }
-                backups.push((id.clone(), Some(binding)));
+                run.backups.push((id.clone(), Some(binding)));
+            }
+        }
+        // What they connected between processors of others, such as a child to the device.
+        for (_, binding) in run.backups.iter().skip(first_unbound) {
+            for connection in binding.iter().flat_map(|binding| &binding.connections) {
+                if !touches(connection, &removed) && !self.is_needed(connection) {
+                    edit.disconnect(connection)?;
+                }
             }
         }
 
@@ -353,8 +411,8 @@ impl Bindings {
             else {
                 continue;
             };
-            backups.push((id.clone(), self.by_instance.remove(id)));
-            let previous = backups.last().and_then(|(_, binding)| binding.as_ref());
+            run.backups.push((id.clone(), self.by_instance.remove(id)));
+            let previous = run.backups.last().and_then(|(_, binding)| binding.as_ref());
             let mut context = BehaviourContext {
                 id,
                 edit: &mut *edit,
@@ -363,7 +421,7 @@ impl Bindings {
                 previous,
                 next: Binding::default(),
                 removed: Vec::new(),
-                device_channels,
+                device_channels: run.device_channels,
             };
             behaviour(record.state.as_any(), &mut context).map_err(|source| {
                 BindError::Behaviour {
@@ -380,8 +438,10 @@ impl Bindings {
                         edit.remove_processor(*node)?;
                     }
                 }
+                // The graph holds a connection once, however many declare it. It goes when
+                // the last one stops.
                 for connection in previous.connections.difference(&next.connections) {
-                    if !touches(connection, &removed) && !self.saved.contains(connection) {
+                    if !touches(connection, &removed) && !self.is_needed(connection) {
                         edit.disconnect(connection)?;
                     }
                 }
@@ -389,29 +449,56 @@ impl Bindings {
             self.by_instance.insert(id.clone(), next);
         }
 
-        let mut saved = BTreeSet::new();
-        let mut problems = Vec::new();
+        // Known to close a cycle. Tried again only when the graph changes anyway, so a
+        // parameter drag next to a bad connection does not compile twice per move.
+        let mut waiting = Vec::new();
         for (index, connection) in change.connections.iter().enumerate() {
-            let resolved = self.resolve(connection).and_then(|resolved| {
-                if !self.saved.contains(&resolved) {
-                    edit.connect(resolved).map_err(|error| error.to_string())?;
+            let resolved = match self.resolve(connection) {
+                Ok(resolved) => resolved,
+                Err(message) => {
+                    run.problems
+                        .push((index, format!("connections[{index}]: {message}")));
+                    continue;
                 }
-                Ok(resolved)
-            });
-            match resolved {
-                Ok(resolved) => {
-                    saved.insert(resolved);
+            };
+            run.resolved.insert(resolved, index);
+            if run.skipped.contains(&index) {
+                run.leave_out_cycle(index, resolved);
+            } else if self.cycle_closing.contains(&resolved) {
+                waiting.push((index, resolved));
+            } else if self.saved.contains(&resolved) {
+                run.saved.insert(resolved);
+            } else {
+                match edit.connect(resolved) {
+                    Ok(()) => drop(run.saved.insert(resolved)),
+                    Err(error) => {
+                        run.problems
+                            .push((index, format!("connections[{index}]: {error}")));
+                    }
                 }
-                Err(message) => problems.push(format!("connections[{index}]: {message}")),
             }
         }
-        for connection in self.saved.difference(&saved) {
+        for connection in self.saved.difference(&run.saved) {
             let declared = |binding: &Binding| binding.connections.contains(connection);
             if !touches(connection, &removed) && !self.by_instance.values().any(declared) {
                 edit.disconnect(connection)?;
             }
         }
-        Ok((saved, problems))
+        for (index, resolved) in waiting {
+            if edit.changes_graph() && edit.connect(resolved).is_ok() {
+                run.saved.insert(resolved);
+            } else {
+                run.leave_out_cycle(index, resolved);
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a `project.json` connection or another instance still wants this connection.
+    /// Called while the instance that drops it is out of `by_instance`.
+    fn is_needed(&self, connection: &Connection) -> bool {
+        let declared = |binding: &Binding| binding.connections.contains(connection);
+        self.saved.contains(connection) || self.by_instance.values().any(declared)
     }
 
     fn resolve(&self, connection: &SavedConnection) -> Result<Connection, String> {

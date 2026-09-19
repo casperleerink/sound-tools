@@ -22,6 +22,11 @@ pub trait State: Serialize + DeserializeOwned + Clone + PartialEq + Send + Sync 
     /// The stable tool name that records carry, for example `"arrangement.clip"`.
     const TOOL: &'static str;
 
+    /// Whether instances of this tool can own child instances. It decides the place of the
+    /// record for good: `<name>/instance.json` with the children next to it when true,
+    /// `<name>.json` when false.
+    const OWNS_CHILDREN: bool = false;
+
     /// Rules that the types alone do not express, such as ranges. It runs on every path into
     /// the project: files, interface edits, undo. The message should name the field.
     fn validate(&self) -> Result<(), String> {
@@ -100,6 +105,37 @@ impl InstanceId {
             Bound::Included(start.as_str()),
             Bound::Excluded(end.as_str()),
         ))
+    }
+
+    /// The direct children of this instance in `map`, in name order. It jumps over what each
+    /// child owns, so the cost follows the number of children, not the size of the subtree.
+    pub(crate) fn children_in<'a, V>(
+        &self,
+        map: &'a BTreeMap<InstanceId, V>,
+    ) -> impl Iterator<Item = (&'a InstanceId, &'a V)> + use<'a, V> {
+        let depth = self.depth() + 1;
+        let end = format!("{}0", self.0);
+        let mut next = Bound::Included(format!("{}/", self.0));
+        std::iter::from_fn(move || {
+            loop {
+                let start = match &next {
+                    Bound::Included(start) => Bound::Included(start.as_str()),
+                    Bound::Excluded(start) => Bound::Excluded(start.as_str()),
+                    Bound::Unbounded => Bound::Unbounded,
+                };
+                let (id, value) = map
+                    .range::<str, _>((start, Bound::Excluded(end.as_str())))
+                    .next()?;
+                if id.depth() == depth {
+                    next = Bound::Excluded(id.0.clone());
+                    return Some((id, value));
+                }
+                // Inside some child `c`. Siblings such as `c-2` sort before `c/`, so they are
+                // done already. Everything inside `c` sorts before `c0`.
+                let child: Vec<&str> = id.0.split('/').take(depth + 1).collect();
+                next = Bound::Included(format!("{}0", child.join("/")));
+            }
+        })
     }
 }
 
@@ -203,6 +239,7 @@ impl<S: State> ErasedState for S {
 #[derive(Clone)]
 pub(crate) struct Record {
     pub tool: &'static str,
+    pub owns_children: bool,
     pub state: Arc<dyn ErasedState>,
 }
 
@@ -210,6 +247,7 @@ impl Record {
     pub fn new<S: State>(state: S) -> Self {
         Self {
             tool: S::TOOL,
+            owns_children: S::OWNS_CHILDREN,
             state: Arc::new(state),
         }
     }
@@ -266,6 +304,36 @@ mod tests {
             .collect();
         let inside: Vec<&str> = short.inside(&map).map(|(id, ())| id.as_str()).collect();
         assert_eq!(inside, ["tone/a", "tone/a/b"]);
+    }
+
+    #[test]
+    fn children_are_found_without_walking_what_they_own() {
+        let ids = [
+            "a",
+            "a-2",
+            "a/c",
+            "a/c-2",
+            "a/c-2/x",
+            "a/c/x",
+            "a/c/x/y",
+            "a/c/z",
+            "a/c0",
+            "a/d",
+            "a/orphaned/deep",
+            "a0",
+            "b",
+        ];
+        let map: BTreeMap<InstanceId, ()> = ids
+            .iter()
+            .map(|id| (InstanceId::new(id).unwrap(), ()))
+            .collect();
+        let children = |id: &str| -> Vec<&str> {
+            let id = InstanceId::new(id).unwrap();
+            id.children_in(&map).map(|(id, ())| id.as_str()).collect()
+        };
+        assert_eq!(children("a"), ["a/c", "a/c-2", "a/c0", "a/d"]);
+        assert_eq!(children("a/c"), ["a/c/x", "a/c/z"]);
+        assert_eq!(children("b"), Vec::<&str>::new());
     }
 
     #[test]

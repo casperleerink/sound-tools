@@ -1,8 +1,9 @@
 //! The project folder on disk: where records live, reading, atomic writing and the JSON layout.
 //!
-//! The file naming rule, see ARCHITECTURE.md "Project storage": the instance `a/b` is the file
-//! `state/a/b.json`, or the folder `state/a/b/` with its record in `instance.json`. Children
-//! live in the folder of their parent.
+//! The file naming rule, see ARCHITECTURE.md "Project storage": the instance `a/b` of a tool
+//! that owns no children is the file `state/a/b.json`. The instance of a tool that owns
+//! children is the folder `state/a/b/` with its record in `instance.json` and its children next
+//! to it. The tool decides the form. The runtime never moves a record between the two.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -21,13 +22,38 @@ pub(crate) const STATE_FOLDER: &str = "state";
 const LOCK_FILE: &str = ".sound-tools.lock";
 const RECORD_EXTENSION: &str = "json";
 
-/// The two forms of one instance on disk.
+/// The two forms of an instance on disk. The tool decides which one its instances have.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Form {
-    /// `name.json`. For an instance without children.
+    /// `name.json`. For a tool that owns no children.
     File,
-    /// `name/instance.json`. Children live next to the record.
+    /// `name/instance.json`. For a tool that owns children. They live next to the record.
     Folder,
+}
+
+impl Form {
+    pub fn of(record: &Record) -> Self {
+        if record.owns_children {
+            Self::Folder
+        } else {
+            Self::File
+        }
+    }
+}
+
+/// What is on disk for one instance id.
+pub(crate) enum RecordOnDisk {
+    Missing,
+    One(Form, Vec<u8>),
+    /// `name.json` and `name/instance.json` both exist. Neither is loaded.
+    Both,
+}
+
+/// The problem text for a folder that has no record of its own.
+pub(crate) fn folder_without_record(folder: &str) -> String {
+    format!(
+        "not loaded: no {FOLDER_RECORD}.json in {folder}, so the folder is no instance and nothing in it is loaded"
+    )
 }
 
 /// What the runtime last read from or wrote to a record file. A file with the same
@@ -269,12 +295,24 @@ impl Storage {
         }
     }
 
-    /// Reads the record of `id` in whichever form it has. The folder form wins.
-    pub fn read_record(&self, id: &InstanceId) -> Result<Option<(Form, Vec<u8>)>, StorageError> {
-        for form in [Form::Folder, Form::File] {
+    /// Reads the record of `id` in whichever form it is on disk. `seen` is the one form a
+    /// folder scan just saw, which saves looking for the other: at 10,000 records that is a
+    /// quarter of the time to open.
+    pub fn read_record(
+        &self,
+        id: &InstanceId,
+        seen: Option<Form>,
+    ) -> Result<RecordOnDisk, StorageError> {
+        let mut found = RecordOnDisk::Missing;
+        let forms = match seen {
+            Some(form) => vec![form],
+            None => vec![Form::Folder, Form::File],
+        };
+        for form in forms {
             let path = self.record_path(id, form);
             match fs::read(&path) {
-                Ok(bytes) => return Ok(Some((form, bytes))),
+                Ok(_) if matches!(found, RecordOnDisk::One(..)) => return Ok(RecordOnDisk::Both),
+                Ok(bytes) => found = RecordOnDisk::One(form, bytes),
                 // `NotADirectory`: a file stands where a parent folder would be.
                 Err(error)
                     if matches!(
@@ -284,7 +322,16 @@ impl Storage {
                 Err(source) => return Err(self.io_error(&path, source)),
             }
         }
-        Ok(None)
+        Ok(found)
+    }
+
+    /// Whether the folder of `id` exists. Without a record in it, it holds orphaned files.
+    pub fn has_folder(&self, id: &InstanceId) -> bool {
+        self.instance_folder(id).is_dir()
+    }
+
+    pub fn folder_display_path(&self, id: &InstanceId) -> String {
+        self.display_path(&self.instance_folder(id))
     }
 
     pub fn read_project_file(&self) -> Result<Option<Vec<u8>>, StorageError> {
@@ -301,7 +348,7 @@ impl Storage {
     pub fn scan(
         &self,
         parent: Option<&InstanceId>,
-        found: &mut Vec<InstanceId>,
+        found: &mut Vec<(InstanceId, Option<Form>)>,
         problems: &mut Vec<(String, String)>,
     ) {
         let folder = match parent {
@@ -363,40 +410,25 @@ impl Storage {
                 continue;
             };
             let has_folder_record = has_folder && self.record_path(&id, Form::Folder).is_file();
-            if has_file && has_folder_record {
-                problems.push((
-                    self.display_path(&self.record_path(&id, Form::File)),
-                    format!("ignored: the instance also has {name}/{FOLDER_RECORD}.json"),
-                ));
+            match (has_file, has_folder_record) {
+                (true, true) => found.push((id.clone(), None)),
+                (true, false) => found.push((id.clone(), Some(Form::File))),
+                (false, true) => found.push((id.clone(), Some(Form::Folder))),
+                (false, false) => {}
             }
-            if has_file || has_folder_record {
-                found.push(id.clone());
+            if has_folder_record {
                 self.scan(Some(&id), found, problems);
-            } else {
-                problems.push((
-                    self.display_path(&self.instance_folder(&id)),
-                    format!(
-                        "not loaded: a folder is an instance only with its record in {FOLDER_RECORD}.json"
-                    ),
-                ));
+            } else if has_folder {
+                let folder = self.folder_display_path(&id);
+                problems.push((folder.clone(), folder_without_record(&folder)));
             }
         }
     }
 
-    /// Writes the record unless the file already holds these bytes. An instance with children
-    /// is written in folder form, and a record in the other form is removed.
-    pub fn write_record(
-        &mut self,
-        id: &InstanceId,
-        record: &Record,
-        has_children: bool,
-    ) -> Result<(), StorageError> {
+    /// Writes the record, in the form of its tool, unless the file already holds these bytes.
+    pub fn write_record(&mut self, id: &InstanceId, record: &Record) -> Result<(), StorageError> {
         let observed = self.observed(id);
-        let form = match observed {
-            _ if has_children => Form::Folder,
-            Some(on_disk) => on_disk.form,
-            None => Form::File,
-        };
+        let form = Form::of(record);
         let path = self.record_path(id, form);
         let bytes = encode_record(record).map_err(|source| StorageError::Encode {
             path: self.display_path(&path),
@@ -411,6 +443,7 @@ impl Storage {
         }
         self.write_atomically(&path, &bytes)?;
         self.observe(id.clone(), on_disk);
+        // Only when the id now belongs to a tool of the other form, for example after undo.
         if let Some(previous) = observed
             && previous.form != form
         {
@@ -467,6 +500,10 @@ impl Storage {
 
     /// Writes a temporary file next to the target and renames it into place. A reader sees
     /// the old file or the new one, never a part. A failure leaves the old file complete.
+    ///
+    /// No `sync_all`: it costs about 6 ms per file on macOS, which made undo of a deleted
+    /// folder of 100 records block for 0.7 s. The rename still protects against a crash of the
+    /// process. Surviving a power loss is left to git and snapshots.
     fn write_atomically(&self, path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
         let write = || -> io::Result<()> {
             let folder = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
@@ -478,7 +515,7 @@ impl Storage {
             let temporary = PathBuf::from(temporary);
             let result = fs::File::create(&temporary).and_then(|mut file| {
                 file.write_all(bytes)?;
-                file.sync_all()?;
+                drop(file);
                 fs::rename(&temporary, path)
             });
             if result.is_err() {

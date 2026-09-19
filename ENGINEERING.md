@@ -146,7 +146,7 @@ Match what gpui 0.2.2 already pulls in (smol 2, async-task, log, parking_lot, sl
 | JSON errors | `serde_path_to_error` 0.1 | Reports `tracks[3].gain` instead of a line number. Agents fix their edits from this. |
 | JSON schema | `schemars` 1 | Optional. Publish schemas of record types for agents. |
 | File watching | `notify` 8.2 | notify 9 was still a release candidate. No `notify-debouncer-full`: the project reads changed paths again instead of trusting event kinds, and it groups events by a quiet window itself, so a burst is never split. See ARCHITECTURE.md "Project storage". |
-| Atomic writes | Our own | Temporary file, `sync_all`, rename: a dozen lines in `project/storage.rs`. Own writes are known by a fingerprint of the bytes, not by ignoring events. |
+| Atomic writes | Our own | Temporary file and rename, no `fsync` (6 ms per file on macOS): a dozen lines in `project/storage.rs`. Power loss is left to git and snapshots. Own writes are known by a fingerprint of the bytes, not by ignoring events. |
 | Project lock | `std::fs::File::lock` | Stops two runtimes opening one project. No dependency. |
 | IPC | JSON lines over the child's stdin/stdout | The runtime is the outer app's child process. Use `interprocess` 2 only if a reconnectable socket becomes necessary. Avoid `ipc-channel`. |
 | IDs | `slotmap` 1 | Already in gpui. |
@@ -342,7 +342,7 @@ Extensions never touch threads or queues. Through the SDK they:
 - map state changes to update messages or graph changes in their state application hook,
 - read immutable data snapshots delivered as update messages.
 
-The core owns everything in this section. It is built and described in [crates/core/README.md](crates/core/README.md): processors, and tools with their state application hook, which the code calls a behaviour. The hook gets the next state only, not the previous one. It declares what the instance needs and the core sends the difference, so a behaviour sends its few parameters every time instead of comparing records. A tool with a large snapshot can compare inside its own behaviour if rebuilding ever shows up in a profile.
+The core owns everything in this section. It is built and described in [crates/core/README.md](crates/core/README.md): processors, and tools with their state application hook, which the code calls a behaviour. The hook gets the next state only, not the previous one. It declares what the instance needs and the core sends the difference, so a behaviour sends its few parameters every time instead of comparing records. A behaviour has nowhere to keep a previous state. If rebuilding a large snapshot ever shows up in a profile, the core can hand behaviours the previous records then.
 
 ### Device output
 

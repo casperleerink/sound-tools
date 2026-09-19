@@ -148,6 +148,7 @@ pub struct Bank {
 
 impl State for Bank {
     const TOOL: &'static str = "test.bank";
+    const OWNS_CHILDREN: bool = true;
 }
 
 /// The name of the child a bank plays through.

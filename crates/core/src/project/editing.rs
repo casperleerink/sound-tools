@@ -10,6 +10,7 @@ use super::instance::{Instance, InstanceId, Record, State};
 use super::{Project, ProjectError, Source};
 use crate::clock::TempoMap;
 
+#[derive(Clone)]
 pub(crate) enum Change {
     /// Creates the instance or replaces its whole record.
     Set(InstanceId, Record),
@@ -187,6 +188,13 @@ impl Project {
                     })?;
             }
         }
+        let touches_project_file = changes
+            .changes
+            .iter()
+            .any(|change| !matches!(change, Change::Set(..)));
+        if touches_project_file {
+            self.sync_project_file();
+        }
         let applied = self.apply(changes.changes, Source::Interface)?;
         edit.step.absorb(applied);
         Ok(())
@@ -237,6 +245,7 @@ impl Project {
     /// other change. No undo step.
     pub fn cancel(&mut self, edit: Edit) -> Result<(), ProjectError> {
         let step = edit.step;
+        self.sync_project_file();
         let applied = self.apply(step.changes(Side::Before), Source::History)?;
         self.write_step(&step, &applied)
     }
@@ -254,6 +263,7 @@ impl Project {
         let Some(step) = self.history.undo.pop() else {
             return Ok(None);
         };
+        self.sync_project_file();
         let applied = self.apply(step.changes(Side::Before), Source::History)?;
         let written = self.write_step(&step, &applied);
         let label = step.label.clone();
@@ -265,6 +275,7 @@ impl Project {
         let Some(step) = self.history.redo.pop() else {
             return Ok(None);
         };
+        self.sync_project_file();
         let applied = self.apply(step.changes(Side::After), Source::History)?;
         let written = self.write_step(&step, &applied);
         let label = step.label.clone();

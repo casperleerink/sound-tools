@@ -110,8 +110,8 @@ A tool is what composers create and projects save. An instance is one use of a t
 my-piece/
   project.json                format, enabled extensions, tempo map, connections
   state/
-    tone-a.json               the instance `tone-a`: no children, so one file
-    bank/                     the instance `bank`: it has children, so a folder
+    tone-a.json               the instance `tone-a`: its tool owns no children, so one file
+    bank/                     the instance `bank`: its tool owns children, so a folder
       instance.json           its own record
       output.json             the child `bank/output`
       level-1.json            the child `bank/level-1`
@@ -119,6 +119,7 @@ my-piece/
 
 - The id of an instance is its path under `state/` without `.json`: `bank/level-1`. It never changes. Put display names in the state.
 - Names use lowercase letters, digits, `-` and `_`. `instance` is reserved. Every folder is an instance and needs its `instance.json`.
+- The tool decides the form, for good. A tool with `OWNS_CHILDREN = true` is always `<name>/instance.json`, also with no children yet. Every other tool is always `<name>.json`. The runtime never moves a record. A record in the wrong form, both forms for one name, a child under a tool that owns none, and a folder without `instance.json` are not loaded. Each is listed in `project.problems()` with the right path. Tell agents the form of each of your tools in your agent doc.
 - The folder tree is the ownership tree. Deleting a folder deletes the instance and everything it owns. Moving a file to another folder gives it another owner.
 - A record is `{"tool": "<name>", "state": {...}}`. The state is your type.
 
@@ -136,6 +137,7 @@ pub struct ToneState {
 
 impl State for ToneState {
     const TOOL: &'static str = "tone";
+    // const OWNS_CHILDREN: bool = true;   for a tool whose instances own child instances
 
     fn validate(&self) -> Result<(), String> {
         if !(0.0..=1.0).contains(&self.gain) {
@@ -148,6 +150,7 @@ impl State for ToneState {
 
 - The state type is the handle of the tool. Every typed call names it: `project.resolve::<ToneState>(&id)`, `context.children::<ClipState>()`.
 - `TOOL` is the name in records. Use `extension.tool` when an extension has several tools, for example `arrangement.clip`.
+- `OWNS_CHILDREN` is false unless you set it. Set it for a tool that owns children, such as a track. It fixes where the record lives (see above), and creating a child under a tool without it fails with `ProjectError::ParentOwnsNoChildren`. Do not change it later: existing records would be in the wrong form.
 - `validate` runs for files and for interface edits. Name the field in the message: an agent fixes its edit from it. Prefer types that cannot hold a wrong value, such as `Ticks`. Keep `deny_unknown_fields`, so a misspelled field is an error.
 - Save musical meaning in ticks, not seconds. Keep runtime state such as phase and voices in the processor, never in the state.
 - There are no schema versions and no migrations. An instance id in a state (`InstanceId` derives serde) is a reference: it owns nothing. Resolve it with `project.resolve`.
@@ -187,7 +190,7 @@ Declare everything the instance needs, every time. The core compares with the la
 - `context.connect(connection)` makes a connection of your own: between your processors, to a child's port, or to the device with `output.to_device(channel)` for `channel in 0..context.device_channels()`. A connection you stop declaring is disconnected. These are not saved in `project.json`.
 - `context.output(name, endpoint)` and `context.input(name, endpoint)` name a port. Named ports are what `project.json` connections and your owner can use. `OutputEndpoint::new(node, Processor::PORT)` makes one. You may pass up the endpoint of a child.
 
-All behaviours of one edit group run inside one engine edit: one batch, at most one compile, everything lands in the same block. If any behaviour returns an error, or the graph refuses (type mismatch, cycle), the whole group is rejected and nothing changes. Return an error only for real faults. For a state you can play partly, such as a missing child, play what you can.
+All behaviours of one edit group run inside one engine edit: one batch, at most one compile, everything lands in the same block. If any behaviour returns an error, or the graph refuses (type mismatch, cycle), the whole group is rejected and nothing changes. While a project opens, the failing instance is left out with what it owns and listed as a problem instead, so the rest opens. A `project.json` connection that closes a cycle never rejects anything: it stays saved, unused and listed. Return an error only for real faults. For a state you can play partly, such as a missing child, play what you can.
 
 Do not keep engine handles in statics or captured variables. The context holds them, and it rolls back with a rejected group.
 
@@ -224,7 +227,9 @@ fn apply_bank(state: &Bank, context: &mut BehaviourContext<'_>) -> Result<(), Be
 
 For the arrangement this reads: a track owns clip records and one `instrument` child. Its behaviour builds one snapshot from `children::<Clip>()`, sends it to its one sequencer processor, connects the sequencer's event output to `child_input("instrument", "notes")` and the child's `audio` output to the device. An agent adds a part by writing one clip file, and a whole track by writing one folder. Both arrive as one group: one snapshot, one batch. In `Processor::update`, swap the `Arc` with `std::mem::swap` and never drop it there.
 
-Rebuilding a snapshot of a hundred small records on every change is cheap. If a tool needs to skip work, it can compare inside its behaviour. The core passes no previous state.
+Rebuilding a snapshot of a hundred small records on every change is cheap, so do that. A behaviour gets no previous state and has nowhere to keep one. If a rebuild ever shows up in a profile, that is a change to make in the core.
+
+Two instances may declare the same connection, for example an owner and its child both send the child to the device. It is in the graph once and goes when the last one stops declaring it.
 
 ### Read and edit from an interface
 
@@ -259,7 +264,8 @@ project.redo()?;
 ```
 
 - `publish(&mut edit, changes)` applies a whole `Changes` group at once: one engine batch. `update` is the short form for one record. `changes.set` replaces a whole state. `create` with an id inside another instance makes an owned child. The owner must exist or come earlier in the same group.
-- `delete` takes everything the instance owns and the `project.json` connections that name them. Undo brings all of it back.
+- `delete` takes everything the instance owns and the `project.json` connections that name them. Undo brings all of it back. Undo fails with `ProjectError::IdTaken`, and drops the step, when a file the runtime did not load has taken the id meanwhile.
+- Tempo and connection edits land on top of a `project.json` that an agent changed a moment ago. While that file holds a change that does not load, they apply live but are not written, and the problem on `project.json` says so.
 - Last write wins everywhere. A file edit during a drag applies at once and the drag goes on. The next publish overwrites it. The undo step of a finished edit runs from the state before its first publish to the state at the finish.
 - You never write the reverse of an edit. The core records the records before and after.
 - An invalid state is rejected with `ProjectError::InvalidState` and nothing changes.

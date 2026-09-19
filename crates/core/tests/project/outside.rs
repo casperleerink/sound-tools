@@ -342,33 +342,161 @@ fn an_invalid_project_file_leaves_the_live_state() {
     assert_eq!(harness.read("project.json"), broken);
 }
 
+fn amplifier_link(from: &str, to: &str) -> String {
+    format!(
+        r#"{{"from": {{"instance": "{from}", "port": "out"}}, "to": {{"input": {{"instance": "{to}", "port": "in"}}}}}}"#
+    )
+}
+
 #[test]
-fn a_cycle_in_project_json_is_rejected_whole() {
+fn a_connection_that_closes_a_cycle_stays_saved_unused_and_reported() {
     let mut harness = Harness::new();
     for name in ["first", "second"] {
         let record = r#"{"tool": "test.amplifier", "state": {"gain": 1.0}}"#;
         harness.write_and_apply(&format!("state/{name}.json"), record);
     }
-    let link = |from: &str, to: &str| {
-        format!(
-            r#"{{"from": {{"instance": "{from}", "port": "out"}}, "to": {{"input": {{"instance": "{to}", "port": "in"}}}}}}"#
-        )
-    };
-    let cyclic = project_file(&[link("first", "second"), link("second", "first")].join(", "));
-    let path = harness.write("project.json", &cyclic);
-    let error = harness.project.apply_outside_changes(&[path]).unwrap_err();
-    assert!(matches!(error, ProjectError::Graph(_)), "{error}");
-    assert!(harness.project.project_file().connections.is_empty());
-    assert!(
-        harness
-            .problem_at("project.json")
-            .unwrap()
-            .contains("cycle")
-    );
+    let links = [
+        amplifier_link("first", "second"),
+        amplifier_link("second", "first"),
+    ];
+    let cyclic = project_file(&links.join(", "));
+    assert_eq!(harness.write_and_apply("project.json", &cyclic), 1);
+    assert_eq!(harness.project.project_file().connections.len(), 2);
+    let problem = harness.problem_at("project.json").unwrap();
+    assert!(problem.contains("closes a cycle"), "{problem}");
+    assert_eq!(harness.project.problems().len(), 1);
 
-    let fixed = project_file(&link("first", "second"));
+    // Other edits go on, in one batch each, with the bad connection still listed.
+    let batches = harness.batches();
+    harness.write_and_apply("state/dc.json", &dc_record(0.5));
+    assert_eq!(harness.batches(), batches + 1);
+    assert_eq!(harness.project.problems().len(), 1);
+
+    // It opens like this too.
+    let mut harness = harness.reopen();
+    assert_eq!(harness.project.instances().count(), 3);
+    assert_eq!(harness.project.problems().len(), 1);
+
+    let fixed = project_file(&amplifier_link("first", "second"));
     assert_eq!(harness.write_and_apply("project.json", &fixed), 1);
     assert_eq!(harness.project.problems(), []);
+}
+
+#[test]
+fn a_record_in_the_wrong_form_for_its_tool_is_reported_with_the_right_path() {
+    let mut harness = Harness::new();
+    harness.write_and_apply("state/bank.json", BANK_RECORD);
+    let problem = harness.problem_at("state/bank.json").unwrap();
+    assert!(
+        problem.contains("belongs at state/bank/instance.json"),
+        "{problem}"
+    );
+    harness.write_and_apply("state/dc/instance.json", &dc_record(0.5));
+    let problem = harness.problem_at("state/dc/instance.json").unwrap();
+    assert!(problem.contains("belongs at state/dc.json"), "{problem}");
+    assert_eq!(harness.project.instances().count(), 0);
+
+    let harness = harness.reopen();
+    assert_eq!(harness.project.instances().count(), 0);
+    assert!(harness.problem_at("state/bank.json").is_some());
+    assert!(harness.problem_at("state/dc/instance.json").is_some());
+}
+
+#[test]
+fn a_second_record_for_a_live_instance_is_reported_and_never_brings_it_back() {
+    let mut harness = Harness::new();
+    harness.write("state/bank/instance.json", BANK_RECORD);
+    harness.write("state/bank/a.json", &level_record(0.5));
+    let bank = harness.path("state/bank");
+    harness.project.apply_outside_changes(&[bank]).unwrap();
+
+    // An agent writes the other form. Nothing changes, and it is told why.
+    let louder = r#"{"tool": "test.bank", "state": {"gain": 0.5}}"#;
+    assert_eq!(harness.write_and_apply("state/bank.json", louder), 0);
+    let problem = harness.problem_at("state/bank.json").unwrap();
+    assert!(
+        problem.contains("state/bank/instance.json also exists"),
+        "{problem}"
+    );
+    assert_eq!(harness.level(), 0.5);
+
+    // The user deletes the bank. The watcher reports the removed files and the stray one.
+    let mut changes = Changes::new();
+    changes.delete(&id("bank"));
+    harness.project.commit("Delete bank", changes).unwrap();
+    let paths = [
+        harness.path("state/bank/instance.json"),
+        harness.path("state/bank/a.json"),
+        harness.path("state/bank"),
+        harness.path("state/bank.json"),
+    ];
+    assert_eq!(harness.project.apply_outside_changes(&paths).unwrap(), 0);
+    assert_eq!(harness.project.instances().count(), 0);
+    assert_eq!(harness.level(), 0.0);
+    let problem = harness.problem_at("state/bank.json").unwrap();
+    assert!(
+        problem.contains("belongs at state/bank/instance.json"),
+        "{problem}"
+    );
+}
+
+#[test]
+fn deleting_only_the_record_of_a_folder_lists_the_files_left_behind() {
+    let mut harness = Harness::new();
+    harness.write("state/bank/instance.json", BANK_RECORD);
+    harness.write("state/bank/a.json", &level_record(0.5));
+    let bank = harness.path("state/bank");
+    harness.project.apply_outside_changes(&[bank]).unwrap();
+
+    let record = harness.path("state/bank/instance.json");
+    std::fs::remove_file(&record).unwrap();
+    assert_eq!(harness.project.apply_outside_changes(&[record]).unwrap(), 2);
+    assert_eq!(harness.project.instances().count(), 0);
+    assert!(harness.path("state/bank/a.json").exists());
+    let problem = harness.problem_at("state/bank").unwrap();
+    assert!(
+        problem.contains("no instance.json in state/bank"),
+        "{problem}"
+    );
+
+    // Undo writes the record again, and the problem goes.
+    harness.project.undo().unwrap();
+    assert_eq!(harness.level(), 0.5);
+    let paths = [harness.path("state/bank/instance.json")];
+    harness.project.apply_outside_changes(&paths).unwrap();
+    assert_eq!(harness.project.problems(), []);
+}
+
+#[test]
+fn a_change_of_extensions_is_refused_until_the_project_reopens() {
+    let mut harness = one_dc();
+    let off = project_file(&dc_to_device("dc")).replace(r#"["test"]"#, "[]");
+    assert_eq!(harness.write_and_apply("project.json", &off), 0);
+    let problem = harness.problem_at("project.json").unwrap();
+    assert!(problem.contains("Reopen the project"), "{problem}");
+    assert_eq!(harness.project.project_file().extensions, ["test"]);
+
+    // Nothing is half applied: the instance is live and still editable.
+    let dc = harness.project.resolve::<Dc>(&id("dc")).unwrap();
+    let mut edit = harness.project.begin("Louder");
+    harness
+        .project
+        .update(&mut edit, &dc, |state| state.value = 0.5)
+        .unwrap();
+    harness.project.finish(edit).unwrap();
+    assert_eq!(harness.level(), 0.5);
+    assert_eq!(harness.read("project.json"), off);
+
+    // Reopening applies it: the record stays on disk, untouched and not loaded.
+    let harness = harness.reopen();
+    assert_eq!(harness.project.instances().count(), 0);
+    assert!(
+        harness
+            .problem_at("state/dc.json")
+            .unwrap()
+            .contains("unknown tool")
+    );
+    assert!(harness.read("state/dc.json").contains("0.5"));
 }
 
 #[test]

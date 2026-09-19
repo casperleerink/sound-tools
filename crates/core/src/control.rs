@@ -312,6 +312,11 @@ impl Edit<'_> {
         self.update_erased(node.id, Box::new(update))
     }
 
+    /// Whether the edit changed processors or connections, so that `commit` compiles.
+    pub(crate) fn changes_graph(&self) -> bool {
+        self.graph.is_some()
+    }
+
     /// The caller knows that `update` is the `Update` type of the processor behind `node`.
     pub(crate) fn update_erased(
         &mut self,

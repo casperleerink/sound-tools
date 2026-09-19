@@ -26,10 +26,10 @@ pub use registry::{Registry, RegistryError, ToolRegistration};
 pub use storage::StorageError;
 pub use watcher::GROUPING_WINDOW;
 
-use binding::{BindError, Bindings, EngineChange, children_of};
+use binding::{BindError, Bindings, EngineChange};
 use editing::{Applied, Change, History, RecordChange};
 use instance::Record;
-use storage::{Form, Locked, Storage};
+use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
 use crate::control::EngineControl;
@@ -48,7 +48,14 @@ pub enum ProjectError {
     MissingInstance(InstanceId),
     #[error("instance {0} cannot be created: its parent does not exist")]
     MissingParent(InstanceId),
-    #[error("instance {0} cannot be created: a record that is not loaded already has this id")]
+    #[error(
+        "instance {id} cannot be created: its parent is a {parent_tool:?}, which owns no children"
+    )]
+    ParentOwnsNoChildren {
+        id: InstanceId,
+        parent_tool: &'static str,
+    },
+    #[error("instance {0} cannot be created: a file that is not loaded already has this id")]
     IdTaken(InstanceId),
     #[error("tool {0:?} is not registered, or its extension is not enabled in project.json")]
     UnknownTool(&'static str),
@@ -243,7 +250,8 @@ impl Project {
         &self,
         parent: &InstanceId,
     ) -> impl Iterator<Item = (Instance<S>, &S)> {
-        children_of(&self.instances, parent)
+        parent
+            .children_in(&self.instances)
             .filter_map(|(id, record)| Some((Instance::new(id.clone()), record.state::<S>()?)))
     }
 
@@ -339,15 +347,35 @@ impl Project {
                 Change::Set(id, record) => {
                     self.check_tool(record.tool)?;
                     if !self.instances.contains_key(&id) {
-                        if let Some(parent) = id.parent()
-                            && !self.instances.contains_key(&parent)
-                        {
-                            return Err(ProjectError::MissingParent(id));
+                        if let Some(parent) = id.parent() {
+                            let Some(parent) = self.instances.get(&parent) else {
+                                return Err(ProjectError::MissingParent(id));
+                            };
+                            if !parent.owns_children {
+                                return Err(ProjectError::ParentOwnsNoChildren {
+                                    id,
+                                    parent_tool: parent.tool,
+                                });
+                            }
                         }
-                        // A record of an unknown tool or with an error may sit at this id.
-                        if source == Source::Interface && self.storage.read_record(&id)?.is_some() {
+                        // A file the runtime did not load may sit at this id: a record of an
+                        // unknown tool, or one with an error. Undo must not write over it
+                        // either. A file the runtime knows is its own, from before a delete
+                        // that is not written yet.
+                        let writes = matches!(source, Source::Interface | Source::History);
+                        if writes
+                            && self.storage.observed(&id).is_none()
+                            && !matches!(
+                                self.storage.read_record(&id, None)?,
+                                RecordOnDisk::Missing
+                            )
+                        {
                             return Err(ProjectError::IdTaken(id));
                         }
+                    }
+                    // The id now belongs to a tool that owns nothing: what it owned goes.
+                    if !record.owns_children {
+                        self.stage_delete_inside(&id, records);
                     }
                     let before = self.instances.insert(id.clone(), record.clone());
                     let unchanged = before.as_ref().is_some_and(|before| before.equals(&record));
@@ -360,17 +388,13 @@ impl Project {
                     }
                 }
                 Change::Delete(id) => {
-                    let inside = id.inside(&self.instances);
-                    let mut deleted: Vec<InstanceId> = inside.map(|(id, _)| id.clone()).collect();
-                    deleted.insert(0, id.clone());
-                    for id in deleted.into_iter().rev() {
-                        if let Some(before) = self.instances.remove(&id) {
-                            records.push(RecordChange {
-                                id,
-                                before: Some(before),
-                                after: None,
-                            });
-                        }
+                    self.stage_delete_inside(&id, records);
+                    if let Some(before) = self.instances.remove(&id) {
+                        records.push(RecordChange {
+                            id: id.clone(),
+                            before: Some(before),
+                            after: None,
+                        });
                     }
                     self.project_file
                         .connections
@@ -390,6 +414,21 @@ impl Project {
             }
         }
         Ok(())
+    }
+
+    /// Removes everything `id` owns, children before parents.
+    fn stage_delete_inside(&mut self, id: &InstanceId, records: &mut Vec<RecordChange>) {
+        let inside = id.inside(&self.instances);
+        let inside: Vec<InstanceId> = inside.map(|(id, _)| id.clone()).collect();
+        for id in inside.into_iter().rev() {
+            if let Some(before) = self.instances.remove(&id) {
+                records.push(RecordChange {
+                    id,
+                    before: Some(before),
+                    after: None,
+                });
+            }
+        }
     }
 
     fn check_tool(&self, tool: &'static str) -> Result<(), ProjectError> {
@@ -445,24 +484,16 @@ impl Project {
             let Some(record) = self.instances.get(*id) else {
                 continue;
             };
-            // A parent that gets its first child moves into its folder before the child is
-            // written, so the folder is the instance from the first moment.
-            if let Some(parent) = id.parent()
-                && let Some(parent_record) = self.instances.get(&parent)
-                && self.storage.observed(&parent).map(|on_disk| on_disk.form) == Some(Form::File)
-            {
-                results.push(self.storage.write_record(&parent, parent_record, true));
-            }
-            let has_children = children_of(&self.instances, id).next().is_some();
-            results.push(self.storage.write_record(id, record, has_children));
+            results.push(self.storage.write_record(id, record));
         }
         for id in ids.iter().rev() {
             if !self.instances.contains_key(*id) {
                 results.push(self.storage.delete_record(id));
             }
         }
-        if project_file {
+        if project_file && self.project_file_is_ours() {
             results.push(self.storage.write_project_file(&self.project_file));
+            self.clear_problem(storage::PROJECT_FILE);
         }
 
         let mut first = Ok(());
@@ -478,15 +509,63 @@ impl Project {
 }
 
 impl Project {
-    /// Forgets what was reported about the record files of `id`.
+    /// Forgets what was reported about the record files of `id` and about its folder.
     pub(crate) fn clear_record_problems(&mut self, id: &InstanceId) {
         for form in [Form::File, Form::Folder] {
             let path = self.storage.record_path(id, form);
-            let path = self.storage.display_path(&path);
-            if self.file_problems.remove(&path).is_some() {
-                self.events.push(ProjectEvent::ProblemsChanged);
-            }
+            self.clear_problem(&self.storage.display_path(&path));
         }
+        self.clear_problem(&self.storage.folder_display_path(id));
+    }
+
+    pub(crate) fn clear_problem(&mut self, path: &str) {
+        if self.file_problems.remove(path).is_some() {
+            self.events.push(ProjectEvent::ProblemsChanged);
+        }
+    }
+
+    /// Brings in a `project.json` that changed on disk and that the watcher has not delivered
+    /// yet, before an edit changes tempo or connections. So the edit lands on top of the
+    /// outside change instead of writing over it.
+    pub(crate) fn sync_project_file(&mut self) {
+        if self.read_only || self.project_file_on_disk_is_known() {
+            return;
+        }
+        let path = self.storage.root().join(storage::PROJECT_FILE);
+        // A file that does not load is listed as a problem there, and `write` holds back.
+        if let Err(error) = self.apply_outside_changes(&[path]) {
+            self.report_problem(storage::PROJECT_FILE.to_string(), error.to_string());
+        }
+    }
+
+    fn project_file_on_disk_is_known(&self) -> bool {
+        match self.storage.read_project_file() {
+            Ok(Some(bytes)) => {
+                self.storage.project_file_fingerprint() == Some(storage::fingerprint(&bytes))
+            }
+            // Gone: nothing of an outside writer can be lost by writing it.
+            Ok(None) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// Whether `project.json` may be written. Not while the file holds an outside change that
+    /// did not load: that file stays for correction. The edit is live, and the problem says
+    /// that it is not saved.
+    fn project_file_is_ours(&mut self) -> bool {
+        const HELD_BACK: &str =
+            "Tempo and connection edits are live but not written until this file loads";
+        if self.project_file_on_disk_is_known() {
+            return true;
+        }
+        let path = storage::PROJECT_FILE.to_string();
+        let message = match self.file_problems.get(&path) {
+            Some(existing) if existing.contains(HELD_BACK) => existing.clone(),
+            Some(existing) => format!("{existing}. {HELD_BACK}"),
+            None => format!("changed on disk. {HELD_BACK}"),
+        };
+        self.report_problem(path, message);
+        false
     }
 
     pub(crate) fn report_problem(&mut self, path: String, message: String) {
