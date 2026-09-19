@@ -6,7 +6,7 @@ mod components;
 use std::borrow::Cow;
 
 use gpui::{
-    App, AppContext, Application, AssetSource, Bounds, Context, Entity, FontWeight, Render,
+    App, AppContext, AssetSource, Bounds, Context, Entity, FontWeight, Render,
     SharedString, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 
@@ -127,7 +127,7 @@ impl Render for Gallery {
 }
 
 fn main() {
-    Application::new().with_assets(Assets).run(|cx: &mut App| {
+    gpui_platform::application().with_assets(Assets).run(|cx: &mut App| {
         cx.set_global(Theme::dark());
         let bounds = Bounds::centered(None, size(px(760.), px(600.)), cx);
         cx.open_window(

@@ -47,7 +47,7 @@ impl InputsState {
                 .size(InputSize::Md)
         });
         let handle = text_md.read(cx).focus_handle(cx);
-        window.focus(&handle);
+        window.focus(&handle, cx);
         Self {
             text_sm: cx.new(|cx| {
                 TextInput::new(cx)

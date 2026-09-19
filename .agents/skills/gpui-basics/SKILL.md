@@ -1,21 +1,21 @@
 ---
 name: gpui-basics
-description: Core model of gpui 0.2.2 (App, Window, Entity, Context, Render vs RenderOnce), how state reaches the screen (notify/observe/subscribe, the macOS repaint pitfall), focus/actions/key bindings, events, text input, scrolling, layout, popovers, svg icons and fonts. Use before writing any GPUI view or porting a React component to Rust.
+description: Core model of gpui (Zed v1.20.2) (App, Window, Entity, Context, Render vs RenderOnce), how state reaches the screen (notify/observe/subscribe, the macOS repaint pitfall), focus/actions/key bindings, events, text input, scrolling, layout, popovers, svg icons and fonts. Use before writing any GPUI view or porting a React component to Rust.
 ---
 
-# gpui 0.2.2 basics
+# gpui (Zed v1.20.2) basics
 
-Every API name here was checked against `~/.cargo/registry/src/*/gpui-0.2.2/src`. Full compiling
+Every API name here was checked against `~/.cargo/git/checkouts/zed-*/7c451e6/crates/gpui/src`. Full compiling
 examples: `examples/app.rs` (everything below in one app) and `examples/text_input.rs`.
 Project: `crates/ui` (theme in `crates/ui/src/theme.rs`, fonts `crates/ui/assets/fonts`, lucide
 icons `crates/ui/assets/icons`) and `crates/gallery`. Build: `cargo build -p gallery` from repo root.
-Workspace deps: `gpui = { version = "=0.2.2", features = ["runtime_shaders"] }`, edition 2024.
+Workspace deps: `gpui` and `gpui_platform` from Zed git, pinned to v1.20.2 in the root `Cargo.toml`; `gpui_platform` has the `runtime_shaders` and `font-kit` features. Edition 2024. Apps start with `gpui_platform::application()`.
 
 ## 1. The object model
 
 | Thing | What it is |
 |---|---|
-| `Application::new().run(\|cx: &mut App\| ..)` | owns everything; `cx: &mut App` is the root context |
+| `gpui_platform::application().run(\|cx: &mut App\| ..)` | owns everything; `cx: &mut App` is the root context |
 | `Entity<T>` | `Rc`-like handle to state owned by the App. `cx.new(\|cx\| T)`, `e.read(cx)`, `e.update(cx, \|t, cx\| ..)`, `e.downgrade()` -> `WeakEntity<T>` (`weak.update(cx, ..)` returns `Result`) |
 | `Context<T>` | `App` plus "which entity am I". Derefs to `App`, so any `App` method works on it |
 | view | an `Entity<V>` where `V: Render`. `Entity<V>` and `AnyView` are `IntoElement`, so `.child(self.child_view.clone())` |
@@ -29,7 +29,7 @@ RenderOnce, AppContext, VisualContext, FluentBuilder`). Names like `div, px, rem
 Context, Window, App, Entity` are imported explicitly from `gpui`.
 
 ```rust
-use gpui::{App, AppContext, Application, Bounds, Context, TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size};
+use gpui::{App, AppContext, Bounds, Context, TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size};
 
 struct Root { count: i32 }
 impl Render for Root {
@@ -39,14 +39,14 @@ impl Render for Root {
     }
 }
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    gpui_platform::application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.), px(600.)), cx);
         cx.open_window(WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions { title: Some("Sound Tools".into()), ..Default::default() }),
             ..Default::default()
         }, |window, cx| cx.new(|cx| Root { count: 0 })).unwrap();   // closure gets (&mut Window, &mut App)
-        cx.on_window_closed(|cx| if cx.windows().is_empty() { cx.quit() }).detach();
+        cx.on_window_closed(|cx, _window_id| if cx.windows().is_empty() { cx.quit() }).detach();
         cx.activate(true);
     });
 }
@@ -65,8 +65,8 @@ There is no `WindowOptions.title`; it is `titlebar: Some(TitlebarOptions { title
 - `cx.listener(|this, ev, window, cx| ..)` wraps a closure so an element callback gets `&mut Self`
   and `Context<Self>`. It produces `Fn(&E, &mut Window, &mut App)`; use `cx.processor` when the
   callback takes `E` by value.
-- Async: `cx.spawn(async move |weak_this, cx| { Timer::after(Duration::from_millis(16)).await;
-  weak_this.update(cx, |this, cx| { ..; cx.notify(); }).ok(); }).detach();` (`gpui::Timer`).
+- Async: `cx.spawn(async move |weak_this, cx| { cx.background_executor().timer(Duration::from_millis(16)).await;
+  weak_this.update(cx, |this, cx| { ..; cx.notify(); }).ok(); }).detach();` (there is no `gpui::Timer`; never use `smol::Timer`, it breaks `run_until_parked` in tests).
 - Continuous animation: `window.request_animation_frame()` (notifies the current view next frame)
   or `.with_animation(..)` (see gpui-components).
 - Hammers: `window.refresh()` (whole window) and `cx.refresh_windows()` (all windows).
@@ -100,7 +100,7 @@ struct Root { focus_handle: FocusHandle, inputs: Vec<FocusHandle> }
 impl Root {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
         let inputs = (1..=3).map(|i| cx.focus_handle().tab_index(i).tab_stop(true)).collect();
         Self { focus_handle, inputs }
     }
@@ -118,10 +118,10 @@ cx.on_action(|_: &Quit, cx| cx.quit());              // app-level handler
   `KeyBinding::new(keys, action, Some("Ctx"))` only fires when an ancestor has `.key_context("Ctx")`.
 - Key syntax: `"cmd-k"`, `"shift-tab"`, `"ctrl-cmd-space"`, `"escape"`, `"enter"`, `"left"`.
 - Tab order: `FocusHandle::tab_index(n).tab_stop(true)` or on the element `.tab_index(n)`;
-  `window.focus_next()` / `window.focus_prev()` bound to `tab` / `shift-tab` yourself (see
-  `gpui-0.2.2/examples/tab_stop.rs`). Style: `.focus(|s| s.border_color(..))` (there is no
-  `focus_visible` in 0.2.2), `handle.is_focused(window)`, `handle.contains_focused(window, cx)`.
-- Programmatic focus in a callback: `window.focus(&handle)`. Blur: `window.blur()`.
+  `window.focus_next(cx)` / `window.focus_prev(cx)` bound to `tab` / `shift-tab` yourself (see
+  `crates/gpui/examples/tab_stop.rs` in the checkout). Style: `.focus(|s| ..)` styles any focus;
+  `.focus_visible(|s| ..)` styles keyboard focus only, `handle.is_focused(window)`, `handle.contains_focused(window, cx)`.
+- Programmatic focus in a callback: `window.focus(&handle, cx)`. Blur: `window.blur(cx)`.
 - Data actions: `#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)] #[action(namespace = demo)] struct Jump { to: usize }` (needs `serde`, `schemars`).
 
 ## 4. Events
@@ -145,7 +145,7 @@ Cursor: `.cursor_pointer()`, `.cursor(CursorStyle::IBeam)`.
 
 ## 5. Text input (no built-in widget)
 
-gpui 0.2.2 ships no text field. The pattern (from the crate's `examples/input.rs`, copied to
+gpui (Zed v1.20.2) ships no text field. The pattern (from the crate's `examples/input.rs`, copied to
 `examples/text_input.rs` here) is:
 1. An `Entity<TextInput>` holding `content: SharedString`, `selected_range`, `marked_range`,
    `focus_handle`, and implementing `EntityInputHandler` (IME + `replace_text_in_range`).
@@ -171,7 +171,7 @@ scroll.scroll_to_item(ix); scroll.offset(); scroll.set_offset(point);
 let list_scroll = UniformListScrollHandle::new();
 uniform_list("rows", item_count, cx.processor(|this, range: Range<usize>, window, cx| {
     range.map(|ix| div().id(ix).h(px(24.)).child(format!("row {ix}"))).collect()
-})).track_scroll(list_scroll.clone()).h_full()
+})).track_scroll(&list_scroll).h_full()
 list_scroll.scroll_to_item(ix, ScrollStrategy::Top);
 ```
 `uniform_list` needs equal-height rows and a parent with a definite height. `list(ListState::new(n,
@@ -193,7 +193,7 @@ There is no scrollbar element; `.scrollbar_width(px(8.))` only reserves space. D
   `.line_height(px(20.))`, `.text_color(..)`, `.truncate()` (= overflow_hidden + nowrap + ellipsis),
   `.line_clamp(2)`, `.whitespace_nowrap()`, `.text_center()`, `.italic()`, `.underline()`.
   Text does not shrink in flex rows: give the text container `.min_w_0().flex_1()` or a fixed width.
-- Popovers/menus: `deferred(anchored().anchor(Corner::TopLeft).snap_to_window_with_margin(px(8.))
+- Popovers/menus: `deferred(anchored().anchor(Anchor::TopLeft).snap_to_window_with_margin(px(8.))
   .child(div().occlude()...)).with_priority(1)`. `anchored` positions at its own layout spot unless
   `.position(point)` is given; `deferred` paints after the rest of the tree so it sits on top;
   `.occlude()` stops clicks going through; `.on_mouse_down_out(..)` closes it.
@@ -211,7 +211,7 @@ impl AssetSource for Assets {
     }
     fn list(&self, _: &str) -> gpui::Result<Vec<SharedString>> { Ok(vec![]) }
 }
-Application::new().with_assets(Assets).run(..)
+gpui_platform::application().with_assets(Assets).run(..)
 ```
 For `crates/ui/assets/icons/*.svg` generate the match arms with a macro or `rust-embed`. Lucide
 icons use `stroke="currentColor"`, which gpui's renderer maps to `text_color`. Raster: `img(path_or_bytes)`.
@@ -224,7 +224,7 @@ cx.text_system().add_fonts(vec![
     Cow::Borrowed(include_bytes!("../assets/fonts/InterDisplay-Regular.ttf")),
     Cow::Borrowed(include_bytes!("../assets/fonts/InterDisplay-Medium.ttf")),
     Cow::Borrowed(include_bytes!("../assets/fonts/InterDisplay-SemiBold.ttf")),
-]).unwrap();            // do this once in Application::run before opening windows
+]).unwrap();            // do this once in the `run` callback before opening windows
 let ui_font = Font {
     family: "Inter Display".into(),   // family name inside the file, not the file name
     features: FontFeatures(Arc::new(vec![("ss03".into(), 1), ("cv01".into(), 1), ("tnum".into(), 1)])),

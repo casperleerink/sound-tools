@@ -1,5 +1,5 @@
-//! Editable single-line text input for gpui 0.2.2. Adapted from the crate's own `examples/input.rs`
-//! (~/.cargo/registry/src/*/gpui-0.2.2/examples/input.rs). GPUI has no built-in input widget;
+//! Editable single-line text input for gpui (Zed v1.20.2). Adapted from the crate's own `examples/input.rs`
+//! (`crates/gpui/examples/input.rs` in the Zed checkout). GPUI has no built-in input widget;
 //! this is the pattern: an Entity implementing `EntityInputHandler` (IME/text events) plus a custom
 //! `Element` that calls `window.handle_input(..)` and paints the shaped line, selection and cursor.
 //! Change from the original: grapheme boundaries via `char_indices` instead of the
@@ -7,10 +7,10 @@
 use std::ops::Range;
 
 use gpui::{
-    App, Application, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
+    App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
     Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke,
     LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WindowBounds,
+    ShapedLine, SharedString, Style, TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, WindowBounds,
     WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
     rgb, rgba, size, white, yellow,
 };
@@ -552,7 +552,7 @@ impl Element for TextElement {
             window.paint_quad(selection)
         }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
+        line.paint(bounds.origin, window.line_height(), TextAlign::Left, None, window, cx)
             .unwrap();
 
         if focus_handle.is_focused(window)
@@ -681,7 +681,7 @@ impl Render for InputExample {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    gpui_platform::application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, None),
@@ -742,7 +742,7 @@ fn main() {
 
         window
             .update(cx, |view, window, cx| {
-                window.focus(&view.text_input.focus_handle(cx));
+                window.focus(&view.text_input.focus_handle(cx), cx);
                 cx.activate(true);
             })
             .unwrap();

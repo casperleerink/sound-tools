@@ -142,7 +142,7 @@ impl NumericInput {
             input.set_text(text, cx);
             input.select_all_text(cx);
         });
-        window.focus(&handle);
+        window.focus(&handle, cx);
         cx.notify();
     }
 
@@ -151,7 +151,7 @@ impl NumericInput {
         if let Some(value) = value {
             self.set_value(value, window, cx);
         }
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -160,7 +160,7 @@ impl NumericInput {
             self.start_editing(window, cx);
             return;
         }
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         self.drag_start = Some((f32::from(ev.position.y), self.value));
         cx.notify();
     }

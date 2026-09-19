@@ -133,7 +133,7 @@ impl Knob {
     }
 
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         self.drag_start = Some((f32::from(ev.position.y), self.value));
         cx.notify();
     }

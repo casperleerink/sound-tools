@@ -1,9 +1,9 @@
-//! Reusable component patterns for gpui 0.2.2: Theme global, RenderOnce builder components
+//! Reusable component patterns for gpui (Zed v1.20.2): Theme global, RenderOnce builder components
 //! (Button, Switch, Badge), a Tooltip view, a stateful Popover view, and a pulse animation.
 use std::{rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{
-    Animation, AnimationExt, AnyView, App, AppContext, ClickEvent, Context, Corner, Div, ElementId,
+    Animation, AnimationExt, AnyView, App, AppContext, ClickEvent, Context, Anchor, Div, ElementId,
     FocusHandle, Font, FontFeatures, FontStyle, FontWeight, Global, Hsla, Interactivity,
     MouseDownEvent, Render, SharedString, StyleRefinement, Window, anchored, deferred, div, hsla,
     prelude::*, pulsating_between, px, svg,
@@ -361,7 +361,7 @@ impl Render for Popover {
                 d.child(
                     // deferred: paint after siblings (on top). anchored: keep inside the window.
                     deferred(
-                        anchored().anchor(Corner::TopLeft).snap_to_window_with_margin(px(8.)).child(
+                        anchored().anchor(Anchor::TopLeft).snap_to_window_with_margin(px(8.)).child(
                             div()
                                 .occlude()
                                 .mt_1()

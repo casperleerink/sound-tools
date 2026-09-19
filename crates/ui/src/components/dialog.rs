@@ -4,7 +4,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, BoxShadow, ClickEvent, Context, Corner, FocusHandle, FontWeight, IntoElement,
+    App, BoxShadow, ClickEvent, Context, Anchor, FocusHandle, FontWeight, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, Render, SharedString, Window, anchored, deferred,
     div, hsla, point, prelude::*, px,
 };
@@ -81,7 +81,7 @@ impl Dialog {
 
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -154,7 +154,7 @@ impl Render for Dialog {
             deferred(
                 anchored()
                     .position(point(px(0.), px(0.)))
-                    .anchor(Corner::TopLeft)
+                    .anchor(Anchor::TopLeft)
                     .child(
                         div()
                             .occlude()
@@ -190,6 +190,7 @@ impl Render for Dialog {
                                         offset: point(px(0.), px(8.)),
                                         blur_radius: px(24.),
                                         spread_radius: px(-8.),
+                                        inset: false,
                                     }])
                                     .child(
                                         div()

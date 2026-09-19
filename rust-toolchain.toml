@@ -1,0 +1,5 @@
+# Match the toolchain Zed pins at the gpui revision in Cargo.toml.
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]

@@ -73,7 +73,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let focus = window
         .use_keyed_state("foundation-focus", cx, |window, cx| {
             let handle = cx.focus_handle();
-            window.focus(&handle);
+            window.focus(&handle, cx);
             handle
         })
         .read(cx)

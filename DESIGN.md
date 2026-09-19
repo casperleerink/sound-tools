@@ -62,13 +62,14 @@ Every element must earn its keep. Reference feel: Hooman Studio and Hive. Lots o
 
 ## GPUI notes from the first port, September 14, 2026
 
-The UI SDK lives in `crates/ui`; the gallery in `crates/gallery` shows every component (`GALLERY_SECTION=foundation|inputs|overlays|composed cargo run -p gallery`). GPUI 0.2.2 limits that shaped the components:
+The UI SDK lives in `crates/ui`; the gallery in `crates/gallery` shows every component (`GALLERY_SECTION=foundation|inputs|overlays|composed cargo run -p gallery`; `cargo test -p gallery --test snapshots` renders PNGs without opening a window). GPUI 0.2.2 limits that shaped the components. GPUI is now pinned to Zed v1.20.2, where some of these no longer apply, as noted:
 
 - No CSS transitions. Hover and active states swap instantly. Only the switch thumb and the working indicator animate, through `with_animation`.
-- No focus-visible. Focus rings show on mouse focus too. Stateless components take an optional `FocusHandle` to show a ring.
+- No focus-visible. Focus rings show on mouse focus too. Stateless components take an optional `FocusHandle` to show a ring. The pinned version has `.focus_visible(..)`; the components do not use it yet.
 - No built-in text widget. `text_input.rs` implements shaping, cursor, selection and IME itself. It is single-line; `.lines(n)` only makes the box taller. Real multi-line editing is future work.
 - Key bindings are registered by the component on first use, scoped to a key context, since the app binds none globally yet.
 - Draggable controls use drag events with a delta, so a plain click on a slider track does not jump the handle.
 - SVG icons take an explicit colour; `Icon` reads the inherited text colour at render time. Colour buttons therefore tint rather than invert on hover.
 - Overlays anchor to a zero-size box on the trigger edge and snap to the window with a margin. Side is explicit, not collision-aware. Click-outside uses `on_mouse_down_out` with an occluding surface.
 - No arc primitive; the knob draws its value ring with dots.
+- No accessibility tree in 0.2.2. The pinned version has AccessKit support (roles, labels, actions; see `crates/gpui/examples/a11y.rs` in Zed). The components do not use it yet.
