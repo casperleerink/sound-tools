@@ -78,13 +78,15 @@ pub struct EngineStatus {
     /// anything above zero is a bug in that processor.
     pub port_misuses: u64,
     pub playing: bool,
-    /// The project position in frames. Moves only while playing.
+    /// The project position in frames. It advances only while playing. A seek, a stop and a
+    /// tempo map change move it.
     pub playhead_frame: Frames,
     /// The project position in ticks: the first tick at or after `playhead_frame`.
     pub playhead_tick: Ticks,
 }
 
 pub struct Engine {
+    sample_rate: u32,
     channels: usize,
     slots: Vec<Slot>,
     schedule: Box<Schedule>,
@@ -97,6 +99,7 @@ pub struct Engine {
 
 impl Engine {
     pub(crate) fn from_parts(
+        sample_rate: u32,
         channels: usize,
         slot_count: usize,
         clock: Arc<Clock>,
@@ -105,6 +108,7 @@ impl Engine {
         status_writer: triple_buffer::Input<EngineStatus>,
     ) -> Self {
         Self {
+            sample_rate,
             channels,
             slots: std::iter::repeat_with(|| None).take(slot_count).collect(),
             schedule: Box::default(),
@@ -114,6 +118,11 @@ impl Engine {
             status: EngineStatus::default(),
             status_writer,
         }
+    }
+
+    /// The sample rate this engine was built for. Its clock turns ticks into frames with it.
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
     }
 
     pub fn channels(&self) -> usize {

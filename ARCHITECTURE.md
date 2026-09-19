@@ -291,7 +291,7 @@ Seeking does not replay every event between the previous position and the destin
 
 Exact reconstruction of stateful audio at a seek destination is a separate capability, not a guarantee of seeking.
 
-Decided September 19, 2026: the notification is one flag in the process context, set for the one block after a seek or a stop. The core holds no scheduled events. Timeline-driven processors make their events block by block from the transport info, so after a seek there is nothing to invalidate. Play and pause show as the playing state. The playhead and the playing state reach the control side through the engine status.
+Decided September 19, 2026: the notification is two flags in the process context, each set for one block. One says the position jumped, after a seek or a stop. The other says playback stopped, after a pause or a stop. Tools release what they hold on either. The core holds no scheduled events. Timeline-driven processors make their events block by block from the transport info, so after a seek there is nothing to invalidate. The playhead and the playing state reach the control side through the engine status.
 
 ## Editing and system services
 

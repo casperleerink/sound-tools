@@ -60,6 +60,7 @@ A handle that matches no declared port (wrong index, wrong event type, or the sa
 Engine time (`context.start_frame`) always runs, so live instruments and tails keep sounding. The project position is separate and moves only while the project plays. `context.transport` describes this block on the project timeline:
 
 - `playing`: whether the project plays.
+- `stopped_playing`: true for the one block where the project stopped playing, by a pause or a stop.
 - `tick_range`: the ticks that land on a frame of this block, as a half-open range. While playing, each block starts at the tick where the previous block ended. This holds for every device buffer size, for tempo changes inside a block and for a tempo map change. So every tick belongs to exactly one block. While not playing the range is empty.
 - `offset_of(tick)`: the frame offset inside this block where a tick of `tick_range` lands. Pass it to `event_outputs.push`.
 - `jumped`: true for one block after a seek or a stop. Nothing between the old and the new position is replayed. Decide what that means for your tool, for example release held notes.
@@ -71,8 +72,9 @@ A timeline-driven processor emits what starts inside `tick_range`. It never conv
 ```rust
 fn process(&mut self, context: &mut ProcessContext<'_>) {
     let transport = &context.transport;
-    if transport.jumped {
-        // Release what is held. The notes at the new position come through `tick_range`.
+    if transport.jumped || transport.stopped_playing {
+        // Send a note off for every held note. After a jump the notes at the new position
+        // come through `tick_range`. After a pause nothing comes until the project plays.
     }
     for note in self.snapshot.notes_starting_in(&transport.tick_range) {
         if let Some(offset) = transport.offset_of(note.start) {
@@ -82,7 +84,7 @@ fn process(&mut self, context: &mut ProcessContext<'_>) {
 }
 ```
 
-This needs no `if transport.playing`: the range is empty while the project does not play. Each note is sent exactly once, on the frame the clock gives for its tick. The `Click` processor in `crates/runtime/src/main.rs` and the `Beats` processor in `tests/transport.rs` are small complete examples.
+Starting notes needs no `if transport.playing`: the range is empty while the project does not play. Each note is sent exactly once, on the frame the clock gives for its tick. Ending notes is different. A note off that lies after the pause position is never reached, so a processor must release its held notes when `stopped_playing` is set, and also when `jumped` is set. Without this a paused project sounds forever. The `Click` processor in `crates/runtime/src/main.rs` and the `Beats` processor in `tests/transport.rs` are small complete examples.
 
 ### Events
 
@@ -131,7 +133,9 @@ status.playing; status.playhead_tick; status.playhead_frame;
 
 Each call is a message to the audio thread. It applies at the start of the next engine block, at most 64 frames later. `poll` gives the state after the last device callback. A new engine is stopped at zero with 120 bpm in 4/4.
 
-`set_tempo_map` compiles the map into a new `Clock` on the control thread and sends it. The audio thread swaps it in, the old clock comes back and is dropped in `poll`. `control.clock()` is the clock set last, for conversions on the control side.
+`set_tempo_map` compiles the map into a new `Clock` on the control thread and sends it. The audio thread swaps it in, the old clock comes back and is dropped in `poll`. `control.clock()` is the clock set last, for conversions on the control side. A map equal to the current one sends nothing, so loading an unchanged project file does not move the playhead.
+
+`OutputDevice::start` refuses an engine whose sample rate differs from the device, because the clock would play every tempo at the wrong speed. Build the `EngineConfig` from `device.sample_rate()`.
 
 ## The musical clock
 
@@ -144,7 +148,7 @@ Musical time is whole ticks, 960 per quarter note (`Ticks`). Project time in aud
 
 Invalid values cannot be built: the constructors and the JSON loader return a `ClockError`.
 
-`Clock::frame_of` is the only place where ticks become frames. A tick lands on the frame that contains its exact time, so the exact position rounded down. Each tempo change starts on the frame of its own tick, so rounding does not pile up over many changes. `tick_at(frame)` is the first tick at or after the frame. For every valid tempo and every sample rate from 16000 Hz up (`MIN_EXACT_SAMPLE_RATE`), a tick is at least one frame long, so no two ticks share a frame and `tick_at(frame_of(tick)) == tick`. `OutputDevice` refuses lower sample rates.
+`Clock::frame_of` is the only place where ticks become frames. A tick lands on the frame that contains its exact time, so the exact position rounded down. Each tempo change starts on the frame of its own tick, rounded down the same way, so a tempo change can move the ticks after it early by less than one frame. Every conversion uses the same clock, so all parts still agree. `tick_at(frame)` is the first tick at or after the frame. For every valid tempo and every sample rate from 16000 Hz up (`MIN_EXACT_SAMPLE_RATE`), a tick is at least one frame long, so no two ticks share a frame and `tick_at(frame_of(tick)) == tick`. `OutputDevice` refuses lower sample rates.
 
 The saved JSON, as it will appear in `project.json`:
 

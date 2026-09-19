@@ -301,18 +301,18 @@ proptest! {
 const PLAYING: AudioOutput = AudioOutput::new(0);
 const JUMPED: AudioOutput = AudioOutput::new(1);
 const START_TICK: AudioOutput = AudioOutput::new(2);
+const STOPPED_PLAYING: AudioOutput = AudioOutput::new(3);
+const PROBE_OUTPUTS: [AudioOutput; 4] = [PLAYING, JUMPED, START_TICK, STOPPED_PLAYING];
 
-/// Writes what it sees of the transport to three device channels.
+/// Writes what it sees of the transport to four device channels.
 struct Probe;
 
 impl Processor for Probe {
     type Update = ();
 
     fn ports(&self) -> Ports {
-        Ports::new()
-            .audio_output(PLAYING)
-            .audio_output(JUMPED)
-            .audio_output(START_TICK)
+        let ports = Ports::new();
+        PROBE_OUTPUTS.into_iter().fold(ports, Ports::audio_output)
     }
 
     fn prepare(&mut self, _: &PrepareConfig) {}
@@ -325,10 +325,9 @@ impl Processor for Probe {
             f32::from(u8::from(transport.playing)),
             f32::from(u8::from(transport.jumped)),
             transport.tick_range.start.0 as f32,
+            f32::from(u8::from(transport.stopped_playing)),
         ];
-        let outputs = context
-            .audio_outputs
-            .get_many([PLAYING, JUMPED, START_TICK]);
+        let outputs = context.audio_outputs.get_many(PROBE_OUTPUTS);
         for (output, value) in outputs.into_iter().zip(values) {
             output.fill(value);
         }
@@ -341,6 +340,7 @@ struct Seen {
     playing: bool,
     jumped: bool,
     start_tick: u64,
+    stopped_playing: bool,
 }
 
 fn seen(playing: bool, jumped: bool, start_tick: u64) -> Seen {
@@ -348,14 +348,23 @@ fn seen(playing: bool, jumped: bool, start_tick: u64) -> Seen {
         playing,
         jumped,
         start_tick,
+        stopped_playing: false,
+    }
+}
+
+/// The one block where the project stopped playing.
+fn seen_stopping(jumped: bool, start_tick: u64) -> Seen {
+    Seen {
+        stopped_playing: true,
+        ..seen(false, jumped, start_tick)
     }
 }
 
 fn probe_engine() -> (EngineControl, Engine) {
-    let (mut control, engine) = Engine::new(EngineConfig::new(48_000, 3));
+    let (mut control, engine) = Engine::new(EngineConfig::new(48_000, 4));
     let mut edit = control.edit();
     let probe = edit.add_processor("probe", Probe).unwrap();
-    for (channel, port) in [PLAYING, JUMPED, START_TICK].into_iter().enumerate() {
+    for (channel, port) in PROBE_OUTPUTS.into_iter().enumerate() {
         edit.connect(Connection::to_device(probe.id(), port, channel))
             .unwrap();
     }
@@ -365,15 +374,16 @@ fn probe_engine() -> (EngineControl, Engine) {
 
 /// Renders whole engine blocks of 64 frames and gives what the probe saw in each.
 fn render_blocks(engine: &mut Engine, blocks: usize) -> Vec<Seen> {
-    let mut output = vec![0.0; blocks * 64 * 3];
+    let mut output = vec![0.0; blocks * 64 * PROBE_OUTPUTS.len()];
     engine.process_block(&mut output);
-    let blocks = output.chunks(64 * 3).map(|block| {
-        let first = seen(block[0] == 1.0, block[1] == 1.0, block[2] as u64);
-        for frame in block.chunks(3) {
-            assert_eq!(
-                seen(frame[0] == 1.0, frame[1] == 1.0, frame[2] as u64),
-                first
-            );
+    let decode = |frame: &[f32]| Seen {
+        stopped_playing: frame[3] == 1.0,
+        ..seen(frame[0] == 1.0, frame[1] == 1.0, frame[2] as u64)
+    };
+    let blocks = output.chunks(64 * PROBE_OUTPUTS.len()).map(|block| {
+        let first = decode(block);
+        for frame in block.chunks(PROBE_OUTPUTS.len()) {
+            assert_eq!(decode(frame), first);
         }
         first
     });
@@ -407,11 +417,11 @@ fn pause_holds_play_resumes_and_stop_returns_to_zero() {
         (Frames(6400), Ticks(256))
     );
 
+    // The first block after the pause says that playback stopped, so held notes can end.
     control.pause();
-    assert_eq!(
-        render_blocks(&mut engine, 10),
-        [seen(false, false, 256); 10]
-    );
+    let blocks = render_blocks(&mut engine, 10);
+    assert_eq!(blocks[0], seen_stopping(false, 256));
+    assert_eq!(blocks[1..], [seen(false, false, 256); 9]);
     let status = control.poll().unwrap();
     assert_eq!((status.frames, status.playing), (128 + 6400 + 640, false));
     assert_eq!(
@@ -429,7 +439,7 @@ fn pause_holds_play_resumes_and_stop_returns_to_zero() {
     assert_eq!(
         render_blocks(&mut engine, 3),
         [
-            seen(false, true, 0),
+            seen_stopping(true, 0),
             seen(false, false, 0),
             seen(false, false, 0)
         ]
@@ -520,4 +530,77 @@ fn a_tempo_map_swap_keeps_the_musical_position_and_the_old_clock_comes_back() {
         (Frames(96_128), Ticks(1923))
     );
     assert!(status.playing);
+}
+
+#[test]
+fn stopped_playing_is_about_blocks_not_commands() {
+    let (mut control, mut engine) = probe_engine();
+
+    // A stop while stopped is a jump, but nothing stopped playing.
+    control.stop();
+    assert_eq!(
+        render_blocks(&mut engine, 2),
+        [seen(false, true, 0), seen(false, false, 0)]
+    );
+
+    // A pause and a play that land in the same block: every block played, so nothing stopped
+    // and the ticks go on without a gap.
+    control.play();
+    render_blocks(&mut engine, 1);
+    control.pause();
+    control.play();
+    assert_eq!(
+        render_blocks(&mut engine, 2),
+        [seen(true, false, 3), seen(true, false, 6)]
+    );
+}
+
+#[test]
+fn an_equal_tempo_map_sends_nothing_and_does_not_move_the_playhead() {
+    let (mut control, mut engine) = probe_engine();
+    control.play();
+    render_blocks(&mut engine, 1);
+    let before = control.poll().unwrap();
+    // Frame 64 is between tick 2 and tick 3. A real swap would move the position to the
+    // frame of tick 3, frame 75.
+    assert_eq!(before.playhead_frame, Frames(64));
+
+    let clock = control.clock().clone();
+    control.set_tempo_map(clock.tempo_map().clone());
+    assert!(Arc::ptr_eq(&clock, control.clock()));
+    render_blocks(&mut engine, 1);
+    let after = control.poll().unwrap();
+    assert_eq!(after.batches_applied, before.batches_applied);
+    assert_eq!(after.playhead_frame, Frames(128));
+
+    // Another map does move it. Frame 128 is just before tick 6, which is at frame 300 at
+    // 60 bpm.
+    control.set_tempo_map(tempo_map(&[(0, 60.0)]));
+    render_blocks(&mut engine, 1);
+    let swapped = control.poll().unwrap();
+    assert_eq!(swapped.batches_applied, before.batches_applied + 1);
+    assert_eq!(swapped.playhead_frame, Frames(6 * 50 + 64));
+}
+
+#[test]
+fn a_seek_past_any_real_position_saturates_and_never_panics() {
+    let (mut control, mut engine) = probe_engine();
+    assert_eq!(engine.sample_rate(), 48_000);
+    control.play();
+    control.seek(Ticks(u64::MAX));
+    let blocks = render_blocks(&mut engine, 3);
+    assert!(blocks.iter().all(|block| block.playing));
+    assert!(blocks[0].jumped && !blocks[1].jumped);
+    let status = control.poll().unwrap();
+    assert_eq!(status.playhead_frame, Frames(u64::MAX));
+    // Engine time is not touched by the project position.
+    assert_eq!(status.frames, 192);
+
+    control.set_tempo_map(tempo_map(&[(0, 10.0), (u64::MAX, 1000.0)]));
+    render_blocks(&mut engine, 1);
+
+    control.stop();
+    render_blocks(&mut engine, 1);
+    control.play();
+    assert_eq!(render_blocks(&mut engine, 1), [seen(true, false, 0)]);
 }

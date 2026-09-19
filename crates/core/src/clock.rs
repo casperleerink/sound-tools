@@ -341,7 +341,9 @@ fn deserialize_tempo_changes<'de, D: Deserializer<'de>>(
 #[derive(Copy, Clone, Debug)]
 struct Segment {
     tick: u64,
-    /// The frame of `tick`. A whole number, so rounding errors do not pile up over changes.
+    /// The frame of `tick`, rounded down like the frame of any tick. So each tempo change can
+    /// move the ticks after it early by less than one frame. Every conversion goes through
+    /// the same clock, so all parts of the application still agree on the frame of a tick.
     frame: u64,
     bpm: Tempo,
     /// One tick lasts `frames_per_tick.0 / frames_per_tick.1` frames, in lowest terms.

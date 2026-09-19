@@ -13,10 +13,14 @@ use crate::clock::{Clock, Frames, Ticks};
 /// While playing, the blocks of a processor cover the project timeline without gaps or
 /// overlaps: each `tick_range` starts where the previous one ended, until `jumped` says
 /// otherwise. So a processor that emits what starts inside `tick_range` emits everything
-/// exactly once. While not playing both ranges are empty.
+/// exactly once. While not playing both ranges are empty, so nothing new starts. What already
+/// sounds is the processor's to end: release held notes when `stopped_playing` or `jumped`.
 #[derive(Clone, Debug)]
 pub struct Transport<'a> {
     pub playing: bool,
+    /// The previous block played and this one does not: a pause or a stop. Set for one block.
+    /// The ranges are empty from here on, so release held notes now or they sound forever.
+    pub stopped_playing: bool,
     /// The position moved by a seek or a stop since the previous block. Set for one block.
     /// Nothing between the old and the new position is replayed. Each processor decides what
     /// to do, for example release its held notes.
@@ -53,6 +57,9 @@ pub(crate) enum TransportCommand {
 
 pub(crate) struct TransportState {
     playing: bool,
+    /// Whether the previous block played. Compared per block, not per command, so a pause and
+    /// a play that land in the same block are no stop: that block goes on where the last ended.
+    was_playing: bool,
     jumped: bool,
     position: Frames,
     clock: Arc<Clock>,
@@ -62,6 +69,7 @@ impl TransportState {
     pub(crate) fn new(clock: Arc<Clock>) -> Self {
         Self {
             playing: false,
+            was_playing: false,
             jumped: false,
             position: Frames(0),
             clock,
@@ -99,6 +107,7 @@ impl TransportState {
         let end = Frames(self.position.0.saturating_add(advance));
         Transport {
             playing: self.playing,
+            stopped_playing: self.was_playing && !self.playing,
             jumped: self.jumped,
             frame_range: self.position..end,
             // Both ends come from the same function, so the end of this block is the start of
@@ -111,6 +120,7 @@ impl TransportState {
     /// Call after the block ran, with the end of its frame range.
     pub(crate) fn finish_block(&mut self, end: Frames) {
         self.position = end;
+        self.was_playing = self.playing;
         self.jumped = false;
     }
 }

@@ -20,6 +20,8 @@ pub enum DeviceError {
     SampleRateTooLow(u32),
     #[error("the engine has {engine} channels, the device has {device}")]
     ChannelMismatch { engine: usize, device: usize },
+    #[error("the engine runs at {engine} Hz, the device at {device} Hz")]
+    SampleRateMismatch { engine: u32, device: u32 },
     #[error(transparent)]
     Backend(#[from] cpal::Error),
 }
@@ -62,6 +64,14 @@ impl OutputDevice {
             return Err(DeviceError::ChannelMismatch {
                 engine: engine.channels(),
                 device: self.channels(),
+            });
+        }
+        // The clock turns ticks into frames with the engine's rate. On a device with another
+        // rate every tempo would play at the wrong speed.
+        if engine.sample_rate() != self.sample_rate() {
+            return Err(DeviceError::SampleRateMismatch {
+                engine: engine.sample_rate(),
+                device: self.sample_rate(),
             });
         }
         let counters = Arc::new(Counters::default());

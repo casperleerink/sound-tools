@@ -48,6 +48,7 @@ impl Engine {
         let graph = Graph::with_slots(config.processor_slots);
         let clock = Arc::new(Clock::new(TempoMap::default(), config.sample_rate));
         let engine = Engine::from_parts(
+            config.sample_rate,
             config.channels,
             config.processor_slots,
             clock.clone(),
@@ -159,7 +160,13 @@ impl EngineControl {
 
     /// Replaces the tempo map. Playback keeps its musical position: the tick sequence goes on
     /// without a gap or a repeat. The old clock comes back and is dropped in `poll`.
+    ///
+    /// A map equal to the current one sends nothing. A change moves the frame position to the
+    /// frame of the next tick, and a project file saved again unchanged must not do that.
     pub fn set_tempo_map(&mut self, tempo_map: TempoMap) {
+        if *self.clock.tempo_map() == tempo_map {
+            return;
+        }
         self.clock = Arc::new(self.clock.with_tempo_map(tempo_map));
         self.send(Command::SetClock(self.clock.clone()));
     }
