@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+use crate::clock::MIN_EXACT_SAMPLE_RATE;
 use crate::engine::Engine;
 
 #[derive(Debug, thiserror::Error)]
@@ -15,8 +16,12 @@ pub enum DeviceError {
     NoOutputDevice,
     #[error("the output device wants {0} samples, only f32 is supported")]
     UnsupportedSampleFormat(cpal::SampleFormat),
+    #[error("the output device runs at {0} Hz, the clock needs {MIN_EXACT_SAMPLE_RATE} Hz or more")]
+    SampleRateTooLow(u32),
     #[error("the engine has {engine} channels, the device has {device}")]
     ChannelMismatch { engine: usize, device: usize },
+    #[error("the engine runs at {engine} Hz, the device at {device} Hz")]
+    SampleRateMismatch { engine: u32, device: u32 },
     #[error(transparent)]
     Backend(#[from] cpal::Error),
 }
@@ -39,6 +44,9 @@ impl OutputDevice {
             ));
         }
         let config = supported.config();
+        if config.sample_rate < MIN_EXACT_SAMPLE_RATE {
+            return Err(DeviceError::SampleRateTooLow(config.sample_rate));
+        }
         Ok(Self { device, config })
     }
 
@@ -56,6 +64,14 @@ impl OutputDevice {
             return Err(DeviceError::ChannelMismatch {
                 engine: engine.channels(),
                 device: self.channels(),
+            });
+        }
+        // The clock turns ticks into frames with the engine's rate. On a device with another
+        // rate every tempo would play at the wrong speed.
+        if engine.sample_rate() != self.sample_rate() {
+            return Err(DeviceError::SampleRateMismatch {
+                engine: engine.sample_rate(),
+                device: self.sample_rate(),
             });
         }
         let counters = Arc::new(Counters::default());

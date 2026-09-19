@@ -197,7 +197,7 @@ Avoid: `nih-plug` (maintenance mode; plugin authoring, which we do not need), `k
 
 ## 3. Audio engine design
 
-Status, September 19, 2026: built in `crates/core` (`processor.rs`, `graph.rs`, `engine.rs`, `control.rs`, `device.rs`), except the parts marked "not built yet". The API guide for extension authors is [crates/core/README.md](crates/core/README.md). Where the build took a simpler road than the first design, the text says so and why.
+Status, September 19, 2026: built in `crates/core` (`processor.rs`, `graph.rs`, `engine.rs`, `control.rs`, `device.rs`, `clock.rs`, `transport.rs`), except the parts marked "not built yet". The API guide for extension authors is [crates/core/README.md](crates/core/README.md). Where the build took a simpler road than the first design, the text says so and why.
 
 This section answers the open items "Audio graph execution, scheduling and transport notification APIs" and "queue representation" from ARCHITECTURE.md and SDK_SKETCH.md. All studied engines (Pd, Elementary, firewheel, fundsp) converge on the same core idea: edit a graph on a normal thread, compile it to a flat schedule there, and hand that to the audio thread through a lock-free queue. The design below follows them and avoids their known mistakes.
 
@@ -217,12 +217,12 @@ The engine is a value, not global state: `Engine::process_block(&mut self, outpu
 
 Two `rtrb` rings, created once with fixed capacity:
 
-- **Control → audio**: one message per edit, a batch (`Vec<Command>`) of processor inserts and removals, processor updates, a larger slot table and a new schedule. The audio thread drains the ring at the start of each sub-block.
+- **Control → audio**: one message per edit, a batch (`Vec<Command>`) of processor inserts and removals, processor updates, a larger slot table, a new schedule, transport operations and a new clock. The audio thread drains the ring at the start of each sub-block.
 - **Audio → control**: the same batches, coming back. The audio thread applies every command by swapping: the new value goes in, the old value ends up inside the command. So old schedules, removed processors and replaced snapshots ride back inside the batch that replaced them, and `EngineControl::poll` drops them. Nothing is ever freed on the audio thread.
 
 One batch in gives one batch out. The audio thread takes a batch only when the return ring has room. Otherwise the batch waits in the command ring for a later block. This is why a full return ring can never force a drop on the audio thread.
 
-Plus a `triple_buffer` for values the control side or UI reads at its own pace. Today it carries `EngineStatus`: blocks and frames processed, edits applied, event overflows, port handle misuses, full-ring counts. Playhead and meters join it later.
+Plus a `triple_buffer` for values the control side or UI reads at its own pace. Today it carries `EngineStatus`: blocks and frames processed, edits applied, event overflows, port handle misuses, full-ring counts, whether the project plays and the playhead in frames and ticks. Meters join it later.
 
 Simpler than first designed: reports are not messages on the return ring. They are counters that only grow, published through the triple buffer. Reading the latest value never misses a count, and the return ring keeps its one in, one out rule. Device xruns and late callbacks are counted the same way in `OutputStream::status`.
 
@@ -252,7 +252,7 @@ trait Processor: Send + 'static {
 
 Calling `prepare` again after a sample rate change is not built yet. The engine is created for one device configuration.
 
-`ProcessContext` gives separate input and output slices per port, the block's sorted events with frame offsets, and the engine time of the block. Transport info joins it with the musical clock. Do not alias input and output buffers the way Pd does; in Rust that is undefined behaviour. The compiler can still reuse buffers whose lifetimes do not overlap.
+`ProcessContext` gives separate input and output slices per port, the block's sorted events with frame offsets, the engine time of the block and the transport info (see "Arrangement playback and transport"). Do not alias input and output buffers the way Pd does; in Rust that is undefined behaviour. The compiler can still reuse buffers whose lifetimes do not overlap.
 
 Processors live in a slot table on the audio thread, indexed by IDs the control side assigns. Schedules refer to slots, not to processors. A routing change sends a new schedule while every surviving processor keeps its phase, envelopes and delay lines. This removes the SDK sketch's fallback of stopping playback on routing edits. New processors arrive prepared and boxed; removed ones go back on the return ring. When the table is full the control side sends a table of twice the size in the same batch, the audio thread moves the processors over, and the old table goes back.
 
@@ -287,11 +287,40 @@ One edit group or undo step triggers one compile, like Pd's `canvas_suspend_dsp`
 
 ### Arrangement playback and transport
 
-Transport is not built yet. The snapshot swap is built and tested with a small fake.
+Built in `transport.rs` and `clock.rs`. The snapshot swap is built and tested with a small fake.
 
-Timeline-driven processors generate their own events on the audio thread. The arrangement extension's processor holds an immutable snapshot of its clips (`Arc`, replaced by an update message with `std::mem::swap`, old one returned). Each block it reads the transport info (playing, position in frames and beats, seek flag, tempo map snapshot) and emits the notes that fall inside the block.
+Timeline-driven processors generate their own events on the audio thread. The arrangement extension's processor holds an immutable snapshot of its clips (`Arc`, replaced by an update message with `std::mem::swap`, old one returned). Each block it reads the transport info (`ProcessContext::transport`: playing, the block's range in project frames and in ticks, the jump flag, the clock) and emits the notes that fall inside the block.
 
-This beats scheduling ahead from the control thread: timing never depends on control thread latency, seek takes effect in the next block, and open-ended projects need no preparation. Transport operations (play, pause, stop, seek) are control → audio messages. The core sets the transport info and notifies processors through a flag in the context. Each tool decides how to respond, as ARCHITECTURE.md already requires.
+This beats scheduling ahead from the control thread: timing never depends on control thread latency, seek takes effect in the next block, and open-ended projects need no preparation. Transport operations (play, pause, stop, seek) are control → audio messages, applied at a sub-block start like every other command. The core sets the transport info and notifies processors through two flags in the context, each set for one block: `jumped` after a seek or a stop, and `stopped_playing` when the previous block played and this one does not. A processor with held notes releases them on either flag, because while not playing the ranges are empty and nothing else would end them. The second flag is in the core so that not every processor keeps its own copy of the previous playing state. Each tool decides how to respond, as ARCHITECTURE.md already requires.
+
+The transport state on the audio thread is small: playing, whether the previous block played, the project position in frames, the jump flag and an `Arc<Clock>`. Each sub-block gets the frame range `position..position + frames` (empty while not playing) and the tick range `tick_at(start)..tick_at(end)`. Both ends come from the same pure function, so the end of one block is the start of the next by construction, and every tick belongs to exactly one block. Nothing is cached between blocks. The cost is two binary searches over the tempo changes and two 128 bit divisions per sub-block.
+
+A tempo map change is a new `Arc<Clock>`, compiled on the control thread. The audio thread reads the next tick from the old clock, swaps the clocks, and moves the frame position to that tick's frame in the new clock. So the tick sequence goes on with no gap and no repeat, and `jumped` stays false. The frame position does change, by design. The old clock rides back in the batch. The control side keeps the same `Arc` for its own conversions. `set_tempo_map` with a map equal to the current one sends nothing, so a project file saved again unchanged does not move the frame position.
+
+### Musical clock
+
+Decided and built September 19, 2026, in `clock.rs`. The rules behind "rounds in one place":
+
+- `Clock::frame_of(tick)` is the one conversion. A tick lands on the frame that contains its exact time: the exact position rounded down. `tick_at(frame)` is its inverse, the first tick at or after a frame. Rounding down makes that inverse a plain ceiling division. The error is below one frame and the same everywhere.
+- All math is integers. A tempo is held in steps of 0.001 bpm, so frames per tick is the fraction `sample_rate * 60000 / (milli_bpm * 960)`. Products use `u128`, so positions far beyond any real project stay exact.
+- Each tempo change starts a segment on the whole frame of its own tick. Math inside a segment then starts from an integer, and a segment is found with a binary search by tick or by frame. The start is rounded down like any tick, so each tempo change can move the ticks after it early by less than one frame. That is far below what anyone hears, and every conversion uses the same clock, so all parts still agree on the frame of a tick.
+- Tempo bounds are 10 to 1000 bpm. With the 1000 bpm limit a tick is at least one frame long from 16000 Hz up (`MIN_EXACT_SAMPLE_RATE`). Then no two ticks share a frame and `tick_at(frame_of(tick)) == tick`. 44100, 48000 and 96000 Hz are tested. `OutputDevice` refuses devices below 16000 Hz. Offline engines below it still run and never panic, but two ticks can share a frame there, and a tempo map change can repeat a tick.
+- Seconds go through frames (`seconds_of`, `tick_at_seconds`), so they agree with the audio.
+- Bars and beats need only the time signature: `TimeSignature::bar_beat_of` and `ticks_of`. Denominators 1 to 32 all divide the 3840 ticks of a whole note, so a beat is a whole tick count.
+
+Saved form: `TempoMap` derives serde and validates while loading. Step 3 puts it in `project.json`.
+
+```json
+{
+  "time_signature": "4/4",
+  "tempo_changes": [
+    { "tick": 0, "bpm": 120.0 },
+    { "tick": 15360, "bpm": 93.5 }
+  ]
+}
+```
+
+Simpler than planned: the time signature is saved as a string. It reads well, and the validated type needs no second unvalidated struct for serde. `Engine::new` stays infallible: it takes any sample rate and the device wrapper checks the limit, instead of a validated sample rate type through every config.
 
 ### Graph change clicks
 
@@ -317,14 +346,14 @@ The core owns everything in this section. The processor half of this surface is 
 
 ### Device output
 
-`OutputDevice::default_output()` opens the default device with its default configuration, f32 samples only. `start(engine)` moves the engine into the cpal callback. Device selection, audio input and sample formats other than f32 are not built yet. `cargo run -p runtime` plays a Tone scenario on the device and prints the counters; `--render <wav>` renders the same scenario offline.
+`OutputDevice::default_output()` opens the default device with its default configuration, f32 samples only. `start(engine)` moves the engine into the cpal callback. It refuses an engine built for another channel count or another sample rate than the device has. Device selection, audio input and sample formats other than f32 are not built yet. `cargo run -p runtime` plays a scenario of Tone edits and transport operations on the device, with a click on every beat that is scheduled from the transport info. It prints the playhead at every step and the counters, and fails when the playhead moved while the project did not play. `--render <wav>` renders the same scenario offline.
 
 ## 4. Testing and CI
 
 - DSP, graph compile, clock and project state tests are plain `#[test]` with no GPUI. Offline rendering through `process_block` makes audio behaviour testable: render N frames, assert on samples or snapshot a summary with insta.
 - Use `#[gpui::test]` only for views and entities. In GPUI tests use `cx.background_executor().timer(..)`, never `smol::Timer::after`, or `run_until_parked()` fails.
 - Clippy's `allow-unwrap-in-tests` covers `#[test]` functions only. A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`.
-- Property tests: random graphs compile to valid schedules; bars/beats ↔ samples round-trips exactly; any valid record applied on top of any other gives the same state as loading it from empty.
+- Property tests: random graphs compile to valid schedules; ticks ↔ frames and ticks ↔ bars/beats round-trip exactly; a processor that emits from the transport info fires every tick exactly once over random tempo maps, device buffer sizes, a pause and a tempo map change; any valid record applied on top of any other gives the same state as loading it from empty.
 - The gallery snapshot renderer has no test harness, so nextest skips it. Run it with `cargo test -p gallery --test snapshots`.
 - CI on macOS first (`.github/workflows/ci.yml`): `cargo fmt --check`, clippy with `-D warnings` via the CI config, `cargo nextest run --workspace`, `cargo shear`, `cargo build --locked`, `typos`, `cargo deny check`, the forbidden-dependency test, and the realtime sanitizer run from section 3. Add Miri for any unsafe code. Add Windows and Linux jobs when we claim support there.
 

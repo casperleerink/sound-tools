@@ -5168,6 +5168,8 @@ dependencies = [
  "proptest 1.11.0",
  "rtrb",
  "rtsan-standalone",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "triple_buffer",
 ]
