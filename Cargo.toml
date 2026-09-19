@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/ui", "crates/gallery", "tooling/workspace-rules"]
+members = ["crates/core", "crates/runtime", "crates/ui", "crates/gallery", "extensions/tone", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -12,10 +12,21 @@ publish = false
 # Zed stable v1.20.2. Keep the rev and rust-toolchain.toml in step with Zed's pin.
 gpui = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f", features = ["runtime_shaders", "font-kit"] }
+sound-core = { path = "crates/core" }
 sound-ui = { path = "crates/ui" }
+tone = { path = "extensions/tone" }
 anyhow = "1"
 cargo_metadata = "0.23"
+cpal = "0.18"
+hound = "3.5"
 image = { version = "0.25", default-features = false, features = ["png"] }
+no_denormals = "0.3"
+proptest = "1"
+rtrb = "0.4"
+# Does nothing unless the build sets RTSAN_ENABLE=1. See ENGINEERING.md section 3.
+rtsan-standalone = "0.3"
+thiserror = "2"
+triple_buffer = "9"
 
 # Deny a short list of real mistakes. Allow the style group so agents do not fight style lints.
 [workspace.lints.clippy]
@@ -50,6 +61,8 @@ serde_derive = { opt-level = 3 }
 gpui_macros = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
+sound-core = { opt-level = 3 }
+tone = { opt-level = 3 }
 
 [profile.dbg]
 inherits = "dev"

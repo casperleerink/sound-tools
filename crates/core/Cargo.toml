@@ -6,3 +6,14 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+cpal.workspace = true
+no_denormals.workspace = true
+rtrb.workspace = true
+rtsan-standalone.workspace = true
+thiserror.workspace = true
+triple_buffer.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
