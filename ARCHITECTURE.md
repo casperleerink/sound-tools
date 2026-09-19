@@ -1,6 +1,6 @@
 # Technical architecture
 
-This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The full application remains unimplemented.
+This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The full application remains unimplemented.
 
 ## Terms
 
@@ -67,7 +67,7 @@ Users should be able to sign in to different AI providers and use their supporte
 
 Two kinds of work have different speed requirements. Composing within a project edits project state: instances, connections, parameters and extension-defined content. These edits apply immediately in the running runtime, whether they come from an interface or from the agent, and never require compilation. Building or changing an extension changes code and uses the build and reload workflow; build time and a restart are acceptable there. Bundled extensions should cover common musical needs with compiled processors and helpers, so most composer requests are project edits rather than code changes.
 
-Changes to extension code, enabled extensions or runtime structure may stop playback and use the project reload workflow. Seamless replacement of running code or audio graphs is not required. Recompile when code or build dependencies change; reloading existing compiled functionality does not inherently require compilation. Parameter changes during playback must work without compilation or project reload.
+Changes to extension code or enabled extensions may stop playback and use the project reload workflow. Routing edits within a project do not: the engine receives a new schedule and surviving processors keep their state, as designed in [ENGINEERING.md](ENGINEERING.md) section 3. This replaces the SDK sketch's earlier fallback of stopping playback on routing edits. Seamless replacement of running code or audio graphs is not required. Recompile when code or build dependencies change; reloading existing compiled functionality does not inherently require compilation. Parameter changes during playback must work without compilation or project reload.
 
 The proposed build structure separates the engine, SDK and application UI, with one crate per extension initially. All projects share one Cargo target directory per machine, so the dependency tree compiles once on first launch or after a toolchain change. Opening a new project compiles only its own extension crates and the runtime binary.
 
@@ -123,9 +123,39 @@ The v0 workspace is a small DAW. Its parts are bundled extensions that ship with
 
 Build the core and these extensions together. Each extension should be small and finished before starting the next. Order: arrangement and instrument first, since they prove the note contract, the musical clock and live agent edits. Plugin host last, since it depends on the note and audio contracts being stable.
 
+The arrangement saves a folder per track and a file per clip. A track record holds its name, colour and order. A clip record holds its own start, length and notes, one note per line, so adding a part is one new file and moving a clip to another track is moving a file. A track owns its instrument as a child instance and goes to the main output by default, so adding a track is one new folder and no `project.json` edit. The headless inspect command prints a project summary, so agents do not need to open every clip to answer what plays in a bar range.
+
 The arrangement extension's saved format becomes the de facto note and clip contract other extensions read. It lives in a bundled contract crate, not in the core. The core stays independent of notes, tracks and clips.
 
 Agent-authored extensions remain supported and use the same SDK. They are a later capability, not the v0 headline. Codex subagents can keep running authoring tests against the SDK until the integrated agent exists.
+
+### First milestone, decided September 19, 2026
+
+Goal: a composer makes a short piece with tracks, clips, notes and one synth, an external agent adds a part by editing project files, and the composer sees and hears it live.
+
+In scope:
+
+- Core: the realtime engine from [ENGINEERING.md](ENGINEERING.md) section 3, the musical clock, transport, and the live project folder including records created and deleted from outside.
+- Arrangement extension: tracks, clips and notes, an arrangement view and a note editor. No automation yet.
+- Instrument extension: one subtractive synth. Tracks sum to the device output; there is no mixer yet.
+- A transport control and the project menu from [DESIGN.md](DESIGN.md).
+- A project agent doc that explains the folder layout and record formats, written together with the arrangement extension.
+
+One process: the project runtime alone. The agent is an external coding agent such as Codex or Claude Code, run in the project folder. This already matches the rule that agents edit files and the runtime applies them live.
+
+Out of scope until later milestones: the outer application, agent sidebar, provider sign-in, in-app build and reload, project-local extension copies, mixer, sampler, effects, MIDI input, plugin host, recording and automation.
+
+Second milestone: the outer application, the agent sidebar and the agent integration. After that, the remaining bundled extensions in the order above.
+
+Verify the first milestone:
+
+- An external agent with only file access adds a part in a bar range. The running project shows and plays it without a build or restart, and undo removes it.
+- The agent adds a whole new track with its instrument by writing one new folder, during playback, without stopping the other tracks.
+- The core crate contains no track, clip or note types. Tone from the lifecycle prototype runs on the same storage rule as a second, differently shaped tool.
+- A generated project with 100 tracks of 100 clips opens, plays and applies a single clip edit live.
+- Notes start at the expected frames for a given tempo, and a tempo change moves them accordingly.
+- Closing and reopening the project restores the piece.
+- The realtime checks from ENGINEERING.md pass on every `process` function.
 
 ### Agent context and tools
 
@@ -145,9 +175,18 @@ A project is a folder containing JSON state and separate assets. The project's t
 my-piece/
   project.json
   state/
-    synth-a.json
-    synth-b.json
-    arrangement-a.json
+    arrangement/              a root instance of the bundled arrangement tool
+      arrangement.json
+      tracks/
+        piano/
+          track.json
+          instrument/
+            synth.json
+          clips/
+            verse-a.json
+            verse-b.json
+    drone-machine/            another tool, one small record
+      drone-machine.json
   assets/
     field-recording.wav
   extensions/
@@ -155,7 +194,15 @@ my-piece/
   workspace.json
 ```
 
-`project.json` records the project format version, enabled extensions by name, saved instance index, and core-owned connections. Extensions have no version numbers: the code in the project's extensions folder is the version, and updating from a newer bundled copy is an explicit copy. Stable identifiers link records independently of display names.
+Decided September 19, 2026, the core storage rule. It says nothing about music:
+
+- An instance is a folder under `state/` holding one JSON record. The record names its tool type.
+- Owned child instances are subfolders. The folder tree is the ownership tree, so one parent per child and no cycles come for free. Deleting a folder deletes the instance and its children.
+- The path is the stable ID. Folder names are readable and chosen at creation. Display names live inside the record, so renaming in an interface does not move the folder.
+- Links that are not ownership, such as connections, sends or a shared clip, are saved references to a path. A reference resolves to an optional instance.
+- The extension chooses how finely to split its state: one record or a deep tree. Exact file naming is settled when building.
+
+There is no instance index. The runtime finds instances by reading `state/`. `project.json` records the project format version, enabled extensions by name, the tempo map and core-owned connections. Extensions have no version numbers: the code in the project's extensions folder is the version, and updating from a newer bundled copy is an explicit copy. Stable identifiers link records independently of display names.
 
 Each extension defines its saved data using Rust types. The core normally handles serialization, writing and loading. JSON is the storage format; live extension code works with typed state.
 
@@ -163,7 +210,9 @@ The project folder is always live. The runtime writes each affected record atomi
 
 Extensions must be able to apply new state while running, not only at load. Loading is applying state from empty.
 
-Save separate records for independently persisted instances. An arrangement may contain all its tracks, clips and notes in one record. Individual notes and parameters do not require separate files.
+Records should stay small enough for an agent to read and rewrite cheaply, and projects must scale: 100 tracks with 100 clips each is an ordinary project, not a limit. Individual notes and parameters do not require separate files. The layout under the arrangement in the example above is that extension's choice, described in the v0 section; the core knows no tracks, clips or notes.
+
+The watcher covers more than edits to existing records. New record files and folders, deleted ones, and connection changes in `project.json` all apply live. File changes that arrive together are one undo step, so an agent request that touches eight clips undoes as one. The lifecycle prototype only handled edits to existing records.
 
 Each record identifies its type. There are no schema versions; keeping code and saved data compatible is the composer's and their agent's responsibility. Extensions can register additional asset files for large or unusual data.
 
@@ -173,7 +222,7 @@ Each project keeps its own editable copies of the extensions it uses. Agent chan
 
 Preserve musical meaning, such as frequency ratios and rhythm groupings, in saved state. Keep workspace layout separate from musical content. Closing a view does not remove its instrument.
 
-Missing extensions leave their saved data intact. A failed write must leave the previous file complete. The runtime writes each record to a temporary file and renames it into place, so every file is atomic on its own. An edit that touches several files writes them in dependency order: instance records first, then the index in `project.json`. A crash between renames leaves a valid project with at most one stale record, which normal loading errors surface. Fully atomic multi-file commits are not required.
+Missing extensions leave their saved data intact. A failed write must leave the previous file complete. The runtime writes each record to a temporary file and renames it into place, so every file is atomic on its own. An edit that touches several files writes them in dependency order: parent records before children, then connections in `project.json`. A crash between renames leaves a valid project with at most one stale record, which normal loading errors surface. Fully atomic multi-file commits are not required.
 
 Compatibility between an extension's code and its saved data is the user's or their agent's responsibility. If a code change requires updating project files, they perform that update themselves. The core and SDK do not provide a migration framework or automatically run extension data conversions. Normal loading errors can be reported for diagnosis.
 
@@ -209,7 +258,9 @@ Projects can have a finite duration or run without a predetermined end. The runt
 
 Extensions may still define other divisions of time or keep independent musical clocks. Their timing must ultimately translate into scheduling on the shared audio engine. The SDK provides the core clock's conversion facilities so extensions do this precisely.
 
-Project position is distinct from the engine's advancing sample count. Audio processing can continue while project playback is paused or stopped, allowing live instruments and effect tails to continue. The exact time representation remains open.
+Project position is distinct from the engine's advancing sample count. Audio processing can continue while project playback is paused or stopped, allowing live instruments and effect tails to continue.
+
+Decided September 19, 2026: engine time is an integer frame count. Musical time in the core clock is an integer tick count, 960 ticks per quarter note. Bundled extensions save positions and lengths in ticks, not floats or seconds. Conversion from ticks to frames rounds in one place in the core, so results are repeatable. Extensions with other ideas of time can save their own format and convert through the clock.
 
 ### Transport operations
 
@@ -246,19 +297,20 @@ Provide recommended patterns and the underlying operations for custom workflows.
 
 [The SDK sketch](SDK_SKETCH.md) proposes a Tone lifecycle and a small next prototype. Its APIs remain provisional. Last write wins for file edits, active drags, undo, redo and cancellation; do not reopen this as a synchronization problem.
 
-Immediate next work:
+Immediate next work is the first milestone above, in this order:
 
-- Resolve native repaint validation before expanding the GUI. Automated clicks and file edits update records, but screenshots only show changes after resizing. Accessible controls remain unverified.
-- The design system in the UI SDK, tested by using it in Tone and then having a Codex subagent adapt Tremolo.
-- Live device output and the control-to-audio handoff. Offline rendering works; realtime audio does not exist yet.
-- The musical clock in the core timeline, then the arrangement and instrument extensions on top of it.
+- The realtime engine with device output and the control-to-audio handoff, following ENGINEERING.md section 3. Offline rendering works in the prototype; realtime audio does not exist yet.
+- The musical clock in the core timeline.
+- The live project folder with external record creation and deletion.
+- The arrangement and instrument extensions on top, with the project agent doc.
+
+The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. Re-check it once in the real application. The pinned GPUI has an accessibility tree and focus-visible; the UI components do not use them yet.
 
 Open:
 
 - Tool registration and lifecycle APIs, including child instances and shared state references.
 - Editing API and undo implementation under the settled last-write-wins rule.
-- Audio graph execution, scheduling and transport notification APIs.
-- Agent integration, the outer application/runtime protocol and window/workspace composition.
+- Agent integration, the outer application/runtime protocol details and window/workspace composition. Second milestone.
 
 Reference code: [pi-mono](https://github.com/badlogic/pi-mono) for extension registration and agent access to docs, and [Pure Data](https://github.com/pure-data/pure-data) for processor composition and scheduling. Neither dictates the product's UI or musical model. [ENGINEERING.md](ENGINEERING.md) records tooling, dependency and audio engine recommendations drawn from Zed, Pure Data and Elementary.
 
