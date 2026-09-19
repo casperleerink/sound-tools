@@ -95,6 +95,7 @@ trait EngineEdit {
         ports: Ports,
         processor: Box<dyn ErasedProcessor>,
     ) -> Result<NodeId, GraphError>;
+    fn remove(&mut self, node: NodeId) -> Result<(), GraphError>;
     fn update(&mut self, node: NodeId, update: Box<dyn Any + Send>) -> Result<(), GraphError>;
     fn connect(&mut self, connection: Connection) -> Result<(), GraphError>;
 }
@@ -111,6 +112,10 @@ impl EngineEdit for Edit<'_> {
         processor: Box<dyn ErasedProcessor>,
     ) -> Result<NodeId, GraphError> {
         self.add_prepared(name, ports, processor)
+    }
+
+    fn remove(&mut self, node: NodeId) -> Result<(), GraphError> {
+        self.remove_processor(node)
     }
 
     fn update(&mut self, node: NodeId, update: Box<dyn Any + Send>) -> Result<(), GraphError> {
@@ -134,6 +139,8 @@ pub struct BehaviourContext<'a> {
     bindings: &'a BTreeMap<InstanceId, Binding>,
     previous: Option<&'a Binding>,
     next: Binding,
+    /// Processors of `previous` that this run already removed from the graph.
+    removed: Vec<NodeId>,
     device_channels: usize,
 }
 
@@ -160,13 +167,16 @@ impl BehaviourContext<'_> {
                 "processor {name:?} is declared twice ({id:?})"
             )));
         }
-        let kept = self
-            .previous
-            .and_then(|previous| previous.nodes.get(name))
-            .filter(|(_, processor_type)| *processor_type == TypeId::of::<P>());
-        let id = match kept {
-            Some((id, _)) => *id,
-            None => {
+        let previous = self.previous.and_then(|previous| previous.nodes.get(name));
+        let id = match previous {
+            Some((id, processor_type)) if *processor_type == TypeId::of::<P>() => *id,
+            other => {
+                // The name now means another processor type. The old one makes room first,
+                // because names are unique in the graph.
+                if let Some((replaced, _)) = other {
+                    self.edit.remove(*replaced)?;
+                    self.removed.push(*replaced);
+                }
                 let mut processor = create();
                 processor.prepare(&self.edit.prepare_config());
                 let ports = processor.ports();
@@ -352,6 +362,7 @@ impl Bindings {
                 bindings: &self.by_instance,
                 previous,
                 next: Binding::default(),
+                removed: Vec::new(),
                 device_channels,
             };
             behaviour(record.state.as_any(), &mut context).map_err(|source| {
@@ -361,12 +372,12 @@ impl Bindings {
                 }
             })?;
             let next = context.next;
+            removed.extend(context.removed);
             if let Some(previous) = previous {
                 for (name, (node, _)) in &previous.nodes {
                     let kept = next.nodes.get(name).is_some_and(|(kept, _)| kept == node);
-                    if !kept {
+                    if !kept && removed.insert(*node) {
                         edit.remove_processor(*node)?;
-                        removed.insert(*node);
                     }
                 }
                 for connection in previous.connections.difference(&next.connections) {

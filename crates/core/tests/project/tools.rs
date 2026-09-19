@@ -41,6 +41,10 @@ impl State for Dc {
 pub struct Constant(f32);
 
 impl Constant {
+    pub fn new(value: f32) -> Self {
+        Self(value)
+    }
+
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
 }
 
@@ -63,7 +67,7 @@ impl Processor for Constant {
 }
 
 fn apply_dc(state: &Dc, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
-    let constant = context.processor("constant", || Constant(0.0))?;
+    let constant = context.processor("constant", || Constant::new(0.0))?;
     context.update(constant, state.value)?;
     context.output("out", OutputEndpoint::new(constant, Constant::OUTPUT));
     Ok(())
@@ -93,6 +97,10 @@ impl State for Amplifier {
 pub struct Gain(f32);
 
 impl Gain {
+    pub fn new(gain: f32) -> Self {
+        Self(gain)
+    }
+
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
 }
@@ -125,7 +133,7 @@ fn apply_amplifier(
     state: &Amplifier,
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
-    let gain = context.processor("gain", || Gain(0.0))?;
+    let gain = context.processor("gain", || Gain::new(0.0))?;
     context.update(gain, state.gain)?;
     context.input("in", InputEndpoint::new(gain, Gain::INPUT));
     context.output("out", OutputEndpoint::new(gain, Gain::OUTPUT));
@@ -145,12 +153,14 @@ impl State for Bank {
 /// The name of the child a bank plays through.
 pub const BANK_OUTPUT: &str = "output";
 
+#[derive(Default)]
 pub struct BankUpdate {
     gain: f32,
     levels: Arc<Vec<f32>>,
 }
 
 /// Puts out the sum of one immutable snapshot of levels, times a gain.
+#[derive(Default)]
 pub struct Summer(BankUpdate);
 
 impl Summer {
@@ -185,11 +195,7 @@ fn apply_bank(state: &Bank, context: &mut BehaviourContext<'_>) -> Result<(), Be
         .children::<Level>()
         .map(|(_, level)| level.value)
         .collect();
-    let empty = || BankUpdate {
-        gain: 0.0,
-        levels: Arc::default(),
-    };
-    let summer = context.processor("summer", || Summer(empty()))?;
+    let summer = context.processor("summer", Summer::default)?;
     let update = BankUpdate {
         gain: state.gain,
         levels: Arc::new(levels),

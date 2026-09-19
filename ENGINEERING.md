@@ -145,8 +145,8 @@ Match what gpui 0.2.2 already pulls in (smol 2, async-task, log, parking_lot, sl
 | JSON | `serde` 1, `serde_json` 1 with `preserve_order` | Key order stays stable, so agent diffs of project files stay small. |
 | JSON errors | `serde_path_to_error` 0.1 | Reports `tracks[3].gain` instead of a line number. Agents fix their edits from this. |
 | JSON schema | `schemars` 1 | Optional. Publish schemas of record types for agents. |
-| File watching | `notify` 8.2 + `notify-debouncer-full` 0.7 | notify 9 was still a release candidate. |
-| Atomic writes | `atomic-write-file` 0.3 | Or `tempfile::persist`. Ignore watcher events from our own writes. |
+| File watching | `notify` 8.2 | notify 9 was still a release candidate. No `notify-debouncer-full`: the project reads changed paths again instead of trusting event kinds, and it groups events by a quiet window itself, so a burst is never split. See ARCHITECTURE.md "Project storage". |
+| Atomic writes | Our own | Temporary file, `sync_all`, rename: a dozen lines in `project/storage.rs`. Own writes are known by a fingerprint of the bytes, not by ignoring events. |
 | Project lock | `std::fs::File::lock` | Stops two runtimes opening one project. No dependency. |
 | IPC | JSON lines over the child's stdin/stdout | The runtime is the outer app's child process. Use `interprocess` 2 only if a reconnectable socket becomes necessary. Avoid `ipc-channel`. |
 | IDs | `slotmap` 1 | Already in gpui. |
@@ -280,7 +280,7 @@ One edit group or undo step triggers one compile, like Pd's `canvas_suspend_dsp`
 
 ### Parameters and events
 
-- **Base value edits** from UI or agent: a typed `Processor::Update` message applied at the next block start. The same message type carries data snapshots and "do this now" events from the UI, so the core has one control-to-processor path. The state application hook compares previous and next records and sends only changed parameters. Elementary's `createRef` fast path works the same way. The SDK provides smoothing helpers; the core does not smooth.
+- **Base value edits** from UI or agent: a typed `Processor::Update` message applied at the next block start. The same message type carries data snapshots and "do this now" events from the UI, so the core has one control-to-processor path. A tool's behaviour sends the current values on every state application, which costs no compile. Elementary's `createRef` fast path works the same way. The SDK provides smoothing helpers; the core does not smooth.
 - **Scheduled events** travel between processors through typed event ports and carry an explicit frame offset within the block. Any `Copy + Send + 'static` type is an event; the core moves it without knowing it. `Copy` rules out allocation and drops on the audio thread. Port handles carry the event type, and `connect` rejects two ports with different types. Each processor receives a time-sorted event list per block, the model CLAP and VST3 use. Not built: events scheduled from the control thread for a future frame. Timeline-driven processors make their own events on the audio thread (next heading), which covers the milestone. Pd gets sub-sample timing from one shared thread and an implicit logical clock; we have separate threads, so timestamps must be explicit.
 - Engine time is a `u64` frame counter. Project position is separate and only advances while playing. Musical time converts through the core tempo map. Integer frames avoid Pd's floating-point time unit tricks.
 - Event buffers per port are preallocated with fixed capacity (`EngineConfig::event_capacity`, per block). Overflow is counted in `EngineStatus::event_overflows`, never allocated.
@@ -342,14 +342,15 @@ Extensions never touch threads or queues. Through the SDK they:
 - map state changes to update messages or graph changes in their state application hook,
 - read immutable data snapshots delivered as update messages.
 
-The core owns everything in this section. The processor half of this surface is built and described in [crates/core/README.md](crates/core/README.md). Tool registration and the state application hook arrive with the live project folder.
+The core owns everything in this section. It is built and described in [crates/core/README.md](crates/core/README.md): processors, and tools with their state application hook, which the code calls a behaviour. The hook gets the next state only, not the previous one. It declares what the instance needs and the core sends the difference, so a behaviour sends its few parameters every time instead of comparing records. A tool with a large snapshot can compare inside its own behaviour if rebuilding ever shows up in a profile.
 
 ### Device output
 
-`OutputDevice::default_output()` opens the default device with its default configuration, f32 samples only. `start(engine)` moves the engine into the cpal callback. It refuses an engine built for another channel count or another sample rate than the device has. Device selection, audio input and sample formats other than f32 are not built yet. `cargo run -p runtime` plays a scenario of Tone edits and transport operations on the device, with a click on every beat that is scheduled from the transport info. It prints the playhead at every step and the counters, and fails when the playhead moved while the project did not play. `--render <wav>` renders the same scenario offline.
+`OutputDevice::default_output()` opens the default device with its default configuration, f32 samples only. `start(engine)` moves the engine into the cpal callback. It refuses an engine built for another channel count or another sample rate than the device has. Device selection, audio input and sample formats other than f32 are not built yet. `cargo run -p runtime -- <project-folder>` plays a project folder on the device and keeps it live. It prints every change it applies and, at the end, the counters. It reads `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status` and `quit` as lines on stdin. This is provisional and not the outer application protocol. `--inspect` prints a summary without a device and without the project lock. `--render <wav> --seconds <n>` renders offline. The earlier hard-coded scenario with its beat click is gone. `tests/transport.rs` covers what it checked.
 
 ## 4. Testing and CI
 
+- Project folder tests call `Project::apply_outside_changes` with explicit paths, the function the watcher calls, so they do not depend on timing. One test uses the real watcher, with long timeouts. The scale test (10,000 child records) is `#[ignore]`: `cargo nextest run -p sound-core --run-ignored only ten_thousand --no-capture`.
 - DSP, graph compile, clock and project state tests are plain `#[test]` with no GPUI. Offline rendering through `process_block` makes audio behaviour testable: render N frames, assert on samples or snapshot a summary with insta.
 - Use `#[gpui::test]` only for views and entities. In GPUI tests use `cx.background_executor().timer(..)`, never `smol::Timer::after`, or `run_until_parked()` fails.
 - Clippy's `allow-unwrap-in-tests` covers `#[test]` functions only. A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`.
