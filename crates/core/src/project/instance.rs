@@ -230,18 +230,15 @@ mod tests {
 
     #[test]
     fn ids_are_paths_of_valid_names() {
-        let track = InstanceId::new("arrangement/piano").unwrap();
-        assert_eq!(track.name(), "piano");
-        assert_eq!(
-            track.parent(),
-            Some(InstanceId::new("arrangement").unwrap())
-        );
-        assert_eq!(track.parent().unwrap().parent(), None);
-        let clip = track.child("verse-a").unwrap();
-        assert!(clip.is_inside(&track));
-        assert!(clip.is_inside(&track.parent().unwrap()));
-        assert!(!track.is_inside(&track));
-        assert_eq!(clip.depth(), 2);
+        let owner = InstanceId::new("band/piano").unwrap();
+        assert_eq!(owner.name(), "piano");
+        assert_eq!(owner.parent(), Some(InstanceId::new("band").unwrap()));
+        assert_eq!(owner.parent().unwrap().parent(), None);
+        let owned = owner.child("verse-a").unwrap();
+        assert!(owned.is_inside(&owner));
+        assert!(owned.is_inside(&owner.parent().unwrap()));
+        assert!(!owner.is_inside(&owner));
+        assert_eq!(owned.depth(), 2);
 
         for invalid in [
             "",

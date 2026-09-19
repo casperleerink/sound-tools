@@ -236,7 +236,7 @@ let state: Option<&ToneState> = project.state(&tone);       // None once it is d
 for (clip, state) in project.children::<ClipState>(track.id()) { /* ... */ }
 ```
 
-Every change is an edit: `begin`, any number of `publish`, then `finish` or `cancel`.
+Every change is an edit: `begin`, any number of `publish`, then `finish` or `cancel`. `begin` returns a `ProjectEdit`. It is a plain value that a view keeps for the length of a gesture.
 
 ```rust
 // A drag. Sound and views follow each publish. No file is written until the end.

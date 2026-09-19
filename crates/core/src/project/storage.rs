@@ -607,18 +607,18 @@ mod tests {
 
     #[test]
     fn layout_puts_long_containers_on_several_lines() {
-        let note =
+        let item =
             |start: u32| format!(r#"{{"start":{start},"length":480,"pitch":60,"velocity":100}}"#);
-        let notes: Vec<String> = [0, 480, 960].map(note).into();
+        let items: Vec<String> = [0, 480, 960].map(item).into();
         let compact = format!(
-            r#"{{"tool":"x","state":{{"name":"a, \"b\": {{c}} é","notes":[{}],"empty":[],"flag":true}}}}"#,
-            notes.join(",")
+            r#"{{"tool":"x","state":{{"name":"a, \"b\": {{c}} é","items":[{}],"empty":[],"flag":true}}}}"#,
+            items.join(",")
         );
         let expected = r#"{
   "tool": "x",
   "state": {
     "name": "a, \"b\": {c} é",
-    "notes": [
+    "items": [
       {"start": 0, "length": 480, "pitch": 60, "velocity": 100},
       {"start": 480, "length": 480, "pitch": 60, "velocity": 100},
       {"start": 960, "length": 480, "pitch": 60, "velocity": 100}
