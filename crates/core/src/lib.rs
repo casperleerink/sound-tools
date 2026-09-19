@@ -10,6 +10,7 @@ mod device;
 mod engine;
 mod graph;
 mod processor;
+mod transport;
 
 pub use clock::{
     BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, TICKS_PER_QUARTER, Tempo,
@@ -24,3 +25,4 @@ pub use processor::{
     EventOutput, EventOutputs, InputPort, MAX_BLOCK, OutputPort, Ports, PrepareConfig,
     ProcessContext, Processor, Timed,
 };
+pub use transport::Transport;

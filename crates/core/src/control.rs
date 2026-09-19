@@ -3,10 +3,13 @@
 
 use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
+use crate::clock::{Clock, TempoMap, Ticks};
 use crate::engine::{Batch, Command, Engine, EngineStatus};
 use crate::graph::{Connection, Graph, GraphError, NodeId};
 use crate::processor::{PrepareConfig, Processor};
+use crate::transport::TransportCommand;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct EngineConfig {
@@ -36,14 +39,18 @@ impl EngineConfig {
 impl Engine {
     /// Creates both halves of an engine. Keep the control on a normal thread. Give the engine
     /// to `OutputDevice::start`, or call `process_block` yourself to render offline.
+    ///
+    /// The transport starts stopped at zero with the default tempo map, 120 bpm in 4/4.
     pub fn new(config: EngineConfig) -> (EngineControl, Engine) {
         let (command_producer, command_consumer) = rtrb::RingBuffer::new(config.ring_capacity);
         let (return_producer, return_consumer) = rtrb::RingBuffer::new(config.ring_capacity);
         let (status_writer, status_reader) = triple_buffer::triple_buffer(&EngineStatus::default());
         let graph = Graph::with_slots(config.processor_slots);
+        let clock = Arc::new(Clock::new(TempoMap::default(), config.sample_rate));
         let engine = Engine::from_parts(
             config.channels,
             config.processor_slots,
+            clock.clone(),
             command_consumer,
             return_producer,
             status_writer,
@@ -51,6 +58,7 @@ impl Engine {
         let control = EngineControl {
             config,
             graph,
+            clock,
             next_node: 0,
             pending: VecDeque::new(),
             commands: command_producer,
@@ -90,6 +98,7 @@ impl<P> Copy for Node<P> {}
 pub struct EngineControl {
     config: EngineConfig,
     graph: Graph,
+    clock: Arc<Clock>,
     /// Lives outside the graph, which edits copy and may throw away. So an id handed out by a
     /// failed edit is never given to another processor.
     next_node: u64,
@@ -125,6 +134,44 @@ impl EngineControl {
         let mut edit = self.edit();
         edit.update(node, update)?;
         edit.commit()
+    }
+
+    /// Advances the project position from where it is, from the next block on.
+    pub fn play(&mut self) {
+        self.send(Command::Transport(TransportCommand::Play));
+    }
+
+    /// Holds the project position.
+    pub fn pause(&mut self) {
+        self.send(Command::Transport(TransportCommand::Pause));
+    }
+
+    /// Ends playback and returns the project position to zero. Processors see a jump.
+    pub fn stop(&mut self) {
+        self.send(Command::Transport(TransportCommand::Stop));
+    }
+
+    /// Moves the project position. Playback keeps running or stays stopped. Nothing between the
+    /// old and the new position is replayed. Processors see a jump.
+    pub fn seek(&mut self, position: Ticks) {
+        self.send(Command::Transport(TransportCommand::Seek(position)));
+    }
+
+    /// Replaces the tempo map. Playback keeps its musical position: the tick sequence goes on
+    /// without a gap or a repeat. The old clock comes back and is dropped in `poll`.
+    pub fn set_tempo_map(&mut self, tempo_map: TempoMap) {
+        self.clock = Arc::new(self.clock.with_tempo_map(tempo_map));
+        self.send(Command::SetClock(self.clock.clone()));
+    }
+
+    /// The clock of the tempo map set last. The audio thread switches to it at its next block.
+    pub fn clock(&self) -> &Arc<Clock> {
+        &self.clock
+    }
+
+    fn send(&mut self, command: Command) {
+        self.pending.push_back(vec![command]);
+        self.flush();
     }
 
     /// Call this regularly. It sends edits that were waiting for ring space, drops everything

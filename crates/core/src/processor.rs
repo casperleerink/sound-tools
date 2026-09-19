@@ -6,6 +6,8 @@ use std::any::{Any, TypeId};
 use std::cell::Cell;
 use std::marker::PhantomData;
 
+use crate::transport::Transport;
+
 /// Processors never see more frames than this in one `process` call.
 pub const MAX_BLOCK: usize = 64;
 
@@ -40,12 +42,14 @@ pub trait Processor: Send + 'static {
     fn process(&mut self, context: &mut ProcessContext<'_>);
 }
 
-/// One block of work for one processor. The engine builds it. Transport info will be added here.
+/// One block of work for one processor. The engine builds it.
 pub struct ProcessContext<'a> {
     /// Frames in this block, from 1 to [`MAX_BLOCK`].
     pub frames: usize,
     /// Engine time of the first frame of this block.
     pub start_frame: u64,
+    /// Whether the project plays and which part of the project timeline this block covers.
+    pub transport: Transport<'a>,
     pub audio_inputs: AudioInputs<'a>,
     pub audio_outputs: AudioOutputs<'a>,
     pub event_inputs: EventInputs<'a>,

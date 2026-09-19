@@ -5,13 +5,16 @@
 
 use std::any::Any;
 use std::cell::Cell;
+use std::sync::Arc;
 
 use rtsan_standalone::nonblocking;
 
+use crate::clock::{Clock, Frames, Ticks};
 use crate::graph::Schedule;
 use crate::processor::{
     AudioInputs, AudioOutputs, EventInputs, EventOutputs, MAX_BLOCK, ProcessContext, Processor,
 };
+use crate::transport::{TransportCommand, TransportState};
 
 /// A [`Processor`] without its `Update` type, so one table can hold every kind.
 pub(crate) trait ErasedProcessor: Send {
@@ -48,13 +51,17 @@ pub(crate) enum Command {
         update: Box<dyn Any + Send>,
     },
     SetSchedule(Box<Schedule>),
+    Transport(TransportCommand),
+    /// A new tempo map, compiled. The old clock comes back.
+    SetClock(Arc<Clock>),
 }
 
 /// All commands of one edit. They apply at the start of the same block.
 pub(crate) type Batch = Vec<Command>;
 
-/// Counters the audio thread publishes after every `process_block` call. They only grow, so
-/// reading the latest value never misses a report.
+/// What the audio thread publishes after every `process_block` call. The latest value wins.
+/// The counters only grow, so reading the latest value never misses a report. The transport
+/// fields are the state after the last block.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct EngineStatus {
     /// Calls to `process_block`. One per device callback.
@@ -70,12 +77,18 @@ pub struct EngineStatus {
     /// index or a wrong event type. Such reads are empty and such writes go nowhere, so
     /// anything above zero is a bug in that processor.
     pub port_misuses: u64,
+    pub playing: bool,
+    /// The project position in frames. Moves only while playing.
+    pub playhead_frame: Frames,
+    /// The project position in ticks: the first tick at or after `playhead_frame`.
+    pub playhead_tick: Ticks,
 }
 
 pub struct Engine {
     channels: usize,
     slots: Vec<Slot>,
     schedule: Box<Schedule>,
+    transport: TransportState,
     commands: rtrb::Consumer<Batch>,
     returns: rtrb::Producer<Batch>,
     status: EngineStatus,
@@ -86,6 +99,7 @@ impl Engine {
     pub(crate) fn from_parts(
         channels: usize,
         slot_count: usize,
+        clock: Arc<Clock>,
         commands: rtrb::Consumer<Batch>,
         returns: rtrb::Producer<Batch>,
         status_writer: triple_buffer::Input<EngineStatus>,
@@ -94,6 +108,7 @@ impl Engine {
             channels,
             slots: std::iter::repeat_with(|| None).take(slot_count).collect(),
             schedule: Box::default(),
+            transport: TransportState::new(clock),
             commands,
             returns,
             status: EngineStatus::default(),
@@ -161,6 +176,8 @@ impl Engine {
                     Command::SetSchedule(schedule) => {
                         std::mem::swap(schedule, &mut self.schedule);
                     }
+                    Command::Transport(command) => self.transport.apply(*command),
+                    Command::SetClock(clock) => self.transport.swap_clock(clock),
                 }
             }
             self.status.batches_applied += 1;
@@ -185,6 +202,7 @@ impl Engine {
             device_sources,
         } = &mut *self.schedule;
 
+        let transport = self.transport.block(frames);
         let port_misuses = Cell::new(0);
         for step in steps.iter() {
             for (input, sources) in audio_scratch.iter_mut().zip(&step.audio_sources) {
@@ -222,6 +240,7 @@ impl Engine {
                 processor.process(&mut ProcessContext {
                     frames,
                     start_frame: self.status.frames,
+                    transport: transport.clone(),
                     audio_inputs: AudioInputs {
                         buffers: audio_scratch
                             .get(..step.audio_sources.len())
@@ -261,5 +280,9 @@ impl Engine {
         }
         self.status.frames += frames as u64;
         self.status.port_misuses += port_misuses.get();
+        self.status.playing = transport.playing;
+        self.status.playhead_frame = transport.frame_range.end;
+        self.status.playhead_tick = transport.tick_range.end;
+        self.transport.finish_block(self.status.playhead_frame);
     }
 }
