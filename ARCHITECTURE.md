@@ -1,6 +1,6 @@
 # Technical architecture
 
-This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The full application remains unimplemented.
+This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The realtime engine from ENGINEERING.md section 3 is built in `crates/core`. The rest of the application remains unimplemented.
 
 ## Terms
 
@@ -306,7 +306,7 @@ Provide recommended patterns and the underlying operations for custom workflows.
 
 Immediate next work is the first milestone above, in this order:
 
-- The realtime engine with device output and the control-to-audio handoff, following ENGINEERING.md section 3. Offline rendering works in the prototype; realtime audio does not exist yet.
+- Done September 19, 2026: the realtime engine with device output and the control-to-audio handoff, following ENGINEERING.md section 3. Tone plays through it from `extensions/tone`. Feedback connections, audio input and device selection are not built yet.
 - The musical clock in the core timeline.
 - The live project folder with external record creation and deletion.
 - The arrangement and instrument extensions on top, with the project agent doc.
