@@ -147,9 +147,18 @@ impl Render for Select {
                 trigger("select-trigger", cx)
                     .w(px(width))
                     .justify_between()
-                    .child(div().truncate().min_w_0().flex_1().text_color(
-                        if is_placeholder { placeholder_color } else { text },
-                    ).child(label))
+                    .child(
+                        div()
+                            .truncate()
+                            .min_w_0()
+                            .flex_1()
+                            .text_color(if is_placeholder {
+                                placeholder_color
+                            } else {
+                                text
+                            })
+                            .child(label),
+                    )
                     .child(Icon::new("chevron-down").size(14.).color(muted))
                     .on_click(cx.listener(|this, _, window, cx| {
                         if this.open {
@@ -169,18 +178,20 @@ impl Render for Select {
                         .on_mouse_down_out(
                             cx.listener(|this, _: &MouseDownEvent, _, cx| this.close(cx)),
                         )
-                        .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
-                            this.on_key(ev, cx)
-                        }))
+                        .on_key_down(
+                            cx.listener(|this, ev: &KeyDownEvent, _, cx| this.on_key(ev, cx)),
+                        )
                         .child(
                             MenuList::new(vec![MenuEntry::Group(
                                 MenuGroup::new().items(self.items.clone()),
                             )])
                             .selected(self.selected.clone())
                             .highlighted(self.highlighted)
-                            .on_select(cx.processor(|this, value: SharedString, _, cx| {
-                                this.pick(value, cx)
-                            })),
+                            .on_select(
+                                cx.processor(|this, value: SharedString, _, cx| {
+                                    this.pick(value, cx)
+                                }),
+                            ),
                         ),
                 ))
             })

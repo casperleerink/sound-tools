@@ -4,7 +4,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, BoxShadow, ClickEvent, Context, Anchor, FocusHandle, FontWeight, IntoElement,
+    Anchor, App, BoxShadow, ClickEvent, Context, FocusHandle, FontWeight, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, Render, SharedString, Window, anchored, deferred,
     div, hsla, point, prelude::*, px,
 };

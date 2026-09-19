@@ -84,35 +84,39 @@ impl RenderOnce for SegmentedControl {
         let value = self.value.clone();
         let on_change = self.on_change.filter(|_| !disabled);
 
-        let items = self.options.into_iter().enumerate().map(|(ix, (val, label))| {
-            let selected = val == value;
-            let on_change = on_change.clone();
-            div()
-                .id(("segment", ix))
-                .flex()
-                .flex_none()
-                .items_center()
-                .h(px(28.))
-                .px(px(10.))
-                .rounded_full()
-                .text_size(px(14.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(text)
-                .when(selected, |d| {
-                    d.bg(selected_bg).border_1().border_color(border)
-                })
-                .when(!selected, |d| {
-                    d.border_1()
-                        .border_color(gpui::Hsla::transparent_black())
-                        .opacity(0.4)
-                        .hover(|s| s.bg(hover_bg).opacity(1.))
-                })
-                .when(!disabled, |d| d.cursor_pointer())
-                .when_some(on_change, |d, f| {
-                    d.on_click(move |_: &ClickEvent, window, cx| f(val.clone(), window, cx))
-                })
-                .child(label)
-        });
+        let items = self
+            .options
+            .into_iter()
+            .enumerate()
+            .map(|(ix, (val, label))| {
+                let selected = val == value;
+                let on_change = on_change.clone();
+                div()
+                    .id(("segment", ix))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .h(px(28.))
+                    .px(px(10.))
+                    .rounded_full()
+                    .text_size(px(14.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(text)
+                    .when(selected, |d| {
+                        d.bg(selected_bg).border_1().border_color(border)
+                    })
+                    .when(!selected, |d| {
+                        d.border_1()
+                            .border_color(gpui::Hsla::transparent_black())
+                            .opacity(0.4)
+                            .hover(|s| s.bg(hover_bg).opacity(1.))
+                    })
+                    .when(!disabled, |d| d.cursor_pointer())
+                    .when_some(on_change, |d, f| {
+                        d.on_click(move |_: &ClickEvent, window, cx| f(val.clone(), window, cx))
+                    })
+                    .child(label)
+            });
 
         self.base
             .id(self.id)

@@ -192,9 +192,19 @@ fn look(variant: BadgeVariant, cx: &App) -> Look {
             theme.alpha_at(0.10),
             theme.gray_50.opacity(0.10),
         ),
-        BadgeVariant::Subtle => (theme.alpha_at(0.05), theme.gray_950, clear, theme.alpha_at(0.05)),
+        BadgeVariant::Subtle => (
+            theme.alpha_at(0.05),
+            theme.gray_950,
+            clear,
+            theme.alpha_at(0.05),
+        ),
         BadgeVariant::Ghost => (clear, theme.gray_950, clear, theme.alpha_at(0.05)),
-        BadgeVariant::Outline => (clear, theme.gray_950, theme.alpha_at(0.10), theme.alpha_at(0.05)),
+        BadgeVariant::Outline => (
+            clear,
+            theme.gray_950,
+            theme.alpha_at(0.10),
+            theme.alpha_at(0.05),
+        ),
         BadgeVariant::Solid(accent) => (accent, theme.gray_50, clear, theme.gray_50.opacity(0.10)),
         BadgeVariant::SubtleColor(accent) => {
             (accent.opacity(0.10), accent, clear, accent.opacity(0.10))
@@ -252,7 +262,9 @@ impl RenderOnce for Badge {
             .text_color(fg)
             .text_size(px(size.text_size()))
             .font_weight(FontWeight::MEDIUM)
-            .when_some(self.icon, |b, name| b.child(Icon::new(name).size(size.icon_size())))
+            .when_some(self.icon, |b, name| {
+                b.child(Icon::new(name).size(size.icon_size()))
+            })
             .child(
                 div()
                     .px(px(size.label_pad_x()))

@@ -4,8 +4,8 @@
 use gpui::{
     Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, prelude::*, px,
 };
-use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem};
 use sound_ui::ActiveTheme;
+use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem};
 
 fn entries() -> Vec<MenuEntry> {
     vec![
@@ -13,12 +13,16 @@ fn entries() -> Vec<MenuEntry> {
             MenuGroup::new().item(MenuItem::new("add", "Add tool…").selectable(false)),
         ),
         MenuEntry::Separator,
-        MenuEntry::Group(MenuGroup::new().items([
-            MenuItem::new("undo", "Undo").shortcut("mod+z").selectable(false),
-            MenuItem::new("redo", "Redo")
-                .shortcut("shift+mod+z")
-                .selectable(false),
-        ])),
+        MenuEntry::Group(
+            MenuGroup::new().items([
+                MenuItem::new("undo", "Undo")
+                    .shortcut("mod+z")
+                    .selectable(false),
+                MenuItem::new("redo", "Redo")
+                    .shortcut("shift+mod+z")
+                    .selectable(false),
+            ]),
+        ),
         MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().label("Output device").items([
             MenuItem::new("speakers", "MacBook Pro Speakers"),

@@ -229,13 +229,27 @@ fn look(variant: ButtonVariant, cx: &App) -> Look {
             theme.alpha_at(0.05),
             theme.gray_950,
         ),
-        ButtonVariant::Ghost => (clear, theme.gray_950, clear, theme.alpha_at(0.05), theme.gray_950),
-        ButtonVariant::Solid(accent) => {
-            (accent, theme.gray_50, accent, accent.opacity(0.85), theme.gray_50)
-        }
-        ButtonVariant::SubtleColor(accent) => {
-            (accent.opacity(0.10), accent, clear, accent.opacity(0.20), accent)
-        }
+        ButtonVariant::Ghost => (
+            clear,
+            theme.gray_950,
+            clear,
+            theme.alpha_at(0.05),
+            theme.gray_950,
+        ),
+        ButtonVariant::Solid(accent) => (
+            accent,
+            theme.gray_50,
+            accent,
+            accent.opacity(0.85),
+            theme.gray_50,
+        ),
+        ButtonVariant::SubtleColor(accent) => (
+            accent.opacity(0.10),
+            accent,
+            clear,
+            accent.opacity(0.20),
+            accent,
+        ),
         ButtonVariant::OutlineColor(accent) => (clear, accent, accent, accent, theme.gray_50),
         ButtonVariant::GhostColor(accent) => (clear, accent, clear, accent, theme.gray_50),
     };

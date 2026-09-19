@@ -5,9 +5,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, BoxShadow, Context, Anchor, Div, FocusHandle, FontWeight, KeyDownEvent,
-    MouseDownEvent, Render, SharedString, Stateful, Window, anchored, deferred, div, hsla,
-    point, prelude::*, px,
+    Anchor, AnyElement, App, BoxShadow, Context, Div, FocusHandle, FontWeight, KeyDownEvent,
+    MouseDownEvent, Render, SharedString, Stateful, Window, anchored, deferred, div, hsla, point,
+    prelude::*, px,
 };
 
 use crate::theme::ActiveTheme;
@@ -193,9 +193,9 @@ impl Render for Popover {
                         .track_focus(&self.focus_handle)
                         .w(px(width))
                         .p(px(12.))
-                        .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                            this.close(cx)
-                        }))
+                        .on_mouse_down_out(
+                            cx.listener(|this, _: &MouseDownEvent, _, cx| this.close(cx)),
+                        )
                         .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
                             if ev.keystroke.key == "escape" {
                                 this.close(cx);
