@@ -1,6 +1,6 @@
 # Technical architecture
 
-This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The realtime engine from ENGINEERING.md section 3 is built in `crates/core`. The rest of the application remains unimplemented.
+This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The realtime engine from ENGINEERING.md section 3 is built in `crates/core`, with the musical clock and the transport. The rest of the application remains unimplemented.
 
 ## Terms
 
@@ -269,6 +269,13 @@ Project position is distinct from the engine's advancing sample count. Audio pro
 
 Decided September 19, 2026: engine time is an integer frame count. Musical time in the core clock is an integer tick count, 960 ticks per quarter note. Bundled extensions save positions and lengths in ticks, not floats or seconds. Conversion from ticks to frames rounds in one place in the core, so results are repeatable. Extensions with other ideas of time can save their own format and convert through the clock.
 
+Decided September 19, 2026, with the clock build. The details and reasons are in ENGINEERING.md section 3, "Musical clock".
+
+- A tick lands on the frame that contains its exact time. Tempo is 10 to 1000 bpm in steps of 0.001 bpm. Within these bounds and from 16000 Hz up, tick to frame to tick is exact.
+- The tempo map is a list of step changes at tick positions, with one time signature per project. It is the saved form in `project.json`: `{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}`. Invalid values fail to load with a reason.
+- Processors get, each block, the half-open range of ticks the block covers and the exact frame offset of any tick in it. Blocks cover the timeline without gaps or overlaps, so extensions never round time themselves.
+- A tempo map change during playback keeps the position in ticks. The position in frames and seconds changes with it.
+
 ### Transport operations
 
 | Operation | Core behaviour |
@@ -282,7 +289,9 @@ The core handles project position, invalidates scheduled events that no longer a
 
 Seeking does not replay every event between the previous position and the destination. The core notifies tools of the position change and provides the context needed to schedule from the destination. Extensions define the musical response; the core does not prescribe note or clip behaviour.
 
-Exact reconstruction of stateful audio at a seek destination is a separate capability, not a guarantee of seeking. Transport notification types and event invalidation mechanics remain to be designed.
+Exact reconstruction of stateful audio at a seek destination is a separate capability, not a guarantee of seeking.
+
+Decided September 19, 2026: the notification is one flag in the process context, set for the one block after a seek or a stop. The core holds no scheduled events. Timeline-driven processors make their events block by block from the transport info, so after a seek there is nothing to invalidate. Play and pause show as the playing state. The playhead and the playing state reach the control side through the engine status.
 
 ## Editing and system services
 
@@ -307,7 +316,7 @@ Provide recommended patterns and the underlying operations for custom workflows.
 Immediate next work is the first milestone above, in this order:
 
 - Done September 19, 2026: the realtime engine with device output and the control-to-audio handoff, following ENGINEERING.md section 3. Tone plays through it from `extensions/tone`. Feedback connections, audio input and device selection are not built yet.
-- The musical clock in the core timeline.
+- Done September 19, 2026: the musical clock and the transport in `crates/core`. Loop playback, tempo ramps and time signature changes are not built yet.
 - The live project folder with external record creation and deletion.
 - The arrangement and instrument extensions on top, with the project agent doc.
 
