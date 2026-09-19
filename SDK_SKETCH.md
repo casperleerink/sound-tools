@@ -57,7 +57,7 @@ State application runs outside the audio callback. For this fixed graph, it conv
 
 The audio callback processes prepared data without file I/O, GPUI work, allocation or locks. Queue representation and handling of rapid updates still need a prototype. The sketch does not promise sample-accurate UI edits; scheduled events use the engine's separate timing contract.
 
-A connection joins typed endpoint handles. The core checks direction and the declared signal contract, including channel layout and meaning, then connects their graph endpoints. Device output is a core endpoint. Connections are saved once in the project, not copied into Tone's state. For the first prototype, routing edits may stop playback and rebuild the graph. Frequency and gain edits must not.
+A connection joins typed endpoint handles. The core checks direction and the declared signal contract, including channel layout and meaning, then connects their graph endpoints. Device output is a core endpoint. Connections are saved once in the project, not copied into Tone's state. Routing edits send a new schedule while surviving processors keep their state, so they do not stop playback (see ENGINEERING.md section 3). Frequency and gain edits must not stop it either.
 
 If a parameter later supports modulation, the saved field remains its base value. A declared modulation input and an explicit combination rule produce the effective audio value. Neither the modulation signal nor the effective value overwrites the record. Tone does not need modulation to test the first lifecycle.
 
@@ -73,11 +73,11 @@ If a parameter later supports modulation, the saved field remains its base value
 | Edit extension code | The outer application builds while the current runtime remains usable. On success it stops playback, flushes finished state and restarts. Failure retains the old executable. |
 | Restore | Register types, load instance records and ownership, create behaviour from empty, resolve connections, then restore views. Phase and undo history reset; saved values and routing survive. Playback stays stopped. |
 | Close a view | Remove its workspace entry. The Tone instance and its sound remain. |
-| Delete | Remove the instance's graph contribution, connections and record/index entry through the project service. Views close or show that their target was deleted. Other instances survive. |
+| Delete | Remove the instance's graph contribution, connections and record folder through the project service. Views close or show that their target was deleted. Other instances survive. |
 
 ## Owned children and references
 
-To test composition later, a Two-tone tool can own two Tone instances and expose their selected ports. Ownership is core metadata linking child IDs to their parent. Child state stays in the child records. The parent never embeds another copy of their frequency and gain.
+To test composition later, a Two-tone tool can own two Tone instances and expose their selected ports. Ownership is the folder tree: a child's folder sits inside its parent's (see Project storage in ARCHITECTURE.md). Child state stays in the child records. The parent never embeds another copy of their frequency and gain.
 
 Creating a fresh composite creates its children once. Restoring it resolves those existing children; its state application hook must not create duplicates. Deleting it deletes its owned children and their connections. Ownership must have one parent per child and no cycles.
 
