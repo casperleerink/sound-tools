@@ -1,11 +1,8 @@
 [package]
-name = "sound-ui"
+name = "sound-core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [lints]
 workspace = true
-
-[dependencies]
-gpui.workspace = true

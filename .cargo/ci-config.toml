@@ -1,0 +1,4 @@
+# CI only. A warning must never fail a composer's build, so this is not in config.toml.
+# CI copies this file to ../.cargo/config.toml so it merges with config.toml for every cargo command.
+[target.'cfg(all())']
+rustflags = ["-D", "warnings"]

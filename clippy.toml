@@ -1,0 +1,6 @@
+allow-unwrap-in-tests = true
+disallowed-methods = [
+  { path = "std::process::Command::spawn", reason = "Blocks the current thread", replacement = "smol::process::Command::spawn" },
+  { path = "smol::Timer::after", reason = "Non-deterministic in GPUI tests", replacement = "gpui::BackgroundExecutor::timer" },
+  { path = "serde_json::from_reader", reason = "Much slower", replacement = "serde_json::from_slice" },
+]

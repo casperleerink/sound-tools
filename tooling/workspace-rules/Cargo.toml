@@ -1,5 +1,5 @@
 [package]
-name = "sound-ui"
+name = "workspace-rules"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -7,5 +7,6 @@ publish.workspace = true
 [lints]
 workspace = true
 
-[dependencies]
-gpui.workspace = true
+[dev-dependencies]
+anyhow.workspace = true
+cargo_metadata.workspace = true

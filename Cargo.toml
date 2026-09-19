@@ -1,18 +1,68 @@
 [workspace]
-members = ["crates/ui", "crates/gallery"]
+members = ["crates/core", "crates/ui", "crates/gallery", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
+publish = false
 
+# Every dependency, internal or external, is declared here once. Members write `foo.workspace = true`.
 [workspace.dependencies]
 # Zed stable v1.20.2. Keep the rev and rust-toolchain.toml in step with Zed's pin.
 gpui = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f", features = ["runtime_shaders", "font-kit"] }
 sound-ui = { path = "crates/ui" }
 anyhow = "1"
+cargo_metadata = "0.23"
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Deny a short list of real mistakes. Allow the style group so agents do not fight style lints.
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+redundant_clone = "deny"
+disallowed_methods = "deny"
+declare_interior_mutable_const = "deny"
+undocumented_unsafe_blocks = "deny"
+unwrap_used = "warn"
+style = { level = "allow", priority = -1 }
+type_complexity = "allow"
+too_many_arguments = "allow"
 
 [profile.dev]
 debug = 0
+incremental = true
+codegen-units = 16
+
+# Build scripts and proc macros use the same settings, so shared crates compile once.
+[profile.dev.build-override]
+debug = 0
+codegen-units = 16
+
+# Fast proc macros make derive-heavy extension builds faster. Fast layout and SVG keep debug UI usable.
+# Every crate with DSP code also gets opt-level 3: unoptimized audio glitches and hides real problems.
+[profile.dev.package]
+syn = { opt-level = 3 }
+quote = { opt-level = 3 }
+proc-macro2 = { opt-level = 3 }
+serde_derive = { opt-level = 3 }
+gpui_macros = { opt-level = 3 }
+taffy = { opt-level = 3 }
+resvg = { opt-level = 3 }
+
+[profile.dbg]
+inherits = "dev"
+debug = "full"
+
+[profile.release]
+debug = "limited"
+lto = "thin"
+codegen-units = 1
+
+# For profiling audio without thin-LTO link times.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = "full"

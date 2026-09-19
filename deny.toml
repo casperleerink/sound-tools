@@ -1,0 +1,41 @@
+[graph]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+
+[advisories]
+# Unmaintained crates that gpui pulls in. Re-check when the gpui pin moves.
+ignore = [
+  { id = "RUSTSEC-2024-0436", reason = "paste, through gpui" },
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser, through gpui" },
+  { id = "RUSTSEC-2026-0206", reason = "rustybuzz, through gpui" },
+]
+
+[licenses]
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "bzip2-1.0.6",
+  # File-level copyleft. Fine as an unmodified dependency.
+  "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+# Our own crates are not published and have no licence field yet.
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+  "https://github.com/zed-industries/zed",
+  "https://github.com/zed-industries/font-kit",
+  "https://github.com/proptest-rs/proptest",
+]

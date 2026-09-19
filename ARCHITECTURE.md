@@ -123,7 +123,7 @@ The v0 workspace is a small DAW. Its parts are bundled extensions that ship with
 
 Build the core and these extensions together. Each extension should be small and finished before starting the next. Order: arrangement and instrument first, since they prove the note contract, the musical clock and live agent edits. Plugin host last, since it depends on the note and audio contracts being stable.
 
-The arrangement saves a folder per track and a file per clip. A track record holds its name, colour and order. A clip record holds its own start, length and notes, one note per line, so adding a part is one new file and moving a clip to another track is moving a file. A track owns its instrument as a child instance and goes to the main output by default, so adding a track is one new folder and no `project.json` edit. The headless inspect command prints a project summary, so agents do not need to open every clip to answer what plays in a bar range.
+The arrangement saves a folder per track and a file per clip. A track record holds its name, colour and order. A clip record holds its own start, length and notes, one note per line, so adding a part is one new file and moving a clip to another track is moving a file. A note line holds its start and length in ticks, a MIDI note number and a velocity from 1 to 127, for example `{"start":0,"length":480,"pitch":60,"velocity":100}`. A track owns its instrument as a child instance and goes to the main output by default, so adding a track is one new folder and no `project.json` edit. The headless inspect command prints a project summary, so agents do not need to open every clip to answer what plays in a bar range.
 
 The arrangement extension's saved format becomes the de facto note and clip contract other extensions read. It lives in a bundled contract crate, not in the core. The core stays independent of notes, tracks and clips.
 
@@ -142,6 +142,13 @@ In scope:
 - A project agent doc that explains the folder layout and record formats, written together with the arrangement extension.
 
 One process: the project runtime alone. The agent is an external coding agent such as Codex or Claude Code, run in the project folder. This already matches the rule that agents edit files and the runtime applies them live.
+
+Decided September 19, 2026, for this milestone:
+
+- Mouse editing covers adding, moving, resizing and deleting clips and notes, with a fixed 1/16 snap and scroll to zoom. Copy and paste, multi-select, a velocity lane and adjustable snap come later.
+- Tempo changes are steps. Tempo ramps come later.
+- The runtime starts with a project folder path and creates the default project when the folder is empty.
+- Build in steps, one pull request each: workspace setup, realtime engine, clock and transport, live project folder, note contract and synth, arrangement with the agent doc, application window and views, then the milestone check.
 
 Out of scope until later milestones: the outer application, agent sidebar, provider sign-in, in-app build and reload, project-local extension copies, mixer, sampler, effects, MIDI input, plugin host, recording and automation.
 
