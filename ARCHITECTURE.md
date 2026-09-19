@@ -260,7 +260,7 @@ Open:
 - Audio graph execution, scheduling and transport notification APIs.
 - Agent integration, the outer application/runtime protocol and window/workspace composition.
 
-Reference code: `/Users/casperleerink/hooman/reference-repos/pi-mono` for extension registration and agent access to docs, and `/Users/casperleerink/hooman/reference-repos/pure-data` for processor composition and scheduling. Neither dictates the product's UI or musical model.
+Reference code: `/Users/casperleerink/hooman/reference-repos/pi-mono` for extension registration and agent access to docs, and `/Users/casperleerink/hooman/reference-repos/pure-data` for processor composition and scheduling. Neither dictates the product's UI or musical model. [ENGINEERING.md](ENGINEERING.md) records tooling, dependency and audio engine recommendations drawn from Zed, Pure Data and Elementary.
 
 ## Verification
 
