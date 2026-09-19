@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+
+      # Warnings fail CI only. The parent folder config merges with .cargo/config.toml for every cargo command.
+      - name: Deny warnings
+        run: mkdir -p ../.cargo && cp .cargo/ci-config.toml ../.cargo/config.toml
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> /private/tmp/sound-tools-timing/target"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-shear,cargo-deny,typos
+
+      - run: cargo fmt --all --check
+      - run: typos
+      - run: cargo clippy --workspace --all-targets --locked
+      - run: cargo nextest run --workspace --locked
+      - name: Render gallery snapshots
+        run: cargo test -p gallery --test snapshots --locked
+      - run: cargo build --workspace --locked
+      - run: cargo shear
+      - run: cargo deny check

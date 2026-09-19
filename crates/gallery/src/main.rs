@@ -29,7 +29,7 @@ fn main() {
                 },
                 |_, cx| cx.new(|_| Gallery::new(only)),
             )
-            .unwrap();
+            .expect("failed to open the gallery window");
             cx.activate(true);
         });
 }

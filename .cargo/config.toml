@@ -1,2 +1,6 @@
 [build]
 target-dir = "/private/tmp/sound-tools-timing/target"
+
+# Readable closure names in backtraces. Never vary rustflags between builds: any change rebuilds everything.
+[target.'cfg(all())']
+rustflags = ["-C", "symbol-mangling-version=v0"]

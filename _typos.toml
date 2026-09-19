@@ -1,0 +1,5 @@
+[files]
+extend-exclude = ["experiments/*/results", "*.svg", "Cargo.lock"]
+
+[default.extend-identifiers]
+PNGs = "PNGs"
