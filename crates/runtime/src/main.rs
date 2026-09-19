@@ -1,294 +1,256 @@
-//! The project runtime. For now a headless check of the realtime engine and the transport: it
-//! plays a fixed scenario of Tone edits and transport operations on the default output device,
-//! or renders the same scenario to a WAV file. A click on every beat makes the transport
-//! audible: it sounds only while the project plays.
+//! The project runtime, headless for now. It opens a project folder, keeps it live and plays
+//! it on the default output device until it is told to quit.
 //!
-//! `runtime` plays. `runtime --render <wav>` renders offline.
+//! ```text
+//! runtime <project-folder>                                 run live
+//! runtime <project-folder> --inspect                       print a summary, open no device
+//! runtime <project-folder> --render <wav> --seconds <n>    render offline
+//! ```
+//!
+//! While it runs it reads one command per line from stdin: `play`, `pause`, `stop`,
+//! `seek <ticks>`, `undo`, `redo`, `status`, `quit`. The end of stdin also quits. This is
+//! provisional. It is not the protocol of the outer application.
 
+use std::io::BufRead;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use sound_core::{
-    AudioOutput, BarBeat, Connection, Engine, EngineConfig, EngineControl, EngineStatus, Node,
-    OutputDevice, Ports, PrepareConfig, ProcessContext, Processor, Tempo, TempoMap, Ticks,
-    TimeSignature,
+    Changes, Engine, EngineConfig, EngineStatus, InstanceId, OutputDevice, PortReference, Project,
+    ProjectEvent, Registry, SavedConnection, SavedDestination, Ticks,
 };
-use tone::{Tone, ToneParameters};
+use tone::ToneState;
 
-#[derive(Copy, Clone, Debug)]
-enum Step {
-    AddFirstTone,
-    Play,
-    ChangeFrequency,
-    ChangeGain,
-    AddSecondTone,
-    Pause,
-    RemoveSecondTone,
-    Resume,
-    FasterTempo,
-    SeekToBarTwo,
-    Stop,
-    End,
-}
-
-/// Seconds from the start, and what happens then.
-const SCENARIO: [(f64, Step); 12] = [
-    (0.0, Step::AddFirstTone),
-    (0.5, Step::Play),
-    (1.0, Step::ChangeFrequency),
-    (1.5, Step::ChangeGain),
-    (2.0, Step::AddSecondTone),
-    (2.5, Step::Pause),
-    (3.0, Step::RemoveSecondTone),
-    (3.25, Step::Resume),
-    (3.75, Step::FasterTempo),
-    (4.25, Step::SeekToBarTwo),
-    (4.75, Step::Stop),
-    (5.25, Step::End),
-];
-
-const FIRST: ToneParameters = ToneParameters {
-    frequency_hz: 220.0,
-    gain: 0.2,
-};
-const RAISED_HZ: f32 = 277.18;
-const SECOND: ToneParameters = ToneParameters {
-    frequency_hz: 330.0,
-    gain: 0.1,
+/// Offline renders have no device to ask.
+const OFFLINE: EngineConfig = EngineConfig {
+    sample_rate: 48_000,
+    channels: 2,
+    ring_capacity: 64,
+    event_capacity: 256,
+    processor_slots: 256,
 };
 
-const FASTER_BPM: f64 = 180.0;
-
-/// A short click on every beat of the project, louder on the first beat of a bar. It is
-/// scheduled from the transport info alone, so it is silent while the project does not play.
-struct Click {
-    sample_rate: f32,
-    /// Frames since the sounding click started.
-    age: Option<u32>,
-    gain: f32,
-    clicks: Arc<AtomicU64>,
+/// Every bundled extension registers here.
+fn registry() -> Result<Registry> {
+    let mut registry = Registry::new();
+    tone::register(&mut registry)?;
+    Ok(registry)
 }
 
-impl Click {
-    const OUTPUT: AudioOutput = AudioOutput::new(0);
-    const SECONDS: f32 = 0.04;
-}
-
-impl Processor for Click {
-    type Update = ();
-
-    fn ports(&self) -> Ports {
-        Ports::new().audio_output(Self::OUTPUT)
-    }
-
-    fn prepare(&mut self, config: &PrepareConfig) {
-        self.sample_rate = config.sample_rate as f32;
-    }
-
-    fn update(&mut self, _: &mut ()) {}
-
-    fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let transport = &context.transport;
-        let time_signature = transport.clock.tempo_map().time_signature();
-        let beat = time_signature.ticks_per_beat();
-        let mut next_beat = transport.tick_range.start.0.next_multiple_of(beat);
-        for (offset, sample) in context
-            .audio_outputs
-            .get(Self::OUTPUT)
-            .iter_mut()
-            .enumerate()
-        {
-            if transport.offset_of(Ticks(next_beat)) == Some(offset) {
-                let first_of_bar = next_beat.is_multiple_of(time_signature.ticks_per_bar());
-                self.gain = if first_of_bar { 0.5 } else { 0.25 };
-                self.age = Some(0);
-                self.clicks.fetch_add(1, Ordering::Relaxed);
-                next_beat += beat;
-            }
-            if let Some(age) = self.age {
-                let seconds = age as f32 / self.sample_rate;
-                let decay = (-seconds * 150.0).exp();
-                *sample = self.gain * decay * (std::f32::consts::TAU * 1500.0 * seconds).sin();
-                self.age = (seconds < Self::SECONDS).then_some(age + 1);
-            }
-        }
-    }
-}
-
-/// The processors of the scenario, and the checks on what the engine reports between steps.
-#[derive(Default)]
-struct Scenario {
-    first: Option<Node<Tone>>,
-    second: Option<Node<Tone>>,
-    clicks: Arc<AtomicU64>,
-    /// The status of the previous poll.
-    previous: Option<EngineStatus>,
-    playhead_checks: u64,
-    playhead_failures: u64,
-}
-
-impl Scenario {
-    /// Between two polls with no edit applied in between, so with no transport operation, the
-    /// playhead must move exactly as far as engine time while playing, and not at all otherwise.
-    fn observe(&mut self, status: EngineStatus) {
-        if let Some(previous) = self.previous
-            && previous.batches_applied == status.batches_applied
-        {
-            let engine_frames = status.frames - previous.frames;
-            let expected = if status.playing { engine_frames } else { 0 };
-            let moved = status
-                .playhead_frame
-                .0
-                .checked_sub(previous.playhead_frame.0);
-            self.playhead_checks += 1;
-            self.playhead_failures += u64::from(moved != Some(expected));
-        }
-        self.previous = Some(status);
-    }
-
-    fn check(&self, control: &EngineControl) -> Result<()> {
-        if control.pending_edits() > 0 || self.playhead_failures > 0 {
-            bail!("the run had problems, see the report above");
-        }
-        Ok(())
-    }
-
-    fn apply(&mut self, step: Step, control: &mut EngineControl) -> Result<()> {
-        match step {
-            Step::AddFirstTone => {
-                self.first = Some(add_tone(control, "first", FIRST)?);
-                add_click(control, self.clicks.clone())?;
-            }
-            Step::Play | Step::Resume => control.play(),
-            Step::Pause => control.pause(),
-            Step::Stop => control.stop(),
-            Step::FasterTempo => control.set_tempo_map(TempoMap::constant(
-                TimeSignature::default(),
-                Tempo::from_bpm(FASTER_BPM)?,
-            )),
-            Step::SeekToBarTwo => {
-                let time_signature = control.clock().tempo_map().time_signature();
-                control.seek(time_signature.ticks_of(BarBeat {
-                    bar: 2,
-                    beat: 1,
-                    tick: 0,
-                })?);
-            }
-            Step::ChangeFrequency => {
-                let first = self.first.context("the first tone is missing")?;
-                control.update(
-                    first,
-                    ToneParameters {
-                        frequency_hz: RAISED_HZ,
-                        ..FIRST
-                    },
-                )?;
-            }
-            Step::ChangeGain => {
-                let first = self.first.context("the first tone is missing")?;
-                let parameters = ToneParameters {
-                    frequency_hz: RAISED_HZ,
-                    gain: 0.1,
-                };
-                control.update(first, parameters)?;
-            }
-            Step::AddSecondTone => self.second = Some(add_tone(control, "second", SECOND)?),
-            Step::RemoveSecondTone => {
-                let second = self.second.take().context("the second tone is missing")?;
-                let mut edit = control.edit();
-                edit.remove_processor(second.id())?;
-                edit.commit()?;
-            }
-            Step::End => {}
-        }
-        Ok(())
-    }
-}
-
-fn add_click(control: &mut EngineControl, clicks: Arc<AtomicU64>) -> Result<()> {
-    let channels = control.config().channels;
-    let mut edit = control.edit();
-    let click = Click {
-        sample_rate: 0.0,
-        age: None,
-        gain: 0.0,
-        clicks,
+/// The default project, for now: two Tones, one of them connected to the first two device
+/// channels.
+fn create_default_project(project: &mut Project) -> Result<()> {
+    let mut changes = Changes::new();
+    let connected = changes.create(InstanceId::new("tone-a")?, ToneState::default());
+    let silent = ToneState {
+        frequency_hz: 330.0,
+        gain: 0.1,
     };
-    let node = edit.add_processor("click", click)?;
-    for channel in 0..channels {
-        edit.connect(Connection::to_device(node.id(), Click::OUTPUT, channel))?;
+    changes.create(InstanceId::new("tone-b")?, silent);
+    for channel in 0..2 {
+        let output = PortReference::new(connected.id(), tone::AUDIO_OUTPUT);
+        changes.connect(SavedConnection::to_device(output, channel));
     }
-    edit.commit()?;
+    project.commit("Create default project", changes)?;
     Ok(())
 }
 
-/// Prints where the playhead is when a step is about to happen.
-fn print_step(seconds: f64, step: Step, status: &EngineStatus, control: &EngineControl) {
-    let time_signature = control.clock().tempo_map().time_signature();
+fn is_empty(folder: &Path) -> bool {
+    match std::fs::read_dir(folder) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(_) => true,
+    }
+}
+
+fn print_summary(project: &Project) {
+    println!("project: {}", project.root().display());
+    let project_file = project.project_file();
+    println!("extensions: {}", project_file.extensions.join(", "));
+    let tempo_map = &project_file.tempo_map;
+    println!("time signature: {}", tempo_map.time_signature());
+    for change in tempo_map.tempo_changes() {
+        println!(
+            "tempo: {} bpm from tick {}",
+            change.bpm.bpm(),
+            change.tick.0
+        );
+    }
+    println!("instances: {}", project.instances().count());
+    for (id, tool) in project.instances() {
+        let indent = "  ".repeat(id.as_str().matches('/').count() + 1);
+        let state = project.state_json(id).unwrap_or_default();
+        println!("{indent}{}  [{tool}]  {state}", id.name());
+    }
+    println!("connections: {}", project_file.connections.len());
+    for connection in &project_file.connections {
+        let from = &connection.from;
+        let to = match &connection.to {
+            SavedDestination::DeviceOutput(channel) => format!("device output {channel}"),
+            SavedDestination::Input(input) => format!("{}:{}", input.instance, input.port),
+        };
+        println!("  {}:{} -> {to}", from.instance, from.port);
+    }
+    print_problems(project);
+}
+
+fn print_problems(project: &Project) {
+    let problems = project.problems();
+    println!("problems: {}", problems.len());
+    for problem in problems {
+        println!("  {}: {}", problem.path, problem.message);
+    }
+}
+
+/// Prints what changed, so that a person or an agent sees each live change arrive.
+fn print_events(project: &mut Project) {
+    let events = project.drain_events();
+    let mut problems_changed = false;
+    for event in &events {
+        match event {
+            ProjectEvent::Created(id) | ProjectEvent::Changed(id) => {
+                let verb = if matches!(event, ProjectEvent::Created(_)) {
+                    "created"
+                } else {
+                    "changed"
+                };
+                let state = project.state_json(id).unwrap_or_default();
+                println!("{verb} {id}  {state}");
+            }
+            ProjectEvent::Deleted(id) => println!("deleted {id}"),
+            ProjectEvent::ProjectFileChanged => {
+                let project_file = project.project_file();
+                let tempo = project_file.tempo_map.tempo_changes().first();
+                println!(
+                    "project.json changed: {} connections, {} bpm at the start",
+                    project_file.connections.len(),
+                    tempo.map_or(0.0, |change| change.bpm.bpm()),
+                );
+            }
+            ProjectEvent::ProblemsChanged => problems_changed = true,
+        }
+    }
+    if problems_changed {
+        print_problems(project);
+    }
+}
+
+fn print_status(project: &mut Project, status: &EngineStatus) {
+    let time_signature = project.engine().clock().tempo_map().time_signature();
     println!(
-        "{seconds:>5.2} s  {:<17} playhead {:>8} (tick {:>5}, frame {:>6}), {}",
-        format!("{step:?}"),
-        time_signature.bar_beat_of(status.playhead_tick).to_string(),
+        "status: {}, playhead {} (tick {}), {} edits applied, undo: {}, redo: {}",
+        if status.playing { "playing" } else { "stopped" },
+        time_signature.bar_beat_of(status.playhead_tick),
         status.playhead_tick.0,
-        status.playhead_frame.0,
-        if status.playing {
-            "playing"
-        } else {
-            "not playing"
-        },
+        status.batches_applied,
+        project.undo_label().unwrap_or("nothing"),
+        project.redo_label().unwrap_or("nothing"),
     );
 }
 
-/// One edit: the new Tone and its connections to every device channel land in the same block.
-fn add_tone(
-    control: &mut EngineControl,
-    name: &str,
-    parameters: ToneParameters,
-) -> Result<Node<Tone>> {
-    let channels = control.config().channels;
-    let mut edit = control.edit();
-    let node = edit.add_processor(name, Tone::new(parameters))?;
-    for channel in 0..channels {
-        edit.connect(Connection::to_device(node.id(), Tone::OUTPUT, channel))?;
-    }
-    edit.commit()?;
-    Ok(node)
+enum Flow {
+    Continue,
+    Quit,
 }
 
-fn play() -> Result<()> {
+fn run_command(line: &str, project: &mut Project, status: &EngineStatus) -> Result<Flow> {
+    let mut words = line.split_whitespace();
+    match (words.next(), words.next()) {
+        (Some("play"), None) => project.engine().play(),
+        (Some("pause"), None) => project.engine().pause(),
+        (Some("stop"), None) => project.engine().stop(),
+        (Some("seek"), Some(ticks)) => {
+            let ticks = ticks.parse().context("seek takes a position in ticks")?;
+            project.engine().seek(Ticks(ticks));
+        }
+        (Some("undo"), None) => match project.undo()? {
+            Some(label) => println!("undid: {label}"),
+            None => println!("nothing to undo"),
+        },
+        (Some("redo"), None) => match project.redo()? {
+            Some(label) => println!("redid: {label}"),
+            None => println!("nothing to redo"),
+        },
+        (Some("status"), None) => print_status(project, status),
+        (Some("quit"), None) => return Ok(Flow::Quit),
+        (None, _) => {}
+        _ => println!(
+            "unknown command {line:?}: play, pause, stop, seek <ticks>, undo, redo, status, quit"
+        ),
+    }
+    Ok(Flow::Continue)
+}
+
+/// Lines from stdin arrive through a channel, so the control loop never blocks on input.
+fn stdin_lines() -> Receiver<String> {
+    let (sender, lines) = channel();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+            if sender.send(line).is_err() {
+                return;
+            }
+        }
+    });
+    lines
+}
+
+fn run(folder: &Path) -> Result<()> {
     let device = OutputDevice::default_output()?;
     let config = EngineConfig::new(device.sample_rate(), device.channels());
     println!(
         "device: {} Hz, {} channels",
         config.sample_rate, config.channels
     );
-    let (mut control, engine) = Engine::new(config);
-    let stream = device.start(engine)?;
-
-    let mut scenario = Scenario::default();
-    let started = Instant::now();
-    for (seconds, step) in SCENARIO {
-        while started.elapsed() < Duration::from_secs_f64(seconds) {
-            scenario.observe(control.poll()?);
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        print_step(seconds, step, &control.poll()?, &control);
-        scenario.apply(step, &mut control)?;
+    let (control, engine) = Engine::new(config);
+    let create_default = is_empty(folder);
+    let mut project = Project::open(folder, registry()?, control)?;
+    if create_default {
+        create_default_project(&mut project)?;
+        println!("created the default project");
     }
-    // Let the last batches come back before the final numbers are read.
-    std::thread::sleep(Duration::from_millis(100));
-    let status = control.poll()?;
+    project.drain_events();
+    print_summary(&project);
+    project.watch()?;
+    let stream = device.start(engine)?;
+    println!("ready");
+
+    let lines = stdin_lines();
+    let status = loop {
+        let status = project.engine().poll()?;
+        // One bad file or one failed write must not end the session. It is reported instead.
+        if let Err(error) = project.poll() {
+            println!("error: {error}");
+        }
+        print_events(&mut project);
+        match lines.try_recv() {
+            Ok(line) => match run_command(&line, &mut project, &status) {
+                Ok(Flow::Continue) => print_events(&mut project),
+                Ok(Flow::Quit) => break status,
+                Err(error) => println!("error: {error}"),
+            },
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => break status,
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+
+    print_status(&mut project, &status);
     let device_status = stream.status();
     let errors = stream.take_errors();
     drop(stream);
-
-    report(&status, &control, &scenario);
+    println!("callbacks: {}", status.blocks);
     println!("xruns: {}", device_status.xruns);
     println!("late callbacks: {}", device_status.late_callbacks);
     println!("slowest callback: {:?}", device_status.slowest_callback);
+    println!("edits still waiting: {}", project.engine().pending_edits());
+    println!(
+        "command ring full: {}",
+        project.engine().command_ring_full()
+    );
+    println!("return ring full: {}", status.return_ring_full);
+    println!("event overflows: {}", status.event_overflows);
+    println!("port misuses: {}", status.port_misuses);
     println!("stream errors: {}", errors.len());
     for error in &errors {
         println!("  {error}");
@@ -296,67 +258,60 @@ fn play() -> Result<()> {
     if device_status.xruns > 0 || !errors.is_empty() {
         bail!("playback had problems, see the report above");
     }
-    scenario.check(&control)
+    Ok(())
 }
 
-fn render(path: &Path) -> Result<()> {
-    let config = EngineConfig::new(48_000, 2);
-    let (mut control, mut engine) = Engine::new(config);
+/// Reads the project without its lock, so it works next to a running runtime.
+fn inspect(folder: &Path) -> Result<()> {
+    let (control, _engine) = Engine::new(OFFLINE);
+    let project = Project::open_read_only(folder, registry()?, control)?;
+    print_summary(&project);
+    Ok(())
+}
+
+fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
+    let (control, mut engine) = Engine::new(OFFLINE);
+    let mut project = Project::open_read_only(folder, registry()?, control)?;
+    print_problems(&project);
+    project.engine().play();
     let mut writer = hound::WavWriter::create(
-        path,
+        wav,
         hound::WavSpec {
-            channels: 2,
-            sample_rate: config.sample_rate,
+            channels: OFFLINE.channels as u16,
+            sample_rate: OFFLINE.sample_rate,
             bits_per_sample: 32,
             sample_format: hound::SampleFormat::Float,
         },
     )?;
-
-    // Not a multiple of the engine block size, so short sub-blocks are part of the render.
-    let mut buffer = [0.0_f32; 480 * 2];
-    let mut scenario = Scenario::default();
-    let mut rendered_frames = 0;
-    for (seconds, step) in SCENARIO {
-        let step_frame = (seconds * f64::from(config.sample_rate)) as usize;
-        while rendered_frames < step_frame {
-            let frames = (step_frame - rendered_frames).min(buffer.len() / config.channels);
-            let output = &mut buffer[..frames * config.channels];
-            engine.process_block(output);
-            for sample in output.iter() {
-                writer.write_sample(*sample)?;
-            }
-            rendered_frames += frames;
-            scenario.observe(control.poll()?);
+    let mut buffer = [0.0_f32; 512 * OFFLINE.channels];
+    let mut frames_left = (seconds * f64::from(OFFLINE.sample_rate)) as usize;
+    let mut peak = 0.0_f32;
+    while frames_left > 0 {
+        let frames = frames_left.min(buffer.len() / OFFLINE.channels);
+        let output = &mut buffer[..frames * OFFLINE.channels];
+        engine.process_block(output);
+        for sample in output.iter() {
+            peak = peak.max(sample.abs());
+            writer.write_sample(*sample)?;
         }
-        print_step(seconds, step, &control.poll()?, &control);
-        scenario.apply(step, &mut control)?;
+        frames_left -= frames;
+        project.engine().poll()?;
     }
     writer.finalize()?;
-    report(&control.poll()?, &control, &scenario);
-    scenario.check(&control)
-}
-
-fn report(status: &EngineStatus, control: &EngineControl, scenario: &Scenario) {
-    println!("callbacks: {}", status.blocks);
-    println!("frames processed: {}", status.frames);
-    println!("edits applied: {}", status.batches_applied);
-    println!("edits still waiting: {}", control.pending_edits());
-    println!("event overflows: {}", status.event_overflows);
-    println!("command ring full: {}", control.command_ring_full());
-    println!("return ring full: {}", status.return_ring_full);
-    println!("port misuses: {}", status.port_misuses);
-    println!("clicks: {}", scenario.clicks.load(Ordering::Relaxed));
-    println!(
-        "playhead checks: {} polls, {} where it did not move with the playing state",
-        scenario.playhead_checks, scenario.playhead_failures
-    );
+    println!("rendered {seconds} s to {}, peak {peak:.4}", wav.display());
+    Ok(())
 }
 
 fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match arguments.as_slice() {
-        [] => play(),
-        [flag, path] if flag == "--render" => render(Path::new(path)),
-        _ => bail!("usage: runtime [--render <wav>]"),
+        [folder] => run(Path::new(folder)),
+        [folder, "--inspect"] => inspect(Path::new(folder)),
+        [folder, "--render", wav, "--seconds", seconds] => {
+            let seconds = seconds.parse().context("--seconds takes a number")?;
+            render(Path::new(folder), Path::new(wav), seconds)
+        }
+        _ => bail!("usage: runtime <project-folder> [--inspect | --render <wav> --seconds <n>]"),
     }
 }

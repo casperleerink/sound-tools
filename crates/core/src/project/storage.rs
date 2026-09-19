@@ -498,9 +498,12 @@ impl Storage {
     }
 }
 
-/// Lays out compact JSON for people and agents: a list or object that holds only plain values
-/// stays on one line, everything else gets one line per item. So a record with 200 small
-/// items is about 200 lines, and a change to one item is a one line diff.
+/// A list or object longer than this goes on several lines.
+const LINE_WIDTH: usize = 100;
+
+/// Lays out compact JSON for people and agents. A list or object that fits in [`LINE_WIDTH`]
+/// stays on one line, a longer one gets one line per item, and the top level always does. So
+/// a record with 200 small items has about 200 lines, and changing one item is a one line diff.
 pub(crate) fn layout(compact: &str) -> String {
     let mut output = Vec::with_capacity(compact.len() * 2);
     let mut parser = Layout {
@@ -508,7 +511,7 @@ pub(crate) fn layout(compact: &str) -> String {
         position: 0,
     };
     let laid_out = parser
-        .value(0, &mut output)
+        .value(None, &mut output)
         .filter(|()| parser.position == compact.len())
         .and_then(|()| String::from_utf8(output).ok());
     match laid_out {
@@ -528,80 +531,62 @@ impl Layout<'_> {
         self.input.get(self.position).copied()
     }
 
-    /// The end of the value that starts at the current position, and whether it goes on one
-    /// line: a plain value, or a list or object of only plain values.
-    fn measure(&self) -> Option<(usize, bool)> {
-        let mut position = self.position;
+    /// Copies the value at the current position onto one line, with a space after each `:`
+    /// and `,` outside strings.
+    fn inline(&mut self, output: &mut Vec<u8>) -> Option<()> {
         let mut depth = 0_usize;
-        let mut deepest = 0_usize;
-        loop {
-            match *self.input.get(position)? {
-                b'"' => {
-                    position += 1;
-                    while *self.input.get(position)? != b'"' {
-                        let escaped = *self.input.get(position)? == b'\\';
-                        position += if escaped { 2 } else { 1 };
-                    }
-                }
-                // An empty list or object is as plain as a number.
-                b'[' | b'{' if matches!(self.input.get(position + 1), Some(b']' | b'}')) => {
-                    position += 1;
-                }
-                b'[' | b'{' => {
-                    depth += 1;
-                    deepest = deepest.max(depth);
-                }
-                b']' | b'}' => depth = depth.checked_sub(1)?,
-                _ => {}
-            }
-            position += 1;
-            let next = self.input.get(position);
-            if depth == 0 && matches!(next, None | Some(b',' | b':' | b']' | b'}')) {
-                return Some((position, deepest <= 1));
-            }
-        }
-    }
-
-    /// Copies a one line value, with a space after each `:` and `,` outside strings.
-    fn inline(&mut self, end: usize, output: &mut Vec<u8>) -> Option<()> {
         let mut in_string = false;
-        while self.position < end {
+        loop {
             let byte = self.peek()?;
             output.push(byte);
             self.position += 1;
             match byte {
-                b'"' => in_string = !in_string,
                 b'\\' if in_string => {
                     output.push(self.peek()?);
                     self.position += 1;
                 }
-                b':' | b',' if !in_string => output.push(b' '),
+                b'"' => in_string = !in_string,
+                _ if in_string => {}
+                b'[' | b'{' => depth += 1,
+                b']' | b'}' => depth = depth.checked_sub(1)?,
+                b':' | b',' => output.push(b' '),
                 _ => {}
             }
+            let ended = matches!(self.peek(), None | Some(b',' | b':' | b']' | b'}'));
+            if depth == 0 && !in_string && ended {
+                return Some(());
+            }
         }
-        Some(())
     }
 
-    fn value(&mut self, indent: usize, output: &mut Vec<u8>) -> Option<()> {
-        let (end, one_line) = self.measure()?;
-        if one_line {
-            return self.inline(end, output);
-        }
+    /// `indent` is `None` for the top level, which never goes on one line.
+    fn value(&mut self, indent: Option<usize>, output: &mut Vec<u8>) -> Option<()> {
         let open = self.peek()?;
-        let close = if open == b'[' { b']' } else { b'}' };
+        let start = (self.position, output.len());
+        self.inline(output)?;
+        let width = output.len() - start.1 + indent.unwrap_or_default() * 2;
+        let is_empty = self.position - start.0 == 2;
+        let is_container = matches!(open, b'[' | b'{') && !is_empty;
+        if !is_container || (indent.is_some() && width <= LINE_WIDTH) {
+            return Some(());
+        }
+
+        // Too long for one line: start again with one item per line.
+        self.position = start.0 + 1;
+        output.truncate(start.1);
         output.push(open);
-        self.position += 1;
+        let close = if open == b'[' { b']' } else { b'}' };
+        let indent = indent.map_or(0, |indent| indent + 1);
         loop {
             output.push(b'\n');
             output.extend(std::iter::repeat_n(b' ', (indent + 1) * 2));
             if open == b'{' {
-                let (key_end, _) = self.measure()?;
-                self.inline(key_end, output)?;
+                self.inline(output)?;
                 // Skips the `:` after the key.
                 self.position += 1;
                 output.extend(b": ");
             }
-            self.value(indent + 1, output)?;
+            self.value(Some(indent), output)?;
             let separator = self.peek()?;
             self.position += 1;
             if separator == close {
@@ -621,40 +606,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn layout_keeps_plain_containers_on_one_line() {
-        let compact = r#"{"tool":"x","state":{"name":"a, \"b\": {c}","items":[{"start":0,"pitch":60},{"start":480,"pitch":62}],"empty":[],"nested":{"inner":{"gain":0.5}},"flag":true}}"#;
+    fn layout_puts_long_containers_on_several_lines() {
+        let note =
+            |start: u32| format!(r#"{{"start":{start},"length":480,"pitch":60,"velocity":100}}"#);
+        let notes: Vec<String> = [0, 480, 960].map(note).into();
+        let compact = format!(
+            r#"{{"tool":"x","state":{{"name":"a, \"b\": {{c}} é","notes":[{}],"empty":[],"flag":true}}}}"#,
+            notes.join(",")
+        );
         let expected = r#"{
   "tool": "x",
   "state": {
-    "name": "a, \"b\": {c}",
-    "items": [
-      {"start": 0, "pitch": 60},
-      {"start": 480, "pitch": 62}
+    "name": "a, \"b\": {c} é",
+    "notes": [
+      {"start": 0, "length": 480, "pitch": 60, "velocity": 100},
+      {"start": 480, "length": 480, "pitch": 60, "velocity": 100},
+      {"start": 960, "length": 480, "pitch": 60, "velocity": 100}
     ],
     "empty": [],
-    "nested": {
-      "inner": {"gain": 0.5}
-    },
     "flag": true
   }
 }
 "#;
-        let laid_out = layout(compact);
+        let laid_out = layout(&compact);
         assert_eq!(laid_out, expected);
         let reparsed: serde_json::Value = serde_json::from_str(&laid_out).unwrap();
-        assert_eq!(
-            reparsed,
-            serde_json::from_str::<serde_json::Value>(compact).unwrap()
-        );
+        let original: serde_json::Value = serde_json::from_str(&compact).unwrap();
+        assert_eq!(reparsed, original);
     }
 
     #[test]
-    fn layout_of_plain_values() {
+    fn layout_keeps_short_values_on_one_line_below_the_top_level() {
         assert_eq!(layout("1.5"), "1.5\n");
-        assert_eq!(layout(r#"{"a":1}"#), "{\"a\": 1}\n");
-        assert_eq!(layout("[[1,2],[3]]"), "[\n  [1, 2],\n  [3]\n]\n");
-        let escapes = r#"{"a":"é\\\"","b":{"c":[]}}"#;
-        let expected = "{\n  \"a\": \"é\\\\\\\"\",\n  \"b\": {\"c\": []}\n}\n";
-        assert_eq!(layout(escapes), expected);
+        assert_eq!(layout("[]"), "[]\n");
+        assert_eq!(
+            layout(r#"{"a":{"b":[1,2]}}"#),
+            "{\n  \"a\": {\"b\": [1, 2]}\n}\n"
+        );
+        assert_eq!(layout(r#"["\\\"",[3]]"#), "[\n  \"\\\\\\\"\",\n  [3]\n]\n");
     }
 }
