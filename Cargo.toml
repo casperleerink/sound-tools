@@ -64,6 +64,7 @@ serde_derive = { opt-level = 3 }
 gpui_macros = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
+runtime = { opt-level = 3 }
 sound-core = { opt-level = 3 }
 tone = { opt-level = 3 }
 
