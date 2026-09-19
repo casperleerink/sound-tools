@@ -1,5 +1,5 @@
 //! Dialog: centred panel over a dimmed backdrop, with a title, a body and a
-//! footer of actions. Ported from Hooman Studio `dialog.tsx` (desktop form only).
+//! footer of actions. Ported from the source design system's `dialog.tsx` (desktop form only).
 
 use std::rc::Rc;
 

@@ -19,7 +19,7 @@ export CARGO_TARGET_DIR=/private/tmp/sound-tools-timing/target
 cargo run --offline --locked -p lifecycle-runtime -- /private/tmp/my-sound-project
 ```
 
-The target directory reuses the previous experiment's cached dependencies on Casper's Mac. On another machine, omit it and run `cargo fetch --locked` once before the offline commands. Rust/GPUI native platform dependencies are required. Only macOS has been tested.
+The target directory reuses the previous experiment's cached dependencies on the original development machine. On another machine, omit it and run `cargo fetch --locked` once before the offline commands. Rust/GPUI native platform dependencies are required. Only macOS has been tested.
 
 A new project starts with two Tone instances and two Tremolo instances. Only Tone A connects to the output. The initial workspace opens Tone A twice, Tone B once, and both Tremolo editors. Scroll to see all editors. Closing a view changes `workspace.json` and leaves its instance intact. Use the Open buttons to reopen it. The default folder, when no argument is supplied, is `sound-core-lifecycle-demo` inside the OS temporary directory.
 

@@ -1,4 +1,4 @@
-//! Badge: a label with an optional icon and an optional remove button (Hooman Studio's badge
+//! Badge: a label with an optional icon and an optional remove button (the source design system's badge
 //! and chip merged). Variants `primary`, `subtle`, `ghost`, `outline` and solid/subtle/ghost on
 //! any accent. Heights 20/28/32/40 px, pill `rounded`.
 

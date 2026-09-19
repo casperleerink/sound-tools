@@ -2,7 +2,7 @@
 
 How to build Sound Tools: tooling, dependencies and the audio engine design. Researched September 19, 2026 from Zed (`916fc2b`), Pure Data (`d9639d2`, 0.57 dev), Elementary (`60e7234`) and crates.io. [ARCHITECTURE.md](ARCHITECTURE.md) remains the source of truth for product decisions. This file gives recommendations for how to implement them. When the two disagree, ARCHITECTURE.md wins. Record the disagreement there.
 
-Reference clones live in `/Users/casperleerink/hooman/reference-repos/` (`zed`, `pure-data`, `elementary`). Read them before designing something they already solved.
+Reference repos: [Zed](https://github.com/zed-industries/zed), [Pure Data](https://github.com/pure-data/pure-data) and [Elementary](https://github.com/elemaudio/elementary). Clone them next to this repo and read them before designing something they already solved. Paths in this file are relative to each repo's root.
 
 Versions below were current on the research date. AI agents tend to write code for older APIs. Use these pinned versions and check the crate's changelog before relying on memory.
 

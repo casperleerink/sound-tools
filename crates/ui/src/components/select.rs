@@ -1,5 +1,5 @@
 //! Select: a trigger showing the current value plus `chevron-down`, opening the
-//! dropdown menu list. Ported from Hooman Studio `select.tsx`.
+//! dropdown menu list. Ported from the source design system's `select.tsx`.
 
 use gpui::{
     Context, FocusHandle, IntoElement, KeyDownEvent, MouseDownEvent, Render, SharedString, Window,

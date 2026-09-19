@@ -1,5 +1,5 @@
 //! Dropdown menu: labelled groups, radio items with an optional second line,
-//! separators and a group that scrolls. Ported from Hooman Studio
+//! separators and a group that scrolls. Ported from the source design system's
 //! `dropdown-menu.tsx` and the desktop app's model picker. The list itself
 //! (`MenuList`) is reused by `select.rs`.
 

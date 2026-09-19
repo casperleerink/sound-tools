@@ -203,7 +203,7 @@ struct Look {
     hover_fg: Hsla,
 }
 
-/// Colours per variant, following Hooman Studio's button variants.
+/// Colours per variant, following the source design system's button variants.
 fn look(variant: ButtonVariant, cx: &App) -> Look {
     let theme = cx.theme();
     let clear = Hsla::transparent_black();

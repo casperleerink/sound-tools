@@ -6,7 +6,7 @@ description: Concrete gotchas for gpui (Zed v1.20.2) - renamed APIs that make on
 # gpui (Zed v1.20.2) pitfalls
 
 Checked against the pinned git checkout, `~/.cargo/git/checkouts/zed-*/7c451e6/crates/gpui`.
-Zed's repo (`~/hooman/reference-repos/zed`) shows real usage, but its main branch may be newer than
+Zed's repo (https://github.com/zed-industries/zed) shows real usage, but its main branch may be newer than
 our pin; verify names against the checkout. Project builds with `cargo build -p gallery` from the repo root.
 The crates.io `gpui` 0.2.2 (Oct 2025) and blog posts based on it are out of date for this project.
 

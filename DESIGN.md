@@ -4,7 +4,7 @@ Design decisions for the Sound Tools UI. Settled from the three web prototypes r
 
 ## Source design system
 
-The UI takes its language from Hooman Studio (`~/hooman/hooman-studio/packages/ui`): tokens in `src/globals.css`, components in `src/components/`. Composite pieces to reuse: the chat composer (`packages/dashboard/src/messages/message-composer-form.tsx`, `chat/chat-pane.tsx`) and the sidebar (`packages/dashboard/src/tasks/sidebar/`).
+The UI takes its language from an existing web design system (React and Tailwind). The values below are the parts that carry over.
 
 - Font: InterDisplay with `ss03` and `cv01`. Tabular numbers (`tnum`, `lnum`) for every number, meter and time. Monospace stack for code, paths and build output.
 - Sizes: controls 24, 28, 32, 40 px tall. Radii 6, 8, 10 px. Body 14 px, labels medium weight, meta 12 px. Agent conversation text 15 or 16 px with 1.5 line height.
@@ -14,9 +14,9 @@ The UI takes its language from Hooman Studio (`~/hooman/hooman-studio/packages/u
 - Shadows: dropdown `0 4px 24px -8px rgba(0,0,0,0.2)`, card `0 8px 16px -8px rgba(0,0,0,0.1)`.
 - Spacing: 8 px grid for layout, 4 px inside controls. Panel and card margins at least 24 px. Card padding at least 16 px.
 
-## Colour: Catppuccin Mocha over the Hooman scale
+## Colour: Catppuccin Mocha over the source grey scale
 
-Dark only for now. Hooman's dark theme uses `gray-50` as the darkest background and `gray-950` as text; keep that meaning.
+Dark only for now. The source dark theme uses `gray-50` as the darkest background and `gray-950` as text; keep that meaning.
 
 | Token | Mocha | Hex |
 | --- | --- | --- |
@@ -51,7 +51,7 @@ Solid colour buttons need dark text (`#1e1e2e`). Accents are sparse: lavender fo
 
 ## Quiet rule
 
-Every element must earn its keep. Reference feel: Hooman Studio and Hive. Lots of air, one accent, calm type. Audio tools are usually crowded; we are not copying that.
+Every element must earn its keep. Reference feel: the source design system and Hive. Lots of air, one accent, calm type. Audio tools are usually crowded; we are not copying that.
 
 - Agent sidebar: a turn is the composer's message and the agent's result text. While working, one line such as `Building Polyrhythm` with a slow pulse. After, a muted `Worked for 12 s` that expands on click to the history. A failed build is `Build failed` in red plus one short sentence. No tool-call rows, progress bars, timestamps per message, or explanatory prose about builds and playback.
 - Composer: input, model name, send. Placeholder inside the input is the only hint.

@@ -1,5 +1,5 @@
 //! Tooltip view for GPUI's `.tooltip(..)`: label text plus optional keyboard
-//! shortcut chips. Ported from Hooman Studio `tooltip.tsx` (primary + outline).
+//! shortcut chips. Ported from the source design system's `tooltip.tsx` (primary + outline).
 
 use gpui::{
     AnyView, App, Context, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px,
