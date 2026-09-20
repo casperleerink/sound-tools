@@ -63,9 +63,27 @@ pub fn register(views: &mut Views) {
 }
 ```
 
+The runtime collects the views of every bundled extension and installs the registry once, before the window opens: `views.install(cx)`. It is a GPUI global from then on.
+
 A tool that edits what it owns shows that inside its own view. The window has one main area with one root view. Decided for the first milestone: the note editor is a panel inside the arrangement view and belongs to the arrangement extension, which opens it for the selected clip. The window does not know it.
 
-`Views::view_of(&session, &id, window, cx)` makes the view of an instance. The window shows the view of `Views::main_instance`: the first instance at the top of the project whose tool has a view. This is provisional. Composing a workspace from many views is later work.
+`Views::view_of(&session, &id, window, cx)` makes the view of an instance from the installed registry. The window shows the view of `Views::main_instance(&session, cx)`: the first instance at the top of the project whose tool has a view. This is provisional. Composing a workspace from many views is later work.
+
+### Host the view of another instance
+
+Any view may call `Views::view_of`, because the registry is a global and not a field of the window. So a view can host the view of an instance whose tool it does not know, and an extension can show what another extension owns without depending on it. The track panel of the arrangement does this for the instrument of a track (`extensions/arrangement/src/view/track_panel.rs`):
+
+```rust
+// `None`: the instance is gone, its tool has no view, or no registry is installed.
+let view: Option<AnyView> = Views::view_of(&session, &slot, window, cx);
+// In `render`:
+card.child(view.clone())
+```
+
+- Keep the `AnyView` in a field and make it when the instance or its tool changes, in a subscription with a window (`cx.subscribe_in`), never in `render`. Remember the tool name you made it for (`project.tool_of(&id)`): a file from outside can put another tool at the same id.
+- Show something quiet when there is no view. A tool without a view is normal.
+- The hosted view owns its edits and its gestures. The host gives it a surface, such as a card, and nothing else. When the host drops the view during a drag, the view must finish its gesture when it is released (`cx.on_release`), as `SynthView` does.
+- A test needs the registry too: `runtime::views().install(cx)`, or a `Views` of its own.
 
 ## Edit from a view
 
@@ -107,6 +125,25 @@ What the clip and note drags of the arrangement added to this pattern, in `exten
 
 Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Session::toggle_playback` is what space does. The result shows in the `Playhead` after the next poll.
 
+### A knob on saved state
+
+`Knob` is controlled, so a view of saved state keeps no copy of it: give the value on every render and handle the `KnobChange`. `extensions/instrument/src/view.rs` is the example.
+
+```rust
+Knob::new("cutoff_hz")
+    .range(KnobRange::logarithmic(20., 20_000.))   // or `KnobRange::linear`
+    .value(state.cutoff_hz)
+    .default_value(2_000.)                          // what a double click sets
+    .label("Cutoff")
+    .readout("2 kHz")                               // the caller formats: it knows the unit
+    .on_change(callback)
+```
+
+- `KnobChange::Drag(value)`: begin the gesture when it is the first of this drag, then publish. The knob sends it only when the value changed, and works it out from the value at the press.
+- `KnobChange::DragEnd`: `finish_gesture`. `KnobChange::DragCancel` (escape): `cancel_gesture`. Both come only after a `Drag`, so a plain click is no undo step.
+- `KnobChange::Set(value)`: a key step or a reset. One `commit`.
+- The knob has its own tab stop and focus ring, and stops at the ends of its range. `KnobRange::value` gives three significant digits.
+
 ## Rules
 
 - No `cx.notify()` and no entity updates inside `render` or inside a paint callback. Mouse listeners that a canvas registers while painting may update: they run later, on an event.
@@ -114,13 +151,14 @@ Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Ses
 - Draw only what is visible. A view of many records paints on a `canvas`, like the arrangement, and does not make an element per record.
 - Keep what walks many records between the project events that can change it, and read it again in `render`, once per group of events, not per paint and not per event. The arrangement keeps its track order and its end this way. This is the one kind of copy a view holds.
 - Keys: the window binds space, cmd-z and shift-cmd-z in the context `Shell && !TextInput`, so a focused `TextInput` gets them first, and tab and shift-tab in `Shell`. Bindings run before key listeners. For keys of your own view, the simplest is `track_focus` with a tab stop and `on_key_down` on the root of the view, as the arrangement does: they reach the view only while it has the focus, and it calls `cx.stop_propagation()` for a key it used. Focus the view on mouse down.
-- Show a focus ring only when the focus came from the keyboard. `.focus_visible(..)` also shows it when a key follows a click, and space follows a click all the time. The arrangement works it out while painting (`KeyboardFocus` in `view/paint.rs`).
+- Show a focus ring only when the focus came from the keyboard. `.focus_visible(..)` also shows it when a key follows a click, and space follows a click all the time. `sound_ui::KeyboardFocus` works it out while rendering or painting: keep one next to the focus handle, ask `shows_ring(&handle, window)` and call `pressed(cx)` on a mouse press. The arrangement, the knob and the segmented control use it.
+- A callback that a control keeps, such as `Knob::on_change`, should hold the view weakly. `cx.listener` does. `cx.processor` holds it strongly, and then the mouse listeners of the last frame keep a view that was just closed alive for one more frame, with its open drag. `SynthView::callback` in `extensions/instrument/src/view.rs` is the weak form for a callback that takes its argument by value.
 - Keep what repaints with the playhead apart from the rest. A view that GPUI is to keep while the playhead moves must not have the playhead view inside it: a notified view also renders every view above it. Make them siblings and put `.cached(..)` on the heavy one. See `ArrangementView`.
 - Put coordinate math in pure functions with tests (`extensions/arrangement/src/view/layout.rs`).
 - Use the components of this crate and the theme tokens (`cx.theme()`). A new general component goes here with a gallery entry. What only one tool needs stays in its extension.
 
 ## Test a view
 
-`crates/ui/tests/bridge.rs` and `crates/runtime/tests/window/` show the pattern: a project on a temporary folder with an offline engine, a `Session`, `#[gpui::test]`, and `cx.executor().advance_clock(POLL_INTERVAL)` to let the poll timer fire. Call `engine.process_block(..)` yourself, so that transport commands apply. Wait with `cx.background_executor().timer(..)`, never with `smol::Timer`. `tests/window/support.rs` has the hands of a composer: press, drag and release at the place of a tick, a track or a pitch, worked out with the layout functions of the view. Two keys in one `simulate_keystrokes` call have no frame between them. Send them one by one when the second needs what the first painted, such as the tab order.
+`crates/ui/tests/bridge.rs` and `crates/runtime/tests/window/` show the pattern: a project on a temporary folder with an offline engine, a `Session`, `#[gpui::test]`, and `cx.executor().advance_clock(POLL_INTERVAL)` to let the poll timer fire. Call `engine.process_block(..)` yourself, so that transport commands apply. Wait with `cx.background_executor().timer(..)`, never with `smol::Timer`. `tests/window/support.rs` has the hands of a composer: press, drag and release at the place of a tick, a track or a pitch, worked out with the layout functions of the view. A control made of elements has no layout function. The knob and the segments of a segmented control name themselves for tests with GPUI's `debug_selector` (`knob-<id>`, `segment-<value>`), which does nothing in a normal build, and `Opened::control("knob-cutoff_hz")` gives the middle of one. It asks for a whole frame first, because a cached view that was not painted again has no bounds in the last frame. Two keys in one `simulate_keystrokes` call have no frame between them. Send them one by one when the second needs what the first painted, such as the tab order.
 
 `cargo test -p runtime --test snapshots` renders the whole window to PNGs with no visible window, and `cargo test -p gallery --test snapshots` renders the components.
