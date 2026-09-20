@@ -8,8 +8,8 @@ use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor, Timeline, TrackPanel};
 use gpui::{
     AppContext, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-    MouseUpEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext,
-    point, px,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
+    TestAppContext, VisualTestContext, point, px,
 };
 use runtime::window::{Shell, bind_keys};
 use runtime::{OFFLINE, open_or_create, views};
@@ -71,12 +71,11 @@ pub fn open_project(
     engine: Engine,
 ) -> Opened<'_> {
     cx.update(sound_ui::init);
-    cx.update(|cx| views().install(cx));
     let session = cx.new(|cx| Session::new(project, cx));
     cx.update(bind_keys);
     let (shell, cx) = cx.add_window_view({
         let session = session.clone();
-        move |window, cx| Shell::new(session, "Test device".into(), window, cx)
+        move |window, cx| Shell::new(session, views(), "Test device".into(), window, cx)
     });
     cx.run_until_parked();
     let main = shell
@@ -283,6 +282,35 @@ impl Opened<'_> {
             button: MouseButton::Left,
             click_count,
             first_mouse: false,
+        });
+        self.cx.run_until_parked();
+    }
+
+    /// The button goes down where the pointer is, with no move before it: what arrives when
+    /// the mouse up of a drag was lost and the next press comes.
+    pub fn mouse_down(&mut self, position: Point<Pixels>) {
+        self.cx.simulate_event(MouseDownEvent {
+            position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 1,
+            first_mouse: false,
+        });
+        self.cx.run_until_parked();
+    }
+
+    /// Several moves with the left button held, with no frame between them, as a fast mouse
+    /// sends them between two frames of the screen.
+    pub fn drag_through(&mut self, positions: &[Point<Pixels>]) {
+        self.cx.update(|window, cx| {
+            for position in positions {
+                let event = MouseMoveEvent {
+                    position: *position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                };
+                window.dispatch_event(PlatformInput::MouseMove(event), cx);
+            }
         });
         self.cx.run_until_parked();
     }

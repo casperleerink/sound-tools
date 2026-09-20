@@ -48,13 +48,15 @@ pub struct Shell {
 }
 
 impl Shell {
-    /// The view registry must be installed before: `Views::install`.
+    /// Installs `views` as the registry of the application, so that no caller can forget it.
     pub fn new(
         session: Entity<Session>,
+        views: Views,
         device_name: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        views.install(cx);
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&session, window, |shell, _, event, window, cx| {
             let at_top = |id: &InstanceId| id.parent().is_none();
@@ -272,7 +274,6 @@ pub fn run(folder: &Path) -> Result<()> {
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             sound_ui::init(cx);
-            views().install(cx);
             let session = cx.new(|cx| Session::new(project, cx));
             bind_keys(cx);
 
@@ -318,7 +319,7 @@ pub fn run(folder: &Path) -> Result<()> {
                 ..Default::default()
             };
             let opened = cx.open_window(options, |window, cx| {
-                cx.new(|cx| Shell::new(session, device_name.into(), window, cx))
+                cx.new(|cx| Shell::new(session, views(), device_name.into(), window, cx))
             });
             match opened {
                 Ok(_) => cx.activate(true),

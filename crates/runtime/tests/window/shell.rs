@@ -190,10 +190,9 @@ fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppC
             FieldView { field: input }
         }
     });
-    cx.update(|cx| views.install(cx));
     let (_shell, cx) = cx.add_window_view({
         let session = session.clone();
-        move |window, cx| Shell::new(session, "Test device".into(), window, cx)
+        move |window, cx| Shell::new(session, views, "Test device".into(), window, cx)
     });
     cx.run_until_parked();
     let field = field.borrow().clone().unwrap();

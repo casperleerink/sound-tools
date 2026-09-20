@@ -60,7 +60,7 @@ impl Opened {
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
         let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {
             let session = session.clone();
-            cx.new(|cx| Shell::new(session, "MacBook Pro Speakers".into(), window, cx))
+            cx.new(|cx| Shell::new(session, views(), "MacBook Pro Speakers".into(), window, cx))
         })?;
         cx.run_until_parked();
         Ok(Self {
@@ -354,7 +354,6 @@ fn main() -> Result<()> {
         gpui_platform::current_headless_renderer,
     );
     cx.update(sound_ui::init);
-    cx.update(|cx| views().install(cx));
     cx.update(runtime::window::bind_keys);
     let save = |cx: &mut HeadlessAppContext, opened: &Opened, name: &str| -> Result<()> {
         let path = out_dir.join(format!("{name}.png"));

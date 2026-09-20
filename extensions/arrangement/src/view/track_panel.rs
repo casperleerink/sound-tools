@@ -6,15 +6,18 @@
 //! sits in the `instrument` slot of the track and puts it into a card. A slot that is empty,
 //! or whose tool has no view, shows a quiet card that says so.
 //!
-//! How the rack grows: an effect is one more id in [`device_slots`], after the instrument. The
-//! mixer controls of the track (gain, pan, mute) are not devices: they get a fixed section at
-//! the right end of the row in `render`, after the rack.
+//! How the rack grows. The instrument slot has a fixed name, so its card is made once and only
+//! made again when the tool in it changes. Effects will come and go: [`device_slots`] then
+//! reads them from the project, and the panel makes its list again on `Created` and `Deleted`
+//! inside the track, keeping the device of every slot that stays, so that an open knob drag
+//! of another device goes on. The mixer controls of the track (gain, pan, mute) are not
+//! devices: they get a fixed section at the right end of the row in `render`, after the rack.
 
 use gpui::{
     AnyView, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Window, div,
     prelude::*, px,
 };
-use sound_core::{Instance, InstanceId, ProjectEvent};
+use sound_core::{Instance, InstanceId, InvalidInstanceId, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::card::Card;
 use sound_ui::{ActiveTheme, Session, Views};
@@ -30,9 +33,8 @@ pub enum TrackPanelEvent {
 }
 
 /// The devices of a track, in rack order, by the id of their slot. A slot may be empty.
-fn device_slots(track: &InstanceId) -> Vec<InstanceId> {
-    // The name is a constant that is a valid id, so there is always this one slot.
-    track.child(INSTRUMENT).into_iter().collect()
+fn device_slots(track: &InstanceId) -> Result<Vec<InstanceId>, InvalidInstanceId> {
+    Ok(vec![track.child(INSTRUMENT)?])
 }
 
 /// One card of the rack: what is in a slot now, and its view when its tool has one.
@@ -120,8 +122,13 @@ impl TrackPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let slots = device_slots(track.id()).into_iter();
-        self.devices = slots
+        let slots = device_slots(track.id()).unwrap_or_else(|error| {
+            let session = self.session.clone();
+            session.update(cx, |session, cx| session.report(error, cx));
+            Vec::new()
+        });
+        let devices = slots.into_iter();
+        self.devices = devices
             .map(|slot| Device::new(&self.session, slot, window, cx))
             .collect();
         self.track = track;
@@ -244,12 +251,15 @@ impl Render for TrackPanel {
             )
             .child(header)
             // The rack. The transport floats over the bottom of the panel, so the cards are at
-            // the top, clear of it.
+            // the top, clear of it. It scrolls sideways: a card is as wide as its controls,
+            // and a narrow window must not cut the last ones off.
             .child(
                 div()
+                    .id("rack")
                     .flex_1()
                     .min_w_0()
-                    .overflow_hidden()
+                    .h_full()
+                    .overflow_x_scroll()
                     .flex()
                     .items_start()
                     .gap(px(16.))

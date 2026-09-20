@@ -32,7 +32,7 @@ The view shows the title `Synth` and one control per field, in four groups parte
 
 The range and the default of a field are written once, in the `Parameter` constants next to `SynthState` (`CUTOFF`, `RESONANCE`, `ATTACK`, `DECAY`, `SUSTAIN`, `RELEASE`, `GAIN`, and all of them in `PARAMETERS`). `validate`, `Default`, the range of each knob and what a double click resets to all read them. A test holds this table and the one in `agent-doc.md` to them. This is local to the crate on purpose. It is not the declarative parameter system of ARCHITECTURE.md, which is still open. What is only about the interface is in `view.rs`: the label, the unit, the travel and the name of the undo step.
 
-Frequencies and times are heard in ratios, so their knobs travel in ratios: a third of the cutoff knob is a decade. A knob gives values of three significant digits, so the file stays short: `"cutoff_hz": 632.0`. A value that an agent wrote with more digits is kept until the knob moves.
+Frequencies and times are heard in ratios, so their knobs travel in ratios: a third of the cutoff knob is a decade. A knob gives values of three significant digits, so the file stays short: `"cutoff_hz": 632.0`. A value that an agent wrote with more digits is kept until the knob moves up or down: a press, a press with a sideways move, and a drag there and back all leave it as it is, to the digit.
 
 Editing:
 

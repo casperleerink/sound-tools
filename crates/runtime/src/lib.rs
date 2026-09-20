@@ -50,7 +50,7 @@ pub fn registry() -> Result<Registry> {
 }
 
 /// Every bundled extension with a view registers it here. The window names no view type.
-/// Install the result before the window opens: `views().install(cx)`.
+/// `Shell::new` takes the result and installs it.
 pub fn views() -> Views {
     let mut views = Views::new();
     arrangement::view::register(&mut views);

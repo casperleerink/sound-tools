@@ -7,7 +7,11 @@
 //! element state under its id.
 //!
 //! - A drag works from the value at mouse down and the distance the pointer went, so a drag
-//!   there and back ends where it began. A press without a move reports nothing.
+//!   there and back ends where it began, at exactly that value, also when it has more digits
+//!   than the knob gives. A press without a move up or down reports nothing.
+//! - A drag reports a value only when it is not the one it reported last. It does not look at
+//!   the value of the last render: several mouse moves may arrive between two frames.
+//! - Any new mouse press ends a drag that is still open, because its mouse up was lost.
 //! - Escape during a drag reports [`KnobChange::DragCancel`].
 //! - A double click reports the default value, when one is set.
 //! - The arrow keys step by a fiftieth of the travel, with shift by a five-hundredth.
@@ -113,9 +117,25 @@ type ChangeHandler = Rc<dyn Fn(KnobChange, &mut Window, &mut App)>;
 #[derive(Clone, Copy)]
 struct KnobDrag {
     start_y: f32,
+    start_value: f32,
     start_position: f32,
+    /// The value that went out last. The value of the press before the first `Drag`.
+    sent: f32,
     /// Whether a `Drag` went out, so that the end of the drag has something to end.
     changed: bool,
+}
+
+impl KnobDrag {
+    /// The value for a pointer at `y`. Back at the height of the press it is the value of the
+    /// press itself, not that value in three digits: a press with a sideways move, or a drag
+    /// there and back, must not rewrite a value that was written by hand.
+    fn value_at(&self, y: f32, range: &KnobRange) -> f32 {
+        let travelled = self.start_y - y;
+        if travelled == 0. {
+            return self.start_value;
+        }
+        range.value(self.start_position + travelled / DRAG_RANGE)
+    }
 }
 
 struct KnobState {
@@ -210,17 +230,19 @@ fn arc_point(fraction: f32, r: f32) -> (f32, f32) {
     (r * angle.sin(), -r * angle.cos())
 }
 
-/// The end of a drag, by mouse up or because the button came up somewhere else.
+/// The end of a drag: mouse up, the button came up somewhere else, or a new press. Nothing
+/// that is drawn depends on the drag, so nobody is notified: these listeners hear every mouse
+/// up and every press of the window.
 fn end_drag(
     state: &Entity<KnobState>,
     on_change: &ChangeHandler,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let drag = state.update(cx, |state, cx| {
-        cx.notify();
-        state.drag.take()
-    });
+    if state.read(cx).drag.is_none() {
+        return;
+    }
+    let drag = state.update(cx, |state, _| state.drag.take());
     if drag.is_some_and(|drag| drag.changed) {
         on_change(KnobChange::DragEnd, window, cx);
     }
@@ -289,7 +311,9 @@ impl RenderOnce for Knob {
                             state.keyboard_focus.pressed(cx);
                             state.drag = (!reset).then(|| KnobDrag {
                                 start_y: f32::from(event.position.y),
+                                start_value: value,
                                 start_position: position,
+                                sent: value,
                                 changed: false,
                             });
                         });
@@ -315,10 +339,7 @@ impl RenderOnce for Knob {
                         let step = match event.keystroke.key.as_str() {
                             "escape" if dragging => {
                                 cx.stop_propagation();
-                                let drag = state.update(cx, |state, cx| {
-                                    cx.notify();
-                                    state.drag.take()
-                                });
+                                let drag = state.update(cx, |state, _| state.drag.take());
                                 if drag.is_some_and(|drag| drag.changed) {
                                     on_change(KnobChange::DragCancel, window, cx);
                                 }
@@ -339,8 +360,8 @@ impl RenderOnce for Knob {
                         }
                     }
                 };
-                // A drag goes on wherever the pointer is, so these two are not hit tested.
-                // They are there on every frame and look at the drag when an event arrives.
+                // A drag goes on wherever the pointer is, so these are not hit tested. They are
+                // there on every frame and look at the drag when an event arrives.
                 let listeners = canvas(
                     |_, _, _| {},
                     move |_, (), window, _| {
@@ -357,22 +378,33 @@ impl RenderOnce for Knob {
                                     // The button came up somewhere that did not tell us.
                                     return end_drag(&state, &on_change, window, cx);
                                 }
-                                let travelled = drag.start_y - f32::from(event.position.y);
-                                let next =
-                                    range.value(drag.start_position + travelled / DRAG_RANGE);
-                                if next == value {
+                                let next = drag.value_at(f32::from(event.position.y), &range);
+                                if next == drag.sent {
                                     return;
                                 }
                                 state.update(cx, |state, _| {
                                     if let Some(drag) = &mut state.drag {
-                                        drag.changed = true;
+                                        (drag.sent, drag.changed) = (next, true);
                                     }
                                 });
                                 on_change(KnobChange::Drag(next), window, cx);
                             }
                         });
-                        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
-                            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                        window.on_mouse_event({
+                            let (state, on_change) = (state.clone(), on_change.clone());
+                            move |event: &MouseUpEvent, phase, window, cx| {
+                                let left = event.button == MouseButton::Left;
+                                if phase == DispatchPhase::Bubble && left {
+                                    end_drag(&state, &on_change, window, cx);
+                                }
+                            }
+                        });
+                        // A press while a drag is open: its mouse up went somewhere that did
+                        // not tell this window. Without this, the held button of the new press
+                        // would look like the old drag going on. Before the press of the knob
+                        // itself, which opens a new drag.
+                        window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
+                            if phase == DispatchPhase::Capture {
                                 end_drag(&state, &on_change, window, cx);
                             }
                         });
@@ -394,8 +426,10 @@ impl RenderOnce for Knob {
                     .size(px(face_size))
                     .rounded_full()
                     .bg(face)
-                    .border_1()
-                    .border_color(if ring_shows { ring } else { border }),
+                    .map(|face| match ring_shows {
+                        true => face.border_2().border_color(ring),
+                        false => face.border_1().border_color(border),
+                    }),
             )
             // Pointer.
             .child(
@@ -499,6 +533,21 @@ mod tests {
         let linear = KnobRange::linear(0., 1.);
         assert_eq!(linear.value(0.5), 0.5);
         assert_eq!(linear.position(0.25), 0.25);
+    }
+
+    #[test]
+    fn a_drag_back_at_the_height_of_the_press_gives_the_value_of_the_press_exactly() {
+        let range = KnobRange::logarithmic(20., 20_000.);
+        let drag = KnobDrag {
+            start_y: 300.,
+            start_value: 1234.5,
+            start_position: range.position(1234.5),
+            sent: 1234.5,
+            changed: false,
+        };
+        assert_eq!(drag.value_at(300., &range), 1234.5);
+        assert_eq!(drag.value_at(299., &range), 1290.);
+        assert_eq!(drag.value_at(301., &range), 1180.);
     }
 
     #[test]

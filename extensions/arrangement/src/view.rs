@@ -36,7 +36,7 @@ use gpui::{
     SharedString, StyleRefinement, Subscription, Window, canvas, div, fill, point, prelude::*, px,
     quad, size,
 };
-use sound_core::{Changes, Instance, InstanceId, ProjectEvent, Ticks, TimeSignature};
+use sound_core::{Changes, Instance, InstanceId, ProjectEvent, State, Ticks, TimeSignature};
 use sound_notes::Clip;
 use sound_ui::{ActiveTheme, KeyboardFocus, Session, Views};
 
@@ -509,9 +509,7 @@ impl Timeline {
     ) -> Self {
         let focus_handle = cx.focus_handle().tab_stop(true);
         let project_events = cx.subscribe(&session, |timeline, _, event, cx| {
-            let shown = |id: &InstanceId| {
-                id == timeline.arrangement.id() || id.is_inside(timeline.arrangement.id())
-            };
+            let shown = |id: &InstanceId| timeline.shows(id, cx);
             let changed = match event {
                 ProjectEvent::Changed(id) => shown(id),
                 ProjectEvent::Created(id) => {
@@ -612,6 +610,23 @@ impl Timeline {
             tracks: self.order.len(),
         };
         viewport.clamped(extent, self.time_signature(cx), width, height)
+    }
+
+    /// Whether an event about `id` can change what the timeline paints: the arrangement, a
+    /// track, or a clip of a track. Another child of a track shows nowhere here. So a knob
+    /// drag on the instrument of a track, which changes it per mouse move, reads no clips
+    /// again and paints nothing. What a deleted id was is not known any more, so it counts.
+    fn shows(&self, id: &InstanceId, cx: &App) -> bool {
+        let arrangement = self.arrangement.id();
+        let Some(parent) = id.parent() else {
+            return id == arrangement;
+        };
+        if parent == *arrangement {
+            return true;
+        }
+        let project = self.session.read(cx).project();
+        parent.parent().as_ref() == Some(arrangement)
+            && project.tool_of(id).is_none_or(|tool| tool == Clip::TOOL)
     }
 
     /// The track that an id of this arrangement is, or is inside of.

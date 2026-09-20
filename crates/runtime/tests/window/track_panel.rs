@@ -1,7 +1,10 @@
 //! The track panel and the view of the synth in it, with a simulated mouse and keys. Every
 //! test checks the project, the undo history and the file of the instrument.
 
-use gpui::{TestAppContext, point, px};
+use std::cell::Cell;
+use std::rc::Rc;
+
+use gpui::{Entity, TestAppContext, point, px, size};
 use instrument::view::SynthView;
 use instrument::{SynthState, Waveform};
 use sound_core::Changes;
@@ -559,4 +562,158 @@ fn closing_the_panel_during_a_knob_drag_leaves_no_gesture_open(cx: &mut TestAppC
     // Nothing of the panel holds the session after the window: the project closes.
     drop(arrangement);
     drop(opened.close());
+}
+
+/// Counts how often an entity tells its observers that it changed, which is what makes GPUI
+/// render it again.
+fn notifications<T: 'static>(opened: &mut Opened<'_>, entity: &Entity<T>) -> Rc<Cell<usize>> {
+    let count = Rc::new(Cell::new(0));
+    let counted = count.clone();
+    opened.cx.update(|_, cx| {
+        cx.observe(entity, move |_, _| counted.set(counted.get() + 1))
+            .detach()
+    });
+    count
+}
+
+#[gpui::test]
+fn a_press_with_a_sideways_move_or_a_drag_there_and_back_keeps_a_value_written_by_hand(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open_panel(cx);
+    // More digits than a knob gives.
+    write_outside(
+        &mut opened,
+        r#"{"tool": "instrument.synth", "state": {"cutoff_hz": 1234.5}}"#,
+    );
+    let (file, label) = (synth_file(&mut opened), opened.undo_label());
+    assert!(file.as_ref().unwrap().contains("1234.5"));
+
+    let knob = opened.control(CUTOFF);
+    opened.press(knob);
+    opened.drag_to(knob + point(px(3.), px(0.)));
+    assert!(!opened.gesture_open());
+    opened.release(knob + point(px(3.), px(0.)));
+    assert_eq!(cutoff(&mut opened), 1234.5);
+    assert_eq!(synth_file(&mut opened), file);
+    assert_eq!(opened.undo_label(), label);
+
+    // Up, where the knob gives three digits, and back to the height of the press.
+    opened.press(knob);
+    opened.drag_to(knob + point(px(0.), px(-20.)));
+    assert_eq!(cutoff(&mut opened), 2930.0);
+    opened.drag_to(knob + point(px(-2.), px(0.)));
+    assert_eq!(cutoff(&mut opened), 1234.5);
+    opened.release(knob + point(px(-2.), px(0.)));
+    assert!(!opened.gesture_open());
+    assert_eq!(synth_file(&mut opened), file);
+    assert_eq!(opened.undo_label(), label);
+}
+
+#[gpui::test]
+fn mouse_moves_between_two_frames_end_where_the_pointer_is(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let knob = opened.control(CUTOFF);
+    opened.press(knob);
+    // Away and back before the next frame: the knob of that frame still has the old value.
+    opened.drag_through(&[knob + point(px(0.), px(-30.)), knob]);
+    assert_eq!(cutoff(&mut opened), 2_000.0);
+    opened.release(knob);
+    assert!(!opened.gesture_open());
+    assert_eq!(synth(&mut opened), Some(SynthState::default()));
+    assert_eq!(opened.undo_label(), None);
+
+    // And away, back and away again: the last one counts.
+    opened.press(knob);
+    let away = knob + point(px(0.), px(-30.));
+    opened.drag_through(&[away, knob, away]);
+    assert_eq!(cutoff(&mut opened), 7_300.0);
+    opened.release(away);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
+}
+
+#[gpui::test]
+fn a_press_elsewhere_ends_a_knob_drag_whose_mouse_up_was_lost(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let (knob, other) = (opened.control(CUTOFF), opened.control("knob-gain"));
+    opened.press(knob);
+    opened.drag_to(knob + point(px(0.), px(-30.)));
+    assert_eq!(cutoff(&mut opened), 7_300.0);
+    assert!(opened.gesture_open());
+
+    // No mouse up arrives. The next thing is a press on another knob, and a drag of that.
+    opened.mouse_down(other);
+    assert!(!opened.gesture_open());
+    assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
+    opened.drag_to(other + point(px(0.), px(-40.)));
+    // Only the knob under the new press moves.
+    assert_eq!(cutoff(&mut opened), 7_300.0);
+    assert_eq!(synth(&mut opened).unwrap().gain, 0.4);
+    opened.release(other + point(px(0.), px(-40.)));
+    assert_eq!(opened.undo_label().as_deref(), Some("Change gain"));
+    assert!(!opened.gesture_open());
+    opened.keys("cmd-z");
+    opened.keys("cmd-z");
+    assert_eq!(synth(&mut opened), Some(SynthState::default()));
+}
+
+#[gpui::test]
+fn a_knob_drag_does_not_draw_the_timeline_and_a_timeline_click_does_not_draw_the_synth(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open_panel(cx);
+    let knob = opened.control(CUTOFF);
+    let timeline = opened.timeline.clone();
+    let timeline_notified = notifications(&mut opened, &timeline);
+    opened.press(knob);
+    opened.drag_to(knob + point(px(0.), px(-30.)));
+    opened.drag_to(knob + point(px(0.), px(-60.)));
+    opened.release(knob + point(px(0.), px(-60.)));
+    assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
+    // The instrument of a track shows nowhere in the timeline.
+    assert_eq!(timeline_notified.get(), 0);
+
+    let panel = opened.track_panel().unwrap();
+    let view = opened.cx.read(|cx| {
+        let mut views = panel.read(cx).device_views();
+        views.next().unwrap().cloned()
+    });
+    let synth_view = view.unwrap().downcast::<SynthView>().ok().unwrap();
+    let (synth_notified, panel_notified) = (
+        notifications(&mut opened, &synth_view),
+        notifications(&mut opened, &panel),
+    );
+    // Every knob hears every mouse up of the window. With no drag open it tells nobody.
+    let empty = opened.at(6 * BAR, 1);
+    opened.click(empty);
+    opened.click(empty);
+    assert_eq!(synth_notified.get(), 0);
+    assert_eq!(panel_notified.get(), 0);
+    // A clip change still reaches the timeline.
+    let on_clip = opened.at(BAR, 0);
+    opened.click(on_clip);
+    opened.keys("right");
+    assert!(timeline_notified.get() > 0);
+}
+
+#[gpui::test]
+fn the_rack_scrolls_so_that_the_last_knob_is_reachable_in_a_narrow_window(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    opened.cx.simulate_resize(size(px(760.), px(800.)));
+    opened.cx.run_until_parked();
+    let window_right = px(760.);
+    let gain = opened.control("knob-gain");
+    assert!(gain.x > window_right, "the window is not narrow enough");
+
+    // A wheel has no sideways scroll: its up and down moves a rack that only goes sideways.
+    let in_rack = opened.control(CUTOFF);
+    opened.scroll(in_rack, 0., -400.);
+    let gain = opened.control("knob-gain");
+    assert!(gain.x + px(32.) < window_right, "gain is at {gain:?}");
+    opened.click(gain);
+    opened.keys("up");
+    assert_eq!(synth(&mut opened).unwrap().gain, 0.17);
+    // And back.
+    opened.scroll(gain, 400., 0.);
+    assert!(opened.control("knob-gain").x > window_right);
 }

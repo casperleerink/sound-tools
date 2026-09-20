@@ -63,7 +63,7 @@ pub fn register(views: &mut Views) {
 }
 ```
 
-The runtime collects the views of every bundled extension and installs the registry once, before the window opens: `views.install(cx)`. It is a GPUI global from then on.
+The runtime collects the views of every bundled extension and gives them to its window: `Shell::new(session, views, ..)` takes a `Views` and installs it (`views.install(cx)`), so the runtime cannot forget it. It is a GPUI global from then on.
 
 A tool that edits what it owns shows that inside its own view. The window has one main area with one root view. Decided for the first milestone: the note editor is a panel inside the arrangement view and belongs to the arrangement extension, which opens it for the selected clip. The window does not know it.
 
@@ -83,7 +83,7 @@ card.child(view.clone())
 - Keep the `AnyView` in a field and make it when the instance or its tool changes, in a subscription with a window (`cx.subscribe_in`), never in `render`. Remember the tool name you made it for (`project.tool_of(&id)`): a file from outside can put another tool at the same id.
 - Show something quiet when there is no view. A tool without a view is normal.
 - The hosted view owns its edits and its gestures. The host gives it a surface, such as a card, and nothing else. When the host drops the view during a drag, the view must finish its gesture when it is released (`cx.on_release`), as `SynthView` does.
-- A test needs the registry too: `runtime::views().install(cx)`, or a `Views` of its own.
+- A test with the window of the runtime has the registry through `Shell::new`. A test of a view alone installs one itself: `views.install(cx)`.
 
 ## Edit from a view
 
@@ -139,10 +139,11 @@ Knob::new("cutoff_hz")
     .on_change(callback)
 ```
 
-- `KnobChange::Drag(value)`: begin the gesture when it is the first of this drag, then publish. The knob sends it only when the value changed, and works it out from the value at the press.
+- `KnobChange::Drag(value)`: begin the gesture when it is the first of this drag, then publish. The knob works the value out from the value at the press, and sends it only when it is not the value it sent last. It does not compare with the value of the last render, because several mouse moves arrive between two frames. Back at the height of the press the value is exactly that of the press, so a press with a sideways move never rounds a value that was written by hand.
 - `KnobChange::DragEnd`: `finish_gesture`. `KnobChange::DragCancel` (escape): `cancel_gesture`. Both come only after a `Drag`, so a plain click is no undo step.
 - `KnobChange::Set(value)`: a key step or a reset. One `commit`.
 - The knob has its own tab stop and focus ring, and stops at the ends of its range. `KnobRange::value` gives three significant digits.
+- Every knob hears every mouse up and every press of the window, because a drag goes on outside it. It tells nobody unless a drag was open, so a click somewhere else renders nothing. A press while a drag is still open ends that drag: its mouse up was lost.
 
 ## Rules
 

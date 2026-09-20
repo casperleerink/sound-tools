@@ -30,7 +30,9 @@ impl Views {
         Self::default()
     }
 
-    /// Makes this the registry of the application. Call it once, before the window opens.
+    /// Makes this the registry of the application. The window of the runtime takes a `Views`
+    /// and calls this, so the runtime cannot forget it. Another host, or a test without that
+    /// window, calls it once before its first view.
     pub fn install(self, cx: &mut App) {
         cx.set_global(self);
     }
