@@ -152,6 +152,7 @@ impl State for ToneState {
 - The state type is the handle of the tool. Every typed call names it: `project.resolve::<ToneState>(&id)`, `context.children::<ClipState>()`.
 - `TOOL` is the name in records. Use `extension.tool` when an extension has several tools, for example `arrangement.clip`.
 - `OWNS_CHILDREN` is false unless you set it. Set it for a tool that owns children, such as a track. It fixes where the record lives (see above), and creating a child under a tool without it fails with `ProjectError::ParentOwnsNoChildren`. Do not change it later: existing records would be in the wrong form.
+- `PLACE` is `Place::Anywhere` unless you set it. Set `Place::Root` or `Place::In("owner.tool")` for a tool that only means something there, such as a clip in a track. A record somewhere else is not loaded, and the problem says where it belongs. From an interface it is `ProjectError::WrongPlace`.
 - `validate` runs for files and for interface edits. Name the field in the message: an agent fixes its edit from it. Prefer types that cannot hold a wrong value, such as `Ticks`. Keep `deny_unknown_fields`, so a misspelled field is an error.
 - Save musical meaning in ticks, not seconds. Keep runtime state such as phase and voices in the processor, never in the state.
 - There are no schema versions and no migrations. An instance id in a state (`InstanceId` derives serde) is a reference: it owns nothing. Resolve it with `project.resolve`.
@@ -176,7 +177,7 @@ Two more things an extension registers, both for agents that work in the project
 - `.summary(|project, instance| ...)` after `.behaviour(...)`: lines of text about one instance and what it owns. `Project::summary(&id)` gives it and `runtime --inspect` prints it. An owner of many small records gives one, so an agent reads one summary and not every record.
 - `registry.agent_doc(EXTENSION, include_str!("../agent-doc.md"))`: your section of the `AGENTS.md` that the runtime writes into every project that enables the extension. Start it with a `## ` heading. Say the form of each tool, give one complete example record per tool in a fenced block whose first line is <code>```json state/path/of/the/file.json</code>, and say how to add, move and delete. A test of the runtime writes every such block into a folder and opens it, so an example that does not load fails the build. `{{ticks_per_bar}}`, `{{ticks_per_beat}}`, `{{time_signature}}`, `{{bar_5_start}}`, `{{four_bars}}`, `{{bar_9_start}}` and `{{bar_3_beat_2}}` are filled in from the project's time signature.
 
-The runtime keeps `AGENTS.md`, `CLAUDE.md` and `problems.txt` up to date when the project opens and from `project.poll()`. `problems.txt` holds `project.problems()`, one per line, and is absent when there are none.
+The runtime keeps `AGENTS.md`, `CLAUDE.md` and `problems.txt` up to date when the project opens and from `project.poll()`. `problems.txt` holds `project.problems()`, one per line, or the line `NO_PROBLEMS`. It is there the whole time a project is open with its lock, and dropping the `Project` removes it. So for an agent a missing file means that no runtime is watching. Keep `registry.runtime_agent_doc_section(..)` free of paths: the doc is a file in a folder that may be in git.
 
 ### Behaviour: from state to the engine
 
@@ -306,7 +307,9 @@ project.apply_outside_changes(&[path])?;     // one group, one undo step
 engine.process_block(&mut interleaved);      // assert on samples
 ```
 
-`extensions/tone/tests/tone/project.rs` and `tests/project/` show this. `Project::open_read_only` opens without the lock and never writes. The runtime uses it for `--inspect` and `--render`.
+`extensions/tone/tests/tone/project.rs` and `tests/project/` show this. Outside groups less than `OUTSIDE_UNDO_WINDOW` (15 s) apart, with no interface edit, undo or redo in between, are one undo step. Tests run in milliseconds, so a test that wants one step per change gives the times itself: `project.apply_outside_changes_at(&paths, at)`. The test harnesses add a minute per call. `project.clear_history()` forgets all steps, for a new project after its default content is made.
+
+`Project::open_read_only` opens without the lock and never writes. The runtime uses it for `--inspect` and `--render`.
 
 ## Edit the graph
 

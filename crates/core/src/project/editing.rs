@@ -107,6 +107,17 @@ impl Step {
         }
     }
 
+    /// Forgets what ended where it began, for example a record that was made and deleted.
+    fn drop_unchanged(&mut self) {
+        self.records
+            .retain(|_, (before, after)| match (before, after) {
+                (Some(before), Some(after)) => !before.equals(after),
+                (None, None) => false,
+                _ => true,
+            });
+        self.project_file.take_if(|(before, after)| before == after);
+    }
+
     fn is_empty(&self) -> bool {
         self.records.is_empty() && self.project_file.is_none()
     }
@@ -177,7 +188,13 @@ impl History {
         match self.undo.last_mut().filter(|_| recent) {
             Some(step) => {
                 step.absorb(applied);
+                step.drop_unchanged();
                 self.last_outside = Some(at);
+                // An agent that takes back what it just wrote leaves nothing to undo.
+                if step.is_empty() {
+                    self.undo.pop();
+                    self.last_outside = None;
+                }
             }
             None => {
                 let mut step = Step {
@@ -272,13 +289,7 @@ impl Project {
         if let Some((_, after)) = &mut step.project_file {
             *after = self.project_file.clone();
         }
-        step.records
-            .retain(|_, (before, after)| match (before, after) {
-                (Some(before), Some(after)) => !before.equals(after),
-                (None, None) => false,
-                _ => true,
-            });
-        step.project_file.take_if(|(before, after)| before == after);
+        step.drop_unchanged();
         let written = self.write(step.records.keys(), step.project_file.is_some());
         self.history.push(step);
         written

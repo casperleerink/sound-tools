@@ -35,7 +35,7 @@ pub struct Registry {
     tools: BTreeMap<&'static str, ToolDefinition>,
     /// By extension name.
     agent_docs: BTreeMap<&'static str, &'static str>,
-    runtime_agent_doc: Option<String>,
+    runtime_agent_doc: Option<&'static str>,
 }
 
 impl Registry {
@@ -74,13 +74,15 @@ impl Registry {
     }
 
     /// A last section of the agent doc about the program that runs the project, for example
-    /// how to call it for a summary. Every project gets it.
-    pub fn runtime_agent_doc_section(&mut self, markdown: String) {
+    /// how to call it for a summary. Every project gets it. Keep it free of paths and of
+    /// anything else that differs between machines: the doc is a file in the project folder,
+    /// which may be in git.
+    pub fn runtime_agent_doc_section(&mut self, markdown: &'static str) {
         self.runtime_agent_doc = Some(markdown);
     }
 
-    pub(crate) fn runtime_agent_doc(&self) -> Option<&str> {
-        self.runtime_agent_doc.as_deref()
+    pub(crate) fn runtime_agent_doc(&self) -> Option<&'static str> {
+        self.runtime_agent_doc
     }
 
     pub(crate) fn agent_doc_of(&self, extension: &str) -> Option<&'static str> {

@@ -2,7 +2,7 @@
 
 # This folder is a Sound Tools project
 
-A piece of music saved as small JSON files. You work on it by editing these files. While the runtime has the project open, every change applies live: the composer hears it about 0.2 s later, with no build and no restart. Files you write within 0.1 s of each other are one undo step for the composer.
+A piece of music saved as small JSON files. You work on it by editing these files. While the runtime has the project open, every change applies live: the composer hears it about 0.2 s later, with no build and no restart. All the files of one request are one undo step for the composer, as long as you leave less than 15 s between two writes.
 
 ## Layout
 

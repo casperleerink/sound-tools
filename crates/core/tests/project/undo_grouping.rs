@@ -50,7 +50,7 @@ fn the_window_runs_from_the_last_group_and_keeps_the_oldest_before_side() {
     let path = harness.write("state/dc.json", &dc_record(0.1));
     harness
         .project
-        .apply_outside_changes_at(&[path.clone()], start)
+        .apply_outside_changes_at(std::slice::from_ref(&path), start)
         .unwrap();
     // A minute later, an agent rewrites the record three times, ten seconds apart.
     for (index, value) in [0.2, 0.3, 0.4].into_iter().enumerate() {
@@ -58,7 +58,7 @@ fn the_window_runs_from_the_last_group_and_keeps_the_oldest_before_side() {
         let at = start + Duration::from_secs(60 + 10 * index as u64);
         harness
             .project
-            .apply_outside_changes_at(&[path.clone()], at)
+            .apply_outside_changes_at(std::slice::from_ref(&path), at)
             .unwrap();
     }
     harness.project.undo().unwrap();
@@ -147,4 +147,22 @@ fn a_cleared_history_has_nothing_to_undo() {
     assert_eq!(harness.project.undo_label(), None);
     assert_eq!(harness.project.undo().unwrap(), None);
     assert_eq!(harness.project.instances().count(), 1);
+}
+
+#[test]
+fn an_agent_that_takes_back_what_it_wrote_leaves_no_undo_step() {
+    let mut harness = Harness::new();
+    let start = Instant::now();
+    let path = harness.write("state/dc.json", &dc_record(0.1));
+    harness
+        .project
+        .apply_outside_changes_at(std::slice::from_ref(&path), start)
+        .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let later = start + Duration::from_secs(5);
+    harness
+        .project
+        .apply_outside_changes_at(&[path], later)
+        .unwrap();
+    assert_eq!(harness.project.undo_label(), None);
 }
