@@ -1,6 +1,7 @@
 //! A probe instrument, a harness on a temporary project folder and helpers to read levels.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use arrangement::{ArrangementState, Colour};
 use serde::{Deserialize, Serialize};
@@ -143,14 +144,22 @@ pub fn tempo(bpm: f64) -> TempoMap {
 pub struct Harness {
     pub project: Project,
     pub engine: Engine,
+    /// The time of the last outside change. Each one comes a minute after the one before, so
+    /// it is an undo step of its own, as for changes made by hand. Without this, outside
+    /// changes that a test makes within milliseconds would join (`OUTSIDE_UNDO_WINDOW`).
+    now: Instant,
     /// Last, so the folder outlives the project that holds its lock.
     _folder: tempfile::TempDir,
 }
 
 impl Harness {
     pub fn new() -> Self {
+        Self::with_config(EngineConfig::new(SAMPLE_RATE, 1))
+    }
+
+    pub fn with_config(config: EngineConfig) -> Self {
         let folder = tempfile::tempdir().unwrap();
-        let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
+        let (control, engine) = Engine::new(config);
         let mut project = Project::open(folder.path(), registry(), control).unwrap();
         let mut changes = Changes::new();
         changes.create(id("arrangement"), ArrangementState {});
@@ -158,6 +167,7 @@ impl Harness {
         Self {
             project,
             engine,
+            now: Instant::now(),
             _folder: folder,
         }
     }
@@ -179,7 +189,11 @@ impl Harness {
 
     /// A track `arrangement/piano` with scale 1 and these clips, named `clip-0`, `clip-1`, ...
     pub fn with_clips(clips: Vec<Clip>) -> Self {
-        let mut harness = Self::new();
+        Self::new().and_clips(clips)
+    }
+
+    pub fn and_clips(self, clips: Vec<Clip>) -> Self {
+        let mut harness = self;
         harness.add_track("piano", 1.0);
         let mut changes = Changes::new();
         for (index, clip) in clips.into_iter().enumerate() {
@@ -198,12 +212,18 @@ impl Harness {
         let path = self.path(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, contents).unwrap();
-        self.project.apply_outside_changes(&[path]).unwrap()
+        self.apply_paths(&[path])
     }
 
     pub fn apply(&mut self, relative: &[&str]) -> usize {
         let paths: Vec<PathBuf> = relative.iter().map(|path| self.path(path)).collect();
-        self.project.apply_outside_changes(&paths).unwrap()
+        self.apply_paths(&paths)
+    }
+
+    fn apply_paths(&mut self, paths: &[PathBuf]) -> usize {
+        self.now += Duration::from_secs(60);
+        let changed = self.project.apply_outside_changes_at(paths, self.now);
+        changed.unwrap()
     }
 
     pub fn problems(&self) -> Vec<String> {

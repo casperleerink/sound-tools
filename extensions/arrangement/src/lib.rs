@@ -21,10 +21,10 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    BehaviourContext, BehaviourError, Changes, Instance, InstanceId, OutputEndpoint, Project,
-    ProjectError, Registry, RegistryError, State,
+    BehaviourContext, BehaviourError, Changes, Instance, InstanceId, OutputEndpoint, Place,
+    Project, ProjectError, Registry, RegistryError, State,
 };
-use sound_notes::{AUDIO_OUTPUT, Clip, NOTES_INPUT};
+use sound_notes::{AUDIO_OUTPUT, Clip, NOTES_INPUT, TRACK_TOOL};
 
 pub use sequencer::{HELD_CAPACITY, Sequencer, TrackSnapshot};
 
@@ -45,48 +45,51 @@ pub struct ArrangementState {}
 impl State for ArrangementState {
     const TOOL: &'static str = "arrangement";
     const OWNS_CHILDREN: bool = true;
+    const PLACE: Place = Place::Root;
 }
 
-/// The accents of the DESIGN.md palette. A track shows its colour on dots and clip edges.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Colour {
-    #[default]
-    Blue,
-    Sapphire,
-    Sky,
-    Teal,
-    Green,
-    Yellow,
-    Peach,
-    Red,
-    Maroon,
-    Mauve,
-    Pink,
-    Lavender,
-    Rosewater,
-    Flamingo,
-}
-
-impl Colour {
-    /// The name in records and in the design tokens.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Blue => "blue",
-            Self::Sapphire => "sapphire",
-            Self::Sky => "sky",
-            Self::Teal => "teal",
-            Self::Green => "green",
-            Self::Yellow => "yellow",
-            Self::Peach => "peach",
-            Self::Red => "red",
-            Self::Maroon => "maroon",
-            Self::Mauve => "mauve",
-            Self::Pink => "pink",
-            Self::Lavender => "lavender",
-            Self::Rosewater => "rosewater",
-            Self::Flamingo => "flamingo",
+/// One list gives each colour its variant and its name, so the name in records, the name in
+/// messages and the design token cannot drift apart.
+macro_rules! colours {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        /// The accents of the DESIGN.md palette. A track shows its colour on dots and clip edges.
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        pub enum Colour {
+            $(#[serde(rename = $name)] $variant,)+
         }
+
+        impl Colour {
+            /// The name in records and in the design tokens.
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+        }
+    };
+}
+
+colours! {
+    Blue => "blue",
+    Sapphire => "sapphire",
+    Sky => "sky",
+    Teal => "teal",
+    Green => "green",
+    Yellow => "yellow",
+    Peach => "peach",
+    Red => "red",
+    Maroon => "maroon",
+    Mauve => "mauve",
+    Pink => "pink",
+    Lavender => "lavender",
+    Rosewater => "rosewater",
+    Flamingo => "flamingo",
+}
+
+/// The colour of a track record that names none.
+impl Default for Colour {
+    fn default() -> Self {
+        Self::Blue
     }
 }
 
@@ -104,8 +107,10 @@ pub struct TrackState {
 }
 
 impl State for TrackState {
-    const TOOL: &'static str = "arrangement.track";
+    const TOOL: &'static str = TRACK_TOOL;
     const OWNS_CHILDREN: bool = true;
+    /// Only an arrangement shows tracks. Anywhere else a track would play and be hidden.
+    const PLACE: Place = Place::In(ArrangementState::TOOL);
 
     fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {

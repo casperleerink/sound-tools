@@ -214,3 +214,48 @@ fn a_track_without_an_instrument_loads_and_is_silent() {
         [(0, 60.0), (480 * TICK, 0.0)]
     );
 }
+
+#[test]
+fn a_clip_outside_a_track_and_a_track_outside_an_arrangement_are_reported() {
+    let mut harness = Harness::with_clips(vec![]);
+    let part = crate::support::clip_json(&clip(0, 960, vec![note(0, 480, 60)]));
+    let track = r#"{"tool": "arrangement.track", "state": {"name": "Lost"}}"#;
+    let arrangement = r#"{"tool": "arrangement", "state": {}}"#;
+    let cases = [
+        (
+            "state/root-clip.json",
+            part.as_str(),
+            "an instance of \"arrangement.clip\" belongs directly inside an instance of \"arrangement.track\", not at the top of state/",
+        ),
+        (
+            "state/arrangement/orphan-clip.json",
+            part.as_str(),
+            "an instance of \"arrangement.clip\" belongs directly inside an instance of \"arrangement.track\", and its owner here is a \"arrangement\"",
+        ),
+        (
+            "state/lost/instance.json",
+            track,
+            "an instance of \"arrangement.track\" belongs directly inside an instance of \"arrangement\", not at the top of state/",
+        ),
+        (
+            "state/arrangement/piano/nested/instance.json",
+            arrangement,
+            "an instance of \"arrangement\" belongs at the top of state/, not inside another instance",
+        ),
+    ];
+    for (file, record, message) in cases {
+        assert_eq!(harness.write_and_apply(file, record), 0, "{file}");
+        assert!(
+            harness
+                .problems()
+                .contains(&format!("{file}: not loaded: {message}")),
+            "{:?}",
+            harness.problems()
+        );
+    }
+    // In its track the same clip loads.
+    assert_eq!(
+        harness.write_and_apply("state/arrangement/piano/part.json", &part),
+        1
+    );
+}

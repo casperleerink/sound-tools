@@ -14,14 +14,16 @@ Enable it in `project.json` under `extensions` as `"arrangement"`.
 
 `Clip` lives in the contract crate `crates/notes`, because its saved form is what other extensions read. This crate does not depend on any instrument. A track finds its instrument by the child name `instrument` (`INSTRUMENT`) and the port names `NOTES_INPUT` and `AUDIO_OUTPUT`, so any tool with those ports fits. A track without that child loads and is silent.
 
+Each tool says where it lives (`State::PLACE`): the arrangement at the top of `state/`, a track in an arrangement, a clip in a track. A record anywhere else is not loaded and the problem says where it belongs, so an agent that forgot the track folder gets a signal and not silence.
+
 `Colour` is an enum of the accent names of DESIGN.md, saved in lowercase. It is not a hex string, so a record cannot hold a colour the design has no token for. Map it to a token in the interface with `Colour::name()`.
 
 ## Rules
 
-- Note starts count from the start of their clip. Every note starts inside the clip: `start` below the clip `length`. A record that breaks this does not load, and the message names the note. So a note written with a project position is an error an agent sees, not silence. `Clip::set_length` drops the notes a shorter clip cannot hold.
+- Note starts count from the start of their clip. Every note starts inside the clip: `start` below the clip `length`. A record that breaks this does not load, and the message names the note. So a note written with a project position is an error an agent sees, not silence. `Clip::set_length` drops the notes a shorter clip cannot hold, for good. So a resize drag applies every move to the clip as it was when the gesture began, not to the live clip. Else dragging in and out again loses the notes in between.
 - A note that is longer than the rest of its clip ends where the clip ends.
 - Clips on one track may overlap. The notes of all of them play.
-- Two sounding notes of one pitch on one track: the first off releases both. That is the note contract (`Off` releases every held note of its pitch), not a choice of this crate.
+- Two sounding notes of one pitch on one track sound until the last of them ends. In the note contract an `Off` releases every held note of its pitch, so the sequencer sends the one off with the last holder. The result is the same in any order of ends and with or without a snapshot swap in between.
 - Tracks show by `order`, then by id. `tracks()` gives them in that order. `clips()` gives the clips of a track by start, then by id.
 - A seek or a stop silences what sounds. A note is never started in its middle: there is no chase.
 
@@ -34,7 +36,7 @@ No stuck notes. The processor keeps a fixed list of the notes it started (`HELD_
 - After a swap, each held note looks itself up in the new snapshot by start and pitch. Found: it takes the end it has there. Not found, or that end is already past: its off goes out at once. A note the edit did not touch is found with the same end, so nothing is sent for it. A swap per mouse move during a drag neither cuts nor restarts it.
 - On `jumped` or `stopped_playing`: one `AllOff`, and the list is cleared.
 - On one tick, offs go before ons.
-- A note that would be the 129th held one is not played. It counts in `EngineStatus::event_overflows`, which the runtime prints at the end. An on that does not fit in the event buffer is not listed as held, and an off that does not fit stays in the list and goes out in the next block.
+- A note that would be the 129th held one is not played. An on that does not fit in the event buffer is not played and not listed as held. Each such note counts once in `EngineStatus::event_overflows`, which the runtime prints in `status`, after a render and at the end. An off that does not fit stays in the list and goes out in the next block. After the first event that did not fit, nothing more is pushed in that block, so a waiting off counts at most once per block.
 
 ## Helpers for interfaces
 

@@ -1,9 +1,9 @@
 //! No stuck notes: a note that started gets its off, whatever happens to its clip, the tempo
 //! or the transport while it sounds. And a note that nothing happened to is left alone.
 
-use sound_core::{Changes, Ticks};
+use sound_core::{Changes, EngineConfig, Ticks};
 
-use crate::support::{Harness, TICK, clip, clip_json, level_changes, note, tempo};
+use crate::support::{Harness, SAMPLE_RATE, TICK, clip, clip_json, level_changes, note, tempo};
 
 const CLIP: &str = "state/arrangement/piano/clip-0.json";
 /// Where every test below makes its change: tick 480, on a device buffer edge, so the change
@@ -209,16 +209,52 @@ fn clips_that_overlap_both_play() {
 }
 
 #[test]
-fn the_same_pitch_in_clips_that_overlap_ends_with_the_first_off() {
+fn a_pitch_that_two_notes_hold_sounds_until_the_last_of_them_ends() {
     let first = clip(0, 960, vec![note(0, 960, 60)]);
     let second = clip(480, 960, vec![note(0, 960, 60)]);
     let mut harness = Harness::with_clips(vec![first, second]);
     let output = harness.play(1920 * TICK);
-    // The note contract: an off releases every held note of its pitch. Nothing is stuck.
+    // An off releases every held note of its pitch, so the one off goes out with the last
+    // holder, at 1440. The probe counts the two ons and drops to 0 on that one off.
     assert_eq!(
         level_changes(&output),
-        [(0, 60.0), (480 * TICK, 120.0), (960 * TICK, 0.0)]
+        [(0, 60.0), (480 * TICK, 120.0), (1440 * TICK, 0.0)]
     );
+}
+
+#[test]
+fn two_holders_of_a_pitch_sound_the_same_with_and_without_an_unrelated_edit() {
+    // Both start together. The short one ends first, in whatever order the list holds them.
+    for lengths in [(480, 1920), (1920, 480)] {
+        let run = |edit: bool| {
+            let first = clip(0, 3840, vec![note(0, lengths.0, 60)]);
+            let second = clip(0, 3840, vec![note(0, lengths.1, 60)]);
+            let mut harness = Harness::with_clips(vec![first, second]);
+            let mut output = harness.play(240 * TICK);
+            if edit {
+                let other = clip(7680, 3840, vec![note(0, 240, 72)]);
+                harness.write_and_apply("state/arrangement/piano/other.json", &clip_json(&other));
+            }
+            output.extend(harness.render(3840 * TICK - 240 * TICK));
+            output
+        };
+        let (quiet, edited) = (run(false), run(true));
+        assert_eq!(level_changes(&quiet), [(0, 120.0), (1920 * TICK, 0.0)]);
+        assert_eq!(quiet, edited);
+    }
+}
+
+#[test]
+fn of_two_holders_of_a_pitch_the_one_that_is_deleted_leaves_the_other_sounding() {
+    let first = clip(0, 3840, vec![note(0, 1920, 60)]);
+    let second = clip(0, 3840, vec![note(0, 960, 60)]);
+    let mut harness = Harness::with_clips(vec![first, second]);
+    let mut output = harness.play(CHANGE);
+    std::fs::remove_file(harness.path(CLIP)).unwrap();
+    assert_eq!(harness.apply(&[CLIP]), 1);
+    output.extend(harness.render(3840 * TICK - CHANGE));
+    // The long note is gone. The pitch ends with the note that is left, at 960.
+    assert_eq!(level_changes(&output), [(0, 120.0), (960 * TICK, 0.0)]);
 }
 
 #[test]
@@ -268,5 +304,62 @@ fn a_snapshot_swap_leaves_a_held_note_alone() {
     assert_eq!(
         level_changes(&edited),
         [(0, 60.0), (1920 * TICK, 64.0), (3840 * TICK, 0.0)]
+    );
+}
+
+#[test]
+fn an_event_that_does_not_fit_counts_once_and_no_off_is_lost() {
+    let mut config = EngineConfig::new(SAMPLE_RATE, 1);
+    config.event_capacity = 8;
+
+    // A chord of 20 notes: 8 ons fit, 12 notes are not played, and each counts once.
+    let chord = (0..20).map(|index| note(0, 480, 40 + index));
+    let mut harness = Harness::with_config(config).and_clips(vec![clip(0, 3840, chord.collect())]);
+    harness.project.engine().play();
+    let (output, status) = harness.render_with_status(960 * TICK);
+    assert_eq!(status.event_overflows, 12);
+    let played: u32 = (40..48).sum();
+    assert_eq!(
+        level_changes(&output),
+        [(0, played as f32), (480 * TICK, 0.0)]
+    );
+
+    // Eight notes end on the tick where eight others start. The offs go first and fill the
+    // buffer, so the eight ons are lost: 8 counted, not one more for every try of an off.
+    let ending = (0..8).map(|index| note(0, 480, 40 + index));
+    let starting = (0..8).map(|index| note(480, 480, 60 + index));
+    let notes = ending.chain(starting).collect();
+    let mut harness = Harness::with_config(config).and_clips(vec![clip(0, 3840, notes)]);
+    harness.project.engine().play();
+    let (output, status) = harness.render_with_status(1920 * TICK);
+    assert_eq!(status.event_overflows, 8);
+    assert_eq!(
+        level_changes(&output),
+        [(0, played as f32), (480 * TICK, 0.0)]
+    );
+
+    // More offs on one tick than fit: the rest goes out in the next block, 64 frames later
+    // at most, and nothing is stuck.
+    config.event_capacity = 4;
+    let mut harness = Harness::with_config(config);
+    harness.add_track("piano", 1.0);
+    for index in 0..8 {
+        let part = clip(
+            0,
+            3840,
+            vec![note(index * 100, 2000 - index * 100, 40 + index as u8)],
+        );
+        harness.write_and_apply(
+            &format!("state/arrangement/piano/part-{index}.json"),
+            &clip_json(&part),
+        );
+    }
+    harness.project.engine().play();
+    let (output, _) = harness.render_with_status(3840 * TICK);
+    let last_change = level_changes(&output).last().copied().unwrap();
+    assert_eq!(last_change.1, 0.0);
+    assert!(
+        (2000 * TICK..2000 * TICK + 128).contains(&last_change.0),
+        "{last_change:?}"
     );
 }

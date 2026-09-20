@@ -9,6 +9,8 @@ state/arrangement/<track>/instrument.json    the instrument of the track, always
 state/arrangement/<track>/<clip>.json        a clip, under any other name
 ```
 
+A clip only loads inside a track folder, and a track only inside the arrangement folder. Anywhere else the file is listed in `problems.txt` with where it belongs.
+
 To see what plays where, list a track folder and read `start` and `length` of its clips. Open only the clips that overlap the bars you work on.
 
 ### A clip: `arrangement.clip`
@@ -37,7 +39,7 @@ This clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one 
 - `pitch`: MIDI note number, 0 to 127, one step per semitone. C4 (middle C) is 60, A4 is 69, C3 is 48, C2 is 36.
 - `velocity`: how hard the note is played, 1 to 127. It sets the loudness: 64 is a quarter as loud as 127.
 - A chord is several notes with the same `start`. Write one note per line, sorted by `start`.
-- Do not let two notes of the same pitch overlap on one track: the end of the first also ends the second.
+- Two notes of the same pitch that overlap on one track sound as one: the pitch is held until the last of them ends.
 - Clips on one track may overlap in time. The notes of both play.
 
 ### A track: `arrangement.track`

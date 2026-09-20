@@ -77,8 +77,11 @@ fn a_tone_written_during_playback_sounds_and_the_other_keeps_its_phase() {
     assert!(status.playing);
 
     // The agent deletes it again. The connection goes with it.
+    // A minute later, so it is an undo step of its own and not part of the one above.
     std::fs::remove_file(&paths[0]).unwrap();
-    assert_eq!(project.apply_outside_changes(&paths[..1]).unwrap(), 2);
+    let later = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let changed = project.apply_outside_changes_at(&paths[..1], later);
+    assert_eq!(changed.unwrap(), 2);
     output.extend(render(&mut engine, 10_000));
     assert_eq!(
         project.engine().poll().unwrap().batches_applied,

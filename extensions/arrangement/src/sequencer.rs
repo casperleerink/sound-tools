@@ -114,11 +114,15 @@ impl Processor for Sequencer {
             swapped,
             held,
         } = self;
+        let mut sender = Sender {
+            event_outputs,
+            full: false,
+        };
 
         if transport.jumped || transport.stopped_playing {
             // After this block the range is empty or somewhere else, so no off of the list
             // would come. The buffer is still empty here, so the event fits.
-            event_outputs.push(Self::NOTES, 0, NoteEvent::AllOff);
+            sender.send(0, NoteEvent::AllOff);
             held.clear();
         }
 
@@ -126,32 +130,37 @@ impl Processor for Sequencer {
         // note is gone or moved. A note the edit did not touch is found with the same end, so
         // nothing is sent for it: a swap neither cuts nor starts it again.
         if std::mem::take(swapped) {
-            held.retain_mut(|note| match snapshot.end_of(note.start, note.pitch) {
-                Some(end) if end > range.start => {
-                    note.end = end;
-                    true
+            let mut index = 0;
+            while let Some(note) = held.get_mut(index) {
+                match snapshot.end_of(note.start, note.pitch) {
+                    Some(end) if end > range.start => {
+                        note.end = end;
+                        index += 1;
+                    }
+                    // Removed: the note that took its place at `index` is looked at next.
+                    _ if end_note(held, index, 0, &mut sender) => {}
+                    _ => index += 1,
                 }
-                _ => !event_outputs.push(Self::NOTES, 0, NoteEvent::Off { pitch: note.pitch }),
-            });
+            }
         }
 
         // In time order, and on one tick the offs before the ons. Else the end of one note
-        // would release the next note of the same pitch that starts there. An event that
-        // does not fit stays out of the list (an on) or in it (an off, sent again next block).
+        // would release the next note of the same pitch that starts there.
         for note in snapshot.starting_in(&range) {
-            release_before(held, note.start + Ticks(1), transport, event_outputs);
+            release_before(held, note.start + Ticks(1), transport, &mut sender);
             let Some(offset) = transport.offset_of(note.start) else {
                 continue;
             };
             if held.len() >= HELD_CAPACITY {
-                event_outputs.count_dropped();
+                sender.event_outputs.count_dropped();
                 continue;
             }
             let on = NoteEvent::On {
                 pitch: note.pitch,
                 velocity: note.velocity,
             };
-            if event_outputs.push(Self::NOTES, offset, on) {
+            // An on that does not fit is not played, so it is not held either.
+            if sender.send_or_drop(offset, on) {
                 held.push(Held {
                     start: note.start,
                     end: note.end,
@@ -159,21 +168,79 @@ impl Processor for Sequencer {
                 });
             }
         }
-        release_before(held, range.end, transport, event_outputs);
+        release_before(held, range.end, transport, &mut sender);
     }
 }
 
-/// Sends the off of every held note that ends before `limit`.
+/// The event output for one block. Once an event did not fit, the buffer is full for the rest
+/// of the block and nothing more is pushed. So the engine counts that one event, and not one
+/// more for every later try.
+struct Sender<'a, 'b> {
+    event_outputs: &'a mut EventOutputs<'b>,
+    full: bool,
+}
+
+impl Sender<'_, '_> {
+    /// For an event that is sent again later when it does not fit: an off.
+    fn send(&mut self, offset: usize, event: NoteEvent) -> bool {
+        if !self.full {
+            self.full = !self.event_outputs.push(Sequencer::NOTES, offset, event);
+        }
+        !self.full
+    }
+
+    /// For an event that is lost when it does not fit: an on. Each lost one counts once, by
+    /// the buffer when it refused the push, else here.
+    fn send_or_drop(&mut self, offset: usize, event: NoteEvent) -> bool {
+        let refused_before = self.full;
+        let sent = self.send(offset, event);
+        if refused_before {
+            self.event_outputs.count_dropped();
+        }
+        sent
+    }
+}
+
+/// Ends the held note at `index` and takes it off the list. While another held note has the
+/// same pitch, no off is sent: an off releases every note of its pitch, so it goes out with
+/// the last holder. The pitch then sounds until its last note ends, in any order of ends and
+/// with or without a snapshot swap in between. Returns false when the off did not fit: the
+/// note stays listed and ends in a later block.
+fn end_note(
+    held: &mut Vec<Held>,
+    index: usize,
+    offset: usize,
+    sender: &mut Sender<'_, '_>,
+) -> bool {
+    let Some(note) = held.get(index).copied() else {
+        return false;
+    };
+    let mut others = held.iter().enumerate().filter(|(other, _)| *other != index);
+    let shared = others.any(|(_, other)| other.pitch == note.pitch);
+    if shared || sender.send(offset, NoteEvent::Off { pitch: note.pitch }) {
+        held.swap_remove(index);
+        return true;
+    }
+    false
+}
+
+/// Ends every held note that ends before `limit`, the earliest end first, so that of two
+/// notes of one pitch the later end sends the off.
 fn release_before(
     held: &mut Vec<Held>,
     limit: Ticks,
     transport: &Transport<'_>,
-    event_outputs: &mut EventOutputs<'_>,
+    sender: &mut Sender<'_, '_>,
 ) {
-    held.retain(|note| {
+    loop {
+        let due = held.iter().enumerate().filter(|(_, note)| note.end < limit);
+        let Some((index, note)) = due.min_by_key(|(_, note)| note.end) else {
+            return;
+        };
         // An end before this block is an off that did not fit earlier.
         let offset = transport.offset_of(note.end).unwrap_or(0);
-        let off = NoteEvent::Off { pitch: note.pitch };
-        note.end >= limit || !event_outputs.push(Sequencer::NOTES, offset, off)
-    });
+        if !end_note(held, index, offset, sender) {
+            return;
+        }
+    }
 }

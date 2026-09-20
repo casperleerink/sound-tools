@@ -5,10 +5,13 @@
 //! this crate is the guide.
 
 use serde::{Deserialize, Serialize};
-use sound_core::{State, Ticks};
+use sound_core::{Place, State, Ticks};
 
 /// The event input of an instrument. It carries [`NoteEvent`].
 pub const NOTES_INPUT: &str = "notes";
+
+/// The tool that owns clips. Named here because the clip record is: see [`Clip`].
+pub const TRACK_TOOL: &str = "arrangement.track";
 
 /// The audio output of an instrument. Mono for now.
 pub const AUDIO_OUTPUT: &str = "audio";
@@ -200,6 +203,8 @@ impl Clip {
 
 impl State for Clip {
     const TOOL: &'static str = "arrangement.clip";
+    /// Only a track plays clips. Anywhere else a clip would load and never sound.
+    const PLACE: Place = Place::In(TRACK_TOOL);
 
     fn validate(&self) -> Result<(), String> {
         let length = self.length.ticks();

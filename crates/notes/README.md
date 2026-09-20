@@ -27,7 +27,7 @@ In Rust, `Pitch`, `Velocity` and `Length` cannot hold a wrong value: `Pitch::new
 
 `Clip` is the record `arrangement.clip`: `start` and `length` in ticks and `notes`. It lives here because its saved form is what other extensions read. `extensions/arrangement/agent-doc.md` has the format with a complete example.
 
-The rules are the same for everyone who plays or draws a clip. Note starts count from the clip start. Every note starts inside the clip, below its `length`, else the record does not load. A note that is longer than the rest of the clip ends where the clip ends. `clip.placed_notes()` gives the notes at their project position with these rules applied. `clip.set_length(length)` drops the notes a shorter clip cannot hold. `Length` is the type of both lengths: 1 tick or more.
+The rules are the same for everyone who plays or draws a clip. Note starts count from the clip start. Every note starts inside the clip, below its `length`, else the record does not load. A note that is longer than the rest of the clip ends where the clip ends. `clip.placed_notes()` gives the notes at their project position with these rules applied. `clip.set_length(length)` drops the notes a shorter clip cannot hold. `Length` is the type of both lengths: 1 tick or more. A clip lives directly inside a track (`TRACK_TOOL`, `arrangement.track`). Anywhere else it does not load, because nothing would play it.
 
 ## The note event
 
