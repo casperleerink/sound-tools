@@ -504,6 +504,33 @@ impl Storage {
         self.write_atomically(&path, contents.as_bytes())
     }
 
+    /// Makes the generated folder `folder` hold exactly `files`, by name and text. Files in it
+    /// that `files` does not name are removed, so a doc of an extension that is no longer
+    /// enabled cannot mislead an agent. Subfolders are left alone: the runtime made none.
+    pub fn write_generated_folder(
+        &self,
+        folder: &str,
+        files: BTreeMap<String, String>,
+    ) -> Result<(), StorageError> {
+        let path = self.root.join(folder);
+        for (name, contents) in &files {
+            self.write_generated(&format!("{folder}/{name}"), Some(contents))?;
+        }
+        let entries = match fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(source) => return Err(self.io_error(&path, source)),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|source| self.io_error(&path, source))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !files.contains_key(&name) && entry.path().is_file() {
+                self.remove_file(&entry.path())?;
+            }
+        }
+        Ok(())
+    }
+
     fn remove_file(&self, path: &Path) -> Result<(), StorageError> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),

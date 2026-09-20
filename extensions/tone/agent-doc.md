@@ -1,4 +1,4 @@
-## Tone: a sine oscillator
+# Tone: a sine oscillator
 
 `tone` plays one steady sine. It is not part of the arrangement and ignores the transport.
 

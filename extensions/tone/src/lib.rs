@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    AudioOutput, BehaviourContext, BehaviourError, OutputEndpoint, Ports, PrepareConfig,
+    AgentDoc, AudioOutput, BehaviourContext, BehaviourError, OutputEndpoint, Ports, PrepareConfig,
     ProcessContext, Processor, Registry, RegistryError, State,
 };
 
@@ -57,10 +57,17 @@ impl State for ToneState {
     }
 }
 
+/// The doc of the tool, for an agent with only file access.
+pub const AGENT_DOC: AgentDoc = AgentDoc {
+    name: "tone",
+    when: "You work on a `tone` record: a steady sine outside the arrangement",
+    markdown: include_str!("../agent-doc.md"),
+};
+
 /// Registers the Tone tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.tool::<ToneState>(EXTENSION)?.behaviour(apply);
-    registry.agent_doc(EXTENSION, include_str!("../agent-doc.md"));
+    registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
 

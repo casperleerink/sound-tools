@@ -26,7 +26,8 @@ pub mod view;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry, RegistryError, State,
+    AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
+    RegistryError, State,
 };
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
@@ -194,10 +195,17 @@ impl State for SynthState {
     }
 }
 
+/// The doc of the synth record, for an agent with only file access.
+pub const AGENT_DOC: AgentDoc = AgentDoc {
+    name: "instrument",
+    when: "You change how a track sounds, or give a new track its instrument",
+    markdown: include_str!("../agent-doc.md"),
+};
+
 /// Registers the synth tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.tool::<SynthState>(EXTENSION)?.behaviour(apply);
-    registry.agent_doc(EXTENSION, include_str!("../agent-doc.md"));
+    registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
 

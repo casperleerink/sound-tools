@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    AudioInput, AudioOutput, BehaviourContext, BehaviourError, Engine, EngineConfig, InputEndpoint,
-    InstanceId, OutputEndpoint, Place, Ports, PrepareConfig, ProcessContext, Processor, Project,
-    ProjectError, Registry, State,
+    AgentDoc, AudioInput, AudioOutput, BehaviourContext, BehaviourError, Engine, EngineConfig,
+    InputEndpoint, InstanceId, OutputEndpoint, Place, Ports, PrepareConfig, ProcessContext,
+    Processor, Project, ProjectError, Registry, State,
 };
 
 pub const EXTENSION: &str = "test";
@@ -232,7 +232,7 @@ pub fn registry() -> Registry {
         .summary(summarize_bank);
     registry.tool::<Shelf>(EXTENSION).unwrap();
     registry.tool::<Book>(EXTENSION).unwrap();
-    registry.agent_doc(EXTENSION, TEST_AGENT_DOC);
+    registry.agent_doc(EXTENSION, TEST_AGENT_DOC).unwrap();
     registry
 }
 
@@ -259,8 +259,11 @@ impl State for Book {
 pub const SHELF_RECORD: &str = r#"{"tool": "test.shelf", "state": {}}"#;
 pub const BOOK_RECORD: &str = r#"{"tool": "test.book", "state": {}}"#;
 
-pub const TEST_AGENT_DOC: &str =
-    "## Test tools\n\nA bar is {{ticks_per_bar}} ticks in {{time_signature}}.\n";
+pub const TEST_AGENT_DOC: AgentDoc = AgentDoc {
+    name: "test-tools",
+    when: "You work on a test record",
+    markdown: "# Test tools\n\nA bar is {{ticks_per_bar}} ticks in {{time_signature}}.\n",
+};
 
 /// A bank tells what it owns in one line, so a summary does not list every level.
 fn summarize_bank(project: &Project, bank: &sound_core::Instance<Bank>) -> String {
