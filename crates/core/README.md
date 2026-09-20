@@ -172,6 +172,8 @@ The runtime calls `register` of every bundled extension before it opens the proj
 
 A tool without `.behaviour(...)` is plain data. Its owner reads it. Clips are like this.
 
+`.end(|project, instance| ...)` says where the content of an instance ends on the timeline, as `Option<Ticks>`. `Project::end()` is the latest of them and `None` for a project with no set end. The core knows no clips, so this is how a transport shows a duration. The arrangement gives the end of its last clip.
+
 Two more things an extension registers, both for agents that work in the project folder with only file access:
 
 - `.summary(|project, instance| ...)` after `.behaviour(...)`: lines of text about one instance and what it owns. `Project::summary(&id)` gives it and `runtime --inspect` prints it. An owner of many small records gives one, so an agent reads one summary and not every record.
@@ -242,7 +244,7 @@ Two instances may declare the same connection, for example an owner and its chil
 
 ### Read and edit from an interface
 
-Views hold an `Instance<S>` and read the current state when they render. They keep no copy.
+Views hold an `Instance<S>` and read the current state when they render. They keep no copy. In the window, a view reaches the project through the GPUI bridge of the UI SDK: the [sound-ui README](../ui/README.md) is the guide for writing a view. The calls are the ones below.
 
 ```rust
 let tone: Instance<ToneState> = project.resolve(&id)?;      // None: gone, or another tool
@@ -292,6 +294,8 @@ for event in project.drain_events() { /* refresh what is named */ }
 ```
 
 `ProjectEvent` is `Created(id)`, `Changed(id)`, `Deleted(id)`, `ProjectFileChanged` or `ProblemsChanged`. Events carry no state. A view of a parent that shows its children refreshes when `id.is_inside(parent)`. `project.problems()` lists files that are not live, with the path and the field. Interface edits, file edits, undo and redo all produce the same events.
+
+`project.clock()` is the clock the engine plays by, for conversions while reading, such as ticks to seconds.
 
 Transport goes through `project.engine()`: `play`, `pause`, `stop`, `seek`. Change the tempo map with `changes.set_tempo_map`, not on the engine, so it is saved and undoable.
 
@@ -385,7 +389,8 @@ The saved JSON, as it will appear in `project.json`:
 cargo nextest run -p sound-core -p tone
 RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement   # with the realtime sanitizer
 cargo nextest run -p sound-core --run-ignored only ten_thousand --no-capture   # scale numbers
-cargo run -p runtime -- my-project                        # runs the folder live on the default device
+cargo run -p runtime -- my-project                        # the window: runs the folder live on the default device
+cargo run -p runtime -- my-project --headless             # the same without a window, commands from stdin
 cargo run -p runtime -- my-project --inspect              # summary, no device, no lock
 cargo run -p runtime -- my-project --render out.wav --seconds 4
 ```

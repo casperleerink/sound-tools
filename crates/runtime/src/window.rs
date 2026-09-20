@@ -35,7 +35,7 @@ actions!(
 );
 
 /// Room for the traffic lights of a macOS window, left of the project menu.
-const TRAFFIC_LIGHTS_WIDTH: f32 = 72.;
+const TRAFFIC_LIGHTS_WIDTH: f32 = 80.;
 const TOP_ROW_HEIGHT: f32 = 48.;
 
 /// The root view of the window.
@@ -211,7 +211,7 @@ impl Render for Shell {
 /// Key bindings and the actions that need no window. They hold the session weakly: when the
 /// window closes, the session and with it the project must go, so the project folder is left
 /// as a clean close leaves it.
-fn bind_actions(session: WeakEntity<Session>, cx: &mut App) {
+pub fn bind_actions(session: WeakEntity<Session>, cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("space", TogglePlayback, None),
         KeyBinding::new("cmd-z", Undo, None),

@@ -60,14 +60,27 @@ Every element must earn its keep. Reference feel: the source design system and H
 - Cards and panels: 16 px padding, no meta chips in headers, port labels on hover only, secondary parameters behind a disclosure or a second view.
 - Accessible: visible focus rings, labelled controls, full keyboard reach. This is a product requirement.
 
+## The window, September 19, 2026
+
+What is built, in `crates/runtime/src/window.rs` and `extensions/arrangement/src/view.rs`. `cargo test -p runtime --test snapshots` renders it to PNGs.
+
+- One background, `gray-100`, for the whole window. No panels and no top bar: the title bar is transparent, the project name sits right of the traffic lights and the row around it drags the window.
+- Transport pill: play or pause in green, stop, the position as `bar.beat`, the time as `m:ss` muted, then the hairline seek strip and the duration when the project has an end. Numbers are tabular with a fixed width, so the pill does not move while playing. Space toggles playback. Tab reaches the buttons and the strip, and left and right seek by a bar on the strip.
+- Project menu: add track, undo and redo with the name of the step and their shortcuts, the output device by name with a check, reveal project folder. An item that cannot run is at 40% opacity.
+- Arrangement: 176 px track headers with the accent dot and the name at 14 px medium in `gray-900`, 64 px rows, a 32 px ruler with one short mark and one muted 12 px number per bar. Bar numbers thin out to every 2nd, 4th, 8th bar when bars get narrow. No grid lines, no row lines, no zoom or scroll controls. Two hairlines at `alpha/5`: under the ruler and right of the headers. Tick 0 sits 8 px into the timeline.
+- Clips: `alpha/5` fill with an `alpha/10` hairline border and 6 px corners, 4 px inside the row. The notes are small bars in the accent of the track. That is the one place where a track accent is more than a dot: notes are marks, not fills, and they tie a clip to its track without a label. The selected clip has a `gray-950` border. Clips have no name label.
+- Playhead: a 1 px `gray-950` line with a 7 px round head in the ruler.
+- Notices: one quiet line bottom-left, a red dot for the last error with a dismiss button, a peach dot for files that are not live. Nothing blocks.
+- Scroll pans, pinch or cmd-scroll zooms about the pointer. A click on the ruler seeks to the nearest sixteenth. A click on a clip selects it.
+
 ## GPUI notes from the first port, September 14, 2026
 
 The UI SDK lives in `crates/ui`; the gallery in `crates/gallery` shows every component (`GALLERY_SECTION=foundation|inputs|overlays|composed cargo run -p gallery`; `cargo test -p gallery --test snapshots` renders PNGs without opening a window). GPUI 0.2.2 limits that shaped the components. GPUI is now pinned to Zed v1.20.2, where some of these no longer apply, as noted:
 
 - No CSS transitions. Hover and active states swap instantly. Only the switch thumb and the working indicator animate, through `with_animation`.
-- No focus-visible. Focus rings show on mouse focus too. Stateless components take an optional `FocusHandle` to show a ring. The pinned version has `.focus_visible(..)`; the components do not use it yet.
+- No focus-visible. Focus rings show on mouse focus too. Stateless components take an optional `FocusHandle` to show a ring. The pinned version has `.focus_visible(..)`. The dropdown menu trigger and the seek strip use it; the button does not yet.
 - No built-in text widget. `text_input.rs` implements shaping, cursor, selection and IME itself. It is single-line; `.lines(n)` only makes the box taller. Real multi-line editing is future work.
-- Key bindings are registered by the component on first use, scoped to a key context, since the app binds none globally yet.
+- Key bindings are registered by the component on first use, scoped to a key context. The window binds a few globally: space, cmd-z, shift-cmd-z, tab, shift-tab, cmd-q. A global binding wins over a focused button, so space always toggles playback and enter activates the focused control.
 - Draggable controls use drag events with a delta, so a plain click on a slider track does not jump the handle.
 - SVG icons take an explicit colour; `Icon` reads the inherited text colour at render time. Colour buttons therefore tint rather than invert on hover.
 - Overlays anchor to a zero-size box on the trigger edge and snap to the window with a margin. Side is explicit, not collision-aware. Click-outside uses `on_mouse_down_out` with an occluding surface.

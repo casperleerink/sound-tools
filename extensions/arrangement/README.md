@@ -52,6 +52,17 @@ Ids come from `Project::free_id`, which looks at the project and the disk but no
 
 Edit notes with `project.update(&mut edit, &clip, |clip| ...)` on the `Clip` itself. A note editor needs no helper for that.
 
+- `end(project, arrangement)`: the end of the last clip, `None` without clips. It is registered as the end of the tool, so `Project::end` and the transport have a duration.
+
+## The view
+
+`view::register(views)` registers `ArrangementView` for the `arrangement` tool. The guide for views in general is the [sound-ui README](../../crates/ui/README.md). `view.rs` is the only module that uses GPUI.
+
+- `ArrangementView` stacks a cached `Timeline` and a playhead line, so that playback repaints the line only.
+- `Timeline` holds the interface state: `Viewport` (zoom and scroll), the selected clip and a focus handle. Each paint builds a `Scene` from the project: the visible rows, bars and `ClipShape`s, each with its `Instance<Clip>` and its rect. The mouse listeners of that frame get the same scene, and `Scene::clip_at(x, y)` is the hit test. Gestures for editing belong there: mouse down finds the clip, mouse move publishes through `Session::edit`, mouse up finishes.
+- `view::layout` is pure math with unit tests: `Viewport::x_of`, `tick_at`, `y_of`, `track_at`, `visible_ticks`, `visible_tracks`, `zoomed`, `scrolled`, `clamped`, `clip_rect`, `ruler_bars`, `miniature`, and `snap` to a sixteenth (`SNAP`). Its coordinates are those of the timeline area, right of the headers and below the ruler. `Timeline::timeline_position` is the way from a mouse event to them.
+- Read-only for now: scroll pans, pinch or cmd-scroll zooms, a click on the ruler seeks to the nearest sixteenth, a click on a clip selects it.
+
 ## Summary
 
 The arrangement registers a summary (`ToolRegistration::summary`), which `runtime <folder> --inspect` prints: each track in order with name, colour, order and instrument tool, and each clip with its id, `bar:beat:tick` range, tick range, note count and pitch range.
@@ -62,6 +73,7 @@ The arrangement registers a summary (`ToolRegistration::summary`), which `runtim
 cargo nextest run -p arrangement -p runtime
 RTSAN_ENABLE=1 cargo nextest run -p arrangement                                   # with the realtime sanitizer
 cargo nextest run -p runtime --run-ignored only hundred_tracks --no-capture      # 100 tracks of 100 clips
+cargo test -p runtime --test snapshots                                           # the window as PNGs, with frame times
 ```
 
 Measured September 19, 2026 on an Apple Silicon laptop, dev profile with `opt-level = 3`, 48 kHz, offline: a project of 100 tracks with 100 clips each (10,200 records, an eighth of the tracks playing a chord at any time) opens in 0.44 s, applies one outside clip edit in 0.5 ms, and plays 62 times faster than realtime.
