@@ -10,6 +10,8 @@ use sound_core::{
     Engine, EngineConfig, EngineControl, InstanceId, Project, Registry, SavedDestination,
 };
 
+const PROJECT_FILE: &str = "project.json";
+
 /// Offline renders have no device to ask.
 pub const OFFLINE: EngineConfig = EngineConfig {
     sample_rate: 48_000,
@@ -19,31 +21,40 @@ pub const OFFLINE: EngineConfig = EngineConfig {
     processor_slots: 256,
 };
 
+/// The same text on every machine and for every build, so a project in git gets no diff from
+/// being opened somewhere else. Hence no path of this executable in it.
+const INSPECT_SECTION: &str = "## Inspect from a command line
+
+When you can run commands, the Sound Tools runtime prints the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems. It works while the project is open and changes nothing.
+
+```sh
+runtime . --inspect
+```
+
+`runtime` is the program that has this project open. When it is not on your `PATH`, ask the composer where it is, or skip this step: `problems.txt` tells you whether your files loaded.";
+
 /// Every bundled extension registers here.
 pub fn registry() -> Result<Registry> {
     let mut registry = Registry::new();
     arrangement::register(&mut registry)?;
     instrument::register(&mut registry)?;
     tone::register(&mut registry)?;
-    if let Ok(executable) = std::env::current_exe() {
-        registry.runtime_agent_doc_section(format!(
-            "## Inspect from a command line\n\nWhen you can run commands, this prints the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems. It works while the project is open and changes nothing.\n\n```sh\n{} . --inspect\n```",
-            executable.display()
-        ));
-    }
+    registry.runtime_agent_doc_section(INSPECT_SECTION);
     Ok(registry)
 }
 
-/// Opens the project with its lock. An empty or missing folder becomes the default project:
-/// 120 bpm, 4/4, one arrangement with one track and its synth, no clips.
+/// Opens the project with its lock. A folder without a `project.json` becomes the default
+/// project: 120 bpm, 4/4, one arrangement with one track and its synth, no clips. Other
+/// files in it, such as `.git` or `.DS_Store`, do not make it an existing project.
+///
+/// Making the default content is not something to undo, so a new project has no history.
 pub fn open_or_create(folder: &Path, control: EngineControl) -> Result<Project> {
-    let is_empty = match std::fs::read_dir(folder) {
-        Ok(mut entries) => entries.next().is_none(),
-        Err(_) => true,
-    };
+    let is_new = !folder.join(PROJECT_FILE).exists();
     let mut project = Project::open(folder, registry()?, control)?;
-    if is_empty {
+    // A `state/` folder with content but no project file is someone's work, not a new project.
+    if is_new && project.instances().next().is_none() && project.problems().is_empty() {
         arrangement::create_default_project(&mut project, SynthState::default())?;
+        project.clear_history();
     }
     Ok(project)
 }

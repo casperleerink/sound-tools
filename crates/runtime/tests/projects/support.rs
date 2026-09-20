@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use runtime::OFFLINE;
 use sound_core::{Engine, Project};
@@ -33,6 +34,10 @@ pub fn clip(start: u64, length: u64, notes: &[(u64, u64, u8)]) -> String {
 pub struct Harness {
     pub project: Project,
     pub engine: Engine,
+    /// The time of the last outside change. Each one comes a minute after the one before, so
+    /// it is an undo step of its own, as for changes made by hand. Without this, outside
+    /// changes that a test makes within milliseconds would join (`OUTSIDE_UNDO_WINDOW`).
+    now: Instant,
     pub folder: tempfile::TempDir,
 }
 
@@ -48,6 +53,7 @@ impl Harness {
         Self {
             project,
             engine,
+            now: Instant::now(),
             folder,
         }
     }
@@ -57,6 +63,7 @@ impl Harness {
             project,
             engine,
             folder,
+            ..
         } = self;
         drop((project, engine));
         Self::open(folder)
@@ -103,13 +110,19 @@ impl Harness {
         for (clip, contents) in clips {
             self.write(&format!("{folder}/{clip}.json"), contents);
         }
-        let changed = self.project.apply_outside_changes(&[self.path(&folder)]);
-        assert_eq!(changed.unwrap(), 2 + clips.len());
+        let folder = self.path(&folder);
+        assert_eq!(self.apply(&[folder]), 2 + clips.len());
     }
 
     pub fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
         let path = self.write(relative, contents);
-        self.project.apply_outside_changes(&[path]).unwrap()
+        self.apply(&[path])
+    }
+
+    pub fn apply(&mut self, paths: &[PathBuf]) -> usize {
+        self.now += Duration::from_secs(60);
+        let changed = self.project.apply_outside_changes_at(paths, self.now);
+        changed.unwrap()
     }
 
     pub fn render(&mut self, frames: usize) -> Vec<f32> {

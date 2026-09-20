@@ -65,11 +65,12 @@ fn print_events(project: &mut Project) {
 fn print_status(project: &mut Project, status: &EngineStatus) {
     let time_signature = project.engine().clock().tempo_map().time_signature();
     println!(
-        "status: {}, playhead {} (tick {}), {} edits applied, undo: {}, redo: {}",
+        "status: {}, playhead {} (tick {}), {} edits applied, {} events dropped, undo: {}, redo: {}",
         if status.playing { "playing" } else { "stopped" },
         time_signature.bar_beat_of(status.playhead_tick),
         status.playhead_tick.0,
         status.batches_applied,
+        status.event_overflows,
         project.undo_label().unwrap_or("nothing"),
         project.redo_label().unwrap_or("nothing"),
     );
@@ -218,6 +219,10 @@ fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
     }
     writer.finalize()?;
     println!("rendered {seconds} s to {}, peak {peak:.4}", wav.display());
+    // Above zero, notes were lost: more events in one block than a port holds, or more held
+    // notes than a track keeps.
+    let status = project.engine().poll()?;
+    println!("event overflows: {}", status.event_overflows);
     Ok(())
 }
 

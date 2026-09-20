@@ -36,6 +36,39 @@ fn the_default_project_is_a_small_musical_template() {
             .path("state/arrangement/track-1/instrument.json")
             .exists()
     );
+    // Making the default content is nothing to undo.
+    assert_eq!(harness.project.undo_label(), None);
+}
+
+#[test]
+fn a_folder_without_a_project_file_becomes_the_default_project_whatever_else_is_in_it() {
+    let folder = tempfile::tempdir().unwrap();
+    std::fs::create_dir(folder.path().join(".git")).unwrap();
+    std::fs::write(folder.path().join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(folder.path().join(".DS_Store"), [0_u8; 4]).unwrap();
+    let harness = Harness::open(folder);
+    assert_eq!(harness.project.instances().count(), 3);
+    assert!(harness.path(".git/HEAD").exists());
+
+    // An existing project is left as it is, also one with no instances.
+    let mut harness = harness;
+    let mut changes = sound_core::Changes::new();
+    changes.delete(&sound_core::InstanceId::new("arrangement").unwrap());
+    harness.project.commit("Delete all", changes).unwrap();
+    let harness = harness.reopen();
+    assert_eq!(harness.project.instances().count(), 0);
+
+    // Records without a project file are someone's work, not a new project.
+    let folder = tempfile::tempdir().unwrap();
+    let drone = r#"{"tool": "tone", "state": {"frequency_hz": 110.0, "gain": 0.1}}"#;
+    crate::support::write(folder.path(), "state/drone.json", drone);
+    let harness = Harness::open(folder);
+    let ids: Vec<String> = harness
+        .project
+        .instances()
+        .map(|(id, _)| id.to_string())
+        .collect();
+    assert_eq!(ids, ["drone"]);
 }
 
 #[test]
@@ -102,13 +135,7 @@ fn a_track_folder_written_during_playback_adds_a_track_without_stopping_the_othe
     // Deleting the folder removes the track, and one undo brings the three records back.
     let folder = harness.path("state/arrangement/bass");
     std::fs::remove_dir_all(&folder).unwrap();
-    assert_eq!(
-        harness
-            .project
-            .apply_outside_changes(std::slice::from_ref(&folder))
-            .unwrap(),
-        3
-    );
+    assert_eq!(harness.apply(std::slice::from_ref(&folder)), 3);
     harness.project.engine().stop();
     harness.render(BAR);
     assert_eq!(difference(&harness.play(5 * BAR), &expected), None);

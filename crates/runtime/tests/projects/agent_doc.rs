@@ -39,6 +39,19 @@ fn the_agent_doc_is_written_with_every_section_and_is_stable_on_reopen() {
         ]
     );
     assert!(!doc.contains("{{"), "a placeholder is left");
+    // Nothing of this machine is in it, so a project in git gets no diff from being opened
+    // by another build or on another machine.
+    let root = harness.project.root().display().to_string();
+    let executable = std::env::current_exe().unwrap();
+    for machine_specific in [
+        root.as_str(),
+        executable.to_str().unwrap(),
+        "/Users/",
+        "/tmp/",
+    ] {
+        assert!(!doc.contains(machine_specific), "{machine_specific}");
+    }
+    assert!(doc.contains("```sh\nruntime . --inspect\n```"));
     assert_eq!(
         std::fs::read_to_string(harness.path("CLAUDE.md")).unwrap(),
         "@AGENTS.md\n"
