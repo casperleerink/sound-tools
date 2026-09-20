@@ -1,14 +1,16 @@
 //! The arrangement view: track headers, a bar ruler, clips with a miniature of their notes,
-//! the playhead, and the note editor as a panel below. Clips are added, moved, resized and
-//! deleted here with the mouse and the keys.
+//! the playhead, and one detail panel below: the note editor of a clip or the track panel of a
+//! track, one at a time. Clips are added, moved, resized and deleted here with the mouse and
+//! the keys.
 //!
 //! The views, split so that a moving playhead repaints almost nothing:
-//! - [`ArrangementView`] is what the window shows. It stacks the timeline over the note editor
-//!   and opens and closes the editor.
+//! - [`ArrangementView`] is what the window shows. It stacks the timeline over the detail
+//!   panel, and opens, swaps and closes what the panel shows.
 //! - [`Timeline`] draws everything that changes with the project, the scroll and the zoom on
 //!   one canvas, and only what is visible. GPUI keeps its painted frame while it is not
 //!   notified, so playback does not run this code.
 //! - [`NoteEditor`] does the same for the notes of one clip.
+//! - [`TrackPanel`] shows the devices of one track, each in the view of its own tool.
 //! - A `PlayheadLine` on top of each draws one line, every frame while the project plays.
 //!
 //! All positions come from [`layout`], and what a drag does to a clip from [`gesture`]. The
@@ -21,6 +23,7 @@ pub mod gesture;
 pub mod layout;
 mod paint;
 pub mod roll;
+pub mod track_panel;
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,7 +38,7 @@ use gpui::{
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent, Ticks, TimeSignature};
 use sound_notes::Clip;
-use sound_ui::{ActiveTheme, Session, Views};
+use sound_ui::{ActiveTheme, KeyboardFocus, Session, Views};
 
 use crate::{ArrangementState, TrackState, add_clip, move_clip, tracks};
 use editor::EditorEvent;
@@ -45,10 +48,10 @@ use layout::{
     Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, SNAP, TRACK_HEIGHT, Viewport, shifted, snap,
     snapped_delta,
 };
-use paint::{
-    KeyboardFocus, PlayheadLine, accent, paint_focus_ring, paint_ruler, paint_track_label, placed,
-};
+use paint::{PlayheadLine, accent, paint_focus_ring, paint_ruler, paint_track_label, placed};
 use roll::EDITOR_HEIGHT;
+pub use track_panel::TrackPanel;
+use track_panel::TrackPanelEvent;
 
 /// Registers the view of the `arrangement` tool.
 pub fn register(views: &mut Views) {
@@ -62,11 +65,23 @@ struct OpenEditor {
     _events: Subscription,
 }
 
+struct OpenTrackPanel {
+    panel: Entity<TrackPanel>,
+    _events: Subscription,
+}
+
+/// What the panel below the timeline shows. One thing at a time: opening the other takes its
+/// place.
+enum Detail {
+    Editor(OpenEditor),
+    Track(OpenTrackPanel),
+}
+
 pub struct ArrangementView {
     session: Entity<Session>,
     timeline: Entity<Timeline>,
     playhead_line: Entity<PlayheadLine>,
-    editor: Option<OpenEditor>,
+    detail: Option<Detail>,
 }
 
 impl ArrangementView {
@@ -81,32 +96,43 @@ impl ArrangementView {
         let painted = timeline.read(cx).painted.clone();
         let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, painted, cx));
 
-        cx.subscribe_in(&timeline, window, |view, _, event, window, cx| {
-            let TimelineEvent::OpenEditor(clip) = event;
-            view.open_editor(clip.clone(), window, cx);
-        })
+        cx.subscribe_in(
+            &timeline,
+            window,
+            |view, _, event, window, cx| match event {
+                TimelineEvent::OpenEditor(clip) => view.open_editor(clip.clone(), window, cx),
+                TimelineEvent::OpenTrack(track) => view.open_track_panel(track.clone(), window, cx),
+            },
+        )
         .detach();
-        // The open editor follows the selection to another clip.
-        cx.observe(&timeline, |view, _, cx| {
-            view.follow_selection(cx);
+        // What is open follows the selection to another clip or another track.
+        cx.observe_in(&timeline, window, |view, _, window, cx| {
+            view.follow_selection(window, cx);
         })
         .detach();
         // A move to another track, and the undo of one, delete the clip at one id and create
         // it at another in one group of events. So the editor is not closed at the delete, but
         // after the group: the timeline has selected the clip at its new id by then, and the
-        // editor goes with it. Only a clip that is really gone closes the editor.
+        // editor goes with it. Only a clip that is really gone closes the editor. A track
+        // keeps its id, so its panel closes with it at once.
         cx.subscribe_in(&session, window, |view, _, event, window, cx| {
-            let shown = view.editor_clip(cx);
-            if matches!(event, ProjectEvent::Deleted(id) if Some(id) == shown.as_ref()) {
+            let ProjectEvent::Deleted(id) = event else {
+                return;
+            };
+            if Some(id) == view.editor_clip(cx).as_ref() {
                 cx.defer_in(window, |view, window, cx| {
                     let gone = view.editor_clip(cx).is_some_and(|clip| {
                         let project = view.session.read(cx).project();
                         project.resolve::<Clip>(&clip).is_none()
                     });
-                    if gone && !view.follow_selection(cx) {
-                        view.close_editor(window, cx);
+                    if gone && !view.follow_selection(window, cx) {
+                        view.close_detail(window, cx);
                     }
                 });
+            }
+            let shown = view.track_panel().map(|panel| panel.read(cx).track().id());
+            if Some(id) == shown {
+                view.close_detail(window, cx);
             }
         })
         .detach();
@@ -115,7 +141,7 @@ impl ArrangementView {
             session,
             timeline,
             playhead_line,
-            editor: None,
+            detail: None,
         }
     }
 
@@ -125,7 +151,18 @@ impl ArrangementView {
 
     /// The note editor, while it is open.
     pub fn editor(&self) -> Option<&Entity<NoteEditor>> {
-        self.editor.as_ref().map(|open| &open.editor)
+        match &self.detail {
+            Some(Detail::Editor(open)) => Some(&open.editor),
+            Some(Detail::Track(_)) | None => None,
+        }
+    }
+
+    /// The track panel, while it is open.
+    pub fn track_panel(&self) -> Option<&Entity<TrackPanel>> {
+        match &self.detail {
+            Some(Detail::Track(open)) => Some(&open.panel),
+            Some(Detail::Editor(_)) | None => None,
+        }
     }
 
     fn editor_clip(&self, cx: &App) -> Option<InstanceId> {
@@ -133,17 +170,18 @@ impl ArrangementView {
         Some(editor.clip().id().clone())
     }
 
-    /// Opens the note editor for a clip and gives it the focus, so the keys edit notes.
+    /// Opens the note editor for a clip and gives it the focus, so the keys edit notes. It
+    /// takes the place of an open track panel.
     pub fn open_editor(
         &mut self,
         clip: Instance<Clip>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(open) = &self.editor {
-            open.editor
-                .update(cx, |editor, cx| editor.set_clip(clip, cx));
+        if let Some(editor) = self.editor() {
+            editor.update(cx, |editor, cx| editor.set_clip(clip, cx));
         } else {
+            self.close_detail(window, cx);
             let (width, _) = self.timeline.read(cx).painted_size.get();
             let session = self.session.clone();
             let editor = cx.new(|cx| NoteEditor::new(session, clip, width, cx));
@@ -152,13 +190,13 @@ impl ArrangementView {
             let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &editor, painted, cx));
             let events = cx.subscribe_in(&editor, window, |view, _, event, window, cx| {
                 let EditorEvent::Close = event;
-                view.close_editor(window, cx);
+                view.close_detail(window, cx);
             });
-            self.editor = Some(OpenEditor {
+            self.detail = Some(Detail::Editor(OpenEditor {
                 editor,
                 playhead_line,
                 _events: events,
-            });
+            }));
             cx.notify();
         }
         if let Some(editor) = self.editor() {
@@ -166,47 +204,113 @@ impl ArrangementView {
         }
     }
 
-    /// Closes the editor. The focus goes back to the timeline when the editor had it.
-    pub fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.editor.take() else {
+    /// Opens the track panel for a track. It takes the place of an open note editor. The
+    /// focus stays where it is: the timeline keeps the keys that pick another track, and tab
+    /// goes into the panel.
+    pub fn open_track_panel(
+        &mut self,
+        track: Instance<TrackState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(panel) = self.track_panel() {
+            if panel.read(cx).track().id() != track.id() {
+                panel.update(cx, |panel, cx| panel.set_track(track, window, cx));
+            }
             return;
+        }
+        self.close_detail(window, cx);
+        let session = self.session.clone();
+        let panel = cx.new(|cx| TrackPanel::new(session, track, window, cx));
+        let events = cx.subscribe_in(&panel, window, |view, _, event, window, cx| {
+            let TrackPanelEvent::Close = event;
+            view.close_detail(window, cx);
+        });
+        self.detail = Some(Detail::Track(OpenTrackPanel {
+            panel,
+            _events: events,
+        }));
+        cx.notify();
+    }
+
+    /// Closes what the panel below the timeline shows. The focus goes back to the timeline
+    /// when it was inside.
+    pub fn close_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let focus_handle = match self.detail.take() {
+            Some(Detail::Editor(open)) => {
+                // A note drag may be going on: its gesture ends here, not with the editor.
+                open.editor.update(cx, |editor, cx| editor.end_drag(cx));
+                open.editor.focus_handle(cx)
+            }
+            // A knob drag of a device ends when its view is released with the panel.
+            Some(Detail::Track(open)) => open.panel.focus_handle(cx),
+            None => return,
         };
-        // A note drag may be going on: its gesture ends here, not with the editor.
-        open.editor.update(cx, |editor, cx| editor.end_drag(cx));
-        if open.editor.focus_handle(cx).contains_focused(window, cx) {
+        if focus_handle.contains_focused(window, cx) {
             window.focus(&self.timeline.focus_handle(cx), cx);
         }
         cx.notify();
     }
 
-    /// Shows the selected clip in the open editor. Whether there was one to show.
-    fn follow_selection(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(open) = &self.editor else {
-            return false;
-        };
-        let Some(selected) = self.timeline.read(cx).selected_clip().cloned() else {
-            return false;
-        };
+    /// Shows the selected clip in the open editor, or the selected track in the open track
+    /// panel. Whether there was one to show.
+    fn follow_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let project = self.session.read(cx).project();
-        let Some(clip) = project.resolve::<Clip>(&selected) else {
-            return false;
-        };
-        if open.editor.read(cx).clip().id() != &selected {
-            open.editor
-                .update(cx, |editor, cx| editor.set_clip(clip, cx));
+        let timeline = self.timeline.read(cx);
+        match &self.detail {
+            Some(Detail::Editor(open)) => {
+                let Some(clip) = timeline.selected_instance(cx) else {
+                    return false;
+                };
+                if open.editor.read(cx).clip().id() != clip.id() {
+                    open.editor
+                        .update(cx, |editor, cx| editor.set_clip(clip, cx));
+                }
+                true
+            }
+            Some(Detail::Track(_)) => {
+                let selected = timeline.selected_track.as_ref();
+                let Some(track) = selected.and_then(|track| project.resolve(track)) else {
+                    return false;
+                };
+                self.open_track_panel(track, window, cx);
+                true
+            }
+            None => false,
         }
-        true
     }
 }
 
 impl Render for ArrangementView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let timeline = self.timeline.clone();
         let fill_parent = || StyleRefinement::default().size_full();
+        // Both details have one height, so a swap between them does not move the timeline.
+        // Both are cached: the playhead line above draws this view again on every frame.
+        let detail = self.detail.as_ref().map(|detail| {
+            let panel = div().flex_none().h(px(EDITOR_HEIGHT)).relative();
+            match detail {
+                Detail::Editor(open) => panel
+                    .child(open.editor.clone().cached(fill_parent()))
+                    .child(open.playhead_line.clone()),
+                Detail::Track(open) => panel.child(open.panel.clone().cached(fill_parent())),
+            }
+        });
         div()
             .size_full()
             .flex()
             .flex_col()
+            // Escape closes the detail. It comes here from the timeline and from inside the
+            // track panel when nothing there used it, as a knob does to cancel its drag. The
+            // note editor handles its own.
+            .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+                let escape =
+                    event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
+                if escape && view.detail.is_some() {
+                    view.close_detail(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .child(
                 div()
                     .flex_1()
@@ -216,14 +320,7 @@ impl Render for ArrangementView {
                     .child(timeline.cached(fill_parent()))
                     .child(self.playhead_line.clone()),
             )
-            .children(self.editor.as_ref().map(|open| {
-                div()
-                    .flex_none()
-                    .h(px(EDITOR_HEIGHT))
-                    .relative()
-                    .child(open.editor.clone().cached(fill_parent()))
-                    .child(open.playhead_line.clone())
-            }))
+            .children(detail)
     }
 }
 
@@ -231,6 +328,7 @@ struct TrackRow {
     y: f32,
     name: SharedString,
     accent: Hsla,
+    selected: bool,
 }
 
 /// A clip as it is on screen, in the coordinates of [`layout`].
@@ -361,6 +459,8 @@ impl Stale {
 pub enum TimelineEvent {
     /// A double click on a clip, or enter: show its notes.
     OpenEditor(Instance<Clip>),
+    /// A click on a track header, or enter on the selected track: show its panel.
+    OpenTrack(Instance<TrackState>),
 }
 
 pub struct Timeline {
@@ -383,6 +483,9 @@ pub struct Timeline {
     /// What the events since the last render may have changed.
     stale: Stale,
     selected_clip: Option<InstanceId>,
+    /// The track whose header was clicked last. The track panel shows it. The keys go to the
+    /// selected clip first, and to this track when no clip is selected.
+    selected_track: Option<InstanceId>,
     /// The selected clip was deleted in the event group that is arriving, and what the same
     /// group created. See [`Self::reselect`].
     lost_selection: Option<InstanceId>,
@@ -422,6 +525,9 @@ impl Timeline {
                 }
                 ProjectEvent::Deleted(id) => {
                     let changed = shown(id);
+                    if timeline.selected_track.as_ref() == Some(id) {
+                        timeline.selected_track = None;
+                    }
                     if timeline.selected_clip.as_ref() == Some(id) {
                         timeline.selected_clip = None;
                         timeline.lost_selection = Some(id.clone());
@@ -473,6 +579,7 @@ impl Timeline {
             ends: BTreeMap::new(),
             stale: Stale::Everything,
             selected_clip: None,
+            selected_track: None,
             lost_selection: None,
             created_in_group: Vec::new(),
             forgets_group_later: false,
@@ -592,6 +699,21 @@ impl Timeline {
         }
     }
 
+    pub fn selected_track(&self) -> Option<&InstanceId> {
+        self.selected_track.as_ref()
+    }
+
+    /// Selects a track and no clip, so that the keys are about the track.
+    pub fn select_track(&mut self, track: Option<InstanceId>, cx: &mut Context<Self>) {
+        if track.is_some() {
+            self.select_clip(None, cx);
+        }
+        if self.selected_track != track {
+            self.selected_track = track;
+            cx.notify();
+        }
+    }
+
     fn time_signature(&self, cx: &App) -> TimeSignature {
         let project = self.session.read(cx).project();
         project.project_file().tempo_map.time_signature()
@@ -625,6 +747,7 @@ impl Timeline {
                 y: viewport.y_of(index),
                 name: state.name.clone().into(),
                 accent,
+                selected: self.selected_track.as_ref() == Some(track.id()),
             });
             let first = scene.clips.len();
             for (clip, state) in project.children::<Clip>(track.id()) {
@@ -666,6 +789,12 @@ impl Timeline {
         cx: &mut Context<Self>,
     ) {
         if x < 0.0 {
+            // A track header.
+            let row = scene.viewport.track_at(y, self.order.len());
+            if let Some(track) = row.and_then(|row| self.order.get(row)).cloned() {
+                self.select_track(Some(track.id().clone()), cx);
+                cx.emit(TimelineEvent::OpenTrack(track));
+            }
             return;
         }
         if y < 0.0 {
@@ -927,7 +1056,7 @@ impl Timeline {
             return false;
         }
         let Some(clip) = self.selected_instance(cx) else {
-            return false;
+            return self.on_track_key(key, cx);
         };
         let step = SNAP.0 as i64;
         match key {
@@ -938,6 +1067,31 @@ impl Timeline {
             "up" => self.nudge_to_track(&clip, -1, cx),
             "down" => self.nudge_to_track(&clip, 1, cx),
             _ => return false,
+        }
+        true
+    }
+
+    /// The keys of the selected track, which it gets while no clip is selected: up and down
+    /// select the track above or below, and enter opens its panel.
+    fn on_track_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        self.refresh_order(cx);
+        let mut rows = self.order.iter();
+        let selected = self.selected_track.as_ref();
+        let Some(current) = selected.and_then(|id| rows.position(|track| track.id() == id)) else {
+            return false;
+        };
+        let next = match key {
+            "enter" => current,
+            "up" => nudged_track(current, self.order.len(), -1),
+            "down" => nudged_track(current, self.order.len(), 1),
+            _ => return false,
+        };
+        let Some(track) = self.order.get(next).cloned() else {
+            return false;
+        };
+        self.select_track(Some(track.id().clone()), cx);
+        if key == "enter" {
+            cx.emit(TimelineEvent::OpenTrack(track));
         }
         true
     }
@@ -1137,7 +1291,7 @@ fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &
         theme.alpha_at(0.05),
         theme.alpha_at(0.10),
     );
-    let selection = theme.gray_950;
+    let (selection, selected_header) = (theme.gray_950, theme.alpha_at(0.05));
     let headers = Bounds::new(
         bounds.origin + point(px(0.), px(RULER_HEIGHT)),
         size(px(HEADER_WIDTH), bounds.size.height - px(RULER_HEIGHT)),
@@ -1157,6 +1311,21 @@ fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &
     window.with_content_mask(Some(ContentMask { bounds: headers }), |window| {
         for row in &scene.rows {
             let top = headers.origin + point(px(0.), px(row.y.round()));
+            if row.selected {
+                // The shape of a clip, in the same place of the row. No accent: it is a fill.
+                let inside = Bounds::new(
+                    top + point(px(8.), px(4.)),
+                    size(px(HEADER_WIDTH - 16.), px(TRACK_HEIGHT - 8.)),
+                );
+                window.paint_quad(quad(
+                    inside,
+                    px(6.),
+                    selected_header,
+                    px(0.),
+                    selected_header,
+                    BorderStyle::Solid,
+                ));
+            }
             let name_width = HEADER_WIDTH - 44. - 16.;
             let name = row.name.clone();
             paint_track_label(name, row.accent, top, TRACK_HEIGHT, name_width, window, cx);

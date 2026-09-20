@@ -9,30 +9,21 @@ use gpui::{
     div, prelude::*, px,
 };
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::knob::Knob;
+use sound_ui::components::knob::{Knob, KnobChange, KnobRange};
 use sound_ui::components::meter::Meter;
 use sound_ui::components::slider::Slider;
 use sound_ui::{ActiveTheme, typography};
 
 pub struct MixerStrip {
-    pan: Entity<Knob>,
+    pan: f32,
     level: Entity<Slider>,
     mute: bool,
     solo: bool,
-    _subs: [Subscription; 2],
+    _level_changed: Subscription,
 }
 
 impl MixerStrip {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let pan = cx.new(|cx| {
-            Knob::new(cx)
-                .range(-50., 50.)
-                .step(1.)
-                .decimals(0)
-                .value(0.)
-                .size(40.)
-                .label("Pan")
-        });
         let level = cx.new(|cx| {
             Slider::new(cx)
                 .range(-60., 6.)
@@ -41,16 +32,13 @@ impl MixerStrip {
                 .value(-6.)
                 .width(72.)
         });
-        let subs = [
-            cx.observe(&pan, |_, _, cx| cx.notify()),
-            cx.observe(&level, |_, _, cx| cx.notify()),
-        ];
+        let level_changed = cx.observe(&level, |_, _, cx| cx.notify());
         Self {
-            pan,
+            pan: 0.,
             level,
             mute: false,
             solo: false,
-            _subs: subs,
+            _level_changed: level_changed,
         }
     }
 
@@ -105,7 +93,22 @@ impl Render for MixerStrip {
                             .child("Bass"),
                     ),
             )
-            .child(self.pan.clone())
+            .child(
+                Knob::new("pan")
+                    .range(KnobRange::linear(-50., 50.))
+                    .value(self.pan)
+                    .default_value(0.)
+                    .size(40.)
+                    .label("Pan")
+                    .readout(format!("{}", self.pan))
+                    .on_change(cx.processor(|this, change, _, cx| {
+                        // A sample with no undo: escape leaves the value where it is.
+                        if let KnobChange::Drag(pan) | KnobChange::Set(pan) = change {
+                            this.pan = pan;
+                            cx.notify();
+                        }
+                    })),
+            )
             .child(Meter::new(-12.).peak(-6.).height(180.).width(10.))
             .child(self.level.clone())
             .child(div().text_size(px(12.)).child(readout))

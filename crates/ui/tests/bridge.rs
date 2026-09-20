@@ -375,15 +375,18 @@ fn the_registry_makes_the_view_of_a_top_instance(cx: &mut TestAppContext) {
     let opened = open(cx);
     let mut views = Views::new();
     views.register(|_, marker: Instance<Marker>, _, _| MarkerView { marker });
-    cx.update(|cx| assert_eq!(views.main_instance(&opened.session, cx), None));
+    // Nothing is installed yet: a nested view then gets no view, and no panic.
+    cx.update(|cx| assert_eq!(Views::main_instance(&opened.session, cx), None));
+    cx.update(|cx| views.install(cx));
+    cx.update(|cx| assert_eq!(Views::main_instance(&opened.session, cx), None));
 
     create_marker(&opened.session, cx);
     let session = opened.session.clone();
     let cx = cx.add_empty_window();
     cx.update(|window, cx| {
-        assert_eq!(views.main_instance(&session, cx), Some(marker_id()));
-        assert!(views.view_of(&session, &marker_id(), window, cx).is_some());
+        assert_eq!(Views::main_instance(&session, cx), Some(marker_id()));
+        assert!(Views::view_of(&session, &marker_id(), window, cx).is_some());
         let missing = InstanceId::new("missing").unwrap();
-        assert!(views.view_of(&session, &missing, window, cx).is_none());
+        assert!(Views::view_of(&session, &missing, window, cx).is_none());
     });
 }

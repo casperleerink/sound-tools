@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
-use arrangement::view::{ArrangementView, NoteEditor, Timeline};
+use arrangement::view::{ArrangementView, NoteEditor, Timeline, TrackPanel};
 use gpui::{
     AppContext, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
     MouseUpEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext,
@@ -71,11 +71,12 @@ pub fn open_project(
     engine: Engine,
 ) -> Opened<'_> {
     cx.update(sound_ui::init);
+    cx.update(|cx| views().install(cx));
     let session = cx.new(|cx| Session::new(project, cx));
     cx.update(bind_keys);
     let (shell, cx) = cx.add_window_view({
         let session = session.clone();
-        move |window, cx| Shell::new(session, views(), "Test device".into(), window, cx)
+        move |window, cx| Shell::new(session, "Test device".into(), window, cx)
     });
     cx.run_until_parked();
     let main = shell
@@ -198,6 +199,42 @@ impl Opened<'_> {
             px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
             px(TOP_ROW + RULER_HEIGHT + viewport.y_of(track) + TRACK_HEIGHT / 2.),
         )
+    }
+
+    /// The middle of the header of a track row of the arrangement.
+    pub fn track_header(&mut self, track: usize) -> Point<Pixels> {
+        let y = self.at(0, track).y;
+        point(px(HEADER_WIDTH / 2.), y)
+    }
+
+    pub fn selected_track(&mut self) -> Option<InstanceId> {
+        let timeline = self.timeline.clone();
+        self.cx
+            .read(|cx| timeline.read(cx).selected_track().cloned())
+    }
+
+    pub fn track_panel(&mut self) -> Option<Entity<TrackPanel>> {
+        let arrangement = self.arrangement.clone();
+        self.cx
+            .read(|cx| arrangement.read(cx).track_panel().cloned())
+    }
+
+    /// The track that the open track panel shows.
+    pub fn panel_track(&mut self) -> Option<InstanceId> {
+        let panel = self.track_panel()?;
+        Some(self.cx.read(|cx| panel.read(cx).track().id().clone()))
+    }
+
+    /// The middle of a control that names itself for tests: `knob-<id>` or `segment-<value>`.
+    /// GPUI knows the bounds of what the last frame painted, and a cached view paints
+    /// nothing, so this asks for a whole frame first.
+    pub fn control(&mut self, selector: &'static str) -> Point<Pixels> {
+        self.cx.update(|window, _| window.refresh());
+        self.cx.run_until_parked();
+        let bounds = self.cx.debug_bounds(selector);
+        bounds
+            .unwrap_or_else(|| panic!("nothing on screen is called {selector}"))
+            .center()
     }
 
     pub fn editor(&mut self) -> Option<Entity<NoteEditor>> {

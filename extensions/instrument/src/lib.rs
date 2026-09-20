@@ -18,11 +18,11 @@
 //! }
 //! ```
 //!
-//! `README.md` in this crate has the units, ranges and ports.
+//! `README.md` in this crate has the units, ranges and ports. [`view`] is the interface of the
+//! synth, and the only module here that uses GPUI.
 
 mod synth;
-
-use std::ops::RangeInclusive;
+pub mod view;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
@@ -68,42 +68,129 @@ pub struct SynthState {
     pub gain: f32,
 }
 
+/// One number of the saved state: its field, its range and its default. The range and the
+/// default of a field are written here and nowhere else. `validate`, `Default`, the knobs of
+/// the view and a test of the docs all read them.
+pub struct Parameter {
+    pub field: &'static str,
+    pub min: f32,
+    pub max: f32,
+    pub default: f32,
+    pub get: fn(&SynthState) -> f32,
+    pub set: fn(&mut SynthState, f32),
+}
+
+impl Parameter {
+    /// An envelope time. The lower end keeps every stage long enough not to click.
+    const fn time(
+        field: &'static str,
+        default: f32,
+        get: fn(&SynthState) -> f32,
+        set: fn(&mut SynthState, f32),
+    ) -> Self {
+        let (min, max) = (0.001, 10.0);
+        Self {
+            field,
+            min,
+            max,
+            default,
+            get,
+            set,
+        }
+    }
+
+    fn check(&self, state: &SynthState) -> Result<(), String> {
+        let (
+            Self {
+                field, min, max, ..
+            },
+            value,
+        ) = (self, (self.get)(state));
+        if (*min..=*max).contains(&value) {
+            return Ok(());
+        }
+        Err(format!("{field} must be from {min} to {max}, not {value}"))
+    }
+}
+
+pub const CUTOFF: Parameter = Parameter {
+    field: "cutoff_hz",
+    min: 20.0,
+    max: 20_000.0,
+    default: 2_000.0,
+    get: |state| state.cutoff_hz,
+    set: |state, value| state.cutoff_hz = value,
+};
+pub const RESONANCE: Parameter = Parameter {
+    field: "resonance",
+    min: 0.0,
+    max: 1.0,
+    default: 0.2,
+    get: |state| state.resonance,
+    set: |state, value| state.resonance = value,
+};
+pub const ATTACK: Parameter = Parameter::time(
+    "attack_seconds",
+    0.005,
+    |state| state.attack_seconds,
+    |state, value| state.attack_seconds = value,
+);
+pub const DECAY: Parameter = Parameter::time(
+    "decay_seconds",
+    0.2,
+    |state| state.decay_seconds,
+    |state, value| state.decay_seconds = value,
+);
+pub const SUSTAIN: Parameter = Parameter {
+    field: "sustain",
+    min: 0.0,
+    max: 1.0,
+    default: 0.7,
+    get: |state| state.sustain,
+    set: |state, value| state.sustain = value,
+};
+pub const RELEASE: Parameter = Parameter::time(
+    "release_seconds",
+    0.3,
+    |state| state.release_seconds,
+    |state, value| state.release_seconds = value,
+);
+pub const GAIN: Parameter = Parameter {
+    field: "gain",
+    min: 0.0,
+    max: 1.0,
+    default: 0.15,
+    get: |state| state.gain,
+    set: |state, value| state.gain = value,
+};
+
+/// Every number of the state, in the order of its fields.
+pub const PARAMETERS: [&Parameter; 7] = [
+    &CUTOFF, &RESONANCE, &ATTACK, &DECAY, &SUSTAIN, &RELEASE, &GAIN,
+];
+
 impl Default for SynthState {
     fn default() -> Self {
         Self {
             waveform: Waveform::Saw,
-            cutoff_hz: 2_000.0,
-            resonance: 0.2,
-            attack_seconds: 0.005,
-            decay_seconds: 0.2,
-            sustain: 0.7,
-            release_seconds: 0.3,
-            gain: 0.15,
+            cutoff_hz: CUTOFF.default,
+            resonance: RESONANCE.default,
+            attack_seconds: ATTACK.default,
+            decay_seconds: DECAY.default,
+            sustain: SUSTAIN.default,
+            release_seconds: RELEASE.default,
+            gain: GAIN.default,
         }
     }
 }
-
-/// Envelope times. The lower end keeps every stage long enough not to click.
-const TIME_RANGE: RangeInclusive<f32> = 0.001..=10.0;
 
 impl State for SynthState {
     const TOOL: &'static str = "instrument.synth";
 
     fn validate(&self) -> Result<(), String> {
-        let check = |field: &str, value: f32, range: RangeInclusive<f32>| {
-            if range.contains(&value) {
-                return Ok(());
-            }
-            let (low, high) = range.into_inner();
-            Err(format!("{field} must be from {low} to {high}, not {value}"))
-        };
-        check("cutoff_hz", self.cutoff_hz, 20.0..=20_000.0)?;
-        check("resonance", self.resonance, 0.0..=1.0)?;
-        check("attack_seconds", self.attack_seconds, TIME_RANGE)?;
-        check("decay_seconds", self.decay_seconds, TIME_RANGE)?;
-        check("sustain", self.sustain, 0.0..=1.0)?;
-        check("release_seconds", self.release_seconds, TIME_RANGE)?;
-        check("gain", self.gain, 0.0..=1.0)
+        PARAMETERS
+            .iter()
+            .try_for_each(|parameter| parameter.check(self))
     }
 }
 
@@ -122,4 +209,60 @@ fn apply(state: &SynthState, context: &mut BehaviourContext<'_>) -> Result<(), B
     context.input(NOTES_INPUT, InputEndpoint::new(synth, Synth::NOTES));
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(synth, Synth::OUTPUT));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The docs give the ranges and the defaults to agents and to people. They are checked
+    /// against the one definition, so they cannot drift from it.
+    #[test]
+    fn the_docs_give_the_range_and_the_default_of_every_parameter() {
+        let docs = [
+            ("agent-doc.md", include_str!("../agent-doc.md")),
+            ("README.md", include_str!("../README.md")),
+        ];
+        for (name, doc) in docs {
+            for Parameter {
+                field,
+                min,
+                max,
+                default,
+                ..
+            } in PARAMETERS
+            {
+                let row = format!("| `{field}` |");
+                let row = doc.lines().find(|line| line.starts_with(&row));
+                let row = row.unwrap_or_else(|| panic!("{name} has no row for {field}"));
+                assert!(
+                    row.contains(&format!("| {min} to {max} |")),
+                    "{name}: {row}"
+                );
+                // The agent doc gives the defaults in its example, which another test loads.
+                if name == "README.md" {
+                    assert!(row.contains(&format!("| {default} |")), "{name}: {row}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {
+        for parameter in PARAMETERS {
+            for value in [parameter.min, parameter.default, parameter.max] {
+                let mut state = SynthState::default();
+                (parameter.set)(&mut state, value);
+                assert_eq!((parameter.get)(&state), value);
+                assert_eq!(state.validate(), Ok(()));
+            }
+            let mut state = SynthState::default();
+            (parameter.set)(&mut state, parameter.max * 2.0 + 1.0);
+            assert!(
+                state
+                    .validate()
+                    .is_err_and(|error| error.contains(parameter.field))
+            );
+        }
+    }
 }

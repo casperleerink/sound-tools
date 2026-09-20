@@ -8,6 +8,9 @@
 //! - `menu.png`: the project menu, open, after one edit.
 //! - `editor.png`: the note editor open on the selected clip, one note selected.
 //! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
+//! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default.
+//! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
+//! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -57,7 +60,7 @@ impl Opened {
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
         let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {
             let session = session.clone();
-            cx.new(|cx| Shell::new(session, views(), "MacBook Pro Speakers".into(), window, cx))
+            cx.new(|cx| Shell::new(session, "MacBook Pro Speakers".into(), window, cx))
         })?;
         cx.run_until_parked();
         Ok(Self {
@@ -133,6 +136,37 @@ impl Opened {
         cx.run_until_parked();
         let editor = cx.update(|cx| view.read(cx).editor().cloned());
         editor.context("the editor did not open")
+    }
+
+    /// A real click on the header of a track row, which selects the track and opens its
+    /// panel. The focus is then on the timeline, from the mouse, so no ring shows.
+    fn click_track_header(&self, row: f32, cx: &mut HeadlessAppContext) -> Result<()> {
+        let position = point(
+            px(HEADER_WIDTH / 2.),
+            px(48. + RULER_HEIGHT + TRACK_HEIGHT * (row + 0.5)),
+        );
+        self.drag(position, point(px(0.), px(0.)), 0, cx)?;
+        let view = self.arrangement_view(cx)?;
+        let open = cx.update(|cx| view.read(cx).track_panel().is_some());
+        anyhow::ensure!(open, "the track panel did not open");
+        Ok(())
+    }
+
+    /// One key, and a frame, as the screen draws one between two keys: a focus ring follows
+    /// the focus that a frame sees.
+    fn key(&self, keys: &str, cx: &mut HeadlessAppContext) -> Result<()> {
+        let keystroke = gpui::Keystroke::parse(keys)?;
+        let key_down = PlatformInput::KeyDown(gpui::KeyDownEvent {
+            keystroke,
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.update_window(self.window.into(), |_, window, cx| {
+            window.dispatch_event(key_down, cx);
+        })?;
+        cx.run_until_parked();
+        cx.capture_screenshot(self.window.into())?;
+        Ok(())
     }
 
     /// One real mouse event, and the frame it causes. Returns how long both took.
@@ -320,6 +354,7 @@ fn main() -> Result<()> {
         gpui_platform::current_headless_renderer,
     );
     cx.update(sound_ui::init);
+    cx.update(|cx| views().install(cx));
     cx.update(runtime::window::bind_keys);
     let save = |cx: &mut HeadlessAppContext, opened: &Opened, name: &str| -> Result<()> {
         let path = out_dir.join(format!("{name}.png"));
@@ -371,21 +406,56 @@ fn main() -> Result<()> {
     opened.open_editor(&bass, &mut cx)?;
     // Away and back with the keys, so the focus is one from the keyboard and shows its ring.
     for keys in ["shift-tab", "tab"] {
-        let keystroke = gpui::Keystroke::parse(keys)?;
-        let key_down = PlatformInput::KeyDown(gpui::KeyDownEvent {
-            keystroke,
-            is_held: false,
-            prefer_character_input: false,
-        });
-        cx.update_window(opened.window.into(), |_, window, cx| {
-            window.dispatch_event(key_down, cx);
-        })?;
-        cx.run_until_parked();
-        // A frame, as the screen draws one between two keys: the ring follows the focus that
-        // a frame sees.
-        cx.capture_screenshot(opened.window.into())?;
+        opened.key(keys, &mut cx)?;
     }
     save(&mut cx, &opened, "editor-focus")?;
+
+    // The track panel takes the place of the editor. The bass has a sound of its own, so the
+    // knobs are not all where the defaults are.
+    let bass_synth = InstanceId::new("arrangement/bass/instrument")?;
+    cx.update(|cx| {
+        opened.session.update(cx, |session, cx| {
+            let synth = session.project().resolve::<SynthState>(&bass_synth);
+            let synth = synth.context("the bass has no synth")?;
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                let sound = SynthState {
+                    waveform: instrument::Waveform::Square,
+                    cutoff_hz: 480.0,
+                    resonance: 0.4,
+                    decay_seconds: 0.35,
+                    sustain: 0.25,
+                    release_seconds: 0.12,
+                    ..SynthState::default()
+                };
+                changes.set(&synth, sound);
+                project.commit("Change sound", changes)
+            });
+            anyhow::Ok(())
+        })
+    })?;
+    opened.click_track_header(1., &mut cx)?;
+    save(&mut cx, &opened, "track-panel")?;
+    // From the timeline, tab goes to the close control, the waveform and then the cutoff.
+    for _ in 0..3 {
+        opened.key("tab", &mut cx)?;
+    }
+    save(&mut cx, &opened, "track-panel-focus")?;
+    drop(opened);
+
+    // A track whose instrument is a tool that has no view: the tone.
+    let opened = Opened::new(&mut cx, |project| {
+        let slot = InstanceId::new("arrangement/track-1/instrument")?;
+        let mut changes = Changes::new();
+        changes.delete(&slot);
+        project.commit("Remove synth", changes)?;
+        let mut changes = Changes::new();
+        changes.create(slot, tone::ToneState::default());
+        project.commit("Add tone", changes)?;
+        Ok(())
+    })?;
+    opened.click_track_header(0., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-empty")?;
     drop(opened);
 
     let started = Instant::now();
