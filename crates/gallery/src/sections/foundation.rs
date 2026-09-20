@@ -13,6 +13,7 @@ use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::kbd::Kbd;
 use sound_ui::components::label::{Label, LabelVariant};
 use sound_ui::components::loader::{Loader, LoaderSize};
+use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::separator::Separator;
 use sound_ui::{ActiveTheme, typography};
 
@@ -549,6 +550,22 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     Alert::new("Delete tool?", "This removes the tool and its presets.")
                         .variant(AlertVariant::Danger)
                         .action_label("Delete")
+                        .into_any_element(),
+                ],
+            )],
+        ))
+        .child(block(
+            "Notice",
+            cx,
+            [row(
+                "tones",
+                cx,
+                [
+                    Notice::new("n-error", "instance arrangement/bass-2 does not exist")
+                        .on_dismiss(|_, _, _| {})
+                        .into_any_element(),
+                    Notice::new("n-warning", "2 files are not live, see problems.txt")
+                        .tone(NoticeTone::Warning)
                         .into_any_element(),
                 ],
             )],

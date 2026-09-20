@@ -1,12 +1,17 @@
-//! Sound Tools UI SDK: design tokens and shared components built on GPUI.
+//! Sound Tools UI SDK: design tokens, shared components and the bridge from a live project to
+//! GPUI views. `README.md` in this crate is the guide for writing a view.
 
 pub mod assets;
 pub mod components;
+pub mod session;
 pub mod theme;
 pub mod typography;
+pub mod views;
 
 pub use assets::Assets;
+pub use session::{POLL_INTERVAL, Playhead, Session};
 pub use theme::{ActiveTheme, Theme};
+pub use views::Views;
 
 /// Register the theme and fonts. Call inside `Application::run`, before opening windows.
 pub fn init(cx: &mut gpui::App) {

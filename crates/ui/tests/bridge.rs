@@ -1,0 +1,312 @@
+//! The session bridge and the view registry, on a real project folder with an offline engine.
+
+// Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them, and
+// it does not know `#[gpui::test]`.
+#![allow(clippy::unwrap_used)]
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use gpui::{Context, Entity, IntoElement, Render, TestAppContext, Window, div, prelude::*};
+use serde::{Deserialize, Serialize};
+use sound_core::{
+    Changes, Engine, EngineConfig, Instance, InstanceId, Project, ProjectEvent, Registry, State,
+};
+use sound_ui::{POLL_INTERVAL, Session, Views};
+use tempfile::TempDir;
+
+/// A tool of plain data. The bridge knows nothing about what a tool means.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Marker {
+    value: u32,
+}
+
+impl State for Marker {
+    const TOOL: &'static str = "marker";
+
+    fn validate(&self) -> Result<(), String> {
+        if self.value > 100 {
+            return Err(format!("value must be at most 100, not {}", self.value));
+        }
+        Ok(())
+    }
+}
+
+struct Opened {
+    folder: TempDir,
+    engine: Engine,
+    session: Entity<Session>,
+}
+
+fn open(cx: &mut TestAppContext) -> Opened {
+    let folder = tempfile::tempdir().unwrap();
+    let mut registry = Registry::new();
+    registry.tool::<Marker>("markers").unwrap();
+    let (control, engine) = Engine::new(EngineConfig::new(48_000, 2));
+    let mut project = Project::open(folder.path(), registry, control).unwrap();
+    project.watch().unwrap();
+    let session = cx.new(|cx| Session::new(project, cx));
+    Opened {
+        folder,
+        engine,
+        session,
+    }
+}
+
+fn marker_id() -> InstanceId {
+    InstanceId::new("marker-a").unwrap()
+}
+
+fn create_marker(session: &Entity<Session>, cx: &mut TestAppContext) -> Instance<Marker> {
+    let created = session.update(cx, |session, cx| {
+        session.edit(cx, |project| {
+            let mut changes = Changes::new();
+            let marker = changes.create(marker_id(), Marker { value: 1 });
+            project.commit("Add marker", changes)?;
+            Ok(marker)
+        })
+    });
+    created.unwrap()
+}
+
+/// Lets the poll timer fire until `done`, while real time passes for the file watcher.
+fn poll_until(
+    cx: &mut TestAppContext,
+    what: &str,
+    mut done: impl FnMut(&mut TestAppContext) -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !done(cx) {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(10));
+        cx.executor().advance_clock(POLL_INTERVAL);
+        cx.run_until_parked();
+    }
+}
+
+#[gpui::test]
+fn an_outside_change_notifies_observers_and_names_the_instance(cx: &mut TestAppContext) {
+    let opened = open(cx);
+    let notified = Rc::new(RefCell::new(0));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    cx.update(|cx| {
+        cx.observe(&opened.session, {
+            let notified = notified.clone();
+            move |_, _| *notified.borrow_mut() += 1
+        })
+        .detach();
+        cx.subscribe(&opened.session, {
+            let events = events.clone();
+            move |_, event: &ProjectEvent, _| events.borrow_mut().push(event.clone())
+        })
+        .detach();
+    });
+    // The watcher needs a moment before it sees changes.
+    std::thread::sleep(Duration::from_millis(200));
+
+    let state = opened.folder.path().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(
+        state.join("marker-a.json"),
+        r#"{"tool": "marker", "state": {"value": 7}}"#,
+    )
+    .unwrap();
+
+    poll_until(cx, "the outside change", |_| !events.borrow().is_empty());
+    assert_eq!(*events.borrow(), [ProjectEvent::Created(marker_id())]);
+    assert_eq!(*notified.borrow(), 1);
+    opened.session.read_with(cx, |session, _| {
+        let marker = session.project().resolve::<Marker>(&marker_id()).unwrap();
+        assert_eq!(session.project().state(&marker), Some(&Marker { value: 7 }));
+    });
+
+    // Undo goes the same way, and nothing more is heard once the folder is quiet.
+    opened.session.update(cx, |session, cx| {
+        assert_eq!(
+            session.edit(cx, Project::undo),
+            Some(Some("File change".to_string()))
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        events.borrow().last(),
+        Some(&ProjectEvent::Deleted(marker_id()))
+    );
+    let heard = *notified.borrow();
+    for _ in 0..30 {
+        std::thread::sleep(Duration::from_millis(10));
+        cx.executor().advance_clock(POLL_INTERVAL);
+        cx.run_until_parked();
+    }
+    assert_eq!(*notified.borrow(), heard, "an idle project must not notify");
+}
+
+#[gpui::test]
+fn a_project_error_reaches_the_notice_and_the_next_good_edit_clears_it(cx: &mut TestAppContext) {
+    let opened = open(cx);
+    let marker = create_marker(&opened.session, cx);
+    let notified = Rc::new(RefCell::new(0));
+    cx.update(|cx| {
+        cx.observe(&opened.session, {
+            let notified = notified.clone();
+            move |_, _| *notified.borrow_mut() += 1
+        })
+        .detach();
+    });
+
+    let result = opened.session.update(cx, |session, cx| {
+        session.edit(cx, |project| {
+            let mut edit = project.begin("Too much");
+            project.update(&mut edit, &marker, |state| state.value = 101)?;
+            project.finish(edit)
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(result, None);
+    assert_eq!(*notified.borrow(), 1);
+    opened.session.read_with(cx, |session, _| {
+        let notice = session.notice().unwrap();
+        assert!(notice.contains("value must be at most 100"), "{notice}");
+        assert_eq!(session.project().state(&marker), Some(&Marker { value: 1 }));
+    });
+
+    opened.session.update(cx, |session, cx| {
+        session.edit(cx, |project| {
+            let mut edit = project.begin("Fine");
+            project.update(&mut edit, &marker, |state| state.value = 100)?;
+            project.finish(edit)
+        })
+    });
+    opened.session.read_with(cx, |session, _| {
+        assert_eq!(session.notice(), None);
+        assert_eq!(session.project().undo_label(), Some("Fine"));
+    });
+}
+
+/// Reads the session when it renders, as every view does.
+struct Reader {
+    session: Entity<Session>,
+    renders: Rc<RefCell<u32>>,
+}
+
+impl Render for Reader {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        *self.renders.borrow_mut() += 1;
+        let instances = self.session.read(cx).project().instances().count();
+        div().child(format!("{instances} instances"))
+    }
+}
+
+#[gpui::test]
+fn the_timer_polls_and_render_does_not(cx: &mut TestAppContext) {
+    let Opened {
+        folder: _folder,
+        engine,
+        session,
+    } = open(cx);
+    let renders = Rc::new(RefCell::new(0));
+    let (reader, cx) = cx.add_window_view({
+        let (session, renders) = (session.clone(), renders.clone());
+        move |_, cx| {
+            cx.observe(&session, |_, _, cx| cx.notify()).detach();
+            Reader { session, renders }
+        }
+    });
+
+    // A stopped engine is what the next poll reports. Rendering must not be that poll.
+    drop(engine);
+    for _ in 0..5 {
+        reader.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+    }
+    assert!(*renders.borrow() >= 5);
+    session.read_with(cx, |session, _| assert_eq!(session.notice(), None));
+
+    cx.executor().advance_clock(POLL_INTERVAL);
+    cx.run_until_parked();
+    session.read_with(cx, |session, _| {
+        assert_eq!(
+            session.notice().unwrap().as_ref(),
+            "the audio engine has stopped"
+        );
+    });
+
+    // Reported once: dismissing it is not undone by the next poll.
+    let before = *renders.borrow();
+    session.update(cx, |session, cx| session.dismiss_notice(cx));
+    cx.executor().advance_clock(POLL_INTERVAL * 10);
+    cx.run_until_parked();
+    session.read_with(cx, |session, _| assert_eq!(session.notice(), None));
+    assert_eq!(*renders.borrow(), before + 1, "only the dismissal renders");
+}
+
+#[gpui::test]
+fn the_playhead_follows_the_engine_without_notifying_the_session(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let (session_notified, playhead_notified) =
+        (Rc::new(RefCell::new(0)), Rc::new(RefCell::new(0)));
+    let playhead = opened
+        .session
+        .read_with(cx, |session, _| session.playhead().clone());
+    cx.update(|cx| {
+        cx.observe(&opened.session, {
+            let count = session_notified.clone();
+            move |_, _| *count.borrow_mut() += 1
+        })
+        .detach();
+        cx.observe(&playhead, {
+            let count = playhead_notified.clone();
+            move |_, _| *count.borrow_mut() += 1
+        })
+        .detach();
+    });
+
+    opened
+        .session
+        .update(cx, |session, cx| session.toggle_playback(cx));
+    let mut buffer = [0.0_f32; 512 * 2];
+    opened.engine.process_block(&mut buffer);
+    cx.executor().advance_clock(POLL_INTERVAL);
+    cx.run_until_parked();
+
+    let now = playhead.read_with(cx, |playhead, _| *playhead);
+    assert!(now.playing);
+    assert!(now.tick.0 > 0);
+    assert_eq!(*playhead_notified.borrow(), 1);
+    assert_eq!(*session_notified.borrow(), 0);
+
+    // The same position again is no news.
+    cx.executor().advance_clock(POLL_INTERVAL);
+    cx.run_until_parked();
+    assert_eq!(*playhead_notified.borrow(), 1);
+}
+
+struct MarkerView {
+    marker: Instance<Marker>,
+}
+
+impl Render for MarkerView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().child(self.marker.id().to_string())
+    }
+}
+
+#[gpui::test]
+fn the_registry_makes_the_view_of_a_top_instance(cx: &mut TestAppContext) {
+    let opened = open(cx);
+    let mut views = Views::new();
+    views.register(|_, marker: Instance<Marker>, _, _| MarkerView { marker });
+    cx.update(|cx| assert_eq!(views.main_instance(&opened.session, cx), None));
+
+    create_marker(&opened.session, cx);
+    let session = opened.session.clone();
+    let cx = cx.add_empty_window();
+    cx.update(|window, cx| {
+        assert_eq!(views.main_instance(&session, cx), Some(marker_id()));
+        assert!(views.view_of(&session, &marker_id(), window, cx).is_some());
+        let missing = InstanceId::new("missing").unwrap();
+        assert!(views.view_of(&session, &missing, window, cx).is_none());
+    });
+}

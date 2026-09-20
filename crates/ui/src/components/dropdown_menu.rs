@@ -6,8 +6,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, Div, FocusHandle, FontWeight, IntoElement, KeyDownEvent, MouseDownEvent, Render,
-    RenderOnce, SharedString, Stateful, StyleRefinement, Styled, Window, div, prelude::*, px,
+    App, Context, Div, EventEmitter, FocusHandle, FontWeight, IntoElement, KeyDownEvent,
+    MouseDownEvent, Render, RenderOnce, SharedString, Stateful, StyleRefinement, Styled, Window,
+    div, prelude::*, px,
 };
 
 use crate::components::icon::Icon;
@@ -316,8 +317,16 @@ fn ghost_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
         .hover(move |s| s.bg(hover))
 }
 
+/// Emitted with the value of the item that was picked, for commands and radio items alike.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MenuPicked(pub SharedString);
+
+impl EventEmitter<MenuPicked> for DropdownMenu {}
+
 pub struct DropdownMenu {
     focus_handle: FocusHandle,
+    /// The trigger is a tab stop. Enter opens the menu, and closing gives the focus back.
+    trigger_focus: FocusHandle,
     label: SharedString,
     entries: Vec<MenuEntry>,
     selected: Option<SharedString>,
@@ -337,6 +346,7 @@ impl DropdownMenu {
     ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
+            trigger_focus: cx.focus_handle().tab_stop(true),
             label: label.into(),
             entries,
             selected: None,
@@ -379,27 +389,47 @@ impl DropdownMenu {
         self.selected.as_ref()
     }
 
+    /// Replaces the items, for a menu whose labels follow the application, such as
+    /// `Undo Move clip`.
+    pub fn set_entries(&mut self, entries: Vec<MenuEntry>, cx: &mut Context<Self>) {
+        self.entries = entries;
+        self.highlighted = usize::MAX;
+        cx.notify();
+    }
+
+    pub fn set_selected(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.selected = Some(value.into());
+        cx.notify();
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
         window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
-    pub fn close(&mut self, cx: &mut Context<Self>) {
+    pub fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = false;
+        self.highlighted = usize::MAX;
+        // The open menu held the focus. Without this it would be nowhere, and keys with it.
+        window.focus(&self.trigger_focus, cx);
         cx.notify();
     }
 
-    fn pick(&mut self, value: SharedString, cx: &mut Context<Self>) {
+    fn pick(&mut self, value: SharedString, window: &mut Window, cx: &mut Context<Self>) {
         let selectable = flat(&self.entries)
             .iter()
             .find(|item| item.value == value)
             .is_none_or(|item| item.selectable);
         if selectable {
-            self.selected = Some(value);
+            self.selected = Some(value.clone());
         }
-        self.open = false;
-        cx.notify();
+        self.close(window, cx);
+        cx.emit(MenuPicked(value));
     }
 
     /// Move the highlight, skipping disabled rows.
@@ -424,9 +454,9 @@ impl DropdownMenu {
         cx.notify();
     }
 
-    fn on_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
+    fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         match ev.keystroke.key.as_str() {
-            "escape" => self.close(cx),
+            "escape" => self.close(window, cx),
             "down" => self.step(1, cx),
             "up" => self.step(-1, cx),
             "enter" => {
@@ -434,7 +464,7 @@ impl DropdownMenu {
                     .get(self.highlighted)
                     .map(|item| item.value.clone());
                 if let Some(value) = value {
-                    self.pick(value, cx);
+                    self.pick(value, window, cx);
                 }
             }
             _ => {}
@@ -450,7 +480,7 @@ impl Render for DropdownMenu {
         } else {
             trigger("dropdown-trigger", cx)
         };
-        let muted = cx.theme().gray_700;
+        let (muted, ring) = (cx.theme().gray_700, cx.theme().lavender);
 
         div()
             .relative()
@@ -458,11 +488,14 @@ impl Render for DropdownMenu {
             .flex_none()
             .child(
                 trigger_element
+                    .track_focus(&self.trigger_focus)
+                    .border_1()
+                    .focus_visible(move |s| s.border_color(ring))
                     .child(self.label.clone())
                     .child(Icon::new("chevron-down").size(14.).color(muted))
                     .on_click(cx.listener(|this, _, window, cx| {
                         if this.open {
-                            this.close(cx);
+                            this.close(window, cx);
                         } else {
                             this.open(window, cx);
                         }
@@ -475,19 +508,21 @@ impl Render for DropdownMenu {
                     surface(cx)
                         .track_focus(&self.focus_handle)
                         .w(px(width))
-                        .on_mouse_down_out(
-                            cx.listener(|this, _: &MouseDownEvent, _, cx| this.close(cx)),
-                        )
-                        .on_key_down(
-                            cx.listener(|this, ev: &KeyDownEvent, _, cx| this.on_key(ev, cx)),
-                        )
+                        .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                            this.close(window, cx)
+                        }))
+                        .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                            this.on_key(ev, window, cx)
+                        }))
                         .child(
                             MenuList::new(self.entries.clone())
                                 .selected(self.selected.clone())
                                 .highlighted(self.highlighted)
-                                .on_select(cx.processor(|this, value: SharedString, _, cx| {
-                                    this.pick(value, cx)
-                                })),
+                                .on_select(cx.processor(
+                                    |this, value: SharedString, window, cx| {
+                                        this.pick(value, window, cx)
+                                    },
+                                )),
                         ),
                 ))
             })
