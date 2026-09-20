@@ -12,9 +12,9 @@
 //! processor in the engine with a switch, see [`metronome`].
 
 use gpui::{
-    App, BorderStyle, Bounds, BoxShadow, Context, DispatchPhase, Entity, FocusHandle, Hitbox,
-    HitboxBehavior, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Window, canvas, div, fill, hsla, point, prelude::*, px, quad, size,
+    App, BorderStyle, Bounds, BoxShadow, Context, CursorStyle, DispatchPhase, Entity, FocusHandle,
+    Hitbox, HitboxBehavior, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Window, canvas, div, fill, hsla, point, prelude::*, px, quad, size,
 };
 use metronome::Click;
 use sound_core::{Changes, ProjectEvent, Tempo, TempoMap, Ticks};
@@ -311,9 +311,9 @@ impl TransportPill {
             .px(px(6.))
             .rounded(px(6.))
             .border_1()
-            .border_color(gpui::Hsla::transparent_black())
+            .border_color(Hsla::transparent_black())
             .focus_visible(move |style| style.border_color(ring))
-            .cursor(gpui::CursorStyle::ResizeUpDown)
+            .cursor(CursorStyle::ResizeUpDown)
             .child(
                 div()
                     .font(typography::tabular())
