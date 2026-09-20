@@ -608,3 +608,58 @@ fn the_second_device_connection_of_a_milestone_one_project_is_left_out_and_named
     engine.process_block(&mut output);
     assert_eq!([output[14], output[15]], [0.25, 0.25]);
 }
+
+/// The same project with its two connections the other way round. Whichever order the file
+/// lists them in, the port plays once on both channels, and the line that is reported is the
+/// one that can go: the one to the higher channel.
+#[test]
+fn the_order_of_the_two_device_connections_in_the_file_does_not_matter() {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path().to_path_buf();
+    let pair = [dc_to_device_channel("dc", 1), dc_to_device_channel("dc", 0)].join(", ");
+    write(&root, "state/dc.json", &dc_record(0.25));
+    write(&root, "project.json", &project_file(&pair));
+
+    let (control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let project = Project::open(&root, registry(), control).unwrap();
+    let problems = project.problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    // The first line, the one to the higher channel, is the one that can go.
+    assert!(
+        problems[0].message.contains("connections[0]"),
+        "{problems:?}"
+    );
+    let mut output = [f32::NAN; 2 * 8];
+    engine.process_block(&mut output);
+    assert_eq!([output[14], output[15]], [0.25, 0.25]);
+}
+
+/// The same, arriving live: a project that plays through channel 1 alone gets the line to
+/// channel 0 written into it.
+#[test]
+fn a_device_connection_to_a_lower_channel_arriving_live_takes_over() {
+    let mut harness = Harness::stereo();
+    harness.write_and_apply("state/dc.json", &dc_record(0.25));
+    harness.write_and_apply(
+        "project.json",
+        &project_file(&dc_to_device_channel("dc", 1)),
+    );
+    assert_eq!(harness.project.problems(), []);
+    assert_eq!(harness.frame(), [0.0, 0.25]);
+
+    let pair = [dc_to_device_channel("dc", 1), dc_to_device_channel("dc", 0)].join(", ");
+    harness.write_and_apply("project.json", &project_file(&pair));
+    let problems = harness.project.problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].message.contains("connections[0]"),
+        "{problems:?}"
+    );
+    assert_eq!(harness.frame(), [0.25, 0.25]);
+
+    // The composer does what the problem says and removes that line. What is left is the
+    // one connection of the stereo path, and the sound does not change.
+    harness.write_and_apply("project.json", &project_file(&dc_to_device("dc")));
+    assert_eq!(harness.project.problems(), []);
+    assert_eq!(harness.frame(), [0.25, 0.25]);
+}

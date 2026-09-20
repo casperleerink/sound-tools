@@ -13,7 +13,7 @@ use super::registry::Registry;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
 use crate::graph::{Connection, Destination, GraphError, NodeId};
-use crate::processor::{InputPort, OutputPort, Ports, PrepareConfig, Processor};
+use crate::processor::{CHANNELS, InputPort, OutputPort, Ports, PrepareConfig, Processor};
 
 /// Why a behaviour could not apply a state. It rejects the whole edit group.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -300,6 +300,73 @@ fn touches(connection: &Connection, removed: &BTreeSet<NodeId>) -> bool {
         || matches!(connection.destination, Destination::Node(node, _) if removed.contains(&node))
 }
 
+/// The first device channel a connection writes, when it goes to the device.
+fn device_channel(connection: &Connection) -> Option<usize> {
+    match connection.destination {
+        Destination::DeviceOutput(channel) => Some(channel),
+        Destination::Node(..) => None,
+    }
+}
+
+/// One line of `project.json` that is not used, because another line of the same port
+/// already carries its device channel.
+struct LeftOut {
+    /// The line that carries the channel, and the channel that line names.
+    winner: usize,
+    winner_channel: usize,
+    channel: usize,
+}
+
+impl LeftOut {
+    fn message(&self, index: usize) -> String {
+        let Self {
+            winner,
+            winner_channel,
+            channel,
+        } = self;
+        format!(
+            "connections[{index}]: not used, because connections[{winner}] already carries both channels of this port. Audio is stereo: the connection to device output {winner_channel} carries that channel and the next one, so this line to device output {channel} can go"
+        )
+    }
+}
+
+/// Which lines of `project.json` are left out because another line of the same port already
+/// carries their device channel. A connection to the device writes the channel it names and
+/// the one after it, so two lines of one port to channels next to each other overlap: the
+/// lower channel carries both and the other is left out. Deciding it here, by channel and not
+/// by the order of the file, is what makes a project of the first milestone, which has one
+/// line per device channel, sound the same whichever way round its lines are written.
+fn device_clashes(lines: &[(usize, Connection)]) -> BTreeMap<usize, LeftOut> {
+    let mut by_channel: Vec<&(usize, Connection)> = lines.iter().collect();
+    by_channel.sort_by_key(|(index, connection)| (device_channel(connection), *index));
+    let mut carried: Vec<(usize, Connection, usize)> = Vec::new();
+    let mut left_out = BTreeMap::new();
+    for (index, connection) in by_channel {
+        let Some(channel) = device_channel(connection) else {
+            continue;
+        };
+        let overlapping = carried.iter().find(|(_, other, taken)| {
+            let distance = taken.abs_diff(channel);
+            other.source == connection.source
+                && other.output == connection.output
+                && distance != 0
+                && distance < CHANNELS
+        });
+        match overlapping {
+            Some((winner, _, winner_channel)) => {
+                let left = LeftOut {
+                    winner: *winner,
+                    winner_channel: *winner_channel,
+                    channel,
+                };
+                left_out.insert(*index, left);
+            }
+            None => carried.push((*index, *connection, channel)),
+        }
+    }
+    left_out
+}
+
 impl Bindings {
     pub fn connection_problems(&self) -> &[String] {
         &self.connection_problems
@@ -455,19 +522,47 @@ impl Bindings {
             self.by_instance.insert(id.clone(), next);
         }
 
-        // Known to close a cycle. Tried again only when the graph changes anyway, so a
-        // parameter drag next to a bad connection does not compile twice per move.
-        let mut waiting = Vec::new();
+        // Every line is resolved before any of them reaches the graph, so the device
+        // channels are handed out by channel and not by the order of the file.
+        let mut lines = Vec::new();
         for (index, connection) in change.connections.iter().enumerate() {
-            let resolved = match self.resolve(connection) {
-                Ok(resolved) => resolved,
+            match self.resolve(connection) {
+                Ok(resolved) => {
+                    run.resolved.insert(resolved, index);
+                    lines.push((index, resolved));
+                }
                 Err(message) => {
                     run.problems
                         .push((index, format!("connections[{index}]: {message}")));
-                    continue;
                 }
-            };
-            run.resolved.insert(resolved, index);
+            }
+        }
+        let left_out = device_clashes(&lines);
+        for (index, left) in &left_out {
+            run.problems.push((*index, left.message(*index)));
+        }
+
+        // What the graph holds from the file and this run does not keep goes first, so that
+        // a line that takes over a device channel finds it free.
+        let keep: BTreeSet<Connection> = lines
+            .iter()
+            .filter(|(index, _)| !left_out.contains_key(index) && !run.skipped.contains(index))
+            .map(|(_, connection)| *connection)
+            .collect();
+        for connection in self.saved.iter().filter(|saved| !keep.contains(saved)) {
+            let declared = |binding: &Binding| binding.connections.contains(connection);
+            if !touches(connection, &removed) && !self.by_instance.values().any(declared) {
+                edit.disconnect(connection)?;
+            }
+        }
+
+        // Known to close a cycle. Tried again only when the graph changes anyway, so a
+        // parameter drag next to a bad connection does not compile twice per move.
+        let mut waiting = Vec::new();
+        for (index, resolved) in lines {
+            if left_out.contains_key(&index) {
+                continue;
+            }
             if run.skipped.contains(&index) {
                 run.leave_out_cycle(index, resolved);
             } else if self.cycle_closing.contains(&resolved) {
@@ -482,12 +577,6 @@ impl Bindings {
                             .push((index, format!("connections[{index}]: {error}")));
                     }
                 }
-            }
-        }
-        for connection in self.saved.difference(&run.saved) {
-            let declared = |binding: &Binding| binding.connections.contains(connection);
-            if !touches(connection, &removed) && !self.by_instance.values().any(declared) {
-                edit.disconnect(connection)?;
             }
         }
         for (index, resolved) in waiting {

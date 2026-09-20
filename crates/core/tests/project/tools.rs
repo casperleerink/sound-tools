@@ -291,6 +291,27 @@ impl Harness {
         Self::open(tempfile::tempdir().unwrap())
     }
 
+    /// A project with two device channels, so a test can tell the channels apart.
+    pub fn stereo() -> Self {
+        let folder = tempfile::tempdir().unwrap();
+        let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+        let project = Project::open(folder.path(), registry(), control).unwrap();
+        Self {
+            project,
+            engine,
+            now: Instant::now(),
+            folder,
+        }
+    }
+
+    /// Renders one device buffer and gives the last frame: the two channels of a stereo
+    /// harness. Every test processor puts out a constant, so one frame shows the state.
+    pub fn frame(&mut self) -> [f32; 2] {
+        let mut buffer = [0.0; 480];
+        self.engine.process_block(&mut buffer);
+        [buffer[478], buffer[479]]
+    }
+
     pub fn open(folder: tempfile::TempDir) -> Self {
         let (project, engine) = open(folder.path());
         Self {
