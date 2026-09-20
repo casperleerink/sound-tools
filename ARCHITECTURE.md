@@ -141,12 +141,21 @@ The arrangement extension's saved format becomes the de facto note and clip cont
 
 Decided September 19, 2026, the note contract crate: `crates/notes`, package `sound-notes`. The arrangement and every instrument depend on it and not on each other. It holds:
 
-- The saved `Note`. Pitch (0 to 127), velocity (1 to 127) and length (1 tick or more) are types that cannot hold a wrong value, and they save as plain numbers. The clip record that holds notes stays in the arrangement extension.
-- The realtime `NoteEvent`: `On` with pitch and velocity, `Off` with pitch, and `AllOff`. A sender keeps no list of held notes. It sends `AllOff` when the transport stops or jumps, and on one frame it sends offs before ons.
+- The saved `Note`. Pitch (0 to 127), velocity (1 to 127) and length (1 tick or more) are types that cannot hold a wrong value, and they save as plain numbers.
+- The saved `Clip`: its start and length in ticks and its notes. It moved here from the arrangement with the arrangement build, because its saved form is what other extensions read. The tool name stays `arrangement.clip`.
+- The realtime `NoteEvent`: `On` with pitch and velocity, `Off` with pitch, and `AllOff`. A sender sends `AllOff` when the transport stops or jumps, and on one frame it sends offs before ons. A sender whose notes can change while they sound, such as a track, keeps a fixed list of the notes it started, so each gets its off.
 - Pitch to frequency: twelve equal steps per octave, A4 at 440 Hz.
 - The port names of an instrument: an event input `notes` and a mono audio output `audio`. An owner finds its instrument by these names, so any tool with these ports fits.
 
 The instrument extension is `extensions/instrument` with the tool `instrument.synth`. Its saved state uses units an agent can reason about: Hz, seconds and 0 to 1. `extensions/instrument/README.md` is the guide for editing a synth record.
+
+Decided September 19, 2026, with the arrangement build in `extensions/arrangement`. Its README has the rules of the sequencer, and its `agent-doc.md` is the single source for the record formats.
+
+- Three tools: `arrangement` (the root, owns tracks, no settings yet), `arrangement.track` and `arrangement.clip`. A track finds its instrument as the child named `instrument`, by the port names of the note contract, so the arrangement depends on no instrument. A track without one loads and is silent.
+- Clip rules, the simplest that hold: note starts count from the clip start. Every note starts inside its clip, else the record does not load, so a note written with a project position is a reported error and not silence. A note that is longer than the rest of its clip ends with the clip. Clips on one track may overlap and all their notes play. A seek never starts a note in its middle.
+- Track colour is a name from the DESIGN.md accents, an enum, `blue` when left out. Track order is a whole number, 0 when left out. Tracks show by order, then by id.
+- No stuck notes: a note that started gets its off when its clip is edited, moved or deleted while it sounds, and across a tempo change. A new snapshot leaves a note it did not touch alone. The held list is fixed at 128 notes per track. One more is not played and is counted.
+- The default project is a template of this extension: 120 bpm, 4/4, one arrangement with one track and its synth, no clips. Tone stays registered and is not part of it.
 
 Agent-authored extensions remain supported and use the same SDK. They are a later capability, not the v0 headline. Codex subagents can keep running authoring tests against the SDK until the integrated agent exists.
 
@@ -369,6 +378,9 @@ Decided September 19, 2026, the edit API and undo, built in `crates/core/src/pro
 - Undo history is two stacks of steps. A step holds the before and after record of every instance it touched, shared with the live state and not copied. Undo applies the before side as one group and writes the files. A step that can no longer apply is dropped with a typed error, for example because its owner is gone, or because a file the runtime did not load now sits at the id of an instance that undo would write.
 - Writing: parents before children, then deleted records, then `project.json`. Each file is a temporary file renamed into place, with no `fsync`: it cost 6 ms per file on macOS, which made undo of a deleted folder of 100 records block for 0.7 s. The rename protects against a crash of the process. Surviving a power loss is left to git and snapshots. A failed write leaves the old file complete, the edit stays live and undoable, and the problem is listed until a later write succeeds. The runtime only removes record files it knows, so deleting an instance never removes records of unknown tools or other files in its folder.
 - The UI layer drains a list of small events after each call: created, changed, deleted with the instance id, project file changed, problems changed. Events carry no state.
+- A tool may register a summary: a function from the project and one instance to lines of text about it and what it owns. The core knows no tracks, so this is how `--inspect` tells what plays where. An instance without one is listed as its record.
+- The runtime writes three generated files into the project folder, each only when its text changes. `AGENTS.md` is the project agent doc: a core section (layout, form rule with the tools of the project, record format, ids, ticks with the bar math of the project's time signature, `project.json`, rules, how to check), then the section of each enabled extension, which the extension supplies as markdown, then a section of the runtime with the inspect command. `CLAUDE.md` imports it. `problems.txt` lists what is not live, one line per problem, and is absent when there is none. A read-only open writes nothing.
+- Open, found with two external agent runs: an agent writes its files seconds apart, so the 100 ms window makes a new track two or three undo steps, not one. And a missing `problems.txt` reads the same whether all is well or no runtime is open.
 - One runtime per project: the runtime holds a lock on `.sound-tools.lock` in the project folder. Inspecting and offline rendering open the project read-only without the lock, so they work next to a running runtime.
 
 ## Next decisions
@@ -380,7 +392,7 @@ Immediate next work is the first milestone above, in this order:
 - Done September 19, 2026: the realtime engine with device output and the control-to-audio handoff, following ENGINEERING.md section 3. Tone plays through it from `extensions/tone`. Feedback connections, audio input and device selection are not built yet.
 - Done September 19, 2026: the musical clock and the transport in `crates/core`. Loop playback, tempo ramps and time signature changes are not built yet.
 - Done September 19, 2026: the live project folder in `crates/core`, with tool registration, owned children, references, editing with undo, storage, the watcher and the engine binding. Tone is the first tool on it. `cargo run -p runtime -- <folder>` runs a project headless. Not built: reacting to referenced instances, declarative parameters, assets.
-- The arrangement and instrument extensions on top, with the project agent doc.
+- Done September 19, 2026: the instrument and the arrangement extensions, the default project, the project summary and the project agent doc. Not built: the views, automation, mixer, mute and solo, loop playback.
 
 The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. Re-check it once in the real application. The pinned GPUI has an accessibility tree and focus-visible; the UI components do not use them yet.
 

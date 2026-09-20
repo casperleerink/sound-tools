@@ -52,7 +52,7 @@ In `process`:
 - `context.audio_outputs.get(port)` gives `&mut [f32]`. Outputs start silent.
 - `let [left, right] = context.audio_outputs.get_many([Self::LEFT, Self::RIGHT]);` gives several outputs at once, to write them in one loop.
 - `context.event_inputs.get(port)` gives `&[Timed<E>]`, sorted by `offset`, the frame offset within this block. Several connections arrive merged.
-- `context.event_outputs.push(port, offset, event)` sends an event.
+- `context.event_outputs.push(port, offset, event)` sends an event. It returns whether the event fitted. Keep an event you must not lose, such as a note off, and send it in the next block. `context.event_outputs.count_dropped()` counts an event you dropped for a full list of your own.
 - `context.frames` is 1 to `MAX_BLOCK` (64). `context.start_frame` is the engine time of the block's first frame.
 
 A handle that matches no declared port (wrong index, wrong event type, or the same output twice in `get_many`) never panics on the audio thread. Reads are empty, writes go nowhere, and each use counts in `EngineStatus::port_misuses`. Anything above zero there is a bug in a processor.
@@ -171,6 +171,13 @@ The runtime calls `register` of every bundled extension before it opens the proj
 
 A tool without `.behaviour(...)` is plain data. Its owner reads it. Clips are like this.
 
+Two more things an extension registers, both for agents that work in the project folder with only file access:
+
+- `.summary(|project, instance| ...)` after `.behaviour(...)`: lines of text about one instance and what it owns. `Project::summary(&id)` gives it and `runtime --inspect` prints it. An owner of many small records gives one, so an agent reads one summary and not every record.
+- `registry.agent_doc(EXTENSION, include_str!("../agent-doc.md"))`: your section of the `AGENTS.md` that the runtime writes into every project that enables the extension. Start it with a `## ` heading. Say the form of each tool, give one complete example record per tool in a fenced block whose first line is <code>```json state/path/of/the/file.json</code>, and say how to add, move and delete. A test of the runtime writes every such block into a folder and opens it, so an example that does not load fails the build. `{{ticks_per_bar}}`, `{{ticks_per_beat}}`, `{{time_signature}}`, `{{bar_5_start}}`, `{{four_bars}}`, `{{bar_9_start}}` and `{{bar_3_beat_2}}` are filled in from the project's time signature.
+
+The runtime keeps `AGENTS.md`, `CLAUDE.md` and `problems.txt` up to date when the project opens and from `project.poll()`. `problems.txt` holds `project.problems()`, one per line, and is absent when there are none.
+
 ### Behaviour: from state to the engine
 
 A behaviour is one function. It runs for every valid state of an instance, whatever the source: loading, an interface edit, a file edit, undo. Loading is the same call on an instance with no processors yet. It must accept any valid state, not only steps its own interface makes.
@@ -265,6 +272,7 @@ project.redo()?;
 ```
 
 - `publish(&mut edit, changes)` applies a whole `Changes` group at once: one engine batch. `update` is the short form for one record. `changes.set` replaces a whole state. `create` with an id inside another instance makes an owned child. The owner must exist or come earlier in the same group.
+- `project.free_id(&wanted)` gives `wanted`, or `wanted-2`, `wanted-3` and so on: an id no live instance has and no file or folder sits at. `project.tool_of(&id)` gives the tool name of any instance.
 - `delete` takes everything the instance owns and the `project.json` connections that name them. Undo brings all of it back. Undo fails with `ProjectError::IdTaken`, and drops the step, when a file the runtime did not load has taken the id meanwhile.
 - Tempo and connection edits land on top of a `project.json` that an agent changed a moment ago. While that file holds a change that does not load, they apply live but are not written, and the problem on `project.json` says so.
 - Last write wins everywhere. A file edit during a drag applies at once and the drag goes on. The next publish overwrites it. The undo step of a finished edit runs from the state before its first publish to the state at the finish.
@@ -372,7 +380,7 @@ The saved JSON, as it will appear in `project.json`:
 
 ```sh
 cargo nextest run -p sound-core -p tone
-RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes   # with the realtime sanitizer
+RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement   # with the realtime sanitizer
 cargo nextest run -p sound-core --run-ignored only ten_thousand --no-capture   # scale numbers
 cargo run -p runtime -- my-project                        # runs the folder live on the default device
 cargo run -p runtime -- my-project --inspect              # summary, no device, no lock
