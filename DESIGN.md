@@ -62,7 +62,7 @@ Every element must earn its keep. Reference feel: the source design system and H
 
 ## The window, September 19, 2026
 
-What is built, in `crates/runtime/src/window.rs` and `extensions/arrangement/src/view.rs`. `cargo test -p runtime --test snapshots` renders it to PNGs.
+What is built, in `crates/runtime/src/window.rs` and `extensions/arrangement/src/view.rs` with `view/editor.rs`. `cargo test -p runtime --test snapshots` renders it to PNGs.
 
 - One background, `gray-100`, for the whole window. No panels and no top bar: the title bar is transparent, the project name sits right of the traffic lights and the row around it drags the window.
 - Transport pill: play or pause in green, stop, the position as `bar.beat`, the time as `m:ss` muted, then the hairline seek strip and the duration when the project has an end. Numbers are tabular and the pill sizes from its content, so it stays still while playing and grows by a digit at bar 100 or at ten minutes. Space toggles playback. Tab reaches the buttons and the strip, and left and right seek by a bar on the strip.
@@ -71,7 +71,39 @@ What is built, in `crates/runtime/src/window.rs` and `extensions/arrangement/src
 - Clips: `alpha/5` fill with an `alpha/10` hairline border and 6 px corners, 4 px inside the row. The notes are small bars in the accent of the track. That is the one place where a track accent is more than a dot: notes are marks, not fills, and they tie a clip to its track without a label. The selected clip has a `gray-950` border. Clips have no name label.
 - Playhead: a 1 px `gray-950` line with a 7 px round head in the ruler.
 - Notices: quiet lines bottom-left, 400 px wide at most. A red dot for the last error with a dismiss button that Tab reaches, a peach dot for files that are not live. A long message wraps to at most three lines. Nothing blocks.
-- Scroll pans, pinch or cmd-scroll zooms about the pointer. A click on the ruler seeks to the nearest sixteenth. A click on a clip selects it.
+- Note editor: a panel of 384 px below the arrangement, on the same background, with one hairline above it. No toolbar and no tools: what the pointer is on decides what a drag does. The header column lines up with the track headers: the accent dot and the name of the track in the ruler row, then a quiet close icon at 60% opacity, and below them a slim key strip of 32 px at the right edge, white keys at `alpha/10` and black keys at `alpha/3`, with only the Cs named in 12 px `gray-700` left of it. Rows are 12 px per semitone. The rows of black keys are tinted `alpha/2`, so a pitch can be read without lines between rows. Bar lines are hairlines at `alpha/5`, beat lines at half of that and only from 24 px per beat. This is the one place with a grid, because notes are placed by it. The arrangement keeps none. Outside the clip the area is a shade darker (`gray-50` at 50%). Notes are rounded bars of 11 px in the track accent with 3 px corners, the selected one with a 1 px `gray-950` outline. The ruler and the playhead are those of the arrangement. The editor opens zoomed to fit its clip, with the middle of its notes in the middle of what the transport leaves free.
+- Focus: the arrangement and the note editor each show a 1 px lavender ring inside their edge, only when the focus came from the keyboard. Tab goes from the project menu to the arrangement, the editor, its close icon and the transport.
+- Cursor: a left-right resize cursor over the edges of a clip and over the end of a note, 6 px wide or a quarter of a narrow shape. Nothing else changes on hover.
+- Scroll pans, pinch or cmd-scroll zooms in time about the pointer. A click on a ruler seeks to the nearest sixteenth. The rest is under "Using the app".
+
+## Using the app
+
+`cargo run -p runtime -- <project-folder>` opens the window. Everything snaps to a sixteenth. Every drag and every key below is one undo step, and escape during a drag puts it back.
+
+| Where | Mouse or key | What it does |
+| --- | --- | --- |
+| Anywhere | space | Play or pause |
+| Anywhere | cmd-z, shift-cmd-z | Undo, redo. Both wait while a drag is going on |
+| Anywhere | tab, shift-tab | Move the focus: project menu, arrangement, note editor, transport |
+| Project menu | Add track | A new track with a synth |
+| Ruler | click | Move the playhead there |
+| Arrangement or note editor | scroll, cmd-scroll or pinch | Pan, zoom in time |
+| Arrangement | double click on empty track space | Add a clip of one bar |
+| Arrangement | click on a clip | Select it |
+| Arrangement | drag a clip | Move it in time and to another track |
+| Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note |
+| Arrangement | delete or backspace | Delete the selected clip |
+| Arrangement | left, right, up, down | Move the selected clip by a sixteenth, or to the track above or below |
+| Arrangement | double click on a clip, or enter | Open the note editor for it |
+| Note editor | drag on empty space inside the clip | Draw a note. It sounds |
+| Note editor | click on a note | Select it. It sounds |
+| Note editor | drag a note | Move it in time and pitch. A new pitch sounds |
+| Note editor | drag the end of a note | Change its length |
+| Note editor | delete or backspace | Delete the selected note |
+| Note editor | left, right | Move the selected note by a sixteenth |
+| Note editor | up, down, with shift | Move it by a semitone, by an octave |
+| Note editor | click on a key of the strip | Hear that pitch |
+| Note editor | escape or the close icon | Close the editor |
 
 ## GPUI notes from the first port, September 14, 2026
 
@@ -80,7 +112,7 @@ The UI SDK lives in `crates/ui`; the gallery in `crates/gallery` shows every com
 - No CSS transitions. Hover and active states swap instantly. Only the switch thumb and the working indicator animate, through `with_animation`.
 - No focus-visible. Focus rings show on mouse focus too. Stateless components take an optional `FocusHandle` to show a ring. The pinned version has `.focus_visible(..)`. The dropdown menu trigger and the seek strip use it; the button does not yet.
 - No built-in text widget. `text_input.rs` implements shaping, cursor, selection and IME itself. It is single-line; `.lines(n)` only makes the box taller. Real multi-line editing is future work.
-- Key bindings are registered by the component on first use, scoped to a key context. The window binds a few globally: space, cmd-z, shift-cmd-z, tab, shift-tab, cmd-q. A global binding wins over a focused button, so space always toggles playback and enter activates the focused control.
+- Key bindings are registered by the component on first use, scoped to a key context. The arrangement and the note editor use key listeners on their focused root and no bindings. The window binds a few globally: space, cmd-z, shift-cmd-z, tab, shift-tab, cmd-q. A global binding wins over a focused button, so space always toggles playback and enter activates the focused control.
 - Draggable controls use drag events with a delta, so a plain click on a slider track does not jump the handle.
 - SVG icons take an explicit colour; `Icon` reads the inherited text colour at render time. Colour buttons therefore tint rather than invert on hover.
 - Overlays anchor to a zero-size box on the trigger edge and snap to the window with a margin. Side is explicit, not collision-aware. Click-outside uses `on_mouse_down_out` with an occluding surface.

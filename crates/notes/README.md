@@ -21,7 +21,7 @@ This is exactly how the runtime writes a note: spaces after `:` and `,`, and one
 
 All four are plain JSON numbers. A value out of range, a fraction or an unknown field does not load, and the message names the range: `pitch must be from 0 to 127, not 128`.
 
-In Rust, `Pitch`, `Velocity` and `Length` cannot hold a wrong value: `Pitch::new(60)?`, `Velocity::new(100)?`, `Length::new(Ticks(480))?`. `Pitch::frequency_hz()` gives the frequency, twelve equal steps per octave with A4 at 440 Hz. `start` is the core `Ticks`. A length of 0 cannot be built, because such a note would get its off before its on and never end. `note.end()` is the tick of the note off. `note.on()` and `note.off()` give the events below.
+In Rust, `Pitch`, `Velocity` and `Length` cannot hold a wrong value: `Pitch::new(60)?`, `Velocity::new(100)?`, `Length::new(Ticks(480))?`. `Pitch::frequency_hz()` gives the frequency, twelve equal steps per octave with A4 at 440 Hz. `start` is the core `Ticks`. A length of 0 cannot be built, because such a note would get its off before its on and never end. `note.end()` is the tick of the note off. `note.on()` and `note.off()` give the events below. Interface math that cannot fail uses `Pitch::nearest(number)`, `Velocity::nearest(number)` and `Length::at_least_one(ticks)`: the valid value nearest to any number, for a drag that stops at the ends.
 
 ## The saved clip
 
