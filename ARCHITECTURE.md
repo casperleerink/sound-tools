@@ -128,7 +128,7 @@ The v0 workspace is a small DAW. Its parts are bundled extensions that ship with
 | Bundled extension | Provides |
 | --- | --- |
 | Arrangement | Tracks, clips, notes and automation on the core timeline, with an arrangement view and a clip or note editor. |
-| Mixer | Track levels, pan, sends and the mixer view. |
+| Mixer | Sends, buses and the mixer view. The gain, pan and mute of a track are in the arrangement, in the track record, see "Stereo signal path and the track mixer". |
 | Instrument | One subtractive synth with a few parameters. |
 | Sampler | Plays imported samples from project assets. |
 | Effects | Two or three, such as delay, filter and reverb. |
@@ -147,7 +147,7 @@ Decided September 19, 2026, the note contract crate: `crates/notes`, package `so
 - The saved `Clip`: its start and length in ticks and its notes. It moved here from the arrangement with the arrangement build, because its saved form is what other extensions read. The tool name stays `arrangement.clip`.
 - The realtime `NoteEvent`: `On` with pitch and velocity, `Off` with pitch, and `AllOff`. A sender sends `AllOff` when the transport stops or jumps, and on one frame it sends offs before ons. A sender whose notes can change while they sound, such as a track, keeps a fixed list of the notes it started, so each gets its off.
 - Pitch to frequency: twelve equal steps per octave, A4 at 440 Hz.
-- The port names of an instrument: an event input `notes` and a mono audio output `audio`. An owner finds its instrument by these names, so any tool with these ports fits.
+- The port names of an instrument: an event input `notes` and an audio output `audio`. An owner finds its instrument by these names, so any tool with these ports fits. The audio is stereo, like every audio port, since step 1 of the second milestone.
 
 The instrument extension is `extensions/instrument` with the tool `instrument.synth`. Its saved state uses units an agent can reason about: Hz, seconds and 0 to 1. `extensions/instrument/README.md` is the guide for editing a synth record.
 
@@ -237,6 +237,19 @@ One agent doc per project does not scale with the extensions and tasks of this m
 #### The terminal from the project menu, decided September 20, 2026 with step 0
 
 The composer needs a terminal in the project folder to start a coding agent. "Open terminal in project folder" sits next to "Reveal project folder" in the project menu and runs `/usr/bin/open -a Terminal <folder>`: the system Terminal, which every Mac has. No picker, no setting, no terminal inside the window. Other platforms come when we claim them. The command is built by a function of its own so a test reads its program and arguments, which CI can do without a Terminal it cannot close. It runs on the background executor and a failure goes to the notice of the session.
+
+#### Stereo signal path and the track mixer, decided September 20, 2026 with step 1
+
+The path from an instrument to the device is stereo, and a track has a gain, a pan and a mute. Built in `crates/core/src/processor.rs` and `engine.rs`, and in `extensions/arrangement/src/mixer.rs`.
+
+- One audio format everywhere: every audio port of the engine carries two channels, left then right (`sound_core::CHANNELS`). There is no mono port, so no processor, connection or device negotiates a channel count, and `project.json` connections keep the form they had. A processor that makes one signal, such as the synth, writes it into the left channel and copies that to the right. This was cheaper than a pair of named ports per signal: the note contract keeps its one `audio` port, a stereo cable cannot be half connected, and a plugin with two outputs in step 4 fits one port.
+- `{"device_output": n}` is now the first device channel of the connection: the left channel goes to `n` and the right one to `n + 1`. A device that does not have that next channel plays the left channel alone. Nothing else changed in the saved form.
+- Gain, pan and mute live in the `arrangement.track` record as `gain_db` (-60 to 6), `pan` (-1 to 1) and `mute`. A record that leaves them out is 0 dB, the middle and not muted, so a project of the first milestone opens, is not rewritten and plays exactly as it did. They are in the arrangement because they are the track, not a tool of their own; the bundled mixer extension of the v0 table is left for sends, buses and a mixer view.
+- The pan law is equal power, scaled so that the middle is exactly 1 in both channels. So a centred track at 0 dB leaves every sample as its instrument made it, and an old project loses no level. Hard left or right, the channel that plays the track is √2, 3 dB above the middle, and the other is exactly 0. A track keeps its loudness wherever it is panned. There is still no limiter, so a hard-panned loud track has 3 dB less headroom than a centred one.
+- Each track has one `Mixer` processor after its instrument. The behaviour works out the two channel gains on the control thread and sends them, so the audio thread computes no pan law, and a mixer edit is an update and no compile. The processor ramps to a new pair over 20 ms, so no change of gain, pan or mute clicks, and a muted track that has finished its fade returns before it touches its output.
+- `Smoothed` moved from the synth into the core as the one smoothing helper of the SDK, which ENGINEERING.md section 3 already promised. The synth and the mixer use the same one.
+- Each change is one undo step: a knob drag of the panel is one gesture, the mute button is one commit, a file edit is one group, as for any other record.
+- Not built: solo, sends, buses, a master fader, meters, a limiter, a mixer view, mute on the track header, automation of these values, and a mono device that folds the two channels together.
 
 ### Agent context and tools
 
@@ -444,7 +457,7 @@ Built in `crates/ui` (the bridge), `extensions/arrangement/src/view.rs` and `cra
 - The arrangement view paints on one canvas and only what is visible: no element per clip. All coordinate math (tick to x, track to y, snap to a sixteenth, visible range, zoom about the pointer, the miniature of the notes) is pure functions with tests in `view/layout.rs`. Mouse listeners are registered while painting and get the scene that was painted, so a click hits what is on screen. Zoom, scroll and selection are interface state and are not saved.
 - The note editor is a panel inside the arrangement view, owned by the arrangement extension. The main area of the window stays one root view, and the window does not know the editor. It opens for the selected clip, follows the selection to another clip, and closes when its clip is deleted, from inside or outside.
 - One detail area below the arrangement, one thing at a time, decided September 20, 2026. It shows the note editor of a clip or the track panel of a track, like the clip view and the device view of Ableton. A double click or enter on a clip opens the editor, a click on a track header opens the track panel, and each takes the place of the other. Escape or the close control closes either. Both have one height. The selected track is interface state of the timeline, like the selected clip.
-- The track panel belongs to the arrangement and is about the track, not about a synth. A track owns clips and one child named `instrument`, and any tool with the ports of the note contract fits there. The panel is a rack of device cards, left to right. For each slot it asks the view registry for the view of whatever instance is there and hosts it in a card, so the arrangement still depends on no instrument, and the controls of the synth live in the instrument extension, which registers a view for `instrument.synth`. A slot that is empty or whose tool has no view shows a quiet card with the tool name. Today the rack holds the instrument alone. Later, effects are more slots after it, and the mixer controls of the track (gain, pan, mute) are a fixed section at the right end. Neither is built and there are no placeholders for them.
+- The track panel belongs to the arrangement and is about the track, not about a synth. A track owns clips and one child named `instrument`, and any tool with the ports of the note contract fits there. The panel is a rack of device cards, left to right. For each slot it asks the view registry for the view of whatever instance is there and hosts it in a card, so the arrangement still depends on no instrument, and the controls of the synth live in the instrument extension, which registers a view for `instrument.synth`. A slot that is empty or whose tool has no view shows a quiet card with the tool name. Today the rack holds the instrument alone. Since step 1 of the second milestone the gain, pan and mute of the track are a fixed section at the right end, after the rack. Effects become more slots in the rack; they are not built and there is no placeholder for them.
 - The view registry is a GPUI global (`Views::view_of` from any view). `Shell::new` takes the `Views` and installs it, so the contract is still in a type and a caller cannot forget it. It was a field of the window before, which a nested view could not reach. A global is the smallest change: one process has one window and one project, nothing has to be passed down through view constructors, and a host needs no type of what it hosts.
 - The synth view is the first view on a record with plain parameters. Its knob is a controlled component: the view gives the value on every render and the knob reports changes, so the view keeps no copy of saved state and an outside edit shows at once, also during a drag. A knob drag is a session gesture that begins with the first change. The ranges and the defaults of the synth are written once, as `Parameter` constants next to `SynthState`, and `validate`, the knobs, the reset and a test of the docs read them. This is local to the instrument crate. The declarative parameter system below stays open: one tool is not enough to design it from.
 - Measured September 20, 2026, same laptop, dev profile: GPUI in the instrument crate costs the DSP loop about 0.1 s. `cargo build -p runtime` after a touch of `synth.rs` takes 1.85 s (1.94, 1.85, 1.84), 1.7 s before. After a touch of the synth view file 1.75 s, of the track panel file 1.8 s. `cargo nextest run -p instrument` after a touch of `synth.rs` takes 2.1 s, as before, and the instrument crate alone compiles in 0.57 s, 0.47 s without the view module. So the view stays in the crate of its tool.
@@ -487,6 +500,7 @@ The first milestone is built and was verified on September 19, 2026, see "Verifi
 Second milestone steps:
 
 - Done September 20, 2026, step 0: the agent docs as a map with one doc per extension, and the terminal from the project menu. See "Agent docs as a map" and "The terminal from the project menu". Not built: a doc per task (no task needs one yet), other platforms than macOS for the terminal.
+- Done September 20, 2026, step 1: the stereo signal path and the gain, pan and mute of a track, in the record, in the track panel and from a file. See "Stereo signal path and the track mixer". Not built: solo, sends, buses, a master fader, meters, a limiter, a mixer view and automation.
 
 The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. It was re-checked in the real window and needs no workaround, see "The window and its views". The pinned GPUI has an accessibility tree and focus-visible. The menu trigger and the seek strip use focus-visible; the other components and the accessibility tree are open.
 
@@ -505,7 +519,7 @@ Collected from every step and the check. Decided limits are in the sections abov
 Sound and engine:
 
 - Nobody has listened with care. All proof of sound is counters, offline renders and sample comparisons. The synth defaults need an ear.
-- No limiter and no mixer. Tracks add up, and one square note at full resonance and velocity can peak above 1.0.
+- No limiter. Tracks add up, and one square note at full resonance and velocity can peak above 1.0. Since the second milestone a track has a gain, a pan and a mute, and nothing else of a mixer.
 - No feedback connections, no audio input, no device switching, no new `prepare` after a sample rate change. Only f32 output on the default device, only macOS.
 - No App Nap prevention. A long session in a hidden window is not tried.
 - A routing edit is a hard switch, without a gain ramp. Tone steps its gain. The synth smooths its own. There is no smoothing helper in the SDK.

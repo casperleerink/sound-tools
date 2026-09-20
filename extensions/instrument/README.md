@@ -47,7 +47,7 @@ Editing:
 | Name | Kind |
 | --- | --- |
 | `notes` | event input carrying `sound_notes::NoteEvent` |
-| `audio` | mono audio output |
+| `audio` | audio output, stereo. The synth is one bank of voices in the middle: the same samples in both channels. Where a track puts it is the track's business |
 
 A track connects both itself. To play a synth straight to the device, add connections to `project.json`:
 

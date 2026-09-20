@@ -24,7 +24,7 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 3. Double click the clip. The note editor opens below.
 4. Drag on empty space inside the clip to draw a note. It sounds. Drag a note to move it, drag its end to change its length, press delete to remove it.
 5. Press space to play and again to pause. Click the ruler to move the playhead.
-6. Click the name of a track on the left. Its panel opens below with the synth. Drag a knob up or down while it plays, and double click a knob to reset it.
+6. Click the name of a track on the left. Its panel opens below with the synth, and at the right end the mixer of the track: gain, pan and mute. Drag a knob up or down while it plays, and double click a knob to reset it.
 7. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
 8. Press cmd-q to quit. Run the same command again and the piece is back.
 
@@ -45,6 +45,7 @@ The agent is any coding agent that can edit files. The app must be running on th
    - `Add a bass line in bars 5 to 8 that follows the chords on the piano track`
    - `Add a new track with a simple melody over bars 1 to 4`
    - `Make the bass sound darker`
+   - `Turn the piano down a few dB and put the bass a little to the left`
 4. The part shows up and plays while the agent still writes. One cmd-z in the app takes the whole request back.
 
 What the agent uses:

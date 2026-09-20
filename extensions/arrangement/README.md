@@ -9,7 +9,7 @@ Enable it in `project.json` under `extensions` as `"arrangement"`.
 | Tool | State | Form | Behaviour |
 | --- | --- | --- | --- |
 | `arrangement` | `ArrangementState`, no fields yet | `<name>/instance.json` | none. It owns the tracks and gives the summary. |
-| `arrangement.track` | `TrackState`: `name`, `colour`, `order` | `<name>/instance.json` | one `Sequencer`, routed to the child `instrument` and to device channels 0 and 1 |
+| `arrangement.track` | `TrackState`: `name`, `colour`, `order`, `gain_db`, `pan`, `mute` | `<name>/instance.json` | one `Sequencer` and one `Mixer`: sequencer, child `instrument`, mixer, main output |
 | `arrangement.clip` | `sound_notes::Clip`: `start`, `length`, `notes` | `<name>.json` | none, plain data for its track |
 
 `Clip` lives in the contract crate `crates/notes`, because its saved form is what other extensions read. This crate does not depend on any instrument. A track finds its instrument by the child name `instrument` (`INSTRUMENT`) and the port names `NOTES_INPUT` and `AUDIO_OUTPUT`, so any tool with those ports fits. A track without that child loads and is silent.
@@ -17,6 +17,8 @@ Enable it in `project.json` under `extensions` as `"arrangement"`.
 Each tool says where it lives (`State::PLACE`): the arrangement at the top of `state/`, a track in an arrangement, a clip in a track. A record anywhere else is not loaded and the problem says where it belongs, so an agent that forgot the track folder gets a signal and not silence.
 
 `Colour` is an enum of the accent names of DESIGN.md, saved in lowercase. It is not a hex string, so a record cannot hold a colour the design has no token for. Map it to a token in the interface with `Colour::name()`.
+
+`gain_db` (-60 to 6, `TrackState::GAIN_DB`), `pan` (-1 to 1, `TrackState::PAN`) and `mute` are the mixer of the track. A record that leaves them out plays as it did before they existed: no change of level, in the middle, not muted. A value outside its range does not load and the problem names the field, like any other record value. The ranges are written once, in `TrackState`, and `validate`, the knobs of the track panel and the docs read them there.
 
 ## Rules
 
@@ -48,6 +50,15 @@ The off comes from the sequencer, not from the interface, `PREVIEW_SECONDS` (0.3
 - A stop or a seek ends it with everything else (`AllOff`).
 - An off releases every note of its pitch. So a preview sends no off while a note of the timeline holds its pitch: the off of that note ends both. The other way round, a note of the timeline that ends cuts a preview of its pitch short.
 - An off that does not fit in the event buffer waits for the next block. An on that does not fit is dropped and counted.
+
+## The mixer
+
+One `Mixer` processor per track, after the instrument and before the main output. Audio is stereo everywhere (`sound_core::CHANNELS`), so the mixer is two gains, one per channel.
+
+- `channel_gains(track)` turns the record into those two gains on the control thread. The audio thread works out no pan law. The behaviour sends them on every run, which costs no compile.
+- The pan law is equal power, scaled so that the middle is exactly 1 in both channels. A centred track at 0 dB is untouched, sample for sample, so a project from before the mixer sounds the same. Hard left or right, the channel that plays it is √2, 3 dB above the middle, and the other is exactly 0. The power of a track is the same wherever it is panned.
+- The processor ramps to a new pair over `RAMP_SECONDS` (20 ms), so no change of gain, pan or mute clicks. The largest step it can take in one frame is the distance divided by the ramp. A muted track that has finished its fade returns before it touches its output.
+- A change of the mixer keeps everything else: a note goes on sounding through it, because the behaviour keeps both processors and only sends an update.
 
 ## Helpers for interfaces
 
@@ -85,10 +96,11 @@ A track is not a synth. It owns clips and one child named `instrument`, and any 
 - The panel is a rack: device cards from left to right, in the order the sound goes through them. Today a track has one device, the instrument. `track_panel::device_slots` gives the ids of the slots of a track, and today that is `<track>/instrument` alone.
 - For each slot the panel asks the view registry for the view of whatever instance is there: `Views::view_of`. It names no instrument type, and this crate still depends on no instrument. The view goes into a plain card. When the slot is empty, or its tool has no registered view, the card says so: `No instrument`, or the tool name with `This tool has no view.`
 - The card follows the slot live. When an event names a slot and its tool is not the one the card was made for (another `instrument.json` from outside, a delete, an undo), the panel makes the card again. While the tool stays the same, the device view follows its own record.
-- The panel edits nothing itself and keeps no state of the project. Edits are those of the device views, through the session. A knob drag that is open when the panel closes is finished by the device view when it is released.
+- The mixer of the track is a fixed section at the right end of the row, after the rack and outside what scrolls: a gain knob, a pan knob and a mute button. It is the one thing the panel edits itself, because those three values are in the track record. A knob drag is one gesture and one undo step ("Change gain", "Change pan"), and the button is one commit ("Mute track", "Unmute track"). The panel ends an open drag when it shows another track, when its track is deleted and when it is released, as the note editor does.
+- Apart from that section the panel edits nothing and keeps no state of the project. The other edits are those of the device views, through the session. A knob drag that is open when the panel closes is finished by the device view when it is released.
 - The header is that of the note editor: accent dot, track name, close control. The panel has a focus handle that is no tab stop. It only tells `ArrangementView` whether the focus is inside when the panel closes, so that the focus goes back to the timeline. Tab reaches the close control and then the controls of the devices.
 
-How the rack grows. The instrument slot has a fixed name, so its card is made once and made again only when the tool in it changes. Effects will come and go, so they need more than one more id: `device_slots` then reads the effect children from the project, in rack order, and the panel makes its list again on `Created` and `Deleted` inside the track. That rebuild must keep the device of every slot that stays, by its slot id, so that a view with an open knob drag is not dropped for a change next to it. The rendering needs no change, because a card is already made per device, and the rack already scrolls sideways when the cards are wider than the window. The mixer controls of the track (gain, pan, mute) are not devices. They get a fixed section at the right end of the row in `TrackPanel::render`, after the rack, outside of what scrolls. None of this is built, and there are no empty places for it: no effects, sends, instrument picker or reordering.
+How the rack grows. The instrument slot has a fixed name, so its card is made once and made again only when the tool in it changes. Effects will come and go, so they need more than one more id: `device_slots` then reads the effect children from the project, in rack order, and the panel makes its list again on `Created` and `Deleted` inside the track. That rebuild must keep the device of every slot that stays, by its slot id, so that a view with an open knob drag is not dropped for a change next to it. The rendering needs no change, because a card is already made per device, and the rack already scrolls sideways when the cards are wider than the window. Effects are not built, and there are no empty places for them: no sends, instrument picker or reordering.
 
 ### Editing rules
 
@@ -117,6 +129,7 @@ The arrangement registers a summary (`ToolRegistration::summary`), which `runtim
 
 ```sh
 cargo nextest run -p arrangement -p runtime
+cargo nextest run -p arrangement --test arrangement mixer                         # gain, pan and mute with numbers
 RTSAN_ENABLE=1 cargo nextest run -p arrangement                                   # with the realtime sanitizer
 cargo nextest run -p runtime --test window                                       # the views with a simulated mouse and keys
 cargo nextest run -p runtime --test window track_panel                           # the track panel and the synth view in it
