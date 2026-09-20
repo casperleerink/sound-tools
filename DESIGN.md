@@ -90,14 +90,14 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Where | Mouse or key | What it does |
 | --- | --- | --- |
 | Anywhere | space | Play or pause |
-| Transport | drag the tempo up or down | Change the tempo at the playhead. Half a bpm per pixel, a tenth of that with shift. Escape during the drag puts it back |
-| Transport | up or right, down or left on the focused tempo | One bpm. With shift a tenth |
-| Transport | the metronome button | The click on or off. It is not an undo step and changes no file |
 | Anywhere | cmd-z, shift-cmd-z | Undo, redo. Both wait while a drag is going on |
-| Anywhere | tab, shift-tab | Move the focus: project menu, arrangement, note editor, transport |
+| Anywhere | tab, shift-tab | Move the focus: project menu, arrangement, the panel below, transport |
 | Project menu | Add track | A new track with a synth |
 | Project menu | Open terminal in project folder | The macOS Terminal in the folder, to start a coding agent there |
 | Ruler | click | Move the playhead there |
+| Transport | drag the tempo up or down | Change the tempo at the playhead. Half a bpm per pixel, a tenth of that with shift. Escape during the drag puts it back |
+| Transport | up or right, down or left on the focused tempo | One bpm. With shift a tenth |
+| Transport | the metronome button | The click on or off. It is not an undo step and changes no file |
 | Arrangement or note editor | scroll, cmd-scroll or pinch | Pan, zoom in time |
 | Arrangement | double click on empty track space | Add a clip of one bar |
 | Arrangement | click on a clip | Select it |
