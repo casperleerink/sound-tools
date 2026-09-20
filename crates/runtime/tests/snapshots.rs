@@ -7,8 +7,8 @@
 //! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
 //! - `menu.png`: the project menu, open, after one edit.
 //!
-//! The frame times it prints are those of `Window::draw` on the scale project: building and
-//! painting the scene, not the GPU.
+//! The frame times it prints are those of one update and the `Window::draw` it causes on the
+//! scale project: rendering, layout and painting into the scene, not the GPU.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -61,12 +61,15 @@ impl Opened {
     }
 
     /// Lets the engine run for `frames` and the session see it, as the device and the poll
-    /// timer do in the real window.
-    fn advance(&mut self, frames: usize, cx: &mut HeadlessAppContext) {
+    /// timer do in the real window. Returns how long the poll and the frame it caused took:
+    /// with test support GPUI draws a window as soon as an update leaves it dirty.
+    fn advance(&mut self, frames: usize, cx: &mut HeadlessAppContext) -> Duration {
         let mut buffer = vec![0.0_f32; frames * OFFLINE.channels];
         self.engine.process_block(&mut buffer);
+        let started = Instant::now();
         cx.update(|cx| self.session.update(cx, |session, cx| session.poll(cx)));
         cx.run_until_parked();
+        started.elapsed()
     }
 
     /// Seeks and plays. Making a large project leaves many edits waiting for the engine, and
@@ -98,14 +101,6 @@ impl Opened {
             .ok()
             .context("not the arrangement")?;
         Ok(cx.update(|cx| view.read(cx).timeline().clone()))
-    }
-
-    fn draw(&self, cx: &mut HeadlessAppContext) -> Result<Duration> {
-        cx.update_window(self.window.into(), |_, window, cx| {
-            let started = Instant::now();
-            window.draw(cx).clear(cx);
-            started.elapsed()
-        })
     }
 }
 
@@ -279,26 +274,43 @@ fn main() -> Result<()> {
     opened.play_from(Ticks(405 * BAR), &mut cx)?;
     save(&mut cx, &opened, "scale")?;
 
+    // The transport reads this after every change, so it has to stay small.
+    for _ in 0..3 {
+        let started = Instant::now();
+        let end = cx.update(|cx| opened.session.read(cx).project().end());
+        println!(
+            "Project::end over 10,000 clips: {:?} ({end:?})",
+            started.elapsed()
+        );
+        let started = Instant::now();
+        let end = cx.update(|cx| {
+            let project = opened.session.read(cx).project();
+            main_arrangement(project).and_then(|a| arrangement::end(project, a.id()))
+        });
+        println!("arrangement::end: {:?} ({end:?})", started.elapsed());
+    }
+
     // Frames while playing: only the playhead moves, the timeline reuses what it painted.
     let mut playing = Vec::new();
     for _ in 0..200 {
-        opened.advance(800, &mut cx);
-        playing.push(opened.draw(&mut cx)?);
+        playing.push(opened.advance(800, &mut cx));
     }
     // Frames while scrolling: the timeline builds and paints its scene again.
     let mut scrolling = Vec::new();
     for step in 0..200 {
         let viewport = middle.scrolled(-(step as f32) * 7.0, -(step as f32) * 3.0);
+        let started = Instant::now();
         cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_viewport(viewport, cx)));
-        scrolling.push(opened.draw(&mut cx)?);
+        scrolling.push(started.elapsed());
     }
     // Far zoomed out: every clip of every visible track is on screen.
     let far_out = middle.zoomed(0.05, 0.0);
     let mut zoomed_out = Vec::new();
     for step in 0..200 {
         let viewport = far_out.scrolled(-(step as f32), 0.0);
+        let started = Instant::now();
         cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_viewport(viewport, cx)));
-        zoomed_out.push(opened.draw(&mut cx)?);
+        zoomed_out.push(started.elapsed());
     }
     for (what, mut times) in [
         ("playing", playing),
