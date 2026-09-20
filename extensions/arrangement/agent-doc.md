@@ -54,7 +54,7 @@ This clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one 
 - `name`: what the composer sees. Not empty. The folder name is the id and stays as it is when the name changes.
 - `colour`: `blue`, `sapphire`, `sky`, `teal`, `green`, `yellow`, `peach`, `red`, `maroon`, `mauve`, `pink`, `lavender`, `rosewater` or `flamingo`. `blue` when left out.
 - `order`: tracks show from the lowest to the highest. Tracks with the same order show by id. 0 when left out.
-- `gain_db`: how much louder or quieter the track plays, in decibels, -60 to 6. 0 when left out, which is the sound as the instrument makes it. -6 is half as loud, 6 is twice. Change the sound itself in `instrument.json`; change the balance between tracks here.
+- `gain_db`: how much louder or quieter the track plays, in decibels, -60 to 6. 0 when left out, which is the sound as the instrument makes it. -6 halves the samples, 6 doubles them, and -60 is as quiet as it goes; for silence use `mute`. Change the sound itself in `instrument.json`; change the balance between tracks here.
 - `pan`: where the track sits between the two channels, -1 to 1. -1 is hard left, 0 the middle, 1 hard right. 0 when left out. A track keeps its loudness wherever it is panned.
 - `mute`: `true` silences the track and changes nothing else. `false` when left out.
 - The track plays through the file `instrument.json` in its folder. Its record is in the doc of the instrument, `agent-docs/instrument.md`. A track without it is silent.
