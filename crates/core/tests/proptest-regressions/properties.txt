@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b99294c2d469c658099c98e6a7bb6c88d149ec65f0beb03886a5a4127edf9333 # shrinks to first = BankFiles { gain: 8, levels: [], output_gain: None }, second = BankFiles { gain: 8, levels: [], output_gain: None }
