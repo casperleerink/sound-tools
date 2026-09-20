@@ -463,3 +463,108 @@ fn the_focus_ring_shows_only_for_a_focus_from_the_keyboard(cx: &mut TestAppConte
     opened.click(place);
     assert!(!timeline_ring(&mut opened));
 }
+
+#[gpui::test]
+fn a_resize_goes_on_from_the_live_clip_and_never_writes_an_old_copy(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let mut changes = Changes::new();
+        changes.create(id(PART), part());
+        project.commit("Add clip", changes).unwrap();
+        // One step to undo: the clip loses its second note.
+        let part = project.resolve::<sound_notes::Clip>(&id(PART)).unwrap();
+        let mut edit = project.begin("Delete note");
+        project
+            .update(&mut edit, &part, |clip| {
+                clip.notes.pop();
+            })
+            .unwrap();
+        project.finish(edit).unwrap();
+    });
+    assert_eq!(opened.clip(PART).unwrap().notes.len(), 1);
+
+    // Press the edge and hold. Undo brings the note back under the press.
+    let edge = opened.at(3 * BAR, 0) - point(px(2.), px(0.));
+    opened.press(edge);
+    opened.keys("cmd-z");
+    assert_eq!(opened.clip(PART), Some(part()));
+    assert_eq!(opened.redo_label().as_deref(), Some("Delete note"));
+    // A move inside the snap step changes nothing, so redo is still there.
+    opened.drag_to(edge + point(px(1.), px(0.)));
+    assert!(!opened.gesture_open());
+    assert_eq!(opened.redo_label().as_deref(), Some("Delete note"));
+
+    // The drag resizes the clip that is there now, with its note.
+    let longer = opened.at(4 * BAR, 0) - point(px(1.), px(0.));
+    opened.drag_to(longer);
+    opened.release(longer);
+    assert_eq!(opened.clip(PART), Some(clip(BAR, 3 * BAR, part().notes)));
+    assert_eq!(opened.undo_label().as_deref(), Some("Resize clip"));
+    assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 64"));
+    opened.keys("cmd-z");
+    assert_eq!(opened.clip(PART), Some(part()));
+}
+
+#[gpui::test]
+fn an_outside_note_edit_during_a_resize_is_kept(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let edge = opened.at(3 * BAR, 0) - point(px(2.), px(0.));
+    let longer = opened.at(4 * BAR, 0) - point(px(2.), px(0.));
+    opened.press(edge);
+    opened.drag_to(longer);
+    assert_eq!(opened.clip(PART).unwrap().length.ticks().0, 3 * BAR);
+
+    // An agent adds a note to the clip as it is now, three bars long.
+    let path = opened.path(&format!("state/{PART}.json"));
+    let record = r#"{"tool": "arrangement.clip", "state": {"start": 3840, "length": 11520, "notes": [
+        {"start": 960, "length": 480, "pitch": 60, "velocity": 100},
+        {"start": 4800, "length": 480, "pitch": 64, "velocity": 100},
+        {"start": 9600, "length": 480, "pitch": 72, "velocity": 100}]}}"#;
+    std::fs::write(&path, record).unwrap();
+    opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
+
+    // The drag goes on from there: one more bar, and the new note is still in the clip.
+    let longest = opened.at(5 * BAR, 0) - point(px(2.), px(0.));
+    opened.drag_to(longest);
+    opened.release(longest);
+    let after = opened.clip(PART).unwrap();
+    assert_eq!(after.length.ticks().0, 4 * BAR);
+    assert_eq!(after.notes.len(), 3);
+    assert_eq!(after.notes[2], note(9600, 480, 72));
+    assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 72"));
+}
+
+#[gpui::test]
+fn a_press_then_undo_then_a_move_starts_from_the_live_clip(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let place = opened.at(BAR + 1920, 0);
+    opened.click(place);
+    opened.keys("right");
+    // The clip is a step later. Press it, undo the nudge under the press, then drag a bar.
+    let from = opened.at(BAR + 1920, 0);
+    opened.press(from);
+    opened.keys("cmd-z");
+    assert_eq!(opened.clip(PART).unwrap().start.0, BAR);
+    let to = opened.at(2 * BAR + 1920, 0);
+    opened.drag_to(from + point(px(1.), px(0.)));
+    opened.drag_to(to);
+    opened.release(to);
+    assert_eq!(opened.clip(PART).unwrap().start.0, 2 * BAR);
+    assert!(opened.clip_file(PART).unwrap().contains("\"start\": 7680"));
+}
+
+#[gpui::test]
+fn a_timeline_that_goes_away_during_a_drag_leaves_no_gesture_open(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let (from, to) = (opened.at(BAR + 1920, 0), opened.at(2 * BAR + 1920, 0));
+    opened.press(from);
+    opened.drag_to(to);
+    assert!(opened.gesture_open());
+    // The whole arrangement is deleted from outside: the window drops its view.
+    let folder = opened.path("state/arrangement");
+    std::fs::remove_dir_all(&folder).unwrap();
+    opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&folder)));
+    opened.settle();
+    assert_eq!(opened.clip(PART), None);
+    assert!(!opened.gesture_open());
+    assert_eq!(opened.notice(), None);
+}

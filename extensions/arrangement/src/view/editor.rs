@@ -63,7 +63,6 @@ impl NoteDragKind {
 
 struct NoteDrag {
     kind: NoteDragKind,
-    index: usize,
     /// The note at mouse down. Every move starts from it.
     origin: Note,
     /// The note as this drag wrote it last. It finds the note again when something else
@@ -83,7 +82,10 @@ pub struct NoteEditor {
     /// The width of the note area at the last paint. Before the first paint it is the width
     /// of the timeline above, which is the same.
     painted_width: Rc<Cell<f32>>,
-    selected_note: Option<usize>,
+    /// The selected note, by value and not by its index: the clip changes under the editor, by
+    /// an agent, an undo or a clip resize, and an index would then name another note. It is
+    /// looked up when it is used, and cleared when the clip no longer has it.
+    selected_note: Option<Note>,
     drag: Option<NoteDrag>,
     /// The pointer is over the end of a note, so the cursor says that a drag resizes.
     over_edge: bool,
@@ -114,9 +116,20 @@ impl NoteEditor {
                 ProjectEvent::ProjectFileChanged => true,
             };
             if changed {
+                editor.drop_lost_selection(cx);
                 cx.notify();
             }
         });
+        // A drag that is still open when the editor goes away must not leave the gesture of
+        // the session open: undo and redo wait for it. The view that closes the editor ends
+        // the drag first. This is the net under every other way to go.
+        cx.on_release(|editor, cx| {
+            if editor.drag.take().is_some_and(|drag| drag.begun) {
+                let session = editor.session.clone();
+                session.update(cx, |session, cx| session.finish_gesture(cx));
+            }
+        })
+        .detach();
         let mut editor = Self {
             session,
             clip: clip.clone(),
@@ -152,15 +165,33 @@ impl NoteEditor {
         self.keyboard_focus.shows_ring(&self.focus_handle, window)
     }
 
-    /// The index of the selected note in the clip.
-    pub fn selected_note(&self) -> Option<usize> {
-        self.selected_note
+    /// The index of the selected note in the clip as it is now. `None` when nothing is
+    /// selected or the clip no longer has the note.
+    pub fn selected_note(&self, cx: &App) -> Option<usize> {
+        let (index, _, _) = self.selected(cx)?;
+        Some(index)
     }
 
-    pub fn select_note(&mut self, note: Option<usize>, cx: &mut Context<Self>) {
+    /// Selects the note at an index of the clip as it is now.
+    pub fn select_note(&mut self, index: Option<usize>, cx: &mut Context<Self>) {
+        let clip = self.session.read(cx).project().state(&self.clip);
+        let note = index.and_then(|index| clip?.notes.get(index).copied());
+        self.select(note, cx);
+    }
+
+    fn select(&mut self, note: Option<Note>, cx: &mut Context<Self>) {
         if self.selected_note != note {
             self.selected_note = note;
             cx.notify();
+        }
+    }
+
+    /// The clip changed. A selected note that it no longer has is not selected any more, so a
+    /// key never edits a note that only took its place. A drag keeps the selection on what it
+    /// wrote last.
+    fn drop_lost_selection(&mut self, cx: &App) {
+        if self.drag.is_none() && self.selected(cx).is_none() {
+            self.selected_note = None;
         }
     }
 
@@ -238,8 +269,8 @@ impl NoteEditor {
         };
         let pointer = viewport.tick_at(x);
         let hit = note_at(&viewport, clip, x, y);
-        let hit = hit.and_then(|(index, zone)| Some((index, zone, *clip.notes.get(index)?)));
-        if let Some((index, zone, note)) = hit {
+        let hit = hit.and_then(|(index, zone)| Some((zone, *clip.notes.get(index)?)));
+        if let Some((zone, note)) = hit {
             let kind = match zone {
                 Zone::RightEdge => NoteDragKind::Resize { grab: pointer },
                 Zone::Body | Zone::LeftEdge => NoteDragKind::Move {
@@ -249,22 +280,20 @@ impl NoteEditor {
             };
             self.drag = Some(NoteDrag {
                 kind,
-                index,
                 origin: note,
                 written: note,
                 begun: false,
             });
-            self.select_note(Some(index), cx);
+            self.select(Some(note), cx);
             self.preview(note.pitch, note.velocity, cx);
             return;
         }
 
         let Some(note) = drawn_note(clip, pointer, pointer, pitch) else {
             // Outside the clip there is nothing to draw into.
-            self.select_note(None, cx);
+            self.select(None, cx);
             return;
         };
-        let index = clip.notes.len();
         let instance = self.clip.clone();
         let drawn = self.session.update(cx, |session, cx| {
             session.begin_gesture("Draw note", cx);
@@ -279,12 +308,11 @@ impl NoteEditor {
         }
         self.drag = Some(NoteDrag {
             kind: NoteDragKind::Draw { down: pointer },
-            index,
             origin: note,
             written: note,
             begun: true,
         });
-        self.select_note(Some(index), cx);
+        self.select(Some(note), cx);
         self.preview(note.pitch, note.velocity, cx);
     }
 
@@ -299,13 +327,9 @@ impl NoteEditor {
         let Some(clip) = project.state(&self.clip) else {
             return self.end_drag(cx);
         };
-        // Something else may have changed the clip. The note is where it was, or it is found
-        // by what this drag wrote last, or it is gone.
-        let index = match clip.notes.get(drag.index) {
-            Some(note) if *note == drag.written => Some(drag.index),
-            _ => clip.notes.iter().position(|note| *note == drag.written),
-        };
-        let Some(index) = index else {
+        // Something else may have changed the clip. The note is found by what this drag wrote
+        // last, or it is gone.
+        let Some(index) = clip.notes.iter().position(|note| *note == drag.written) else {
             return self.end_drag(cx);
         };
         let pointer = viewport.tick_at(x);
@@ -344,11 +368,12 @@ impl NoteEditor {
         if let Some(drag) = &mut self.drag {
             drag.begun = true;
             if published.is_some() {
-                drag.index = index;
                 drag.written = next;
             }
         }
-        self.select_note(Some(index), cx);
+        if published.is_some() {
+            self.select(Some(next), cx);
+        }
         if published.is_some() && next.pitch != before.pitch {
             self.preview(next.pitch, next.velocity, cx);
         }
@@ -357,8 +382,8 @@ impl NoteEditor {
     /// Mouse up, or the note went away under the drag: the gesture becomes one undo step. The
     /// notes are put in order first, because the file is written now and the agent doc asks
     /// for notes by start.
-    fn end_drag(&mut self, cx: &mut Context<Self>) {
-        if let Some(drag) = self.drag.take().filter(|drag| drag.begun) {
+    pub(super) fn end_drag(&mut self, cx: &mut Context<Self>) {
+        if self.drag.take().is_some_and(|drag| drag.begun) {
             let instance = self.clip.clone();
             self.session.update(cx, |session, cx| {
                 session.gesture(cx, |project, edit| match project.state(&instance) {
@@ -368,11 +393,8 @@ impl NoteEditor {
                 });
                 session.finish_gesture(cx);
             });
-            let project = self.session.read(cx).project();
-            let notes = project.state(&self.clip).map(|clip| clip.notes.as_slice());
-            let mut notes = notes.unwrap_or_default().iter();
-            self.selected_note = notes.position(|note| *note == drag.written);
         }
+        self.drop_lost_selection(cx);
         cx.notify();
     }
 
@@ -385,9 +407,9 @@ impl NoteEditor {
             self.session
                 .update(cx, |session, cx| session.cancel_gesture(cx));
         }
-        // A drawn note is gone again. Any other keeps its place in the clip.
+        // A drawn note is gone again. Any other is the note of mouse down again.
         let drawn = matches!(drag.kind, NoteDragKind::Draw { .. });
-        self.selected_note = (!drawn).then_some(drag.index);
+        self.selected_note = (!drawn).then_some(drag.origin);
         cx.notify();
     }
 
@@ -412,11 +434,12 @@ impl NoteEditor {
         }
     }
 
-    /// The selected note, when the clip still has a note at its index.
+    /// The selected note with its index in the clip as it is now, when the clip has it.
     fn selected(&self, cx: &App) -> Option<(usize, Note, Length)> {
-        let index = self.selected_note?;
+        let selected = self.selected_note?;
         let clip = self.session.read(cx).project().state(&self.clip)?;
-        Some((index, *clip.notes.get(index)?, clip.length))
+        let index = clip.notes.iter().position(|note| *note == selected)?;
+        Some((index, selected, clip.length))
     }
 
     /// The keys of the focused editor. Whether the key was one of them.
@@ -478,11 +501,7 @@ impl NoteEditor {
                 project.finish(edit)
             })
         });
-        let project = self.session.read(cx).project();
-        let notes = project.state(&self.clip).map(|clip| clip.notes.as_slice());
-        let mut notes = notes.unwrap_or_default().iter();
-        let selected = next.and_then(|next| notes.position(|note| *note == next));
-        self.select_note(selected, cx);
+        self.select(next, cx);
         if let Some(next) = next.filter(|next| next.pitch != note.pitch) {
             self.preview(next.pitch, next.velocity, cx);
         }
@@ -511,7 +530,16 @@ impl NoteEditor {
         let width = f32::from(bounds.size.width) - HEADER_WIDTH;
         let height = f32::from(bounds.size.height) - RULER_HEIGHT;
         let viewport = clamped(&self.viewport, clip, time_signature, width, height);
-        let notes = clip.notes.iter();
+        // Only what shows: a long clip has many notes and the editor shows a few bars of it.
+        let ticks = viewport.visible_ticks(width);
+        let pitches = visible_pitches(&viewport, height);
+        let visible = clip.notes.iter().filter(|note| {
+            let start = clip.start + note.start;
+            pitches.contains(&note.pitch.number())
+                && start < ticks.end
+                && clip.start + note.end() > ticks.start
+        });
+        let selected = self.selected_note;
         Some(RollScene {
             viewport,
             width,
@@ -525,8 +553,9 @@ impl NoteEditor {
             beats: viewport.beat_lines(time_signature, width).collect(),
             clip_start: viewport.x_of(clip.start).clamp(0.0, width),
             clip_end: viewport.x_of(clip.end()).clamp(0.0, width),
-            notes: notes.map(|note| note_rect(&viewport, clip, note)).collect(),
-            selected: self.selected_note,
+            notes: visible
+                .map(|note| (note_rect(&viewport, clip, note), selected == Some(*note)))
+                .collect(),
         })
     }
 }
@@ -543,8 +572,8 @@ struct RollScene {
     /// The part of the note area that is inside the clip.
     clip_start: f32,
     clip_end: f32,
-    notes: Vec<Rect>,
-    selected: Option<usize>,
+    /// The visible notes, and whether each is the selected one.
+    notes: Vec<(Rect, bool)>,
 }
 
 fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
@@ -633,13 +662,14 @@ fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx
                 window.paint_quad(fill(placed(veil, area.origin), outside));
             }
         }
-        for (index, rect) in scene.notes.iter().enumerate() {
+        // The selected note is filled with the text colour, which is the lightest there is,
+        // and keeps its accent as the outline. An outline alone on a pastel fill was hard to see.
+        for (rect, selected) in &scene.notes {
             let body = placed(*rect, area.origin);
-            let selected = scene.selected == Some(index);
-            let border = if selected { selection } else { scene.accent };
+            let fill_color = if *selected { selection } else { scene.accent };
             let radius = px(3.).min(body.size.width / 2.);
             let solid = BorderStyle::Solid;
-            window.paint_quad(quad(body, radius, scene.accent, px(1.), border, solid));
+            window.paint_quad(quad(body, radius, fill_color, px(1.), scene.accent, solid));
         }
     });
 

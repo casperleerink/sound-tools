@@ -477,3 +477,179 @@ fn nothing_is_left_sounding_after_a_fast_drag_a_delete_or_a_closed_editor(cx: &m
     opened.render(2 * SECOND);
     assert_eq!(peak(&opened.render(SECOND / 4)), 0.0);
 }
+
+/// The record of `part` with these notes, as an agent writes it.
+fn part_record(notes: &[(u64, u8)]) -> String {
+    let lines: Vec<String> = notes
+        .iter()
+        .map(|(start, pitch)| {
+            format!(r#"{{"start": {start}, "length": 480, "pitch": {pitch}, "velocity": 100}}"#)
+        })
+        .collect();
+    format!(
+        r#"{{"tool": "arrangement.clip", "state": {{"start": 3840, "length": 7680, "notes": [{}]}}}}"#,
+        lines.join(", ")
+    )
+}
+
+#[gpui::test]
+fn an_outside_delete_of_the_clip_during_a_note_drag_leaves_no_gesture_open(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open(cx);
+    // A nudge first, so that undo has a step that must still work afterwards.
+    let place = opened.in_editor(BAR + 1000, 60);
+    opened.click(place);
+    opened.keys("up");
+    let (from, to) = (
+        opened.in_editor(BAR + 1000, 61),
+        opened.in_editor(BAR + 2000, 66),
+    );
+    opened.press(from);
+    opened.drag_to(to);
+    assert!(opened.gesture_open());
+
+    // An agent deletes the clip file while the button is down.
+    let path = opened.path(&format!("state/{PART}.json"));
+    std::fs::remove_file(&path).unwrap();
+    opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
+    assert_eq!(opened.editor_clip(), None);
+    assert!(!opened.gesture_open());
+
+    // The mouse goes on and lets go. Nothing is open, nothing fails, nothing comes back.
+    opened.drag_to(from);
+    opened.release(from);
+    assert!(!opened.gesture_open());
+    assert_eq!(opened.notice(), None);
+    assert_eq!(opened.clip(PART), None);
+    assert_eq!(opened.clip_file(PART), None);
+
+    // Undo works at once: it gives the clip back as it was before the drag, with the nudge.
+    opened.keys("cmd-z");
+    let back = opened.clip(PART).unwrap();
+    assert_eq!(back.notes[0], note(960, 480, 61));
+    assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 61"));
+    assert_eq!(opened.undo_label().as_deref(), Some("File change"));
+}
+
+#[gpui::test]
+fn closing_the_editor_during_a_note_drag_ends_the_gesture(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let (from, to) = (
+        opened.in_editor(BAR + 1000, 60),
+        opened.in_editor(BAR + 2000, 66),
+    );
+    opened.press(from);
+    opened.drag_to(to);
+    assert!(opened.gesture_open());
+    // Another view closes the editor while the button is down.
+    let arrangement = opened.arrangement.clone();
+    opened
+        .cx
+        .update(|window, cx| arrangement.update(cx, |view, cx| view.close_editor(window, cx)));
+    opened.cx.run_until_parked();
+    assert!(!opened.gesture_open());
+    assert_eq!(opened.undo_label().as_deref(), Some("Move note"));
+    assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 66"));
+    opened.release(to);
+    opened.keys("cmd-z");
+    assert_eq!(opened.clip(PART), Some(part()));
+}
+
+#[gpui::test]
+fn the_selection_names_a_note_and_not_a_place_in_the_file(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let path = opened.path(&format!("state/{PART}.json"));
+    // The second note is selected: start 4800, pitch 64.
+    let second = opened.in_editor(2 * BAR + 1000, 64);
+    opened.click(second);
+    assert_eq!(opened.selected_note(), Some(1));
+
+    // An agent puts a note at the front of the file. The selection stays on its note.
+    std::fs::write(&path, part_record(&[(0, 50), (960, 60), (4800, 64)])).unwrap();
+    opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
+    assert_eq!(opened.selected_note(), Some(2));
+    opened.keys("delete");
+    assert_eq!(
+        opened.clip(PART).unwrap().notes,
+        [note(0, 480, 50), note(960, 480, 60)]
+    );
+    let file = opened.clip_file(PART).unwrap();
+    assert!(file.contains("\"pitch\": 60") && !file.contains("\"pitch\": 64"));
+
+    // An agent takes the selected note away: nothing is selected, and delete does nothing.
+    let first = opened.in_editor(BAR + 1000, 60);
+    opened.click(first);
+    std::fs::write(&path, part_record(&[(0, 50)])).unwrap();
+    opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
+    assert_eq!(opened.selected_note(), None);
+    opened.keys("delete right up");
+    assert_eq!(opened.clip(PART).unwrap().notes, [note(0, 480, 50)]);
+    assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 50"));
+}
+
+#[gpui::test]
+fn undo_of_a_drawn_note_leaves_nothing_selected(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let place = opened.in_editor(BAR + 2000, 67);
+    opened.click(place);
+    assert_eq!(opened.selected_note(), Some(1));
+    opened.keys("cmd-z");
+    assert_eq!(opened.clip(PART), Some(part()));
+    assert_eq!(opened.selected_note(), None);
+    // Delete has no note to delete. Before, it took the old note at the index of the new one.
+    opened.keys("delete");
+    assert_eq!(opened.clip(PART), Some(part()));
+    assert_eq!(opened.undo_label(), None);
+    assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 64"));
+}
+
+#[gpui::test]
+fn a_clip_resize_that_drops_the_selected_note_clears_the_selection(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let second = opened.in_editor(2 * BAR + 1000, 64);
+    opened.click(second);
+    assert_eq!(opened.selected_note(), Some(1));
+    // The right edge of the clip goes in to one bar: the second note is outside now.
+    let edge = opened.at(3 * BAR, 0) - point(px(2.), px(0.));
+    let inside = opened.at(2 * BAR, 0) - point(px(2.), px(0.));
+    opened.drag(edge, inside);
+    assert_eq!(opened.clip(PART).unwrap().notes, [note(960, 480, 60)]);
+    assert_eq!(opened.selected_note(), None);
+    // The focus went to the arrangement with the drag. Back in the editor, delete does nothing.
+    opened.keys("enter delete");
+    assert_eq!(opened.clip(PART).unwrap().notes, [note(960, 480, 60)]);
+    assert_eq!(opened.undo_label().as_deref(), Some("Resize clip"));
+}
+
+#[gpui::test]
+fn undo_of_a_move_to_another_track_keeps_the_selection_and_the_editor(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let (from, to) = (opened.at(BAR + 1920, 0), opened.at(BAR + 1920, 1));
+    opened.drag(from, to);
+    let moved = "arrangement/track-2/part";
+    assert_eq!(opened.editor_clip(), Some(id(moved)));
+    assert_eq!(opened.selected_clip(), Some(id(moved)));
+
+    opened.keys("cmd-z");
+    assert_eq!(opened.clip(PART), Some(part()));
+    assert_eq!(opened.selected_clip(), Some(id(PART)));
+    assert_eq!(opened.editor_clip(), Some(id(PART)));
+    opened.keys("shift-cmd-z");
+    assert_eq!(opened.clip(moved), Some(part()));
+    assert_eq!(opened.selected_clip(), Some(id(moved)));
+    assert_eq!(opened.editor_clip(), Some(id(moved)));
+    assert!(opened.clip_file(moved).is_some());
+    assert_eq!(opened.clip_file(PART), None);
+
+    // The same for the arrow keys.
+    opened.keys("cmd-z up");
+    assert_eq!(opened.selected_clip(), Some(id(PART)));
+    let place = opened.at(BAR + 1920, 0);
+    opened.click(place);
+    opened.keys("down");
+    assert_eq!(opened.editor_clip(), Some(id(moved)));
+    opened.keys("cmd-z");
+    assert_eq!(opened.selected_clip(), Some(id(PART)));
+    assert_eq!(opened.editor_clip(), Some(id(PART)));
+}

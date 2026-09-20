@@ -213,7 +213,7 @@ impl Opened<'_> {
 
     pub fn selected_note(&mut self) -> Option<usize> {
         let editor = self.editor()?;
-        self.cx.read(|cx| editor.read(cx).selected_note())
+        self.cx.read(|cx| editor.read(cx).selected_note(cx))
     }
 
     fn editor_top(&mut self) -> f32 {

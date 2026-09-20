@@ -91,14 +91,22 @@ impl ArrangementView {
             view.follow_selection(cx);
         })
         .detach();
+        // A move to another track, and the undo of one, delete the clip at one id and create
+        // it at another in one group of events. So the editor is not closed at the delete, but
+        // after the group: the timeline has selected the clip at its new id by then, and the
+        // editor goes with it. Only a clip that is really gone closes the editor.
         cx.subscribe_in(&session, window, |view, _, event, window, cx| {
             let shown = view.editor_clip(cx);
             if matches!(event, ProjectEvent::Deleted(id) if Some(id) == shown.as_ref()) {
-                // A drag to another track deletes the clip at its old id. The timeline has
-                // selected the new one by now, and the editor goes with it.
-                if !view.follow_selection(cx) {
-                    view.close_editor(window, cx);
-                }
+                cx.defer_in(window, |view, window, cx| {
+                    let gone = view.editor_clip(cx).is_some_and(|clip| {
+                        let project = view.session.read(cx).project();
+                        project.resolve::<Clip>(&clip).is_none()
+                    });
+                    if gone && !view.follow_selection(cx) {
+                        view.close_editor(window, cx);
+                    }
+                });
             }
         })
         .detach();
@@ -163,6 +171,8 @@ impl ArrangementView {
         let Some(open) = self.editor.take() else {
             return;
         };
+        // A note drag may be going on: its gesture ends here, not with the editor.
+        open.editor.update(cx, |editor, cx| editor.end_drag(cx));
         if open.editor.focus_handle(cx).contains_focused(window, cx) {
             window.focus(&self.timeline.focus_handle(cx), cx);
         }
@@ -257,19 +267,37 @@ impl Scene {
     }
 }
 
-/// What a drag of a clip does. Only a resize keeps the clip as it was at mouse down, because
-/// `Clip::set_length` drops notes for good: every move starts from that clip again.
+/// What a drag of a clip does, with what it starts every move from and what it wrote last.
+/// When the live clip is not what the drag wrote, something else changed it: an undo between
+/// mouse down and the first move, or an agent. A resize then goes on from the live clip, so it
+/// never writes an old copy with old notes over a newer clip. A move writes only the start.
 enum ClipDragKind {
-    Move { start: Ticks },
-    ResizeLeft { origin: Clip },
-    ResizeRight { origin: Clip },
+    Move {
+        start: Ticks,
+        written: Ticks,
+    },
+    /// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:
+    /// every move starts from `origin` again, so going in and out loses nothing.
+    Resize {
+        edge: Edge,
+        origin: Clip,
+        written: Clip,
+        /// The delta of the last move, to skip a move inside the same snap step cheaply.
+        delta: i64,
+    },
+}
+
+#[derive(Copy, Clone)]
+enum Edge {
+    Left,
+    Right,
 }
 
 impl ClipDragKind {
     fn label(&self) -> &'static str {
         match self {
             Self::Move { .. } => "Move clip",
-            Self::ResizeLeft { .. } | Self::ResizeRight { .. } => "Resize clip",
+            Self::Resize { .. } => "Resize clip",
         }
     }
 }
@@ -355,6 +383,11 @@ pub struct Timeline {
     /// What the events since the last render may have changed.
     stale: Stale,
     selected_clip: Option<InstanceId>,
+    /// The selected clip was deleted in the event group that is arriving, and what the same
+    /// group created. See [`Self::reselect`].
+    lost_selection: Option<InstanceId>,
+    created_in_group: Vec<InstanceId>,
+    forgets_group_later: bool,
     drag: Option<ClipDrag>,
     /// The pointer is over an edge of a clip, so the cursor says that a drag resizes.
     over_edge: bool,
@@ -377,11 +410,23 @@ impl Timeline {
                 id == timeline.arrangement.id() || id.is_inside(timeline.arrangement.id())
             };
             let changed = match event {
-                ProjectEvent::Created(id) | ProjectEvent::Changed(id) => shown(id),
+                ProjectEvent::Changed(id) => shown(id),
+                ProjectEvent::Created(id) => {
+                    let changed = shown(id);
+                    if changed {
+                        timeline.created_in_group.push(id.clone());
+                        timeline.reselect(cx);
+                        timeline.forget_group_later(cx);
+                    }
+                    changed
+                }
                 ProjectEvent::Deleted(id) => {
                     let changed = shown(id);
                     if timeline.selected_clip.as_ref() == Some(id) {
                         timeline.selected_clip = None;
+                        timeline.lost_selection = Some(id.clone());
+                        timeline.reselect(cx);
+                        timeline.forget_group_later(cx);
                     }
                     // Deleted under the drag, from outside. A drag to another track is not
                     // this: it names its new clip before this event arrives.
@@ -409,6 +454,15 @@ impl Timeline {
                 cx.notify();
             }
         });
+        // A drag that is still open when the timeline goes away must not leave the gesture
+        // of the session open: undo and redo wait for it.
+        cx.on_release(|timeline, cx| {
+            if timeline.drag.take().is_some_and(|drag| drag.begun) {
+                let session = timeline.session.clone();
+                session.update(cx, |session, cx| session.finish_gesture(cx));
+            }
+        })
+        .detach();
         Self {
             session,
             arrangement,
@@ -419,6 +473,9 @@ impl Timeline {
             ends: BTreeMap::new(),
             stale: Stale::Everything,
             selected_clip: None,
+            lost_selection: None,
+            created_in_group: Vec::new(),
+            forgets_group_later: false,
             drag: None,
             over_edge: false,
             focus_handle,
@@ -487,6 +544,41 @@ impl Timeline {
     /// Whether the focus ring shows: the timeline has the focus, and it came from the keyboard.
     pub fn shows_focus_ring(&self, window: &Window) -> bool {
         self.keyboard_focus.shows_ring(&self.focus_handle, window)
+    }
+
+    /// A move to another track is a delete and a create in one group, and so is its undo and
+    /// its redo. The selection goes with the clip: when the selected clip is deleted and the
+    /// same group creates a clip of the same name, that one is selected.
+    fn reselect(&mut self, cx: &App) {
+        let Some(lost) = &self.lost_selection else {
+            return;
+        };
+        let project = self.session.read(cx).project();
+        let mut created = self.created_in_group.iter();
+        let found =
+            created.find(|id| id.name() == lost.name() && project.resolve::<Clip>(id).is_some());
+        if let Some(found) = found {
+            self.selected_clip = Some(found.clone());
+            self.lost_selection = None;
+        }
+    }
+
+    /// Forgets what `reselect` keeps, once per group. Deferred work runs after the events
+    /// that are waiting, which are the rest of the group.
+    fn forget_group_later(&mut self, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.forgets_group_later, true) {
+            return;
+        }
+        let this = cx.weak_entity();
+        cx.defer(move |cx| {
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |timeline, _| {
+                    timeline.lost_selection = None;
+                    timeline.created_in_group.clear();
+                    timeline.forgets_group_later = false;
+                });
+            }
+        });
     }
 
     pub fn selected_clip(&self) -> Option<&InstanceId> {
@@ -599,20 +691,25 @@ impl Timeline {
         let Some(state) = self.session.read(cx).project().state(&clip) else {
             return;
         };
+        let resize = |edge| ClipDragKind::Resize {
+            edge,
+            origin: state.clone(),
+            written: state.clone(),
+            delta: 0,
+        };
         let kind = match zone {
-            Zone::Body => ClipDragKind::Move { start: state.start },
-            Zone::LeftEdge => ClipDragKind::ResizeLeft {
-                origin: state.clone(),
+            Zone::Body => ClipDragKind::Move {
+                start: state.start,
+                written: state.start,
             },
-            Zone::RightEdge => ClipDragKind::ResizeRight {
-                origin: state.clone(),
-            },
+            Zone::LeftEdge => resize(Edge::Left),
+            Zone::RightEdge => resize(Edge::Right),
         };
         self.drag = Some(ClipDrag {
             home: clip.id().clone(),
             clip,
             kind,
-            grab: scene.viewport.tick_at(x),
+            grab: self.painted.get().tick_at(x),
             begun: false,
         });
     }
@@ -637,50 +734,100 @@ impl Timeline {
         }
     }
 
-    /// What the pointer asks of the dragged clip now.
-    fn drag_step(&self, drag: &ClipDrag, x: f32, y: f32, cx: &App) -> DragStep {
+    /// What the pointer asks of the dragged clip now. It goes on from the live clip when that
+    /// is not what the drag wrote last.
+    fn drag_step(&self, drag: &mut ClipDrag, x: f32, y: f32, cx: &App) -> DragStep {
         let project = self.session.read(cx).project();
         let Some(live) = project.state(&drag.clip) else {
             return DragStep::Gone;
         };
-        let delta = snapped_delta(drag.grab, self.viewport.tick_at(x));
-        let mut to_track = None;
-        let next = match &drag.kind {
-            ClipDragKind::Move { start } => {
-                let row = self.viewport.nearest_track(y, self.order.len());
+        let viewport = self.painted.get();
+        let pointer = viewport.tick_at(x);
+        match &mut drag.kind {
+            ClipDragKind::Move { start, written } => {
+                // Once it moves, the drag owns the start: the clip stays under the pointer,
+                // and the rest of the clip is the live one. Before that, an undo under the
+                // press may have moved the clip.
+                if !drag.begun && live.start != *written {
+                    (*start, *written) = (live.start, live.start);
+                }
+                let row = viewport.nearest_track(y, self.order.len());
                 let under_pointer = row.and_then(|row| self.order.get(row));
                 let on_now = drag.clip.id().parent();
-                to_track = under_pointer
+                let to_track = under_pointer
                     .filter(|track| Some(track.id()) != on_now.as_ref())
                     .cloned();
-                Clip {
-                    start: shifted(*start, delta),
+                let next_start = shifted(*start, snapped_delta(drag.grab, pointer));
+                if to_track.is_none() && next_start == live.start {
+                    return DragStep::Unchanged;
+                }
+                let next = Clip {
+                    start: next_start,
                     ..live.clone()
+                };
+                DragStep::Publish { next, to_track }
+            }
+            ClipDragKind::Resize {
+                edge,
+                origin,
+                written,
+                delta,
+            } => {
+                // Something else wrote the clip. The drag goes on from that clip, and the grab
+                // moves by what the drag had done to its edge, so the pointer still means the
+                // same distance.
+                let rebased = live != written;
+                if rebased {
+                    let ticks = |ticks: Ticks| ticks.0 as i64;
+                    let done = match edge {
+                        Edge::Left => ticks(written.start) - ticks(origin.start),
+                        Edge::Right => ticks(written.length.ticks()) - ticks(origin.length.ticks()),
+                    };
+                    drag.grab = shifted(drag.grab, done);
+                    (*origin, *written) = (live.clone(), live.clone());
+                }
+                let next_delta = snapped_delta(drag.grab, pointer);
+                if !rebased && next_delta == *delta {
+                    return DragStep::Unchanged;
+                }
+                *delta = next_delta;
+                let next = match edge {
+                    Edge::Left => resized_left(origin, next_delta),
+                    Edge::Right => resized_right(origin, next_delta),
+                };
+                if next == *written {
+                    return DragStep::Unchanged;
+                }
+                DragStep::Publish {
+                    next,
+                    to_track: None,
                 }
             }
-            ClipDragKind::ResizeLeft { origin } => resized_left(origin, delta),
-            ClipDragKind::ResizeRight { origin } => resized_right(origin, delta),
-        };
-        if to_track.is_none() && next == *live {
-            return DragStep::Unchanged;
         }
-        DragStep::Publish { next, to_track }
     }
 
     /// One mouse move of a drag: the clip becomes what the pointer says, through the gesture
     /// of the session, so sound and every other view follow.
     fn drag_to(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
         self.refresh_order(cx);
-        let Some(drag) = &self.drag else {
+        let Some(mut drag) = self.drag.take() else {
             return;
         };
-        let (next, to_track) = match self.drag_step(drag, x, y, cx) {
-            DragStep::Gone => return self.end_drag(cx),
-            DragStep::Unchanged => return,
-            DragStep::Publish { next, to_track } => (next, to_track),
+        let step = self.drag_step(&mut drag, x, y, cx);
+        let DragStep::Publish { next, to_track } = step else {
+            self.drag = Some(drag);
+            if matches!(step, DragStep::Gone) {
+                self.end_drag(cx);
+            }
+            return;
         };
         let (clip, home, label) = (drag.clip.clone(), drag.home.clone(), drag.kind.label());
-        let begun = drag.begun;
+        let begun = std::mem::replace(&mut drag.begun, true);
+        let wrote = match &drag.kind {
+            ClipDragKind::Move { .. } => None,
+            ClipDragKind::Resize { .. } => Some(next.clone()),
+        };
+        let wrote_start = next.start;
         let moved = self.session.update(cx, |session, cx| {
             if !begun {
                 session.begin_gesture(label, cx);
@@ -706,14 +853,17 @@ impl Timeline {
                 Ok(clip)
             })
         });
-        if let Some(drag) = &mut self.drag {
-            drag.begun = true;
-            if let Some(moved) = moved {
-                drag.clip = moved;
+        if let Some(moved) = moved {
+            drag.clip = moved;
+            match (&mut drag.kind, wrote) {
+                (ClipDragKind::Move { written, .. }, _) => *written = wrote_start,
+                (ClipDragKind::Resize { written, .. }, Some(wrote)) => *written = wrote,
+                (ClipDragKind::Resize { .. }, None) => {}
             }
         }
-        let dragged = self.drag.as_ref().map(|drag| drag.clip.id().clone());
-        self.select_clip(dragged, cx);
+        let dragged = drag.clip.id().clone();
+        self.drag = Some(drag);
+        self.select_clip(Some(dragged), cx);
     }
 
     /// Mouse up, or the clip went away under the drag: the gesture becomes one undo step.
@@ -752,7 +902,7 @@ impl Timeline {
 
     fn resize_cursor(&self) -> bool {
         match &self.drag {
-            Some(drag) => !matches!(drag.kind, ClipDragKind::Move { .. }),
+            Some(drag) => matches!(drag.kind, ClipDragKind::Resize { .. }),
             None => self.over_edge,
         }
     }
