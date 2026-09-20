@@ -4806,9 +4806,7 @@ dependencies = [
  "arrangement",
  "hound",
  "instrument",
- "serde_json",
  "sound-core",
- "sound-notes",
  "tempfile",
  "tone",
 ]

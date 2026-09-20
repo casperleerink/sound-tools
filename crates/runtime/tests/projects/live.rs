@@ -105,7 +105,7 @@ fn a_track_folder_written_during_playback_adds_a_track_without_stopping_the_othe
     assert_eq!(
         harness
             .project
-            .apply_outside_changes(&[folder.clone()])
+            .apply_outside_changes(std::slice::from_ref(&folder))
             .unwrap(),
         3
     );

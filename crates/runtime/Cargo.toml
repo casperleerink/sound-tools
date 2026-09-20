@@ -16,6 +16,4 @@ sound-core.workspace = true
 tone.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
-sound-notes.workspace = true
 tempfile.workspace = true

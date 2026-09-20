@@ -67,4 +67,4 @@ This project is in {{time_signature}}: a beat is {{ticks_per_beat}} ticks and a 
 ## Check your work
 
 - Wait a second after your last write, then look for `problems.txt` in this folder. No such file means every file is live. Else each line is `<file>: <field>: <reason>`, for example `state/lead.json: state: gain must be from 0 to 1, not 3`. A file with a problem is not live and the last valid state keeps playing. Fix the file and its line goes away.
-- `problems.txt` only exists while a runtime has the project open.
+- `problems.txt` only exists while a runtime has the project open, and it follows a write by about 0.2 s. So no file right after your write proves little: look again at the end of your work. When you cannot tell whether a runtime is open, say so in your answer.
