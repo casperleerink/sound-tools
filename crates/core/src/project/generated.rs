@@ -71,7 +71,7 @@ impl Project {
     }
 
     /// The text of one doc, with the generated note in front of it.
-    pub fn agent_doc_text(&self, doc: &AgentDoc) -> String {
+    fn agent_doc_text(&self, doc: &AgentDoc) -> String {
         format!("{GENERATED_NOTE}{}", self.fill(doc.markdown.trim_end()))
     }
 
