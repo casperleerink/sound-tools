@@ -123,8 +123,7 @@ fn terminal_command(folder: &Path) -> Command {
 /// as soon as the Terminal has the folder, so waiting for it here costs nothing and leaves no
 /// child process behind.
 fn open_terminal(folder: PathBuf, cx: &mut Context<Session>) {
-    let session = cx.entity().downgrade();
-    cx.spawn(async move |_, cx| {
+    cx.spawn(async move |session, cx| {
         let opened = cx
             .background_spawn(async move { terminal_command(&folder).status() })
             .await;
@@ -133,6 +132,7 @@ fn open_terminal(folder: PathBuf, cx: &mut Context<Session>) {
             Ok(status) => format!("The terminal did not open: {status}"),
             Err(error) => format!("The terminal did not open: {error}"),
         };
+        // The window is gone when this fails, and there is nobody left to tell.
         if let Some(session) = session.upgrade() {
             session.update(cx, |session, cx| session.report(failure, cx));
         }
