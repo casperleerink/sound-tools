@@ -709,6 +709,8 @@ impl Render for NoteEditor {
             },
         );
         let close = Button::icon_only("close-editor", "x")
+            // Quiet until it is wanted: the icon is as muted as the ruler numbers.
+            .opacity(0.6)
             .variant(ButtonVariant::Ghost)
             .size(ButtonSize::Xs)
             .focus_handle(&self.close_focus)

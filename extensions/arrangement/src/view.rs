@@ -23,6 +23,7 @@ mod paint;
 pub mod roll;
 
 use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use gpui::{
@@ -36,7 +37,7 @@ use sound_core::{Changes, Instance, InstanceId, ProjectEvent, Ticks, TimeSignatu
 use sound_notes::Clip;
 use sound_ui::{ActiveTheme, Session, Views};
 
-use crate::{ArrangementState, TrackState, add_clip, end, move_clip, tracks};
+use crate::{ArrangementState, TrackState, add_clip, move_clip, tracks};
 use editor::EditorEvent;
 pub use editor::NoteEditor;
 use gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
@@ -298,6 +299,34 @@ enum DragStep {
     },
 }
 
+/// What of the kept track order and clip ends has to be read again. A drag changes one clip
+/// per mouse move, so only its track is walked then, not every clip of the project.
+#[derive(Default)]
+enum Stale {
+    #[default]
+    Nothing,
+    Tracks(BTreeSet<InstanceId>),
+    Everything,
+}
+
+impl Stale {
+    /// An event named `id`. `track` is the track it is or is inside of. Without one, the event
+    /// is about the arrangement itself.
+    fn add(&mut self, track: Option<InstanceId>, id: &InstanceId) {
+        match (&mut *self, track) {
+            (Self::Everything, _) => {}
+            // The record of a track holds its order. A track that comes or goes changes it.
+            (_, Some(track)) if track != *id => match self {
+                Self::Tracks(tracks) => {
+                    tracks.insert(track);
+                }
+                _ => *self = Self::Tracks(BTreeSet::from([track])),
+            },
+            _ => *self = Self::Everything,
+        }
+    }
+}
+
 /// What the timeline asks of the view that holds it.
 pub enum TimelineEvent {
     /// A double click on a clip, or enter: show its notes.
@@ -316,12 +345,13 @@ pub struct Timeline {
     painted: Rc<Cell<Viewport>>,
     /// The size of the timeline area at the last paint, which the scroll limits depend on.
     painted_size: Rc<Cell<(f32, f32)>>,
-    /// The tracks in display order and the end of the last clip. Finding them walks every
-    /// clip, so they are kept between the project events that can change them and are not
-    /// read again per paint. Nothing else of the project is kept.
+    /// The tracks in display order, each with the end of its last clip. Finding the ends walks
+    /// every clip, so they are kept between the project events that can change them and are
+    /// not read again per paint. Nothing else of the project is kept.
     order: Vec<Instance<TrackState>>,
-    end: Ticks,
-    order_is_stale: bool,
+    ends: BTreeMap<InstanceId, Ticks>,
+    /// What the events since the last render may have changed.
+    stale: Stale,
     selected_clip: Option<InstanceId>,
     drag: Option<ClipDrag>,
     /// The pointer is over an edge of a clip, so the cursor says that a drag resizes.
@@ -363,7 +393,15 @@ impl Timeline {
             };
             if changed {
                 // Read again at the next render, once for all events of a group.
-                timeline.order_is_stale = true;
+                match event {
+                    ProjectEvent::Created(id)
+                    | ProjectEvent::Changed(id)
+                    | ProjectEvent::Deleted(id) => {
+                        let track = timeline.track_of(id);
+                        timeline.stale.add(track, id);
+                    }
+                    ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged => {}
+                }
                 cx.notify();
             }
         });
@@ -374,8 +412,8 @@ impl Timeline {
             painted: Rc::default(),
             painted_size: Rc::default(),
             order: Vec::new(),
-            end: Ticks(0),
-            order_is_stale: true,
+            ends: BTreeMap::new(),
+            stale: Stale::Everything,
             selected_clip: None,
             drag: None,
             over_edge: false,
@@ -401,21 +439,44 @@ impl Timeline {
 
     fn clamped(&self, viewport: Viewport, width: f32, height: f32, cx: &App) -> Viewport {
         let extent = Extent {
-            end: self.end,
+            end: self.ends.values().max().copied().unwrap_or_default(),
             tracks: self.order.len(),
         };
         viewport.clamped(extent, self.time_signature(cx), width, height)
     }
 
+    /// The track that an id of this arrangement is, or is inside of.
+    fn track_of(&self, id: &InstanceId) -> Option<InstanceId> {
+        let arrangement = self.arrangement.id();
+        let mut inside = id.ancestors().chain([id.clone()]);
+        inside.find(|ancestor| ancestor.parent().as_ref() == Some(arrangement))
+    }
+
     fn refresh_order(&mut self, cx: &App) {
-        if !self.order_is_stale {
-            return;
-        }
         let project = self.session.read(cx).project();
-        let tracks = tracks(project, self.arrangement.id());
-        self.order = tracks.into_iter().map(|(track, _)| track).collect();
-        self.end = end(project, self.arrangement.id()).unwrap_or_default();
-        self.order_is_stale = false;
+        let end_of = |track: &InstanceId| {
+            let clips = project.children::<Clip>(track);
+            clips.map(|(_, clip)| clip.end()).max()
+        };
+        match std::mem::take(&mut self.stale) {
+            Stale::Nothing => {}
+            Stale::Tracks(tracks) => {
+                for track in tracks {
+                    match end_of(&track) {
+                        Some(end) => self.ends.insert(track, end),
+                        None => self.ends.remove(&track),
+                    };
+                }
+            }
+            Stale::Everything => {
+                let tracks = tracks(project, self.arrangement.id());
+                self.order = tracks.into_iter().map(|(track, _)| track).collect();
+                let ends = self.order.iter();
+                self.ends = ends
+                    .filter_map(|track| Some((track.id().clone(), end_of(track.id())?)))
+                    .collect();
+            }
+        }
     }
 
     pub fn selected_clip(&self) -> Option<&InstanceId> {

@@ -54,6 +54,14 @@ impl TransportPill {
             }
         })
         .detach();
+        // The end is not read during a drag, see `refresh`. The end of a gesture sends no
+        // event, and the session notifies after it.
+        cx.observe(&session, |pill, _, cx| {
+            if pill.end_is_stale {
+                cx.notify();
+            }
+        })
+        .detach();
         Self {
             end: session.read(cx).project().end(),
             end_is_stale: false,
@@ -67,9 +75,11 @@ impl TransportPill {
     }
 
     /// Reads the end again when an event made it stale. `render` calls it, so a group of ten
-    /// thousand events costs one walk.
+    /// thousand events costs one walk. Not while a gesture is open: a drag publishes on every
+    /// mouse move, and the walk over every clip was a quarter of the time of a move on a large
+    /// project. The duration follows when the drag ends.
     fn refresh(&mut self, cx: &App) {
-        if !self.end_is_stale {
+        if !self.end_is_stale || self.session.read(cx).gesture_open() {
             return;
         }
         self.end = self.session.read(cx).project().end();

@@ -12,7 +12,7 @@ use sound_core::{TICKS_PER_QUARTER, Ticks, TimeSignature};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 
 use super::gesture::{Zone, shortest, zone_at};
-use super::layout::{LEAD_IN, Rect, SNAP, Viewport, shifted, snap, snap_floor};
+use super::layout::{BOTTOM_ROOM, LEAD_IN, Rect, SNAP, Viewport, shifted, snap, snap_floor};
 
 /// The height of the editor panel, ruler included.
 pub const EDITOR_HEIGHT: f32 = 384.0;
@@ -103,7 +103,8 @@ pub fn note_at(viewport: &Viewport, clip: &Clip, x: f32, y: f32) -> Option<(usiz
 }
 
 /// The viewport of an editor that opens for a clip in a note area of this size: the clip
-/// starts at the left and fits the width, and the middle of its notes is in the middle.
+/// starts at the left and fits the width, and the middle of its notes is in the middle of
+/// what the floating transport leaves free.
 pub fn opened(clip: &Clip, width: f32, height: f32) -> Viewport {
     let quarters = clip.length.ticks().0 as f64 / TICKS_PER_QUARTER as f64;
     let fitted = f64::from((width - LEAD_IN - OPENING_ROOM).max(1.0)) / quarters;
@@ -120,7 +121,7 @@ pub fn opened(clip: &Clip, width: f32, height: f32) -> Viewport {
     Viewport {
         pixels_per_quarter,
         scroll_x: clip.start.0 as f64 * pixels_per_quarter / TICKS_PER_QUARTER as f64,
-        scroll_y: (middle_y - f64::from(height) / 2.0).round(),
+        scroll_y: (middle_y - f64::from(height - BOTTOM_ROOM) / 2.0).round(),
     }
 }
 
@@ -318,13 +319,14 @@ mod tests {
         // 16 quarters in 1264 - 8 - 96 px.
         assert_eq!(viewport.pixels_per_quarter, 72.5);
         assert_eq!(viewport.x_of(clip.start), LEAD_IN);
-        // Pitch 60 is the middle of 48 and 72: the middle of its row is mid-height.
-        assert_eq!(y_of(&viewport, pitch(60)) + KEY_HEIGHT / 2.0, 176.0);
+        // Pitch 60 is the middle of 48 and 72: the middle of its row is in the middle of the
+        // 256 px above the room for the transport.
+        assert_eq!(y_of(&viewport, pitch(60)) + KEY_HEIGHT / 2.0, 128.0);
 
         let empty = self::clip(0, BAR, vec![]);
         let viewport = opened(&empty, 1264.0, 352.0);
         assert_eq!(viewport.pixels_per_quarter, 192.0);
-        assert_eq!(y_of(&viewport, pitch(60)) + KEY_HEIGHT / 2.0, 176.0);
+        assert_eq!(y_of(&viewport, pitch(60)) + KEY_HEIGHT / 2.0, 128.0);
         let long = self::clip(0, 400 * BAR, vec![]);
         assert_eq!(opened(&long, 1264.0, 352.0).pixels_per_quarter, 24.0);
     }
