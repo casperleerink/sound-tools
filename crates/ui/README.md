@@ -11,7 +11,7 @@ Read the GPUI skills in `.agents/skills/` before you write GPUI code. The pinned
 A view gets two things from it:
 
 - `session.read(cx).project()`: the project, to read state while rendering.
-- `session.read(cx).playhead()`: an `Entity<Playhead>` with `playing` and `tick`. It is an entity of its own, because it changes on every frame during playback. Observe it only in the small view that shows the position.
+- `session.read(cx).playhead()`: an `Entity<Playhead>` with `playing`, `tick` and `jumps`. It is an entity of its own, because it changes on every frame during playback. Observe it only in the small view that shows the position, or in a view that follows it. `jumps` counts seeks and stops: keep the last value to tell a jump from the position moving with playback, which the tick alone cannot say. The arrangement uses it to bring the playhead back into view.
 
 What the session tells its observers:
 
@@ -123,7 +123,7 @@ What the clip and note drags of the arrangement added to this pattern, in `exten
 - The target may go away under the drag, by an outside delete. Read it on every move and finish the gesture when it is gone. Subscribe to `Deleted` too, so the drag ends when it happens and not at the next move.
 - Something that should sound now and is not an edit, such as a preview note, goes through `Project::send` inside `session.edit`. See the core README, "Updates".
 
-Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Session::toggle_playback` is what space does. The result shows in the `Playhead` after the next poll.
+Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Session::toggle_playback` is what space does. The result shows in the `Playhead` after the next poll. `session.engine()` is the whole `EngineControl`, so a view can also add a processor of its own to the graph, outside the project and outside undo. The transport pill does that for the click, see [metronome](../../extensions/metronome/README.md). Keep that for things that are not music: everything a composer saves goes through an edit.
 
 ### A knob on saved state
 

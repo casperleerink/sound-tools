@@ -367,10 +367,10 @@ control.seek(Ticks(3840));        // move, keep playing or stay stopped
 control.set_tempo_map(tempo_map); // keeps the musical position
 
 let status = control.poll()?;
-status.playing; status.playhead_tick; status.playhead_frame;
+status.playing; status.playhead_tick; status.playhead_frame; status.jumps;
 ```
 
-Each call is a message to the audio thread. It applies at the start of the next engine block, at most 64 frames later. `poll` gives the state after the last device callback. A new engine is stopped at zero with 120 bpm in 4/4.
+Each call is a message to the audio thread. It applies at the start of the next engine block, at most 64 frames later. `poll` gives the state after the last device callback. `jumps` counts seeks and stops, so a view that keeps the last value can tell a jump from the position moving with playback. A new engine is stopped at zero with 120 bpm in 4/4.
 
 `set_tempo_map` compiles the map into a new `Clock` on the control thread and sends it. The audio thread swaps it in, the old clock comes back and is dropped in `poll`. `control.clock()` is the clock set last, for conversions on the control side. A map equal to the current one sends nothing, so loading an unchanged project file does not move the playhead.
 
@@ -407,7 +407,7 @@ The saved JSON, as it will appear in `project.json`:
 
 ```sh
 cargo nextest run -p sound-core -p tone
-RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement   # with the realtime sanitizer
+RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement -p metronome   # the realtime sanitizer
 cargo nextest run -p sound-core --run-ignored only ten_thousand --no-capture   # scale numbers
 cargo run -p runtime -- my-project                        # the window: runs the folder live on the default device
 cargo run -p runtime -- my-project --headless             # the same without a window, commands from stdin

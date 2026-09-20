@@ -37,11 +37,15 @@ fn the_transport_shows_the_tempo_at_the_playhead(cx: &mut TestAppContext) {
     // A second tempo change at bar 3, written from outside as an agent would.
     let map = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 7680, "bpm": 60.0}]}"#;
     write_tempo_map(&mut opened, map);
-    assert_eq!(opened.shown_tempo(), 120.0, "the playhead is still at bar 1");
+    assert_eq!(
+        opened.shown_tempo(),
+        120.0,
+        "the playhead is still at bar 1"
+    );
 
-    opened
-        .session
-        .update(opened.cx, |session, _| session.engine().seek(Ticks(2 * BAR)));
+    opened.session.update(opened.cx, |session, _| {
+        session.engine().seek(Ticks(2 * BAR))
+    });
     opened.settle();
     assert_eq!(opened.shown_tempo(), 60.0, "the playhead is past bar 3");
 }
@@ -51,10 +55,14 @@ fn write_tempo_map(opened: &mut Opened<'_>, tempo_map: &str) {
     let text = tempo_file(opened);
     let start = text.find("\"tempo_map\"").unwrap();
     let end = text[start..].find("\"connections\"").unwrap() + start;
-    let replaced = format!("{}\"tempo_map\": {tempo_map},\n  {}", &text[..start], &text[end..]);
+    let replaced = format!(
+        "{}\"tempo_map\": {tempo_map},\n  {}",
+        &text[..start],
+        &text[end..]
+    );
     let path = opened.path("project.json");
     std::fs::write(&path, replaced).unwrap();
-    opened.edit(|project| project.apply_outside_changes(&[path.clone()]));
+    opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
     opened.settle();
 }
 
@@ -130,9 +138,9 @@ fn a_tempo_edit_changes_the_tempo_change_at_the_playhead(cx: &mut TestAppContext
     let mut opened = open(cx);
     let map = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 7680, "bpm": 60.0}]}"#;
     write_tempo_map(&mut opened, map);
-    opened
-        .session
-        .update(opened.cx, |session, _| session.engine().seek(Ticks(2 * BAR)));
+    opened.session.update(opened.cx, |session, _| {
+        session.engine().seek(Ticks(2 * BAR))
+    });
     opened.settle();
 
     let at = tempo_control(&mut opened);
@@ -140,7 +148,10 @@ fn a_tempo_edit_changes_the_tempo_change_at_the_playhead(cx: &mut TestAppContext
     opened.keys("up");
     assert_eq!(opened.shown_tempo(), 61.0);
     let file = tempo_in_file(&mut opened);
-    assert!(file.contains("120"), "the first change is untouched: {file}");
+    assert!(
+        file.contains("120"),
+        "the first change is untouched: {file}"
+    );
     assert!(file.contains("61"), "the second change moved: {file}");
 }
 
@@ -178,7 +189,10 @@ fn the_view_pages_forward_while_playing_and_a_jump_brings_the_playhead_back(
     play(&mut opened);
     opened.render(40 * 48_000);
     opened.settle();
-    assert!(scroll(&mut opened) > 0.0, "the view did not follow the playhead");
+    assert!(
+        scroll(&mut opened) > 0.0,
+        "the view did not follow the playhead"
+    );
     assert!(shows_playhead(&mut opened));
 
     // A stop is a jump: the view comes back to the start with the playhead.
@@ -246,7 +260,8 @@ fn set_scroll(opened: &mut Opened<'_>, scroll_x: f64) {
 /// Whether the timeline shows the playhead, with the width the test window really has.
 fn shows_playhead(opened: &mut Opened<'_>) -> bool {
     let (timeline, tick) = (opened.timeline.clone(), opened.playhead().tick);
-    let width = f32::from(opened.cx.update(|window, _| window.viewport_size().width)) - HEADER_WIDTH;
+    let width =
+        f32::from(opened.cx.update(|window, _| window.viewport_size().width)) - HEADER_WIDTH;
     opened
         .cx
         .read(|cx| timeline.read(cx).viewport().shows(tick, width))

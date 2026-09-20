@@ -151,7 +151,12 @@ impl TransportPill {
     }
 
     /// The tempo map with one of its changes set. A failure is reported, never dropped.
-    fn tempo_map_with(&mut self, change: usize, bpm: f64, cx: &mut Context<Self>) -> Option<TempoMap> {
+    fn tempo_map_with(
+        &mut self,
+        change: usize,
+        bpm: f64,
+        cx: &mut Context<Self>,
+    ) -> Option<TempoMap> {
         let current = self
             .session
             .read(cx)
@@ -286,7 +291,7 @@ impl TransportPill {
         // A drag goes on wherever the pointer is, so these listeners are not hit tested.
         let listeners = canvas(
             |_, _, _| {},
-            move |_, (), window, _| listen_to_tempo(pill.clone(), window),
+            move |_, (), window, _| listen_to_tempo(pill, window),
         );
         div()
             .id("tempo")
@@ -314,12 +319,7 @@ impl TransportPill {
                     .font(typography::tabular())
                     .child(tempo::tempo_text(tempo)),
             )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(muted)
-                    .child("bpm"),
-            )
+            .child(div().text_size(px(12.)).text_color(muted).child("bpm"))
             .child(listeners.absolute().size_0())
     }
 

@@ -544,7 +544,12 @@ mod tests {
         };
         assert!(!scrolled.shows(Ticks(0), width));
         assert_eq!(scrolled.following(Ticks(0), width).scroll_x, 0.0);
-        assert_eq!(scrolled.following(Ticks(20 * BAR), width).x_of(Ticks(20 * BAR)), LEAD_IN);
+        assert_eq!(
+            scrolled
+                .following(Ticks(20 * BAR), width)
+                .x_of(Ticks(20 * BAR)),
+            LEAD_IN
+        );
 
         // Zoomed far in, far into a long piece, the playhead still lands at the left edge.
         let zoomed = Viewport {

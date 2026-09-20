@@ -88,7 +88,7 @@ pub fn open_project(
         folder,
         engine,
         session,
-        shell: shell.clone(),
+        shell,
         arrangement,
         timeline,
         cx,

@@ -23,10 +23,11 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 2. Double click on empty space in a track row. That adds a clip of one bar.
 3. Double click the clip. The note editor opens below.
 4. Drag on empty space inside the clip to draw a note. It sounds. Drag a note to move it, drag its end to change its length, press delete to remove it.
-5. Press space to play and again to pause. Click the ruler to move the playhead.
-6. Click the name of a track on the left. Its panel opens below with the synth, and at the right end the mixer of the track: gain, pan and mute. Drag a knob up or down while it plays, and double click a knob to reset it.
-7. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
-8. Press cmd-q to quit. Run the same command again and the piece is back.
+5. Press space to play and again to pause. Click the ruler to move the playhead. The view follows it and pages forward while it plays.
+6. In the transport pill at the bottom: drag the tempo number up or down to change the tempo, and click the metronome to turn the click on or off. The click is not part of the piece and is never in a render.
+7. Click the name of a track on the left. Its panel opens below with the synth, and at the right end the mixer of the track: gain, pan and mute. Drag a knob up or down while it plays, and double click a knob to reset it.
+8. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
+9. Press cmd-q to quit. Run the same command again and the piece is back.
 
 Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 
@@ -94,7 +95,7 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [docs/milestone-2.md](docs/milestone-2.md): the plan for the next milestone. [docs/agent-brief.md](docs/agent-brief.md) is the shared brief for the agents that build it.
 - [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
 - [SDK_SKETCH.md](SDK_SKETCH.md): an early sketch of the extension SDK.
-- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md).
+- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [metronome](extensions/metronome/README.md).
 
 ## License
 

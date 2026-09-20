@@ -498,7 +498,8 @@ fn no_undo_step_of_a_tempo_gesture_holds_the_middle_of_that_gesture() {
     assert_eq!(bpm(&harness), 130.0);
 
     // An agent writes another tempo halfway through the drag. It applies at once.
-    let outside = crate::tools::project_file(&crate::tools::dc_to_device("dc")).replace("120", "90");
+    let outside =
+        crate::tools::project_file(&crate::tools::dc_to_device("dc")).replace("120", "90");
     harness.write_and_apply("project.json", &outside);
     assert_eq!(bpm(&harness), 90.0);
 
@@ -541,9 +542,14 @@ fn cancelling_a_tempo_gesture_leaves_what_the_file_holds() {
     changes.set_tempo_map(tempo_map(130.0));
     harness.project.publish(&mut edit, changes).unwrap();
 
-    let outside = crate::tools::project_file(&crate::tools::dc_to_device("dc")).replace("120", "90");
+    let outside =
+        crate::tools::project_file(&crate::tools::dc_to_device("dc")).replace("120", "90");
     harness.write_and_apply("project.json", &outside);
     harness.project.cancel(edit).unwrap();
-    assert_eq!(bpm(&harness), 90.0, "a cancel goes back to what the file holds");
+    assert_eq!(
+        bpm(&harness),
+        90.0,
+        "a cancel goes back to what the file holds"
+    );
     assert_eq!(harness.project.undo_label(), Some("File change"));
 }

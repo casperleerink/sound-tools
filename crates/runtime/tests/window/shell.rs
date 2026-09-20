@@ -283,7 +283,9 @@ fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
 
     // The menu, the arrangement, play, stop, the seek strip, the tempo, the click, then the
     // notice.
-    opened.cx.simulate_keystrokes("tab tab tab tab tab tab tab tab");
+    opened
+        .cx
+        .simulate_keystrokes("tab tab tab tab tab tab tab tab");
     opened.press_enter();
     opened
         .cx

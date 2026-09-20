@@ -96,7 +96,12 @@ mod tests {
         assert_eq!(after.tempo_changes()[1].bpm.bpm(), 140.0);
 
         // Past an end it stops there, and an index that is gone changes nothing.
-        assert_eq!(with_bpm(&before, 0, 5.0).unwrap().tempo_changes()[0].bpm.bpm(), 10.0);
+        assert_eq!(
+            with_bpm(&before, 0, 5.0).unwrap().tempo_changes()[0]
+                .bpm
+                .bpm(),
+            10.0
+        );
         assert_eq!(
             with_bpm(&before, 0, 5_000.0).unwrap().tempo_changes()[0]
                 .bpm
