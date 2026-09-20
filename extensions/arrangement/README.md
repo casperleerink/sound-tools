@@ -138,3 +138,5 @@ cargo test -p runtime --test snapshots                                          
 ```
 
 Measured September 19, 2026 on an Apple Silicon laptop, dev profile with `opt-level = 3`, 48 kHz, offline: a project of 100 tracks with 100 clips each (10,200 records, an eighth of the tracks playing a chord at any time) opens in 0.44 s, applies one outside clip edit in 0.5 ms, and plays 62 times faster than realtime.
+
+Measured again September 20, 2026, with the stereo path and the mixer: the same project opens in 0.44 s, applies an edit in 0.5 ms and plays 34 times faster than realtime. Nearly all of that is the stereo buffers, which are twice as many samples per port: without the mixer in the path it is 35 times. Most synths in that project are idle and return at once, so what is left is the engine moving buffers around. Reusing buffers in `compile`, which ENGINEERING.md section 3 leaves open, is where to look if this ever matters.
