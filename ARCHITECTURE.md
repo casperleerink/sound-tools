@@ -223,6 +223,21 @@ The order of work changed. A better DAW comes before an agent inside the product
 
 The decisions, the scope, the steps and the checks are in [docs/milestone-2.md](docs/milestone-2.md). Each step records what it settles in this file.
 
+#### Agent docs as a map, decided September 20, 2026 with step 0
+
+One agent doc per project does not scale with the extensions and tasks of this milestone, so it is split. Built in `crates/core/src/project/generated.rs`.
+
+- `AGENTS.md` is the map. It holds what an agent needs on every task: what the folder is, the layout with the form of every tool of the project, ids, ticks with the bar math of the project's time signature, the rules for writing a file, and how to check `problems.txt`. Then a table of the docs, one line each saying when to open it. `CLAUDE.md` still imports it. The map is about 960 words, half of the 2030 the one doc had.
+- Every doc is a file in `agent-docs/` in the project folder, `<name>.md`. A folder, so the docs sit together and out of the way of the composer's own files, and `state/` and `project.json` stay the only places the runtime reads records from. The watcher ignores everything else, so the docs cause no outside change.
+- A doc is an `AgentDoc`: a `name` (the file), a `when` (the one line in the map) and `markdown` starting with `# `. An extension registers one or more with `registry.agent_doc(EXTENSION, doc)`, one per task when a tool grows several, and the runtime registers docs every project gets with `registry.runtime_agent_doc(doc)`. Two docs of one name is a registry error, because the second would write over the first. The core brings the doc of `project.json` itself, since `project.json` is core and not an extension.
+- The runtime owns the folder: a `.md` in it that no enabled extension registers is removed, so a doc never outlives its tools. Everything else stays as it was: written only when the text changes, nothing of the machine in them, a read-only open writes nothing. The placeholders of the project's time signature are filled in every doc, not only in the map.
+- A test of the runtime loads every `json` example of the map and of every doc into one folder, as before.
+- Checked with outside agents on September 20, 2026, see the step below. Both opened only the docs their task needed.
+
+#### The terminal from the project menu, decided September 20, 2026 with step 0
+
+The composer needs a terminal in the project folder to start a coding agent. "Open terminal in project folder" sits next to "Reveal project folder" in the project menu and runs `/usr/bin/open -a Terminal <folder>`: the system Terminal, which every Mac has. No picker, no setting, no terminal inside the window. Other platforms come when we claim them. The command is built by a function of its own so a test reads its program and arguments, which CI can do without a Terminal it cannot close. It runs on the background executor and a failure goes to the notice of the session.
+
 ### Agent context and tools
 
 The agent works through the live project folder and the runtime protocol, not a separate edit API.
@@ -409,7 +424,7 @@ Decided September 19, 2026, the edit API and undo, built in `crates/core/src/pro
 - The UI layer drains a list of small events after each call: created, changed, deleted with the instance id, project file changed, problems changed. Events carry no state.
 - A new project has no undo history: making its default content is not a step. The runtime makes the default project when the folder has no `project.json` and no records, whatever else is in it, such as `.git`.
 - A tool may register a summary: a function from the project and one instance to lines of text about it and what it owns. The core knows no tracks, so this is how `--inspect` tells what plays where. An instance without one is listed as its record.
-- The runtime writes three generated files into the project folder, each only when its text changes. `AGENTS.md` is the project agent doc: a core section (layout, form rule with the tools of the project, record format, ids, ticks with the bar math of the project's time signature, `project.json`, rules, how to check), then the section of each enabled extension, which the extension supplies as markdown, then a section of the runtime with the inspect command. `CLAUDE.md` imports it. `problems.txt` lists what is not live, one line per problem, and is absent when there is none. A read-only open writes nothing.
+- The runtime writes the generated files into the project folder, each only when its text changes. `AGENTS.md` is the map for an agent, `CLAUDE.md` imports it, `agent-docs/*.md` are the docs the map lists, and `problems.txt` lists what is not live, one line per problem, and is absent when there is none. A read-only open writes nothing. See "Agent docs as a map" below for what is in the map and what is in a doc.
 - Undo of outside changes: groups of outside changes that follow each other within 15 s (`OUTSIDE_UNDO_WINDOW`), with no interface edit, undo or redo in between, are one undo step. The step keeps its oldest before side and takes the newest after side, and a step that ends where it began is dropped. The 100 ms quiet window still decides when a change is heard. Reason: two runs with an external agent showed that it writes the files of one request seconds apart, so a new track was two or three undo steps. This is a heuristic. The second milestone replaces it with the real boundaries of an agent request.
 - `problems.txt` is there the whole time a runtime has the project open with its lock, with the line `No problems. Every file is live.` when there are none, and the runtime removes it on a clean close. So for an agent a missing file means that no runtime is watching: its edits are saved and unchecked. A file left by a crash can be stale, and the agent doc says so.
 - A tool may say where its instances live (`State::PLACE`): anywhere, only at the top of `state/`, or only directly inside an instance of one named tool. A record somewhere else is not loaded and is listed as a problem that says where it belongs. The arrangement uses it, so a clip outside a track or a track outside the arrangement is a signal to the agent and not silence. The core still knows no tool by name.
@@ -468,6 +483,10 @@ The first milestone is built and was verified on September 19, 2026, see "Verifi
 - Done September 19, 2026: editing clips and notes in the window with the mouse and the keys, the note editor and the preview note. Not built: copy and paste, multi-select, a velocity lane, adjustable snap, splitting clips, selecting a clip with the keys alone, renaming tracks.
 - Done September 19, 2026: the milestone check on the real application, with two outside agents, a release build and the root `README.md`.
 - Done September 20, 2026, after the milestone: the track panel with the view of the synth, see "The window and its views". Not built: effects, the mixer section of a track, an instrument picker, reordering devices.
+
+Second milestone steps:
+
+- Done September 20, 2026, step 0: the agent docs as a map with one doc per extension, and the terminal from the project menu. See "Agent docs as a map" and "The terminal from the project menu". Not built: a doc per task (no task needs one yet), other platforms than macOS for the terminal.
 
 The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. It was re-checked in the real window and needs no workaround, see "The window and its views". The pinned GPUI has an accessibility tree and focus-visible. The menu trigger and the seek strip use focus-visible; the other components and the accessibility tree are open.
 

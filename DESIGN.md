@@ -56,7 +56,7 @@ Every element must earn its keep. Reference feel: the source design system and H
 - Agent sidebar: a turn is the composer's message and the agent's result text. While working, one line such as `Building Polyrhythm` with a slow pulse. After, a muted `Worked for 12 s` that expands on click to the history. A failed build is `Build failed` in red plus one short sentence. No tool-call rows, progress bars, timestamps per message, or explanatory prose about builds and playback.
 - Composer: input, model name, send. Placeholder inside the input is the only hint.
 - Transport: floating pill, bottom centre. Play/pause, stop, position, duration if the project has one, a hairline seek strip. Build status and device selection are not in it; at most a small dot when a reload is pending.
-- Chrome: project name top-left as a quiet menu holding add, undo/redo, output device and project folder. No legends, no zoom controls, no grid.
+- Chrome: project name top-left as a quiet menu holding add, undo/redo, output device and the project folder in the Finder or in a terminal. No legends, no zoom controls, no grid.
 - Cards and panels: 16 px padding, no meta chips in headers, port labels on hover only, secondary parameters behind a disclosure or a second view.
 - Accessible: visible focus rings, labelled controls, full keyboard reach. This is a product requirement.
 
@@ -66,7 +66,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 
 - One background, `gray-100`, for the whole window. No panels and no top bar: the title bar is transparent, the project name sits right of the traffic lights and the row around it drags the window.
 - Transport pill: play or pause in green, stop, the position as `bar.beat`, the time as `m:ss` muted, then the hairline seek strip and the duration when the project has an end. Numbers are tabular and the pill sizes from its content, so it stays still while playing and grows by a digit at bar 100 or at ten minutes. Space toggles playback. Tab reaches the buttons and the strip, and left and right seek by a bar on the strip.
-- Project menu: add track, undo and redo with the name of the step and their shortcuts, the output device by name with a check, reveal project folder. An item that cannot run is at 40% opacity.
+- Project menu: add track, undo and redo with the name of the step and their shortcuts, the output device by name with a check, reveal project folder, open terminal in project folder. An item that cannot run is at 40% opacity.
 - Arrangement: 176 px track headers with the accent dot and the name at 14 px medium in `gray-900`, 64 px rows, a 32 px ruler with one short mark and one 12 px number in `gray-700` per bar. Bar numbers thin out to every 2nd, 4th, 8th bar when bars get narrow. No grid lines, no row lines, no zoom or scroll controls. Two hairlines at `alpha/5`: under the ruler and right of the headers. Tick 0 sits 8 px into the timeline.
 - Clips: `alpha/5` fill with an `alpha/10` hairline border and 6 px corners, 4 px inside the row. The notes are small bars in the accent of the track. That is the one place where a track accent is more than a dot: notes are marks, not fills, and they tie a clip to its track without a label. The selected clip has a `gray-950` border. Clips have no name label.
 - Playhead: a 1 px `gray-950` line with a 7 px round head in the ruler.
@@ -89,6 +89,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Anywhere | cmd-z, shift-cmd-z | Undo, redo. Both wait while a drag is going on |
 | Anywhere | tab, shift-tab | Move the focus: project menu, arrangement, note editor, transport |
 | Project menu | Add track | A new track with a synth |
+| Project menu | Open terminal in project folder | The macOS Terminal in the folder, to start a coding agent there |
 | Ruler | click | Move the playhead there |
 | Arrangement or note editor | scroll, cmd-scroll or pinch | Pan, zoom in time |
 | Arrangement | double click on empty track space | Add a clip of one bar |
