@@ -1,66 +1,25 @@
-//! The window driven by simulated keys and clicks, on the default project with an offline
-//! engine. No display and no device.
-
-// Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them, and
-// it does not know `#[gpui::test]`.
-#![allow(clippy::unwrap_used)]
+//! The keys of the window, the focus, the transport and the timeline without edits.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use arrangement::ArrangementState;
 use arrangement::view::layout::{HEADER_WIDTH, LEAD_IN, RULER_HEIGHT, TRACK_HEIGHT, Viewport};
-use arrangement::view::{ArrangementView, Timeline};
 use gpui::{
-    AppContext, Context, Entity, Focusable, IntoElement, KeyUpEvent, Keystroke, Modifiers,
-    PlatformInput, Render, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext,
-    Window, div, point, prelude::*, px,
+    AppContext, Context, Entity, Focusable, IntoElement, Modifiers, PlatformInput, Render,
+    ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext, Window, div, point,
+    prelude::*, px,
 };
 use runtime::window::{Shell, bind_keys};
-use runtime::{OFFLINE, main_arrangement, open_or_create, views};
-use sound_core::Instance;
-use sound_core::{Changes, Engine, InstanceId, Ticks};
-use sound_notes::{Clip, Length};
-use sound_ui::Views;
+use runtime::{OFFLINE, main_arrangement, open_or_create};
+use sound_core::{Changes, Engine, Instance, InstanceId, Ticks};
+use sound_notes::Clip;
 use sound_ui::components::text_input::TextInput;
-use sound_ui::{POLL_INTERVAL, Playhead, Session};
-use tempfile::TempDir;
+use sound_ui::{POLL_INTERVAL, Playhead, Session, Views};
 
-const BAR: u64 = 3840;
-/// The height of the row with the project menu, above the main area.
-const TOP_ROW: f32 = 48.;
-
-struct Opened<'a> {
-    _folder: TempDir,
-    engine: Engine,
-    session: Entity<Session>,
-    timeline: Entity<Timeline>,
-    cx: &'a mut VisualTestContext,
-}
+use crate::support::{self, BAR, Opened, TOP_ROW};
 
 impl Opened<'_> {
-    /// Lets the engine take what was sent to it and the poll timer see the result.
-    fn settle(&mut self) {
-        let mut buffer = [0.0_f32; 64 * OFFLINE.channels];
-        self.engine.process_block(&mut buffer);
-        self.cx.executor().advance_clock(POLL_INTERVAL);
-        self.cx.run_until_parked();
-    }
-
-    fn playhead(&mut self) -> Playhead {
-        let session = self.session.clone();
-        self.cx.read(|cx| *session.read(cx).playhead().read(cx))
-    }
-
-    /// A whole key press. GPUI clicks the focused control when enter comes up again, and
-    /// `simulate_keystrokes` only sends the key down.
-    fn press_enter(&mut self) {
-        self.cx.simulate_keystrokes("enter");
-        let keystroke = Keystroke::parse("enter").unwrap();
-        self.cx.simulate_event(KeyUpEvent { keystroke });
-        self.cx.run_until_parked();
-    }
-
     fn click_timeline(&mut self, bar: f32, track: f32) {
         let x = HEADER_WIDTH + LEAD_IN + bar * 96.;
         let y = TOP_ROW + RULER_HEIGHT + track * TRACK_HEIGHT;
@@ -72,38 +31,11 @@ impl Opened<'_> {
 
 /// The default project with one clip of two bars at bar 2 on its track.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
-    let folder = tempfile::tempdir().unwrap();
-    let (control, engine) = Engine::new(OFFLINE);
-    let mut project = open_or_create(folder.path(), control).unwrap();
-    let mut changes = Changes::new();
-    let clip = Clip {
-        start: Ticks(BAR),
-        length: Length::new(Ticks(2 * BAR)).unwrap(),
-        notes: Vec::new(),
-    };
-    changes.create(clip_id(), clip);
-    project.commit("Add clip", changes).unwrap();
-
-    cx.update(sound_ui::init);
-    let session = cx.new(|cx| Session::new(project, cx));
-    cx.update(bind_keys);
-    let (shell, cx) = cx.add_window_view({
-        let session = session.clone();
-        move |window, cx| Shell::new(session, views(), "Test device".into(), window, cx)
-    });
-    cx.run_until_parked();
-    let main = shell
-        .read_with(cx, |shell, _| shell.main_view().cloned())
-        .unwrap();
-    let arrangement = main.downcast::<ArrangementView>().ok().unwrap();
-    let timeline = arrangement.read_with(cx, |view, _| view.timeline().clone());
-    Opened {
-        _folder: folder,
-        engine,
-        session,
-        timeline,
-        cx,
-    }
+    support::open_with(cx, |project| {
+        let mut changes = Changes::new();
+        changes.create(clip_id(), support::clip(BAR, 2 * BAR, Vec::new()));
+        project.commit("Add clip", changes).unwrap();
+    })
 }
 
 fn clip_id() -> InstanceId {
@@ -125,8 +57,8 @@ fn space_plays_and_pauses(cx: &mut TestAppContext) {
 #[gpui::test]
 fn tab_reaches_the_menu_and_the_transport_and_enter_activates(cx: &mut TestAppContext) {
     let mut opened = open(cx);
-    // The project menu first, then play, then stop.
-    opened.cx.simulate_keystrokes("tab tab");
+    // The project menu first, then the arrangement, then play, then stop.
+    opened.cx.simulate_keystrokes("tab tab tab");
     opened.press_enter();
     opened.settle();
     assert!(opened.playhead().playing);
@@ -345,8 +277,8 @@ fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
         .update(|_, cx| session.update(cx, |session, cx| session.report("the device is gone", cx)));
     opened.cx.run_until_parked();
 
-    // The menu, play, stop, the seek strip, then the notice.
-    opened.cx.simulate_keystrokes("tab tab tab tab tab");
+    // The menu, the arrangement, play, stop, the seek strip, then the notice.
+    opened.cx.simulate_keystrokes("tab tab tab tab tab tab");
     opened.press_enter();
     opened
         .cx

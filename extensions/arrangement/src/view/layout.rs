@@ -28,6 +28,8 @@ const MIN_PIXELS_PER_QUARTER: f64 = 1.0;
 const MAX_PIXELS_PER_QUARTER: f64 = 384.0;
 /// Bar numbers in the ruler are at least this far apart.
 const MIN_LABEL_SPACING: f64 = 64.0;
+/// Beat lines show only when beats are at least this far apart.
+const MIN_BEAT_SPACING: f64 = 24.0;
 /// Below this width a clip shows no notes.
 const MIN_MINIATURE_WIDTH: f32 = 8.0;
 /// A miniature shows at least this many semitones, so two close pitches do not fill the clip.
@@ -36,6 +38,25 @@ const MIN_MINIATURE_SEMITONES: f32 = 12.0;
 /// The nearest multiple of [`SNAP`].
 pub fn snap(tick: Ticks) -> Ticks {
     Ticks((tick.0 + SNAP.0 / 2) / SNAP.0 * SNAP.0)
+}
+
+/// The multiple of [`SNAP`] at or before a tick: the grid cell that a pointer is in.
+pub fn snap_floor(tick: Ticks) -> Ticks {
+    Ticks(tick.0 / SNAP.0 * SNAP.0)
+}
+
+/// How far a drag went, from the tick under the pointer at mouse down to the tick under it now,
+/// as the nearest whole number of snap steps. A drag moves by this and does not snap the
+/// result, so what an agent wrote off the grid keeps its offset.
+pub fn snapped_delta(from: Ticks, to: Ticks) -> i64 {
+    let step = SNAP.0 as i64;
+    let delta = to.0 as i64 - from.0 as i64;
+    (delta + delta.signum() * step / 2) / step * step
+}
+
+/// A tick moved by a signed delta. It stops at tick 0.
+pub fn shifted(tick: Ticks, delta: i64) -> Ticks {
+    Ticks(tick.0.saturating_add_signed(delta))
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -105,6 +126,14 @@ impl Viewport {
         (row >= 0.0 && (row as usize) < tracks).then_some(row as usize)
     }
 
+    /// The row of a drag: above the first track is the first, below the last is the last.
+    /// `None` without tracks.
+    pub fn nearest_track(&self, y: f32, tracks: usize) -> Option<usize> {
+        let row = ((f64::from(y) + self.scroll_y) / f64::from(TRACK_HEIGHT)).floor();
+        let last = tracks.checked_sub(1)?;
+        Some((row.max(0.0) as usize).min(last))
+    }
+
     /// The ticks a timeline area of this width shows. A clip is visible when it overlaps.
     pub fn visible_ticks(&self, width: f32) -> Range<Ticks> {
         let end = (f64::from(width - LEAD_IN) + self.scroll_x) / self.pixels_per_tick();
@@ -153,11 +182,23 @@ impl Viewport {
         width: f32,
         height: f32,
     ) -> Self {
+        let content_height = extent.tracks as f64 * f64::from(TRACK_HEIGHT);
+        self.clamped_to(extent.end, content_height, time_signature, width, height)
+    }
+
+    /// The same for any content below the ruler: `end` with the room after it across, and
+    /// `content_height` with the room for the transport below it.
+    pub fn clamped_to(
+        &self,
+        end: Ticks,
+        content_height: f64,
+        time_signature: TimeSignature,
+        width: f32,
+        height: f32,
+    ) -> Self {
         let end_room = END_ROOM_BARS * time_signature.ticks_per_bar();
-        let content_width =
-            (extent.end.0 + end_room) as f64 * self.pixels_per_tick() + f64::from(LEAD_IN);
-        let content_height =
-            extent.tracks as f64 * f64::from(TRACK_HEIGHT) + f64::from(BOTTOM_ROOM);
+        let content_width = (end.0 + end_room) as f64 * self.pixels_per_tick() + f64::from(LEAD_IN);
+        let content_height = content_height + f64::from(BOTTOM_ROOM);
         Self {
             scroll_x: self
                 .scroll_x
@@ -200,6 +241,26 @@ impl Viewport {
             .step_by(step as usize)
             .map(move |bar| (bar + 1, viewport.x_of(Ticks(bar * ticks_per_bar))))
             .take_while(move |(_, x)| *x < width)
+    }
+
+    /// The x of every beat that is not a bar line, for very faint lines in the note editor.
+    /// Nothing when beats are too narrow to help.
+    pub fn beat_lines(
+        &self,
+        time_signature: TimeSignature,
+        width: f32,
+    ) -> impl Iterator<Item = f32> + use<> {
+        let ticks_per_beat = time_signature.ticks_per_beat();
+        let ticks_per_bar = time_signature.ticks_per_bar();
+        let wide_enough = ticks_per_beat as f64 * self.pixels_per_tick() >= MIN_BEAT_SPACING;
+        let visible = self.visible_ticks(width);
+        let first = visible.start.0 / ticks_per_beat;
+        let viewport = *self;
+        (first..)
+            .map(move |beat| beat * ticks_per_beat)
+            .take_while(move |tick| wide_enough && *tick < visible.end.0)
+            .filter(move |tick| !tick.is_multiple_of(ticks_per_bar))
+            .map(move |tick| viewport.x_of(Ticks(tick)))
     }
 
     /// The notes of a clip as small bars inside `rect`, the rect of [`Self::clip_rect`].
@@ -308,6 +369,51 @@ mod tests {
         assert_eq!(snap(Ticks(120)), Ticks(240));
         assert_eq!(snap(Ticks(359)), Ticks(240));
         assert_eq!(snap(Ticks(3840 + 130)), Ticks(3840 + 240));
+    }
+
+    #[test]
+    fn a_drag_moves_by_whole_snap_steps_and_stops_at_tick_zero() {
+        assert_eq!(snap_floor(Ticks(239)), Ticks(0));
+        assert_eq!(snap_floor(Ticks(240)), Ticks(240));
+        assert_eq!(snap_floor(Ticks(3840 + 479)), Ticks(3840 + 240));
+
+        assert_eq!(snapped_delta(Ticks(1000), Ticks(1000)), 0);
+        assert_eq!(snapped_delta(Ticks(1000), Ticks(1119)), 0);
+        assert_eq!(snapped_delta(Ticks(1000), Ticks(1120)), 240);
+        assert_eq!(snapped_delta(Ticks(1000), Ticks(881)), 0);
+        assert_eq!(snapped_delta(Ticks(1000), Ticks(880)), -240);
+        assert_eq!(snapped_delta(Ticks(1000), Ticks(0)), -960);
+        assert_eq!(snapped_delta(Ticks(0), Ticks(3840)), 3840);
+
+        // What is off the grid keeps its offset, and nothing goes before tick 0.
+        assert_eq!(shifted(Ticks(250), 240), Ticks(490));
+        assert_eq!(shifted(Ticks(250), -240), Ticks(10));
+        assert_eq!(shifted(Ticks(250), -480), Ticks(0));
+        assert_eq!(shifted(Ticks(0), -240), Ticks(0));
+    }
+
+    #[test]
+    fn a_drag_outside_the_rows_stays_on_the_nearest_track() {
+        let viewport = Viewport {
+            scroll_y: 96.0,
+            ..Viewport::default()
+        };
+        assert_eq!(viewport.nearest_track(-500.0, 10), Some(0));
+        assert_eq!(viewport.nearest_track(0.0, 10), Some(1));
+        assert_eq!(viewport.nearest_track(5_000.0, 10), Some(9));
+        assert_eq!(viewport.nearest_track(0.0, 0), None);
+    }
+
+    #[test]
+    fn beat_lines_show_only_when_beats_are_wide_enough() {
+        let beats: Vec<_> = Viewport::default().beat_lines(four_four(), 120.0).collect();
+        // 24 px per beat. The bar lines at 8 and 104 are not beat lines.
+        assert_eq!(beats, [32.0, 56.0, 80.0]);
+        let narrow = Viewport {
+            pixels_per_quarter: 23.0,
+            ..Viewport::default()
+        };
+        assert_eq!(narrow.beat_lines(four_four(), 500.0).count(), 0);
     }
 
     #[test]

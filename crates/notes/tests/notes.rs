@@ -90,3 +90,15 @@ fn a_note_gives_its_own_events() {
     assert_eq!(note.on(), NoteEvent::On { pitch, velocity });
     assert_eq!(note.off(), NoteEvent::Off { pitch });
 }
+
+#[test]
+fn interface_math_gets_the_nearest_valid_value() {
+    assert_eq!(Pitch::nearest(-5).number(), 0);
+    assert_eq!(Pitch::nearest(64).number(), 64);
+    assert_eq!(Pitch::nearest(500).number(), 127);
+    assert_eq!(Velocity::nearest(0).value(), 1);
+    assert_eq!(Velocity::nearest(100).value(), 100);
+    assert_eq!(Velocity::nearest(128).value(), 127);
+    assert_eq!(Length::at_least_one(Ticks(0)).ticks(), Ticks(1));
+    assert_eq!(Length::at_least_one(Ticks(480)).ticks(), Ticks(480));
+}
