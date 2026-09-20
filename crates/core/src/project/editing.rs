@@ -166,9 +166,44 @@ pub(crate) struct History {
     /// When the step on top of `undo` is an outside step and nothing came after it: when its
     /// last group was applied. An interface edit, an undo and a redo all clear it.
     last_outside: Option<Instant>,
+    /// The committed state of every record that an open edit has published over: what it was
+    /// before the first publish, or what a file change, an undo or a redo made of it since.
+    /// The live state of such a record is the middle of a gesture, which no undo step may
+    /// hold: nobody ever saw it as a result.
+    committed: BTreeMap<InstanceId, Option<Record>>,
 }
 
 impl History {
+    /// Keeps `committed` current after a state application. A change from a file or from
+    /// history to a record under an open edit gets the committed state as its before side, in
+    /// place of the state in the middle of the gesture.
+    pub fn note_committed(&mut self, change: &mut RecordChange, source: Source) {
+        match source {
+            Source::Load => {}
+            Source::Interface => {
+                let before = || change.before.clone();
+                self.committed
+                    .entry(change.id.clone())
+                    .or_insert_with(before);
+            }
+            Source::Outside | Source::History => {
+                if let Some(committed) = self.committed.get_mut(&change.id) {
+                    change.before = std::mem::replace(committed, change.after.clone());
+                }
+            }
+        }
+    }
+
+    /// The edit of `step` ends. Its before side becomes what was committed under it, so that
+    /// the step starts where the step before it ended.
+    fn close(&mut self, step: &mut Step) {
+        for (id, (before, _)) in &mut step.records {
+            if let Some(committed) = self.committed.remove(id) {
+                *before = committed;
+            }
+        }
+    }
+
     /// A new step. What was undone before can no longer be redone.
     pub fn push(&mut self, step: Step) {
         self.last_outside = None;
@@ -202,6 +237,8 @@ impl History {
                     ..Step::default()
                 };
                 step.absorb(applied);
+                // A file may bring back what was committed under an open edit.
+                step.drop_unchanged();
                 let is_empty = step.is_empty();
                 self.push(step);
                 // An empty group is no step, and then the top is not known to be an outside one.
@@ -278,11 +315,13 @@ impl Project {
     }
 
     /// Ends the edit as one undo step and writes every record it touched, once. The step runs
-    /// from the state before the edit to the state now, whoever wrote last.
+    /// from the committed state before it to the state now, whoever wrote last. That is the
+    /// state before the edit, or what a file change, an undo or a redo wrote during it.
     ///
     /// On a write error the edit stays applied and undoable, and the problem is reported.
     pub fn finish(&mut self, edit: Edit) -> Result<(), ProjectError> {
         let mut step = edit.step;
+        self.history.close(&mut step);
         for (id, (_, after)) in &mut step.records {
             *after = self.instances.get(id).cloned();
         }
@@ -296,9 +335,11 @@ impl Project {
     }
 
     /// Ends the edit by applying the state from before it, through the same path as every
-    /// other change. No undo step.
+    /// other change. No undo step. A record that a file change, an undo or a redo wrote during
+    /// the edit goes back to that state: it is what was committed, and what its file holds.
     pub fn cancel(&mut self, edit: Edit) -> Result<(), ProjectError> {
-        let step = edit.step;
+        let mut step = edit.step;
+        self.history.close(&mut step);
         self.sync_project_file();
         let applied = self.apply(step.changes(Side::Before), Source::History)?;
         self.write_step(&step, &applied)

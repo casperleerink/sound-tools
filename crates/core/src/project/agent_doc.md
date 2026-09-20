@@ -66,7 +66,7 @@ This project is in {{time_signature}}: a beat is {{ticks_per_beat}} ticks and a 
 
 ## Check your work
 
-`problems.txt` in this folder is there the whole time a runtime has the project open, and it follows a write by about 0.2 s. Read it at the end of your work.
+`problems.txt` in this folder is there the whole time a runtime has the project open, and it follows a write by about 0.2 s. Read it at the end of your work. When you write and read in one command, wait a second in between: read too early, it still shows the state from before your write.
 
 - `No problems. Every file is live.`: all your files play.
 - Else each line is `<file>: <field>: <reason>`, for example `state/lead.json: state: gain must be from 0 to 1, not 3`. A file with a problem is not live, and the last valid state keeps playing. Fix the file and its line goes away.

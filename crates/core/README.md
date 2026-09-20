@@ -274,6 +274,8 @@ project.undo()?;    // Some(label), or None when there is nothing to undo
 project.redo()?;
 ```
 
+A file change, an undo or a redo may write a record while an edit is open on it. Undo never lands on the middle of a gesture then. The core keeps what was committed for such a record: the file change takes that as its before side, and the edit takes what the file change wrote as its own. So the two steps undo one after the other, each to a state that was a result. `cancel` goes back to what the file change wrote, which is what the file holds.
+
 - `publish(&mut edit, changes)` applies a whole `Changes` group at once: one engine batch. `update` is the short form for one record. `changes.set` replaces a whole state. `create` with an id inside another instance makes an owned child. The owner must exist or come earlier in the same group.
 - `project.free_id(&wanted)` gives `wanted`, or `wanted-2`, `wanted-3` and so on: an id no live instance has and no file or folder sits at. `project.tool_of(&id)` gives the tool name of any instance.
 - `delete` takes everything the instance owns and the `project.json` connections that name them. Undo brings all of it back. Undo fails with `ProjectError::IdTaken`, and drops the step, when a file the runtime did not load has taken the id meanwhile.

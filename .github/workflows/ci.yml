@@ -49,6 +49,9 @@ jobs:
       # Last, because the variable rebuilds the audio crates. The sanitizer aborts any test that
       # allocates, locks or makes a system call inside Engine::process_block.
       - name: Realtime sanitizer
-        run: cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement --locked
+        run: |
+          cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement --locked
+          # Real projects: the sequencer of every track into its synth, with live file edits.
+          cargo nextest run -p runtime --test projects --locked
         env:
           RTSAN_ENABLE: 1

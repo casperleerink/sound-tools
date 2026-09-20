@@ -1,6 +1,6 @@
 # Technical architecture
 
-This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The realtime engine from ENGINEERING.md section 3 is built in `crates/core`, with the musical clock, the transport and the live project folder: tool registration, instances, editing with undo, storage and the file watcher. Tone runs on it as the first tool. The application window shows the arrangement live with the transport and the project menu, and a composer adds, moves, resizes and deletes clips and notes in it with the mouse and the keys. The agent sidebar and the outer application are not built yet.
+This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The realtime engine from ENGINEERING.md section 3 is built in `crates/core`, with the musical clock, the transport and the live project folder: tool registration, instances, editing with undo, storage and the file watcher. Tone runs on it as the first tool. The application window shows the arrangement live with the transport and the project menu, and a composer adds, moves, resizes and deletes clips and notes in it with the mouse and the keys. The first milestone was verified on the real application on September 19, 2026, with Claude Code and Codex as outside agents. The agent sidebar and the outer application are not built yet.
 
 ## Terms
 
@@ -194,6 +194,25 @@ Verify the first milestone:
 - Closing and reopening the project restores the piece.
 - The realtime checks from ENGINEERING.md pass on every `process` function.
 
+#### Verified September 19, 2026
+
+Checked on the real application on an Apple Silicon laptop: the window driven with real mouse and key events, and two outside agents, Claude Code with file tools only and Codex in its workspace-write sandbox. Each agent ran in the project folder and knew nothing but the generated `AGENTS.md`. Nobody listened: sound is proven by offline renders and counters, not by ear. The screenshots, logs and renders of the check are not in the repo.
+
+| Item | Result | Evidence |
+| --- | --- | --- |
+| An agent adds a part in a bar range, live, and undo removes it | Pass | Prompt "Add a bass line in bars 5 to 8 that follows the chords on the piano track" during playback. Both agents wrote a bass track with a clip in bars 5 to 8, first try, `problems.txt` clean the whole time. Claude wrote three files 9 s apart, Codex in one burst. One cmd-z removed all of it from the window and the folder, one shift-cmd-z brought it back, and the render was byte-identical after that. The render differs only in bars 5 to 8. |
+| An agent adds a whole track with one folder during playback | Pass | Prompt "Add a new track with a simple melody over bars 1 to 4". Same process before and after, 0 xruns, 0 late callbacks for the session. The audio claim is `live::a_track_folder_written_during_playback_adds_a_track_without_stopping_the_others` in `crates/runtime/tests/projects`: the other tracks are bit-identical. One undo, one redo. |
+| No track, clip or note types in the core. Tone on the same storage rule | Pass | No type, function or constant in `crates/core/src` is named after a track, clip, note, pitch or velocity, and the core depends on no bundled crate. `state/drone.json` and two connections in `project.json`, written while the window was open, loaded with no problems: the render gained a sine of exactly the saved gain. Deleting the file removed its connections. |
+| 100 tracks of 100 clips open, play and take an edit | Pass | 10,200 records. The window is on screen 1.1 s after the start, 2.8 s with a cold file cache. 35 s of playback with 0 xruns, slowest callback 1.4 ms. One outside clip edit showed within the next screenshot, 0.5 s later. Offline it applies in 0.2 ms (`scale::hundred_tracks_of_hundred_clips_open_play_and_take_an_edit`, run by hand). |
+| Notes start on the expected frames, and a tempo change moves them | Pass | `timing::notes_start_and_end_on_the_frames_of_their_ticks`, `timing::another_tempo_moves_every_note`, `timing::a_tempo_change_during_playback_moves_the_notes_that_follow`, `held_notes::a_held_note_ends_on_its_tick_after_a_tempo_change` in the arrangement, and `quarter_notes_land_on_exact_engine_frames_for_every_device_buffer_size`, `a_tempo_change_moves_later_ticks_by_the_expected_frames`, `tick_to_frame_to_tick_is_exact` in the core. In the window, 60 bpm written into `project.json` during playback: the transport went from `2.3 0:03` of `0:16` to `2.4 0:07` of `0:32`, no problems, and cmd-z took it back. |
+| Closing and reopening restores the piece | Pass | cmd-q, then the same command. The screenshot, the `--inspect` output, every file and a 16 s `--render` were byte-identical. `problems.txt` was gone after the quit. |
+| The realtime checks pass on every `process` function | Pass | Three processors outside tests: `Tone`, `Synth`, `Sequencer`. Each runs under `RTSAN_ENABLE=1` in the tests of its crate, 224 tests. The check added the real-project tests of the runtime to that run. |
+| The success sentence of CONCEPT.md | Pass, with an external agent | With the mouse in a new project: Add track, a clip by double click, three drawn notes, play, undo, redo, quit and reopen. Then the agent items above. |
+
+Release build, first time: `cargo build --release -p runtime` takes 1.5 minutes and gives a binary of 12 MB. In the window the small project uses 2 % of a core stopped and 11 to 14 % playing, headless 1 % playing. The large one uses 8 % stopped and 20 % playing. 0 xruns in all. The dev build uses 9 % and 32 % on the large one. It also ran on a device at 96 kHz.
+
+Found and fixed by the check: an undo could land on the middle of a drag (see "Editing and system services"), and the agent doc now tells an agent that writes and reads in one command to wait a second before it reads `problems.txt`. After that, Codex did.
+
 ### Agent context and tools
 
 The agent works through the live project folder and the runtime protocol, not a separate edit API.
@@ -361,7 +380,7 @@ The core implements project file writing and watching, undo/redo and notificatio
 
 Interfaces and agents use the same typed editing actions. Authors choose meaningful edit boundaries and can group multiple actions into one undo step. The SDK records affected project state and handles restoration, so authors do not need to implement the reverse of each state edit.
 
-Agents and composers can edit project state concurrently through existing actions without rebuilding. Conflicting writes use last-write-wins semantics, ordered by application in the runtime. Stale edits do not require conflict rejection or agent reapproval. An outside file edit applies immediately without ending an active interface drag. Later drag updates may overwrite the file edit. Undo, redo and cancellation also apply as later writes and may overwrite intervening changes. Last write wins throughout; no special conflict handling is required.
+Agents and composers can edit project state concurrently through existing actions without rebuilding. Conflicting writes use last-write-wins semantics, ordered by application in the runtime. Stale edits do not require conflict rejection or agent reapproval. An outside file edit applies immediately without ending an active interface drag. Later drag updates may overwrite the file edit. Undo and redo also apply as later writes and may overwrite intervening changes. A cancelled drag goes back to what the file edit wrote. Last write wins throughout; no special conflict handling is required.
 
 For a drag gesture, begin an edit, publish updates during the drag, then finish it as one named undo step. Cancellation restores the original state. Playback and other views can respond to published updates before the gesture finishes.
 
@@ -374,7 +393,7 @@ Provide recommended patterns and the underlying operations for custom workflows.
 Decided September 19, 2026, the edit API and undo, built in `crates/core/src/project`:
 
 - One state application takes a group of changes: set a whole record (which also creates), delete an instance with everything it owns, and change tempo or connections. Interface edits, file changes, loading, undo, redo and cancel all call it. It applies the group whole, as one engine batch, or not at all. It notes the record before and after, which is all undo needs.
-- An edit is `begin`, any number of `publish` calls with a group of changes, then `finish` or `cancel`. It may touch many records, create and delete. `publish` applies live and writes nothing. `finish` writes every touched record once and adds one undo step, from the state before the first publish to the live state at the finish, whoever wrote last. `cancel` applies the states from before through the same path. Several edits may be open at once.
+- An edit is `begin`, any number of `publish` calls with a group of changes, then `finish` or `cancel`. It may touch many records, create and delete. `publish` applies live and writes nothing. `finish` writes every touched record once and adds one undo step, from the committed state before it to the live state at the finish, whoever wrote last. `cancel` applies the committed states through the same path. The committed state of a record is its state before the first publish, or what a file change, an undo or a redo wrote during the edit. So no undo step holds the middle of a gesture: a file change during a drag undoes to the state before the drag, the drag undoes to what the file change wrote, and a cancel leaves what the file holds. Built with the milestone check. Before, the file change took the state in the middle of the drag as its before side. Not covered: tempo and connections, which no gesture edits yet. Several edits may be open at once.
 - Undo history is two stacks of steps. A step holds the before and after record of every instance it touched, shared with the live state and not copied. Undo applies the before side as one group and writes the files. A step that can no longer apply is dropped with a typed error, for example because its owner is gone, or because a file the runtime did not load now sits at the id of an instance that undo would write.
 - Writing: parents before children, then deleted records, then `project.json`. Each file is a temporary file renamed into place, with no `fsync`: it cost 6 ms per file on macOS, which made undo of a deleted folder of 100 records block for 0.7 s. The rename protects against a crash of the process. Surviving a power loss is left to git and snapshots. A failed write leaves the old file complete, the edit stays live and undoable, and the problem is listed until a later write succeeds. The runtime only removes record files it knows, so deleting an instance never removes records of unknown tools or other files in its folder.
 - The UI layer drains a list of small events after each call: created, changed, deleted with the instance id, project file changed, problems changed. Events carry no state.
@@ -407,7 +426,6 @@ Built in `crates/ui` (the bridge), `extensions/arrangement/src/view.rs` and `cra
   - When the dragged clip is deleted from outside, the gesture finishes and does not cancel: the delete was the last write, and a cancel would bring the clip back over it.
   - The note editor puts the notes of a clip in order by start and pitch when a note edit ends, as the agent doc asks of an agent.
   - The selected note is kept by value, not by index, and a clip resize goes on from the live clip when something else wrote it. Both for the same reason: the clip changes under an open view, and a view must never edit what only took the place of what the composer chose.
-  - Known, in the core, for later: an outside change that lands during a gesture records the state in the middle of the drag as its before side. Two undos can then land on a state that was never committed.
   - During an open gesture the transport does not read the end of the project again, and the arrangement reads only the track of the changed clip. Both walked every clip per mouse move before. The duration follows when the drag ends.
 - The preview note: a note that is clicked, drawn or moved to a new pitch sounds for 0.3 s through the instrument of its track, also while the project is stopped. The core got one call for it, `Project::send`: an update from an interface to a processor of an instance, outside any edit. The sequencer ends the note by itself in engine time, so no interface can leave one sounding.
 - The keys of a view are key listeners on its focused root, not bindings: delete, the arrows, enter and escape reach the arrangement or the editor only while it has the focus. The bindings of the window run first, so space still plays. The focus ring of these two views shows only when the focus came from the keyboard. GPUI's focus-visible also shows it when a key follows a click, which space does all the time.
@@ -424,7 +442,7 @@ Built in `crates/ui` (the bridge), `extensions/arrangement/src/view.rs` and `cra
 
 [The SDK sketch](SDK_SKETCH.md) proposes a Tone lifecycle and a small next prototype. Its APIs remain provisional. Last write wins for file edits, active drags, undo, redo and cancellation; do not reopen this as a synchronization problem.
 
-Immediate next work is the first milestone above, in this order:
+The first milestone is built and was verified on September 19, 2026, see "Verified September 19, 2026" under it. Its steps, with what each left out:
 
 - Done September 19, 2026: the realtime engine with device output and the control-to-audio handoff, following ENGINEERING.md section 3. Tone plays through it from `extensions/tone`. Feedback connections, audio input and device selection are not built yet.
 - Done September 19, 2026: the musical clock and the transport in `crates/core`. Loop playback, tempo ramps and time signature changes are not built yet.
@@ -432,13 +450,60 @@ Immediate next work is the first milestone above, in this order:
 - Done September 19, 2026: the instrument and the arrangement extensions, the default project, the project summary and the project agent doc. Not built: automation, mixer, mute and solo, loop playback.
 - Done September 19, 2026: the application window with the session bridge, the view registry, the arrangement view, the transport and the project menu. Not built: following the playhead when it leaves the view, device switching, a tempo display.
 - Done September 19, 2026: editing clips and notes in the window with the mouse and the keys, the note editor and the preview note. Not built: copy and paste, multi-select, a velocity lane, adjustable snap, splitting clips, selecting a clip with the keys alone, renaming tracks.
+- Done September 19, 2026: the milestone check on the real application, with two outside agents, a release build and the root `README.md`.
 
 The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. It was re-checked in the real window and needs no workaround, see "The window and its views". The pinned GPUI has an accessibility tree and focus-visible. The menu trigger and the seek strip use focus-visible; the other components and the accessibility tree are open.
+
+What the second milestone starts from: one process, the project runtime, that opens a project folder in a window or headless, keeps it live in both directions and plays it. An external agent already composes in it through files alone, with `AGENTS.md` as its context, `problems.txt` as its check and one undo step per request by the 15 s rule. The second milestone puts the agent into the product: the outer application that owns the agent session and starts the runtime, the protocol between the two (start, stop, reload, transport, state and errors), the agent sidebar in the window, and the real boundaries of an agent request in place of the 15 s rule. Nothing in the runtime or the SDK depends on which agent it is.
 
 Open:
 
 - Declarative parameter metadata and generic parameter controls.
 - Agent integration, the outer application/runtime protocol details and window/workspace composition. Second milestone.
+- Whether the agent gets the transport and `--inspect` as tools. No agent has used `--inspect` yet: Claude Code ran with file tools only, and Codex had a shell but no `runtime` on its `PATH`. Both managed without it.
+
+### Known gaps after the first milestone
+
+Collected from every step and the check. Decided limits are in the sections above and are not repeated here.
+
+Sound and engine:
+
+- Nobody has listened with care. All proof of sound is counters, offline renders and sample comparisons. The synth defaults need an ear.
+- No limiter and no mixer. Tracks add up, and one square note at full resonance and velocity can peak above 1.0.
+- No feedback connections, no audio input, no device switching, no new `prepare` after a sample rate change. Only f32 output on the default device, only macOS.
+- No App Nap prevention. A long session in a hidden window is not tried.
+- A routing edit is a hard switch, without a gain ramp. Tone steps its gain. The synth smooths its own. There is no smoothing helper in the SDK.
+- Aliasing of the synth is not measured. Speed on x86 is not measured. No Miri run.
+
+Time and transport:
+
+- Playback does not stop at the end of the project and there is no loop. During an agent request the playhead runs far past the piece.
+- The view does not follow the playhead. The tempo shows nowhere in the window.
+- No tempo ramps, no time signature changes, no chase of notes on a seek.
+
+Project folder and undo:
+
+- The 15 s rule for one undo step per agent request is a heuristic. It held for both agents, with up to 5 s between two files. A slower agent gets two steps.
+- `problems.txt` does not say which write it has seen. An agent that reads it in the same command as its write can see the old text. The agent doc now says to wait a second.
+- A `problems.txt` left by a crash can be stale.
+- An undo step for tempo or connections can still hold the middle of a gesture. No gesture edits them yet.
+- A file edit of a clip while that clip is dragged across tracks comes back as a second clip.
+- A behaviour does not react to an instance it only references. Port names in `project.json` are strings without a check at build time.
+- No assets, no `workspace.json`, no declarative parameters. No `fsync`, by decision. The file watcher is tried on macOS only.
+- The stdin commands of `--headless` are provisional. They are not the protocol of the outer application.
+
+Window:
+
+- CPU: the release build uses 11 to 14 % of a core while it plays a small project in the window, and 1 % headless. So nearly all of it is the window, which draws a frame for the playhead at the rate of the display. The dev build uses 20 % and more.
+- Not tried by hand: pinch zoom on a trackpad, the resize cursor on a real screen, dragging the window by its top row.
+- Focus-visible covers the menu trigger and the seek strip only. The accessibility tree is not used.
+- The main area shows the first top instance with a view, and "Add track" names the arrangement. Both go with workspace composition.
+- The timeline and the note editor each have their own block of mouse listeners.
+
+Tooling:
+
+- CI runs on macOS only. The list of crates for the realtime sanitizer is kept by hand.
+- A build after a touch of a view file takes 1.6 to 2 s, most of it linking GPUI.
 
 Reference code: [pi-mono](https://github.com/badlogic/pi-mono) for extension registration and agent access to docs, and [Pure Data](https://github.com/pure-data/pure-data) for processor composition and scheduling. Neither dictates the product's UI or musical model. [ENGINEERING.md](ENGINEERING.md) records tooling, dependency and audio engine recommendations drawn from Zed, Pure Data and Elementary.
 
