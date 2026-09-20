@@ -7,8 +7,8 @@ use sound_core::{
 };
 
 use crate::tools::{
-    BANK_RECORD, Dc, Harness, SAMPLE_RATE, dc_record, dc_to_device, id, level_record, project_file,
-    registry,
+    BANK_RECORD, Dc, Harness, SAMPLE_RATE, dc_record, dc_to_device, dc_to_device_channel, id,
+    level_record, project_file, records, registry, write,
 };
 
 /// A project with one connected `test.dc` at 0.25.
@@ -566,4 +566,45 @@ fn a_second_open_of_the_same_folder_fails_with_a_typed_error() {
     drop(project);
     let (control, _engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
     assert!(Project::open(&folder, registry(), control).is_ok());
+}
+
+/// A project of the first milestone connects one port once per device channel. Audio is
+/// stereo since the second milestone, so the first of those connections already carries both
+/// channels and the second would play the source again on the right.
+#[test]
+fn the_second_device_connection_of_a_milestone_one_project_is_left_out_and_named() {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path().to_path_buf();
+    let pair = [dc_to_device_channel("dc", 0), dc_to_device_channel("dc", 1)].join(", ");
+    write(&root, "state/dc.json", &dc_record(0.25));
+    write(&root, "project.json", &project_file(&pair));
+    let before = records(&root);
+
+    let frame = {
+        let (control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+        let project = Project::open(&root, registry(), control).unwrap();
+        let problems = project.problems();
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!(problems[0].path, "project.json");
+        let message = &problems[0].message;
+        assert!(message.contains("connections[1]"), "{message}");
+        assert!(message.contains("device output 1"), "{message}");
+        assert!(message.contains("device output 0"), "{message}");
+        let mut output = [f32::NAN; 2 * 8];
+        engine.process_block(&mut output);
+        [output[14], output[15]]
+    };
+    // Both channels play it once, as in the first milestone. Not 0.25 and 0.5.
+    assert_eq!(frame, [0.25, 0.25]);
+    // The runtime wrote nothing of its own into the records: the file is still the file.
+    assert_eq!(records(&root), before);
+
+    // One connection is the whole stereo path, and there is nothing to report.
+    write(&root, "project.json", &project_file(&dc_to_device("dc")));
+    let (control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let project = Project::open(&root, registry(), control).unwrap();
+    assert_eq!(project.problems(), []);
+    let mut output = [f32::NAN; 2 * 8];
+    engine.process_block(&mut output);
+    assert_eq!([output[14], output[15]], [0.25, 0.25]);
 }

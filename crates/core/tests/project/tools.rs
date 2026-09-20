@@ -395,7 +395,43 @@ pub fn project_file(connections: &str) -> String {
 }
 
 pub fn dc_to_device(instance: &str) -> String {
+    dc_to_device_channel(instance, 0)
+}
+
+pub fn dc_to_device_channel(instance: &str, channel: usize) -> String {
     format!(
-        r#"{{"from": {{"instance": "{instance}", "port": "out"}}, "to": {{"device_output": 0}}}}"#
+        r#"{{"from": {{"instance": "{instance}", "port": "out"}}, "to": {{"device_output": {channel}}}}}"#
     )
+}
+
+/// Writes a file into a project folder, as an agent would, before the project is open.
+pub fn write(root: &Path, relative: &str, contents: &str) {
+    let path = root.join(relative);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, contents).unwrap();
+}
+
+/// Every record file and `project.json` of a project folder, with its bytes. The generated
+/// files of the runtime are left out: they are its own, not the composer's.
+pub fn records(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    fn walk(folder: &Path, root: &Path, found: &mut Vec<(PathBuf, Vec<u8>)>) {
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return;
+        };
+        for path in entries.map(|entry| entry.unwrap().path()) {
+            if path.is_dir() {
+                walk(&path, root, found);
+            } else {
+                let relative = path.strip_prefix(root).unwrap().to_path_buf();
+                found.push((relative, std::fs::read(&path).unwrap()));
+            }
+        }
+    }
+    let mut found = vec![(
+        PathBuf::from("project.json"),
+        std::fs::read(root.join("project.json")).unwrap(),
+    )];
+    walk(&root.join("state"), root, &mut found);
+    found.sort();
+    found
 }

@@ -678,6 +678,44 @@ fn one_stereo_port_reaches_both_device_channels() {
 }
 
 #[test]
+fn a_port_reaches_each_device_channel_once() {
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 4));
+    let mut edit = control.edit();
+    let one = edit.add_processor("one", Constant(1.0)).unwrap();
+    let two = edit.add_processor("two", Constant(2.0)).unwrap();
+    edit.connect(Connection::to_device(one.id(), OUTPUT, 0))
+        .unwrap();
+    // The same connection again is still one connection, so an owner and its child may both
+    // declare it.
+    edit.connect(Connection::to_device(one.id(), OUTPUT, 0))
+        .unwrap();
+    // Channel 1 already carries the right channel of the connection above. This is the shape
+    // a project of the first milestone has: one connection per device channel.
+    let twice = Connection::to_device(one.id(), OUTPUT, 1);
+    let error = edit.connect(twice).unwrap_err();
+    let GraphError::DeviceChannelTwice {
+        connection, taken, ..
+    } = error
+    else {
+        panic!("unexpected error {error}");
+    };
+    assert_eq!((connection, taken), (twice, 0));
+    // Another pair of channels is fine, and so is another source on channels one of them
+    // already carries: two sources sum there.
+    edit.connect(Connection::to_device(one.id(), OUTPUT, 2))
+        .unwrap();
+    edit.connect(Connection::to_device(two.id(), OUTPUT, 1))
+        .unwrap();
+    edit.commit().unwrap();
+
+    let mut output = [f32::NAN; 4 * 10];
+    engine.process_block(&mut output);
+    for frame in output.chunks(4) {
+        assert_eq!(frame, [1.0, 1.0 + 2.0, 1.0 + 2.0, 1.0]);
+    }
+}
+
+#[test]
 fn port_handles_that_match_no_declared_port_are_counted() {
     #[derive(Copy, Clone)]
     struct Other;

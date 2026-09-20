@@ -71,6 +71,14 @@ pub enum GraphError {
     UnknownInput { node: String, port: InputPort },
     #[error("the device has no output channel {0}")]
     UnknownDeviceChannel(usize),
+    #[error(
+        "{description}: the port already reaches that channel through its connection to device output {taken}. Audio is stereo, so one connection carries both channels and the second one is not needed"
+    )]
+    DeviceChannelTwice {
+        connection: Connection,
+        taken: usize,
+        description: String,
+    },
     #[error("{description}: the two ports carry different types")]
     PortTypeMismatch {
         connection: Connection,
@@ -210,6 +218,19 @@ impl Graph {
                 description: self.describe(&connection),
             });
         }
+        // A connection to the device writes the channel it names and the one after it, so the
+        // same port connected next to itself would play twice: the shape a project of the
+        // first milestone has, one connection per device channel. The very same connection is
+        // still one connection, so a parent and its child may both declare it.
+        if let Destination::DeviceOutput(channel) = connection.destination
+            && let Some(taken) = self.device_channel_of(&connection, channel)
+        {
+            return Err(GraphError::DeviceChannelTwice {
+                connection,
+                taken,
+                description: self.describe(&connection),
+            });
+        }
         self.connections.insert(connection);
         Ok(())
     }
@@ -220,6 +241,20 @@ impl Graph {
         } else {
             Err(GraphError::UnknownConnection(*connection))
         }
+    }
+
+    /// The device channel this port already connects to, when that connection covers
+    /// `channel` too. Two connections of one port to the same channel are one connection.
+    fn device_channel_of(&self, connection: &Connection, channel: usize) -> Option<usize> {
+        self.connections.iter().find_map(|existing| {
+            let Destination::DeviceOutput(taken) = existing.destination else {
+                return None;
+            };
+            let same_port =
+                existing.source == connection.source && existing.output == connection.output;
+            let distance = taken.abs_diff(channel);
+            (same_port && distance != 0 && distance < CHANNELS).then_some(taken)
+        })
     }
 
     fn node(&self, id: NodeId) -> Result<&GraphNode, GraphError> {
