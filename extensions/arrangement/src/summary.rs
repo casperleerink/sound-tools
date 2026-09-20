@@ -13,10 +13,9 @@ pub(crate) fn of_arrangement(
     let time_signature = project.project_file().tempo_map.time_signature();
     let tracks = tracks(project, arrangement.id());
     let mut lines = vec![format!(
-        "arrangement `{}`: {} {}. Positions are bar:beat:tick, a clip runs up to its end position",
+        "arrangement `{}`: {}. Positions are bar:beat:tick, a clip runs up to its end position",
         arrangement.id(),
-        tracks.len(),
-        if tracks.len() == 1 { "track" } else { "tracks" },
+        counted(tracks.len(), "track"),
     )];
     for (track, state) in tracks {
         let instrument = track.id().child(INSTRUMENT).ok();
@@ -43,15 +42,20 @@ pub(crate) fn of_arrangement(
                 _ => String::new(),
             };
             lines.push(format!(
-                "    clip `{}`: {} to {}, ticks {} to {}, {} notes{pitches}",
+                "    clip `{}`: {} to {}, ticks {} to {}, {}{pitches}",
                 clip.id(),
                 time_signature.bar_beat_of(state.start),
                 time_signature.bar_beat_of(state.end()),
                 state.start.0,
                 state.end().0,
-                state.notes.len(),
+                counted(state.notes.len(), "note"),
             ));
         }
     }
     lines.join("\n")
+}
+
+fn counted(count: usize, thing: &str) -> String {
+    let plural = if count == 1 { "" } else { "s" };
+    format!("{count} {thing}{plural}")
 }
