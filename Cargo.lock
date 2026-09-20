@@ -5277,6 +5277,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sound-notes"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sound-core",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "sound-ui"
 version = "0.1.0"
 dependencies = [
