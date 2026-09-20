@@ -197,6 +197,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrangement"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sound-core",
+ "sound-notes",
+ "tempfile",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4792,9 +4803,11 @@ name = "runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrangement",
  "hound",
  "instrument",
  "sound-core",
+ "tempfile",
  "tone",
 ]
 

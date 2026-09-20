@@ -255,15 +255,17 @@ impl<E: Event> EventBuffer<E> {
     }
 
     /// Keeps the list sorted by offset. Events with equal offsets keep their arrival order.
-    fn insert(&mut self, timed: Timed<E>) {
+    /// Returns whether the event fitted.
+    fn insert(&mut self, timed: Timed<E>) -> bool {
         if self.events.len() >= self.capacity {
             self.overflow += 1;
-            return;
+            return false;
         }
         let position = self
             .events
             .partition_point(|existing| existing.offset <= timed.offset);
         self.events.insert(position, timed);
+        true
     }
 }
 
@@ -294,6 +296,7 @@ impl<E: Event> ErasedEventBuffer for EventBuffer<E> {
     fn merge_from(&mut self, source: &dyn ErasedEventBuffer) {
         if let Some(source) = source.as_any().downcast_ref::<Self>() {
             for timed in &source.events {
+                // A full buffer counts the event in `overflow`.
                 self.insert(*timed);
             }
         }
@@ -383,6 +386,7 @@ pub struct EventOutputs<'a> {
     pub(crate) buffers: &'a mut [Box<dyn ErasedEventBuffer>],
     pub(crate) frames: usize,
     pub(crate) misuses: &'a Cell<u64>,
+    pub(crate) dropped: &'a Cell<u64>,
 }
 
 impl EventOutputs<'_> {
@@ -390,7 +394,10 @@ impl EventOutputs<'_> {
     /// last frame. When the port's buffer is full the event is dropped and counted in
     /// `EngineStatus::event_overflows`. A handle with an undeclared index or another event type
     /// than declared sends nothing and counts in `EngineStatus::port_misuses`.
-    pub fn push<E: Event>(&mut self, port: EventOutput<E>, offset: usize, event: E) {
+    ///
+    /// Returns whether the event was taken. A sender that must not lose an event, such as a
+    /// note off, keeps it and sends it again in the next block.
+    pub fn push<E: Event>(&mut self, port: EventOutput<E>, offset: usize, event: E) -> bool {
         let offset = offset.min(self.frames.saturating_sub(1));
         let buffer = self
             .buffers
@@ -400,5 +407,12 @@ impl EventOutputs<'_> {
             Some(buffer) => buffer.insert(Timed { offset, event }),
             None => misused(self.misuses),
         }
+    }
+
+    /// Counts an event that the processor did not send because a fixed list of its own was
+    /// full, for example its list of held notes. It shows up in
+    /// `EngineStatus::event_overflows`, like an event that a full buffer dropped.
+    pub fn count_dropped(&mut self) {
+        self.dropped.set(self.dropped.get() + 1);
     }
 }

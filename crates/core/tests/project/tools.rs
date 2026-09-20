@@ -9,12 +9,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AudioInput, AudioOutput, BehaviourContext, BehaviourError, Engine, EngineConfig, InputEndpoint,
-    InstanceId, OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, Project, Registry,
-    State,
+    InstanceId, OutputEndpoint, Place, Ports, PrepareConfig, ProcessContext, Processor, Project,
+    ProjectError, Registry, State,
 };
 
 pub const EXTENSION: &str = "test";
@@ -227,8 +228,44 @@ pub fn registry() -> Registry {
     registry
         .tool::<Bank>(EXTENSION)
         .unwrap()
-        .behaviour(apply_bank);
+        .behaviour(apply_bank)
+        .summary(summarize_bank);
+    registry.tool::<Shelf>(EXTENSION).unwrap();
+    registry.tool::<Book>(EXTENSION).unwrap();
+    registry.agent_doc(EXTENSION, TEST_AGENT_DOC);
     registry
+}
+
+/// Two tools with a fixed place, data only: a shelf lives at the top, a book on a shelf.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Shelf {}
+
+impl State for Shelf {
+    const TOOL: &'static str = "test.shelf";
+    const OWNS_CHILDREN: bool = true;
+    const PLACE: Place = Place::Root;
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Book {}
+
+impl State for Book {
+    const TOOL: &'static str = "test.book";
+    const PLACE: Place = Place::In(Shelf::TOOL);
+}
+
+pub const SHELF_RECORD: &str = r#"{"tool": "test.shelf", "state": {}}"#;
+pub const BOOK_RECORD: &str = r#"{"tool": "test.book", "state": {}}"#;
+
+pub const TEST_AGENT_DOC: &str =
+    "## Test tools\n\nA bar is {{ticks_per_bar}} ticks in {{time_signature}}.\n";
+
+/// A bank tells what it owns in one line, so a summary does not list every level.
+fn summarize_bank(project: &Project, bank: &sound_core::Instance<Bank>) -> String {
+    let levels = project.children::<Level>(bank.id()).count();
+    format!("bank {} with {levels} levels", bank.id())
 }
 
 pub const SAMPLE_RATE: u32 = 48_000;
@@ -237,6 +274,8 @@ pub const SAMPLE_RATE: u32 = 48_000;
 pub struct Harness {
     pub project: Project,
     pub engine: Engine,
+    /// The time of the last outside change. See [`Harness::apply_outside_changes`].
+    pub now: Instant,
     /// Last, so the folder outlives the project that holds its lock.
     pub folder: tempfile::TempDir,
 }
@@ -251,8 +290,17 @@ impl Harness {
         Self {
             project,
             engine,
+            now: Instant::now(),
             folder,
         }
+    }
+
+    /// Applies outside changes a minute after the last ones. Tests run in milliseconds, and
+    /// outside groups that close together are one undo step (`OUTSIDE_UNDO_WINDOW`). With
+    /// the minute, each call is a step of its own, as for changes a person makes by hand.
+    pub fn apply_outside_changes(&mut self, paths: &[PathBuf]) -> Result<usize, ProjectError> {
+        self.now += Duration::from_secs(60);
+        self.project.apply_outside_changes_at(paths, self.now)
     }
 
     /// Closes the project and opens the same folder again.
@@ -261,6 +309,7 @@ impl Harness {
             project,
             engine,
             folder,
+            ..
         } = self;
         drop((project, engine));
         Self::open(folder)
@@ -285,7 +334,7 @@ impl Harness {
     /// Writes a file and applies it, as the watcher would.
     pub fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
         let path = self.write(relative, contents);
-        self.project.apply_outside_changes(&[path]).unwrap()
+        self.apply_outside_changes(&[path]).unwrap()
     }
 
     /// Renders one device buffer and gives its last sample. Every test processor puts out a

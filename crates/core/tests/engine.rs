@@ -378,6 +378,57 @@ fn events_arrive_at_exact_frames_across_sub_blocks() {
     }
 }
 
+/// Sends five pings on the first frame of every block and keeps count of the ones that did
+/// not fit, the way a sender keeps a note off that it must not lose.
+struct Careful {
+    refused: usize,
+}
+
+impl Processor for Careful {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        Ports::new().event_output(PINGS_OUT).audio_output(OUTPUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, _: &mut ()) {}
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        for _ in 0..5 {
+            if !context
+                .event_outputs
+                .push(PINGS_OUT, 0, Ping { level: 1.0 })
+            {
+                self.refused += 1;
+            }
+        }
+        // A list of its own that was full.
+        context.event_outputs.count_dropped();
+        context.audio_outputs.get(OUTPUT).fill(self.refused as f32);
+    }
+}
+
+#[test]
+fn a_sender_learns_which_events_did_not_fit_and_can_count_its_own_drops() {
+    let mut config = EngineConfig::new(48_000, 1);
+    config.event_capacity = 4;
+    let (mut control, mut engine) = Engine::new(config);
+    let mut edit = control.edit();
+    let careful = edit
+        .add_processor("careful", Careful { refused: 0 })
+        .unwrap();
+    to_device(&mut edit, careful.id());
+    edit.commit().unwrap();
+
+    // Two blocks. In each, the fifth ping is refused.
+    let output = render(&mut engine, 128, 128);
+    assert_eq!((output[0], output[64]), (1.0, 2.0));
+    // Per block: one refused ping and one drop the processor counted itself.
+    assert_eq!(control.poll().unwrap().event_overflows, 4);
+}
+
 #[test]
 fn event_overflow_is_counted_not_allocated() {
     let mut config = EngineConfig::new(48_000, 1);

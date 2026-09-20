@@ -60,6 +60,7 @@ impl State for ToneState {
 /// Registers the Tone tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.tool::<ToneState>(EXTENSION)?.behaviour(apply);
+    registry.agent_doc(EXTENSION, include_str!("../agent-doc.md"));
     Ok(())
 }
 

@@ -7,8 +7,11 @@
 mod binding;
 mod composite;
 mod editing;
+mod generated;
 mod outside;
+mod places;
 mod properties;
 mod scale;
 mod tools;
+mod undo_grouping;
 mod watching;

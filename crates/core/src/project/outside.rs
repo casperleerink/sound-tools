@@ -7,8 +7,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::time::Instant;
 
-use super::editing::{Applied, Change, Step};
+use super::editing::{Applied, Change};
 use super::instance::{FOLDER_RECORD, InstanceId};
 use super::storage::{self, Form, OnDisk, PROJECT_FILE, PathTarget, RecordOnDisk, STATE_FOLDER};
 use super::{Project, ProjectError, ProjectEvent, ProjectFile, Source};
@@ -24,14 +25,30 @@ impl Project {
     /// A file that does not load leaves the live state as it is, stays on disk, and is listed
     /// in [`Project::problems`]. The rest of the group still applies. The runtime's own writes
     /// change nothing here, because the files hold what the runtime last wrote.
+    ///
+    /// Groups that follow each other within [`OUTSIDE_UNDO_WINDOW`], with no interface edit,
+    /// undo or redo in between, are one undo step.
+    ///
+    /// [`OUTSIDE_UNDO_WINDOW`]: super::OUTSIDE_UNDO_WINDOW
     pub fn apply_outside_changes(&mut self, paths: &[PathBuf]) -> Result<usize, ProjectError> {
-        self.apply_paths(paths, Source::Outside)
+        self.apply_outside_changes_at(paths, Instant::now())
+    }
+
+    /// [`Self::apply_outside_changes`] with the time of the change given, for tests of the
+    /// undo grouping.
+    pub fn apply_outside_changes_at(
+        &mut self,
+        paths: &[PathBuf],
+        at: Instant,
+    ) -> Result<usize, ProjectError> {
+        self.apply_paths(paths, Source::Outside, at)
     }
 
     pub(crate) fn apply_paths(
         &mut self,
         paths: &[PathBuf],
         source: Source,
+        at: Instant,
     ) -> Result<usize, ProjectError> {
         // Ids to look at, with the one form a folder scan saw for it, if any.
         let mut queue = BTreeMap::new();
@@ -64,8 +81,8 @@ impl Project {
 
         // Ids sort parents first, and a new instance only adds ids below itself.
         let mut observed = Vec::new();
-        // New instances of this group, and whether their tool owns children.
-        let mut created = BTreeMap::new();
+        // New instances of this group: their tool, and whether it owns children.
+        let mut created: BTreeMap<InstanceId, (&'static str, bool)> = BTreeMap::new();
         let mut deleted = BTreeSet::new();
         while let Some((id, seen)) = queue.pop_first() {
             self.clear_record_problems(&id);
@@ -112,13 +129,15 @@ impl Project {
             }
             let path = self.storage.record_path(&id, form);
             let path = self.storage.display_path(&path);
+            let mut owner_tool = None;
             if let Some(parent) = id.parent() {
                 let owner = match (created.get(&parent), self.instances.get(&parent)) {
-                    (Some(owns_children), _) => Some(*owns_children),
-                    (None, Some(record)) => Some(record.owns_children),
+                    (Some(created), _) => Some(*created),
+                    (None, Some(record)) => Some((record.tool, record.owns_children)),
                     (None, None) => None,
                 };
-                let message = match owner {
+                owner_tool = owner.map(|(tool, _)| tool);
+                let message = match owner.map(|(_, owns_children)| owns_children) {
                     Some(true) => None,
                     Some(false) => Some(format!(
                         "not loaded: its owner {parent} is of a tool that owns no children"
@@ -156,8 +175,12 @@ impl Project {
                 self.report_problem(path, message);
                 continue;
             }
+            if let Some(message) = record.place.refuses(record.tool, owner_tool) {
+                self.report_problem(path, format!("not loaded: {message}"));
+                continue;
+            }
             if !is_live {
-                created.insert(id.clone(), record.owns_children);
+                created.insert(id.clone(), (record.tool, record.owns_children));
                 if record.owns_children {
                     // Its children may have been skipped before, while it did not load.
                     self.queue_inside(Some(&id), &mut queue);
@@ -210,12 +233,7 @@ impl Project {
         }
         let count = applied.records.len() + usize::from(applied.project_file.is_some());
         if source == Source::Outside {
-            let mut step = Step {
-                label: OUTSIDE_LABEL.to_string(),
-                ..Step::default()
-            };
-            step.absorb(applied);
-            self.history.push(step);
+            self.history.push_outside(OUTSIDE_LABEL, applied, at);
             // The record files already hold the new state. Only `project.json` may not.
             self.write(std::iter::empty(), write_project_file)?;
         }
@@ -276,7 +294,7 @@ impl Project {
             !inside.is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
         });
         if self.file_problems.len() != before {
-            self.events.push(ProjectEvent::ProblemsChanged);
+            self.push_event(ProjectEvent::ProblemsChanged);
         }
 
         let mut found = Vec::new();

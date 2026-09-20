@@ -41,7 +41,7 @@ fn ten_thousand_child_records_open_and_one_edit_applies_live() {
 
     let path = harness.write("state/bank-000/level-050.json", &level_record(0.5));
     let started = Instant::now();
-    assert_eq!(harness.project.apply_outside_changes(&[path]).unwrap(), 1);
+    assert_eq!(harness.apply_outside_changes(&[path]).unwrap(), 1);
     println!("apply one outside record edit: {:?}", started.elapsed());
     assert_eq!(harness.level(), 0.5);
 
@@ -54,7 +54,7 @@ fn ten_thousand_child_records_open_and_one_edit_applies_live() {
     let started = Instant::now();
     std::fs::remove_dir_all(&folder).unwrap();
     assert_eq!(
-        harness.project.apply_outside_changes(&[folder]).unwrap(),
+        harness.apply_outside_changes(&[folder]).unwrap(),
         CHILDREN + 1
     );
     println!(

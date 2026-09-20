@@ -1,14 +1,17 @@
 //! The note contract: what a tool that sends notes and a tool that plays them agree on.
 //!
-//! Both sides depend on this crate and not on each other. It holds the saved [`Note`], the
-//! realtime [`NoteEvent`] and the port names of an instrument. `README.md` in this crate is
-//! the guide.
+//! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and
+//! [`Clip`], the realtime [`NoteEvent`] and the port names of an instrument. `README.md` in
+//! this crate is the guide.
 
 use serde::{Deserialize, Serialize};
-use sound_core::Ticks;
+use sound_core::{Place, State, Ticks};
 
 /// The event input of an instrument. It carries [`NoteEvent`].
 pub const NOTES_INPUT: &str = "notes";
+
+/// The tool that owns clips. Named here because the clip record is: see [`Clip`].
+pub const TRACK_TOOL: &str = "arrangement.track";
 
 /// The audio output of an instrument. Mono for now.
 pub const AUDIO_OUTPUT: &str = "audio";
@@ -95,15 +98,16 @@ impl From<Velocity> for u8 {
     }
 }
 
-/// How long a note is held: 1 tick or more.
+/// How long a note or a clip is: 1 tick or more.
 ///
 /// A note of no length would get its off before its on, because offs go first on a frame, and
-/// would sound until the next `AllOff`. So it cannot be built.
+/// would sound until the next `AllOff`. A clip of no length could hold no note. So it cannot
+/// be built.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "Ticks", into = "Ticks")]
-pub struct NoteLength(Ticks);
+pub struct Length(Ticks);
 
-impl NoteLength {
+impl Length {
     pub fn new(ticks: Ticks) -> Result<Self, NoteError> {
         Self::try_from(ticks)
     }
@@ -113,7 +117,7 @@ impl NoteLength {
     }
 }
 
-impl TryFrom<Ticks> for NoteLength {
+impl TryFrom<Ticks> for Length {
     type Error = NoteError;
 
     fn try_from(ticks: Ticks) -> Result<Self, NoteError> {
@@ -124,8 +128,8 @@ impl TryFrom<Ticks> for NoteLength {
     }
 }
 
-impl From<NoteLength> for Ticks {
-    fn from(length: NoteLength) -> Ticks {
+impl From<Length> for Ticks {
+    fn from(length: Length) -> Ticks {
         length.0
     }
 }
@@ -135,7 +139,7 @@ impl From<NoteLength> for Ticks {
 #[serde(deny_unknown_fields)]
 pub struct Note {
     pub start: Ticks,
-    pub length: NoteLength,
+    pub length: Length,
     pub pitch: Pitch,
     pub velocity: Velocity,
 }
@@ -156,6 +160,73 @@ impl Note {
     pub fn off(&self) -> NoteEvent {
         NoteEvent::Off { pitch: self.pitch }
     }
+}
+
+/// A saved clip: a stretch of the timeline of whatever owns it, with the notes that play in it.
+/// This is the record other extensions read, so it lives here and not in the arrangement.
+///
+/// The rules, the same for everyone who plays or draws a clip:
+/// - `start` is a position on the project timeline. Note starts count from the clip start.
+/// - Every note starts inside the clip. A record with a note at or after `length` does not
+///   load, so a note written with a timeline position instead is an error and not silence.
+/// - A note that is longer than the rest of the clip ends where the clip ends.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Clip {
+    pub start: Ticks,
+    pub length: Length,
+    pub notes: Vec<Note>,
+}
+
+impl Clip {
+    /// The first tick after the clip.
+    pub fn end(&self) -> Ticks {
+        self.start + self.length.ticks()
+    }
+
+    /// The notes at their place on the project timeline, in saved order.
+    pub fn placed_notes(&self) -> impl Iterator<Item = PlacedNote> {
+        self.notes.iter().map(|note| PlacedNote {
+            start: self.start + note.start,
+            end: (self.start + note.end()).min(self.end()),
+            pitch: note.pitch,
+            velocity: note.velocity,
+        })
+    }
+
+    /// Sets the length and drops the notes that would start outside, which a clip cannot hold.
+    pub fn set_length(&mut self, length: Length) {
+        self.length = length;
+        self.notes.retain(|note| note.start < length.ticks());
+    }
+}
+
+impl State for Clip {
+    const TOOL: &'static str = "arrangement.clip";
+    /// Only a track plays clips. Anywhere else a clip would load and never sound.
+    const PLACE: Place = Place::In(TRACK_TOOL);
+
+    fn validate(&self) -> Result<(), String> {
+        let length = self.length.ticks();
+        let mut notes = self.notes.iter().enumerate();
+        match notes.find(|(_, note)| note.start >= length) {
+            Some((index, note)) => Err(format!(
+                "notes[{index}].start must be less than the clip length {}, not {}. A note start counts from the start of its clip, not from the start of the project",
+                length.0, note.start.0
+            )),
+            None => Ok(()),
+        }
+    }
+}
+
+/// A note of a clip on the project timeline. `end` is the tick of the note off, which is at
+/// most the end of the clip.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct PlacedNote {
+    pub start: Ticks,
+    pub end: Ticks,
+    pub pitch: Pitch,
+    pub velocity: Velocity,
 }
 
 /// What travels from a sender of notes to an instrument, at a frame offset.

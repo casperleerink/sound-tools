@@ -4,6 +4,7 @@
 //! holds what they need around it.
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use super::file::{ProjectFile, SavedConnection};
 use super::instance::{Instance, InstanceId, Record, State};
@@ -106,6 +107,17 @@ impl Step {
         }
     }
 
+    /// Forgets what ended where it began, for example a record that was made and deleted.
+    fn drop_unchanged(&mut self) {
+        self.records
+            .retain(|_, (before, after)| match (before, after) {
+                (Some(before), Some(after)) => !before.equals(after),
+                (None, None) => false,
+                _ => true,
+            });
+        self.project_file.take_if(|(before, after)| before == after);
+    }
+
     fn is_empty(&self) -> bool {
         self.records.is_empty() && self.project_file.is_none()
     }
@@ -139,19 +151,67 @@ enum Side {
     After,
 }
 
+/// Groups of outside file changes that follow each other within this time are one undo step.
+///
+/// An agent writes the files of one request seconds apart, far more than the quiet window
+/// that groups them for live apply. Without this, undo of a track that an agent added takes
+/// one step per file. It is a heuristic: the second milestone replaces it with the real
+/// boundaries of an agent request.
+pub const OUTSIDE_UNDO_WINDOW: Duration = Duration::from_secs(15);
+
 #[derive(Default)]
 pub(crate) struct History {
     undo: Vec<Step>,
     redo: Vec<Step>,
+    /// When the step on top of `undo` is an outside step and nothing came after it: when its
+    /// last group was applied. An interface edit, an undo and a redo all clear it.
+    last_outside: Option<Instant>,
 }
 
 impl History {
     /// A new step. What was undone before can no longer be redone.
     pub fn push(&mut self, step: Step) {
+        self.last_outside = None;
         if !step.is_empty() {
             self.undo.push(step);
             self.redo.clear();
         }
+    }
+
+    /// A group of outside changes, applied at `at`. It joins the step on top when that is an
+    /// outside step from less than [`OUTSIDE_UNDO_WINDOW`] before, with nothing in between.
+    /// The joined step keeps its older before side and takes the newer after side.
+    pub fn push_outside(&mut self, label: &str, applied: Applied, at: Instant) {
+        let recent = self
+            .last_outside
+            .is_some_and(|last| at.saturating_duration_since(last) < OUTSIDE_UNDO_WINDOW);
+        match self.undo.last_mut().filter(|_| recent) {
+            Some(step) => {
+                step.absorb(applied);
+                step.drop_unchanged();
+                self.last_outside = Some(at);
+                // An agent that takes back what it just wrote leaves nothing to undo.
+                if step.is_empty() {
+                    self.undo.pop();
+                    self.last_outside = None;
+                }
+            }
+            None => {
+                let mut step = Step {
+                    label: label.to_string(),
+                    ..Step::default()
+                };
+                step.absorb(applied);
+                let is_empty = step.is_empty();
+                self.push(step);
+                // An empty group is no step, and then the top is not known to be an outside one.
+                self.last_outside = (!is_empty).then_some(at);
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
     }
 }
 
@@ -229,13 +289,7 @@ impl Project {
         if let Some((_, after)) = &mut step.project_file {
             *after = self.project_file.clone();
         }
-        step.records
-            .retain(|_, (before, after)| match (before, after) {
-                (Some(before), Some(after)) => !before.equals(after),
-                (None, None) => false,
-                _ => true,
-            });
-        step.project_file.take_if(|(before, after)| before == after);
+        step.drop_unchanged();
         let written = self.write(step.records.keys(), step.project_file.is_some());
         self.history.push(step);
         written
@@ -264,6 +318,7 @@ impl Project {
             return Ok(None);
         };
         self.sync_project_file();
+        self.history.last_outside = None;
         let applied = self.apply(step.changes(Side::Before), Source::History)?;
         let written = self.write_step(&step, &applied);
         let label = step.label.clone();
@@ -276,6 +331,7 @@ impl Project {
             return Ok(None);
         };
         self.sync_project_file();
+        self.history.last_outside = None;
         let applied = self.apply(step.changes(Side::After), Source::History)?;
         let written = self.write_step(&step, &applied);
         let label = step.label.clone();
@@ -289,6 +345,12 @@ impl Project {
         let touched = applied.records.iter().map(|change| &change.id);
         let project_file = step.project_file.is_some() || applied.project_file.is_some();
         self.write(step.records.keys().chain(touched), project_file)
+    }
+
+    /// Forgets every undo and redo step. A new project starts like this: making its default
+    /// content is not something to undo.
+    pub fn clear_history(&mut self) {
+        self.history.clear();
     }
 
     /// The label of the step that `undo` would undo.

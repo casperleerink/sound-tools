@@ -6,38 +6,11 @@ Enable it in `project.json` under `extensions` as `"instrument"`.
 
 ## The record
 
-The synth owns no children, so an instance is always one file: `state/<name>.json`, or `instrument.json` inside the folder of the track that owns it. A field you leave out takes its default, so `"state": {}` is the default synth. The runtime writes every field when it saves. An unknown field or a value out of range does not load. The instance then keeps its last valid state, and the problem names the file and the field, for example `state: cutoff_hz must be from 20 to 20000, not 5`.
+[agent-doc.md](agent-doc.md) has the record with every field, its range and default, and some starting points for sounds. The runtime writes that file into every project as part of `AGENTS.md`, and a test loads its example, so it is the single source for the format.
 
-```json
-{
-  "tool": "instrument.synth",
-  "state": {
-    "waveform": "saw",
-    "cutoff_hz": 2000.0,
-    "resonance": 0.2,
-    "attack_seconds": 0.005,
-    "decay_seconds": 0.2,
-    "sustain": 0.7,
-    "release_seconds": 0.3,
-    "gain": 0.15
-  }
-}
-```
+The synth owns no children, so an instance is always one file: `state/<name>.json`, or `instrument.json` inside the folder of the track that owns it. A field you leave out takes its default. The runtime writes every field when it saves. An unknown field or a value out of range does not load. The instance then keeps its last valid state, and the problem names the file and the field, for example `state: cutoff_hz must be from 20 to 20000, not 5`.
 
-These are also the defaults, written the way the runtime writes them. Compact JSON loads too.
-
-| Field | Meaning | Values | Default |
-| --- | --- | --- | --- |
-| `waveform` | The oscillator. `"saw"` is bright and full. `"square"` is hollow. | `"saw"`, `"square"` | `"saw"` |
-| `cutoff_hz` | The low-pass filter lets through what is below this frequency. Lower is darker. | 20 to 20000 Hz | 2000 |
-| `resonance` | A peak at the cutoff. 0 is none, 1 is a strong ringing peak. The synth turns the level down as the resonance goes up, so the peak does not overload the output. | 0 to 1 | 0.2 |
-| `attack_seconds` | From note on to full level. | 0.001 to 10 s | 0.005 |
-| `decay_seconds` | From full level down to the sustain level. | 0.001 to 10 s | 0.2 |
-| `sustain` | The level a held note settles at, as a part of full level. 0 makes every note a pluck. | 0 to 1 | 0.7 |
-| `release_seconds` | From note off to silence. | 0.001 to 10 s | 0.3 |
-| `gain` | Linear output gain. With the defaults one note peaks at 0.16 for velocity 127 and at 0.10 for velocity 100. A chord adds up: six notes at velocity 127 peak at 0.47 with the saw and 0.67 with the square. Tracks add up too, and there is no mixer yet, so keep it low. | 0 to 1 | 0.15 |
-
-Some starting points: a pluck is `sustain` 0 with `decay_seconds` 0.15 to 0.4. A pad is `attack_seconds` 0.5 or more and `release_seconds` 1 or more. A bass is `cutoff_hz` 300 to 800 with `resonance` near 0.4.
+With the defaults one note peaks at 0.16 for velocity 127 and at 0.10 for velocity 100. A chord adds up: six notes at velocity 127 peak at 0.47 with the saw and 0.67 with the square.
 
 An edit applies while notes are held. The notes go on. Gain, cutoff and resonance move to the new value over 0.05 s, so an edit does not click. A sustain edit glides at the decay speed. Attack, decay and release times apply at once, also to held notes. A waveform edit is a switch, not a fade.
 

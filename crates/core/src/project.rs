@@ -9,6 +9,7 @@
 mod binding;
 mod editing;
 mod file;
+mod generated;
 mod instance;
 mod outside;
 mod registry;
@@ -19,9 +20,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
-pub use editing::{Changes, Edit};
+pub use editing::{Changes, Edit, OUTSIDE_UNDO_WINDOW};
 pub use file::{FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination};
-pub use instance::{Instance, InstanceId, InvalidInstanceId, State};
+pub use generated::{AGENT_DOC_FILE, NO_PROBLEMS, PROBLEMS_FILE};
+pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{Registry, RegistryError, ToolRegistration};
 pub use storage::StorageError;
 pub use watcher::GROUPING_WINDOW;
@@ -44,6 +46,8 @@ pub enum ProjectError {
     /// `project.json` could not be loaded when the project opened.
     #[error("{path}: {message}")]
     InvalidProjectFile { path: String, message: String },
+    #[error(transparent)]
+    InvalidId(#[from] InvalidInstanceId),
     #[error("instance {0} does not exist")]
     MissingInstance(InstanceId),
     #[error("instance {0} cannot be created: its parent does not exist")]
@@ -55,6 +59,8 @@ pub enum ProjectError {
         id: InstanceId,
         parent_tool: &'static str,
     },
+    #[error("instance {id} cannot be created here: {message}")]
+    WrongPlace { id: InstanceId, message: String },
     #[error("instance {0} cannot be created: a file that is not loaded already has this id")]
     IdTaken(InstanceId),
     #[error("tool {0:?} is not registered, or its extension is not enabled in project.json")]
@@ -130,6 +136,8 @@ pub struct Project {
     events: Vec<ProjectEvent>,
     /// By path relative to the project folder.
     file_problems: BTreeMap<String, String>,
+    /// The generated files may no longer match the project. See `generated.rs`.
+    generated_are_stale: bool,
     watcher: Option<Watcher>,
 }
 
@@ -182,6 +190,7 @@ impl Project {
             history: History::default(),
             events: Vec::new(),
             file_problems: BTreeMap::new(),
+            generated_are_stale: true,
             watcher: None,
         };
         let mut changes = Vec::new();
@@ -208,8 +217,9 @@ impl Project {
         // The project file first: it says which extensions are enabled.
         project.apply(changes, Source::Load)?;
         let state_folder = project.storage.state_folder();
-        project.apply_paths(&[state_folder], Source::Load)?;
+        project.apply_paths(&[state_folder], Source::Load, std::time::Instant::now())?;
         project.events.clear();
+        project.write_generated_files()?;
         Ok(project)
     }
 
@@ -233,6 +243,11 @@ impl Project {
         self.instances.iter().map(|(id, record)| (id, record.tool))
     }
 
+    /// The tool name of an instance.
+    pub fn tool_of(&self, id: &InstanceId) -> Option<&'static str> {
+        self.instances.get(id).map(|record| record.tool)
+    }
+
     /// Resolves a saved reference. `None` when the instance does not exist or belongs to
     /// another tool. A reference owns nothing and keeps nothing alive.
     pub fn resolve<S: State>(&self, id: &InstanceId) -> Option<Instance<S>> {
@@ -253,6 +268,32 @@ impl Project {
         parent
             .children_in(&self.instances)
             .filter_map(|(id, record)| Some((Instance::new(id.clone()), record.state::<S>()?)))
+    }
+
+    /// How the tool of `id` describes the instance and what it owns, as lines of text. `None`
+    /// when the instance does not exist or its tool registered no summary.
+    pub fn summary(&self, id: &InstanceId) -> Option<String> {
+        let record = self.instances.get(id)?;
+        let summary = self.registry.definition(record.tool)?.summary.as_ref()?;
+        Some(summary(self, id))
+    }
+
+    /// An id that is free: `wanted`, or else `wanted-2`, `wanted-3` and so on. Free means no
+    /// live instance has it and no file or folder sits at its place, loaded or not.
+    pub fn free_id(&self, wanted: &InstanceId) -> Result<InstanceId, ProjectError> {
+        let mut candidate = wanted.clone();
+        let mut number = 1;
+        loop {
+            let on_disk = self.storage.read_record(&candidate, None)?;
+            let taken = self.instances.contains_key(&candidate)
+                || !matches!(on_disk, RecordOnDisk::Missing)
+                || self.storage.has_folder(&candidate);
+            if !taken {
+                return Ok(candidate);
+            }
+            number += 1;
+            candidate = InstanceId::numbered(wanted, number);
+        }
     }
 
     /// The state of any instance as compact JSON, for summaries.
@@ -323,10 +364,10 @@ impl Project {
         let project_file = (project_file_before != self.project_file)
             .then(|| (project_file_before, self.project_file.clone()));
         if project_file.is_some() {
-            self.events.push(ProjectEvent::ProjectFileChanged);
+            self.push_event(ProjectEvent::ProjectFileChanged);
         }
         if problems_before != self.bindings.connection_problems() {
-            self.events.push(ProjectEvent::ProblemsChanged);
+            self.push_event(ProjectEvent::ProblemsChanged);
         }
         Ok(Applied {
             records,
@@ -346,6 +387,13 @@ impl Project {
             match change {
                 Change::Set(id, record) => {
                     self.check_tool(record.tool)?;
+                    let owner = id.parent().and_then(|parent| self.instances.get(&parent));
+                    let owner = owner.map(|owner| owner.tool);
+                    if let Some(message) = record.place.refuses(record.tool, owner)
+                        && id.parent().is_none_or(|_| owner.is_some())
+                    {
+                        return Err(ProjectError::WrongPlace { id, message });
+                    }
                     if !self.instances.contains_key(&id) {
                         if let Some(parent) = id.parent() {
                             let Some(parent) = self.instances.get(&parent) else {
@@ -520,7 +568,7 @@ impl Project {
 
     pub(crate) fn clear_problem(&mut self, path: &str) {
         if self.file_problems.remove(path).is_some() {
-            self.events.push(ProjectEvent::ProblemsChanged);
+            self.push_event(ProjectEvent::ProblemsChanged);
         }
     }
 
@@ -570,7 +618,16 @@ impl Project {
 
     pub(crate) fn report_problem(&mut self, path: String, message: String) {
         self.file_problems.insert(path, message);
-        self.events.push(ProjectEvent::ProblemsChanged);
+        self.push_event(ProjectEvent::ProblemsChanged);
+    }
+
+    /// The generated files follow the problems and `project.json`.
+    pub(crate) fn push_event(&mut self, event: ProjectEvent) {
+        self.generated_are_stale |= matches!(
+            event,
+            ProjectEvent::ProblemsChanged | ProjectEvent::ProjectFileChanged
+        );
+        self.events.push(event);
     }
 }
 

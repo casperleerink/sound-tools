@@ -21,9 +21,13 @@ This is exactly how the runtime writes a note: spaces after `:` and `,`, and one
 
 All four are plain JSON numbers. A value out of range, a fraction or an unknown field does not load, and the message names the range: `pitch must be from 0 to 127, not 128`.
 
-In Rust, `Pitch`, `Velocity` and `NoteLength` cannot hold a wrong value: `Pitch::new(60)?`, `Velocity::new(100)?`, `NoteLength::new(Ticks(480))?`. `Pitch::frequency_hz()` gives the frequency, twelve equal steps per octave with A4 at 440 Hz. `start` is the core `Ticks`. A length of 0 cannot be built, because such a note would get its off before its on and never end. `note.end()` is the tick of the note off. `note.on()` and `note.off()` give the events below.
+In Rust, `Pitch`, `Velocity` and `Length` cannot hold a wrong value: `Pitch::new(60)?`, `Velocity::new(100)?`, `Length::new(Ticks(480))?`. `Pitch::frequency_hz()` gives the frequency, twelve equal steps per octave with A4 at 440 Hz. `start` is the core `Ticks`. A length of 0 cannot be built, because such a note would get its off before its on and never end. `note.end()` is the tick of the note off. `note.on()` and `note.off()` give the events below.
 
-The record that holds notes, such as a clip, belongs to the extension that saves it.
+## The saved clip
+
+`Clip` is the record `arrangement.clip`: `start` and `length` in ticks and `notes`. It lives here because its saved form is what other extensions read. `extensions/arrangement/agent-doc.md` has the format with a complete example.
+
+The rules are the same for everyone who plays or draws a clip. Note starts count from the clip start. Every note starts inside the clip, below its `length`, else the record does not load. A note that is longer than the rest of the clip ends where the clip ends. `clip.placed_notes()` gives the notes at their project position with these rules applied. `clip.set_length(length)` drops the notes a shorter clip cannot hold. `Length` is the type of both lengths: 1 tick or more. A clip lives directly inside a track (`TRACK_TOOL`, `arrangement.track`). Anywhere else it does not load, because nothing would play it.
 
 ## The note event
 
@@ -36,7 +40,8 @@ The record that holds notes, such as a clip, belongs to the extension that saves
 Rules for a sender:
 
 - Send each event at the frame of its tick: `context.transport.offset_of(tick)`, see "Schedule from the transport" in `crates/core/README.md`.
-- A sender keeps no list of held notes. When the transport says `stopped_playing` or `jumped`, send one `AllOff` at offset 0, before the notes of that block.
+- When the transport says `stopped_playing` or `jumped`, send one `AllOff` at offset 0, before the notes of that block.
+- A sender whose notes never change while they sound needs no list of held notes. One whose notes can be edited, moved or deleted while they sound keeps a fixed list of what it started, with the tick of each off, and sends offs from that list. `extensions/arrangement/src/sequencer.rs` does this.
 - On one frame, send the offs before the ons. Else the end of one note releases the next note of the same pitch that starts there.
 
 Known limit: `AllOff` releases everything the instrument holds, whoever started it. Once MIDI input feeds the same `notes` port, a transport stop would also release the notes held on the keyboard. This is to be decided with MIDI input.

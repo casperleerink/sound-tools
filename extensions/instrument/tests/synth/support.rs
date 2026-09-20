@@ -10,7 +10,7 @@ use sound_core::{
     OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, Project, Registry, State,
     Ticks,
 };
-use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Note, NoteEvent, NoteLength, Pitch, Velocity};
+use sound_notes::{AUDIO_OUTPUT, Length, NOTES_INPUT, Note, NoteEvent, Pitch, Velocity};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 
@@ -105,7 +105,7 @@ pub fn id(id: &str) -> InstanceId {
 pub fn note(start: u64, length: u64, pitch: u8, velocity: u8) -> Note {
     Note {
         start: Ticks(start),
-        length: NoteLength::new(Ticks(length)).unwrap(),
+        length: Length::new(Ticks(length)).unwrap(),
         pitch: Pitch::new(pitch).unwrap(),
         velocity: Velocity::new(velocity).unwrap(),
     }

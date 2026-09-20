@@ -73,9 +73,9 @@ proptest! {
     fn applying_on_top_equals_loading_from_empty(first in bank_files(), second in bank_files()) {
         let mut on_top = Harness::new();
         let paths = write(&on_top, &first);
-        on_top.project.apply_outside_changes(&paths).unwrap();
+        on_top.apply_outside_changes(&paths).unwrap();
         let paths = write(&on_top, &second);
-        on_top.project.apply_outside_changes(&paths).unwrap();
+        on_top.apply_outside_changes(&paths).unwrap();
 
         let fresh = Harness::new();
         write(&fresh, &second);

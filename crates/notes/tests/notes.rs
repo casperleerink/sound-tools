@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used)]
 
 use sound_core::Ticks;
-use sound_notes::{Note, NoteError, NoteEvent, NoteLength, Pitch, Velocity};
+use sound_notes::{Length, Note, NoteError, NoteEvent, Pitch, Velocity};
 
 const LINE: &str = r#"{"start":0,"length":480,"pitch":60,"velocity":100}"#;
 
@@ -57,7 +57,7 @@ fn values_out_of_range_are_rejected_with_the_range_in_the_message() {
         error.starts_with("length must be 1 tick or more, not 0"),
         "{error}"
     );
-    assert_eq!(NoteLength::new(Ticks(0)), Err(NoteError::Length));
+    assert_eq!(Length::new(Ticks(0)), Err(NoteError::Length));
     assert_eq!(Pitch::new(128), Err(NoteError::Pitch(128)));
     assert_eq!(Velocity::new(0), Err(NoteError::Velocity(0)));
 }

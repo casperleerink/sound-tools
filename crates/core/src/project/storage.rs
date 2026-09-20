@@ -490,6 +490,20 @@ impl Storage {
         Ok(())
     }
 
+    /// Makes a generated file in the project folder hold `contents`, or removes it for `None`.
+    /// A file that already holds the same bytes is left alone, so its modification time only
+    /// moves when the text does.
+    pub fn write_generated(&self, name: &str, contents: Option<&str>) -> Result<(), StorageError> {
+        let path = self.root.join(name);
+        let Some(contents) = contents else {
+            return self.remove_file(&path);
+        };
+        if fs::read(&path).is_ok_and(|bytes| bytes == contents.as_bytes()) {
+            return Ok(());
+        }
+        self.write_atomically(&path, contents.as_bytes())
+    }
+
     fn remove_file(&self, path: &Path) -> Result<(), StorageError> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/instrument", "extensions/tone", "tooling/workspace-rules"]
+members = ["crates/core", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/instrument", "extensions/tone", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -12,6 +12,7 @@ publish = false
 # Zed stable v1.20.2. Keep the rev and rust-toolchain.toml in step with Zed's pin.
 gpui = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f", features = ["runtime_shaders", "font-kit"] }
+arrangement = { path = "extensions/arrangement" }
 instrument = { path = "extensions/instrument" }
 sound-core = { path = "crates/core" }
 sound-notes = { path = "crates/notes" }
@@ -71,6 +72,7 @@ serde_derive = { opt-level = 3 }
 gpui_macros = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
+arrangement = { opt-level = 3 }
 instrument = { opt-level = 3 }
 runtime = { opt-level = 3 }
 sound-core = { opt-level = 3 }

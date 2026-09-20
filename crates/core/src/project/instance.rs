@@ -14,6 +14,35 @@ use serde::{Deserialize, Serialize};
 /// The file name, without `.json`, of the record of an instance that is a folder.
 pub(crate) const FOLDER_RECORD: &str = "instance";
 
+/// Where instances of a tool may live in the ownership tree.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Place {
+    Anywhere,
+    /// Only at the top of `state/`.
+    Root,
+    /// Only as a direct child of an instance of the tool with this name.
+    In(&'static str),
+}
+
+impl Place {
+    /// Why an instance of `tool` may not live under `owner`, the tool of its direct owner.
+    /// The text tells an agent where the record belongs.
+    pub(crate) fn refuses(self, tool: &str, owner: Option<&str>) -> Option<String> {
+        match (self, owner) {
+            (Self::Root, Some(_)) => Some(format!(
+                "an instance of {tool:?} belongs at the top of state/, not inside another instance"
+            )),
+            (Self::In(wanted), Some(owner)) if owner != wanted => Some(format!(
+                "an instance of {tool:?} belongs directly inside an instance of {wanted:?}, and its owner here is a {owner:?}"
+            )),
+            (Self::In(wanted), None) => Some(format!(
+                "an instance of {tool:?} belongs directly inside an instance of {wanted:?}, not at the top of state/"
+            )),
+            _ => None,
+        }
+    }
+}
+
 /// The saved state of one tool. The type is the handle of the tool: every typed call names it.
 ///
 /// Derive `Serialize`, `Deserialize`, `Clone` and `PartialEq`. Add `#[serde(deny_unknown_fields)]`
@@ -26,6 +55,10 @@ pub trait State: Serialize + DeserializeOwned + Clone + PartialEq + Send + Sync 
     /// record for good: `<name>/instance.json` with the children next to it when true,
     /// `<name>.json` when false.
     const OWNS_CHILDREN: bool = false;
+
+    /// Where instances may live. A record somewhere else is not loaded and is reported, so
+    /// a clip that an agent wrote outside a track is an error it sees, not silence.
+    const PLACE: Place = Place::Anywhere;
 
     /// Rules that the types alone do not express, such as ranges. It runs on every path into
     /// the project: files, interface edits, undo. The message should name the field.
@@ -61,6 +94,12 @@ impl InstanceId {
     /// The id of an owned child of this instance.
     pub fn child(&self, name: &str) -> Result<Self, InvalidInstanceId> {
         Self::new(&format!("{}/{name}", self.0))
+    }
+
+    /// `id-2`, `id-3` and so on: the same id with a number, for a name that is taken.
+    pub(crate) fn numbered(id: &InstanceId, number: u32) -> Self {
+        // Still a valid id: digits and `-` are valid in a name.
+        Self(format!("{}-{number}", id.0))
     }
 
     /// The owner. `None` for a root instance.
@@ -240,6 +279,7 @@ impl<S: State> ErasedState for S {
 pub(crate) struct Record {
     pub tool: &'static str,
     pub owns_children: bool,
+    pub place: Place,
     pub state: Arc<dyn ErasedState>,
 }
 
@@ -248,6 +288,7 @@ impl Record {
         Self {
             tool: S::TOOL,
             owns_children: S::OWNS_CHILDREN,
+            place: S::PLACE,
             state: Arc::new(state),
         }
     }
