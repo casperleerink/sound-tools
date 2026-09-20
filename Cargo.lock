@@ -2745,6 +2745,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "instrument"
+version = "0.1.0"
+dependencies = [
+ "proptest 1.11.0",
+ "serde",
+ "sound-core",
+ "sound-notes",
+ "tempfile",
+]
+
+[[package]]
 name = "interpolate_name"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
