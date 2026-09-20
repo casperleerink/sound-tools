@@ -30,6 +30,8 @@ Build the core and the bundled DAW extensions together. Each bundled extension s
 
 The v0 succeeds when a composer can open a project, make a short piece with the bundled tools, ask the agent for a change in plain language, hear the result without a build, and reopen the work later.
 
+Changed September 20, 2026: the DAW comes first. The next work is what makes it worth using by itself: MIDI recording, third-party plugins, and fitting the tempo to a freely played take. Until the agent sidebar exists, the agent is an external coding agent such as Claude Code or Codex, run in the project folder.
+
 ## Inspirations
 
 - Pi: a focused core with extensions the integrated agent can create and modify.

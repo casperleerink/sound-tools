@@ -91,6 +91,7 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [CONCEPT.md](CONCEPT.md): what the product is for.
 - [ARCHITECTURE.md](ARCHITECTURE.md): the decisions, the first milestone with its check, and the known gaps.
 - [ENGINEERING.md](ENGINEERING.md): how to build: dependencies, the audio engine, testing, rules for agents.
+- [docs/milestone-2.md](docs/milestone-2.md): the plan for the next milestone. [docs/agent-brief.md](docs/agent-brief.md) is the shared brief for the agents that build it.
 - [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
 - [SDK_SKETCH.md](SDK_SKETCH.md): an early sketch of the extension SDK.
 - Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md).

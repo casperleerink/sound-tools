@@ -49,6 +49,8 @@ Verify the first small set by using it in Tone, then asking a Codex subagent to 
 
 ## Outer application and project runtime
 
+Parked September 20, 2026. Nothing in this section is built. The product is one process, the project runtime, and the agent is external. The section stays as the direction for when extension builds and an in-app agent come back into scope.
+
 The outer application and project runtime run as separate processes. The outer application manages the project folder, agent conversation, extension source code and builds. It starts and stops the runtime and remains available while the runtime rebuilds or restarts.
 
 Support one open project at a time for now, with one active project runtime and one audio engine. Simultaneous project sessions are not required.
@@ -182,7 +184,7 @@ Decided September 19, 2026, for this milestone:
 
 Out of scope until later milestones: the outer application, agent sidebar, provider sign-in, in-app build and reload, project-local extension copies, mixer, sampler, effects, MIDI input, plugin host, recording and automation.
 
-Second milestone: the outer application, the agent sidebar and the agent integration. After that, the remaining bundled extensions in the order above.
+Second milestone, changed September 20, 2026: plugins, MIDI recording and fit tempo, see "Second milestone" below. The outer application, the agent sidebar and the agent integration are parked.
 
 Verify the first milestone:
 
@@ -212,6 +214,14 @@ Checked on the real application on an Apple Silicon laptop: the window driven wi
 Release build, first time: `cargo build --release -p runtime` takes 1.5 minutes and gives a binary of 12 MB. In the window the small project uses 2 % of a core stopped and 11 to 14 % playing, headless 1 % playing. The large one uses 8 % stopped and 20 % playing. 0 xruns in all. The dev build uses 9 % and 32 % on the large one. It also ran on a device at 96 kHz.
 
 Found and fixed by the check: an undo could land on the middle of a drag (see "Editing and system services"), and the agent doc now tells an agent that writes and reads in one command to wait a second before it reads `problems.txt`. After that, Codex did.
+
+### Second milestone, decided September 20, 2026
+
+Goal: a composer records a piano take from a MIDI keyboard with no click, on a track that plays a third-party plugin. One action fits the project tempo to the take, so the grid follows the playing and the take sounds the same. A steadiness amount moves the tempo between as played and steady. Parts added after that, by hand or by an external agent, follow the take.
+
+The order of work changed. A better DAW comes before an agent inside the product. The agent stays an external coding agent in the project folder, which the first milestone proved works. The in-app agent, the sidebar and the outer application are parked, not dropped.
+
+The decisions, the scope, the steps and the checks are in [docs/milestone-2.md](docs/milestone-2.md). Each step records what it settles in this file.
 
 ### Agent context and tools
 
@@ -461,12 +471,12 @@ The first milestone is built and was verified on September 19, 2026, see "Verifi
 
 The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. It was re-checked in the real window and needs no workaround, see "The window and its views". The pinned GPUI has an accessibility tree and focus-visible. The menu trigger and the seek strip use focus-visible; the other components and the accessibility tree are open.
 
-What the second milestone starts from: one process, the project runtime, that opens a project folder in a window or headless, keeps it live in both directions and plays it. An external agent already composes in it through files alone, with `AGENTS.md` as its context, `problems.txt` as its check and one undo step per request by the 15 s rule. The second milestone puts the agent into the product: the outer application that owns the agent session and starts the runtime, the protocol between the two (start, stop, reload, transport, state and errors), the agent sidebar in the window, and the real boundaries of an agent request in place of the 15 s rule. Nothing in the runtime or the SDK depends on which agent it is.
+What the second milestone starts from: one process, the project runtime, that opens a project folder in a window or headless, keeps it live in both directions and plays it. An external agent already composes in it through files alone, with `AGENTS.md` as its context, `problems.txt` as its check and one undo step per request by the 15 s rule. The second milestone keeps that and makes the DAW worth using: stereo tracks with gain, pan and mute, MIDI recording, CLAP and VST3 plugins, and fitting the tempo to a free take. The plan is [docs/milestone-2.md](docs/milestone-2.md).
 
 Open:
 
 - Declarative parameter metadata and generic parameter controls.
-- Agent integration, the outer application/runtime protocol details and window/workspace composition. Second milestone.
+- Agent integration, the outer application/runtime protocol details and window/workspace composition. Parked September 20, 2026, until the DAW itself is further along. The 15 s rule for one undo step per agent request stays until then.
 - Whether the agent gets the transport and `--inspect` as tools. No agent has used `--inspect` yet: Claude Code ran with file tools only, and Codex had a shell but no `runtime` on its `PATH`. Both managed without it.
 
 ### Known gaps after the first milestone
