@@ -7,6 +7,7 @@ use std::marker::PhantomData;
 use super::Project;
 use super::binding::{BehaviourContext, BehaviourError};
 use super::instance::{Instance, InstanceId, Record, State};
+use crate::clock::Ticks;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RegistryError {
@@ -19,12 +20,15 @@ type ErasedBehaviour =
 
 type ErasedSummary = Box<dyn Fn(&Project, &InstanceId) -> String + Send>;
 
+type ErasedEnd = Box<dyn Fn(&Project, &InstanceId) -> Option<Ticks> + Send>;
+
 pub(crate) struct ToolDefinition {
     pub extension: &'static str,
     /// Decodes and validates the `state` value of a record. The error names the field.
     pub decode: fn(serde_json::Value) -> Result<Record, String>,
     pub behaviour: Option<ErasedBehaviour>,
     pub summary: Option<ErasedSummary>,
+    pub end: Option<ErasedEnd>,
     pub owns_children: bool,
 }
 
@@ -57,6 +61,7 @@ impl Registry {
             decode: decode::<S>,
             behaviour: None,
             summary: None,
+            end: None,
             owns_children: S::OWNS_CHILDREN,
         });
         Ok(ToolRegistration {
@@ -144,6 +149,21 @@ impl<S: State> ToolRegistration<'_, S> {
                 // Only called for an instance of this tool.
                 None => String::new(),
             }
+        }));
+        self
+    }
+
+    /// Where the content of an instance of this tool ends on the project timeline, `None`
+    /// when it has none. [`Project::end`] is the latest of them. The core knows no clips, so
+    /// this is how a transport shows a duration. A tool without one does not count: it runs
+    /// without a set end.
+    pub fn end(
+        self,
+        end: impl Fn(&Project, &Instance<S>) -> Option<Ticks> + Send + 'static,
+    ) -> Self {
+        self.definition.end = Some(Box::new(move |project, id| {
+            // Only called for an instance of this tool.
+            end(project, &project.resolve::<S>(id)?)
         }));
         self
     }

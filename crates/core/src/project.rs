@@ -34,6 +34,7 @@ use instance::Record;
 use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
+use crate::clock::{Clock, Ticks};
 use crate::control::EngineControl;
 use crate::graph::GraphError;
 
@@ -234,6 +235,11 @@ impl Project {
         &mut self.engine
     }
 
+    /// The clock the engine plays by, for conversions while reading, such as ticks to seconds.
+    pub fn clock(&self) -> &Clock {
+        self.engine.clock()
+    }
+
     pub fn project_file(&self) -> &ProjectFile {
         &self.project_file
     }
@@ -276,6 +282,16 @@ impl Project {
         let record = self.instances.get(id)?;
         let summary = self.registry.definition(record.tool)?.summary.as_ref()?;
         Some(summary(self, id))
+    }
+
+    /// Where the project ends: the latest end that a tool gives for one of its instances, see
+    /// [`ToolRegistration::end`]. `None` for a project that runs without a set end.
+    pub fn end(&self) -> Option<Ticks> {
+        let ends = self.instances.iter().filter_map(|(id, record)| {
+            let end = self.registry.definition(record.tool)?.end.as_ref()?;
+            end(self, id)
+        });
+        ends.max()
     }
 
     /// An id that is free: `wanted`, or else `wanted-2`, `wanted-3` and so on. Free means no
