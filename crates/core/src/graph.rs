@@ -7,8 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use crate::processor::{
-    AudioBuffer, ErasedEventBuffer, EventType, InputPort, MAX_BLOCK, OutputPort, Ports,
+    AudioBuffer, CHANNELS, ErasedEventBuffer, EventType, InputPort, MAX_BLOCK, OutputPort, Ports,
 };
+
+/// A buffer of one audio port with nothing in it.
+const SILENT: AudioBuffer = [[0.0; MAX_BLOCK]; CHANNELS];
 
 /// Identifies a processor in the graph. Never reused within one engine, also not after a
 /// failed or dropped edit.
@@ -19,7 +22,8 @@ pub struct NodeId(pub(crate) u64);
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Destination {
     Node(NodeId, InputPort),
-    /// A channel of the device output. Only audio connects here.
+    /// The first device output channel of an audio port. Its left channel goes here and its
+    /// right channel to the next one, which a device with fewer channels does not play.
     DeviceOutput(usize),
 }
 
@@ -331,7 +335,7 @@ impl Graph {
             // same buffer, which is the fan-out sharing.
             let audio_start = schedule.audio_outputs.len();
             let audio_end = audio_start + node.ports.audio_outputs;
-            schedule.audio_outputs.resize(audio_end, [0.0; MAX_BLOCK]);
+            schedule.audio_outputs.resize(audio_end, SILENT);
             let event_outputs_start = schedule.event_outputs.len();
             for event_type in &node.ports.event_outputs {
                 schedule
@@ -389,7 +393,7 @@ impl Graph {
             .max();
         schedule
             .audio_scratch
-            .resize(widest.unwrap_or_default(), [0.0; MAX_BLOCK]);
+            .resize(widest.unwrap_or_default(), SILENT);
         for step in &mut schedule.steps {
             step.audio_sources
                 .iter_mut()

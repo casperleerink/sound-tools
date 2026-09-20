@@ -22,9 +22,9 @@ pub use device::{DeviceError, DeviceStatus, OutputDevice, OutputStream};
 pub use engine::{Engine, EngineStatus};
 pub use graph::{Connection, Destination, GraphError, NodeId};
 pub use processor::{
-    AudioInput, AudioInputs, AudioOutput, AudioOutputs, Event, EventInput, EventInputs,
+    AudioInput, AudioInputs, AudioOutput, AudioOutputs, CHANNELS, Event, EventInput, EventInputs,
     EventOutput, EventOutputs, InputPort, MAX_BLOCK, OutputPort, Ports, PrepareConfig,
-    ProcessContext, Processor, Timed,
+    ProcessContext, Processor, Smoothed, Timed,
 };
 pub use project::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, AgentDoc, BehaviourContext, BehaviourError, Changes,

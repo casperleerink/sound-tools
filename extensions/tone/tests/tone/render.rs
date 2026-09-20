@@ -100,14 +100,15 @@ fn phase_continues_across_schedule_swaps() {
         gain: 0.25,
     };
 
-    let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    // Four device channels, so each Tone has a stereo pair of its own.
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 4));
     tone_on_channel(&mut control, "first", first, 0);
-    let undisturbed = channel(&render(&mut engine, 30_000), 0, 2);
+    let undisturbed = channel(&render(&mut engine, 30_000), 0, 4);
 
-    let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 4));
     tone_on_channel(&mut control, "first", first, 0);
     let mut output = render(&mut engine, 10_001);
-    let added = tone_on_channel(&mut control, "second", second, 1);
+    let added = tone_on_channel(&mut control, "second", second, 2);
     output.extend(render(&mut engine, 9_999));
     let mut edit = control.edit();
     edit.remove_processor(added.id()).unwrap();
@@ -115,8 +116,8 @@ fn phase_continues_across_schedule_swaps() {
     output.extend(render(&mut engine, 10_000));
 
     // Two schedule swaps happened. The surviving Tone's samples are bit for bit the same.
-    assert_eq!(channel(&output, 0, 2), undisturbed);
-    let other = channel(&output, 1, 2);
+    assert_eq!(channel(&output, 0, 4), undisturbed);
+    let other = channel(&output, 2, 4);
     assert_eq!(peak(&other[..10_001]), 0.0);
     assert!(peak(&other[10_001..20_000]) > 0.2499);
     assert_eq!(peak(&other[20_000..]), 0.0);

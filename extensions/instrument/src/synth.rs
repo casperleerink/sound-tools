@@ -5,7 +5,9 @@
 
 use std::f32::consts::{PI, SQRT_2};
 
-use sound_core::{AudioOutput, EventInput, Ports, PrepareConfig, ProcessContext, Processor};
+use sound_core::{
+    AudioOutput, EventInput, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
+};
 use sound_notes::{NoteEvent, Pitch, Velocity};
 
 use crate::{SynthState, Waveform};
@@ -35,44 +37,6 @@ const ATTACK_OVERSHOOT: f32 = 0.3;
 /// release time. The decay is within this of the sustain level after the decay time. A held
 /// note with no sustain ends when it falls below this.
 const ENVELOPE_FLOOR: f32 = 0.001;
-
-/// A value that moves to its target in a straight line, so a parameter jump is not a click.
-struct Smoothed {
-    current: f32,
-    target: f32,
-    step_per_frame: f32,
-}
-
-impl Smoothed {
-    fn new(value: f32) -> Self {
-        Self {
-            current: value,
-            target: value,
-            step_per_frame: 0.0,
-        }
-    }
-
-    fn set_target(&mut self, target: f32, ramp_frames: f32) {
-        self.target = target;
-        self.step_per_frame = (target - self.current).abs() / ramp_frames;
-    }
-
-    fn snap(&mut self) {
-        self.current = self.target;
-    }
-
-    fn is_moving(&self) -> bool {
-        self.current != self.target
-    }
-
-    /// Moves `frames` along the ramp and returns the new value.
-    fn advance(&mut self, frames: usize) -> f32 {
-        let reach = self.step_per_frame * frames as f32;
-        // Not `clamp`: it panics on a NaN bound, and nothing may panic on the audio thread.
-        self.current += (self.target - self.current).max(-reach).min(reach);
-        self.current
-    }
-}
 
 /// The envelope of every voice, as per-frame factors. Each stage is `level * coefficient +
 /// base`: a curve toward a point a little past the target.
@@ -405,7 +369,7 @@ impl Synth {
                 Waveform::Square => voice.render::<true>(output, filter, &self.envelope),
             }
         }
-        let gain_before = self.gain.current;
+        let gain_before = self.gain.current();
         let gain_step = (self.gain.advance(frames) - gain_before) / frames as f32;
         for (frame, sample) in output.iter_mut().enumerate() {
             *sample *= gain_before + gain_step * (frame + 1) as f32;
@@ -450,14 +414,17 @@ impl Processor for Synth {
         if events.is_empty() && self.active_voices() == 0 {
             return;
         }
-        let output = context.audio_outputs.get(Self::OUTPUT);
+        // The synth is one voice bank in the middle. It renders once, into the left channel,
+        // and copies that to the right. Where the track puts it is the track's business.
+        let [left, right] = context.audio_outputs.get(Self::OUTPUT);
         let mut rendered = 0;
         for timed in events {
-            let offset = timed.offset.clamp(rendered, output.len());
-            self.render(&mut output[rendered..offset]);
+            let offset = timed.offset.clamp(rendered, left.len());
+            self.render(&mut left[rendered..offset]);
             rendered = offset;
             self.handle(timed.event);
         }
-        self.render(&mut output[rendered..]);
+        self.render(&mut left[rendered..]);
+        right.copy_from_slice(left);
     }
 }

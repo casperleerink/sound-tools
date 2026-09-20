@@ -63,7 +63,9 @@ impl Processor for Constant {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        context.audio_outputs.get(Self::OUTPUT).fill(self.0);
+        for channel in context.audio_outputs.get(Self::OUTPUT) {
+            channel.fill(self.0);
+        }
     }
 }
 
@@ -124,8 +126,10 @@ impl Processor for Gain {
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let input = context.audio_inputs.get(Self::INPUT);
         let output = context.audio_outputs.get(Self::OUTPUT);
-        for (output, input) in output.iter_mut().zip(input) {
-            *output = input * self.0;
+        for (output, input) in output.into_iter().zip(input) {
+            for (output, input) in output.iter_mut().zip(input) {
+                *output = input * self.0;
+            }
         }
     }
 }
@@ -185,10 +189,9 @@ impl Processor for Summer {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let sum: f32 = self.0.levels.iter().sum();
-        context
-            .audio_outputs
-            .get(Self::OUTPUT)
-            .fill(sum * self.0.gain);
+        for channel in context.audio_outputs.get(Self::OUTPUT) {
+            channel.fill(sum * self.0.gain);
+        }
     }
 }
 
