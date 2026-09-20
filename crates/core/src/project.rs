@@ -398,6 +398,9 @@ impl Project {
                 _ => ProjectEvent::Changed(id),
             });
         }
+        for change in &mut records {
+            self.history.note_committed(change, source);
+        }
         let project_file = (project_file_before != self.project_file)
             .then(|| (project_file_before, self.project_file.clone()));
         if project_file.is_some() {

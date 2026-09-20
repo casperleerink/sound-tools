@@ -95,10 +95,106 @@ fn a_file_edit_during_a_gesture_follows_last_write_wins() {
     harness.project.finish(edit).unwrap();
     assert!(harness.read("state/dc.json").contains("0.4"));
 
-    // The gesture undoes to where it began, over the file edit.
-    harness.project.undo().unwrap();
+    // Every undo lands on a state that was committed, never on the middle of the gesture
+    // (0.3): first what the file edit wrote, then where the gesture began.
+    assert_eq!(
+        harness.project.undo().unwrap().as_deref(),
+        Some("Drag value")
+    );
+    assert_eq!(harness.level(), 0.9);
+    assert!(harness.read("state/dc.json").contains("0.9"));
+    assert_eq!(
+        harness.project.undo().unwrap().as_deref(),
+        Some("File change")
+    );
     assert_eq!(harness.level(), 0.25);
     assert!(harness.read("state/dc.json").contains("0.25"));
+    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+
+    // Redo goes the same way back.
+    harness.project.redo().unwrap();
+    assert_eq!(harness.level(), 0.9);
+    harness.project.redo().unwrap();
+    assert_eq!(harness.level(), 0.4);
+    assert!(harness.read("state/dc.json").contains("0.4"));
+}
+
+#[test]
+fn a_gesture_that_ends_where_it_began_still_writes_over_a_file_edit() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness, "dc", 0.25);
+    let mut edit = harness.project.begin("Drag value");
+    harness
+        .project
+        .update(&mut edit, &dc, |state| state.value = 0.3)
+        .unwrap();
+    harness.write_and_apply("state/dc.json", &dc_record(0.9));
+    // The drag comes back to its first value. That is the later write, so the file gets it.
+    harness
+        .project
+        .update(&mut edit, &dc, |state| state.value = 0.25)
+        .unwrap();
+    harness.project.finish(edit).unwrap();
+    assert_eq!(harness.level(), 0.25);
+    assert!(harness.read("state/dc.json").contains("0.25"));
+    harness.project.undo().unwrap();
+    assert_eq!(harness.level(), 0.9);
+    assert!(harness.read("state/dc.json").contains("0.9"));
+}
+
+#[test]
+fn cancel_after_a_file_edit_goes_back_to_what_the_file_holds() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness, "dc", 0.25);
+    let mut edit = harness.project.begin("Drag value");
+    harness
+        .project
+        .update(&mut edit, &dc, |state| state.value = 0.3)
+        .unwrap();
+    harness.write_and_apply("state/dc.json", &dc_record(0.9));
+    harness
+        .project
+        .update(&mut edit, &dc, |state| state.value = 0.4)
+        .unwrap();
+    harness.project.cancel(edit).unwrap();
+    assert_eq!(harness.level(), 0.9);
+    assert!(harness.read("state/dc.json").contains("0.9"));
+
+    // The file edit is the one step, and it undoes to the state before the gesture.
+    assert_eq!(
+        harness.project.undo().unwrap().as_deref(),
+        Some("File change")
+    );
+    assert_eq!(harness.level(), 0.25);
+    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+}
+
+#[test]
+fn a_file_delete_during_a_gesture_is_the_one_step_and_undo_gives_the_committed_state() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness, "dc", 0.25);
+    let mut edit = harness.project.begin("Drag value");
+    harness
+        .project
+        .update(&mut edit, &dc, |state| state.value = 0.3)
+        .unwrap();
+    let path = harness.path("state/dc.json");
+    std::fs::remove_file(&path).unwrap();
+    harness
+        .project
+        .apply_outside_changes(std::slice::from_ref(&path))
+        .unwrap();
+    harness.project.finish(edit).unwrap();
+    assert_eq!(harness.project.state(&dc), None);
+
+    // The gesture changed nothing that lasted, so it is no step.
+    assert_eq!(
+        harness.project.undo().unwrap().as_deref(),
+        Some("File change")
+    );
+    assert_eq!(harness.project.state(&dc), Some(&Dc { value: 0.25 }));
+    assert!(harness.read("state/dc.json").contains("0.25"));
+    assert_eq!(harness.project.undo_label(), Some("Add dc"));
 }
 
 #[test]

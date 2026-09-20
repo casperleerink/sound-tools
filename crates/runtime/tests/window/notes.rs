@@ -524,12 +524,18 @@ fn an_outside_delete_of_the_clip_during_a_note_drag_leaves_no_gesture_open(
     assert_eq!(opened.clip(PART), None);
     assert_eq!(opened.clip_file(PART), None);
 
-    // Undo works at once: it gives the clip back as it was before the drag, with the nudge.
+    // Undo works at once. The delete was the last write, so it is the step on top, and it gives
+    // the clip back as it was before the drag, with the nudge. The drag itself left no step.
+    assert_eq!(opened.undo_label().as_deref(), Some("File change"));
     opened.keys("cmd-z");
     let back = opened.clip(PART).unwrap();
     assert_eq!(back.notes[0], note(960, 480, 61));
     assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 61"));
-    assert_eq!(opened.undo_label().as_deref(), Some("File change"));
+
+    // The second undo never lands on the middle of the drag: it takes back the nudge.
+    assert_eq!(opened.undo_label().as_deref(), Some("Nudge note"));
+    opened.keys("cmd-z");
+    assert_eq!(opened.clip(PART).unwrap().notes[0], note(960, 480, 60));
 }
 
 #[gpui::test]
