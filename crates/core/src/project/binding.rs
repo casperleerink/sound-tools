@@ -305,6 +305,12 @@ impl Bindings {
         &self.connection_problems
     }
 
+    /// The processor that the behaviour of `instance` declared under `name`, when it is a `P`.
+    pub fn node<P: Processor>(&self, instance: &InstanceId, name: &str) -> Option<Node<P>> {
+        let (node, processor_type) = self.by_instance.get(instance)?.nodes.get(name)?;
+        (*processor_type == TypeId::of::<P>()).then(|| Node::from_id(*node))
+    }
+
     /// Runs the whole change as one engine edit: one batch and at most one compile. On an
     /// error the engine and the bindings stay as they were.
     ///

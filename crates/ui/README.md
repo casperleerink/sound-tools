@@ -96,6 +96,15 @@ self.session.update(cx, |session, cx| session.finish_gesture(cx));
 
 The session keeps the open edit of a gesture, not the view. So a view cannot leave one open by losing it, a new gesture finishes one that was left open, and the session knows that a drag is going on: `Session::undo` and `Session::redo`, which the window's cmd-z, shift-cmd-z and menu call, do nothing until the gesture ends. An undo in the middle of a drag would be overwritten by the next mouse move. A view keeps only what the gesture needs of its own, such as the clip as it was at mouse down. Call `session.undo(cx)` for an undo button of your own, never `edit(cx, Project::undo)`.
 
+What the clip and note drags of the arrangement added to this pattern, in `extensions/arrangement/src/view.rs`:
+
+- Begin the gesture with the first mouse move that changes something, not at mouse down. A plain click is then no undo step, and an empty step never reaches the history.
+- Work out each move from the value at mouse down and the distance the pointer went, not from the live value. A drag there and back then ends where it began.
+- Skip the publish when the value did not change. Most mouse moves are inside one snap step.
+- A mouse move listener of a drag is not hit tested: the drag goes on wherever the pointer is. A move without the button means that the mouse up went somewhere else: finish.
+- The target may go away under the drag, by an outside delete. Read it on every move and finish the gesture when it is gone. Subscribe to `Deleted` too, so the drag ends when it happens and not at the next move.
+- Something that should sound now and is not an edit, such as a preview note, goes through `Project::send` inside `session.edit`. See the core README, "Updates".
+
 Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Session::toggle_playback` is what space does. The result shows in the `Playhead` after the next poll.
 
 ## Rules
@@ -104,13 +113,14 @@ Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Ses
 - No blocking I/O on the main thread beyond what `Project` does per edit.
 - Draw only what is visible. A view of many records paints on a `canvas`, like the arrangement, and does not make an element per record.
 - Keep what walks many records between the project events that can change it, and read it again in `render`, once per group of events, not per paint and not per event. The arrangement keeps its track order and its end this way. This is the one kind of copy a view holds.
-- Keys: the window binds space, cmd-z and shift-cmd-z in the context `Shell && !TextInput`, so a focused `TextInput` gets them first. Give a view of your own a `key_context` and bind its keys there.
+- Keys: the window binds space, cmd-z and shift-cmd-z in the context `Shell && !TextInput`, so a focused `TextInput` gets them first, and tab and shift-tab in `Shell`. Bindings run before key listeners. For keys of your own view, the simplest is `track_focus` with a tab stop and `on_key_down` on the root of the view, as the arrangement does: they reach the view only while it has the focus, and it calls `cx.stop_propagation()` for a key it used. Focus the view on mouse down.
+- Show a focus ring only when the focus came from the keyboard. `.focus_visible(..)` also shows it when a key follows a click, and space follows a click all the time. The arrangement works it out while painting (`KeyboardFocus` in `view/paint.rs`).
 - Keep what repaints with the playhead apart from the rest. A view that GPUI is to keep while the playhead moves must not have the playhead view inside it: a notified view also renders every view above it. Make them siblings and put `.cached(..)` on the heavy one. See `ArrangementView`.
 - Put coordinate math in pure functions with tests (`extensions/arrangement/src/view/layout.rs`).
 - Use the components of this crate and the theme tokens (`cx.theme()`). A new general component goes here with a gallery entry. What only one tool needs stays in its extension.
 
 ## Test a view
 
-`crates/ui/tests/bridge.rs` and `crates/runtime/tests/window.rs` show the pattern: a project on a temporary folder with an offline engine, a `Session`, `#[gpui::test]`, and `cx.executor().advance_clock(POLL_INTERVAL)` to let the poll timer fire. Call `engine.process_block(..)` yourself, so that transport commands apply. Wait with `cx.background_executor().timer(..)`, never with `smol::Timer`.
+`crates/ui/tests/bridge.rs` and `crates/runtime/tests/window/` show the pattern: a project on a temporary folder with an offline engine, a `Session`, `#[gpui::test]`, and `cx.executor().advance_clock(POLL_INTERVAL)` to let the poll timer fire. Call `engine.process_block(..)` yourself, so that transport commands apply. Wait with `cx.background_executor().timer(..)`, never with `smol::Timer`. `tests/window/support.rs` has the hands of a composer: press, drag and release at the place of a tick, a track or a pitch, worked out with the layout functions of the view. Two keys in one `simulate_keystrokes` call have no frame between them. Send them one by one when the second needs what the first painted, such as the tab order.
 
 `cargo test -p runtime --test snapshots` renders the whole window to PNGs with no visible window, and `cargo test -p gallery --test snapshots` renders the components.

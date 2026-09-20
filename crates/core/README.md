@@ -99,7 +99,7 @@ Any `Copy + Send + 'static` type is an event. Two extensions share an event type
 
 - Parameters: make `Update` a small `Copy` struct and copy it in `update`.
 - Immutable data snapshots: make `Update` (or a variant of it) an `Arc<Snapshot>` and `std::mem::swap` it with the one the processor holds. The engine carries the old one back and the control thread drops it. Never drop an `Arc`, `Box` or `Vec` in `update`.
-- An event from the UI that should happen now, such as a preview note: make it a variant of `Update`.
+- An event from the UI that should happen now, such as a preview note: make it a variant of `Update`. An interface sends it with `project.send::<P>(&instance_id, "name", update)`, where the name is the one the behaviour gave to `context.processor`. It is not an edit: nothing is saved and there is no undo step. `extensions/arrangement` does this for its preview note, and the processor ends the note by itself.
 
 ## Write a tool
 
@@ -282,6 +282,7 @@ project.redo()?;
 - You never write the reverse of an edit. The core records the records before and after.
 - An invalid state is rejected with `ProjectError::InvalidState` and nothing changes.
 - A move is a delete and a create in one `Changes` group.
+- `project.send::<P>(&id, name, update)` sends one update to a processor of an instance, outside any edit. See "Updates" above. `ProjectError::MissingProcessor` when the instance has no processor of that name and type.
 
 ### Follow changes
 

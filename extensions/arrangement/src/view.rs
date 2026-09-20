@@ -1,95 +1,229 @@
 //! The arrangement view: track headers, a bar ruler, clips with a miniature of their notes,
-//! and the playhead. Read-only for now: it seeks and selects.
+//! the playhead, and the note editor as a panel below. Clips are added, moved, resized and
+//! deleted here with the mouse and the keys.
 //!
-//! Three views, so that a moving playhead repaints almost nothing:
-//! - [`ArrangementView`] is what the window shows. It only stacks the other two.
+//! The views, split so that a moving playhead repaints almost nothing:
+//! - [`ArrangementView`] is what the window shows. It stacks the timeline over the note editor
+//!   and opens and closes the editor.
 //! - [`Timeline`] draws everything that changes with the project, the scroll and the zoom on
 //!   one canvas, and only what is visible. GPUI keeps its painted frame while it is not
 //!   notified, so playback does not run this code.
-//! - `PlayheadLine` draws one line on top, every frame while the project plays.
+//! - [`NoteEditor`] does the same for the notes of one clip.
+//! - A `PlayheadLine` on top of each draws one line, every frame while the project plays.
 //!
-//! All positions come from [`layout`]. The timeline keeps the [`Scene`] it painted for its
-//! mouse listeners, so a click hits exactly what is on screen.
+//! All positions come from [`layout`], and what a drag does to a clip from [`gesture`]. The
+//! timeline gives the [`Scene`] it painted to its mouse listeners, so a click hits exactly
+//! what is on screen. Every change goes through the session: a drag is one gesture and one
+//! undo step.
 
+pub mod editor;
+pub mod gesture;
 pub mod layout;
+mod paint;
+pub mod roll;
 
 use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use gpui::{
-    App, BorderStyle, Bounds, ContentMask, Context, DispatchPhase, Entity, FocusHandle, Focusable,
-    FontWeight, Hitbox, HitboxBehavior, Hsla, MouseButton, MouseDownEvent, PinchEvent, Pixels,
-    Point, ScrollWheelEvent, SharedString, StyleRefinement, Subscription, TextAlign, TextRun,
-    TruncateFrom, Window, canvas, div, fill, point, prelude::*, px, quad, size,
+    App, BorderStyle, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Entity,
+    EventEmitter, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollWheelEvent,
+    SharedString, StyleRefinement, Subscription, Window, canvas, div, fill, point, prelude::*, px,
+    quad, size,
 };
-use sound_core::{Instance, InstanceId, ProjectEvent, Ticks, TimeSignature};
+use sound_core::{Changes, Instance, InstanceId, ProjectEvent, Ticks, TimeSignature};
 use sound_notes::Clip;
-use sound_ui::{ActiveTheme, Playhead, Session, Theme, Views, typography};
+use sound_ui::{ActiveTheme, Session, Views};
 
-use crate::{ArrangementState, Colour, TrackState, end, tracks};
-use layout::{Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, TRACK_HEIGHT, Viewport, snap};
+use crate::{ArrangementState, TrackState, add_clip, move_clip, tracks};
+use editor::EditorEvent;
+pub use editor::NoteEditor;
+use gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
+use layout::{
+    Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, SNAP, TRACK_HEIGHT, Viewport, shifted, snap,
+    snapped_delta,
+};
+use paint::{
+    KeyboardFocus, PlayheadLine, accent, paint_focus_ring, paint_ruler, paint_track_label, placed,
+};
+use roll::EDITOR_HEIGHT;
 
 /// Registers the view of the `arrangement` tool.
 pub fn register(views: &mut Views) {
     views.register(ArrangementView::new);
 }
 
+/// The note editor while it is open, with its own playhead line.
+struct OpenEditor {
+    editor: Entity<NoteEditor>,
+    playhead_line: Entity<PlayheadLine>,
+    _events: Subscription,
+}
+
 pub struct ArrangementView {
+    session: Entity<Session>,
     timeline: Entity<Timeline>,
     playhead_line: Entity<PlayheadLine>,
+    editor: Option<OpenEditor>,
 }
 
 impl ArrangementView {
     pub fn new(
         session: Entity<Session>,
         arrangement: Instance<ArrangementState>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let playhead = session.read(cx).playhead().clone();
-        let timeline = cx.new(|cx| Timeline::new(session, arrangement, cx));
-        let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, cx));
+        let timeline = cx.new(|cx| Timeline::new(session.clone(), arrangement, cx));
+        let painted = timeline.read(cx).painted.clone();
+        let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, painted, cx));
+
+        cx.subscribe_in(&timeline, window, |view, _, event, window, cx| {
+            let TimelineEvent::OpenEditor(clip) = event;
+            view.open_editor(clip.clone(), window, cx);
+        })
+        .detach();
+        // The open editor follows the selection to another clip.
+        cx.observe(&timeline, |view, _, cx| {
+            view.follow_selection(cx);
+        })
+        .detach();
+        // A move to another track, and the undo of one, delete the clip at one id and create
+        // it at another in one group of events. So the editor is not closed at the delete, but
+        // after the group: the timeline has selected the clip at its new id by then, and the
+        // editor goes with it. Only a clip that is really gone closes the editor.
+        cx.subscribe_in(&session, window, |view, _, event, window, cx| {
+            let shown = view.editor_clip(cx);
+            if matches!(event, ProjectEvent::Deleted(id) if Some(id) == shown.as_ref()) {
+                cx.defer_in(window, |view, window, cx| {
+                    let gone = view.editor_clip(cx).is_some_and(|clip| {
+                        let project = view.session.read(cx).project();
+                        project.resolve::<Clip>(&clip).is_none()
+                    });
+                    if gone && !view.follow_selection(cx) {
+                        view.close_editor(window, cx);
+                    }
+                });
+            }
+        })
+        .detach();
+
         Self {
+            session,
             timeline,
             playhead_line,
+            editor: None,
         }
     }
 
     pub fn timeline(&self) -> &Entity<Timeline> {
         &self.timeline
     }
+
+    /// The note editor, while it is open.
+    pub fn editor(&self) -> Option<&Entity<NoteEditor>> {
+        self.editor.as_ref().map(|open| &open.editor)
+    }
+
+    fn editor_clip(&self, cx: &App) -> Option<InstanceId> {
+        let editor = self.editor()?.read(cx);
+        Some(editor.clip().id().clone())
+    }
+
+    /// Opens the note editor for a clip and gives it the focus, so the keys edit notes.
+    pub fn open_editor(
+        &mut self,
+        clip: Instance<Clip>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(open) = &self.editor {
+            open.editor
+                .update(cx, |editor, cx| editor.set_clip(clip, cx));
+        } else {
+            let (width, _) = self.timeline.read(cx).painted_size.get();
+            let session = self.session.clone();
+            let editor = cx.new(|cx| NoteEditor::new(session, clip, width, cx));
+            let playhead = self.session.read(cx).playhead().clone();
+            let painted = editor.read(cx).painted();
+            let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &editor, painted, cx));
+            let events = cx.subscribe_in(&editor, window, |view, _, event, window, cx| {
+                let EditorEvent::Close = event;
+                view.close_editor(window, cx);
+            });
+            self.editor = Some(OpenEditor {
+                editor,
+                playhead_line,
+                _events: events,
+            });
+            cx.notify();
+        }
+        if let Some(editor) = self.editor() {
+            window.focus(&editor.focus_handle(cx), cx);
+        }
+    }
+
+    /// Closes the editor. The focus goes back to the timeline when the editor had it.
+    pub fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = self.editor.take() else {
+            return;
+        };
+        // A note drag may be going on: its gesture ends here, not with the editor.
+        open.editor.update(cx, |editor, cx| editor.end_drag(cx));
+        if open.editor.focus_handle(cx).contains_focused(window, cx) {
+            window.focus(&self.timeline.focus_handle(cx), cx);
+        }
+        cx.notify();
+    }
+
+    /// Shows the selected clip in the open editor. Whether there was one to show.
+    fn follow_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(open) = &self.editor else {
+            return false;
+        };
+        let Some(selected) = self.timeline.read(cx).selected_clip().cloned() else {
+            return false;
+        };
+        let project = self.session.read(cx).project();
+        let Some(clip) = project.resolve::<Clip>(&selected) else {
+            return false;
+        };
+        if open.editor.read(cx).clip().id() != &selected {
+            open.editor
+                .update(cx, |editor, cx| editor.set_clip(clip, cx));
+        }
+        true
+    }
 }
 
 impl Render for ArrangementView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let timeline = self.timeline.clone();
+        let fill_parent = || StyleRefinement::default().size_full();
         div()
             .size_full()
-            .relative()
-            // Cached: a frame that only moves the playhead reuses what the timeline painted.
-            .child(timeline.cached(StyleRefinement::default().size_full()))
-            .child(self.playhead_line.clone())
-    }
-}
-
-/// Track colours are design tokens. The match is exhaustive, so a new colour cannot be
-/// left without one.
-fn accent(colour: Colour, theme: &Theme) -> Hsla {
-    match colour {
-        Colour::Blue => theme.blue,
-        Colour::Sapphire => theme.sapphire,
-        Colour::Sky => theme.sky,
-        Colour::Teal => theme.teal,
-        Colour::Green => theme.green,
-        Colour::Yellow => theme.yellow,
-        Colour::Peach => theme.peach,
-        Colour::Red => theme.red,
-        Colour::Maroon => theme.maroon,
-        Colour::Mauve => theme.mauve,
-        Colour::Pink => theme.pink,
-        Colour::Lavender => theme.lavender,
-        Colour::Rosewater => theme.rosewater,
-        Colour::Flamingo => theme.flamingo,
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    // Cached: a frame that only moves the playhead reuses what was painted.
+                    .child(timeline.cached(fill_parent()))
+                    .child(self.playhead_line.clone()),
+            )
+            .children(self.editor.as_ref().map(|open| {
+                div()
+                    .flex_none()
+                    .h(px(EDITOR_HEIGHT))
+                    .relative()
+                    .child(open.editor.clone().cached(fill_parent()))
+                    .child(open.playhead_line.clone())
+            }))
     }
 }
 
@@ -125,6 +259,108 @@ impl Scene {
             .rev()
             .find(|shape| shape.rect.contains(x, y))
     }
+
+    /// The clip on top at a position, with the part of it that is there: its body or an edge.
+    pub fn zone_at(&self, x: f32, y: f32) -> Option<(&ClipShape, Zone)> {
+        let shape = self.clip_at(x, y)?;
+        Some((shape, zone_at(shape.rect, x)))
+    }
+}
+
+/// What a drag of a clip does, with what it starts every move from and what it wrote last.
+/// When the live clip is not what the drag wrote, something else changed it: an undo between
+/// mouse down and the first move, or an agent. A resize then goes on from the live clip, so it
+/// never writes an old copy with old notes over a newer clip. A move writes only the start.
+enum ClipDragKind {
+    Move {
+        start: Ticks,
+        written: Ticks,
+    },
+    /// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:
+    /// every move starts from `origin` again, so going in and out loses nothing.
+    Resize {
+        edge: Edge,
+        origin: Clip,
+        written: Clip,
+        /// The delta of the last move, to skip a move inside the same snap step cheaply.
+        delta: i64,
+    },
+}
+
+#[derive(Copy, Clone)]
+enum Edge {
+    Left,
+    Right,
+}
+
+impl ClipDragKind {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Move { .. } => "Move clip",
+            Self::Resize { .. } => "Resize clip",
+        }
+    }
+}
+
+/// A drag of a clip, from mouse down to mouse up.
+struct ClipDrag {
+    /// The clip now. Its id changes when the drag takes it to another track.
+    clip: Instance<Clip>,
+    /// The id at mouse down. A drag that comes back to its first track takes this id again, so
+    /// a drag there and back leaves the file where it was.
+    home: InstanceId,
+    kind: ClipDragKind,
+    /// The tick under the pointer at mouse down.
+    grab: Ticks,
+    /// Whether the gesture of the session is open. It opens with the first move that changes
+    /// something, so a plain click is no undo step.
+    begun: bool,
+}
+
+/// What one mouse move of a drag asks for.
+enum DragStep {
+    /// The clip is gone: deleted from outside.
+    Gone,
+    Unchanged,
+    Publish {
+        next: Clip,
+        /// Another track than the clip is on now.
+        to_track: Option<Instance<TrackState>>,
+    },
+}
+
+/// What of the kept track order and clip ends has to be read again. A drag changes one clip
+/// per mouse move, so only its track is walked then, not every clip of the project.
+#[derive(Default)]
+enum Stale {
+    #[default]
+    Nothing,
+    Tracks(BTreeSet<InstanceId>),
+    Everything,
+}
+
+impl Stale {
+    /// An event named `id`. `track` is the track it is or is inside of. Without one, the event
+    /// is about the arrangement itself.
+    fn add(&mut self, track: Option<InstanceId>, id: &InstanceId) {
+        match (&mut *self, track) {
+            (Self::Everything, _) => {}
+            // The record of a track holds its order. A track that comes or goes changes it.
+            (_, Some(track)) if track != *id => match self {
+                Self::Tracks(tracks) => {
+                    tracks.insert(track);
+                }
+                _ => *self = Self::Tracks(BTreeSet::from([track])),
+            },
+            _ => *self = Self::Everything,
+        }
+    }
+}
+
+/// What the timeline asks of the view that holds it.
+pub enum TimelineEvent {
+    /// A double click on a clip, or enter: show its notes.
+    OpenEditor(Instance<Clip>),
 }
 
 pub struct Timeline {
@@ -139,16 +375,28 @@ pub struct Timeline {
     painted: Rc<Cell<Viewport>>,
     /// The size of the timeline area at the last paint, which the scroll limits depend on.
     painted_size: Rc<Cell<(f32, f32)>>,
-    /// The tracks in display order and the end of the last clip. Finding them walks every
-    /// clip, so they are kept between the project events that can change them and are not
-    /// read again per paint. Nothing else of the project is kept.
+    /// The tracks in display order, each with the end of its last clip. Finding the ends walks
+    /// every clip, so they are kept between the project events that can change them and are
+    /// not read again per paint. Nothing else of the project is kept.
     order: Vec<Instance<TrackState>>,
-    end: Ticks,
-    order_is_stale: bool,
+    ends: BTreeMap<InstanceId, Ticks>,
+    /// What the events since the last render may have changed.
+    stale: Stale,
     selected_clip: Option<InstanceId>,
+    /// The selected clip was deleted in the event group that is arriving, and what the same
+    /// group created. See [`Self::reselect`].
+    lost_selection: Option<InstanceId>,
+    created_in_group: Vec<InstanceId>,
+    forgets_group_later: bool,
+    drag: Option<ClipDrag>,
+    /// The pointer is over an edge of a clip, so the cursor says that a drag resizes.
+    over_edge: bool,
     focus_handle: FocusHandle,
+    keyboard_focus: KeyboardFocus,
     _project_events: Subscription,
 }
+
+impl EventEmitter<TimelineEvent> for Timeline {}
 
 impl Timeline {
     fn new(
@@ -156,17 +404,37 @@ impl Timeline {
         arrangement: Instance<ArrangementState>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus_handle = cx.focus_handle().tab_stop(true);
         let project_events = cx.subscribe(&session, |timeline, _, event, cx| {
             let shown = |id: &InstanceId| {
                 id == timeline.arrangement.id() || id.is_inside(timeline.arrangement.id())
             };
             let changed = match event {
-                ProjectEvent::Created(id) | ProjectEvent::Changed(id) => shown(id),
+                ProjectEvent::Changed(id) => shown(id),
+                ProjectEvent::Created(id) => {
+                    let changed = shown(id);
+                    if changed {
+                        timeline.created_in_group.push(id.clone());
+                        timeline.reselect(cx);
+                        timeline.forget_group_later(cx);
+                    }
+                    changed
+                }
                 ProjectEvent::Deleted(id) => {
+                    let changed = shown(id);
                     if timeline.selected_clip.as_ref() == Some(id) {
                         timeline.selected_clip = None;
+                        timeline.lost_selection = Some(id.clone());
+                        timeline.reselect(cx);
+                        timeline.forget_group_later(cx);
                     }
-                    shown(id)
+                    // Deleted under the drag, from outside. A drag to another track is not
+                    // this: it names its new clip before this event arrives.
+                    let dragged = timeline.drag.as_ref().map(|drag| drag.clip.id());
+                    if dragged == Some(id) {
+                        timeline.end_drag(cx);
+                    }
+                    changed
                 }
                 // The time signature places the bars.
                 ProjectEvent::ProjectFileChanged => true,
@@ -174,10 +442,27 @@ impl Timeline {
             };
             if changed {
                 // Read again at the next render, once for all events of a group.
-                timeline.order_is_stale = true;
+                match event {
+                    ProjectEvent::Created(id)
+                    | ProjectEvent::Changed(id)
+                    | ProjectEvent::Deleted(id) => {
+                        let track = timeline.track_of(id);
+                        timeline.stale.add(track, id);
+                    }
+                    ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged => {}
+                }
                 cx.notify();
             }
         });
+        // A drag that is still open when the timeline goes away must not leave the gesture
+        // of the session open: undo and redo wait for it.
+        cx.on_release(|timeline, cx| {
+            if timeline.drag.take().is_some_and(|drag| drag.begun) {
+                let session = timeline.session.clone();
+                session.update(cx, |session, cx| session.finish_gesture(cx));
+            }
+        })
+        .detach();
         Self {
             session,
             arrangement,
@@ -185,10 +470,16 @@ impl Timeline {
             painted: Rc::default(),
             painted_size: Rc::default(),
             order: Vec::new(),
-            end: Ticks(0),
-            order_is_stale: true,
+            ends: BTreeMap::new(),
+            stale: Stale::Everything,
             selected_clip: None,
-            focus_handle: cx.focus_handle(),
+            lost_selection: None,
+            created_in_group: Vec::new(),
+            forgets_group_later: false,
+            drag: None,
+            over_edge: false,
+            focus_handle,
+            keyboard_focus: KeyboardFocus::default(),
             _project_events: project_events,
         }
     }
@@ -210,21 +501,84 @@ impl Timeline {
 
     fn clamped(&self, viewport: Viewport, width: f32, height: f32, cx: &App) -> Viewport {
         let extent = Extent {
-            end: self.end,
+            end: self.ends.values().max().copied().unwrap_or_default(),
             tracks: self.order.len(),
         };
         viewport.clamped(extent, self.time_signature(cx), width, height)
     }
 
+    /// The track that an id of this arrangement is, or is inside of.
+    fn track_of(&self, id: &InstanceId) -> Option<InstanceId> {
+        let arrangement = self.arrangement.id();
+        let mut inside = id.ancestors().chain([id.clone()]);
+        inside.find(|ancestor| ancestor.parent().as_ref() == Some(arrangement))
+    }
+
     fn refresh_order(&mut self, cx: &App) {
-        if !self.order_is_stale {
+        let project = self.session.read(cx).project();
+        let end_of = |track: &InstanceId| {
+            let clips = project.children::<Clip>(track);
+            clips.map(|(_, clip)| clip.end()).max()
+        };
+        match std::mem::take(&mut self.stale) {
+            Stale::Nothing => {}
+            Stale::Tracks(tracks) => {
+                for track in tracks {
+                    match end_of(&track) {
+                        Some(end) => self.ends.insert(track, end),
+                        None => self.ends.remove(&track),
+                    };
+                }
+            }
+            Stale::Everything => {
+                let tracks = tracks(project, self.arrangement.id());
+                self.order = tracks.into_iter().map(|(track, _)| track).collect();
+                let ends = self.order.iter();
+                self.ends = ends
+                    .filter_map(|track| Some((track.id().clone(), end_of(track.id())?)))
+                    .collect();
+            }
+        }
+    }
+
+    /// Whether the focus ring shows: the timeline has the focus, and it came from the keyboard.
+    pub fn shows_focus_ring(&self, window: &Window) -> bool {
+        self.keyboard_focus.shows_ring(&self.focus_handle, window)
+    }
+
+    /// A move to another track is a delete and a create in one group, and so is its undo and
+    /// its redo. The selection goes with the clip: when the selected clip is deleted and the
+    /// same group creates a clip of the same name, that one is selected.
+    fn reselect(&mut self, cx: &App) {
+        let Some(lost) = &self.lost_selection else {
+            return;
+        };
+        let project = self.session.read(cx).project();
+        let mut created = self.created_in_group.iter();
+        let found =
+            created.find(|id| id.name() == lost.name() && project.resolve::<Clip>(id).is_some());
+        if let Some(found) = found {
+            self.selected_clip = Some(found.clone());
+            self.lost_selection = None;
+        }
+    }
+
+    /// Forgets what `reselect` keeps, once per group. Deferred work runs after the events
+    /// that are waiting, which are the rest of the group.
+    fn forget_group_later(&mut self, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.forgets_group_later, true) {
             return;
         }
-        let project = self.session.read(cx).project();
-        let tracks = tracks(project, self.arrangement.id());
-        self.order = tracks.into_iter().map(|(track, _)| track).collect();
-        self.end = end(project, self.arrangement.id()).unwrap_or_default();
-        self.order_is_stale = false;
+        let this = cx.weak_entity();
+        cx.defer(move |cx| {
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |timeline, _| {
+                    timeline.lost_selection = None;
+                    timeline.created_in_group.clear();
+                    timeline.forgets_group_later = false;
+                });
+            }
+        });
     }
 
     pub fn selected_clip(&self) -> Option<&InstanceId> {
@@ -303,7 +657,14 @@ impl Timeline {
         )
     }
 
-    fn on_mouse_down(&mut self, x: f32, y: f32, scene: &Scene, cx: &mut Context<Self>) {
+    fn on_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        x: f32,
+        y: f32,
+        scene: &Scene,
+        cx: &mut Context<Self>,
+    ) {
         if x < 0.0 {
             return;
         }
@@ -313,25 +674,344 @@ impl Timeline {
                 .update(cx, |session, _| session.engine().seek(tick));
             return;
         }
-        let clip = scene.clip_at(x, y).map(|shape| shape.clip.id().clone());
-        self.select_clip(clip, cx);
+        let double = event.click_count == 2;
+        let Some((shape, zone)) = scene.zone_at(x, y) else {
+            self.select_clip(None, cx);
+            if double {
+                self.add_clip_at(x, y, scene, cx);
+            }
+            return;
+        };
+        let clip = shape.clip.clone();
+        self.select_clip(Some(clip.id().clone()), cx);
+        if double {
+            cx.emit(TimelineEvent::OpenEditor(clip));
+            return;
+        }
+        let Some(state) = self.session.read(cx).project().state(&clip) else {
+            return;
+        };
+        let resize = |edge| ClipDragKind::Resize {
+            edge,
+            origin: state.clone(),
+            written: state.clone(),
+            delta: 0,
+        };
+        let kind = match zone {
+            Zone::Body => ClipDragKind::Move {
+                start: state.start,
+                written: state.start,
+            },
+            Zone::LeftEdge => resize(Edge::Left),
+            Zone::RightEdge => resize(Edge::Right),
+        };
+        self.drag = Some(ClipDrag {
+            home: clip.id().clone(),
+            clip,
+            kind,
+            grab: self.painted.get().tick_at(x),
+            begun: false,
+        });
+    }
+
+    /// A double click on empty track space: a clip of one bar in the cell under the pointer.
+    fn add_clip_at(&mut self, x: f32, y: f32, scene: &Scene, cx: &mut Context<Self>) {
+        let row = scene.viewport.track_at(y, self.order.len());
+        let Some(track) = row.and_then(|row| self.order.get(row)).cloned() else {
+            return;
+        };
+        let clip = new_clip(scene.viewport.tick_at(x), self.time_signature(cx));
+        let added = self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                let added = add_clip(project, &mut changes, &track, "clip", clip)?;
+                project.commit("Add clip", changes)?;
+                Ok(added)
+            })
+        });
+        if let Some(added) = added {
+            self.select_clip(Some(added.id().clone()), cx);
+        }
+    }
+
+    /// What the pointer asks of the dragged clip now. It goes on from the live clip when that
+    /// is not what the drag wrote last.
+    fn drag_step(&self, drag: &mut ClipDrag, x: f32, y: f32, cx: &App) -> DragStep {
+        let project = self.session.read(cx).project();
+        let Some(live) = project.state(&drag.clip) else {
+            return DragStep::Gone;
+        };
+        let viewport = self.painted.get();
+        let pointer = viewport.tick_at(x);
+        match &mut drag.kind {
+            ClipDragKind::Move { start, written } => {
+                // Once it moves, the drag owns the start: the clip stays under the pointer,
+                // and the rest of the clip is the live one. Before that, an undo under the
+                // press may have moved the clip.
+                if !drag.begun && live.start != *written {
+                    (*start, *written) = (live.start, live.start);
+                }
+                let row = viewport.nearest_track(y, self.order.len());
+                let under_pointer = row.and_then(|row| self.order.get(row));
+                let on_now = drag.clip.id().parent();
+                let to_track = under_pointer
+                    .filter(|track| Some(track.id()) != on_now.as_ref())
+                    .cloned();
+                let next_start = shifted(*start, snapped_delta(drag.grab, pointer));
+                if to_track.is_none() && next_start == live.start {
+                    return DragStep::Unchanged;
+                }
+                let next = Clip {
+                    start: next_start,
+                    ..live.clone()
+                };
+                DragStep::Publish { next, to_track }
+            }
+            ClipDragKind::Resize {
+                edge,
+                origin,
+                written,
+                delta,
+            } => {
+                // Something else wrote the clip. The drag goes on from that clip, and the grab
+                // moves by what the drag had done to its edge, so the pointer still means the
+                // same distance.
+                let rebased = live != written;
+                if rebased {
+                    let ticks = |ticks: Ticks| ticks.0 as i64;
+                    let done = match edge {
+                        Edge::Left => ticks(written.start) - ticks(origin.start),
+                        Edge::Right => ticks(written.length.ticks()) - ticks(origin.length.ticks()),
+                    };
+                    drag.grab = shifted(drag.grab, done);
+                    (*origin, *written) = (live.clone(), live.clone());
+                }
+                let next_delta = snapped_delta(drag.grab, pointer);
+                if !rebased && next_delta == *delta {
+                    return DragStep::Unchanged;
+                }
+                *delta = next_delta;
+                let next = match edge {
+                    Edge::Left => resized_left(origin, next_delta),
+                    Edge::Right => resized_right(origin, next_delta),
+                };
+                if next == *written {
+                    return DragStep::Unchanged;
+                }
+                DragStep::Publish {
+                    next,
+                    to_track: None,
+                }
+            }
+        }
+    }
+
+    /// One mouse move of a drag: the clip becomes what the pointer says, through the gesture
+    /// of the session, so sound and every other view follow.
+    fn drag_to(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
+        self.refresh_order(cx);
+        let Some(mut drag) = self.drag.take() else {
+            return;
+        };
+        let step = self.drag_step(&mut drag, x, y, cx);
+        let DragStep::Publish { next, to_track } = step else {
+            self.drag = Some(drag);
+            if matches!(step, DragStep::Gone) {
+                self.end_drag(cx);
+            }
+            return;
+        };
+        let (clip, home, label) = (drag.clip.clone(), drag.home.clone(), drag.kind.label());
+        let begun = std::mem::replace(&mut drag.begun, true);
+        let wrote = match &drag.kind {
+            ClipDragKind::Move { .. } => None,
+            ClipDragKind::Resize { .. } => Some(next.clone()),
+        };
+        let wrote_start = next.start;
+        let moved = self.session.update(cx, |session, cx| {
+            if !begun {
+                session.begin_gesture(label, cx);
+            }
+            session.gesture(cx, |project, edit| {
+                let mut changes = Changes::new();
+                let clip = match &to_track {
+                    Some(track) if home.parent().as_ref() == Some(track.id()) => {
+                        changes.delete(clip.id());
+                        changes.create(home.clone(), next)
+                    }
+                    Some(track) => {
+                        let moved = move_clip(project, &mut changes, &clip, track)?;
+                        changes.set(&moved, next);
+                        moved
+                    }
+                    None => {
+                        changes.set(&clip, next);
+                        clip.clone()
+                    }
+                };
+                project.publish(edit, changes)?;
+                Ok(clip)
+            })
+        });
+        if let Some(moved) = moved {
+            drag.clip = moved;
+            match (&mut drag.kind, wrote) {
+                (ClipDragKind::Move { written, .. }, _) => *written = wrote_start,
+                (ClipDragKind::Resize { written, .. }, Some(wrote)) => *written = wrote,
+                (ClipDragKind::Resize { .. }, None) => {}
+            }
+        }
+        let dragged = drag.clip.id().clone();
+        self.drag = Some(drag);
+        self.select_clip(Some(dragged), cx);
+    }
+
+    /// Mouse up, or the clip went away under the drag: the gesture becomes one undo step.
+    fn end_drag(&mut self, cx: &mut Context<Self>) {
+        if self.drag.take().is_some_and(|drag| drag.begun) {
+            self.session
+                .update(cx, |session, cx| session.finish_gesture(cx));
+        }
+        cx.notify();
+    }
+
+    /// Escape: the clip goes back to where it was at mouse down. Whether there was a drag.
+    fn cancel_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(drag) = self.drag.take() else {
+            return false;
+        };
+        if drag.begun {
+            self.session
+                .update(cx, |session, cx| session.cancel_gesture(cx));
+            self.select_clip(Some(drag.home), cx);
+        }
+        cx.notify();
+        true
+    }
+
+    /// The cursor says that a drag from here resizes.
+    fn hover(&mut self, x: f32, y: f32, scene: &Scene, cx: &mut Context<Self>) {
+        let inside = x >= 0.0 && y >= 0.0;
+        let zone = scene.zone_at(x, y).filter(|_| inside);
+        let over_edge = zone.is_some_and(|(_, zone)| zone != Zone::Body);
+        if self.over_edge != over_edge {
+            self.over_edge = over_edge;
+            cx.notify();
+        }
+    }
+
+    fn resize_cursor(&self) -> bool {
+        match &self.drag {
+            Some(drag) => matches!(drag.kind, ClipDragKind::Resize { .. }),
+            None => self.over_edge,
+        }
+    }
+
+    fn selected_instance(&self, cx: &App) -> Option<Instance<Clip>> {
+        let project = self.session.read(cx).project();
+        project.resolve(self.selected_clip.as_ref()?)
+    }
+
+    /// The keys of the focused timeline. Whether the key was one of them.
+    fn on_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.control || modifiers.alt || modifiers.platform || modifiers.shift {
+            return false;
+        }
+        let key = event.keystroke.key.as_str();
+        if key == "escape" {
+            return self.cancel_drag(cx);
+        }
+        // The mouse has the clip: a key would fight the next mouse move.
+        if self.drag.is_some() {
+            return false;
+        }
+        let Some(clip) = self.selected_instance(cx) else {
+            return false;
+        };
+        let step = SNAP.0 as i64;
+        match key {
+            "enter" => cx.emit(TimelineEvent::OpenEditor(clip)),
+            "backspace" | "delete" => self.delete_clip(&clip, cx),
+            "left" => self.nudge_in_time(&clip, -step, cx),
+            "right" => self.nudge_in_time(&clip, step, cx),
+            "up" => self.nudge_to_track(&clip, -1, cx),
+            "down" => self.nudge_to_track(&clip, 1, cx),
+            _ => return false,
+        }
+        true
+    }
+
+    fn delete_clip(&mut self, clip: &Instance<Clip>, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.delete(clip.id());
+                project.commit("Delete clip", changes)
+            })
+        });
+    }
+
+    fn nudge_in_time(&mut self, clip: &Instance<Clip>, delta: i64, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project();
+        let Some(start) = project.state(clip).map(|state| state.start) else {
+            return;
+        };
+        let next = shifted(start, delta);
+        if next == start {
+            return;
+        }
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut edit = project.begin("Nudge clip");
+                project.update(&mut edit, clip, |clip| clip.start = next)?;
+                project.finish(edit)
+            })
+        });
+    }
+
+    fn nudge_to_track(&mut self, clip: &Instance<Clip>, step: i64, cx: &mut Context<Self>) {
+        self.refresh_order(cx);
+        let on_now = clip.id().parent();
+        let mut rows = self.order.iter();
+        let Some(current) = rows.position(|track| Some(track.id()) == on_now.as_ref()) else {
+            return;
+        };
+        let next = nudged_track(current, self.order.len(), step);
+        let Some(track) = self.order.get(next).filter(|_| next != current).cloned() else {
+            return;
+        };
+        let moved = self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                let moved = move_clip(project, &mut changes, clip, &track)?;
+                project.commit("Nudge clip", changes)?;
+                Ok(moved)
+            })
+        });
+        if let Some(moved) = moved {
+            self.select_clip(Some(moved.id().clone()), cx);
+        }
     }
 
     fn on_scroll(&mut self, event: &ScrollWheelEvent, x: f32, cx: &mut Context<Self>) {
-        let delta = event.delta.pixel_delta(px(32.));
-        let viewport = if event.modifiers.secondary() {
-            let factor = (f64::from(f32::from(delta.y)) * 0.01).exp();
-            self.viewport.zoomed(factor, x.max(0.0))
-        } else {
-            self.viewport
-                .scrolled(f32::from(delta.x), f32::from(delta.y))
-        };
-        self.set_viewport(viewport, cx);
+        self.set_viewport(scrolled_or_zoomed(self.viewport, event, x), cx);
     }
 
     fn on_pinch(&mut self, event: &PinchEvent, x: f32, cx: &mut Context<Self>) {
         let factor = f64::from(1.0 + event.delta);
         self.set_viewport(self.viewport.zoomed(factor, x.max(0.0)), cx);
+    }
+}
+
+/// Scroll pans. With cmd it zooms in time about the pointer.
+fn scrolled_or_zoomed(viewport: Viewport, event: &ScrollWheelEvent, x: f32) -> Viewport {
+    let delta = event.delta.pixel_delta(px(32.));
+    if event.modifiers.secondary() {
+        let factor = (f64::from(f32::from(delta.y)) * 0.01).exp();
+        viewport.zoomed(factor, x.max(0.0))
+    } else {
+        viewport.scrolled(f32::from(delta.x), f32::from(delta.y))
     }
 }
 
@@ -345,6 +1025,7 @@ impl Render for Timeline {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_order(cx);
         let timeline = cx.entity();
+        let focus_handle = self.focus_handle.clone();
         let surface = canvas(
             |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
             move |bounds, hitbox, window, cx| {
@@ -354,12 +1035,24 @@ impl Render for Timeline {
                 timeline.read(cx).painted.set(scene.viewport);
                 timeline.read(cx).painted_size.set((width, height));
                 paint_scene(&scene, bounds, window, cx);
+                let keyboard_focus = &timeline.read(cx).keyboard_focus;
+                if keyboard_focus.shows_ring(&focus_handle, window) {
+                    paint_focus_ring(bounds, window, cx);
+                }
+                if timeline.read(cx).resize_cursor() {
+                    window.set_cursor_style(CursorStyle::ResizeLeftRight, &hitbox);
+                }
                 listen(timeline, scene, bounds, hitbox, window);
             },
         );
         div()
             .size_full()
             .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|timeline, event, _, cx| {
+                if timeline.on_key(event, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .child(surface.size_full())
     }
 }
@@ -373,12 +1066,50 @@ fn listen(
     window: &mut Window,
 ) {
     window.on_mouse_event({
-        let (timeline, hitbox) = (timeline.clone(), hitbox.clone());
+        let (timeline, hitbox, scene) = (timeline.clone(), hitbox.clone(), scene.clone());
         move |event: &MouseDownEvent, phase, window, cx| {
             let hit = phase == DispatchPhase::Bubble && hitbox.is_hovered(window);
             if hit && event.button == MouseButton::Left {
                 let (x, y) = Timeline::timeline_position(bounds, event.position);
-                timeline.update(cx, |timeline, cx| timeline.on_mouse_down(x, y, &scene, cx));
+                timeline.update(cx, |timeline, cx| {
+                    window.focus(&timeline.focus_handle, cx);
+                    timeline.keyboard_focus.pressed(cx);
+                    timeline.on_mouse_down(event, x, y, &scene, cx)
+                });
+            }
+        }
+    });
+    // A drag that starts on a clip goes on wherever the pointer is, until the button is up.
+    window.on_mouse_event({
+        let (timeline, hitbox) = (timeline.clone(), hitbox.clone());
+        move |event: &MouseMoveEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            let (x, y) = Timeline::timeline_position(bounds, event.position);
+            timeline.update(cx, |timeline, cx| {
+                if timeline.drag.is_none() {
+                    if hitbox.is_hovered(window) {
+                        timeline.hover(x, y, &scene, cx);
+                    }
+                } else if event.dragging() {
+                    timeline.drag_to(x, y, cx);
+                } else {
+                    // The button came up somewhere that did not tell this window.
+                    timeline.end_drag(cx);
+                }
+            });
+        }
+    });
+    window.on_mouse_event({
+        let timeline = timeline.clone();
+        move |event: &MouseUpEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                timeline.update(cx, |timeline, cx| {
+                    if timeline.drag.is_some() {
+                        timeline.end_drag(cx);
+                    }
+                });
             }
         }
     });
@@ -399,73 +1130,9 @@ fn listen(
     });
 }
 
-/// A rect of [`layout`] in window coordinates, on whole pixels so that edges stay sharp.
-fn placed(rect: Rect, origin: Point<Pixels>) -> Bounds<Pixels> {
-    let (left, top) = (rect.x.round(), rect.y.round());
-    let right = (rect.x + rect.width).round().max(left + 1.0);
-    let bottom = (rect.y + rect.height).round().max(top + 1.0);
-    Bounds::new(
-        origin + point(px(left), px(top)),
-        size(px(right - left), px(bottom - top)),
-    )
-}
-
-/// How a label that does not fit is handled.
-enum Fit {
-    /// Ends in an ellipsis at this width.
-    Truncate(f32),
-    /// Not painted when it would cross this x. Half a number reads as another number.
-    SkipPast(Pixels),
-}
-
-fn paint_text(
-    text: SharedString,
-    origin: Point<Pixels>,
-    font_size: f32,
-    weight: FontWeight,
-    color: Hsla,
-    fit: Fit,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let mut font = typography::tabular();
-    font.weight = weight;
-    let run = TextRun {
-        len: text.len(),
-        font: font.clone(),
-        color,
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    let (text, runs) = match fit {
-        Fit::Truncate(width) => {
-            let mut wrapper = window.text_system().line_wrapper(font, px(font_size));
-            let runs = [run];
-            let (text, runs) =
-                wrapper.truncate_line(text, px(width), "…", &runs, TruncateFrom::End);
-            (text, runs.into_owned())
-        }
-        Fit::SkipPast(_) => (text, vec![run]),
-    };
-    let line = window
-        .text_system()
-        .shape_line(text, px(font_size), &runs, None);
-    if matches!(fit, Fit::SkipPast(right) if origin.x + line.width > right) {
-        return;
-    }
-    let line_height = px((font_size * 1.4).round());
-    // A glyph that cannot be painted leaves a gap in a label. Nothing else depends on it.
-    if let Err(error) = line.paint(origin, line_height, TextAlign::Left, None, window, cx) {
-        eprintln!("arrangement view: {error}");
-    }
-}
-
 fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let theme = cx.theme();
-    let (text, muted, hairline, clip_fill, clip_border) = (
-        theme.gray_900,
-        theme.gray_700,
+    let (hairline, clip_fill, clip_border) = (
         theme.alpha_at(0.05),
         theme.alpha_at(0.05),
         theme.alpha_at(0.10),
@@ -485,57 +1152,14 @@ fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &
     );
 
     // The ruler: a short mark and a number per bar. No grid below it.
-    window.with_content_mask(Some(ContentMask { bounds: ruler }), |window| {
-        for (bar, x) in &scene.bars {
-            let x = px(x.round());
-            let mark = Bounds::new(
-                ruler.origin + point(x, px(RULER_HEIGHT - 8.)),
-                size(px(1.), px(8.)),
-            );
-            window.paint_quad(fill(mark, clip_border));
-            let label = ruler.origin + point(x + px(8.), px(8.));
-            let number = bar.to_string().into();
-            let fit = Fit::SkipPast(ruler.right());
-            paint_text(
-                number,
-                label,
-                12.,
-                FontWeight::NORMAL,
-                muted,
-                fit,
-                window,
-                cx,
-            );
-        }
-    });
+    paint_ruler(&scene.bars, ruler, window, cx);
 
     window.with_content_mask(Some(ContentMask { bounds: headers }), |window| {
         for row in &scene.rows {
             let top = headers.origin + point(px(0.), px(row.y.round()));
-            let dot = Bounds::new(
-                top + point(px(24.), px(TRACK_HEIGHT / 2. - 4.)),
-                size(px(8.), px(8.)),
-            );
-            window.paint_quad(quad(
-                dot,
-                px(4.),
-                row.accent,
-                px(0.),
-                row.accent,
-                BorderStyle::Solid,
-            ));
-            let name = top + point(px(44.), px(TRACK_HEIGHT / 2. - 10.));
-            let fit = Fit::Truncate(HEADER_WIDTH - 44. - 16.);
-            paint_text(
-                row.name.clone(),
-                name,
-                14.,
-                FontWeight::MEDIUM,
-                text,
-                fit,
-                window,
-                cx,
-            );
+            let name_width = HEADER_WIDTH - 44. - 16.;
+            let name = row.name.clone();
+            paint_track_label(name, row.accent, top, TRACK_HEIGHT, name_width, window, cx);
         }
     });
 
@@ -573,62 +1197,4 @@ fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &
             }
         }
     });
-}
-
-/// The playhead: one line over the ruler and the tracks. It repaints on every playhead
-/// change, so it reads nothing from the project.
-struct PlayheadLine {
-    playhead: Entity<Playhead>,
-    painted: Rc<Cell<Viewport>>,
-}
-
-impl PlayheadLine {
-    fn new(
-        playhead: Entity<Playhead>,
-        timeline: &Entity<Timeline>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe(&playhead, |_, _, cx| cx.notify()).detach();
-        // A scroll or a zoom moves the line too.
-        cx.observe(timeline, |_, _, cx| cx.notify()).detach();
-        Self {
-            playhead,
-            painted: timeline.read(cx).painted.clone(),
-        }
-    }
-}
-
-impl Render for PlayheadLine {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tick = self.playhead.read(cx).tick;
-        let painted = self.painted.clone();
-        let color = cx.theme().gray_950;
-        canvas(
-            |_, _, _| {},
-            move |bounds, (), window, _| {
-                // The timeline painted before this line, so the viewport is this frame's.
-                let x = painted.get().x_of(tick).round();
-                if x < 0.0 || x >= f32::from(bounds.size.width) - HEADER_WIDTH {
-                    return;
-                }
-                let top = bounds.origin + point(px(HEADER_WIDTH + x), px(RULER_HEIGHT / 2.));
-                let line = Bounds::new(
-                    top,
-                    size(px(1.), bounds.size.height - px(RULER_HEIGHT / 2.)),
-                );
-                let head = Bounds::new(top - point(px(3.), px(3.)), size(px(7.), px(7.)));
-                window.paint_quad(fill(line, color));
-                window.paint_quad(quad(
-                    head,
-                    px(3.5),
-                    color,
-                    px(0.),
-                    color,
-                    BorderStyle::Solid,
-                ));
-            },
-        )
-        .absolute()
-        .inset_0()
-    }
 }

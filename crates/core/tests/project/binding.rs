@@ -247,3 +247,30 @@ fn the_project_can_move_to_another_thread() {
     fn assert_send<T: Send>() {}
     assert_send::<Project>();
 }
+
+#[test]
+fn an_interface_sends_an_update_to_a_processor_of_an_instance() {
+    let (mut project, mut engine, _folder) = open();
+    let mut changes = Changes::new();
+    changes.create(id("routed"), SelfRouted { value: 0.25 });
+    project.commit("Add", changes).unwrap();
+    assert_eq!(level(&mut engine), 0.25);
+
+    // Not an edit: the sound follows, the record and the history do not.
+    project
+        .send::<Constant>(&id("routed"), "constant", 0.75)
+        .unwrap();
+    assert_eq!(level(&mut engine), 0.75);
+    assert_eq!(project.undo_label(), Some("Add"));
+    let routed = project.resolve::<SelfRouted>(&id("routed")).unwrap();
+    assert_eq!(project.state(&routed).unwrap().value, 0.25);
+
+    // The wrong name, the wrong type and a missing instance are typed errors.
+    for (instance, name) in [("routed", "other"), ("missing", "constant")] {
+        let sent = project.send::<Constant>(&id(instance), name, 0.5);
+        assert!(matches!(sent, Err(ProjectError::MissingProcessor { .. })));
+    }
+    let sent = project.send::<Gain>(&id("routed"), "constant", 0.5);
+    assert!(matches!(sent, Err(ProjectError::MissingProcessor { .. })));
+    assert_eq!(level(&mut engine), 0.75);
+}

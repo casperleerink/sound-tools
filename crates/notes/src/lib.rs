@@ -39,6 +39,12 @@ impl Pitch {
         Self::try_from(i64::from(number))
     }
 
+    /// The pitch nearest to any number: 0 below the range, 127 above it. For interface math
+    /// that cannot fail, such as a drag or a transposition that stops at the ends.
+    pub fn nearest(number: i64) -> Self {
+        Self(number.clamp(0, 127) as u8)
+    }
+
     pub fn number(self) -> u8 {
         self.0
     }
@@ -76,6 +82,11 @@ impl Velocity {
         Self::try_from(i64::from(value))
     }
 
+    /// The velocity nearest to any number: 1 below the range, 127 above it.
+    pub fn nearest(value: i64) -> Self {
+        Self(value.clamp(1, 127) as u8)
+    }
+
     pub fn value(self) -> u8 {
         self.0
     }
@@ -110,6 +121,12 @@ pub struct Length(Ticks);
 impl Length {
     pub fn new(ticks: Ticks) -> Result<Self, NoteError> {
         Self::try_from(ticks)
+    }
+
+    /// The length nearest to `ticks`: one tick for 0. For interface math that cannot fail,
+    /// such as a drag that already keeps a minimum.
+    pub fn at_least_one(ticks: Ticks) -> Self {
+        Self(ticks.max(Ticks(1)))
     }
 
     pub fn ticks(self) -> Ticks {

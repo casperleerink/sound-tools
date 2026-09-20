@@ -6,19 +6,27 @@
 //! - `piece.png`: three tracks with several clips, playing, one clip selected.
 //! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
 //! - `menu.png`: the project menu, open, after one edit.
+//! - `editor.png`: the note editor open on the selected clip, one note selected.
+//! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
-//! scale project: rendering, layout and painting into the scene, not the GPU.
+//! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
+//! are those of one real mouse move on that project: the publish into the gesture, every
+//! project event it causes and the frame after it.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use arrangement::view::ArrangementView;
-use arrangement::view::layout::{TRACK_HEIGHT, Viewport};
+use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT, Viewport};
+use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
+use arrangement::view::{ArrangementView, NoteEditor};
 use arrangement::{Colour, TrackState};
-use gpui::{AppContext, Entity, HeadlessAppContext, WindowHandle, px, size};
+use gpui::{
+    AppContext, Entity, HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformInput, Point, WindowHandle, point, px, size,
+};
 use instrument::SynthState;
 use runtime::window::Shell;
 use runtime::{OFFLINE, main_arrangement, open_or_create, views};
@@ -90,18 +98,106 @@ impl Opened {
         anyhow::bail!("the engine did not start to play")
     }
 
+    fn arrangement_view(&self, cx: &mut HeadlessAppContext) -> Result<Entity<ArrangementView>> {
+        let view = cx.update(|cx| self.window.read(cx).map(|shell| shell.main_view().cloned()))?;
+        let view = view.context("the window shows no main view")?;
+        view.downcast::<ArrangementView>()
+            .ok()
+            .context("not the arrangement")
+    }
+
     fn timeline_view(
         &self,
         cx: &mut HeadlessAppContext,
     ) -> Result<Entity<arrangement::view::Timeline>> {
-        let view = cx.update(|cx| self.window.read(cx).map(|shell| shell.main_view().cloned()))?;
-        let view = view.context("the window shows no main view")?;
-        let view = view
-            .downcast::<ArrangementView>()
-            .ok()
-            .context("not the arrangement")?;
+        let view = self.arrangement_view(cx)?;
         Ok(cx.update(|cx| view.read(cx).timeline().clone()))
     }
+
+    /// Selects a clip and opens the note editor for it, as enter does.
+    fn open_editor(
+        &self,
+        clip: &InstanceId,
+        cx: &mut HeadlessAppContext,
+    ) -> Result<Entity<NoteEditor>> {
+        let view = self.arrangement_view(cx)?;
+        let timeline = self.timeline_view(cx)?;
+        let instance = cx.update(|cx| self.session.read(cx).project().resolve::<Clip>(clip));
+        let instance = instance.context("no such clip")?;
+        cx.update_window(self.window.into(), |_, window, cx| {
+            timeline.update(cx, |timeline, cx| {
+                timeline.select_clip(Some(clip.clone()), cx)
+            });
+            view.update(cx, |view, cx| view.open_editor(instance, window, cx));
+        })?;
+        cx.run_until_parked();
+        let editor = cx.update(|cx| view.read(cx).editor().cloned());
+        editor.context("the editor did not open")
+    }
+
+    /// One real mouse event, and the frame it causes. Returns how long both took.
+    fn mouse(&self, event: PlatformInput, cx: &mut HeadlessAppContext) -> Result<Duration> {
+        let started = Instant::now();
+        cx.update_window(self.window.into(), |_, window, cx| {
+            window.dispatch_event(event, cx);
+        })?;
+        cx.run_until_parked();
+        Ok(started.elapsed())
+    }
+
+    /// A drag with the left button from `from`, one mouse move per step of `step`, and the
+    /// time of each move. The button comes up where the drag ends.
+    fn drag(
+        &self,
+        from: Point<Pixels>,
+        step: Point<Pixels>,
+        moves: usize,
+        cx: &mut HeadlessAppContext,
+    ) -> Result<Vec<Duration>> {
+        let modifiers = Modifiers::default();
+        let moved = |position, pressed_button| {
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position,
+                pressed_button,
+                modifiers,
+            })
+        };
+        self.mouse(moved(from, None), cx)?;
+        self.mouse(
+            PlatformInput::MouseDown(MouseDownEvent {
+                position: from,
+                modifiers,
+                button: MouseButton::Left,
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        )?;
+        let mut position = from;
+        let mut times = Vec::new();
+        for _ in 0..moves {
+            position += step;
+            times.push(self.mouse(moved(position, Some(MouseButton::Left)), cx)?);
+        }
+        self.mouse(
+            PlatformInput::MouseUp(MouseUpEvent {
+                position,
+                modifiers,
+                button: MouseButton::Left,
+                click_count: 1,
+            }),
+            cx,
+        )?;
+        Ok(times)
+    }
+}
+
+fn print_times(what: &str, mut times: Vec<Duration>) {
+    times.sort();
+    let mean = times.iter().sum::<Duration>() / times.len().max(1) as u32;
+    let worst = times.last().copied().unwrap_or_default();
+    let median = times.get(times.len() / 2).copied().unwrap_or_default();
+    println!("{what}: mean {mean:?}, median {median:?}, worst {worst:?}");
 }
 
 fn note(start: u64, length: u64, pitch: u8) -> Result<Note> {
@@ -224,6 +320,7 @@ fn main() -> Result<()> {
         gpui_platform::current_headless_renderer,
     );
     cx.update(sound_ui::init);
+    cx.update(runtime::window::bind_keys);
     let save = |cx: &mut HeadlessAppContext, opened: &Opened, name: &str| -> Result<()> {
         let path = out_dir.join(format!("{name}.png"));
         cx.capture_screenshot(opened.window.into())?.save(&path)?;
@@ -259,6 +356,36 @@ fn main() -> Result<()> {
     })?;
     cx.run_until_parked();
     save(&mut cx, &opened, "menu")?;
+    drop(opened);
+
+    // The note editor on the melody, one note selected, stopped at the start of the clip.
+    let opened = Opened::new(&mut cx, piece)?;
+    let melody =
+        InstanceId::new("arrangement/a-melody-with-a-name-too-long-for-its-header/clip-000")?;
+    let editor = opened.open_editor(&melody, &mut cx)?;
+    cx.update(|cx| editor.update(cx, |editor, cx| editor.select_note(Some(5), cx)));
+    cx.run_until_parked();
+    save(&mut cx, &opened, "editor")?;
+    // The bass, low in the pitch range, as the editor looks after tab gave it the focus.
+    let bass = InstanceId::new("arrangement/bass/clip-001")?;
+    opened.open_editor(&bass, &mut cx)?;
+    // Away and back with the keys, so the focus is one from the keyboard and shows its ring.
+    for keys in ["shift-tab", "tab"] {
+        let keystroke = gpui::Keystroke::parse(keys)?;
+        let key_down = PlatformInput::KeyDown(gpui::KeyDownEvent {
+            keystroke,
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.update_window(opened.window.into(), |_, window, cx| {
+            window.dispatch_event(key_down, cx);
+        })?;
+        cx.run_until_parked();
+        // A frame, as the screen draws one between two keys: the ring follows the focus that
+        // a frame sees.
+        cx.capture_screenshot(opened.window.into())?;
+    }
+    save(&mut cx, &opened, "editor-focus")?;
     drop(opened);
 
     let started = Instant::now();
@@ -312,18 +439,108 @@ fn main() -> Result<()> {
         cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_viewport(viewport, cx)));
         zoomed_out.push(started.elapsed());
     }
-    for (what, mut times) in [
-        ("playing", playing),
-        ("scrolling", scrolling),
-        ("scrolling, zoomed far out", zoomed_out),
-    ] {
-        times.sort();
-        let mean = times.iter().sum::<Duration>() / times.len() as u32;
-        let worst = times.last().copied().unwrap_or_default();
-        println!(
-            "frame while {what}: mean {mean:?}, median {:?}, worst {worst:?}",
-            times[times.len() / 2]
-        );
+    print_times("frame while playing", playing);
+    print_times("frame while scrolling", scrolling);
+    print_times("frame while scrolling, zoomed far out", zoomed_out);
+
+    // A drag of a clip with the real mouse events, a snap step per move: 100 moves to the
+    // right on its track, then 8 moves down over other tracks. Stopped, so that only the drag
+    // is measured.
+    cx.update(|cx| {
+        opened
+            .session
+            .update(cx, |session, _| session.engine().stop())
+    });
+    opened.advance(64, &mut cx);
+    cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_viewport(middle, cx)));
+    cx.run_until_parked();
+    // Row 46 is track 45 of the scale project, after the track of the default project. Its
+    // clip 50 is at bar 8 * 50 + 45 % 8 = 405, which is on screen.
+    let top = 48.0 + RULER_HEIGHT;
+    let row_46 = top + middle.y_of(46) + TRACK_HEIGHT / 2.;
+    let on_clip = point(
+        px(HEADER_WIDTH + middle.x_of(Ticks(405 * BAR + BAR / 2))),
+        px(row_46),
+    );
+    let in_time = opened.drag(on_clip, point(px(6.), px(0.)), 100, &mut cx)?;
+    print_times("clip drag in time, per mouse move", in_time);
+    let moved_to = on_clip + point(px(600.), px(0.));
+    let across = opened.drag(moved_to, point(px(0.), px(TRACK_HEIGHT)), 8, &mut cx)?;
+    print_times("clip drag across tracks, per mouse move", across);
+    let label = cx.update(|cx| {
+        opened
+            .session
+            .read(cx)
+            .project()
+            .undo_label()
+            .map(str::to_string)
+    });
+    anyhow::ensure!(
+        label.as_deref() == Some("Move clip"),
+        "the drag did not move a clip"
+    );
+
+    // A drag of a note in the editor of a clip of that project, a semitone per move.
+    let clip = InstanceId::new("arrangement/track-60/clip-050")?;
+    let editor = opened.open_editor(&clip, &mut cx)?;
+    let viewport = cx.update(|cx| editor.read(cx).viewport());
+    let state = cx.update(|cx| {
+        let project = opened.session.read(cx).project();
+        let instance = project.resolve::<Clip>(&clip)?;
+        project.state(&instance).cloned()
+    });
+    let state = state.context("the clip has no state")?;
+    let first = state.notes.first().context("the clip has no notes")?;
+    let editor_top = 900.0 - EDITOR_HEIGHT + RULER_HEIGHT;
+    let on_note = point(
+        px(HEADER_WIDTH + viewport.x_of(state.start + first.start) + 40.),
+        px(editor_top + roll::y_of(&viewport, first.pitch) + KEY_HEIGHT / 2.),
+    );
+    let mut note_moves = opened.drag(on_note, point(px(12.), px(-KEY_HEIGHT)), 10, &mut cx)?;
+    let back = on_note + point(px(120.), px(-10. * KEY_HEIGHT));
+    note_moves.extend(opened.drag(back, point(px(-12.), px(KEY_HEIGHT)), 10, &mut cx)?);
+    print_times("note drag, per mouse move", note_moves);
+    let label = cx.update(|cx| {
+        opened
+            .session
+            .read(cx)
+            .project()
+            .undo_label()
+            .map(str::to_string)
+    });
+    anyhow::ensure!(
+        label.as_deref() == Some("Move note"),
+        "the drag did not move a note"
+    );
+    save(&mut cx, &opened, "scale-editor")?;
+
+    // The publish alone, without the frame: the record, the behaviour of its track with a new
+    // snapshot of its 100 clips, and the engine batch.
+    let instance = cx.update(|cx| opened.session.read(cx).project().resolve::<Clip>(&clip));
+    let instance = instance.context("no such clip")?;
+    let mut publishes = Vec::new();
+    for step in 1..=100_u64 {
+        publishes.push(cx.update(|cx| {
+            opened.session.update(cx, |session, cx| {
+                if step == 1 {
+                    session.begin_gesture("Move clip", cx);
+                }
+                let started = Instant::now();
+                session.gesture(cx, |project, edit| {
+                    project.update(edit, &instance, |clip| {
+                        clip.start = state.start + Ticks(step * 240)
+                    })
+                });
+                started.elapsed()
+            })
+        }));
+        opened.advance(64, &mut cx);
     }
+    cx.update(|cx| {
+        opened
+            .session
+            .update(cx, |session, cx| session.cancel_gesture(cx))
+    });
+    print_times("publish of one clip move", publishes);
     Ok(())
 }

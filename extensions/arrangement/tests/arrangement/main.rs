@@ -6,6 +6,7 @@
 
 mod held_notes;
 mod live_edits;
+mod preview;
 mod records;
 mod support;
 mod timing;

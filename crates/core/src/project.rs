@@ -37,6 +37,7 @@ use watcher::Watcher;
 use crate::clock::{Clock, Ticks};
 use crate::control::EngineControl;
 use crate::graph::GraphError;
+use crate::processor::Processor;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
@@ -51,6 +52,8 @@ pub enum ProjectError {
     InvalidId(#[from] InvalidInstanceId),
     #[error("instance {0} does not exist")]
     MissingInstance(InstanceId),
+    #[error("instance {instance} has no processor {name:?} of this type")]
+    MissingProcessor { instance: InstanceId, name: String },
     #[error("instance {0} cannot be created: its parent does not exist")]
     MissingParent(InstanceId),
     #[error(
@@ -233,6 +236,24 @@ impl Project {
     /// that it is saved and undoable.
     pub fn engine(&mut self) -> &mut EngineControl {
         &mut self.engine
+    }
+
+    /// Sends one update to the processor that the behaviour of `instance` declared under
+    /// `name`: something from an interface that should happen now, such as a preview note. It
+    /// is not an edit: nothing is saved and there is no undo step. It applies at the start of
+    /// the next block.
+    pub fn send<P: Processor>(
+        &mut self,
+        instance: &InstanceId,
+        name: &str,
+        update: P::Update,
+    ) -> Result<(), ProjectError> {
+        let node = self.bindings.node::<P>(instance, name);
+        let node = node.ok_or_else(|| ProjectError::MissingProcessor {
+            instance: instance.clone(),
+            name: name.to_string(),
+        })?;
+        Ok(self.engine.update(node, update)?)
     }
 
     /// The clock the engine plays by, for conversions while reading, such as ticks to seconds.

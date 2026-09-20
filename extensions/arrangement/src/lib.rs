@@ -25,15 +25,18 @@ use sound_core::{
     BehaviourContext, BehaviourError, Changes, Instance, InstanceId, OutputEndpoint, Place,
     Project, ProjectError, Registry, RegistryError, State, Ticks,
 };
-use sound_notes::{AUDIO_OUTPUT, Clip, NOTES_INPUT, TRACK_TOOL};
+use sound_notes::{AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOOL, Velocity};
 
-pub use sequencer::{HELD_CAPACITY, Sequencer, TrackSnapshot};
+pub use sequencer::{HELD_CAPACITY, PREVIEW_SECONDS, Sequencer, SequencerUpdate, TrackSnapshot};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "arrangement";
 
 /// The name of the child of a track that plays its notes.
 pub const INSTRUMENT: &str = "instrument";
+
+/// The name of the processor of a track.
+const SEQUENCER: &str = "sequencer";
 
 /// The id of the arrangement in the default project.
 pub const DEFAULT_ARRANGEMENT: &str = "arrangement";
@@ -143,8 +146,8 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 /// port names of the note contract, so any tool with those ports fits.
 fn apply_track(_: &TrackState, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let snapshot = TrackSnapshot::new(context.children::<Clip>().map(|(_, clip)| clip));
-    let sequencer = context.processor("sequencer", Sequencer::default)?;
-    context.update(sequencer, Arc::new(snapshot))?;
+    let sequencer = context.processor(SEQUENCER, Sequencer::default)?;
+    context.update(sequencer, SequencerUpdate::Snapshot(Arc::new(snapshot)))?;
     if let Some(notes) = context.child_input(INSTRUMENT, NOTES_INPUT) {
         context.connect(OutputEndpoint::new(sequencer, Sequencer::NOTES).to(notes))?;
     }
@@ -239,6 +242,20 @@ pub fn move_clip(
     let id = project.free_id(&to_track.id().child(clip.id().name())?)?;
     changes.delete(clip.id());
     Ok(changes.create(id, state))
+}
+
+/// Plays one note now through the instrument of a track, for [`PREVIEW_SECONDS`], also while
+/// the project does not play: what a note editor calls when a note is clicked, drawn or moved
+/// to a new pitch. The off comes from the sequencer of the track, so the caller has nothing
+/// to end. Not an edit: nothing is saved.
+pub fn preview_note(
+    project: &mut Project,
+    track: &InstanceId,
+    pitch: Pitch,
+    velocity: Velocity,
+) -> Result<(), ProjectError> {
+    let preview = SequencerUpdate::Preview { pitch, velocity };
+    project.send::<Sequencer>(track, SEQUENCER, preview)
 }
 
 /// The default project: one arrangement with one track and its instrument, no clips. The

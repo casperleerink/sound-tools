@@ -12,7 +12,11 @@ use std::sync::Arc;
 use sound_core::{
     EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor, Ticks, Transport,
 };
-use sound_notes::{Clip, NoteEvent, Pitch, PlacedNote};
+use sound_notes::{Clip, NoteEvent, Pitch, PlacedNote, Velocity};
+
+/// How long a preview note sounds. Its off comes from the processor after this time, so no
+/// interface can leave one sounding.
+pub const PREVIEW_SECONDS: f32 = 0.3;
 
 /// How many notes one track can hold at a time. A note that would be one more is not played
 /// and counts in `EngineStatus::event_overflows`. The synth has 16 voices.
@@ -57,6 +61,22 @@ impl TrackSnapshot {
     }
 }
 
+/// What the control side sends to a [`Sequencer`].
+pub enum SequencerUpdate {
+    /// The notes of the track, from its behaviour on every change.
+    Snapshot(Arc<TrackSnapshot>),
+    /// A note from an interface that sounds now, for [`PREVIEW_SECONDS`], also while the
+    /// project does not play. A new one ends the one before it.
+    Preview { pitch: Pitch, velocity: Velocity },
+}
+
+/// The preview note that sounds, and for how many more frames.
+#[derive(Copy, Clone)]
+struct Previewed {
+    pitch: Pitch,
+    frames_left: usize,
+}
+
 /// A note this processor started and has not ended yet.
 #[derive(Copy, Clone)]
 struct Held {
@@ -71,6 +91,10 @@ pub struct Sequencer {
     swapped: bool,
     /// Never grows past [`HELD_CAPACITY`], so it never allocates on the audio thread.
     held: Vec<Held>,
+    /// A preview that came since the last block.
+    preview_wanted: Option<(Pitch, Velocity)>,
+    previewed: Option<Previewed>,
+    preview_frames: usize,
 }
 
 impl Sequencer {
@@ -83,23 +107,35 @@ impl Default for Sequencer {
             snapshot: Arc::default(),
             swapped: false,
             held: Vec::with_capacity(HELD_CAPACITY),
+            preview_wanted: None,
+            previewed: None,
+            preview_frames: 0,
         }
     }
 }
 
 impl Processor for Sequencer {
-    type Update = Arc<TrackSnapshot>;
+    type Update = SequencerUpdate;
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::NOTES)
     }
 
-    fn prepare(&mut self, _: &PrepareConfig) {}
+    fn prepare(&mut self, config: &PrepareConfig) {
+        self.preview_frames = (config.sample_rate as f32 * PREVIEW_SECONDS) as usize;
+    }
 
-    fn update(&mut self, update: &mut Arc<TrackSnapshot>) {
-        // The old snapshot rides back to the control thread inside the update.
-        std::mem::swap(&mut self.snapshot, update);
-        self.swapped = true;
+    fn update(&mut self, update: &mut SequencerUpdate) {
+        match update {
+            SequencerUpdate::Snapshot(snapshot) => {
+                // The old snapshot rides back to the control thread inside the update.
+                std::mem::swap(&mut self.snapshot, snapshot);
+                self.swapped = true;
+            }
+            SequencerUpdate::Preview { pitch, velocity } => {
+                self.preview_wanted = Some((*pitch, *velocity));
+            }
+        }
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
@@ -113,6 +149,9 @@ impl Processor for Sequencer {
             snapshot,
             swapped,
             held,
+            preview_wanted,
+            previewed,
+            preview_frames,
         } = self;
         let mut sender = Sender {
             event_outputs,
@@ -124,7 +163,16 @@ impl Processor for Sequencer {
             // would come. The buffer is still empty here, so the event fits.
             sender.send(0, NoteEvent::AllOff);
             held.clear();
+            *previewed = None;
         }
+        preview(
+            preview_wanted,
+            previewed,
+            *preview_frames,
+            context.frames,
+            held,
+            &mut sender,
+        );
 
         // A held note follows the new snapshot: it takes its new end, or it ends now when its
         // note is gone or moved. A note the edit did not touch is found with the same end, so
@@ -169,6 +217,52 @@ impl Processor for Sequencer {
             }
         }
         release_before(held, range.end, transport, &mut sender);
+    }
+}
+
+/// The preview note, in engine time, so it sounds while the project does not play. It goes out
+/// at the start of the block, before the notes of the timeline.
+///
+/// A preview and a note of the timeline may share a pitch, and an off releases every note of
+/// its pitch. So the preview sends no off while the timeline holds its pitch: the off of that
+/// note ends both. The other way round, a note of the timeline that ends cuts a preview of its
+/// pitch short, which nobody hears as a fault.
+fn preview(
+    wanted: &mut Option<(Pitch, Velocity)>,
+    previewed: &mut Option<Previewed>,
+    preview_frames: usize,
+    frames: usize,
+    held: &[Held],
+    sender: &mut Sender<'_, '_>,
+) {
+    let end = |previewed: &mut Option<Previewed>, sender: &mut Sender<'_, '_>| {
+        let Some(note) = *previewed else {
+            return true;
+        };
+        let shared = held.iter().any(|held| held.pitch == note.pitch);
+        let ended = shared || sender.send(0, NoteEvent::Off { pitch: note.pitch });
+        if ended {
+            *previewed = None;
+        }
+        ended
+    };
+    if let Some((pitch, velocity)) = *wanted {
+        // An off that does not fit waits for the next block, and the new note with it.
+        if !end(previewed, sender) {
+            return;
+        }
+        *wanted = None;
+        if sender.send_or_drop(0, NoteEvent::On { pitch, velocity }) {
+            *previewed = Some(Previewed {
+                pitch,
+                frames_left: preview_frames,
+            });
+        }
+    } else if let Some(note) = previewed {
+        note.frames_left = note.frames_left.saturating_sub(frames);
+        if note.frames_left == 0 {
+            end(previewed, sender);
+        }
     }
 }
 
