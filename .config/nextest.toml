@@ -1,4 +1,5 @@
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 1 }
-# The gallery snapshot renderer has no test harness. Run it with `cargo test -p gallery --test snapshots`.
+# The snapshot renderers of the gallery and the runtime have no test harness. Run them with
+# `cargo test -p gallery --test snapshots` and `cargo test -p runtime --test snapshots`.
 default-filter = "not binary(snapshots)"

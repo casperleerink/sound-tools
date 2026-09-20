@@ -1,14 +1,20 @@
-//! What the project runtime is made of, apart from the live loop in `main.rs`: the bundled
-//! extensions, the default project, the project summary and offline rendering. Tests of whole
-//! projects, with every bundled extension, use this crate.
+//! What the project runtime is made of, apart from the command line in `main.rs`: the bundled
+//! extensions and their views, the default project, the project summary, offline rendering and
+//! the application window. Tests of whole projects, with every bundled extension, use this
+//! crate.
+
+pub mod window;
 
 use std::path::Path;
 
 use anyhow::Result;
+use arrangement::{ArrangementState, Colour};
 use instrument::SynthState;
 use sound_core::{
-    Engine, EngineConfig, EngineControl, InstanceId, Project, Registry, SavedDestination,
+    Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project, ProjectError,
+    Registry, SavedDestination, State,
 };
+use sound_ui::Views;
 
 const PROJECT_FILE: &str = "project.json";
 
@@ -41,6 +47,44 @@ pub fn registry() -> Result<Registry> {
     tone::register(&mut registry)?;
     registry.runtime_agent_doc_section(INSPECT_SECTION);
     Ok(registry)
+}
+
+/// Every bundled extension with a view registers it here. The window names no view type.
+pub fn views() -> Views {
+    let mut views = Views::new();
+    arrangement::view::register(&mut views);
+    views
+}
+
+/// The arrangement that "Add track" adds to: the first one at the top of the project.
+pub fn main_arrangement(project: &Project) -> Option<Instance<ArrangementState>> {
+    let mut instances = project.instances();
+    let (id, _) =
+        instances.find(|(id, tool)| id.parent().is_none() && *tool == ArrangementState::TOOL)?;
+    project.resolve(id)
+}
+
+/// Adds `Track <n>` with the default synth, as one undo step. The next colour of the palette,
+/// so that tracks are easy to tell apart. This and [`open_or_create`] are the two places that
+/// know the default instrument.
+pub fn add_track(
+    project: &mut Project,
+    arrangement: &Instance<ArrangementState>,
+) -> Result<(), ProjectError> {
+    let count = arrangement::tracks(project, arrangement.id()).len();
+    let colour = Colour::ALL[count % Colour::ALL.len()];
+    let name = format!("Track {}", count + 1);
+    let mut changes = Changes::new();
+    let instrument = SynthState::default();
+    arrangement::add_track(
+        project,
+        &mut changes,
+        arrangement.id(),
+        &name,
+        colour,
+        instrument,
+    )?;
+    project.commit("Add track", changes)
 }
 
 /// Opens the project with its lock. A folder without a `project.json` becomes the default

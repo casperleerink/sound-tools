@@ -200,10 +200,12 @@ dependencies = [
 name = "arrangement"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "serde",
  "serde_json",
  "sound-core",
  "sound-notes",
+ "sound-ui",
  "tempfile",
 ]
 
@@ -4804,9 +4806,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrangement",
+ "gpui",
+ "gpui_platform",
  "hound",
  "instrument",
  "sound-core",
+ "sound-notes",
+ "sound-ui",
  "tempfile",
  "tone",
 ]
@@ -5316,6 +5322,9 @@ name = "sound-ui"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "serde",
+ "sound-core",
+ "tempfile",
 ]
 
 [[package]]

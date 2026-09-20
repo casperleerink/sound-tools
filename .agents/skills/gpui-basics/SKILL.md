@@ -89,6 +89,9 @@ until resized" symptom. So:
    re-activating the window (it becomes key) restarts it. `window.activate_window()` and
    `cx.observe_window_activation(..)` exist if you need to hook that.
 4. Do not "fix" this with `cx.refresh_windows()` in a timer loop; it does nothing extra.
+5. Re-checked September 19, 2026 in the runtime window with the pin: an outside change repaints
+   while the window is visible and another app has the focus, and also after hide and unhide
+   without activation. No workaround is needed; points 1 and 2 still hold for screenshots.
 
 ## 3. Focus, actions, key bindings, tab order
 

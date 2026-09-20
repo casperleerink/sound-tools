@@ -146,33 +146,31 @@ impl InstanceId {
         ))
     }
 
-    /// The direct children of this instance in `map`, in name order. It jumps over what each
-    /// child owns, so the cost follows the number of children, not the size of the subtree.
+    /// The direct children of this instance in `map`, in name order. It walks on from child to
+    /// child and jumps over what a child owns, so the cost follows the number of children, not
+    /// the size of the subtree, and a child without children of its own costs one step.
     pub(crate) fn children_in<'a, V>(
         &self,
         map: &'a BTreeMap<InstanceId, V>,
     ) -> impl Iterator<Item = (&'a InstanceId, &'a V)> + use<'a, V> {
         let depth = self.depth() + 1;
+        // Ids inside this one start with `id/`. `0` is the character after `/`.
         let end = format!("{}0", self.0);
-        let mut next = Bound::Included(format!("{}/", self.0));
+        // A range does not keep its bounds, so the closure below can own `end`.
+        let from = move |start: &str| {
+            map.range::<str, _>((Bound::Included(start), Bound::Excluded(end.as_str())))
+        };
+        let mut inside = from(&format!("{}/", self.0));
         std::iter::from_fn(move || {
             loop {
-                let start = match &next {
-                    Bound::Included(start) => Bound::Included(start.as_str()),
-                    Bound::Excluded(start) => Bound::Excluded(start.as_str()),
-                    Bound::Unbounded => Bound::Unbounded,
-                };
-                let (id, value) = map
-                    .range::<str, _>((start, Bound::Excluded(end.as_str())))
-                    .next()?;
+                let (id, value) = inside.next()?;
                 if id.depth() == depth {
-                    next = Bound::Excluded(id.0.clone());
                     return Some((id, value));
                 }
                 // Inside some child `c`. Siblings such as `c-2` sort before `c/`, so they are
                 // done already. Everything inside `c` sorts before `c0`.
                 let child: Vec<&str> = id.0.split('/').take(depth + 1).collect();
-                next = Bound::Included(format!("{}0", child.join("/")));
+                inside = from(&format!("{}0", child.join("/")));
             }
         })
     }

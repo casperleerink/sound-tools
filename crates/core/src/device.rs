@@ -50,6 +50,11 @@ impl OutputDevice {
         Ok(Self { device, config })
     }
 
+    /// The name people know the device by, for example "MacBook Pro Speakers".
+    pub fn name(&self) -> Result<String, DeviceError> {
+        Ok(self.device.description()?.name().to_string())
+    }
+
     pub fn sample_rate(&self) -> u32 {
         self.config.sample_rate
     }

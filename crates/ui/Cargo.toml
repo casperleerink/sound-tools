@@ -9,3 +9,9 @@ workspace = true
 
 [dependencies]
 gpui.workspace = true
+sound-core.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+serde.workspace = true
+tempfile.workspace = true

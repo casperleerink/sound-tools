@@ -40,6 +40,8 @@ jobs:
       - run: cargo nextest run --workspace --locked
       - name: Render gallery snapshots
         run: cargo test -p gallery --test snapshots --locked
+      - name: Render window snapshots
+        run: cargo test -p runtime --test snapshots --locked
       - run: cargo build --workspace --locked
       - run: cargo shear
       - run: cargo deny check

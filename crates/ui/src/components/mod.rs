@@ -10,6 +10,7 @@ pub mod indicator;
 pub mod kbd;
 pub mod label;
 pub mod loader;
+pub mod notice;
 pub mod separator;
 
 pub mod checkbox;
