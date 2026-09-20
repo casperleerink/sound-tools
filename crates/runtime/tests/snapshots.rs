@@ -381,6 +381,9 @@ fn main() -> Result<()> {
             window.dispatch_event(key_down, cx);
         })?;
         cx.run_until_parked();
+        // A frame, as the screen draws one between two keys: the ring follows the focus that
+        // a frame sees.
+        cx.capture_screenshot(opened.window.into())?;
     }
     save(&mut cx, &opened, "editor-focus")?;
     drop(opened);

@@ -159,27 +159,43 @@ pub(super) fn paint_track_label(
     paint_text(name, origin, 14., weight, text, fit, window, cx);
 }
 
-/// A thin ring inside the view, only while it has the focus from the keyboard. A click
-/// focuses the view too, and then the pointer already says where the composer is.
-pub(super) fn paint_focus_ring(
-    bounds: Bounds<Pixels>,
-    focus_handle: &FocusHandle,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    if !focus_handle.is_focused(window) || !window.last_input_was_keyboard() {
-        return;
+/// Whether the focus of a view came from the keyboard. Only then the view shows its ring: after
+/// a click the pointer already says where the composer is. GPUI's own focus-visible would
+/// also show the ring when a key follows a click, and space follows a click all the time here.
+///
+/// It is worked out while painting: a focus change repaints the whole window, so the first
+/// paint with the focus sees the input that brought it.
+#[derive(Default)]
+pub(super) struct KeyboardFocus {
+    had_focus: Cell<bool>,
+    from_keyboard: Cell<bool>,
+}
+
+impl KeyboardFocus {
+    /// A mouse press in the view: the ring goes.
+    pub fn pressed<V: 'static>(&self, cx: &mut Context<V>) {
+        if self.from_keyboard.replace(false) {
+            cx.notify();
+        }
     }
+
+    /// Whether the view has the focus from the keyboard now, so that it shows its ring.
+    pub fn shows_ring(&self, handle: &FocusHandle, window: &Window) -> bool {
+        let has_focus = handle.is_focused(window);
+        if has_focus && !self.had_focus.get() {
+            self.from_keyboard.set(window.last_input_was_keyboard());
+        }
+        self.had_focus.set(has_focus);
+        has_focus && self.from_keyboard.get()
+    }
+}
+
+/// A thin ring inside the bounds of a view, see [`KeyboardFocus::shows_ring`].
+pub(super) fn paint_focus_ring(bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let clear = Hsla::transparent_black();
     let ring = cx.theme().lavender;
-    window.paint_quad(quad(
-        bounds,
-        px(6.),
-        clear,
-        px(1.),
-        ring,
-        BorderStyle::Solid,
-    ));
+    let solid = BorderStyle::Solid;
+    window.paint_quad(quad(bounds, px(6.), clear, px(1.), ring, solid));
 }
 
 /// The playhead: one line over the ruler and what is below it. It repaints on every playhead

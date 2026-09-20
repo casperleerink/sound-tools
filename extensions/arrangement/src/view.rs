@@ -45,7 +45,9 @@ use layout::{
     Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, SNAP, TRACK_HEIGHT, Viewport, shifted, snap,
     snapped_delta,
 };
-use paint::{PlayheadLine, accent, paint_focus_ring, paint_ruler, paint_track_label, placed};
+use paint::{
+    KeyboardFocus, PlayheadLine, accent, paint_focus_ring, paint_ruler, paint_track_label, placed,
+};
 use roll::EDITOR_HEIGHT;
 
 /// Registers the view of the `arrangement` tool.
@@ -357,6 +359,7 @@ pub struct Timeline {
     /// The pointer is over an edge of a clip, so the cursor says that a drag resizes.
     over_edge: bool,
     focus_handle: FocusHandle,
+    keyboard_focus: KeyboardFocus,
     _project_events: Subscription,
 }
 
@@ -368,6 +371,7 @@ impl Timeline {
         arrangement: Instance<ArrangementState>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus_handle = cx.focus_handle().tab_stop(true);
         let project_events = cx.subscribe(&session, |timeline, _, event, cx| {
             let shown = |id: &InstanceId| {
                 id == timeline.arrangement.id() || id.is_inside(timeline.arrangement.id())
@@ -417,7 +421,8 @@ impl Timeline {
             selected_clip: None,
             drag: None,
             over_edge: false,
-            focus_handle: cx.focus_handle().tab_stop(true),
+            focus_handle,
+            keyboard_focus: KeyboardFocus::default(),
             _project_events: project_events,
         }
     }
@@ -477,6 +482,11 @@ impl Timeline {
                     .collect();
             }
         }
+    }
+
+    /// Whether the focus ring shows: the timeline has the focus, and it came from the keyboard.
+    pub fn shows_focus_ring(&self, window: &Window) -> bool {
+        self.keyboard_focus.shows_ring(&self.focus_handle, window)
     }
 
     pub fn selected_clip(&self) -> Option<&InstanceId> {
@@ -875,7 +885,10 @@ impl Render for Timeline {
                 timeline.read(cx).painted.set(scene.viewport);
                 timeline.read(cx).painted_size.set((width, height));
                 paint_scene(&scene, bounds, window, cx);
-                paint_focus_ring(bounds, &focus_handle, window, cx);
+                let keyboard_focus = &timeline.read(cx).keyboard_focus;
+                if keyboard_focus.shows_ring(&focus_handle, window) {
+                    paint_focus_ring(bounds, window, cx);
+                }
                 if timeline.read(cx).resize_cursor() {
                     window.set_cursor_style(CursorStyle::ResizeLeftRight, &hitbox);
                 }
@@ -910,6 +923,7 @@ fn listen(
                 let (x, y) = Timeline::timeline_position(bounds, event.position);
                 timeline.update(cx, |timeline, cx| {
                     window.focus(&timeline.focus_handle, cx);
+                    timeline.keyboard_focus.pressed(cx);
                     timeline.on_mouse_down(event, x, y, &scene, cx)
                 });
             }

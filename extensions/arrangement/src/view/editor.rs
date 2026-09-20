@@ -24,7 +24,8 @@ use sound_ui::{ActiveTheme, Session};
 use super::gesture::Zone;
 use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, SNAP, Viewport, snap, snapped_delta};
 use super::paint::{
-    Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
+    Fit, KeyboardFocus, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label,
+    placed,
 };
 use super::roll::{
     DRAWN_VELOCITY, EDITOR_HEIGHT, KEY_HEIGHT, KEYS_WIDTH, clamped, drawn_note, is_black_key,
@@ -87,6 +88,7 @@ pub struct NoteEditor {
     /// The pointer is over the end of a note, so the cursor says that a drag resizes.
     over_edge: bool,
     focus_handle: FocusHandle,
+    keyboard_focus: KeyboardFocus,
     close_focus: FocusHandle,
     _project_events: Subscription,
 }
@@ -101,6 +103,7 @@ impl NoteEditor {
         width: f32,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus_handle = cx.focus_handle().tab_stop(true);
         let project_events = cx.subscribe(&session, |editor, _, event, cx| {
             let track = editor.clip.id().parent();
             let shown = |id: &InstanceId| id == editor.clip.id() || Some(id) == track.as_ref();
@@ -123,7 +126,8 @@ impl NoteEditor {
             selected_note: None,
             drag: None,
             over_edge: false,
-            focus_handle: cx.focus_handle().tab_stop(true),
+            focus_handle,
+            keyboard_focus: KeyboardFocus::default(),
             close_focus: cx.focus_handle().tab_stop(true),
             _project_events: project_events,
         };
@@ -141,6 +145,11 @@ impl NoteEditor {
 
     pub(super) fn painted(&self) -> Rc<Cell<Viewport>> {
         self.painted.clone()
+    }
+
+    /// Whether the focus ring shows: the editor has the focus, and it came from the keyboard.
+    pub fn shows_focus_ring(&self, window: &Window) -> bool {
+        self.keyboard_focus.shows_ring(&self.focus_handle, window)
     }
 
     /// The index of the selected note in the clip.
@@ -701,7 +710,10 @@ impl Render for NoteEditor {
                 editor.read(cx).painted.set(scene.viewport);
                 editor.read(cx).painted_width.set(scene.width);
                 paint_roll(&scene, bounds, window, cx);
-                paint_focus_ring(bounds, &focus_handle, window, cx);
+                let keyboard_focus = &editor.read(cx).keyboard_focus;
+                if keyboard_focus.shows_ring(&focus_handle, window) {
+                    paint_focus_ring(bounds, window, cx);
+                }
                 if editor.read(cx).resize_cursor() {
                     window.set_cursor_style(CursorStyle::ResizeLeftRight, &hitbox);
                 }
@@ -747,6 +759,7 @@ fn listen(editor: Entity<NoteEditor>, bounds: Bounds<Pixels>, hitbox: Hitbox, wi
                 let (x, y) = NoteEditor::note_area_position(bounds, event.position);
                 editor.update(cx, |editor, cx| {
                     window.focus(&editor.focus_handle, cx);
+                    editor.keyboard_focus.pressed(cx);
                     editor.on_mouse_down(x, y, cx)
                 });
             }

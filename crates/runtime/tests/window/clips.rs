@@ -423,3 +423,43 @@ fn the_keys_of_the_arrangement_need_its_focus_and_space_still_plays(cx: &mut Tes
     opened.keys("shift-tab delete");
     assert_eq!(opened.clip(PART), None);
 }
+
+#[gpui::test]
+fn the_focus_ring_shows_only_for_a_focus_from_the_keyboard(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let timeline = opened.timeline.clone();
+    let timeline_ring = |opened: &mut Opened<'_>| {
+        let timeline = timeline.clone();
+        opened
+            .cx
+            .update(|window, cx| timeline.read(cx).shows_focus_ring(window))
+    };
+    let editor_ring = |opened: &mut Opened<'_>| {
+        let editor = opened.editor().unwrap();
+        opened
+            .cx
+            .update(|window, cx| editor.read(cx).shows_focus_ring(window))
+    };
+    // A click gives the focus and no ring, and a key after it does not bring one.
+    let place = opened.at(BAR + 960, 0);
+    opened.click(place);
+    opened.keys("space space right");
+    assert!(!timeline_ring(&mut opened));
+
+    // Tab away and back, a frame apart: now the focus is from the keyboard.
+    opened.keys("tab");
+    opened.keys("shift-tab");
+    assert!(timeline_ring(&mut opened));
+    // Enter opens the editor with the focus, by the keyboard.
+    opened.keys("enter");
+    assert!(editor_ring(&mut opened));
+    assert!(!timeline_ring(&mut opened));
+    // A press in a view takes its ring away.
+    let in_editor = opened.in_editor(BAR + 100, 72);
+    opened.click(in_editor);
+    assert!(!editor_ring(&mut opened));
+    opened.keys("shift-tab");
+    assert!(timeline_ring(&mut opened));
+    opened.click(place);
+    assert!(!timeline_ring(&mut opened));
+}
