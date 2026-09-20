@@ -135,9 +135,18 @@ The v0 workspace is a small DAW. Its parts are bundled extensions that ship with
 
 Build the core and these extensions together. Each extension should be small and finished before starting the next. Order: arrangement and instrument first, since they prove the note contract, the musical clock and live agent edits. Plugin host last, since it depends on the note and audio contracts being stable.
 
-The arrangement saves a folder per track and a file per clip. A track record holds its name, colour and order. A clip record holds its own start, length and notes, one note per line, so adding a part is one new file and moving a clip to another track is moving a file. A note line holds its start and length in ticks, a MIDI note number and a velocity from 1 to 127, for example `{"start":0,"length":480,"pitch":60,"velocity":100}`. A track owns its instrument as a child instance and goes to the main output by default, so adding a track is one new folder and no `project.json` edit. The headless inspect command prints a project summary, so agents do not need to open every clip to answer what plays in a bar range.
+The arrangement saves a folder per track and a file per clip. A track record holds its name, colour and order. A clip record holds its own start, length and notes, one note per line, so adding a part is one new file and moving a clip to another track is moving a file. A note line holds its start and length in ticks (the length is at least 1), a MIDI note number and a velocity from 1 to 127, for example `{"start": 0, "length": 480, "pitch": 60, "velocity": 100}`. A track owns its instrument as a child instance and goes to the main output by default, so adding a track is one new folder and no `project.json` edit. The headless inspect command prints a project summary, so agents do not need to open every clip to answer what plays in a bar range.
 
 The arrangement extension's saved format becomes the de facto note and clip contract other extensions read. It lives in a bundled contract crate, not in the core. The core stays independent of notes, tracks and clips.
+
+Decided September 19, 2026, the note contract crate: `crates/notes`, package `sound-notes`. The arrangement and every instrument depend on it and not on each other. It holds:
+
+- The saved `Note`. Pitch (0 to 127), velocity (1 to 127) and length (1 tick or more) are types that cannot hold a wrong value, and they save as plain numbers. The clip record that holds notes stays in the arrangement extension.
+- The realtime `NoteEvent`: `On` with pitch and velocity, `Off` with pitch, and `AllOff`. A sender keeps no list of held notes. It sends `AllOff` when the transport stops or jumps, and on one frame it sends offs before ons.
+- Pitch to frequency: twelve equal steps per octave, A4 at 440 Hz.
+- The port names of an instrument: an event input `notes` and a mono audio output `audio`. An owner finds its instrument by these names, so any tool with these ports fits.
+
+The instrument extension is `extensions/instrument` with the tool `instrument.synth`. Its saved state uses units an agent can reason about: Hz, seconds and 0 to 1. `extensions/instrument/README.md` is the guide for editing a synth record.
 
 Agent-authored extensions remain supported and use the same SDK. They are a later capability, not the v0 headline. Codex subagents can keep running authoring tests against the SDK until the integrated agent exists.
 

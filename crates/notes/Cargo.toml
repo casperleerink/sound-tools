@@ -1,5 +1,5 @@
 [package]
-name = "runtime"
+name = "sound-notes"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -8,8 +8,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-anyhow.workspace = true
-hound.workspace = true
-instrument.workspace = true
+serde.workspace = true
 sound-core.workspace = true
-tone.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

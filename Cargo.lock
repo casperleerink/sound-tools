@@ -2745,6 +2745,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "instrument"
+version = "0.1.0"
+dependencies = [
+ "proptest 1.11.0",
+ "serde",
+ "sound-core",
+ "sound-notes",
+ "tempfile",
+]
+
+[[package]]
 name = "interpolate_name"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4782,6 +4793,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hound",
+ "instrument",
  "sound-core",
  "tone",
 ]
@@ -5274,6 +5286,16 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "triple_buffer",
+]
+
+[[package]]
+name = "sound-notes"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sound-core",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

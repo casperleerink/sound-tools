@@ -6,7 +6,7 @@ use proptest::prelude::*;
 use crate::tools::{Harness, dc_to_device, project_file};
 
 /// A bank with a gain, levels and maybe an output child, as the files of its folder.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct BankFiles {
     gain: i8,
     levels: Vec<i8>,
@@ -89,12 +89,15 @@ proptest! {
         prop_assert_eq!(level, expected_level);
         prop_assert_eq!((instances, level), summary(&mut fresh));
 
-        // Undo is the same path backwards: it gives the first project again.
-        on_top.project.undo().unwrap();
-        let undone = Harness::new();
-        write(&undone, &first);
-        let mut undone = undone.reopen();
-        prop_assert_eq!(summary(&mut on_top), summary(&mut undone));
+        // Undo is the same path backwards: it gives the first project again. The same files
+        // twice change nothing the second time, so then there is no second step to undo.
+        if first != second {
+            on_top.project.undo().unwrap();
+            let undone = Harness::new();
+            write(&undone, &first);
+            let mut undone = undone.reopen();
+            prop_assert_eq!(summary(&mut on_top), summary(&mut undone));
+        }
     }
 }
 
