@@ -849,6 +849,14 @@ fn the_mute_button_is_one_undo_step_and_silences_the_track(cx: &mut TestAppConte
     assert_eq!(track(&mut opened).unwrap().mute, false);
     assert_eq!(opened.undo_label(), None);
     assert!(track_file(&mut opened).contains("\"mute\": false"));
+
+    // Tab reaches it after the two knobs, and enter is the click.
+    let gain = opened.control(GAIN_KNOB);
+    opened.click(gain);
+    opened.keys("tab");
+    opened.keys("tab");
+    opened.press_enter();
+    assert_eq!(track(&mut opened).unwrap().mute, true);
 }
 
 #[gpui::test]

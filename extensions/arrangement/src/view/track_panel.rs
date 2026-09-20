@@ -121,6 +121,8 @@ pub struct TrackPanel {
     /// Not a tab stop. It tells whether the focus is inside the panel.
     focus_handle: FocusHandle,
     close_focus: FocusHandle,
+    /// The knobs bring their own. A button takes one to be a tab stop and show a ring.
+    mute_focus: FocusHandle,
 }
 
 impl EventEmitter<TrackPanelEvent> for TrackPanel {}
@@ -174,6 +176,7 @@ impl TrackPanel {
             dragging: false,
             focus_handle: cx.focus_handle(),
             close_focus: cx.focus_handle().tab_stop(true),
+            mute_focus: cx.focus_handle().tab_stop(true),
         };
         panel.set_track(track, window, cx);
         panel
@@ -310,6 +313,7 @@ impl TrackPanel {
             .debug_selector(|| "mute-track".to_string())
             .variant(variant)
             .size(ButtonSize::Sm)
+            .focus_handle(&self.mute_focus)
             .on_click(cx.listener(|panel, _, _, cx| {
                 let label = match panel.muted(cx) {
                     true => "Unmute track",
