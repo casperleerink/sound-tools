@@ -1,4 +1,4 @@
-## Arrangement: tracks, clips and notes
+# Arrangement: tracks, clips and notes
 
 The piece is one arrangement that owns tracks. A track owns its clips and one instrument, and it plays to the main output by itself. Adding music never needs a `project.json` edit.
 
@@ -13,7 +13,7 @@ A clip only loads inside a track folder, and a track only inside the arrangement
 
 To see what plays where, list a track folder and read `start` and `length` of its clips. Open only the clips that overlap the bars you work on.
 
-### A clip: `arrangement.clip`
+## A clip: `arrangement.clip`
 
 ```json state/arrangement/piano/chords-bars-5-8.json
 {
@@ -42,7 +42,7 @@ This clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one 
 - Two notes of the same pitch that overlap on one track sound as one: the pitch is held until the last of them ends.
 - Clips on one track may overlap in time. The notes of both play.
 
-### A track: `arrangement.track`
+## A track: `arrangement.track`
 
 ```json state/arrangement/piano/instance.json
 {
@@ -54,9 +54,9 @@ This clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one 
 - `name`: what the composer sees. Not empty. The folder name is the id and stays as it is when the name changes.
 - `colour`: `blue`, `sapphire`, `sky`, `teal`, `green`, `yellow`, `peach`, `red`, `maroon`, `mauve`, `pink`, `lavender`, `rosewater` or `flamingo`. `blue` when left out.
 - `order`: tracks show from the lowest to the highest. Tracks with the same order show by id. 0 when left out.
-- The track plays through the file `instrument.json` in its folder. See the instrument section for that record. A track without it is silent.
+- The track plays through the file `instrument.json` in its folder. Its record is in the doc of the instrument, `agent-docs/instrument.md`. A track without it is silent.
 
-### The arrangement: `arrangement`
+## The arrangement: `arrangement`
 
 ```json state/arrangement/instance.json
 {
@@ -67,7 +67,7 @@ This clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one 
 
 It has no settings. Leave it as it is.
 
-### How to
+## How to
 
 - Add a part: write one new clip file into the folder of the track. Give the clip the bar range of the part, and count the note starts from the clip start.
 - Change a part: write its clip file again, whole. Notes that sound are not left hanging.

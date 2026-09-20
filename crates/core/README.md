@@ -177,9 +177,23 @@ A tool without `.behaviour(...)` is plain data. Its owner reads it. Clips are li
 Two more things an extension registers, both for agents that work in the project folder with only file access:
 
 - `.summary(|project, instance| ...)` after `.behaviour(...)`: lines of text about one instance and what it owns. `Project::summary(&id)` gives it and `runtime --inspect` prints it. An owner of many small records gives one, so an agent reads one summary and not every record.
-- `registry.agent_doc(EXTENSION, include_str!("../agent-doc.md"))`: your section of the `AGENTS.md` that the runtime writes into every project that enables the extension. Start it with a `## ` heading. Say the form of each tool, give one complete example record per tool in a fenced block whose first line is <code>```json state/path/of/the/file.json</code>, and say how to add, move and delete. A test of the runtime writes every such block into a folder and opens it, so an example that does not load fails the build. `{{ticks_per_bar}}`, `{{ticks_per_beat}}`, `{{time_signature}}`, `{{bar_5_start}}`, `{{four_bars}}`, `{{bar_9_start}}` and `{{bar_3_beat_2}}` are filled in from the project's time signature.
+- `registry.agent_doc(EXTENSION, AGENT_DOC)?`, with `AGENT_DOC: AgentDoc`: one doc for agents, written into every project that enables the extension as `agent-docs/<name>.md`. It has three fields:
 
-The runtime keeps `AGENTS.md`, `CLAUDE.md` and `problems.txt` up to date when the project opens and from `project.poll()`. `problems.txt` holds `project.problems()`, one per line, or the line `NO_PROBLEMS`. It is there the whole time a project is open with its lock, and dropping the `Project` removes it. So for an agent a missing file means that no runtime is watching. Keep `registry.runtime_agent_doc_section(..)` free of paths: the doc is a file in a folder that may be in git.
+  ```rust
+  pub const AGENT_DOC: AgentDoc = AgentDoc {
+      name: "arrangement",
+      when: "You add, change, move or delete music: tracks, clips and notes",
+      markdown: include_str!("../agent-doc.md"),
+  };
+  ```
+
+  `name` is the file name, under the same rule as an instance name: lowercase letters, digits, `-` and `_`. Anything else is a `RegistryError::InvalidAgentDocName`, so a name can never write outside the folder. `when` is the one line the map shows, so an agent knows from the map alone whether to open the doc; write it as the task, not as the tool. `markdown` starts with a `# ` heading; the runtime puts the "generated, do not edit" note in front of it. Say the form of each tool, give one complete example record per tool in a fenced block whose first line is <code>```json state/path/of/the/file.json</code>, and say how to add, move and delete. A test of the runtime writes every such block into a folder and opens it, so an example that does not load fails the build. `{{ticks_per_bar}}`, `{{ticks_per_beat}}`, `{{time_signature}}`, `{{bar_5_start}}`, `{{four_bars}}`, `{{bar_9_start}}` and `{{bar_3_beat_2}}` are filled in from the project's time signature.
+
+  An extension may register several docs, one per task, as long as their names differ. Two docs of one name is a `RegistryError::DuplicateAgentDoc`, and `project-json` is taken by the core. Keep each doc about one thing: an agent opens what its task needs and pays for nothing else.
+
+The runtime keeps `AGENTS.md`, `CLAUDE.md`, `agent-docs/` and `problems.txt` up to date when the project opens and from `project.poll()`. `AGENTS.md` is the map: what an agent needs on every task, plus the list of docs with their `when` line. A `.md` file in `agent-docs/` that no enabled extension registers is removed, so a doc cannot outlive its tools. Nothing else in that folder is touched. `problems.txt` holds `project.problems()`, one per line, or the line `NO_PROBLEMS`. It is there the whole time a project is open with its lock, and dropping the `Project` removes it. So for an agent a missing file means that no runtime is watching.
+
+`registry.runtime_agent_doc(doc)?` is a doc every project gets, whatever it enables, about the program that runs it. Keep it free of paths and of anything else that differs between machines: the docs are files in a folder that may be in git.
 
 ### Behaviour: from state to the engine
 

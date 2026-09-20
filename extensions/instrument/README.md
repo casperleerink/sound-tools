@@ -6,7 +6,7 @@ Enable it in `project.json` under `extensions` as `"instrument"`.
 
 ## The record
 
-[agent-doc.md](agent-doc.md) has the record with every field, its range and default, and some starting points for sounds. The runtime writes that file into every project as part of `AGENTS.md`, and a test loads its example, so it is the single source for the format.
+[agent-doc.md](agent-doc.md) has the record with every field, its range and default, and some starting points for sounds. The runtime writes it into every project as `agent-docs/instrument.md`, listed in the map `AGENTS.md`, and a test loads its example, so it is the single source for the format.
 
 The synth owns no children, so an instance is always one file: `state/<name>.json`, or `instrument.json` inside the folder of the track that owns it. A field you leave out takes its default. The runtime writes every field when it saves. An unknown field or a value out of range does not load. The instance then keeps its last valid state, and the problem names the file and the field, for example `state: cutoff_hz must be from 20 to 20000, not 5`.
 

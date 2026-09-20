@@ -176,7 +176,9 @@ impl InstanceId {
     }
 }
 
-fn is_valid_name(name: &str) -> bool {
+/// The one rule for a name the runtime writes into the project folder: an instance name, and
+/// the name of an agent doc.
+pub(crate) fn is_valid_name(name: &str) -> bool {
     !name.is_empty()
         && name != FOLDER_RECORD
         && name.bytes().all(|byte| {

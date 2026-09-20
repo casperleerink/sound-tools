@@ -11,8 +11,8 @@ use anyhow::Result;
 use arrangement::{ArrangementState, Colour};
 use instrument::SynthState;
 use sound_core::{
-    Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project, ProjectError,
-    Registry, SavedDestination, State,
+    AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
+    ProjectError, Registry, SavedDestination, State,
 };
 use sound_ui::Views;
 
@@ -29,7 +29,10 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 
 /// The same text on every machine and for every build, so a project in git gets no diff from
 /// being opened somewhere else. Hence no path of this executable in it.
-const INSPECT_SECTION: &str = "## Inspect from a command line
+const INSPECT_DOC: AgentDoc = AgentDoc {
+    name: "inspect",
+    when: "You can run commands and want the whole piece in one read",
+    markdown: "# Inspect from a command line
 
 When you can run commands, the Sound Tools runtime prints the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems. It works while the project is open and changes nothing.
 
@@ -37,7 +40,8 @@ When you can run commands, the Sound Tools runtime prints the tempo, every track
 runtime . --inspect
 ```
 
-`runtime` is the program that has this project open. When it is not on your `PATH`, ask the composer where it is, or skip this step: `problems.txt` tells you whether your files loaded.";
+`runtime` is the program that has this project open. When it is not on your `PATH`, ask the composer where it is, or skip this step: `problems.txt` tells you whether your files loaded.",
+};
 
 /// Every bundled extension registers here.
 pub fn registry() -> Result<Registry> {
@@ -45,7 +49,7 @@ pub fn registry() -> Result<Registry> {
     arrangement::register(&mut registry)?;
     instrument::register(&mut registry)?;
     tone::register(&mut registry)?;
-    registry.runtime_agent_doc_section(INSPECT_SECTION);
+    registry.runtime_agent_doc(INSPECT_DOC)?;
     Ok(registry)
 }
 

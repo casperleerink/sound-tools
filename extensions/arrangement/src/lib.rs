@@ -22,8 +22,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    BehaviourContext, BehaviourError, Changes, Instance, InstanceId, OutputEndpoint, Place,
-    Project, ProjectError, Registry, RegistryError, State, Ticks,
+    AgentDoc, BehaviourContext, BehaviourError, Changes, Instance, InstanceId, OutputEndpoint,
+    Place, Project, ProjectError, Registry, RegistryError, State, Ticks,
 };
 use sound_notes::{AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOOL, Velocity};
 
@@ -127,7 +127,15 @@ impl State for TrackState {
     }
 }
 
-/// Registers the three tools and the agent doc section. Call it before the project opens.
+/// The doc an agent opens for anything musical: the records of the three tools and how to add,
+/// move and delete a part or a track.
+pub const AGENT_DOC: AgentDoc = AgentDoc {
+    name: "arrangement",
+    when: "You add, change, move or delete music: tracks, clips and notes",
+    markdown: include_str!("../agent-doc.md"),
+};
+
+/// Registers the three tools and the agent doc. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ArrangementState>(EXTENSION)?
@@ -137,7 +145,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .tool::<TrackState>(EXTENSION)?
         .behaviour(apply_track);
     registry.tool::<Clip>(EXTENSION)?;
-    registry.agent_doc(EXTENSION, include_str!("../agent-doc.md"));
+    registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
 

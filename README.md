@@ -35,10 +35,9 @@ Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 The agent is any coding agent that can edit files. The app must be running on the project, else the edits are saved but nobody checks or plays them.
 
 1. Run the app on a project and press space.
-2. Open a terminal in the project folder and start Claude Code or Codex there:
+2. Click the project name top-left and pick **Open terminal in project folder**, then start Claude Code or Codex there:
 
    ```sh
-   cd ~/Music/my-piece
    claude        # or: codex
    ```
 
@@ -50,7 +49,7 @@ The agent is any coding agent that can edit files. The app must be running on th
 
 What the agent uses:
 
-- `AGENTS.md`. The app writes it into the project, with a `CLAUDE.md` that imports it. It explains the folder layout, the record formats and the bar math of this project. Agents read it by themselves.
+- `AGENTS.md`. The app writes it into the project, with a `CLAUDE.md` that imports it. It is a short map: the folder layout, the bar math of this project, how to check the work, and a list of docs in `agent-docs/` with one line each saying when to open it. The record formats live in those docs, one per extension. Agents read the map by themselves and open only the doc their task needs.
 - `problems.txt`. The app keeps it current while it runs. It lists every file that did not load, and why. `No problems. Every file is live.` means all of it plays. The agent reads it to check its work.
 - `runtime <folder> --inspect`. It prints the tempo, every track and every clip with its bar range. It works next to the running app.
 

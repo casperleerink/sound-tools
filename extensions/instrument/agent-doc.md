@@ -1,4 +1,4 @@
-## Instrument: the synth
+# Instrument: the synth
 
 `instrument.synth` is a subtractive synth with 16 voices: an oscillator, a low-pass filter and an envelope per voice. As the `instrument.json` of a track it plays the notes of that track.
 

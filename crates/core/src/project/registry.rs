@@ -6,13 +6,38 @@ use std::marker::PhantomData;
 
 use super::Project;
 use super::binding::{BehaviourContext, BehaviourError};
-use super::instance::{Instance, InstanceId, Record, State};
+use super::instance::{Instance, InstanceId, Record, State, is_valid_name};
 use crate::clock::Ticks;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RegistryError {
     #[error("a tool named {0:?} is already registered")]
     DuplicateTool(&'static str),
+    #[error("an agent doc named {0:?} is already registered")]
+    DuplicateAgentDoc(&'static str),
+    #[error(
+        "invalid agent doc name {0:?}: it becomes a file name, so it uses lowercase letters, digits, `-` and `_`"
+    )]
+    InvalidAgentDocName(&'static str),
+}
+
+/// One doc for an agent that works in the project folder with only file access. The runtime
+/// writes it as `agent-docs/<name>.md` and lists it in the map, `AGENTS.md`, so the agent
+/// opens the doc its task needs and no other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentDoc {
+    /// The file name under `agent-docs/`, without `.md`. Lowercase letters, digits and `-`.
+    pub name: &'static str,
+    /// The one line the map shows next to the doc: when to open it. No full stop needed.
+    pub when: &'static str,
+    /// The doc itself, starting with a `# ` heading.
+    pub markdown: &'static str,
+}
+
+/// An agent doc with the extension it belongs to. `None` is a doc every project gets.
+pub(crate) struct RegisteredDoc {
+    pub extension: Option<&'static str>,
+    pub doc: AgentDoc,
 }
 
 type ErasedBehaviour =
@@ -34,17 +59,29 @@ pub(crate) struct ToolDefinition {
 
 /// Every tool the compiled extensions offer. Registering makes a type available. It creates
 /// no instance and no sound.
-#[derive(Default)]
 pub struct Registry {
     tools: BTreeMap<&'static str, ToolDefinition>,
-    /// By extension name.
-    agent_docs: BTreeMap<&'static str, &'static str>,
-    runtime_agent_doc: Option<&'static str>,
+    /// In the order they were registered, which is the order of the list in the map. The doc
+    /// of `project.json` is the first, so every project has it and its name is taken.
+    agent_docs: Vec<RegisteredDoc>,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Registry {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            tools: BTreeMap::new(),
+            // `project.json` is core, not an extension, so the core brings its doc itself.
+            agent_docs: vec![RegisteredDoc {
+                extension: None,
+                doc: super::generated::PROJECT_FILE_DOC,
+            }],
+        }
     }
 
     /// Registers the tool whose saved state is `S`, under `S::TOOL`, as part of `extension`.
@@ -70,28 +107,59 @@ impl Registry {
         })
     }
 
-    /// The section of an extension in the agent doc that the runtime writes into every
-    /// project folder, as markdown that starts with a `## ` heading. It tells an agent with
-    /// only file access how to read and write the records of the extension's tools. A project
-    /// gets the section when it enables the extension. Registering again replaces the text.
-    pub fn agent_doc(&mut self, extension: &'static str, markdown: &'static str) {
-        self.agent_docs.insert(extension, markdown);
+    /// A doc of an extension for an agent with only file access: how to read and write the
+    /// records of its tools, or how to do one task with them. A project gets the doc when it
+    /// enables the extension. An extension may register several, one per task.
+    pub fn agent_doc(
+        &mut self,
+        extension: &'static str,
+        doc: AgentDoc,
+    ) -> Result<(), RegistryError> {
+        self.add_agent_doc(Some(extension), doc)
     }
 
-    /// A last section of the agent doc about the program that runs the project, for example
-    /// how to call it for a summary. Every project gets it. Keep it free of paths and of
-    /// anything else that differs between machines: the doc is a file in the project folder,
-    /// which may be in git.
-    pub fn runtime_agent_doc_section(&mut self, markdown: &'static str) {
-        self.runtime_agent_doc = Some(markdown);
+    /// A doc about the program that runs the project, for example how to call it for a
+    /// summary. Every project gets it. Keep it free of paths and of anything else that
+    /// differs between machines: the doc is a file in the project folder, which may be in git.
+    pub fn runtime_agent_doc(&mut self, doc: AgentDoc) -> Result<(), RegistryError> {
+        self.add_agent_doc(None, doc)
     }
 
-    pub(crate) fn runtime_agent_doc(&self) -> Option<&'static str> {
-        self.runtime_agent_doc
+    fn add_agent_doc(
+        &mut self,
+        extension: Option<&'static str>,
+        doc: AgentDoc,
+    ) -> Result<(), RegistryError> {
+        // The name becomes a file name in the project folder. Without this, `../notes` would
+        // write outside the docs folder.
+        if !is_valid_name(doc.name) {
+            return Err(RegistryError::InvalidAgentDocName(doc.name));
+        }
+        // Two docs of one name would write over each other's file. The doc of `project.json`
+        // is in the list from the start, so its name is taken like any other.
+        if self
+            .agent_docs
+            .iter()
+            .any(|other| other.doc.name == doc.name)
+        {
+            return Err(RegistryError::DuplicateAgentDoc(doc.name));
+        }
+        self.agent_docs.push(RegisteredDoc { extension, doc });
+        Ok(())
     }
 
-    pub(crate) fn agent_doc_of(&self, extension: &str) -> Option<&'static str> {
-        self.agent_docs.get(extension).copied()
+    /// The docs of a project that enables `enabled`, in registration order.
+    pub(crate) fn agent_docs<'a>(
+        &'a self,
+        enabled: &'a [String],
+    ) -> impl Iterator<Item = AgentDoc> + 'a {
+        self.agent_docs
+            .iter()
+            .filter(|registered| match registered.extension {
+                Some(extension) => enabled.iter().any(|enabled| enabled == extension),
+                None => true,
+            })
+            .map(|registered| registered.doc)
     }
 
     /// Every tool as (name, extension, owns children), in name order.

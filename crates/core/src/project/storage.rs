@@ -21,6 +21,8 @@ pub(crate) const PROJECT_FILE: &str = "project.json";
 pub(crate) const STATE_FOLDER: &str = "state";
 const LOCK_FILE: &str = ".sound-tools.lock";
 const RECORD_EXTENSION: &str = "json";
+/// The generated docs in the agent docs folder. Only these are the runtime's to remove.
+const MARKDOWN_EXTENSION: &str = ".md";
 
 /// The two forms of an instance on disk. The tool decides which one its instances have.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -502,6 +504,35 @@ impl Storage {
             return Ok(());
         }
         self.write_atomically(&path, contents.as_bytes())
+    }
+
+    /// Makes the generated folder `folder` hold `files`, by name and text. A markdown file in
+    /// it that `files` does not name is removed, so a doc of an extension that is no longer
+    /// enabled cannot mislead an agent. Everything else in the folder is left alone: only the
+    /// markdown is the runtime's, and what a composer or an agent puts next to it is theirs.
+    pub fn write_generated_folder(
+        &self,
+        folder: &str,
+        files: BTreeMap<String, String>,
+    ) -> Result<(), StorageError> {
+        let path = self.root.join(folder);
+        for (name, contents) in &files {
+            self.write_generated(&format!("{folder}/{name}"), Some(contents))?;
+        }
+        let entries = match fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(source) => return Err(self.io_error(&path, source)),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|source| self.io_error(&path, source))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let is_stale_doc = name.ends_with(MARKDOWN_EXTENSION) && !files.contains_key(&name);
+            if is_stale_doc && entry.path().is_file() {
+                self.remove_file(&entry.path())?;
+            }
+        }
+        Ok(())
     }
 
     fn remove_file(&self, path: &Path) -> Result<(), StorageError> {

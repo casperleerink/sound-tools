@@ -4,6 +4,12 @@
 
 A piece of music saved as small JSON files. You work on it by editing these files. While the runtime has the project open, every change applies live: the composer hears it about 0.2 s later, with no build and no restart. All the files of one request are one undo step for the composer, as long as you leave less than 15 s between two writes.
 
+This file is the map. It holds what you need on every task. The docs below hold the rest, one file each. Open the one your task needs and leave the others closed.
+
+## Docs
+
+{{docs}}
+
 ## Layout
 
 ```text
@@ -15,10 +21,11 @@ state/                    every instance of a tool, one JSON record each
     <child>.json          a child instance
     <child>/instance.json a child instance that owns children itself
 problems.txt              written by the runtime while it has the project open: the files that are not live, and why
-AGENTS.md, CLAUDE.md      this doc, generated
+AGENTS.md, CLAUDE.md      this map, generated
+agent-docs/               the docs of the list above, generated
 ```
 
-- A record is `{"tool": "<tool name>", "state": {...}}`. The `state` fields are in the section of the tool's extension below. An unknown field or a value out of range does not load.
+- A record is `{"tool": "<tool name>", "state": {...}}`. The `state` fields are in the doc of the tool's extension. An unknown field or a value out of range does not load.
 - The id of an instance is its path under `state/` without `.json`: the file `state/a/b.json` and the folder record `state/a/b/instance.json` both have the id `a/b`. An id never changes. Names that people see live inside the record.
 - A name uses lowercase letters, digits, `-` and `_`. `instance` is reserved.
 - The tool decides the form, for good. A record in the other form does not load.
@@ -39,22 +46,6 @@ This project is in {{time_signature}}: a beat is {{ticks_per_beat}} ticks and a 
 - Worked example, bars 5 to 8: they start at (5 - 1) × {{ticks_per_bar}} = {{bar_5_start}} and last 4 × {{ticks_per_bar}} = {{four_bars}} ticks, so they end at tick {{bar_9_start}}, where bar 9 starts. Bar 3, beat 2 is tick {{bar_3_beat_2}}.
 - Note lengths: whole 3840, half 1920, quarter 960, eighth 480, sixteenth 240, eighth triplet 320.
 
-## project.json
-
-```json project.json
-{
-  "format": 1,
-  "extensions": [{{extensions}}],
-  "tempo_map": {"time_signature": "{{time_signature}}", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
-  "connections": []
-}
-```
-
-- `tempo_map.tempo_changes`: the tempo from a tick on, as steps. The first is at tick 0, ticks go up, `bpm` is 10 to 1000. Edit it to change the tempo. It applies live.
-- `tempo_map.time_signature`: one for the whole project, such as `"3/4"` or `"6/8"`. The bar math above follows it when this doc is written again.
-- `connections`: only routing that tools do not make themselves, for example `{"from": {"instance": "drone", "port": "audio"}, "to": {"device_output": 0}}`. Most work needs no edit here.
-- Leave `format` and `extensions` alone. A change to `extensions` is refused while the project runs.
-
 ## Rules
 
 - Write a file whole, as valid JSON, in one write. Write it the way the runtime does: two spaces of indent, a space after `:` and `,`, a short list or object on one line, a long list with one item per line. Then a later save by the runtime makes no diff.
@@ -63,6 +54,7 @@ This project is in {{time_signature}}: a beat is {{ticks_per_beat}} ticks and a 
 - Pick ids that say what the thing is, unique in their folder: `bass-bars-5-8`, not `clip-1` and not `Bass Line`.
 - To delete, remove the file or the folder. To move, move the file.
 - The composer can undo your change. Keep no copies.
+- `AGENTS.md`, `CLAUDE.md`, `problems.txt` and the markdown in `agent-docs/` are written by the runtime. Editing them changes nothing.
 
 ## Check your work
 

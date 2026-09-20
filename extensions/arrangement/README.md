@@ -1,6 +1,6 @@
 # arrangement
 
-The bundled arrangement extension: tracks, clips and notes on the project timeline. This file is for extension and interface authors. The record formats, with a complete example of each, are in [agent-doc.md](agent-doc.md), which the runtime also writes into every project as part of `AGENTS.md`. That file is the single source for the formats; a test loads every example in it.
+The bundled arrangement extension: tracks, clips and notes on the project timeline. This file is for extension and interface authors. The record formats, with a complete example of each, are in [agent-doc.md](agent-doc.md), which the runtime also writes into every project as `agent-docs/arrangement.md`, listed in the map `AGENTS.md`. That file is the single source for the formats; a test loads every example in it.
 
 Enable it in `project.json` under `extensions` as `"arrangement"`.
 
