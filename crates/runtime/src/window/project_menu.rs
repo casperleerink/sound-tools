@@ -20,6 +20,26 @@ pub struct ProjectMenu {
     session: Entity<Session>,
     device_name: SharedString,
     menu: Entity<DropdownMenu>,
+    /// What the items were made from. They are made again only when this changes.
+    shown: Shown,
+}
+
+/// All that the items depend on in the project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Shown {
+    can_add_track: bool,
+    undo: Option<String>,
+    redo: Option<String>,
+}
+
+impl Shown {
+    fn of(project: &Project) -> Self {
+        Self {
+            can_add_track: main_arrangement(project).is_some(),
+            undo: project.undo_label().map(str::to_string),
+            redo: project.redo_label().map(str::to_string),
+        }
+    }
 }
 
 impl ProjectMenu {
@@ -31,17 +51,24 @@ impl ProjectMenu {
         let project = session.read(cx).project();
         let name = project.root().file_name().unwrap_or_default();
         let name = name.to_string_lossy().into_owned();
-        let items = entries(project, &device_name);
+        let shown = Shown::of(project);
+        let items = entries(&shown, &device_name);
         let menu = cx.new(|cx| {
             DropdownMenu::new(name, items, cx)
                 .selected(DEVICE)
                 .ghost(true)
                 .width(280.)
         });
-        // Undo and redo say what they would do, so the items follow every change.
+        // Undo and redo say what they would do. A finished edit changes the label and sends no
+        // project event, so this follows every notify, and it is cheap: three values to compare,
+        // and new items only when one differs. A drag changes none of them until it ends.
         cx.observe(&session, |this, session, cx| {
-            let items = entries(session.read(cx).project(), &this.device_name);
-            this.menu.update(cx, |menu, cx| menu.set_entries(items, cx));
+            let shown = Shown::of(session.read(cx).project());
+            if shown != this.shown {
+                let items = entries(&shown, &this.device_name);
+                this.menu.update(cx, |menu, cx| menu.set_entries(items, cx));
+                this.shown = shown;
+            }
         })
         .detach();
         cx.subscribe(&menu, Self::on_picked).detach();
@@ -49,6 +76,7 @@ impl ProjectMenu {
             session,
             device_name,
             menu,
+            shown,
         }
     }
 
@@ -65,12 +93,8 @@ impl ProjectMenu {
                         session.edit(cx, |project| add_track(project, &arrangement));
                     }
                 }
-                UNDO => {
-                    session.edit(cx, Project::undo);
-                }
-                REDO => {
-                    session.edit(cx, Project::redo);
-                }
+                UNDO => session.undo(cx),
+                REDO => session.redo(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
                 // Switching the device is not built yet. The menu only names it.
                 _ => {}
@@ -78,7 +102,7 @@ impl ProjectMenu {
     }
 }
 
-fn entries(project: &Project, device_name: &SharedString) -> Vec<MenuEntry> {
+fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
     let command =
         |value: &'static str, label: String| MenuItem::new(value, label).selectable(false);
     let history = |value, verb: &str, label: Option<&str>, shortcut: &'static str| {
@@ -89,15 +113,13 @@ fn entries(project: &Project, device_name: &SharedString) -> Vec<MenuEntry> {
     };
     vec![
         MenuEntry::Group(
-            MenuGroup::new().item(
-                command(ADD_TRACK, "Add track".to_string())
-                    .disabled(main_arrangement(project).is_none()),
-            ),
+            MenuGroup::new()
+                .item(command(ADD_TRACK, "Add track".to_string()).disabled(!shown.can_add_track)),
         ),
         MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().items([
-            history(UNDO, "Undo", project.undo_label(), "mod+z"),
-            history(REDO, "Redo", project.redo_label(), "shift+mod+z"),
+            history(UNDO, "Undo", shown.undo.as_deref(), "mod+z"),
+            history(REDO, "Redo", shown.redo.as_deref(), "shift+mod+z"),
         ])),
         MenuEntry::Separator,
         MenuEntry::Group(

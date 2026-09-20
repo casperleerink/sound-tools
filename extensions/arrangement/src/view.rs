@@ -22,11 +22,11 @@ use gpui::{
     Point, ScrollWheelEvent, SharedString, StyleRefinement, Subscription, TextAlign, TextRun,
     TruncateFrom, Window, canvas, div, fill, point, prelude::*, px, quad, size,
 };
-use sound_core::{Instance, InstanceId, ProjectEvent, TimeSignature};
+use sound_core::{Instance, InstanceId, ProjectEvent, Ticks, TimeSignature};
 use sound_notes::Clip;
 use sound_ui::{ActiveTheme, Playhead, Session, Theme, Views, typography};
 
-use crate::{ArrangementState, Colour, clips, end, tracks};
+use crate::{ArrangementState, Colour, TrackState, end, tracks};
 use layout::{Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, TRACK_HEIGHT, Viewport, snap};
 
 /// Registers the view of the `arrangement` tool.
@@ -103,6 +103,7 @@ struct TrackRow {
 pub struct ClipShape {
     pub clip: Instance<Clip>,
     pub rect: Rect,
+    start: Ticks,
     notes: Vec<Rect>,
     accent: Hsla,
     selected: bool,
@@ -129,12 +130,21 @@ impl Scene {
 pub struct Timeline {
     session: Entity<Session>,
     arrangement: Instance<ArrangementState>,
-    /// What scroll and zoom asked for. The painted viewport is this one kept inside the
-    /// content, see [`Viewport::clamped`].
+    /// Zoom and scroll, kept inside the content by [`Self::set_viewport`]. Scroll and pinch go
+    /// on from here, not from what was painted: several events may arrive between two frames.
     viewport: Viewport,
-    /// Filled by paint, like a GPUI scroll handle. The playhead line and the next scroll
-    /// read it, so both go from what is on screen.
+    /// The viewport of the last paint, for the playhead line. Filled by paint, like a GPUI
+    /// scroll handle. It differs from `viewport` only while the window or the project changed
+    /// size under it.
     painted: Rc<Cell<Viewport>>,
+    /// The size of the timeline area at the last paint, which the scroll limits depend on.
+    painted_size: Rc<Cell<(f32, f32)>>,
+    /// The tracks in display order and the end of the last clip. Finding them walks every
+    /// clip, so they are kept between the project events that can change them and are not
+    /// read again per paint. Nothing else of the project is kept.
+    order: Vec<Instance<TrackState>>,
+    end: Ticks,
+    order_is_stale: bool,
     selected_clip: Option<InstanceId>,
     focus_handle: FocusHandle,
     _project_events: Subscription,
@@ -163,6 +173,8 @@ impl Timeline {
                 ProjectEvent::ProblemsChanged => false,
             };
             if changed {
+                // Read again at the next render, once for all events of a group.
+                timeline.order_is_stale = true;
                 cx.notify();
             }
         });
@@ -171,6 +183,10 @@ impl Timeline {
             arrangement,
             viewport: Viewport::default(),
             painted: Rc::default(),
+            painted_size: Rc::default(),
+            order: Vec::new(),
+            end: Ticks(0),
+            order_is_stale: true,
             selected_clip: None,
             focus_handle: cx.focus_handle(),
             _project_events: project_events,
@@ -181,11 +197,34 @@ impl Timeline {
         self.viewport
     }
 
+    /// Sets zoom and scroll, kept inside the content for the size that was last painted.
     pub fn set_viewport(&mut self, viewport: Viewport, cx: &mut Context<Self>) {
+        self.refresh_order(cx);
+        let (width, height) = self.painted_size.get();
+        let viewport = self.clamped(viewport, width, height, cx);
         if self.viewport != viewport {
             self.viewport = viewport;
             cx.notify();
         }
+    }
+
+    fn clamped(&self, viewport: Viewport, width: f32, height: f32, cx: &App) -> Viewport {
+        let extent = Extent {
+            end: self.end,
+            tracks: self.order.len(),
+        };
+        viewport.clamped(extent, self.time_signature(cx), width, height)
+    }
+
+    fn refresh_order(&mut self, cx: &App) {
+        if !self.order_is_stale {
+            return;
+        }
+        let project = self.session.read(cx).project();
+        let tracks = tracks(project, self.arrangement.id());
+        self.order = tracks.into_iter().map(|(track, _)| track).collect();
+        self.end = end(project, self.arrangement.id()).unwrap_or_default();
+        self.order_is_stale = false;
     }
 
     pub fn selected_clip(&self) -> Option<&InstanceId> {
@@ -209,12 +248,8 @@ impl Timeline {
         let project = self.session.read(cx).project();
         let theme = cx.theme();
         let time_signature = self.time_signature(cx);
-        let tracks = tracks(project, self.arrangement.id());
-        let extent = Extent {
-            end: end(project, self.arrangement.id()).unwrap_or_default(),
-            tracks: tracks.len(),
-        };
-        let viewport = self.viewport.clamped(extent, time_signature, width, height);
+        // Clamped again for this size: the window may have grown since the last scroll.
+        let viewport = self.clamped(self.viewport, width, height, cx);
         let visible_ticks = viewport.visible_ticks(width);
 
         let mut scene = Scene {
@@ -223,9 +258,13 @@ impl Timeline {
             rows: Vec::new(),
             bars: viewport.ruler_bars(time_signature, width).collect(),
         };
-        for index in viewport.visible_tracks(height, tracks.len()) {
-            let Some((track, state)) = tracks.get(index) else {
+        for index in viewport.visible_tracks(height, self.order.len()) {
+            let Some(track) = self.order.get(index) else {
                 break;
+            };
+            // Gone since the order was read: the render after its event leaves it out.
+            let Some(state) = project.state(track) else {
+                continue;
             };
             let accent = accent(state.colour, theme);
             scene.rows.push(TrackRow {
@@ -233,22 +272,25 @@ impl Timeline {
                 name: state.name.clone().into(),
                 accent,
             });
-            for (clip, state) in clips(project, track.id()) {
-                if state.start >= visible_ticks.end {
-                    break;
-                }
-                if state.end() <= visible_ticks.start {
+            let first = scene.clips.len();
+            for (clip, state) in project.children::<Clip>(track.id()) {
+                if state.start >= visible_ticks.end || state.end() <= visible_ticks.start {
                     continue;
                 }
                 let rect = viewport.clip_rect(index, state);
                 scene.clips.push(ClipShape {
                     notes: viewport.miniature(state, rect).collect(),
                     selected: self.selected_clip.as_ref() == Some(clip.id()),
+                    start: state.start,
                     clip,
                     rect,
                     accent,
                 });
             }
+            // The order of `clips()`, by start and then by id, for the few that are visible:
+            // it decides which of two overlapping clips is on top.
+            scene.clips[first..]
+                .sort_by(|a, b| (a.start, a.clip.id()).cmp(&(b.start, b.clip.id())));
         }
         scene
     }
@@ -277,21 +319,19 @@ impl Timeline {
 
     fn on_scroll(&mut self, event: &ScrollWheelEvent, x: f32, cx: &mut Context<Self>) {
         let delta = event.delta.pixel_delta(px(32.));
-        let painted = self.painted.get();
         let viewport = if event.modifiers.secondary() {
-            painted.zoomed((f64::from(f32::from(delta.y)) * 0.01).exp(), x.max(0.0))
+            let factor = (f64::from(f32::from(delta.y)) * 0.01).exp();
+            self.viewport.zoomed(factor, x.max(0.0))
         } else {
-            painted.scrolled(f32::from(delta.x), f32::from(delta.y))
+            self.viewport
+                .scrolled(f32::from(delta.x), f32::from(delta.y))
         };
         self.set_viewport(viewport, cx);
     }
 
     fn on_pinch(&mut self, event: &PinchEvent, x: f32, cx: &mut Context<Self>) {
-        let viewport = self.painted.get();
-        self.set_viewport(
-            viewport.zoomed(f64::from(1.0 + event.delta), x.max(0.0)),
-            cx,
-        );
+        let factor = f64::from(1.0 + event.delta);
+        self.set_viewport(self.viewport.zoomed(factor, x.max(0.0)), cx);
     }
 }
 
@@ -303,6 +343,7 @@ impl Focusable for Timeline {
 
 impl Render for Timeline {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.refresh_order(cx);
         let timeline = cx.entity();
         let surface = canvas(
             |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
@@ -311,6 +352,7 @@ impl Render for Timeline {
                 let height = f32::from(bounds.size.height) - RULER_HEIGHT;
                 let scene = Rc::new(timeline.read(cx).scene(width, height, cx));
                 timeline.read(cx).painted.set(scene.viewport);
+                timeline.read(cx).painted_size.set((width, height));
                 paint_scene(&scene, bounds, window, cx);
                 listen(timeline, scene, bounds, hitbox, window);
             },
@@ -423,7 +465,7 @@ fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &
     let theme = cx.theme();
     let (text, muted, hairline, clip_fill, clip_border) = (
         theme.gray_900,
-        theme.gray_600,
+        theme.gray_700,
         theme.alpha_at(0.05),
         theme.alpha_at(0.05),
         theme.alpha_at(0.10),

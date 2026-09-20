@@ -390,10 +390,19 @@ impl DropdownMenu {
     }
 
     /// Replaces the items, for a menu whose labels follow the application, such as
-    /// `Undo Move clip`.
+    /// `Undo Move clip`. The keyboard highlight stays when the items are the same ones, so a
+    /// change from outside while the menu is open does not take it away.
     pub fn set_entries(&mut self, entries: Vec<MenuEntry>, cx: &mut Context<Self>) {
+        let values = |entries: &[MenuEntry]| -> Vec<SharedString> {
+            flat(entries)
+                .iter()
+                .map(|item| item.value.clone())
+                .collect()
+        };
+        if values(&entries) != values(&self.entries) {
+            self.highlighted = usize::MAX;
+        }
         self.entries = entries;
-        self.highlighted = usize::MAX;
         cx.notify();
     }
 

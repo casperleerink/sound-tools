@@ -567,6 +567,15 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     Notice::new("n-warning", "2 files are not live, see problems.txt")
                         .tone(NoticeTone::Warning)
                         .into_any_element(),
+                    Notice::new(
+                        "n-long",
+                        "instance arrangement/warm-pad/verse-b: notes[3].start must be less than \
+                         the clip length 3840, not 5760. A note start counts from the start of \
+                         its clip, not from the start of the project",
+                    )
+                    .w(px(400.))
+                    .on_dismiss(|_, _, _| {})
+                    .into_any_element(),
                 ],
             )],
         ))

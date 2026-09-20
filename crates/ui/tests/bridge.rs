@@ -185,6 +185,83 @@ fn a_project_error_reaches_the_notice_and_the_next_good_edit_clears_it(cx: &mut 
     });
 }
 
+#[gpui::test]
+fn a_good_edit_leaves_a_notice_of_the_system_alone(cx: &mut TestAppContext) {
+    let opened = open(cx);
+    let marker = create_marker(&opened.session, cx);
+    opened.session.update(cx, |session, cx| {
+        session.report("the output device is gone", cx);
+        let moved = session.edit(cx, |project| {
+            let mut edit = project.begin("Fine");
+            project.update(&mut edit, &marker, |state| state.value = 2)?;
+            project.finish(edit)
+        });
+        assert_eq!(moved, Some(()));
+        assert_eq!(
+            session.notice().unwrap().as_ref(),
+            "the output device is gone"
+        );
+
+        // A failed edit takes its place, and that one a good edit clears.
+        session.edit(cx, |project| {
+            let mut edit = project.begin("Too much");
+            project.update(&mut edit, &marker, |state| state.value = 101)
+        });
+        assert!(session.notice().unwrap().contains("at most 100"));
+        session.edit(cx, |project| project.undo());
+        assert_eq!(session.notice(), None);
+    });
+}
+
+#[gpui::test]
+fn undo_and_redo_wait_for_the_open_gesture(cx: &mut TestAppContext) {
+    let opened = open(cx);
+    let marker = create_marker(&opened.session, cx);
+    let value = |session: &Session| session.project().state(&marker).unwrap().value;
+    opened.session.update(cx, |session, cx| {
+        // No gesture: nothing to publish into.
+        assert_eq!(session.gesture(cx, |_, _| Ok(())), None);
+
+        session.begin_gesture("Drag", cx);
+        for step in [10, 20, 30] {
+            session.gesture(cx, |project, edit| {
+                project.update(edit, &marker, |state| state.value = step)
+            });
+        }
+        session.undo(cx);
+        session.redo(cx);
+        assert_eq!(
+            value(session),
+            30,
+            "undo in the middle of a drag is ignored"
+        );
+        assert_eq!(session.project().undo_label(), Some("Add marker"));
+
+        session.finish_gesture(cx);
+        assert!(!session.gesture_open());
+        assert_eq!(session.project().undo_label(), Some("Drag"));
+        session.undo(cx);
+        assert_eq!(value(session), 1, "the whole drag is one step");
+        session.redo(cx);
+        assert_eq!(value(session), 30);
+
+        // Cancel applies the state from before, and a new gesture ends one left open.
+        session.begin_gesture("Cancelled", cx);
+        session.gesture(cx, |project, edit| {
+            project.update(edit, &marker, |state| state.value = 40)
+        });
+        session.cancel_gesture(cx);
+        assert_eq!(value(session), 30);
+        session.begin_gesture("First", cx);
+        session.gesture(cx, |project, edit| {
+            project.update(edit, &marker, |state| state.value = 50)
+        });
+        session.begin_gesture("Second", cx);
+        assert_eq!(session.project().undo_label(), Some("First"));
+        session.cancel_gesture(cx);
+    });
+}
+
 /// Reads the session when it renders, as every view does.
 struct Reader {
     session: Entity<Session>,

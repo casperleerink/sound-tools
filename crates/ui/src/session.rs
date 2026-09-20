@@ -9,7 +9,9 @@ use std::fmt::Display;
 use std::time::Duration;
 
 use gpui::{Context, Entity, EventEmitter, SharedString, Task, prelude::*};
-use sound_core::{EngineControl, EngineStatus, Project, ProjectError, ProjectEvent, Ticks};
+use sound_core::{
+    EngineControl, EngineStatus, Project, ProjectEdit, ProjectError, ProjectEvent, Ticks,
+};
 
 /// How often the session polls. About one display frame, so the playhead moves smoothly.
 /// A poll that finds nothing new notifies nobody, so a stopped project draws no frames.
@@ -23,10 +25,22 @@ pub struct Playhead {
     pub tick: Ticks,
 }
 
+/// Where a notice came from decides what clears it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum NoticeSource {
+    /// A failed edit. The next edit that works clears it.
+    Edit,
+    /// The engine, the watcher or the system. It is reported once, so only a dismissal or a
+    /// newer notice clears it. A drag publishes sixty good edits a second.
+    System,
+}
+
 pub struct Session {
     project: Project,
     playhead: Entity<Playhead>,
-    notice: Option<SharedString>,
+    notice: Option<(NoticeSource, SharedString)>,
+    /// The open gesture, see [`Self::begin_gesture`].
+    gesture: Option<ProjectEdit>,
     /// A stopped engine fails every poll. It is reported once.
     engine_stopped: bool,
     _polling: Task<()>,
@@ -54,6 +68,7 @@ impl Session {
             project,
             playhead: cx.new(|_| Playhead::default()),
             notice: None,
+            gesture: None,
             engine_stopped: false,
             _polling: polling,
         }
@@ -82,9 +97,9 @@ impl Session {
         }
     }
 
-    /// Runs one project operation: `begin`, `publish`, `update`, `finish`, `cancel`, `commit`,
-    /// `undo`, `redo`. Observers hear what it changed. An error goes to the notice and gives
-    /// `None`, so no caller can drop one.
+    /// Runs one project operation, such as a `commit`. Observers hear what it changed. An
+    /// error goes to the notice and gives `None`, so no caller can drop one. A drag goes
+    /// through [`Self::begin_gesture`], and undo and redo through [`Self::undo`].
     pub fn edit<R>(
         &mut self,
         cx: &mut Context<Self>,
@@ -96,27 +111,84 @@ impl Session {
         cx.notify();
         match result {
             Ok(value) => {
-                self.notice = None;
+                if matches!(self.notice, Some((NoticeSource::Edit, _))) {
+                    self.notice = None;
+                }
                 Some(value)
             }
             Err(error) => {
-                self.notice = Some(error.to_string().into());
+                self.notice = Some((NoticeSource::Edit, error.to_string().into()));
                 None
             }
         }
     }
 
-    /// The last error, for a quiet status surface. It stays until it is dismissed or an edit
-    /// succeeds.
-    pub fn notice(&self) -> Option<&SharedString> {
-        self.notice.as_ref()
+    /// Opens the one gesture of this session: a drag, from mouse down to mouse up. The session
+    /// keeps the edit, so a view cannot leave one open by losing it, and [`Self::undo`] and
+    /// [`Self::redo`] do nothing until it ends. A gesture that is still open is finished first.
+    pub fn begin_gesture(&mut self, label: &str, cx: &mut Context<Self>) {
+        self.finish_gesture(cx);
+        self.gesture = Some(self.project.begin(label));
     }
 
-    /// Shows an error that did not come from the project, for example from the system.
+    pub fn gesture_open(&self) -> bool {
+        self.gesture.is_some()
+    }
+
+    /// Publishes into the open gesture, per mouse move: `project.update(edit, ..)` or
+    /// `project.publish(edit, ..)`. `None` when no gesture is open, or on an error, which goes
+    /// to the notice.
+    pub fn gesture<R>(
+        &mut self,
+        cx: &mut Context<Self>,
+        publish: impl FnOnce(&mut Project, &mut ProjectEdit) -> Result<R, ProjectError>,
+    ) -> Option<R> {
+        let mut edit = self.gesture.take()?;
+        let result = self.edit(cx, |project| publish(project, &mut edit));
+        self.gesture = Some(edit);
+        result
+    }
+
+    /// Ends the gesture as one undo step and writes the files. Nothing without a gesture.
+    pub fn finish_gesture(&mut self, cx: &mut Context<Self>) {
+        if let Some(edit) = self.gesture.take() {
+            self.edit(cx, |project| project.finish(edit));
+        }
+    }
+
+    /// Ends the gesture and applies the state from before it. Nothing without a gesture.
+    pub fn cancel_gesture(&mut self, cx: &mut Context<Self>) {
+        if let Some(edit) = self.gesture.take() {
+            self.edit(cx, |project| project.cancel(edit));
+        }
+    }
+
+    /// Undo for keys and menus. Ignored while a gesture is open: undo in the middle of a drag
+    /// would be overwritten by the next mouse move and leave a step that ends nowhere.
+    pub fn undo(&mut self, cx: &mut Context<Self>) {
+        if self.gesture.is_none() {
+            self.edit(cx, Project::undo);
+        }
+    }
+
+    /// Redo, ignored while a gesture is open, like [`Self::undo`].
+    pub fn redo(&mut self, cx: &mut Context<Self>) {
+        if self.gesture.is_none() {
+            self.edit(cx, Project::redo);
+        }
+    }
+
+    /// The last error, for a quiet status surface. The notice of a failed edit stays until
+    /// an edit succeeds. Any other stays until it is dismissed.
+    pub fn notice(&self) -> Option<&SharedString> {
+        self.notice.as_ref().map(|(_, message)| message)
+    }
+
+    /// Shows an error that did not come from an edit: the engine, the watcher, the system.
     pub fn report(&mut self, error: impl Display, cx: &mut Context<Self>) {
-        let message = SharedString::from(error.to_string());
-        if self.notice.as_ref() != Some(&message) {
-            self.notice = Some(message);
+        let notice = (NoticeSource::System, SharedString::from(error.to_string()));
+        if self.notice.as_ref() != Some(&notice) {
+            self.notice = Some(notice);
             cx.notify();
         }
     }

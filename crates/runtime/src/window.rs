@@ -14,12 +14,10 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use gpui::{
     AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
-    MouseDownEvent, SharedString, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions,
-    actions, div, point, prelude::*, px, size,
+    MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions,
+    div, point, prelude::*, px, size,
 };
-use sound_core::{
-    Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, Project, ProjectEvent,
-};
+use sound_core::{Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, ProjectEvent};
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::{ActiveTheme, Assets, Session, Views, typography};
@@ -47,6 +45,7 @@ pub struct Shell {
     project_menu: Entity<ProjectMenu>,
     transport: Entity<TransportPill>,
     focus_handle: FocusHandle,
+    dismiss_focus: FocusHandle,
 }
 
 impl Shell {
@@ -69,6 +68,13 @@ impl Shell {
 
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
+        // The keys of the window work from its key context, so the focus must stay inside it.
+        // A control that goes away while it has the focus, such as a dismissed notice, would
+        // leave it nowhere.
+        cx.on_focus_lost(window, |shell, window, cx| {
+            window.focus(&shell.focus_handle, cx)
+        })
+        .detach();
         let mut shell = Self {
             project_menu: cx.new(|cx| ProjectMenu::new(session.clone(), device_name, cx)),
             transport: cx.new(|cx| TransportPill::new(session.clone(), cx)),
@@ -76,6 +82,7 @@ impl Shell {
             views,
             main: None,
             focus_handle,
+            dismiss_focus: cx.focus_handle().tab_stop(true),
         };
         shell.show_main_instance(window, cx);
         shell
@@ -124,6 +131,7 @@ impl Shell {
             .children(error.map(|error| {
                 Notice::new("error", error)
                     .max_w_full()
+                    .dismiss_focus(&self.dismiss_focus)
                     .on_dismiss(cx.listener(|shell, _, _, cx| {
                         shell
                             .session
@@ -172,7 +180,17 @@ impl Render for Shell {
 
         div()
             .id("shell")
+            .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|shell, _: &TogglePlayback, _, cx| {
+                shell.session.update(cx, Session::toggle_playback)
+            }))
+            .on_action(
+                cx.listener(|shell, _: &Undo, _, cx| shell.session.update(cx, Session::undo)),
+            )
+            .on_action(
+                cx.listener(|shell, _: &Redo, _, cx| shell.session.update(cx, Session::redo)),
+            )
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .size_full()
@@ -208,41 +226,21 @@ impl Render for Shell {
     }
 }
 
-/// Key bindings and the actions that need no window. They hold the session weakly: when the
-/// window closes, the session and with it the project must go, so the project folder is left
-/// as a clean close leaves it.
-pub fn bind_actions(session: WeakEntity<Session>, cx: &mut App) {
+/// The key context of the window root. Every binding of the window names it.
+const KEY_CONTEXT: &str = "Shell";
+
+/// The keys of the window. Space and undo belong to a focused text field first: there space is
+/// a character and cmd-z is not an undo of the project. Tab moves the focus everywhere.
+pub fn bind_keys(cx: &mut App) {
+    let outside_text = Some("Shell && !TextInput");
     cx.bind_keys([
-        KeyBinding::new("space", TogglePlayback, None),
-        KeyBinding::new("cmd-z", Undo, None),
-        KeyBinding::new("shift-cmd-z", Redo, None),
-        KeyBinding::new("tab", FocusNext, None),
-        KeyBinding::new("shift-tab", FocusPrevious, None),
+        KeyBinding::new("space", TogglePlayback, outside_text),
+        KeyBinding::new("cmd-z", Undo, outside_text),
+        KeyBinding::new("shift-cmd-z", Redo, outside_text),
+        KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
+        KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
-    // A session that is gone means the app is closing. There is nothing left to act on.
-    let on_session = move |cx: &mut App, action: fn(&mut Session, &mut Context<Session>)| {
-        if let Some(session) = session.upgrade() {
-            session.update(cx, action);
-        }
-    };
-    cx.on_action({
-        let on_session = on_session.clone();
-        move |_: &TogglePlayback, cx| on_session(cx, Session::toggle_playback)
-    });
-    cx.on_action({
-        let on_session = on_session.clone();
-        move |_: &Undo, cx| {
-            on_session(cx, |session, cx| {
-                session.edit(cx, Project::undo);
-            })
-        }
-    });
-    cx.on_action(move |_: &Redo, cx| {
-        on_session(cx, |session, cx| {
-            session.edit(cx, Project::redo);
-        })
-    });
     cx.on_action(|_: &Quit, cx| cx.quit());
 }
 
@@ -277,7 +275,7 @@ pub fn run(folder: &Path) -> Result<()> {
         .run(move |cx: &mut App| {
             sound_ui::init(cx);
             let session = cx.new(|cx| Session::new(project, cx));
-            bind_actions(session.downgrade(), cx);
+            bind_keys(cx);
 
             // A lost device must reach the composer. The stream reports it on its own thread.
             cx.spawn({

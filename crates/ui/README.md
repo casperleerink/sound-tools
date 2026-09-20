@@ -63,6 +63,8 @@ pub fn register(views: &mut Views) {
 }
 ```
 
+A tool that edits what it owns shows that inside its own view. The window has one main area with one root view. Decided for the first milestone: the note editor is a panel inside the arrangement view and belongs to the arrangement extension, which opens it for the selected clip. The window does not know it.
+
 `Views::view_of(&session, &id, window, cx)` makes the view of an instance. The window shows the view of `Views::main_instance`: the first instance at the top of the project whose tool has a view. This is provisional. Composing a workspace from many views is later work.
 
 ## Edit from a view
@@ -79,21 +81,20 @@ session.update(cx, |session, cx| {
     })
 });
 
-// A drag. Sound and every other view follow each update. The file is written once, at the end.
+// A drag is a gesture of the session. Sound and every other view follow each move. The file
+// is written once, at the end, and the whole drag is one undo step.
 // Mouse down:
-self.drag = Some(self.session.read(cx).project().begin("Change frequency"));
+self.session.update(cx, |session, cx| session.begin_gesture("Change frequency", cx));
 // Each mouse move:
-if let Some(edit) = &mut self.drag {
-    let tone = self.tone.clone();
-    self.session.update(cx, |session, cx| {
-        session.edit(cx, |project| project.update(edit, &tone, |state| state.frequency_hz = hz))
-    });
-}
-// Mouse up. On escape it is `project.cancel(edit)`, which applies the state from before.
-if let Some(edit) = self.drag.take() {
-    self.session.update(cx, |session, cx| session.edit(cx, |project| project.finish(edit)));
-}
+let tone = self.tone.clone();
+self.session.update(cx, |session, cx| {
+    session.gesture(cx, |project, edit| project.update(edit, &tone, |state| state.frequency_hz = hz))
+});
+// Mouse up. On escape it is `cancel_gesture`, which applies the state from before.
+self.session.update(cx, |session, cx| session.finish_gesture(cx));
 ```
+
+The session keeps the open edit of a gesture, not the view. So a view cannot leave one open by losing it, a new gesture finishes one that was left open, and the session knows that a drag is going on: `Session::undo` and `Session::redo`, which the window's cmd-z, shift-cmd-z and menu call, do nothing until the gesture ends. An undo in the middle of a drag would be overwritten by the next mouse move. A view keeps only what the gesture needs of its own, such as the clip as it was at mouse down. Call `session.undo(cx)` for an undo button of your own, never `edit(cx, Project::undo)`.
 
 Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Session::toggle_playback` is what space does. The result shows in the `Playhead` after the next poll.
 
@@ -102,6 +103,8 @@ Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Ses
 - No `cx.notify()` and no entity updates inside `render` or inside a paint callback. Mouse listeners that a canvas registers while painting may update: they run later, on an event.
 - No blocking I/O on the main thread beyond what `Project` does per edit.
 - Draw only what is visible. A view of many records paints on a `canvas`, like the arrangement, and does not make an element per record.
+- Keep what walks many records between the project events that can change it, and read it again in `render`, once per group of events, not per paint and not per event. The arrangement keeps its track order and its end this way. This is the one kind of copy a view holds.
+- Keys: the window binds space, cmd-z and shift-cmd-z in the context `Shell && !TextInput`, so a focused `TextInput` gets them first. Give a view of your own a `key_context` and bind its keys there.
 - Keep what repaints with the playhead apart from the rest. A view that GPUI is to keep while the playhead moves must not have the playhead view inside it: a notified view also renders every view above it. Make them siblings and put `.cached(..)` on the heavy one. See `ArrangementView`.
 - Put coordinate math in pure functions with tests (`extensions/arrangement/src/view/layout.rs`).
 - Use the components of this crate and the theme tokens (`cx.theme()`). A new general component goes here with a gallery entry. What only one tool needs stays in its extension.

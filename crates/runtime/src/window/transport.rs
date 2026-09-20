@@ -2,14 +2,15 @@
 //! time, and a hairline seek strip with the duration when the project has an end.
 //!
 //! It follows the playhead, so it renders every frame while the project plays. It therefore
-//! reads the end of the project, which walks every clip, only when the project changes.
+//! reads the end of the project, which walks every clip, only after a project event, and
+//! once for all events of a group.
 
 use gpui::{
     App, BorderStyle, Bounds, BoxShadow, Context, DispatchPhase, Entity, FocusHandle, Hitbox,
     HitboxBehavior, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Window, canvas, div, fill, hsla, point, prelude::*, px, quad, size,
 };
-use sound_core::Ticks;
+use sound_core::{ProjectEvent, Ticks};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::{ActiveTheme, Playhead, Session, typography};
 
@@ -17,11 +18,23 @@ const STRIP_WIDTH: f32 = 200.;
 const STRIP_HEIGHT: f32 = 16.;
 const KNOB: f32 = 8.;
 
+/// Where the knob starts on a strip of this width, for a position from 0 to 1. Painting and
+/// scrubbing both use the width the strip really has, so the knob stays under the pointer.
+fn knob_left(fraction: f32, strip_width: f32) -> f32 {
+    (strip_width - KNOB) * fraction.clamp(0., 1.)
+}
+
+/// The position from 0 to 1 that puts the middle of the knob at `x` from the left of the strip.
+fn fraction_at(x: f32, strip_width: f32) -> f32 {
+    ((x - KNOB / 2.) / (strip_width - KNOB).max(1.)).clamp(0., 1.)
+}
+
 pub struct TransportPill {
     session: Entity<Session>,
     playhead: Entity<Playhead>,
-    /// Derived from the project on every change, never edited here.
+    /// Derived from the project, never edited here. Read again in `refresh` after an event.
     end: Option<Ticks>,
+    end_is_stale: bool,
     scrubbing: bool,
     play_focus: FocusHandle,
     stop_focus: FocusHandle,
@@ -32,19 +45,38 @@ impl TransportPill {
     pub fn new(session: Entity<Session>, cx: &mut Context<Self>) -> Self {
         let playhead = session.read(cx).playhead().clone();
         cx.observe(&playhead, |_, _, cx| cx.notify()).detach();
-        cx.observe(&session, |pill, session, cx| {
-            pill.end = session.read(cx).project().end();
-            cx.notify();
+        // Any record may move the end, and the project file holds the tempo of the times shown.
+        // Problems change neither. A notice or a finished edit sends no event at all.
+        cx.subscribe(&session, |pill, _, event, cx| {
+            if !matches!(event, ProjectEvent::ProblemsChanged) {
+                pill.end_is_stale = true;
+                cx.notify();
+            }
         })
         .detach();
         Self {
             end: session.read(cx).project().end(),
+            end_is_stale: false,
             session,
             playhead,
             scrubbing: false,
             play_focus: cx.focus_handle().tab_stop(true),
             stop_focus: cx.focus_handle().tab_stop(true),
             strip_focus: cx.focus_handle().tab_stop(true),
+        }
+    }
+
+    /// Reads the end again when an event made it stale. `render` calls it, so a group of ten
+    /// thousand events costs one walk.
+    fn refresh(&mut self, cx: &App) {
+        if !self.end_is_stale {
+            return;
+        }
+        self.end = self.session.read(cx).project().end();
+        self.end_is_stale = false;
+        // Without an end there is no strip, and no mouse up on it would end a drag.
+        if self.end.is_none() {
+            self.scrubbing = false;
         }
     }
 
@@ -58,8 +90,7 @@ impl TransportPill {
         let Some(end) = self.end else {
             return;
         };
-        let travel = f32::from(strip.size.width) - KNOB;
-        let fraction = ((f32::from(x - strip.left()) - KNOB / 2.) / travel).clamp(0., 1.);
+        let fraction = fraction_at(f32::from(x - strip.left()), f32::from(strip.size.width));
         self.seek(
             Ticks((end.0 as f64 * f64::from(fraction)).round() as u64),
             cx,
@@ -97,8 +128,9 @@ impl TransportPill {
         let surface = canvas(
             |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
             move |bounds, hitbox, window, _| {
-                let middle = bounds.top() + px(STRIP_HEIGHT / 2.);
-                let knob_left = bounds.left() + px((STRIP_WIDTH - KNOB) * fraction);
+                let middle = bounds.top() + bounds.size.height / 2.;
+                let strip_width = f32::from(bounds.size.width);
+                let knob_left = bounds.left() + px(knob_left(fraction, strip_width));
                 let line = |left: Pixels, right: Pixels| {
                     Bounds::new(point(left, middle - px(0.5)), size(right - left, px(1.)))
                 };
@@ -187,6 +219,7 @@ fn position_texts(project: &sound_core::Project, tick: Ticks) -> (String, String
 
 impl Render for TransportPill {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.refresh(cx);
         let theme = cx.theme();
         let (fill, border, muted, green) = (
             theme.gray_200.blend(theme.alpha_at(0.06)),
@@ -257,17 +290,13 @@ impl Render for TransportPill {
                             }),
                     ),
             )
-            .child(
-                div()
-                    .font(typography::tabular())
-                    .min_w(px(40.))
-                    .child(bar_beat),
-            )
+            // No fixed widths: tabular numbers keep the pill still, and it grows by one digit
+            // at bar 100 or at ten minutes.
+            .child(div().font(typography::tabular()).child(bar_beat))
             .child(
                 div()
                     .font(typography::tabular())
                     .text_color(muted)
-                    .min_w(px(32.))
                     .child(time),
             )
             .children(strip)
@@ -282,7 +311,66 @@ impl Render for TransportPill {
 
 #[cfg(test)]
 mod tests {
-    use super::clock_time;
+    use gpui::{AppContext, TestAppContext};
+    use sound_core::{Changes, Engine, InstanceId, Ticks};
+    use sound_notes::{Clip, Length};
+    use sound_ui::Session;
+
+    use super::{KNOB, TransportPill, clock_time, fraction_at, knob_left};
+    use crate::{OFFLINE, open_or_create};
+
+    #[test]
+    fn the_knob_is_under_the_pointer_for_any_strip_width() {
+        // The strip is 198 px inside its border, not the 200 px it asks for.
+        for width in [198., 200., 64.] {
+            for fraction in [0., 0.25, 0.5, 1.] {
+                let middle = knob_left(fraction, width) + KNOB / 2.;
+                assert!((fraction_at(middle, width) - fraction).abs() < 1e-6);
+            }
+            assert_eq!(knob_left(1., width) + KNOB, width);
+            assert_eq!(fraction_at(-50., width), 0.);
+            assert_eq!(fraction_at(width + 50., width), 1.);
+        }
+    }
+
+    #[gpui::test]
+    fn a_scrub_ends_when_the_project_loses_its_end(cx: &mut TestAppContext) {
+        let folder = tempfile::tempdir().unwrap();
+        let (control, _engine) = Engine::new(OFFLINE);
+        let mut project = open_or_create(folder.path(), control).unwrap();
+        let mut changes = Changes::new();
+        let clip = Clip {
+            start: Ticks(0),
+            length: Length::new(Ticks(3840)).unwrap(),
+            notes: Vec::new(),
+        };
+        let id = InstanceId::new("arrangement/track-1/part").unwrap();
+        changes.create(id, clip);
+        project.commit("Add clip", changes).unwrap();
+        let session = cx.new(|cx| Session::new(project, cx));
+        let pill = cx.new(|cx| TransportPill::new(session.clone(), cx));
+        pill.update(cx, |pill, _| {
+            assert_eq!(pill.end, Some(Ticks(3840)));
+            pill.scrubbing = true;
+        });
+
+        // A dismissed notice is no project event: the end is not read again.
+        session.update(cx, |session, cx| {
+            session.report("something", cx);
+            session.dismiss_notice(cx);
+        });
+        cx.run_until_parked();
+        pill.update(cx, |pill, _| assert!(!pill.end_is_stale));
+
+        session.update(cx, |session, cx| session.undo(cx));
+        cx.run_until_parked();
+        pill.update(cx, |pill, cx| {
+            assert!(pill.end_is_stale);
+            pill.refresh(cx);
+            assert_eq!(pill.end, None);
+            assert!(!pill.scrubbing);
+        });
+    }
 
     #[test]
     fn time_shows_as_minutes_and_seconds() {
