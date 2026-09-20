@@ -9,7 +9,13 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+arrangement.workspace = true
 hound.workspace = true
 instrument.workspace = true
 sound-core.workspace = true
 tone.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+sound-notes.workspace = true
+tempfile.workspace = true

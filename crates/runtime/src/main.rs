@@ -17,91 +17,16 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
-use sound_core::{
-    Changes, Engine, EngineConfig, EngineStatus, InstanceId, OutputDevice, PortReference, Project,
-    ProjectEvent, Registry, SavedConnection, SavedDestination, Ticks,
-};
-use tone::ToneState;
-
-/// Offline renders have no device to ask.
-const OFFLINE: EngineConfig = EngineConfig {
-    sample_rate: 48_000,
-    channels: 2,
-    ring_capacity: 64,
-    event_capacity: 256,
-    processor_slots: 256,
-};
-
-/// Every bundled extension registers here.
-fn registry() -> Result<Registry> {
-    let mut registry = Registry::new();
-    instrument::register(&mut registry)?;
-    tone::register(&mut registry)?;
-    Ok(registry)
-}
-
-/// The default project, for now: two Tones, one of them connected to the first two device
-/// channels.
-fn create_default_project(project: &mut Project) -> Result<()> {
-    let mut changes = Changes::new();
-    let connected = changes.create(InstanceId::new("tone-a")?, ToneState::default());
-    let silent = ToneState {
-        frequency_hz: 330.0,
-        gain: 0.1,
-    };
-    changes.create(InstanceId::new("tone-b")?, silent);
-    for channel in 0..2 {
-        let output = PortReference::new(connected.id(), tone::AUDIO_OUTPUT);
-        changes.connect(SavedConnection::to_device(output, channel));
-    }
-    project.commit("Create default project", changes)?;
-    Ok(())
-}
-
-fn is_empty(folder: &Path) -> bool {
-    match std::fs::read_dir(folder) {
-        Ok(mut entries) => entries.next().is_none(),
-        Err(_) => true,
-    }
-}
+use runtime::{OFFLINE, open_or_create, open_read_only, problems, summary};
+use sound_core::{Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks};
 
 fn print_summary(project: &Project) {
     println!("project: {}", project.root().display());
-    let project_file = project.project_file();
-    println!("extensions: {}", project_file.extensions.join(", "));
-    let tempo_map = &project_file.tempo_map;
-    println!("time signature: {}", tempo_map.time_signature());
-    for change in tempo_map.tempo_changes() {
-        println!(
-            "tempo: {} bpm from tick {}",
-            change.bpm.bpm(),
-            change.tick.0
-        );
-    }
-    println!("instances: {}", project.instances().count());
-    for (id, tool) in project.instances() {
-        let indent = "  ".repeat(id.as_str().matches('/').count() + 1);
-        let state = project.state_json(id).unwrap_or_default();
-        println!("{indent}{}  [{tool}]  {state}", id.name());
-    }
-    println!("connections: {}", project_file.connections.len());
-    for connection in &project_file.connections {
-        let from = &connection.from;
-        let to = match &connection.to {
-            SavedDestination::DeviceOutput(channel) => format!("device output {channel}"),
-            SavedDestination::Input(input) => format!("{}:{}", input.instance, input.port),
-        };
-        println!("  {}:{} -> {to}", from.instance, from.port);
-    }
-    print_problems(project);
+    println!("{}", summary(project));
 }
 
 fn print_problems(project: &Project) {
-    let problems = project.problems();
-    println!("problems: {}", problems.len());
-    for problem in problems {
-        println!("  {}: {}", problem.path, problem.message);
-    }
+    println!("{}", problems(project));
 }
 
 /// Prints what changed, so that a person or an agent sees each live change arrive.
@@ -204,12 +129,7 @@ fn run(folder: &Path) -> Result<()> {
         config.sample_rate, config.channels
     );
     let (control, engine) = Engine::new(config);
-    let create_default = is_empty(folder);
-    let mut project = Project::open(folder, registry()?, control)?;
-    if create_default {
-        create_default_project(&mut project)?;
-        println!("created the default project");
-    }
+    let mut project = open_or_create(folder, control)?;
     project.drain_events();
     print_summary(&project);
     project.watch()?;
@@ -264,15 +184,13 @@ fn run(folder: &Path) -> Result<()> {
 
 /// Reads the project without its lock, so it works next to a running runtime.
 fn inspect(folder: &Path) -> Result<()> {
-    let (control, _engine) = Engine::new(OFFLINE);
-    let project = Project::open_read_only(folder, registry()?, control)?;
+    let (project, _engine) = open_read_only(folder)?;
     print_summary(&project);
     Ok(())
 }
 
 fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
-    let (control, mut engine) = Engine::new(OFFLINE);
-    let mut project = Project::open_read_only(folder, registry()?, control)?;
+    let (mut project, mut engine) = open_read_only(folder)?;
     print_problems(&project);
     project.engine().play();
     let mut writer = hound::WavWriter::create(
