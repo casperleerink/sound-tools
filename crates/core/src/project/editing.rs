@@ -182,7 +182,9 @@ impl History {
             Source::Load => {}
             Source::Interface => {
                 let before = || change.before.clone();
-                self.committed.entry(change.id.clone()).or_insert_with(before);
+                self.committed
+                    .entry(change.id.clone())
+                    .or_insert_with(before);
             }
             Source::Outside | Source::History => {
                 if let Some(committed) = self.committed.get_mut(&change.id) {
