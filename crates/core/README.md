@@ -75,8 +75,9 @@ A timeline-driven processor emits what starts inside `tick_range`. It never conv
 fn process(&mut self, context: &mut ProcessContext<'_>) {
     let transport = &context.transport;
     if transport.jumped || transport.stopped_playing {
-        // Send a note off for every held note. After a jump the notes at the new position
-        // come through `tick_range`. After a pause nothing comes until the project plays.
+        // Release what is held. With the note contract of `crates/notes` that is one `AllOff`
+        // at offset 0. After a jump the notes at the new position come through `tick_range`.
+        // After a pause nothing comes until the project plays.
     }
     for note in self.snapshot.notes_starting_in(&transport.tick_range) {
         if let Some(offset) = transport.offset_of(note.start) {
@@ -90,7 +91,7 @@ Starting notes needs no `if transport.playing`: the range is empty while the pro
 
 ### Events
 
-Any `Copy + Send + 'static` type is an event. Two extensions share an event type through a small contract crate. The core does not know the type. Each event port holds `EngineConfig::event_capacity` events per block. More are dropped and counted in `EngineStatus::event_overflows`.
+Any `Copy + Send + 'static` type is an event. Two extensions share an event type through a small contract crate, for example `NoteEvent` in `crates/notes`. The core does not know the type. Each event port holds `EngineConfig::event_capacity` events per block. More are dropped and counted in `EngineStatus::event_overflows`.
 
 ### Updates: parameters, snapshots, anything from the control side
 
@@ -371,7 +372,7 @@ The saved JSON, as it will appear in `project.json`:
 
 ```sh
 cargo nextest run -p sound-core -p tone
-RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone   # with the realtime sanitizer
+RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes   # with the realtime sanitizer
 cargo nextest run -p sound-core --run-ignored only ten_thousand --no-capture   # scale numbers
 cargo run -p runtime -- my-project                        # runs the folder live on the default device
 cargo run -p runtime -- my-project --inspect              # summary, no device, no lock
