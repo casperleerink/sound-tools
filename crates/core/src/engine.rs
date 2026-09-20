@@ -69,7 +69,8 @@ pub struct EngineStatus {
     /// Engine time: frames processed since the engine was created.
     pub frames: u64,
     pub batches_applied: u64,
-    /// Events dropped because an event buffer was full.
+    /// Events dropped because an event buffer was full, or because a processor counted one
+    /// that a full list of its own made it drop.
     pub event_overflows: u64,
     /// Times an edit had to wait a block because the return ring was full.
     pub return_ring_full: u64,
@@ -213,6 +214,7 @@ impl Engine {
 
         let transport = self.transport.block(frames);
         let port_misuses = Cell::new(0);
+        let dropped_events = Cell::new(0);
         for step in steps.iter() {
             for (input, sources) in audio_scratch.iter_mut().zip(&step.audio_sources) {
                 input.fill(0.0);
@@ -270,6 +272,7 @@ impl Engine {
                         buffers: &mut *step_event_outputs,
                         frames,
                         misuses: &port_misuses,
+                        dropped: &dropped_events,
                     },
                 });
             }
@@ -289,6 +292,7 @@ impl Engine {
         }
         self.status.frames += frames as u64;
         self.status.port_misuses += port_misuses.get();
+        self.status.event_overflows += dropped_events.get();
         self.status.playing = transport.playing;
         self.status.playhead_frame = transport.frame_range.end;
         self.status.playhead_tick = transport.tick_range.end;
