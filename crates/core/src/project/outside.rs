@@ -276,7 +276,7 @@ impl Project {
             !inside.is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
         });
         if self.file_problems.len() != before {
-            self.events.push(ProjectEvent::ProblemsChanged);
+            self.push_event(ProjectEvent::ProblemsChanged);
         }
 
         let mut found = Vec::new();

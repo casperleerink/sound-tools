@@ -227,8 +227,19 @@ pub fn registry() -> Registry {
     registry
         .tool::<Bank>(EXTENSION)
         .unwrap()
-        .behaviour(apply_bank);
+        .behaviour(apply_bank)
+        .summary(summarize_bank);
+    registry.agent_doc(EXTENSION, TEST_AGENT_DOC);
     registry
+}
+
+pub const TEST_AGENT_DOC: &str =
+    "## Test tools\n\nA bar is {{ticks_per_bar}} ticks in {{time_signature}}.\n";
+
+/// A bank tells what it owns in one line, so a summary does not list every level.
+fn summarize_bank(project: &Project, bank: &sound_core::Instance<Bank>) -> String {
+    let levels = project.children::<Level>(bank.id()).count();
+    format!("bank {} with {levels} levels", bank.id())
 }
 
 pub const SAMPLE_RATE: u32 = 48_000;

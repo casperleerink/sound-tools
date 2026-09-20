@@ -63,6 +63,12 @@ impl InstanceId {
         Self::new(&format!("{}/{name}", self.0))
     }
 
+    /// `id-2`, `id-3` and so on: the same id with a number, for a name that is taken.
+    pub(crate) fn numbered(id: &InstanceId, number: u32) -> Self {
+        // Still a valid id: digits and `-` are valid in a name.
+        Self(format!("{}-{number}", id.0))
+    }
+
     /// The owner. `None` for a root instance.
     pub fn parent(&self) -> Option<Self> {
         let (parent, _) = self.0.rsplit_once('/')?;

@@ -27,9 +27,10 @@ pub use processor::{
     ProcessContext, Processor, Timed,
 };
 pub use project::{
-    BehaviourContext, BehaviourError, Changes, Edit as ProjectEdit, FORMAT, GROUPING_WINDOW,
-    InputEndpoint, Instance, InstanceId, InvalidInstanceId, OutputEndpoint, PortReference, Problem,
-    Project, ProjectError, ProjectEvent, ProjectFile, Registry, RegistryError, SavedConnection,
-    SavedDestination, State, StorageError, ToolRegistration,
+    AGENT_DOC_FILE, BehaviourContext, BehaviourError, Changes, Edit as ProjectEdit, FORMAT,
+    GROUPING_WINDOW, InputEndpoint, Instance, InstanceId, InvalidInstanceId, OutputEndpoint,
+    PROBLEMS_FILE, PortReference, Problem, Project, ProjectError, ProjectEvent, ProjectFile,
+    Registry, RegistryError, SavedConnection, SavedDestination, State, StorageError,
+    ToolRegistration,
 };
 pub use transport::Transport;

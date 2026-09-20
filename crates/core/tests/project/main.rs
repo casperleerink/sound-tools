@@ -7,6 +7,7 @@
 mod binding;
 mod composite;
 mod editing;
+mod generated;
 mod outside;
 mod properties;
 mod scale;

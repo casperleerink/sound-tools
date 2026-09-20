@@ -41,7 +41,16 @@ impl Project {
     /// Call this regularly, like `EngineControl::poll`. It collects what the watcher saw and,
     /// once the folder has been quiet for [`GROUPING_WINDOW`], applies it as one group through
     /// [`Project::apply_outside_changes`]. Returns how many records and project files changed.
+    ///
+    /// It also brings the generated files up to date, `problems.txt` first of all, so an agent
+    /// with only file access sees what the runtime made of its edit.
     pub fn poll(&mut self) -> Result<usize, ProjectError> {
+        let changed = self.poll_watcher();
+        let written = self.write_generated_files();
+        changed.and_then(|changed| written.map(|()| changed))
+    }
+
+    fn poll_watcher(&mut self) -> Result<usize, ProjectError> {
         let Some(watcher) = &mut self.watcher else {
             return Ok(0);
         };
