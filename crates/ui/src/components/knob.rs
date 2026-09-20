@@ -89,6 +89,21 @@ impl KnobRange {
     }
 }
 
+/// A number with three significant digits and no zeros at its end: `2`, `15.5`, `632`. What a
+/// readout next to a knob shows, so a value at rest is short and a moving one does not jump
+/// between widths.
+pub fn short(value: f32) -> String {
+    if value == 0. {
+        return "0".into();
+    }
+    let decimals = (2 - value.abs().log10().floor() as i32).max(0) as usize;
+    let text = format!("{value:.decimals$}");
+    match text.contains('.') {
+        true => text.trim_end_matches('0').trim_end_matches('.').into(),
+        false => text,
+    }
+}
+
 fn three_digits(value: f32) -> f32 {
     if value == 0. || !value.is_finite() {
         return value;
