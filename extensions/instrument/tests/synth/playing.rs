@@ -5,7 +5,9 @@ use instrument::{SynthState, VOICES, Waveform};
 use sound_core::{Changes, Tempo, TempoMap, Ticks, TimeSignature};
 use sound_notes::Pitch;
 
-use crate::support::{Harness, SAMPLE_RATE, level_at, note, peak, rising_zero_crossings};
+use crate::support::{
+    Harness, SAMPLE_RATE, largest_step, level_at, note, peak, rising_zero_crossings,
+};
 
 const SECOND: usize = SAMPLE_RATE as usize;
 
@@ -152,8 +154,8 @@ fn a_voice_taken_over_does_not_click() {
         (0..count).map(|index| note(index * 240, 9_600, 33 + index as u8, 100 - index as u8));
     let output = Harness::with_track(notes.collect(), quiet).play(3 * SECOND);
     let takeover = 16 * 6_000;
-    let usual = crate::support::largest_step(&output[takeover - SECOND / 2..takeover - 1]);
-    let around = crate::support::largest_step(&output[takeover - 1..takeover + SECOND / 2]);
+    let usual = largest_step(&output[takeover - SECOND / 2..takeover - 1]);
+    let around = largest_step(&output[takeover - 1..takeover + SECOND / 2]);
     assert!(around < 1.5 * usual, "{around} {usual}");
 }
 

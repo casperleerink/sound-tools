@@ -67,7 +67,8 @@ impl Smoothed {
     /// Moves `frames` along the ramp and returns the new value.
     fn advance(&mut self, frames: usize) -> f32 {
         let reach = self.step_per_frame * frames as f32;
-        self.current += (self.target - self.current).clamp(-reach, reach);
+        // Not `clamp`: it panics on a NaN bound, and nothing may panic on the audio thread.
+        self.current += (self.target - self.current).max(-reach).min(reach);
         self.current
     }
 }
