@@ -14,6 +14,34 @@ With the defaults one note peaks at 0.16 for velocity 127 and at 0.10 for veloci
 
 An edit applies while notes are held. The notes go on. Gain, cutoff and resonance move to the new value over 0.05 s, so an edit does not click. A sustain edit glides at the decay speed. Attack, decay and release times apply at once, also to held notes. A waveform edit is a switch, not a fade.
 
+## The view
+
+`view::register(views)` registers `SynthView` for `instrument.synth`, as the arrangement registers its view. `view.rs` is the only module here that uses GPUI. Whatever hosts the view gives it a surface. The track panel of the arrangement puts it into a device card, and it does not know this crate: it asks the view registry for the view of the instance in the `instrument` slot of a track.
+
+The view shows the title `Synth` and one control per field, in four groups parted by air: oscillator, filter, envelope, output. The waveform is a segmented control. Every number is a knob with its label and its value under it.
+
+| Field | Knob | Range | Default | Travel | Shown as |
+| --- | --- | --- | --- | --- | --- |
+| `cutoff_hz` | Cutoff | 20 to 20000 | 2000 | logarithmic | `632 Hz`, `2 kHz` |
+| `resonance` | Resonance | 0 to 1 | 0.2 | linear | `20%` |
+| `attack_seconds` | Attack | 0.001 to 10 | 0.005 | logarithmic | `5 ms`, `1.5 s` |
+| `decay_seconds` | Decay | 0.001 to 10 | 0.2 | logarithmic | `200 ms` |
+| `sustain` | Sustain | 0 to 1 | 0.7 | linear | `70%` |
+| `release_seconds` | Release | 0.001 to 10 | 0.3 | logarithmic | `300 ms` |
+| `gain` | Gain | 0 to 1 | 0.15 | linear | `15%` |
+
+The range and the default of a field are written once, in the `Parameter` constants next to `SynthState` (`CUTOFF`, `RESONANCE`, `ATTACK`, `DECAY`, `SUSTAIN`, `RELEASE`, `GAIN`, and all of them in `PARAMETERS`). `validate`, `Default`, the range of each knob and what a double click resets to all read them. A test holds this table and the one in `agent-doc.md` to them. This is local to the crate on purpose. It is not the declarative parameter system of ARCHITECTURE.md, which is still open. What is only about the interface is in `view.rs`: the label, the unit, the travel and the name of the undo step.
+
+Frequencies and times are heard in ratios, so their knobs travel in ratios: a third of the cutoff knob is a decade. A knob gives values of three significant digits, so the file stays short: `"cutoff_hz": 632.0`. A value that an agent wrote with more digits is kept until the knob moves up or down: a press, a press with a sideways move, and a drag there and back all leave it as it is, to the digit.
+
+Editing:
+
+- A knob drag is one gesture of the session. It begins with the first mouse move that changes the value, publishes per move, so the sound follows during the drag, and ends as one undo step: "Change cutoff", "Change resonance", "Change attack", "Change decay", "Change sustain", "Change release", "Change gain". The file is written once, at the end. Escape cancels. A press without a move is no step, and a drag there and back is none either.
+- A double click sets the default. An arrow key is one step of a fiftieth of the travel, with shift a five-hundredth. A waveform switch is "Change waveform". Each is one commit.
+- The view keeps no copy of the state. Its one field of its own says whether a drag has the gesture open. An outside edit of the record shows at once, also during a drag, and the next mouse move is the later write. It works from the value at the press, and it writes only its own field, so what else the file changed is kept.
+- When the record is deleted under a drag, the gesture finishes and does not cancel: the delete was the last write, and undo gives the synth back as it was before the drag. When the view is released during a drag, because the panel closed, it finishes the gesture too.
+- The callbacks of the controls hold the view weakly. `cx.processor` holds it strongly, and the mouse listeners of the last frame would then keep a closed view, and its open drag, alive for one more frame.
+
 ## Ports
 
 | Name | Kind |
@@ -41,6 +69,7 @@ A track connects both itself. To play a synth straight to the device, add connec
 
 ```sh
 cargo nextest run -p instrument -p sound-notes
+cargo nextest run -p runtime --test window track_panel                              # the view, with a simulated mouse and keys
 RTSAN_ENABLE=1 cargo nextest run -p instrument                                      # with the realtime sanitizer
 cargo nextest run -p instrument --run-ignored only realtime_ratio --no-capture     # speed of 100 synths
 cargo nextest run -p instrument --run-ignored only real_device --no-capture        # plays on the default device

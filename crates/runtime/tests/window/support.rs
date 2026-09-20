@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 
 use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
-use arrangement::view::{ArrangementView, NoteEditor, Timeline};
+use arrangement::view::{ArrangementView, NoteEditor, Timeline, TrackPanel};
 use gpui::{
     AppContext, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-    MouseUpEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext,
-    point, px,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
+    TestAppContext, VisualTestContext, point, px,
 };
 use runtime::window::{Shell, bind_keys};
 use runtime::{OFFLINE, open_or_create, views};
@@ -200,6 +200,42 @@ impl Opened<'_> {
         )
     }
 
+    /// The middle of the header of a track row of the arrangement.
+    pub fn track_header(&mut self, track: usize) -> Point<Pixels> {
+        let y = self.at(0, track).y;
+        point(px(HEADER_WIDTH / 2.), y)
+    }
+
+    pub fn selected_track(&mut self) -> Option<InstanceId> {
+        let timeline = self.timeline.clone();
+        self.cx
+            .read(|cx| timeline.read(cx).selected_track().cloned())
+    }
+
+    pub fn track_panel(&mut self) -> Option<Entity<TrackPanel>> {
+        let arrangement = self.arrangement.clone();
+        self.cx
+            .read(|cx| arrangement.read(cx).track_panel().cloned())
+    }
+
+    /// The track that the open track panel shows.
+    pub fn panel_track(&mut self) -> Option<InstanceId> {
+        let panel = self.track_panel()?;
+        Some(self.cx.read(|cx| panel.read(cx).track().id().clone()))
+    }
+
+    /// The middle of a control that names itself for tests: `knob-<id>` or `segment-<value>`.
+    /// GPUI knows the bounds of what the last frame painted, and a cached view paints
+    /// nothing, so this asks for a whole frame first.
+    pub fn control(&mut self, selector: &'static str) -> Point<Pixels> {
+        self.cx.update(|window, _| window.refresh());
+        self.cx.run_until_parked();
+        let bounds = self.cx.debug_bounds(selector);
+        bounds
+            .unwrap_or_else(|| panic!("nothing on screen is called {selector}"))
+            .center()
+    }
+
     pub fn editor(&mut self) -> Option<Entity<NoteEditor>> {
         let arrangement = self.arrangement.clone();
         self.cx.read(|cx| arrangement.read(cx).editor().cloned())
@@ -246,6 +282,35 @@ impl Opened<'_> {
             button: MouseButton::Left,
             click_count,
             first_mouse: false,
+        });
+        self.cx.run_until_parked();
+    }
+
+    /// The button goes down where the pointer is, with no move before it: what arrives when
+    /// the mouse up of a drag was lost and the next press comes.
+    pub fn mouse_down(&mut self, position: Point<Pixels>) {
+        self.cx.simulate_event(MouseDownEvent {
+            position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 1,
+            first_mouse: false,
+        });
+        self.cx.run_until_parked();
+    }
+
+    /// Several moves with the left button held, with no frame between them, as a fast mouse
+    /// sends them between two frames of the screen.
+    pub fn drag_through(&mut self, positions: &[Point<Pixels>]) {
+        self.cx.update(|window, cx| {
+            for position in positions {
+                let event = MouseMoveEvent {
+                    position: *position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                };
+                window.dispatch_event(PlatformInput::MouseMove(event), cx);
+            }
         });
         self.cx.run_until_parked();
     }

@@ -19,13 +19,12 @@ use gpui::{
 use sound_core::{Instance, InstanceId, ProjectEvent, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::{ActiveTheme, Session};
+use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 
 use super::gesture::Zone;
 use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, SNAP, Viewport, snap, snapped_delta};
 use super::paint::{
-    Fit, KeyboardFocus, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label,
-    placed,
+    Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
 };
 use super::roll::{
     DRAWN_VELOCITY, EDITOR_HEIGHT, KEY_HEIGHT, KEYS_WIDTH, clamped, drawn_note, is_black_key,

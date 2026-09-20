@@ -62,7 +62,7 @@ Every element must earn its keep. Reference feel: the source design system and H
 
 ## The window, September 19, 2026
 
-What is built, in `crates/runtime/src/window.rs` and `extensions/arrangement/src/view.rs` with `view/editor.rs`. `cargo test -p runtime --test snapshots` renders it to PNGs.
+What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/view.rs` with `view/editor.rs` and `view/track_panel.rs`, and `extensions/instrument/src/view.rs`. The track panel was added on September 20, 2026. `cargo test -p runtime --test snapshots` renders it to PNGs.
 
 - One background, `gray-100`, for the whole window. No panels and no top bar: the title bar is transparent, the project name sits right of the traffic lights and the row around it drags the window.
 - Transport pill: play or pause in green, stop, the position as `bar.beat`, the time as `m:ss` muted, then the hairline seek strip and the duration when the project has an end. Numbers are tabular and the pill sizes from its content, so it stays still while playing and grows by a digit at bar 100 or at ten minutes. Space toggles playback. Tab reaches the buttons and the strip, and left and right seek by a bar on the strip.
@@ -72,7 +72,10 @@ What is built, in `crates/runtime/src/window.rs` and `extensions/arrangement/src
 - Playhead: a 1 px `gray-950` line with a 7 px round head in the ruler.
 - Notices: quiet lines bottom-left, 400 px wide at most. A red dot for the last error with a dismiss button that Tab reaches, a peach dot for files that are not live. A long message wraps to at most three lines. Nothing blocks.
 - Note editor: a panel of 384 px below the arrangement, on the same background, with one hairline above it. No toolbar and no tools: what the pointer is on decides what a drag does. The header column lines up with the track headers: the accent dot and the name of the track in the ruler row, then a quiet close icon at 60% opacity, and below them a slim key strip of 32 px at the right edge, white keys at `alpha/10` and black keys at `alpha/3`, with only the Cs named in 12 px `gray-700` left of it. Rows are 12 px per semitone. The rows of black keys are tinted `alpha/2`, so a pitch can be read without lines between rows. Bar lines are hairlines at `alpha/5`, beat lines at half of that and only from 24 px per beat. This is the one place with a grid, because notes are placed by it. The arrangement keeps none. Outside the clip the area is a shade darker (`gray-50` at 50%). Notes are rounded bars of 11 px in the track accent with 3 px corners, the selected one filled with `gray-950`, the lightest colour there is, inside its accent outline. An outline alone on a pastel fill was hard to see. The ruler and the playhead are those of the arrangement. The editor opens zoomed to fit its clip, with the middle of its notes in the middle of what the transport leaves free.
-- Focus: the arrangement and the note editor each show a 1 px lavender ring inside their edge, only when the focus came from the keyboard. Tab goes from the project menu to the arrangement, the editor, its close icon and the transport.
+- Track panel: the other thing the panel below the arrangement can show, in the same 384 px, so a swap between it and the note editor moves nothing. One at a time, like the clip view and the device view of Ableton. The header is that of the note editor: the accent dot, the name of the track and the quiet close icon, in the same places. Right of the header column is the rack: device cards from left to right, 24 px from the edges, at the top of the panel, so the transport pill never covers a control. The rack scrolls sideways when the window is narrower than its cards. There is no scrollbar. A card is the plain card of the design system with 16 px padding. No rack ears, screws or gradients. Today the rack holds one card, the instrument of the track. A slot that is empty or whose tool has no view shows a card with the tool name and one muted line.
+- Selected track: its header gets an `alpha/5` fill in the shape and the place of a clip, 8 px from the edges of the header column. No accent, because it is a fill.
+- Synth card: the title `Synth` at 14 px medium in `gray-900`, then one row of controls. The waveform is a segmented control, then seven 44 px knobs in 64 px columns. Air makes the groups, 32 px between them and 8 px inside: oscillator, filter (cutoff, resonance), envelope (attack, decay, sustain, release), output (gain). No boxes and no group captions: the labels already say what a group is. Under each knob its label at 12 px in `gray-700` and its value at 12 px in `gray-950` with tabular numbers: `480 Hz`, `2 kHz`, `5 ms`, `1.5 s`, `40%`. Three significant digits at most, no zeros at the end, so a value at rest is short.
+- Focus: the arrangement and the note editor each show a 1 px lavender ring inside their edge, only when the focus came from the keyboard. A knob shows it as a 2 px lavender ring around its face, because 1 px on a 35 px circle was too weak to find, and a segmented control as its 1 px border, under the same rule. Tab goes from the project menu to the arrangement, then the note editor and its close icon, or the close icon of the track panel and its controls from left to right, then the transport.
 - Cursor: a left-right resize cursor over the edges of a clip and over the end of a note, 6 px wide or a quarter of a narrow shape. Nothing else changes on hover.
 - Scroll pans, pinch or cmd-scroll zooms in time about the pointer. A click on a ruler seeks to the nearest sixteenth. The rest is under "Using the app".
 
@@ -94,7 +97,16 @@ What is built, in `crates/runtime/src/window.rs` and `extensions/arrangement/src
 | Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note |
 | Arrangement | delete or backspace | Delete the selected clip |
 | Arrangement | left, right, up, down | Move the selected clip by a sixteenth, or to the track above or below |
-| Arrangement | double click on a clip, or enter | Open the note editor for it |
+| Arrangement | double click on a clip, or enter | Open the note editor for it. It takes the place of the track panel |
+| Arrangement | click on a track header | Select the track and open its track panel. It takes the place of the note editor |
+| Arrangement | up, down, with a track and no clip selected | Select the track above or below. The open track panel follows |
+| Arrangement | enter, with a track and no clip selected | Open the track panel |
+| Arrangement or track panel | escape | Close the panel below |
+| Track panel | the close icon | Close the panel |
+| Track panel | drag a knob up or down | Change the value. The sound follows. Escape during the drag puts it back |
+| Track panel | double click on a knob | Set its default |
+| Track panel | up or right, down or left on a focused knob | One step, a fiftieth of the travel. With shift a five-hundredth |
+| Track panel | click on a waveform, or left and right on the focused control | Switch the waveform |
 | Note editor | drag on empty space inside the clip | Draw a note. It sounds |
 | Note editor | click on a note | Select it. It sounds |
 | Note editor | drag a note | Move it in time and pitch. A new pitch sounds |
@@ -110,10 +122,10 @@ What is built, in `crates/runtime/src/window.rs` and `extensions/arrangement/src
 The UI SDK lives in `crates/ui`; the gallery in `crates/gallery` shows every component (`GALLERY_SECTION=foundation|inputs|overlays|composed cargo run -p gallery`; `cargo test -p gallery --test snapshots` renders PNGs without opening a window). GPUI 0.2.2 limits that shaped the components. GPUI is now pinned to Zed v1.20.2, where some of these no longer apply, as noted:
 
 - No CSS transitions. Hover and active states swap instantly. Only the switch thumb and the working indicator animate, through `with_animation`.
-- No focus-visible. Focus rings show on mouse focus too. Stateless components take an optional `FocusHandle` to show a ring. The pinned version has `.focus_visible(..)`. The dropdown menu trigger and the seek strip use it; the button does not yet.
+- No focus-visible. Focus rings show on mouse focus too. Stateless components take an optional `FocusHandle` to show a ring. The pinned version has `.focus_visible(..)`. The dropdown menu trigger and the seek strip use it; the button does not yet. The knob and the segmented control keep their own focus handle in element state and show the ring only for a focus from the keyboard (`sound_ui::KeyboardFocus`).
 - No built-in text widget. `text_input.rs` implements shaping, cursor, selection and IME itself. It is single-line; `.lines(n)` only makes the box taller. Real multi-line editing is future work.
 - Key bindings are registered by the component on first use, scoped to a key context. The arrangement and the note editor use key listeners on their focused root and no bindings. The window binds a few globally: space, cmd-z, shift-cmd-z, tab, shift-tab, cmd-q. A global binding wins over a focused button, so space always toggles playback and enter activates the focused control.
-- Draggable controls use drag events with a delta, so a plain click on a slider track does not jump the handle.
+- Draggable controls use drag events with a delta, so a plain click on a slider track does not jump the handle. The knob is different since September 20, 2026: it is controlled, as a control on saved state has to be. The caller gives the value on every render and hears a change. The knob works a drag out from the value at the press with its own mouse listeners, so a drag goes on outside the knob and a press without a move reports nothing.
 - SVG icons take an explicit colour; `Icon` reads the inherited text colour at render time. Colour buttons therefore tint rather than invert on hover.
 - Overlays anchor to a zero-size box on the trigger edge and snap to the window with a margin. Side is explicit, not collision-aware. Click-outside uses `on_mouse_down_out` with an occluding surface.
 - No arc primitive; the knob draws its value ring with dots.

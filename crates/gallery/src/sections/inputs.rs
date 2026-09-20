@@ -6,7 +6,7 @@ use gpui::{
     ParentElement, SharedString, Styled, Window, div, px,
 };
 use sound_ui::components::checkbox::{Checkbox, CheckboxSize};
-use sound_ui::components::knob::Knob;
+use sound_ui::components::knob::{Knob, KnobChange, KnobRange};
 use sound_ui::components::meter::Meter;
 use sound_ui::components::numeric_input::NumericInput;
 use sound_ui::components::segmented_control::SegmentedControl;
@@ -28,8 +28,10 @@ struct InputsState {
     slider_disabled: Entity<Slider>,
     tempo: Entity<NumericInput>,
     gain: Entity<NumericInput>,
-    knob_small: Entity<Knob>,
-    knob_large: Entity<Knob>,
+    /// Drive, mix and cutoff. A knob is controlled, so the values live here.
+    knobs: [f32; 3],
+    /// The value of the dragged knob at mouse down, for escape.
+    knob_origin: Option<f32>,
     checkbox_focus: FocusHandle,
     switch_focus: FocusHandle,
     checked: bool,
@@ -86,17 +88,8 @@ impl InputsState {
                     .unit(" dB")
                     .width(88.)
             }),
-            knob_small: cx.new(|cx| Knob::new(cx).value(0.3).size(36.).label("Drive")),
-            knob_large: cx.new(|cx| {
-                Knob::new(cx)
-                    .range(0., 100.)
-                    .step(1.)
-                    .decimals(0)
-                    .value(64.)
-                    .unit("%")
-                    .size(56.)
-                    .label("Mix")
-            }),
+            knobs: [0.3, 64., CUTOFF_DEFAULT],
+            knob_origin: None,
             checkbox_focus: cx.focus_handle(),
             switch_focus: cx.focus_handle(),
             checked: true,
@@ -106,6 +99,35 @@ impl InputsState {
             tab: "mixer".into(),
         }
     }
+}
+
+const CUTOFF_DEFAULT: f32 = 2_000.;
+
+/// A knob on one of the values of the section. The handler does what every owner of a knob
+/// does: follow a drag, put the value back on escape, take a key step or a reset.
+fn knob(index: usize, state: &Entity<InputsState>, cx: &App) -> Knob {
+    let value = state.read(cx).knobs[index];
+    let state = state.clone();
+    Knob::new(("knob", index))
+        .value(value)
+        .on_change(move |change, _, cx| {
+            state.update(cx, |s, cx| {
+                match change {
+                    KnobChange::Drag(next) => {
+                        s.knob_origin.get_or_insert(s.knobs[index]);
+                        s.knobs[index] = next;
+                    }
+                    KnobChange::DragEnd => s.knob_origin = None,
+                    KnobChange::DragCancel => {
+                        if let Some(origin) = s.knob_origin.take() {
+                            s.knobs[index] = origin;
+                        }
+                    }
+                    KnobChange::Set(next) => s.knobs[index] = next,
+                }
+                cx.notify();
+            });
+        })
 }
 
 /// One component: a heading and its labelled rows.
@@ -189,7 +211,31 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         s.slider_disabled.clone(),
     );
     let (tempo, gain) = (s.tempo.clone(), s.gain.clone());
-    let (knob_small, knob_large) = (s.knob_small.clone(), s.knob_large.clone());
+    let [drive, mix, cutoff] = s.knobs;
+    let cutoff_readout = if cutoff < 1_000. {
+        format!("{cutoff} Hz")
+    } else {
+        format!("{} kHz", cutoff / 1_000.)
+    };
+    let knob_small = knob(0, &state, cx)
+        .size(36.)
+        .label("Drive")
+        .readout(format!("{drive:.2}"));
+    let knob_large = knob(1, &state, cx)
+        .range(KnobRange::linear(0., 100.))
+        .size(56.)
+        .label("Mix")
+        .readout(format!("{mix}%"));
+    let knob_logarithmic = knob(2, &state, cx)
+        .range(KnobRange::logarithmic(20., 20_000.))
+        .default_value(CUTOFF_DEFAULT)
+        .label("Cutoff")
+        .readout(cutoff_readout);
+    let knob_disabled = Knob::new("knob-disabled")
+        .value(0.6)
+        .label("Drive")
+        .readout("0.60")
+        .disabled(true);
     let muted = cx.theme().gray_600;
 
     let toggle_checked = {
@@ -399,11 +445,19 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .child(block(
             "Knob",
             cx,
-            [row(
-                "sizes",
-                cx,
-                [knob_small.into_any_element(), knob_large.into_any_element()],
-            )],
+            [
+                row(
+                    "sizes",
+                    cx,
+                    [knob_small.into_any_element(), knob_large.into_any_element()],
+                ),
+                row(
+                    "logarithmic, a double click resets",
+                    cx,
+                    [knob_logarithmic.into_any_element()],
+                ),
+                row("disabled", cx, [knob_disabled.into_any_element()]),
+            ],
         ))
         .child(block(
             "Meter",

@@ -24,8 +24,9 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 3. Double click the clip. The note editor opens below.
 4. Drag on empty space inside the clip to draw a note. It sounds. Drag a note to move it, drag its end to change its length, press delete to remove it.
 5. Press space to play and again to pause. Click the ruler to move the playhead.
-6. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
-7. Press cmd-q to quit. Run the same command again and the piece is back.
+6. Click the name of a track on the left. Its panel opens below with the synth. Drag a knob up or down while it plays, and double click a knob to reset it.
+7. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
+8. Press cmd-q to quit. Run the same command again and the piece is back.
 
 Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 

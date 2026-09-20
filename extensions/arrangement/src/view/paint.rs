@@ -5,9 +5,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    App, BorderStyle, Bounds, ContentMask, Context, Entity, FocusHandle, FontWeight, Hsla, Pixels,
-    Point, SharedString, TextAlign, TextRun, TruncateFrom, Window, canvas, fill, point, prelude::*,
-    px, quad, size,
+    App, BorderStyle, Bounds, ContentMask, Context, Entity, FontWeight, Hsla, Pixels, Point,
+    SharedString, TextAlign, TextRun, TruncateFrom, Window, canvas, fill, point, prelude::*, px,
+    quad, size,
 };
 use sound_ui::{ActiveTheme, Playhead, Theme, typography};
 
@@ -159,38 +159,7 @@ pub(super) fn paint_track_label(
     paint_text(name, origin, 14., weight, text, fit, window, cx);
 }
 
-/// Whether the focus of a view came from the keyboard. Only then the view shows its ring: after
-/// a click the pointer already says where the composer is. GPUI's own focus-visible would
-/// also show the ring when a key follows a click, and space follows a click all the time here.
-///
-/// It is worked out while painting: a focus change repaints the whole window, so the first
-/// paint with the focus sees the input that brought it.
-#[derive(Default)]
-pub(super) struct KeyboardFocus {
-    had_focus: Cell<bool>,
-    from_keyboard: Cell<bool>,
-}
-
-impl KeyboardFocus {
-    /// A mouse press in the view: the ring goes.
-    pub fn pressed<V: 'static>(&self, cx: &mut Context<V>) {
-        if self.from_keyboard.replace(false) {
-            cx.notify();
-        }
-    }
-
-    /// Whether the view has the focus from the keyboard now, so that it shows its ring.
-    pub fn shows_ring(&self, handle: &FocusHandle, window: &Window) -> bool {
-        let has_focus = handle.is_focused(window);
-        if has_focus && !self.had_focus.get() {
-            self.from_keyboard.set(window.last_input_was_keyboard());
-        }
-        self.had_focus.set(has_focus);
-        has_focus && self.from_keyboard.get()
-    }
-}
-
-/// A thin ring inside the bounds of a view, see [`KeyboardFocus::shows_ring`].
+/// A thin ring inside the bounds of a view, see [`sound_ui::KeyboardFocus::shows_ring`].
 pub(super) fn paint_focus_ring(bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let clear = Hsla::transparent_black();
     let ring = cx.theme().lavender;

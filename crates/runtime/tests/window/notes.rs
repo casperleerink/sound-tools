@@ -552,7 +552,7 @@ fn closing_the_editor_during_a_note_drag_ends_the_gesture(cx: &mut TestAppContex
     let arrangement = opened.arrangement.clone();
     opened
         .cx
-        .update(|window, cx| arrangement.update(cx, |view, cx| view.close_editor(window, cx)));
+        .update(|window, cx| arrangement.update(cx, |view, cx| view.close_detail(window, cx)));
     opened.cx.run_until_parked();
     assert!(!opened.gesture_open());
     assert_eq!(opened.undo_label().as_deref(), Some("Move note"));

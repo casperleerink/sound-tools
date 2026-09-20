@@ -2,7 +2,7 @@
 //! the floating transport bottom centre, and a quiet line for errors and problems.
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
-//! view [`Views`] has for the first instance at the top of the project.
+//! view the installed [`Views`] has for the first instance at the top of the project.
 
 mod project_menu;
 mod transport;
@@ -39,7 +39,6 @@ const TOP_ROW_HEIGHT: f32 = 48.;
 /// The root view of the window.
 pub struct Shell {
     session: Entity<Session>,
-    views: Views,
     /// The instance in the main area and its view. Both change when it comes or goes.
     main: Option<(InstanceId, AnyView)>,
     project_menu: Entity<ProjectMenu>,
@@ -49,6 +48,7 @@ pub struct Shell {
 }
 
 impl Shell {
+    /// Installs `views` as the registry of the application, so that no caller can forget it.
     pub fn new(
         session: Entity<Session>,
         views: Views,
@@ -56,6 +56,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        views.install(cx);
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&session, window, |shell, _, event, window, cx| {
             let at_top = |id: &InstanceId| id.parent().is_none();
@@ -79,7 +80,6 @@ impl Shell {
             project_menu: cx.new(|cx| ProjectMenu::new(session.clone(), device_name, cx)),
             transport: cx.new(|cx| TransportPill::new(session.clone(), cx)),
             session,
-            views,
             main: None,
             focus_handle,
             dismiss_focus: cx.focus_handle().tab_stop(true),
@@ -97,12 +97,12 @@ impl Shell {
     }
 
     fn show_main_instance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let id = self.views.main_instance(&self.session, cx);
+        let id = Views::main_instance(&self.session, cx);
         if id.as_ref() == self.main.as_ref().map(|(id, _)| id) {
             return;
         }
         self.main = id.and_then(|id| {
-            let view = self.views.view_of(&self.session, &id, window, cx)?;
+            let view = Views::view_of(&self.session, &id, window, cx)?;
             Some((id, view))
         });
         cx.notify();
