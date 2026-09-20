@@ -12,17 +12,18 @@
 //! ```
 //!
 //! `agent-doc.md` in this crate has the record formats. `README.md` is for extension and
-//! interface authors.
+//! interface authors. The interface is in [`view`]. Nothing else here uses GPUI.
 
 mod sequencer;
 mod summary;
+pub mod view;
 
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
     BehaviourContext, BehaviourError, Changes, Instance, InstanceId, OutputEndpoint, Place,
-    Project, ProjectError, Registry, RegistryError, State,
+    Project, ProjectError, Registry, RegistryError, State, Ticks,
 };
 use sound_notes::{AUDIO_OUTPUT, Clip, NOTES_INPUT, TRACK_TOOL};
 
@@ -59,6 +60,9 @@ macro_rules! colours {
         }
 
         impl Colour {
+            /// Every colour, in the order of the palette.
+            pub const ALL: &'static [Colour] = &[$(Self::$variant,)+];
+
             /// The name in records and in the design tokens.
             pub fn name(self) -> &'static str {
                 match self {
@@ -124,7 +128,8 @@ impl State for TrackState {
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ArrangementState>(EXTENSION)?
-        .summary(summary::of_arrangement);
+        .summary(summary::of_arrangement)
+        .end(|project, arrangement| end(project, arrangement.id()));
     registry
         .tool::<TrackState>(EXTENSION)?
         .behaviour(apply_track);
@@ -169,6 +174,16 @@ pub fn clips<'a>(project: &'a Project, track: &InstanceId) -> Vec<(Instance<Clip
     let mut clips: Vec<_> = project.children::<Clip>(track).collect();
     clips.sort_by(|(a, a_clip), (b, b_clip)| (a_clip.start, a.id()).cmp(&(b_clip.start, b.id())));
     clips
+}
+
+/// The end of the last clip of an arrangement. `None` when it has no clips.
+pub fn end(project: &Project, arrangement: &InstanceId) -> Option<Ticks> {
+    let tracks = project.children::<TrackState>(arrangement);
+    let ends = tracks.filter_map(|(track, _)| {
+        let clips = project.children::<Clip>(track.id());
+        clips.map(|(_, clip)| clip.end()).max()
+    });
+    ends.max()
 }
 
 /// Adds a track after the last one, with `instrument` as its instrument, to a group of
