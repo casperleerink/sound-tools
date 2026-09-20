@@ -110,6 +110,7 @@ impl State for SynthState {
 /// Registers the synth tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.tool::<SynthState>(EXTENSION)?.behaviour(apply);
+    registry.agent_doc(EXTENSION, include_str!("../agent-doc.md"));
     Ok(())
 }
 
