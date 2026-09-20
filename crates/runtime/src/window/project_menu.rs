@@ -1,5 +1,9 @@
 //! The project menu: the project name top-left as a quiet menu. Add track, undo and redo with
-//! what they would do, the output device by name, and the project folder.
+//! what they would do, the output device by name, and the project folder in the Finder or in
+//! a terminal. The terminal is where the composer starts a coding agent on the project.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use gpui::{Context, Entity, IntoElement, Render, SharedString, Window, prelude::*};
 use sound_core::Project;
@@ -15,6 +19,7 @@ const UNDO: &str = "undo";
 const REDO: &str = "redo";
 const DEVICE: &str = "device";
 const REVEAL: &str = "reveal";
+const TERMINAL: &str = "terminal";
 
 pub struct ProjectMenu {
     session: Entity<Session>,
@@ -96,10 +101,43 @@ impl ProjectMenu {
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
+                TERMINAL => open_terminal(session.project().root().to_path_buf(), cx),
                 // Switching the device is not built yet. The menu only names it.
                 _ => {}
             });
     }
+}
+
+/// The command that opens a terminal in `folder`. macOS only: the system Terminal, which is
+/// there on every Mac. No picker and no setting until someone asks for one.
+///
+/// A function of its own so a test can read the program and the arguments without a Terminal
+/// opening, which CI has no way to close.
+fn terminal_command(folder: &Path) -> Command {
+    let mut command = Command::new("/usr/bin/open");
+    command.arg("-a").arg("Terminal").arg(folder);
+    command
+}
+
+/// Runs it off the UI thread and puts a failure in the notice of the session. `open` returns
+/// as soon as the Terminal has the folder, so waiting for it here costs nothing and leaves no
+/// child process behind.
+fn open_terminal(folder: PathBuf, cx: &mut Context<Session>) {
+    let session = cx.entity().downgrade();
+    cx.spawn(async move |_, cx| {
+        let opened = cx
+            .background_spawn(async move { terminal_command(&folder).status() })
+            .await;
+        let failure = match opened {
+            Ok(status) if status.success() => return,
+            Ok(status) => format!("The terminal did not open: {status}"),
+            Err(error) => format!("The terminal did not open: {error}"),
+        };
+        if let Some(session) = session.upgrade() {
+            session.update(cx, |session, cx| session.report(failure, cx));
+        }
+    })
+    .detach();
 }
 
 fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
@@ -128,10 +166,52 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
                 .item(MenuItem::new(DEVICE, device_name.clone())),
         ),
         MenuEntry::Separator,
-        MenuEntry::Group(
-            MenuGroup::new().item(command(REVEAL, "Reveal project folder".to_string())),
-        ),
+        MenuEntry::Group(MenuGroup::new().items(folder_items())),
     ]
+}
+
+/// The last group: the project folder in the Finder, and a terminal in it for a coding agent.
+fn folder_items() -> Vec<MenuItem> {
+    [
+        (REVEAL, "Reveal project folder"),
+        (TERMINAL, "Open terminal in project folder"),
+    ]
+    .map(|(value, label)| MenuItem::new(value, label).selectable(false))
+    .to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// CI has no Terminal to open, so the check is on the command itself.
+    #[test]
+    fn the_terminal_command_opens_the_system_terminal_at_the_project_folder() {
+        let command = terminal_command(Path::new("/Users/someone/Music/my piece"));
+        assert_eq!(command.get_program(), "/usr/bin/open");
+        let arguments: Vec<&std::ffi::OsStr> = command.get_args().collect();
+        assert_eq!(
+            arguments,
+            ["-a", "Terminal", "/Users/someone/Music/my piece"]
+        );
+        // One argument, not a shell line, so a space in the folder name needs no quoting.
+        assert_eq!(arguments.len(), 3);
+    }
+
+    #[test]
+    fn the_menu_offers_the_terminal_next_to_the_finder() {
+        let items: Vec<(SharedString, SharedString)> = folder_items()
+            .iter()
+            .map(|item| (item.value.clone(), item.label()))
+            .collect();
+        assert_eq!(
+            items,
+            [
+                (REVEAL.into(), "Reveal project folder".into()),
+                (TERMINAL.into(), "Open terminal in project folder".into()),
+            ]
+        );
+    }
 }
 
 impl Render for ProjectMenu {
