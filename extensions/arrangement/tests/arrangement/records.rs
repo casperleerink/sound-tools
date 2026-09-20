@@ -94,11 +94,8 @@ fn a_track_record_needs_only_its_name() {
     let track = harness
         .project
         .resolve::<TrackState>(&id("arrangement/strings"));
-    let expected = TrackState {
-        name: "Strings".to_string(),
-        colour: Colour::Blue,
-        order: 0,
-    };
+    // Gain, pan and mute are left out: the middle, no change of level, not muted.
+    let expected = TrackState::new("Strings", Colour::Blue, 0);
     assert_eq!(harness.project.state(&track.unwrap()), Some(&expected));
 }
 

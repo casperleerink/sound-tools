@@ -64,9 +64,10 @@ impl Processor for ProbeProcessor {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let events = context.event_inputs.get(Self::NOTES);
-        let output = context.audio_outputs.get(Self::OUTPUT);
+        // The level in both channels, as an instrument in the middle gives it.
+        let [left, right] = context.audio_outputs.get(Self::OUTPUT);
         let mut events = events.iter().peekable();
-        for (frame, sample) in output.iter_mut().enumerate() {
+        for (frame, sample) in left.iter_mut().enumerate() {
             while let Some(timed) = events.next_if(|timed| timed.offset <= frame) {
                 match timed.event {
                     NoteEvent::On { pitch, .. } => self.held[usize::from(pitch.number())] += 1,
@@ -76,6 +77,7 @@ impl Processor for ProbeProcessor {
             }
             *sample = self.level();
         }
+        right.copy_from_slice(left);
     }
 }
 

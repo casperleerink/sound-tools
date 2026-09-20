@@ -6,6 +6,7 @@
 
 mod agent_doc;
 mod live;
+mod mixer;
 mod scale;
 mod summary;
 mod support;
