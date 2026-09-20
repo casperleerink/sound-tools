@@ -94,3 +94,7 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
 - [SDK_SKETCH.md](SDK_SKETCH.md): an early sketch of the extension SDK.
 - Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md).
+
+## License
+
+[MIT](LICENSE).
