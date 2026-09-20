@@ -35,6 +35,7 @@ const OFFLINE: EngineConfig = EngineConfig {
 /// Every bundled extension registers here.
 fn registry() -> Result<Registry> {
     let mut registry = Registry::new();
+    instrument::register(&mut registry)?;
     tone::register(&mut registry)?;
     Ok(registry)
 }

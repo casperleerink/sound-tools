@@ -10,5 +10,6 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 hound.workspace = true
+instrument.workspace = true
 sound-core.workspace = true
 tone.workspace = true

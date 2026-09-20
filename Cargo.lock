@@ -4793,6 +4793,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hound",
+ "instrument",
  "sound-core",
  "tone",
 ]
