@@ -20,7 +20,7 @@ fn children_from_outside_reach_the_parents_snapshot_in_one_engine_edit() {
         harness.write("state/bank/b.json", &level_record(0.25)),
         harness.write("state/bank/output.json", AMPLIFIER_RECORD),
     ];
-    harness.project.apply_outside_changes(&paths).unwrap();
+    harness.apply_outside_changes(&paths).unwrap();
     // Two levels, an output child and new routing: one batch, heard with no project.json edit.
     assert_eq!(harness.batches(), batches + 1);
     assert_eq!(harness.level(), 0.75);
@@ -41,7 +41,7 @@ fn a_child_edit_reaches_the_parent_and_only_names_the_child() {
     harness.write("state/bank/instance.json", BANK_RECORD);
     harness.write("state/bank/a.json", &level_record(0.125));
     let bank = harness.path("state/bank");
-    harness.project.apply_outside_changes(&[bank]).unwrap();
+    harness.apply_outside_changes(&[bank]).unwrap();
     harness.project.drain_events();
 
     let level = harness.project.resolve::<Level>(&id("bank/a")).unwrap();
@@ -66,7 +66,7 @@ fn routing_follows_the_output_child_as_it_comes_and_goes() {
     harness.write("state/bank/instance.json", BANK_RECORD);
     harness.write("state/bank/a.json", &level_record(0.25));
     let bank = harness.path("state/bank");
-    harness.project.apply_outside_changes(&[bank]).unwrap();
+    harness.apply_outside_changes(&[bank]).unwrap();
     assert_eq!(harness.level(), 0.25);
 
     harness.write_and_apply("state/bank/output.json", AMPLIFIER_RECORD);
@@ -74,7 +74,7 @@ fn routing_follows_the_output_child_as_it_comes_and_goes() {
 
     let output = harness.path("state/bank/output.json");
     std::fs::remove_file(&output).unwrap();
-    harness.project.apply_outside_changes(&[output]).unwrap();
+    harness.apply_outside_changes(&[output]).unwrap();
     assert_eq!(harness.level(), 0.25);
 
     harness.project.undo().unwrap();
@@ -89,7 +89,6 @@ fn deleting_the_parent_folder_removes_children_and_processors() {
     harness.write("state/bank/output.json", AMPLIFIER_RECORD);
     let bank = harness.path("state/bank");
     harness
-        .project
         .apply_outside_changes(std::slice::from_ref(&bank))
         .unwrap();
     assert_eq!(harness.level(), 0.5);
@@ -97,7 +96,7 @@ fn deleting_the_parent_folder_removes_children_and_processors() {
     let batches = harness.batches();
 
     std::fs::remove_dir_all(&bank).unwrap();
-    assert_eq!(harness.project.apply_outside_changes(&[bank]).unwrap(), 3);
+    assert_eq!(harness.apply_outside_changes(&[bank]).unwrap(), 3);
     assert_eq!(harness.level(), 0.0);
     assert_eq!(harness.batches(), batches + 1);
     assert_eq!(harness.project.instances().count(), 0);

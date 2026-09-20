@@ -14,7 +14,7 @@ state/                    every instance of a tool, one JSON record each
     instance.json         its own record
     <child>.json          a child instance
     <child>/instance.json a child instance that owns children itself
-problems.txt              written by the runtime: the files that are not live, and why. Absent when all is well
+problems.txt              written by the runtime while it has the project open: the files that are not live, and why
 AGENTS.md, CLAUDE.md      this doc, generated
 ```
 
@@ -66,5 +66,9 @@ This project is in {{time_signature}}: a beat is {{ticks_per_beat}} ticks and a 
 
 ## Check your work
 
-- Wait a second after your last write, then look for `problems.txt` in this folder. No such file means every file is live. Else each line is `<file>: <field>: <reason>`, for example `state/lead.json: state: gain must be from 0 to 1, not 3`. A file with a problem is not live and the last valid state keeps playing. Fix the file and its line goes away.
-- `problems.txt` only exists while a runtime has the project open, and it follows a write by about 0.2 s. So no file right after your write proves little: look again at the end of your work. When you cannot tell whether a runtime is open, say so in your answer.
+`problems.txt` in this folder is there the whole time a runtime has the project open, and it follows a write by about 0.2 s. Read it at the end of your work.
+
+- `No problems. Every file is live.`: all your files play.
+- Else each line is `<file>: <field>: <reason>`, for example `state/lead.json: state: gain must be from 0 to 1, not 3`. A file with a problem is not live, and the last valid state keeps playing. Fix the file and its line goes away.
+- No `problems.txt`: no runtime is watching. Your edits are saved and nobody checked them, so say that in your answer. They load when the project opens.
+- The runtime removes the file when it closes. After a crash a stale one can stay: when it lists a problem in a file you have fixed since, no runtime is watching.

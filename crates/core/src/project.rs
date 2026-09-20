@@ -20,10 +20,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
-pub use editing::{Changes, Edit};
+pub use editing::{Changes, Edit, OUTSIDE_UNDO_WINDOW};
 pub use file::{FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination};
-pub use generated::{AGENT_DOC_FILE, PROBLEMS_FILE};
-pub use instance::{Instance, InstanceId, InvalidInstanceId, State};
+pub use generated::{AGENT_DOC_FILE, NO_PROBLEMS, PROBLEMS_FILE};
+pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{Registry, RegistryError, ToolRegistration};
 pub use storage::StorageError;
 pub use watcher::GROUPING_WINDOW;
@@ -59,6 +59,8 @@ pub enum ProjectError {
         id: InstanceId,
         parent_tool: &'static str,
     },
+    #[error("instance {id} cannot be created here: {message}")]
+    WrongPlace { id: InstanceId, message: String },
     #[error("instance {0} cannot be created: a file that is not loaded already has this id")]
     IdTaken(InstanceId),
     #[error("tool {0:?} is not registered, or its extension is not enabled in project.json")]
@@ -215,7 +217,7 @@ impl Project {
         // The project file first: it says which extensions are enabled.
         project.apply(changes, Source::Load)?;
         let state_folder = project.storage.state_folder();
-        project.apply_paths(&[state_folder], Source::Load)?;
+        project.apply_paths(&[state_folder], Source::Load, std::time::Instant::now())?;
         project.events.clear();
         project.write_generated_files()?;
         Ok(project)
@@ -385,6 +387,13 @@ impl Project {
             match change {
                 Change::Set(id, record) => {
                     self.check_tool(record.tool)?;
+                    let owner = id.parent().and_then(|parent| self.instances.get(&parent));
+                    let owner = owner.map(|owner| owner.tool);
+                    if let Some(message) = record.place.refuses(record.tool, owner)
+                        && id.parent().is_none_or(|_| owner.is_some())
+                    {
+                        return Err(ProjectError::WrongPlace { id, message });
+                    }
                     if !self.instances.contains_key(&id) {
                         if let Some(parent) = id.parent() {
                             let Some(parent) = self.instances.get(&parent) else {

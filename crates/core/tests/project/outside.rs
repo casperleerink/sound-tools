@@ -68,7 +68,7 @@ fn the_runtimes_own_writes_do_not_apply_again() {
 
     // The watcher reports the files the runtime wrote itself.
     let paths = [harness.path("state/dc.json"), harness.path("project.json")];
-    assert_eq!(harness.project.apply_outside_changes(&paths).unwrap(), 0);
+    assert_eq!(harness.apply_outside_changes(&paths).unwrap(), 0);
     assert_eq!(harness.project.drain_events(), []);
     assert_eq!(harness.batches(), batches);
     assert_eq!(harness.project.redo_label(), Some("Louder"));
@@ -95,7 +95,7 @@ fn a_new_record_file_creates_an_instance_and_undo_deletes_it() {
     );
     let batches = harness.batches();
     let paths = [harness.path("state/second.json"), project_path];
-    assert_eq!(harness.project.apply_outside_changes(&paths).unwrap(), 2);
+    assert_eq!(harness.apply_outside_changes(&paths).unwrap(), 2);
 
     // The record and its connection arrive together: one batch, one undo step.
     assert_eq!(harness.level(), 0.375);
@@ -141,7 +141,7 @@ fn deleting_a_record_file_deletes_the_instance_and_its_connections() {
     let mut harness = one_dc();
     std::fs::remove_file(harness.path("state/dc.json")).unwrap();
     let paths = [harness.path("state/dc.json")];
-    assert_eq!(harness.project.apply_outside_changes(&paths).unwrap(), 2);
+    assert_eq!(harness.apply_outside_changes(&paths).unwrap(), 2);
     assert_eq!(harness.level(), 0.0);
     assert_eq!(harness.project.instances().count(), 0);
     assert!(!harness.read("project.json").contains("\"dc\""));
@@ -162,7 +162,7 @@ fn a_whole_folder_with_children_arrives_as_one_step() {
 
     // macOS reports a moved-in folder as the one folder path.
     let paths = [harness.path("state/bank")];
-    assert_eq!(harness.project.apply_outside_changes(&paths).unwrap(), 3);
+    assert_eq!(harness.apply_outside_changes(&paths).unwrap(), 3);
     assert_eq!(harness.level(), 0.75);
     assert_eq!(harness.batches(), batches + 1);
     let created: Vec<_> = harness.project.drain_events();
@@ -192,7 +192,7 @@ fn several_files_that_arrive_together_are_one_undo_step() {
             )
         })
         .collect();
-    assert_eq!(harness.project.apply_outside_changes(&paths).unwrap(), 8);
+    assert_eq!(harness.apply_outside_changes(&paths).unwrap(), 8);
     assert_eq!(harness.level(), 0.5);
 
     harness.project.undo().unwrap();
@@ -211,7 +211,7 @@ fn moving_a_record_to_another_owner_is_one_step() {
         r#"{"tool": "test.bank", "state": {"gain": 0.5}}"#,
     );
     let state = harness.path("state");
-    harness.project.apply_outside_changes(&[state]).unwrap();
+    harness.apply_outside_changes(&[state]).unwrap();
     assert_eq!(harness.level(), 0.5);
 
     let (from, to) = (
@@ -219,10 +219,7 @@ fn moving_a_record_to_another_owner_is_one_step() {
         harness.path("state/right/part.json"),
     );
     std::fs::rename(&from, &to).unwrap();
-    assert_eq!(
-        harness.project.apply_outside_changes(&[from, to]).unwrap(),
-        2
-    );
+    assert_eq!(harness.apply_outside_changes(&[from, to]).unwrap(), 2);
     assert_eq!(harness.level(), 0.25);
 
     harness.project.undo().unwrap();
@@ -271,7 +268,7 @@ fn records_of_unknown_tools_stay_untouched() {
     harness.write("state/thing/instance.json", unknown);
     harness.write("state/thing/child.json", &dc_record(0.5));
     let paths = [harness.path("state/thing")];
-    assert_eq!(harness.project.apply_outside_changes(&paths).unwrap(), 0);
+    assert_eq!(harness.apply_outside_changes(&paths).unwrap(), 0);
     let problem = harness.problem_at("state/thing/instance.json").unwrap();
     assert!(
         problem.contains("unknown tool \"other.thing\""),
@@ -408,7 +405,7 @@ fn a_second_record_for_a_live_instance_is_reported_and_never_brings_it_back() {
     harness.write("state/bank/instance.json", BANK_RECORD);
     harness.write("state/bank/a.json", &level_record(0.5));
     let bank = harness.path("state/bank");
-    harness.project.apply_outside_changes(&[bank]).unwrap();
+    harness.apply_outside_changes(&[bank]).unwrap();
 
     // An agent writes the other form. Nothing changes, and it is told why.
     let louder = r#"{"tool": "test.bank", "state": {"gain": 0.5}}"#;
@@ -430,7 +427,7 @@ fn a_second_record_for_a_live_instance_is_reported_and_never_brings_it_back() {
         harness.path("state/bank"),
         harness.path("state/bank.json"),
     ];
-    assert_eq!(harness.project.apply_outside_changes(&paths).unwrap(), 0);
+    assert_eq!(harness.apply_outside_changes(&paths).unwrap(), 0);
     assert_eq!(harness.project.instances().count(), 0);
     assert_eq!(harness.level(), 0.0);
     let problem = harness.problem_at("state/bank.json").unwrap();
@@ -446,11 +443,11 @@ fn deleting_only_the_record_of_a_folder_lists_the_files_left_behind() {
     harness.write("state/bank/instance.json", BANK_RECORD);
     harness.write("state/bank/a.json", &level_record(0.5));
     let bank = harness.path("state/bank");
-    harness.project.apply_outside_changes(&[bank]).unwrap();
+    harness.apply_outside_changes(&[bank]).unwrap();
 
     let record = harness.path("state/bank/instance.json");
     std::fs::remove_file(&record).unwrap();
-    assert_eq!(harness.project.apply_outside_changes(&[record]).unwrap(), 2);
+    assert_eq!(harness.apply_outside_changes(&[record]).unwrap(), 2);
     assert_eq!(harness.project.instances().count(), 0);
     assert!(harness.path("state/bank/a.json").exists());
     let problem = harness.problem_at("state/bank").unwrap();
@@ -463,7 +460,7 @@ fn deleting_only_the_record_of_a_folder_lists_the_files_left_behind() {
     harness.project.undo().unwrap();
     assert_eq!(harness.level(), 0.5);
     let paths = [harness.path("state/bank/instance.json")];
-    harness.project.apply_outside_changes(&paths).unwrap();
+    harness.apply_outside_changes(&paths).unwrap();
     assert_eq!(harness.project.problems(), []);
 }
 
@@ -509,7 +506,7 @@ fn reopening_restores_instances_children_connections_and_tempo() {
         r#"{"tool": "test.amplifier", "state": {"gain": 2.0}}"#,
     );
     let bank = harness.path("state/bank");
-    harness.project.apply_outside_changes(&[bank]).unwrap();
+    harness.apply_outside_changes(&[bank]).unwrap();
     let mut changes = Changes::new();
     let tempo_map = serde_json::from_str(
         r#"{"time_signature": "3/4", "tempo_changes": [{"tick": 0, "bpm": 90.0}]}"#,

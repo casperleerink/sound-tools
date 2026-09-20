@@ -1,7 +1,9 @@
 //! The files the runtime writes for agents with only file access, and the small helpers
 //! around them: a tool's own summary and a free id.
 
-use sound_core::{AGENT_DOC_FILE, Changes, Engine, EngineConfig, PROBLEMS_FILE, Project};
+use sound_core::{
+    AGENT_DOC_FILE, Changes, Engine, EngineConfig, NO_PROBLEMS, PROBLEMS_FILE, Project,
+};
 
 use crate::tools::{BANK_RECORD, Dc, Harness, SAMPLE_RATE, dc_record, id, level_record, registry};
 
@@ -47,10 +49,9 @@ fn the_agent_doc_follows_the_time_signature() {
 }
 
 #[test]
-fn problems_are_a_file_while_there_are_any() {
+fn the_problems_file_is_there_while_the_project_is_open_and_gone_after_a_close() {
     let mut harness = Harness::new();
-    harness.project.poll().unwrap();
-    assert!(!harness.path(PROBLEMS_FILE).exists());
+    assert_eq!(harness.read(PROBLEMS_FILE), NO_PROBLEMS);
 
     harness.write_and_apply("state/a.json", &dc_record(7.0));
     harness.write_and_apply("state/b.json", "{");
@@ -68,23 +69,36 @@ fn problems_are_a_file_while_there_are_any() {
     harness.project.poll().unwrap();
     assert_eq!(harness.read(PROBLEMS_FILE).lines().count(), 1);
     std::fs::remove_file(harness.path("state/b.json")).unwrap();
-    harness
-        .project
-        .apply_outside_changes(&[harness.path("state/b.json")])
-        .unwrap();
+    let removed = harness.path("state/b.json");
+    harness.apply_outside_changes(&[removed]).unwrap();
     harness.project.poll().unwrap();
-    assert!(!harness.path(PROBLEMS_FILE).exists());
+    assert_eq!(harness.read(PROBLEMS_FILE), NO_PROBLEMS);
+
+    // A clean close removes it, so a missing file means that no runtime is watching.
+    let Harness {
+        project, folder, ..
+    } = harness;
+    drop(project);
+    assert!(!folder.path().join(PROBLEMS_FILE).exists());
+    assert!(folder.path().join(AGENT_DOC_FILE).exists());
 }
 
 #[test]
-fn problems_of_the_last_session_are_gone_after_a_clean_open() {
-    let mut harness = Harness::new();
-    harness.write_and_apply("state/a.json", &dc_record(7.0));
-    harness.project.poll().unwrap();
-    assert!(harness.path(PROBLEMS_FILE).exists());
-    std::fs::write(harness.path("state/a.json"), dc_record(0.5)).unwrap();
+fn a_problems_file_that_a_crash_left_is_replaced_on_open() {
+    let harness = Harness::new();
+    std::fs::write(harness.path("state/a.json"), dc_record(7.0)).unwrap();
     let harness = harness.reopen();
-    assert!(!harness.path(PROBLEMS_FILE).exists());
+    assert_eq!(harness.read(PROBLEMS_FILE).lines().count(), 1);
+    // What a crash leaves: the file stays, and the record is fixed meanwhile.
+    let stale = harness.read(PROBLEMS_FILE);
+    let Harness {
+        project, folder, ..
+    } = harness;
+    drop(project);
+    std::fs::write(folder.path().join(PROBLEMS_FILE), stale).unwrap();
+    std::fs::write(folder.path().join("state/a.json"), dc_record(0.5)).unwrap();
+    let harness = Harness::open(folder);
+    assert_eq!(harness.read(PROBLEMS_FILE), NO_PROBLEMS);
 }
 
 #[test]
@@ -105,6 +119,11 @@ fn a_read_only_project_writes_no_generated_files() {
     for file in [AGENT_DOC_FILE, "CLAUDE.md", PROBLEMS_FILE] {
         assert!(!folder.path().join(file).exists(), "{file}");
     }
+
+    // And it takes nothing away when it closes: the file of a live runtime next to it stays.
+    std::fs::write(folder.path().join(PROBLEMS_FILE), NO_PROBLEMS).unwrap();
+    drop(project);
+    assert!(folder.path().join(PROBLEMS_FILE).exists());
 }
 
 #[test]

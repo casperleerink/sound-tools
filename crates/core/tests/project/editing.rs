@@ -244,7 +244,6 @@ fn undo_does_not_write_over_a_file_that_took_the_id() {
     let path = harness.path("state/dc.json");
     std::fs::remove_file(&path).unwrap();
     harness
-        .project
         .apply_outside_changes(std::slice::from_ref(&path))
         .unwrap();
 

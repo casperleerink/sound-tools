@@ -2,8 +2,10 @@
 //!
 //! `AGENTS.md` tells an agent that has never seen this repository how to work in the folder:
 //! a core section, then the section of every enabled extension. `CLAUDE.md` imports it, so
-//! Codex and Claude Code both find it. `problems.txt` lists what [`Project::problems`] holds
-//! and is absent when there are none. All three are written only when their text changes.
+//! Codex and Claude Code both find it. `problems.txt` lists what [`Project::problems`] holds.
+//! It is there the whole time a runtime has the project open, with one plain line when there
+//! are no problems, and it goes away when the project closes. So an agent can tell "all is
+//! well" from "nobody is watching". All three are written only when their text changes.
 
 use super::{Project, ProjectError};
 
@@ -11,6 +13,8 @@ pub const AGENT_DOC_FILE: &str = "AGENTS.md";
 pub const PROBLEMS_FILE: &str = "problems.txt";
 const CLAUDE_FILE: &str = "CLAUDE.md";
 const CLAUDE_TEXT: &str = "@AGENTS.md\n";
+/// The whole of `problems.txt` when every file is live.
+pub const NO_PROBLEMS: &str = "No problems. Every file is live.\n";
 const CORE_SECTION: &str = include_str!("agent_doc.md");
 
 impl Project {
@@ -79,12 +83,31 @@ impl Project {
         for problem in self.problems() {
             problems.push_str(&format!("{}: {}\n", problem.path, problem.message));
         }
-        let problems = (!problems.is_empty()).then_some(problems.as_str());
-        self.storage.write_generated(PROBLEMS_FILE, problems)?;
+        let problems = if problems.is_empty() {
+            NO_PROBLEMS
+        } else {
+            &problems
+        };
+        self.storage
+            .write_generated(PROBLEMS_FILE, Some(problems))?;
         self.storage
             .write_generated(AGENT_DOC_FILE, Some(&self.agent_doc()))?;
         self.storage
             .write_generated(CLAUDE_FILE, Some(CLAUDE_TEXT))?;
         Ok(())
+    }
+}
+
+/// A clean close takes `problems.txt` away, so its absence means that no runtime watches.
+impl Drop for Project {
+    fn drop(&mut self) {
+        if self.read_only {
+            return;
+        }
+        // There is nobody left to report a failure to. A file that stays is what a crash
+        // leaves too, and the agent doc says that such a file can be stale.
+        match self.storage.write_generated(PROBLEMS_FILE, None) {
+            Ok(()) | Err(_) => {}
+        }
     }
 }

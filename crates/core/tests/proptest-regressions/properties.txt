@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc b99294c2d469c658099c98e6a7bb6c88d149ec65f0beb03886a5a4127edf9333 # shrinks to first = BankFiles { gain: 8, levels: [], output_gain: None }, second = BankFiles { gain: 8, levels: [], output_gain: None }
+cc f16b3830fac91d19b5aa5bfcd0bc84a6fb2be894e9f30c5c80e62048fc369766 # shrinks to first = BankFiles { gain: 0, levels: [], output_gain: None }, second = BankFiles { gain: 0, levels: [], output_gain: Some(0) }
