@@ -1,14 +1,15 @@
 //! The control side of the engine: owns the graph, turns edits into batches and takes back
 //! everything the audio thread is done with.
 
+use std::any::Any;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::clock::{Clock, TempoMap, Ticks};
-use crate::engine::{Batch, Command, Engine, EngineStatus};
+use crate::engine::{Batch, Command, Engine, EngineStatus, ErasedProcessor};
 use crate::graph::{Connection, Graph, GraphError, NodeId};
-use crate::processor::{PrepareConfig, Processor};
+use crate::processor::{Ports, PrepareConfig, Processor};
 use crate::transport::TransportCommand;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -83,6 +84,14 @@ pub struct Node<P> {
 }
 
 impl<P> Node<P> {
+    /// The caller knows that the processor with this id has type `P`.
+    pub(crate) fn from_id(id: NodeId) -> Self {
+        Self {
+            id,
+            processor: PhantomData,
+        }
+    }
+
     pub fn id(&self) -> NodeId {
         self.id
     }
@@ -241,24 +250,38 @@ impl Edit<'_> {
         name: &str,
         mut processor: P,
     ) -> Result<Node<P>, GraphError> {
+        processor.prepare(&self.prepare_config());
+        let ports = processor.ports();
+        let id = self.add_prepared(name, ports, Box::new(processor))?;
+        Ok(Node::from_id(id))
+    }
+
+    pub(crate) fn prepare_config(&self) -> PrepareConfig {
+        PrepareConfig {
+            sample_rate: self.control.config.sample_rate,
+        }
+    }
+
+    /// The part of `add_processor` that does not need the processor type. The project layer
+    /// reaches the edit through a trait object, which cannot have generic methods.
+    pub(crate) fn add_prepared(
+        &mut self,
+        name: &str,
+        ports: Ports,
+        processor: Box<dyn ErasedProcessor>,
+    ) -> Result<NodeId, GraphError> {
         let id = NodeId(self.control.next_node);
         self.control.next_node += 1;
-        let (slot, grown) = self.graph_mut().add_node(id, name, processor.ports())?;
-        processor.prepare(&PrepareConfig {
-            sample_rate: self.control.config.sample_rate,
-        });
+        let (slot, grown) = self.graph_mut().add_node(id, name, ports)?;
         if let Some(slot_count) = grown {
             let table = std::iter::repeat_with(|| None).take(slot_count).collect();
             self.commands.push(Command::GrowSlots(table));
         }
         self.commands.push(Command::SetSlot {
             slot,
-            processor: Some(Box::new(processor)),
+            processor: Some(processor),
         });
-        Ok(Node {
-            id,
-            processor: PhantomData,
-        })
+        Ok(id)
     }
 
     /// Removes the processor and its connections. The processor itself is dropped later on the
@@ -286,11 +309,23 @@ impl Edit<'_> {
         node: Node<P>,
         update: P::Update,
     ) -> Result<(), GraphError> {
+        self.update_erased(node.id, Box::new(update))
+    }
+
+    /// Whether the edit changed processors or connections, so that `commit` compiles.
+    pub(crate) fn changes_graph(&self) -> bool {
+        self.graph.is_some()
+    }
+
+    /// The caller knows that `update` is the `Update` type of the processor behind `node`.
+    pub(crate) fn update_erased(
+        &mut self,
+        node: NodeId,
+        update: Box<dyn Any + Send>,
+    ) -> Result<(), GraphError> {
         let graph = self.graph.as_ref().unwrap_or(&self.control.graph);
-        self.commands.push(Command::Update {
-            slot: graph.slot(node.id)?,
-            update: Box::new(update),
-        });
+        let slot = graph.slot(node)?;
+        self.commands.push(Command::Update { slot, update });
         Ok(())
     }
 

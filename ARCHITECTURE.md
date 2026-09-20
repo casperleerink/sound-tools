@@ -1,6 +1,6 @@
 # Technical architecture
 
-This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The realtime engine from ENGINEERING.md section 3 is built in `crates/core`, with the musical clock and the transport. The rest of the application remains unimplemented.
+This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The realtime engine from ENGINEERING.md section 3 is built in `crates/core`, with the musical clock, the transport and the live project folder: tool registration, instances, editing with undo, storage and the file watcher. Tone runs on it as the first tool. The rest of the application remains unimplemented.
 
 ## Terms
 
@@ -103,7 +103,19 @@ Ordinary Rust dependencies support code reuse. Connections between tool instance
 
 Fixed internal processing structure can be reconstructed from extension code and saved settings. Composer-editable structure belongs in project state. Child tool instances use the core's persistence facilities; avoid saving duplicate representations of the same content.
 
-The project manages tool instances. A composite tool can explicitly own child tool instances; deleting the parent also deletes those children. Connections and references do not establish ownership, so deleting a connected tool does not delete its peers. Views reference musical content without owning a second copy, and closing a view does not delete that content. The exact APIs for registration, ownership and shared references remain open.
+The project manages tool instances. A composite tool can explicitly own child tool instances; deleting the parent also deletes those children. Connections and references do not establish ownership, so deleting a connected tool does not delete its peers. Views reference musical content without owning a second copy, and closing a view does not delete that content.
+
+### Registration and lifecycle, decided September 19, 2026
+
+Built in `crates/core/src/project`. The guide for extension authors is [crates/core/README.md](crates/core/README.md).
+
+- A tool is its saved state type. The type implements `State`, which names the tool and validates. Every typed call names the type, so there is no separate tool handle to pass around or to mix up. An extension registers its tools in a `Registry` before the project opens. A tool belongs to one extension, and a project loads its records only when `project.json` enables that extension.
+- A behaviour is optional. It is one function from the state of an instance to what the instance needs in the engine: processors, updates, its own connections and named ports. It runs for every valid state from every source, and it declares everything each time. The core keeps what was declared before and sends only the difference. So a behaviour cannot leave processors behind, deleting an instance removes what it made, and a processor that is declared again keeps its phase and voices. A tool with no behaviour is plain data for its owner.
+- A behaviour reads the typed state of its owned children and the ports they expose. It runs again whenever its own record or anything below it changes, children before parents. So a parent can build one snapshot from many child records and route to a child, and it goes to the device by itself with no `project.json` edit.
+- One edit group runs all its behaviours inside one engine edit: one batch and at most one compile. If a behaviour or the graph refuses, nothing of the group applies. Two exceptions keep one bad file from blocking everything. While a project opens, an instance whose behaviour fails is left out with what it owns, and reported. And a `project.json` connection that closes a cycle never fails an edit: it stays saved, unused and reported, like a connection to a missing instance.
+- Two instances may declare the same connection, for example a parent and its child both send the child to the device. The graph holds it once, and it goes when the last one stops declaring it.
+- References are saved instance ids. They resolve to an optional typed instance, own nothing and keep nothing alive. `project.json` connections are references too: an end that does not exist leaves the connection saved, unused and reported, so a connection may arrive before its instance and the data of a missing extension stays intact. Deleting an instance removes the connections that name it, in the same undo step.
+- Not built: a behaviour that reacts to changes of an instance it only references. Parents and children cover the milestone.
 
 Audio plugin hosting belongs entirely to extensions. A bundled plugin host extension provides it for the v0 DAW; the core has no plugin interface. The hosting design is not specified here.
 
@@ -183,17 +195,13 @@ my-piece/
   project.json
   state/
     arrangement/              a root instance of the bundled arrangement tool
-      arrangement.json
-      tracks/
-        piano/
-          track.json
-          instrument/
-            synth.json
-          clips/
-            verse-a.json
-            verse-b.json
-    drone-machine/            another tool, one small record
-      drone-machine.json
+      instance.json           its record
+      piano/                  a track: a child instance with children of its own
+        instance.json
+        instrument.json       the synth, a child with no children
+        verse-a.json          a clip
+        verse-b.json
+    drone-machine.json        another tool, one small record
   assets/
     field-recording.wav
   extensions/
@@ -207,9 +215,37 @@ Decided September 19, 2026, the core storage rule. It says nothing about music:
 - Owned child instances are subfolders. The folder tree is the ownership tree, so one parent per child and no cycles come for free. Deleting a folder deletes the instance and its children.
 - The path is the stable ID. Folder names are readable and chosen at creation. Display names live inside the record, so renaming in an interface does not move the folder.
 - Links that are not ownership, such as connections, sends or a shared clip, are saved references to a path. A reference resolves to an optional instance.
-- The extension chooses how finely to split its state: one record or a deep tree. Exact file naming is settled when building.
+- The extension chooses how finely to split its state: one record or a deep tree.
 
-There is no instance index. The runtime finds instances by reading `state/`. `project.json` records the project format version, enabled extensions by name, the tempo map and core-owned connections. Extensions have no version numbers: the code in the project's extensions folder is the version, and updating from a newer bundled copy is an explicit copy. Stable identifiers link records independently of display names.
+Decided September 19, 2026, the file naming rule:
+
+- The tool decides the form, for good. A tool that owns children says so in its code (`State::OWNS_CHILDREN`). Its instances are always a folder `<name>/` that holds the record as `instance.json` and the children next to it, also while there are no children. Instances of every other tool are always one file, `<name>.json`. There are no grouping folders: every folder under `state/` is an instance.
+- The id of an instance is its path under `state/` without `.json`, for example `arrangement/piano/verse-a`. Names use lowercase letters, digits, `-` and `_`. `instance` is reserved.
+- So adding a part is one new file, moving a clip to another track is moving a file, adding a track is one new folder, and deleting a folder deletes the instance and its children. What kind of child a file is comes from the tool name in its record, or from a name the owner gives meaning to, such as `instrument`.
+- The runtime never moves a record between the two forms, so the path of a record never changes under an agent. The first build moved `piano.json` to `piano/instance.json` on the first child. An agent that then rewrote `piano.json` was ignored, and the stale file brought the instance back after a delete.
+- What does not follow the rule is not loaded and is listed as a problem that names the right path: a record in the wrong form for its tool, both forms for one name, a child under a tool that owns no children, and a folder without `instance.json` with everything in it. Creating a child under such a tool from an interface is a typed error.
+- A record is `{"tool": "<tool name>", "state": {...}}`. The runtime writes JSON with stable key order. A list or object of up to 100 characters stays on one line and longer ones get one line per item, so a clip has one note per line and a small edit is a small diff. Any valid JSON loads.
+
+There is no instance index. The runtime finds instances by reading `state/`. `project.json` records the project format version, enabled extensions by name, the tempo map and core-owned connections:
+
+```json
+{
+  "format": 1,
+  "extensions": ["tone"],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": [
+    {"from": {"instance": "tone-a", "port": "audio"}, "to": {"device_output": 0}},
+    {"from": {"instance": "lfo", "port": "out"}, "to": {"input": {"instance": "filter", "port": "cutoff"}}}
+  ]
+}
+```
+
+Ports are named by the tool that exposes them. A change to tempo or connections from outside applies live. A change to `extensions` is refused while the project runs: the file is listed as a problem that says to reopen the project, and nothing of it applies until then. Turning an extension on or off means loading or unloading all records of its tools, which opening the project already does, and extensions change with a rebuild and a restart anyway. An invalid `project.json` stops the project from opening, so it is fixed before the runtime writes anything. Nothing else does: a record that does not load, a record whose behaviour fails and a connection that cannot be used are left out and listed as problems, and the rest opens.
+
+The runtime writes `project.json` whole, so it takes care not to write over an outside change:
+
+- Before an edit, undo or redo changes tempo or connections, the runtime reads `project.json`. If it changed on disk and the watcher has not delivered it yet, that change applies first, as its own undo step, and the edit lands on top.
+- While `project.json` holds an outside change that did not load, the runtime does not write it. The edit still applies live, and the problem on `project.json` says that tempo and connection edits are not written. When the file is fixed it loads whole and is the later write, so those unwritten edits are gone. Undo can bring them back. Extensions have no version numbers: the code in the project's extensions folder is the version, and updating from a newer bundled copy is an explicit copy. Stable identifiers link records independently of display names.
 
 Each extension defines its saved data using Rust types. The core normally handles serialization, writing and loading. JSON is the storage format; live extension code works with typed state.
 
@@ -219,7 +255,15 @@ Extensions must be able to apply new state while running, not only at load. Load
 
 Records should stay small enough for an agent to read and rewrite cheaply, and projects must scale: 100 tracks with 100 clips each is an ordinary project, not a limit. Individual notes and parameters do not require separate files. The layout under the arrangement in the example above is that extension's choice, described in the v0 section; the core knows no tracks, clips or notes.
 
-The watcher covers more than edits to existing records. New record files and folders, deleted ones, and connection changes in `project.json` all apply live. File changes that arrive together are one undo step, so an agent request that touches eight clips undoes as one. The lifecycle prototype only handled edits to existing records.
+The watcher covers more than edits to existing records. New record files and folders, deleted ones, moved ones, and changes to `project.json` all apply live. File changes that arrive together are one undo step, so an agent request that touches eight clips undoes as one.
+
+Decided September 19, 2026, how outside changes apply:
+
+- The watcher only tells which paths changed. The runtime reads those paths again, compares them with the live project and applies the difference as one group. Event kinds are not used, so edits, new files and folders, deletions and moves all take one road, and tests call the same function with explicit paths. Loading a project is that road from an empty project.
+- Grouping window: changes with less than 100 ms between them are one group and one undo step, labelled "File change". The group applies once the folder has been quiet for 100 ms, so that is also the delay before an outside change is heard. The runtime groups raw `notify` events itself. `notify-debouncer-full` emits per path on a timer, so a burst could be split across two of its batches.
+- The runtime knows its own writes by a fingerprint of the bytes it last read or wrote per file. A file with the same fingerprint holds nothing new. A file that decodes to the state the project already has, for example with other spacing, is no change and no undo step, and the runtime does not write it back.
+- A file that does not load leaves the live state unchanged, stays on disk and is listed as a problem with the path and the field, for example `state/tone-b.json: state.frequency_hz: invalid type: string "high", expected f32`. The rest of the group still applies. The same goes for records of unknown tools, which are never written or deleted. A problem goes away when the file loads or is gone.
+- Creation and deletion are undoable from both sides. Undo of an outside creation deletes the files, and undo of an outside deletion writes them again with their connections.
 
 Each record identifies its type. There are no schema versions; keeping code and saved data compatible is the composer's and their agent's responsibility. Extensions can register additional asset files for large or unusual data.
 
@@ -307,7 +351,16 @@ Publishing a state edit through the SDK automatically notifies affected views. U
 
 Undo and redo history are session-only and reset when the project closes or the runtime reloads. Current musical content and settings survive through the project folder; persisting edit history is not required.
 
-Provide recommended patterns and the underlying operations for custom workflows. The exact edit API and undo storage mechanism remain implementation choices. Overlapping edits follow the same last-write-wins rule.
+Provide recommended patterns and the underlying operations for custom workflows. Overlapping edits follow the same last-write-wins rule.
+
+Decided September 19, 2026, the edit API and undo, built in `crates/core/src/project`:
+
+- One state application takes a group of changes: set a whole record (which also creates), delete an instance with everything it owns, and change tempo or connections. Interface edits, file changes, loading, undo, redo and cancel all call it. It applies the group whole, as one engine batch, or not at all. It notes the record before and after, which is all undo needs.
+- An edit is `begin`, any number of `publish` calls with a group of changes, then `finish` or `cancel`. It may touch many records, create and delete. `publish` applies live and writes nothing. `finish` writes every touched record once and adds one undo step, from the state before the first publish to the live state at the finish, whoever wrote last. `cancel` applies the states from before through the same path. Several edits may be open at once.
+- Undo history is two stacks of steps. A step holds the before and after record of every instance it touched, shared with the live state and not copied. Undo applies the before side as one group and writes the files. A step that can no longer apply is dropped with a typed error, for example because its owner is gone, or because a file the runtime did not load now sits at the id of an instance that undo would write.
+- Writing: parents before children, then deleted records, then `project.json`. Each file is a temporary file renamed into place, with no `fsync`: it cost 6 ms per file on macOS, which made undo of a deleted folder of 100 records block for 0.7 s. The rename protects against a crash of the process. Surviving a power loss is left to git and snapshots. A failed write leaves the old file complete, the edit stays live and undoable, and the problem is listed until a later write succeeds. The runtime only removes record files it knows, so deleting an instance never removes records of unknown tools or other files in its folder.
+- The UI layer drains a list of small events after each call: created, changed, deleted with the instance id, project file changed, problems changed. Events carry no state.
+- One runtime per project: the runtime holds a lock on `.sound-tools.lock` in the project folder. Inspecting and offline rendering open the project read-only without the lock, so they work next to a running runtime.
 
 ## Next decisions
 
@@ -317,15 +370,14 @@ Immediate next work is the first milestone above, in this order:
 
 - Done September 19, 2026: the realtime engine with device output and the control-to-audio handoff, following ENGINEERING.md section 3. Tone plays through it from `extensions/tone`. Feedback connections, audio input and device selection are not built yet.
 - Done September 19, 2026: the musical clock and the transport in `crates/core`. Loop playback, tempo ramps and time signature changes are not built yet.
-- The live project folder with external record creation and deletion.
+- Done September 19, 2026: the live project folder in `crates/core`, with tool registration, owned children, references, editing with undo, storage, the watcher and the engine binding. Tone is the first tool on it. `cargo run -p runtime -- <folder>` runs a project headless. Not built: reacting to referenced instances, declarative parameters, assets.
 - The arrangement and instrument extensions on top, with the project agent doc.
 
 The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. Re-check it once in the real application. The pinned GPUI has an accessibility tree and focus-visible; the UI components do not use them yet.
 
 Open:
 
-- Tool registration and lifecycle APIs, including child instances and shared state references.
-- Editing API and undo implementation under the settled last-write-wins rule.
+- Declarative parameter metadata and generic parameter controls.
 - Agent integration, the outer application/runtime protocol details and window/workspace composition. Second milestone.
 
 Reference code: [pi-mono](https://github.com/badlogic/pi-mono) for extension registration and agent access to docs, and [Pure Data](https://github.com/pure-data/pure-data) for processor composition and scheduling. Neither dictates the product's UI or musical model. [ENGINEERING.md](ENGINEERING.md) records tooling, dependency and audio engine recommendations drawn from Zed, Pure Data and Elementary.

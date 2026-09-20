@@ -1,17 +1,16 @@
-//! Tone rendered offline through the engine. Asserts on samples.
-
-// Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them.
-#![allow(clippy::unwrap_used)]
+//! The Tone processor rendered offline through the engine. Asserts on samples.
 
 use sound_core::{Connection, Engine, EngineConfig, EngineControl, Node};
-use tone::{Tone, ToneParameters};
+use tone::{Tone, ToneState};
 
-const SAMPLE_RATE: u32 = 48_000;
+use crate::support::{
+    SAMPLE_RATE, assert_continuous, channel, largest_step, peak, render, rising_zero_crossings,
+};
 
 fn tone_on_channel(
     control: &mut EngineControl,
     name: &str,
-    parameters: ToneParameters,
+    parameters: ToneState,
     channel: usize,
 ) -> Node<Tone> {
     let mut edit = control.edit();
@@ -22,56 +21,10 @@ fn tone_on_channel(
     node
 }
 
-/// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
-fn render(engine: &mut Engine, frames: usize) -> Vec<f32> {
-    let mut output = vec![0.0; frames * engine.channels()];
-    for buffer in output.chunks_mut(480 * engine.channels()) {
-        engine.process_block(buffer);
-    }
-    output
-}
-
-fn channel(interleaved: &[f32], channel: usize, channels: usize) -> Vec<f32> {
-    interleaved
-        .iter()
-        .skip(channel)
-        .step_by(channels)
-        .copied()
-        .collect()
-}
-
-fn rising_zero_crossings(samples: &[f32]) -> usize {
-    samples
-        .windows(2)
-        .filter(|pair| pair[0] < 0.0 && pair[1] >= 0.0)
-        .count()
-}
-
-fn peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
-}
-
-/// The largest step a sine of this frequency and gain can take between two samples.
-fn largest_step(frequency_hz: f32, gain: f32) -> f32 {
-    gain * std::f32::consts::TAU * frequency_hz / SAMPLE_RATE as f32
-}
-
-fn assert_continuous(samples: &[f32], limit: f32) {
-    for (frame, pair) in samples.windows(2).enumerate() {
-        let step = (pair[1] - pair[0]).abs();
-        assert!(
-            step <= limit * 1.001,
-            "jump of {step} after frame {frame}, limit {limit}"
-        );
-    }
-}
-
 #[test]
 fn frequency_and_gain_are_what_the_parameters_say() {
     let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
-    let parameters = ToneParameters {
+    let parameters = ToneState {
         frequency_hz: 440.0,
         gain: 0.25,
     };
@@ -89,11 +42,11 @@ fn frequency_and_gain_are_what_the_parameters_say() {
 #[test]
 fn phase_continues_across_a_parameter_change() {
     let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
-    let before = ToneParameters {
+    let before = ToneState {
         frequency_hz: 220.0,
         gain: 0.5,
     };
-    let after = ToneParameters {
+    let after = ToneState {
         frequency_hz: 330.0,
         gain: 0.5,
     };
@@ -113,7 +66,7 @@ fn phase_continues_across_a_parameter_change() {
 #[test]
 fn gain_changes_at_the_next_block_start() {
     let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
-    let loud = ToneParameters {
+    let loud = ToneState {
         frequency_hz: 1_000.0,
         gain: 0.5,
     };
@@ -122,7 +75,7 @@ fn gain_changes_at_the_next_block_start() {
     control
         .update(
             tone,
-            ToneParameters {
+            ToneState {
                 gain: 0.125,
                 ..loud
             },
@@ -138,11 +91,11 @@ fn gain_changes_at_the_next_block_start() {
 
 #[test]
 fn phase_continues_across_schedule_swaps() {
-    let first = ToneParameters {
+    let first = ToneState {
         frequency_hz: 220.0,
         gain: 0.5,
     };
-    let second = ToneParameters {
+    let second = ToneState {
         frequency_hz: 330.0,
         gain: 0.25,
     };

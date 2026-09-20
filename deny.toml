@@ -21,6 +21,8 @@ allow = [
   "bzip2-1.0.6",
   # File-level copyleft. Fine as an unmodified dependency.
   "MPL-2.0",
+  # Public domain dedication. notify 8.
+  "CC0-1.0",
 ]
 confidence-threshold = 0.8
 
