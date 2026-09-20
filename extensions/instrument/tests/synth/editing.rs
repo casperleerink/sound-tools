@@ -235,7 +235,7 @@ fn the_default_state_saves_as_the_documented_record() {
     "decay_seconds": 0.2,
     "sustain": 0.7,
     "release_seconds": 0.3,
-    "gain": 0.25
+    "gain": 0.15
   }
 }
 "#;
@@ -257,8 +257,8 @@ fn a_record_may_leave_out_fields_and_the_default_synth_has_a_sane_level() {
     assert_eq!(harness.project.state(&synth), Some(&SynthState::default()));
 
     let level = peak(&harness.play(24_000));
-    // The README says 0.35 for velocity 127.
-    assert!((0.33..0.37).contains(&level), "{level}");
+    // The README says 0.16 for velocity 127.
+    assert!((0.15..0.17).contains(&level), "{level}");
 
     let record = r#"{"tool": "instrument.synth", "state": {"waveform": "square", "sustain": 0.5}}"#;
     harness.write_and_apply("state/track/instrument.json", record);
@@ -268,4 +268,15 @@ fn a_record_may_leave_out_fields_and_the_default_synth_has_a_sane_level() {
         ..SynthState::default()
     };
     assert_eq!(harness.project.state(&synth), Some(&expected));
+}
+
+#[test]
+fn saved_notes_are_one_per_line_in_the_documented_form() {
+    let mut harness = Harness::new();
+    let notes = (0..3).map(|index| note(index * 480, 480, 60 + index as u8, 100));
+    harness.add_track("track", notes.collect(), SynthState::default());
+    let path = harness.project.root().join("state/track/instance.json");
+    let record = std::fs::read_to_string(path).unwrap();
+    let line = r#"      {"start": 0, "length": 480, "pitch": 60, "velocity": 100},"#;
+    assert_eq!(record.lines().nth(4), Some(line), "{record}");
 }

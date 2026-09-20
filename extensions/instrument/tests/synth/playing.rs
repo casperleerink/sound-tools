@@ -143,20 +143,70 @@ fn one_note_too_many_takes_over_the_oldest_voice() {
 #[test]
 fn a_voice_taken_over_does_not_click() {
     // Low notes through a low filter move slowly, so a click would stand out. The 17th note
-    // takes over the first voice while it is held.
+    // takes over the first voice while it is held. In the second case the first note is as
+    // loud as a note gets and the 17th is very quiet, so the voice starts far above full level.
     let quiet = SynthState {
         cutoff_hz: 100.0,
         attack_seconds: 0.05,
         ..plain(Waveform::Saw)
     };
-    let count = VOICES as u64 + 1;
-    let notes =
-        (0..count).map(|index| note(index * 240, 9_600, 33 + index as u8, 100 - index as u8));
-    let output = Harness::with_track(notes.collect(), quiet).play(3 * SECOND);
-    let takeover = 16 * 6_000;
-    let usual = largest_step(&output[takeover - SECOND / 2..takeover - 1]);
-    let around = largest_step(&output[takeover - 1..takeover + SECOND / 2]);
-    assert!(around < 1.5 * usual, "{around} {usual}");
+    type VelocityOf = fn(u64) -> u8;
+    let cases: [VelocityOf; 2] = [
+        |index| 100 - index as u8,
+        |index| match index {
+            0 => 127,
+            16 => 10,
+            _ => 40,
+        },
+    ];
+    for velocity_of in cases {
+        let count = VOICES as u64 + 1;
+        let notes =
+            (0..count).map(|index| note(index * 240, 9_600, 33 + index as u8, velocity_of(index)));
+        let output = Harness::with_track(notes.collect(), quiet).play(3 * SECOND);
+        let takeover = 16 * 6_000;
+        let usual = largest_step(&output[takeover - SECOND / 2..takeover - 1]);
+        let around = largest_step(&output[takeover - 1..takeover + SECOND / 2]);
+        assert!(around < 1.5 * usual, "{around} {usual}");
+    }
+}
+
+#[test]
+fn the_quietest_released_voice_gives_way_not_the_one_lowest_in_its_envelope() {
+    // 16 notes end together, so their envelopes are level. The first is loud and the rest
+    // are quiet. A 17th note a little later must not cut the loud tail.
+    let slow_release = SynthState {
+        release_seconds: 2.0,
+        ..plain(Waveform::Saw)
+    };
+    let held = (0..VOICES as u64).map(|index| {
+        let velocity = if index == 0 { 127 } else { 20 };
+        note(0, 480, 40 + 2 * index as u8, velocity)
+    });
+    let notes = held.chain([note(600, 1_920, 90, 100)]).collect();
+    let output = Harness::with_track(notes, slow_release).play(SECOND);
+    // Tick 600 is frame 15 000. The loud note still rings after it.
+    let before = level_at(&output[12_000..15_000], hz(40));
+    let after = level_at(&output[15_000..18_000], hz(40));
+    assert!(after > 0.5 * before && after > 0.01, "{before} {after}");
+}
+
+#[test]
+fn a_held_note_with_no_sustain_ends_by_itself() {
+    // The pluck of the README: no sustain. The decay of 0.1 s is 4800 frames.
+    let pluck = SynthState {
+        sustain: 0.0,
+        ..plain(Waveform::Saw)
+    };
+    let notes = vec![note(0, 1_920, 69, 127), note(960, 480, 69, 127)];
+    let output = Harness::with_track(notes, pluck).play(2 * SECOND);
+    assert!(peak(&output[..2_400]) > 0.1);
+    // Exact zeros while the first note is still held: its voice is idle, not just quiet.
+    assert_eq!(peak(&output[4_800 + 480..24_000]), 0.0);
+    // The second pluck of the same pitch plays. Its note off at frame 36 000 and the late
+    // note off of the first note at frame 48 000 find nothing to release and do no harm.
+    assert!(peak(&output[24_000..26_400]) > 0.1);
+    assert_eq!(peak(&output[24_000 + 4_800 + 480..]), 0.0);
 }
 
 #[test]
@@ -203,4 +253,30 @@ fn a_note_that_starts_where_the_same_pitch_ends_is_held() {
     // Well past the release of the first note, the second still sounds. Then it ends too.
     assert!(peak(&output[20_000..24_000]) > 0.05);
     assert_eq!(peak(&output[24_000 + 4_800..]), 0.0);
+}
+
+#[test]
+fn resonance_and_chords_stay_under_full_scale() {
+    // A loud single note: full velocity, the strongest peak, the cutoff on the fundamental,
+    // and a gain well above the default. The README gives these levels.
+    for waveform in [Waveform::Saw, Waveform::Square] {
+        let ringing = SynthState {
+            waveform,
+            cutoff_hz: hz(57),
+            resonance: 1.0,
+            gain: 0.25,
+            ..SynthState::default()
+        };
+        let output = Harness::with_track(vec![note(0, 9_600, 57, 127)], ringing).play(2 * SECOND);
+        assert!(peak(&output) < 1.0, "{waveform:?}: {}", peak(&output));
+
+        // A chord of six notes at full velocity on the default synth.
+        let chord = [48, 55, 60, 64, 67, 72].map(|pitch| note(0, 9_600, pitch, 127));
+        let default = SynthState {
+            waveform,
+            ..SynthState::default()
+        };
+        let output = Harness::with_track(chord.to_vec(), default).play(2 * SECOND);
+        assert!(peak(&output) < 1.0, "{waveform:?}: {}", peak(&output));
+    }
 }

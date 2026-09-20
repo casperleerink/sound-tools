@@ -32,7 +32,8 @@ const HIGHEST_PHASE_STEP: f32 = 0.45;
 const ATTACK_OVERSHOOT: f32 = 0.3;
 
 /// -60 dB. The release aims this far below silence, and so reaches silence in exactly the
-/// release time. The decay is within this of the sustain level after the decay time.
+/// release time. The decay is within this of the sustain level after the decay time. A held
+/// note with no sustain ends when it falls below this.
 const ENVELOPE_FLOOR: f32 = 0.001;
 
 /// A value that moves to its target in a straight line, so a parameter jump is not a click.
@@ -131,12 +132,15 @@ impl FilterFactors {
         let a1 = 1.0 / (1.0 + g * (g + k));
         let a2 = g * a1;
         let a3 = g * a2;
+        // The peak adds level: a partial on the cutoff comes out Q times louder. The input is
+        // turned down by the square root of that, so resonance does not overload the output.
+        let input = (k / SQRT_2).sqrt();
         Self {
             next_state: [
-                [2.0 * a1 - 1.0, -2.0 * a2, 2.0 * a2],
-                [2.0 * a2, 1.0 - 2.0 * a3, 2.0 * a3],
+                [2.0 * a1 - 1.0, -2.0 * a2, 2.0 * a2 * input],
+                [2.0 * a2, 1.0 - 2.0 * a3, 2.0 * a3 * input],
             ],
-            output: [a2, 1.0 - a3, a3],
+            output: [a2, 1.0 - a3, a3 * input],
         }
     }
 }
@@ -201,6 +205,10 @@ impl Voice {
         self.stage == Stage::Idle
     }
 
+    fn loudness(&self) -> f32 {
+        self.level * self.amplitude
+    }
+
     fn is_held(&self) -> bool {
         matches!(self.stage, Stage::Attack | Stage::Decay)
     }
@@ -219,10 +227,15 @@ impl Voice {
             self.level = 0.0;
         } else {
             // A voice taken from another note keeps its phase and filter state, and its
-            // loudness (level times amplitude), so the takeover is not a click.
-            self.level = (self.level * self.amplitude / amplitude).min(1.0);
+            // loudness (level times amplitude), so the takeover is not a click. A quiet note
+            // that takes over a loud voice starts above full level, and decays from there.
+            self.level = self.level * self.amplitude / amplitude;
         }
-        self.stage = Stage::Attack;
+        self.stage = if self.level < 1.0 {
+            Stage::Attack
+        } else {
+            Stage::Decay
+        };
         self.pitch = Some(pitch);
         self.started = started;
         self.amplitude = amplitude;
@@ -266,6 +279,11 @@ impl Voice {
                 Stage::Decay => {
                     let above = self.level - envelope.sustain;
                     self.level = envelope.sustain + above * envelope.decay_coefficient;
+                    // A pluck: with no sustain a held note ends here, and not at its note off.
+                    if self.level < ENVELOPE_FLOOR && envelope.sustain < ENVELOPE_FLOOR {
+                        self.level = 0.0;
+                        self.stage = Stage::Idle;
+                    }
                 }
                 Stage::Release => {
                     self.level = self.level * envelope.release_coefficient + envelope.release_base;
@@ -348,7 +366,7 @@ impl Synth {
                 .enumerate()
                 .filter(|(_, voice)| !voice.is_held());
             released
-                .min_by(|(_, a), (_, b)| a.level.total_cmp(&b.level))
+                .min_by(|(_, a), (_, b)| a.loudness().total_cmp(&b.loudness()))
                 .map(|(index, _)| index)
         };
         let oldest = || {

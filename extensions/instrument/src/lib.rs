@@ -13,7 +13,7 @@
 //!     "decay_seconds": 0.2,
 //!     "sustain": 0.7,
 //!     "release_seconds": 0.3,
-//!     "gain": 0.25
+//!     "gain": 0.15
 //!   }
 //! }
 //! ```
@@ -53,6 +53,7 @@ pub struct SynthState {
     /// Where the low-pass filter starts to cut.
     pub cutoff_hz: f32,
     /// 0 is a flat filter. 1 is a strong peak at the cutoff. It never oscillates on its own.
+    /// The filter input is turned down as this goes up, so the peak does not overload.
     pub resonance: f32,
     /// From note on to full level.
     pub attack_seconds: f32,
@@ -62,8 +63,8 @@ pub struct SynthState {
     pub sustain: f32,
     /// From note off to silence, for a note at full level. A quieter note ends a little sooner.
     pub release_seconds: f32,
-    /// Linear output gain. One note at velocity 127 peaks at about 1.4 times this value with
-    /// the default filter, because the filter overshoots on the step of the waveform.
+    /// Linear output gain. With the default filter one note at velocity 127 peaks at about
+    /// this value. Tracks sum to the device with no mixer yet, so the default is low.
     pub gain: f32,
 }
 
@@ -77,7 +78,7 @@ impl Default for SynthState {
             decay_seconds: 0.2,
             sustain: 0.7,
             release_seconds: 0.3,
-            gain: 0.25,
+            gain: 0.15,
         }
     }
 }
