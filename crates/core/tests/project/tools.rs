@@ -63,7 +63,9 @@ impl Processor for Constant {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        context.audio_outputs.get(Self::OUTPUT).fill(self.0);
+        for channel in context.audio_outputs.get(Self::OUTPUT) {
+            channel.fill(self.0);
+        }
     }
 }
 
@@ -124,8 +126,10 @@ impl Processor for Gain {
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let input = context.audio_inputs.get(Self::INPUT);
         let output = context.audio_outputs.get(Self::OUTPUT);
-        for (output, input) in output.iter_mut().zip(input) {
-            *output = input * self.0;
+        for (output, input) in output.into_iter().zip(input) {
+            for (output, input) in output.iter_mut().zip(input) {
+                *output = input * self.0;
+            }
         }
     }
 }
@@ -185,10 +189,9 @@ impl Processor for Summer {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let sum: f32 = self.0.levels.iter().sum();
-        context
-            .audio_outputs
-            .get(Self::OUTPUT)
-            .fill(sum * self.0.gain);
+        for channel in context.audio_outputs.get(Self::OUTPUT) {
+            channel.fill(sum * self.0.gain);
+        }
     }
 }
 
@@ -286,6 +289,27 @@ pub struct Harness {
 impl Harness {
     pub fn new() -> Self {
         Self::open(tempfile::tempdir().unwrap())
+    }
+
+    /// A project with two device channels, so a test can tell the channels apart.
+    pub fn stereo() -> Self {
+        let folder = tempfile::tempdir().unwrap();
+        let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+        let project = Project::open(folder.path(), registry(), control).unwrap();
+        Self {
+            project,
+            engine,
+            now: Instant::now(),
+            folder,
+        }
+    }
+
+    /// Renders one device buffer and gives the last frame: the two channels of a stereo
+    /// harness. Every test processor puts out a constant, so one frame shows the state.
+    pub fn frame(&mut self) -> [f32; 2] {
+        let mut buffer = [0.0; 480];
+        self.engine.process_block(&mut buffer);
+        [buffer[478], buffer[479]]
     }
 
     pub fn open(folder: tempfile::TempDir) -> Self {
@@ -392,7 +416,43 @@ pub fn project_file(connections: &str) -> String {
 }
 
 pub fn dc_to_device(instance: &str) -> String {
+    dc_to_device_channel(instance, 0)
+}
+
+pub fn dc_to_device_channel(instance: &str, channel: usize) -> String {
     format!(
-        r#"{{"from": {{"instance": "{instance}", "port": "out"}}, "to": {{"device_output": 0}}}}"#
+        r#"{{"from": {{"instance": "{instance}", "port": "out"}}, "to": {{"device_output": {channel}}}}}"#
     )
+}
+
+/// Writes a file into a project folder, as an agent would, before the project is open.
+pub fn write(root: &Path, relative: &str, contents: &str) {
+    let path = root.join(relative);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, contents).unwrap();
+}
+
+/// Every record file and `project.json` of a project folder, with its bytes. The generated
+/// files of the runtime are left out: they are its own, not the composer's.
+pub fn records(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    fn walk(folder: &Path, root: &Path, found: &mut Vec<(PathBuf, Vec<u8>)>) {
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return;
+        };
+        for path in entries.map(|entry| entry.unwrap().path()) {
+            if path.is_dir() {
+                walk(&path, root, found);
+            } else {
+                let relative = path.strip_prefix(root).unwrap().to_path_buf();
+                found.push((relative, std::fs::read(&path).unwrap()));
+            }
+        }
+    }
+    let mut found = vec![(
+        PathBuf::from("project.json"),
+        std::fs::read(root.join("project.json")).unwrap(),
+    )];
+    walk(&root.join("state"), root, &mut found);
+    found.sort();
+    found
 }

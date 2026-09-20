@@ -47,7 +47,7 @@ Editing:
 | Name | Kind |
 | --- | --- |
 | `notes` | event input carrying `sound_notes::NoteEvent` |
-| `audio` | mono audio output |
+| `audio` | audio output, stereo. The synth is one bank of voices in the middle: the same samples in both channels. Where a track puts it is the track's business |
 
 A track connects both itself. To play a synth straight to the device, add connections to `project.json`:
 
@@ -75,4 +75,4 @@ cargo nextest run -p instrument --run-ignored only realtime_ratio --no-capture  
 cargo nextest run -p instrument --run-ignored only real_device --no-capture        # plays on the default device
 ```
 
-Measured September 19, 2026 on an Apple Silicon laptop, dev profile with `opt-level = 3`, 48 kHz, one engine, offline: 100 synths that each hold a chord of four notes render 13 times faster than realtime with the saw and 11 times with the square. 100 idle synths, with their 100 idle senders, render 250 times faster than realtime. The frame loop of a voice is bound by the chain of operations in the filter from one frame to the next. The next step, if it is ever needed, is to run four voices in one SIMD loop.
+Measured September 19, 2026 on an Apple Silicon laptop, dev profile with `opt-level = 3`, 48 kHz, one engine, offline: 100 synths that each hold a chord of four notes render 13 times faster than realtime with the saw and 11 times with the square. 100 idle synths, with their 100 idle senders, render 227 times faster than realtime (250 before audio became stereo; a voice costs the same, an idle synth carries two buffers). The frame loop of a voice is bound by the chain of operations in the filter from one frame to the next. The next step, if it is ever needed, is to run four voices in one SIMD loop.

@@ -31,7 +31,9 @@ impl Processor for Constant {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        context.audio_outputs.get(OUTPUT).fill(self.0);
+        for channel in context.audio_outputs.get(OUTPUT) {
+            channel.fill(self.0);
+        }
     }
 }
 
@@ -51,7 +53,9 @@ impl Processor for Through {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let input = context.audio_inputs.get(INPUT);
-        context.audio_outputs.get(OUTPUT).copy_from_slice(input);
+        for (output, input) in context.audio_outputs.get(OUTPUT).into_iter().zip(input) {
+            output.copy_from_slice(input);
+        }
     }
 }
 
@@ -73,10 +77,12 @@ impl Processor for FrameCounter {
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         assert!(context.frames <= MAX_BLOCK);
         assert_eq!(context.start_frame, u64::from(self.0));
-        for sample in context.audio_outputs.get(OUTPUT) {
+        let [left, right] = context.audio_outputs.get(OUTPUT);
+        for sample in left.iter_mut() {
             *sample = self.0 as f32;
             self.0 += 1;
         }
+        right.copy_from_slice(left);
     }
 }
 
@@ -140,9 +146,10 @@ impl Processor for Receiver {
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let pings = context.event_inputs.get(PINGS_IN);
         assert!(pings.is_sorted_by_key(|ping| ping.offset));
-        let output = context.audio_outputs.get(OUTPUT);
-        for ping in pings {
-            output[ping.offset] += ping.event.level;
+        for channel in context.audio_outputs.get(OUTPUT) {
+            for ping in pings {
+                channel[ping.offset] += ping.event.level;
+            }
         }
     }
 }
@@ -201,6 +208,8 @@ fn fan_in_sums_and_fan_out_shares() {
         .unwrap();
     edit.connect(Connection::new(sum.id(), OUTPUT, right.id(), INPUT))
         .unwrap();
+    // Both channels of `left` go to the device. The right channel of `right` would go to
+    // channel 2, which this device does not have, so only its left channel is heard.
     edit.connect(Connection::to_device(left.id(), OUTPUT, 0))
         .unwrap();
     edit.connect(Connection::to_device(right.id(), OUTPUT, 1))
@@ -213,7 +222,7 @@ fn fan_in_sums_and_fan_out_shares() {
     let mut output = [0.0; 2 * 100];
     engine.process_block(&mut output);
     for frame in output.chunks(2) {
-        assert_eq!(frame, [3.0, 4.0]);
+        assert_eq!(frame, [3.0, 3.0 + 3.0 + 1.0]);
     }
 }
 
@@ -406,7 +415,9 @@ impl Processor for Careful {
         }
         // A list of its own that was full.
         context.event_outputs.count_dropped();
-        context.audio_outputs.get(OUTPUT).fill(self.refused as f32);
+        for channel in context.audio_outputs.get(OUTPUT) {
+            channel.fill(self.refused as f32);
+        }
     }
 }
 
@@ -490,7 +501,9 @@ fn a_full_command_ring_loses_no_edit_and_keeps_their_order() {
             }
         }
         fn process(&mut self, context: &mut ProcessContext<'_>) {
-            context.audio_outputs.get(OUTPUT).fill(self.0 as f32);
+            for channel in context.audio_outputs.get(OUTPUT) {
+                channel.fill(self.0 as f32);
+            }
         }
     }
 
@@ -621,17 +634,17 @@ fn a_failed_edit_does_not_free_its_node_ids_for_reuse() {
     }
 }
 
-const LEFT: AudioOutput = AudioOutput::new(0);
-const RIGHT: AudioOutput = AudioOutput::new(1);
+/// The second audio output port, which no processor here declares.
+const SECOND_PORT: AudioOutput = AudioOutput::new(1);
 
-/// Writes two outputs in one loop, the way a stereo synth does.
+/// Writes the two channels of its one port in one loop, as an instrument does.
 struct Stereo;
 
 impl Processor for Stereo {
     type Update = ();
 
     fn ports(&self) -> Ports {
-        Ports::new().audio_output(LEFT).audio_output(RIGHT)
+        Ports::new().audio_output(OUTPUT)
     }
 
     fn prepare(&mut self, _: &PrepareConfig) {}
@@ -639,7 +652,7 @@ impl Processor for Stereo {
     fn update(&mut self, _: &mut ()) {}
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let [left, right] = context.audio_outputs.get_many([LEFT, RIGHT]);
+        let [left, right] = context.audio_outputs.get(OUTPUT);
         for (frame, (left, right)) in left.iter_mut().zip(right).enumerate() {
             *left = frame as f32;
             *right = -(frame as f32);
@@ -648,13 +661,11 @@ impl Processor for Stereo {
 }
 
 #[test]
-fn a_processor_writes_two_outputs_in_one_loop() {
+fn one_stereo_port_reaches_both_device_channels() {
     let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 2));
     let mut edit = control.edit();
     let stereo = edit.add_processor("stereo", Stereo).unwrap();
-    edit.connect(Connection::to_device(stereo.id(), LEFT, 0))
-        .unwrap();
-    edit.connect(Connection::to_device(stereo.id(), RIGHT, 1))
+    edit.connect(Connection::to_device(stereo.id(), OUTPUT, 0))
         .unwrap();
     edit.commit().unwrap();
 
@@ -664,6 +675,44 @@ fn a_processor_writes_two_outputs_in_one_loop() {
         assert_eq!(samples, [frame as f32, -(frame as f32)]);
     }
     assert_eq!(control.poll().unwrap().port_misuses, 0);
+}
+
+#[test]
+fn a_port_reaches_each_device_channel_once() {
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 4));
+    let mut edit = control.edit();
+    let one = edit.add_processor("one", Constant(1.0)).unwrap();
+    let two = edit.add_processor("two", Constant(2.0)).unwrap();
+    edit.connect(Connection::to_device(one.id(), OUTPUT, 0))
+        .unwrap();
+    // The same connection again is still one connection, so an owner and its child may both
+    // declare it.
+    edit.connect(Connection::to_device(one.id(), OUTPUT, 0))
+        .unwrap();
+    // Channel 1 already carries the right channel of the connection above. This is the shape
+    // a project of the first milestone has: one connection per device channel.
+    let twice = Connection::to_device(one.id(), OUTPUT, 1);
+    let error = edit.connect(twice).unwrap_err();
+    let GraphError::DeviceChannelTwice {
+        connection, taken, ..
+    } = error
+    else {
+        panic!("unexpected error {error}");
+    };
+    assert_eq!((connection, taken), (twice, 0));
+    // Another pair of channels is fine, and so is another source on channels one of them
+    // already carries: two sources sum there.
+    edit.connect(Connection::to_device(one.id(), OUTPUT, 2))
+        .unwrap();
+    edit.connect(Connection::to_device(two.id(), OUTPUT, 1))
+        .unwrap();
+    edit.commit().unwrap();
+
+    let mut output = [f32::NAN; 4 * 10];
+    engine.process_block(&mut output);
+    for frame in output.chunks(4) {
+        assert_eq!(frame, [1.0, 1.0 + 2.0, 1.0 + 2.0, 1.0]);
+    }
 }
 
 #[test]
@@ -694,16 +743,24 @@ fn port_handles_that_match_no_declared_port_are_counted() {
                 .event_outputs
                 .push(EventOutput::<Other>::new(0), 0, Other);
             // Undeclared indices, and the same output twice.
-            assert!(context.audio_inputs.get(INPUT).is_empty());
-            assert!(context.audio_outputs.get(RIGHT).is_empty());
+            assert!(context.audio_inputs.get(INPUT).iter().all(|c| c.is_empty()));
+            assert!(
+                context
+                    .audio_outputs
+                    .get(SECOND_PORT)
+                    .iter()
+                    .all(|c| c.is_empty())
+            );
             let [first, second] = context.audio_outputs.get_many([OUTPUT, OUTPUT]);
-            assert!(first.is_empty() && second.is_empty());
+            assert!(first.into_iter().chain(second).all(|c| c.is_empty()));
             // Correct use counts nothing.
             assert!(context.event_inputs.get(PINGS_IN).is_empty());
             context
                 .event_outputs
                 .push(PINGS_OUT, 0, Ping { level: 1.0 });
-            context.audio_outputs.get(OUTPUT).fill(1.0);
+            for channel in context.audio_outputs.get(OUTPUT) {
+                channel.fill(1.0);
+            }
         }
     }
 
@@ -766,6 +823,7 @@ fn merged_event_inputs_count_their_overflow() {
 
 #[test]
 fn three_channels_and_a_trailing_partial_frame() {
+    // Channel 2 is the last one, so the right channel of the port has nowhere to go.
     let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 3));
     let mut edit = control.edit();
     let constant = edit.add_processor("constant", Constant(1.0)).unwrap();
@@ -835,7 +893,9 @@ impl Processor for SnapshotReader {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        context.audio_outputs.get(OUTPUT).fill(self.snapshot.value);
+        for channel in context.audio_outputs.get(OUTPUT) {
+            channel.fill(self.snapshot.value);
+        }
     }
 }
 
@@ -897,10 +957,9 @@ impl Processor for Allocating {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let allocated = std::hint::black_box(vec![1.0_f32; context.frames]);
-        context
-            .audio_outputs
-            .get(OUTPUT)
-            .copy_from_slice(&allocated);
+        for channel in context.audio_outputs.get(OUTPUT) {
+            channel.copy_from_slice(&allocated);
+        }
     }
 }
 

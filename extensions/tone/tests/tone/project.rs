@@ -18,11 +18,12 @@ const FIRST: ToneState = ToneState {
     gain: 0.5,
 };
 
-/// A stereo project with one Tone on the left channel, playing.
+/// A project with four device channels, so each Tone gets a stereo pair of its own: the
+/// first on channels 0 and 1, a second one on 2 and 3. Playing.
 fn open(folder: &Path) -> (Project, Engine) {
     let mut registry = Registry::new();
     tone::register(&mut registry).unwrap();
-    let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 4));
     let mut project = Project::open(folder, registry, control).unwrap();
     if project.instances().count() == 0 {
         let mut changes = Changes::new();
@@ -47,7 +48,7 @@ const PROJECT_WITH_SECOND: &str = r#"{
   "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
   "connections": [
     {"from": {"instance": "first", "port": "audio"}, "to": {"device_output": 0}},
-    {"from": {"instance": "second", "port": "audio"}, "to": {"device_output": 1}}
+    {"from": {"instance": "second", "port": "audio"}, "to": {"device_output": 2}}
   ]
 }"#;
 
@@ -56,7 +57,7 @@ fn a_tone_written_during_playback_sounds_and_the_other_keeps_its_phase() {
     let undisturbed = {
         let folder = tempfile::tempdir().unwrap();
         let (_project, mut engine) = open(folder.path());
-        channel(&render(&mut engine, 30_000), 0, 2)
+        channel(&render(&mut engine, 30_000), 0, 4)
     };
 
     let folder = tempfile::tempdir().unwrap();
@@ -89,15 +90,15 @@ fn a_tone_written_during_playback_sounds_and_the_other_keeps_its_phase() {
     );
 
     // The first Tone never restarted or stopped: bit for bit the same as with no edits.
-    assert_eq!(channel(&output, 0, 2), undisturbed);
-    let right = channel(&output, 1, 2);
-    assert_eq!(peak(&right[..10_001]), 0.0);
-    assert!(peak(&right[10_001..20_000]) > 0.2499);
-    assert_eq!(peak(&right[20_000..]), 0.0);
+    assert_eq!(channel(&output, 0, 4), undisturbed);
+    let second = channel(&output, 2, 4);
+    assert_eq!(peak(&second[..10_001]), 0.0);
+    assert!(peak(&second[10_001..20_000]) > 0.2499);
+    assert_eq!(peak(&second[20_000..]), 0.0);
 
     // Undo brings the Tone and its connection back, as one step.
     project.undo().unwrap();
-    let again = channel(&render(&mut engine, 4_800), 1, 2);
+    let again = channel(&render(&mut engine, 4_800), 2, 4);
     assert!(peak(&again) > 0.2499);
     assert!((32..=34).contains(&rising_zero_crossings(&again)));
 }
@@ -107,13 +108,13 @@ fn an_outside_frequency_edit_keeps_the_phase() {
     let folder = tempfile::tempdir().unwrap();
     let (mut project, mut engine) = open(folder.path());
     // 12 345 frames ends mid-cycle, where a phase reset would show as a jump.
-    let mut samples = channel(&render(&mut engine, 12_345), 0, 2);
+    let mut samples = channel(&render(&mut engine, 12_345), 0, 4);
     assert!(samples.last().unwrap().abs() > 0.1);
 
     let edited = r#"{"tool": "tone", "state": {"frequency_hz": 330.0, "gain": 0.5}}"#;
     let path = write(&project, "state/first.json", edited);
     project.apply_outside_changes(&[path]).unwrap();
-    let changed = channel(&render(&mut engine, SAMPLE_RATE as usize), 0, 2);
+    let changed = channel(&render(&mut engine, SAMPLE_RATE as usize), 0, 4);
     samples.extend(&changed);
     assert_continuous(&samples, largest_step(330.0, 0.5));
     assert!((329..=331).contains(&rising_zero_crossings(&changed)));

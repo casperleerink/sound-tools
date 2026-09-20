@@ -117,9 +117,12 @@ impl Processor for Tone {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let step = self.parameters.frequency_hz * self.seconds_per_frame;
-        for sample in context.audio_outputs.get(Self::OUTPUT) {
+        // One tone in the middle: the same samples in both channels.
+        let [left, right] = context.audio_outputs.get(Self::OUTPUT);
+        for sample in left.iter_mut() {
             *sample = (self.phase * std::f32::consts::TAU).sin() * self.parameters.gain;
             self.phase = (self.phase + step).fract();
         }
+        right.copy_from_slice(left);
     }
 }

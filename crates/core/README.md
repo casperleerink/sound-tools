@@ -46,14 +46,17 @@ Rules for `update` and `process`: no allocation, locks, I/O, logging or drops of
 
 Declare each port as a constant handle: `AudioInput::new(0)`, `AudioOutput::new(0)`, `EventInput::<MyEvent>::new(0)`, `EventOutput::<MyEvent>::new(0)`. Indices count from 0 per kind. Build `Ports` from the same constants in index order. `process` uses the same constants, so the declared event type and the type you read cannot disagree.
 
+Every audio port carries two channels, left then right (`CHANNELS`). There is no mono port, so nothing negotiates a channel count. A processor that makes one signal writes it into the left channel and copies that into the right, as the synth does.
+
 In `process`:
 
-- `context.audio_inputs.get(port)` gives `&[f32]`. Unconnected inputs are silent. Several connections to one input arrive summed.
-- `context.audio_outputs.get(port)` gives `&mut [f32]`. Outputs start silent.
-- `let [left, right] = context.audio_outputs.get_many([Self::LEFT, Self::RIGHT]);` gives several outputs at once, to write them in one loop.
+- `let [left, right] = context.audio_inputs.get(port);` gives the two channels as `&[f32]`. Unconnected inputs are silent. Several connections to one input arrive summed, channel by channel.
+- `let [left, right] = context.audio_outputs.get(port);` gives them as `&mut [f32]`. Outputs start silent.
+- `let [first, second] = context.audio_outputs.get_many([Self::A, Self::B]);` gives several ports at once, each with its two channels, to write them in one loop.
 - `context.event_inputs.get(port)` gives `&[Timed<E>]`, sorted by `offset`, the frame offset within this block. Several connections arrive merged.
 - `context.event_outputs.push(port, offset, event)` sends an event. It returns whether the event fitted. Keep an event you must not lose, such as a note off, and send it in the next block. `context.event_outputs.count_dropped()` counts an event you dropped for a full list of your own.
 - `context.frames` is 1 to `MAX_BLOCK` (64). `context.start_frame` is the engine time of the block's first frame.
+- `Smoothed` is the one smoothing helper of the SDK. `set_target(value, ramp_frames)` in `update`, `advance(frames)` in `process`, `snap()` when nothing sounds. A parameter that jumps clicks; the core smooths nothing by itself.
 
 A handle that matches no declared port (wrong index, wrong event type, or the same output twice in `get_many`) never panics on the audio thread. Reads are empty, writes go nowhere, and each use counts in `EngineStatus::port_misuses`. Anything above zero there is a bug in a processor.
 
@@ -212,7 +215,7 @@ Declare everything the instance needs, every time. The core compares with the la
 
 - `context.processor(name, create)` gives the processor the instance keeps under `name`. `create` runs only the first time. After that you get the same processor back, with its phase, voices and buffers. A name you stop declaring is removed from the engine. So is everything when the instance is deleted. You never remove anything yourself.
 - `context.update(node, update)` sends `Processor::Update`: parameters, or an `Arc` snapshot. Send the current values on every run. It costs no compile.
-- `context.connect(connection)` makes a connection of your own: between your processors, to a child's port, or to the device with `output.to_device(channel)` for `channel in 0..context.device_channels()`. A connection you stop declaring is disconnected. These are not saved in `project.json`.
+- `context.connect(connection)` makes a connection of your own: between your processors, to a child's port, or to the device with `output.to_device(channel)`. The channel is where the left side of the port goes; the right side goes to the channel after it, and is left out when the device has no such channel. Connecting the same port to a channel it already reaches is a `GraphError::DeviceChannelTwice`; the same connection twice is still one connection. `context.device_channels()` says how many there are. A connection you stop declaring is disconnected. These are not saved in `project.json`.
 - `context.output(name, endpoint)` and `context.input(name, endpoint)` name a port. Named ports are what `project.json` connections and your owner can use. `OutputEndpoint::new(node, Processor::PORT)` makes one. You may pass up the endpoint of a child.
 
 All behaviours of one edit group run inside one engine edit: one batch, at most one compile, everything lands in the same block. If any behaviour returns an error, or the graph refuses (type mismatch, cycle), the whole group is rejected and nothing changes. While a project opens, the failing instance is left out with what it owns and listed as a problem instead, so the rest opens. A `project.json` connection that closes a cycle never rejects anything: it stays saved, unused and listed. Return an error only for real faults. For a state you can play partly, such as a missing child, play what you can.
@@ -250,7 +253,7 @@ fn apply_bank(state: &Bank, context: &mut BehaviourContext<'_>) -> Result<(), Be
 }
 ```
 
-For the arrangement this reads: a track owns clip records and one `instrument` child. Its behaviour builds one snapshot from `children::<Clip>()`, sends it to its one sequencer processor, connects the sequencer's event output to `child_input("instrument", "notes")` and the child's `audio` output to the device. An agent adds a part by writing one clip file, and a whole track by writing one folder. Both arrive as one group: one snapshot, one batch. In `Processor::update`, swap the `Arc` with `std::mem::swap` and never drop it there.
+For the arrangement this reads: a track owns clip records and one `instrument` child. Its behaviour builds one snapshot from `children::<Clip>()`, sends it to its one sequencer processor, connects the sequencer's event output to `child_input("instrument", "notes")` and the child's `audio` output through the track's mixer to the device. An agent adds a part by writing one clip file, and a whole track by writing one folder. Both arrive as one group: one snapshot, one batch. In `Processor::update`, swap the `Arc` with `std::mem::swap` and never drop it there.
 
 Rebuilding a snapshot of a hundred small records on every change is cheap, so do that. A behaviour gets no previous state and has nowhere to keep one. If a rebuild ever shows up in a profile, that is a change to make in the core.
 

@@ -7,8 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use crate::processor::{
-    AudioBuffer, ErasedEventBuffer, EventType, InputPort, MAX_BLOCK, OutputPort, Ports,
+    AudioBuffer, CHANNELS, ErasedEventBuffer, EventType, InputPort, MAX_BLOCK, OutputPort, Ports,
 };
+
+/// A buffer of one audio port with nothing in it.
+const SILENT: AudioBuffer = [[0.0; MAX_BLOCK]; CHANNELS];
 
 /// Identifies a processor in the graph. Never reused within one engine, also not after a
 /// failed or dropped edit.
@@ -19,7 +22,8 @@ pub struct NodeId(pub(crate) u64);
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Destination {
     Node(NodeId, InputPort),
-    /// A channel of the device output. Only audio connects here.
+    /// The first device output channel of an audio port. Its left channel goes here and its
+    /// right channel to the next one, which a device with fewer channels does not play.
     DeviceOutput(usize),
 }
 
@@ -67,6 +71,14 @@ pub enum GraphError {
     UnknownInput { node: String, port: InputPort },
     #[error("the device has no output channel {0}")]
     UnknownDeviceChannel(usize),
+    #[error(
+        "{description}: the port already reaches that channel through its connection to device output {taken}. Audio is stereo, so one connection carries both channels and the second one is not needed"
+    )]
+    DeviceChannelTwice {
+        connection: Connection,
+        taken: usize,
+        description: String,
+    },
     #[error("{description}: the two ports carry different types")]
     PortTypeMismatch {
         connection: Connection,
@@ -206,6 +218,19 @@ impl Graph {
                 description: self.describe(&connection),
             });
         }
+        // A connection to the device writes the channel it names and the one after it, so the
+        // same port connected next to itself would play twice: the shape a project of the
+        // first milestone has, one connection per device channel. The very same connection is
+        // still one connection, so a parent and its child may both declare it.
+        if let Destination::DeviceOutput(channel) = connection.destination
+            && let Some(taken) = self.device_channel_of(&connection, channel)
+        {
+            return Err(GraphError::DeviceChannelTwice {
+                connection,
+                taken,
+                description: self.describe(&connection),
+            });
+        }
         self.connections.insert(connection);
         Ok(())
     }
@@ -216,6 +241,20 @@ impl Graph {
         } else {
             Err(GraphError::UnknownConnection(*connection))
         }
+    }
+
+    /// The device channel this port already connects to, when that connection covers
+    /// `channel` too. Two connections of one port to the same channel are one connection.
+    fn device_channel_of(&self, connection: &Connection, channel: usize) -> Option<usize> {
+        self.connections.iter().find_map(|existing| {
+            let Destination::DeviceOutput(taken) = existing.destination else {
+                return None;
+            };
+            let same_port =
+                existing.source == connection.source && existing.output == connection.output;
+            let distance = taken.abs_diff(channel);
+            (same_port && distance != 0 && distance < CHANNELS).then_some(taken)
+        })
     }
 
     fn node(&self, id: NodeId) -> Result<&GraphNode, GraphError> {
@@ -331,7 +370,7 @@ impl Graph {
             // same buffer, which is the fan-out sharing.
             let audio_start = schedule.audio_outputs.len();
             let audio_end = audio_start + node.ports.audio_outputs;
-            schedule.audio_outputs.resize(audio_end, [0.0; MAX_BLOCK]);
+            schedule.audio_outputs.resize(audio_end, SILENT);
             let event_outputs_start = schedule.event_outputs.len();
             for event_type in &node.ports.event_outputs {
                 schedule
@@ -389,7 +428,7 @@ impl Graph {
             .max();
         schedule
             .audio_scratch
-            .resize(widest.unwrap_or_default(), [0.0; MAX_BLOCK]);
+            .resize(widest.unwrap_or_default(), SILENT);
         for step in &mut schedule.steps {
             step.audio_sources
                 .iter_mut()

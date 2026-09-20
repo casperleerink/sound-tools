@@ -9,7 +9,7 @@
 
 use gpui::{App, Context, Entity, FontWeight, SharedString, Window, div, prelude::*, px};
 use sound_core::{Changes, Instance, ProjectEvent};
-use sound_ui::components::knob::{Knob, KnobChange, KnobRange, KnobScale};
+use sound_ui::components::knob::{Knob, KnobChange, KnobRange, KnobScale, short};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{ActiveTheme, Session, Views};
 
@@ -89,19 +89,6 @@ const WAVEFORMS: [(Waveform, &str, &str); 2] = [
     (Waveform::Saw, "saw", "Saw"),
     (Waveform::Square, "square", "Square"),
 ];
-
-/// A number with three significant digits and no zeros at its end: `2`, `15.5`, `632`.
-fn short(value: f32) -> String {
-    if value == 0.0 {
-        return "0".into();
-    }
-    let decimals = (2 - value.abs().log10().floor() as i32).max(0) as usize;
-    let text = format!("{value:.decimals$}");
-    match text.contains('.') {
-        true => text.trim_end_matches('0').trim_end_matches('.').into(),
-        false => text,
-    }
-}
 
 /// A value with its unit, as the knob shows it: `632 Hz`, `2 kHz`, `5 ms`, `1.5 s`, `70%`.
 fn readout(unit: Unit, value: f32) -> String {

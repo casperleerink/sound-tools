@@ -11,7 +11,12 @@ use crate::transport::Transport;
 /// Processors never see more frames than this in one `process` call.
 pub const MAX_BLOCK: usize = 64;
 
-pub(crate) type AudioBuffer = [f32; MAX_BLOCK];
+/// The channels of every audio port, left first. Audio is stereo everywhere: a port cannot be
+/// mono, so no processor, connection or device negotiates a channel count.
+pub const CHANNELS: usize = 2;
+
+/// One audio port for one block: a channel each, not interleaved.
+pub(crate) type AudioBuffer = [[f32; MAX_BLOCK]; CHANNELS];
 
 /// What a processor may rely on for every later `process` call.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -60,6 +65,55 @@ pub struct ProcessContext<'a> {
 /// `Copy` keeps delivery free of allocation and drops on the audio thread.
 pub trait Event: Copy + Send + 'static {}
 impl<T: Copy + Send + 'static> Event for T {}
+
+/// A value that moves to its target in a straight line, so a parameter jump is not a click.
+/// The SDK's one smoothing helper: the core itself smooths nothing.
+///
+/// Set the target when an update arrives and move along the ramp in `process`, per block or
+/// per frame. A processor that knows it makes no sound can [`snap`](Self::snap) instead.
+pub struct Smoothed {
+    current: f32,
+    target: f32,
+    step_per_frame: f32,
+}
+
+impl Smoothed {
+    pub fn new(value: f32) -> Self {
+        Self {
+            current: value,
+            target: value,
+            step_per_frame: 0.0,
+        }
+    }
+
+    /// Aims at `target`, reached in `ramp_frames` frames from where the value is now.
+    pub fn set_target(&mut self, target: f32, ramp_frames: f32) {
+        self.target = target;
+        self.step_per_frame = (target - self.current).abs() / ramp_frames;
+    }
+
+    /// Where the value is now, without moving it.
+    pub fn current(&self) -> f32 {
+        self.current
+    }
+
+    /// Takes the target at once, with no ramp.
+    pub fn snap(&mut self) {
+        self.current = self.target;
+    }
+
+    pub fn is_moving(&self) -> bool {
+        self.current != self.target
+    }
+
+    /// Moves `frames` along the ramp and returns the new value.
+    pub fn advance(&mut self, frames: usize) -> f32 {
+        let reach = self.step_per_frame * frames as f32;
+        // Not `clamp`: it panics on a NaN bound, and nothing may panic on the audio thread.
+        self.current += (self.target - self.current).max(-reach).min(reach);
+        self.current
+    }
+}
 
 /// An event with its frame offset from the start of the block.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -316,13 +370,16 @@ pub struct AudioInputs<'a> {
 }
 
 impl AudioInputs<'_> {
-    /// An undeclared port reads as an empty slice and counts in `EngineStatus::port_misuses`.
-    pub fn get(&self, port: AudioInput) -> &[f32] {
-        let samples = self
-            .buffers
-            .get(port.0)
-            .and_then(|buffer| buffer.get(..self.frames));
-        samples.unwrap_or_else(|| misused(self.misuses))
+    /// The channels of a port, left first. An undeclared port reads as empty slices and counts
+    /// in `EngineStatus::port_misuses`.
+    pub fn get(&self, port: AudioInput) -> [&[f32]; CHANNELS] {
+        let frames = self.frames;
+        match self.buffers.get(port.0) {
+            Some(buffer) => buffer
+                .each_ref()
+                .map(|channel| channel.get(..frames).unwrap_or_default()),
+            None => misused(self.misuses),
+        }
     }
 }
 
@@ -340,21 +397,29 @@ pub struct AudioOutputs<'a> {
 }
 
 impl AudioOutputs<'_> {
-    /// An undeclared port gives an empty slice and counts in `EngineStatus::port_misuses`.
-    pub fn get(&mut self, port: AudioOutput) -> &mut [f32] {
+    /// The channels of a port, left first. An undeclared port gives empty slices and counts in
+    /// `EngineStatus::port_misuses`.
+    pub fn get(&mut self, port: AudioOutput) -> [&mut [f32]; CHANNELS] {
         let [samples] = self.get_many([port]);
         samples
     }
 
-    /// Several outputs at once, for example left and right in one loop. An undeclared port or
-    /// the same port twice gives empty slices and counts in `EngineStatus::port_misuses`.
-    pub fn get_many<const N: usize>(&mut self, ports: [AudioOutput; N]) -> [&mut [f32]; N] {
+    /// Several ports at once, each with its channels. An undeclared port or the same port
+    /// twice gives empty slices and counts in `EngineStatus::port_misuses`.
+    pub fn get_many<const N: usize>(
+        &mut self,
+        ports: [AudioOutput; N],
+    ) -> [[&mut [f32]; CHANNELS]; N] {
         let frames = self.frames;
         match self.buffers.get_disjoint_mut(ports.map(|port| port.0)) {
-            Ok(buffers) => buffers.map(|buffer| buffer.get_mut(..frames).unwrap_or_default()),
+            Ok(buffers) => buffers.map(|buffer| {
+                buffer
+                    .each_mut()
+                    .map(|channel| channel.get_mut(..frames).unwrap_or_default())
+            }),
             Err(_) => {
                 misused::<()>(self.misuses);
-                std::array::from_fn(|_| Default::default())
+                std::array::from_fn(|_| std::array::from_fn(|_| Default::default()))
             }
         }
     }

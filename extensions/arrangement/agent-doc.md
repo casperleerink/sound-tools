@@ -47,13 +47,16 @@ This clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one 
 ```json state/arrangement/piano/instance.json
 {
   "tool": "arrangement.track",
-  "state": {"name": "Piano", "colour": "blue", "order": 0}
+  "state": {"name": "Piano", "colour": "blue", "order": 0, "gain_db": 0.0, "pan": 0.0, "mute": false}
 }
 ```
 
 - `name`: what the composer sees. Not empty. The folder name is the id and stays as it is when the name changes.
 - `colour`: `blue`, `sapphire`, `sky`, `teal`, `green`, `yellow`, `peach`, `red`, `maroon`, `mauve`, `pink`, `lavender`, `rosewater` or `flamingo`. `blue` when left out.
 - `order`: tracks show from the lowest to the highest. Tracks with the same order show by id. 0 when left out.
+- `gain_db`: how much louder or quieter the track plays, in decibels, -60 to 6. 0 when left out, which is the sound as the instrument makes it. -6 halves the samples, 6 doubles them, and -60 is as quiet as it goes; for silence use `mute`. Change the sound itself in `instrument.json`; change the balance between tracks here.
+- `pan`: where the track sits between the two channels, -1 to 1. -1 is hard left, 0 the middle, 1 hard right. 0 when left out. A track keeps its loudness wherever it is panned.
+- `mute`: `true` silences the track and changes nothing else. `false` when left out.
 - The track plays through the file `instrument.json` in its folder. Its record is in the doc of the instrument, `agent-docs/instrument.md`. A track without it is silent.
 
 ## The arrangement: `arrangement`
@@ -75,3 +78,4 @@ It has no settings. Leave it as it is.
 - Move a clip in time: change its `start`. Move it to another track: move the file into the folder of that track.
 - Delete a clip: remove its file. Delete a track: remove its folder.
 - Change the sound of a track: edit its `instrument.json`.
+- Balance the tracks: set `gain_db` in `instance.json` of each. Put a track to one side with `pan`, and silence one with `"mute": true`. All three apply while the project plays.

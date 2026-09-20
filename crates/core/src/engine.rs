@@ -217,10 +217,12 @@ impl Engine {
         let dropped_events = Cell::new(0);
         for step in steps.iter() {
             for (input, sources) in audio_scratch.iter_mut().zip(&step.audio_sources) {
-                input.fill(0.0);
+                input.iter_mut().for_each(|channel| channel.fill(0.0));
                 for source in sources.iter().filter_map(|index| audio_outputs.get(*index)) {
-                    for (sum, sample) in input.iter_mut().zip(source) {
-                        *sum += sample;
+                    for (sum_channel, source_channel) in input.iter_mut().zip(source) {
+                        for (sum, sample) in sum_channel.iter_mut().zip(source_channel) {
+                            *sum += sample;
+                        }
                     }
                 }
             }
@@ -239,7 +241,8 @@ impl Engine {
                 .unwrap_or_default();
             step_audio_outputs
                 .iter_mut()
-                .for_each(|buffer| buffer.fill(0.0));
+                .flatten()
+                .for_each(|channel| channel.fill(0.0));
             let step_event_outputs = event_outputs
                 .get_mut(step.event_outputs.clone())
                 .unwrap_or_default();
@@ -282,11 +285,15 @@ impl Engine {
         }
 
         output.fill(0.0);
-        for (channel, sources) in device_sources.iter().enumerate().take(channels) {
+        // A connection names the first device channel of its stereo port. The right channel
+        // goes to the next one, and is left out on a device that does not have it.
+        for (first, sources) in device_sources.iter().enumerate().take(channels) {
             for source in sources.iter().filter_map(|index| audio_outputs.get(*index)) {
-                let samples = output.iter_mut().skip(channel).step_by(channels);
-                for (sum, sample) in samples.zip(source) {
-                    *sum += sample;
+                for (channel, source_channel) in (first..channels).zip(source) {
+                    let samples = output.iter_mut().skip(channel).step_by(channels);
+                    for (sum, sample) in samples.zip(source_channel) {
+                        *sum += sample;
+                    }
                 }
             }
         }

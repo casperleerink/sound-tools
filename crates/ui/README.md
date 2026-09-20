@@ -127,7 +127,7 @@ Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Ses
 
 ### A knob on saved state
 
-`Knob` is controlled, so a view of saved state keeps no copy of it: give the value on every render and handle the `KnobChange`. `extensions/instrument/src/view.rs` is the example.
+`Knob` is controlled, so a view of saved state keeps no copy of it: give the value on every render and handle the `KnobChange`. `extensions/instrument/src/view.rs` is the example, and the mixer section of `extensions/arrangement/src/view/track_panel.rs` is a shorter one.
 
 ```rust
 Knob::new("cutoff_hz")
@@ -142,7 +142,7 @@ Knob::new("cutoff_hz")
 - `KnobChange::Drag(value)`: begin the gesture when it is the first of this drag, then publish. The knob works the value out from the value at the press, and sends it only when it is not the value it sent last. It does not compare with the value of the last render, because several mouse moves arrive between two frames. Back at the height of the press the value is exactly that of the press, so a press with a sideways move never rounds a value that was written by hand.
 - `KnobChange::DragEnd`: `finish_gesture`. `KnobChange::DragCancel` (escape): `cancel_gesture`. Both come only after a `Drag`, so a plain click is no undo step.
 - `KnobChange::Set(value)`: a key step or a reset. One `commit`.
-- The knob has its own tab stop and focus ring, and stops at the ends of its range. `KnobRange::value` gives three significant digits.
+- The knob has its own tab stop and focus ring, and stops at the ends of its range. `KnobRange::value` gives three significant digits, and `knob::short` writes a number the same way for a readout: `2`, `15.5`, `632`.
 - Every knob hears every mouse up and every press of the window, because a drag goes on outside it. It tells nobody unless a drag was open, so a click somewhere else renders nothing. A press while a drag is still open ends that drag: its mouse up was lost.
 
 ## Rules

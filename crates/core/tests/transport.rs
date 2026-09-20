@@ -93,12 +93,13 @@ impl Processor for Impulses {
     fn update(&mut self, _: &mut ()) {}
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let output = context.audio_outputs.get(OUTPUT);
+        let [left, right] = context.audio_outputs.get(OUTPUT);
         for timed in context.event_inputs.get(BEATS_IN) {
-            if let Some(sample) = output.get_mut(timed.offset) {
+            if let Some(sample) = left.get_mut(timed.offset) {
                 *sample += impulse(timed.event.0);
             }
         }
+        right.copy_from_slice(left);
     }
 }
 
@@ -304,7 +305,8 @@ const START_TICK: AudioOutput = AudioOutput::new(2);
 const STOPPED_PLAYING: AudioOutput = AudioOutput::new(3);
 const PROBE_OUTPUTS: [AudioOutput; 4] = [PLAYING, JUMPED, START_TICK, STOPPED_PLAYING];
 
-/// Writes what it sees of the transport to four device channels.
+/// Writes what it sees of the transport to four device channels, one per port. Each port
+/// writes its left channel only: its right channel would land on the channel of the next port.
 struct Probe;
 
 impl Processor for Probe {
@@ -328,8 +330,8 @@ impl Processor for Probe {
             f32::from(u8::from(transport.stopped_playing)),
         ];
         let outputs = context.audio_outputs.get_many(PROBE_OUTPUTS);
-        for (output, value) in outputs.into_iter().zip(values) {
-            output.fill(value);
+        for ([left, _], value) in outputs.into_iter().zip(values) {
+            left.fill(value);
         }
     }
 }

@@ -58,6 +58,6 @@ An instrument is any tool whose behaviour names these two ports. An owner finds 
 | Constant | Port name | Kind |
 | --- | --- | --- |
 | `NOTES_INPUT` | `notes` | event input carrying `NoteEvent` |
-| `AUDIO_OUTPUT` | `audio` | mono audio output |
+| `AUDIO_OUTPUT` | `audio` | audio output, stereo like every audio port |
 
 `extensions/instrument/tests/synth/support.rs` has a complete small sender: a test track tool with a sequencer processor.

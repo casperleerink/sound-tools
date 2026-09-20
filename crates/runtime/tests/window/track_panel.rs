@@ -4,6 +4,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use arrangement::TrackState;
 use gpui::{Entity, TestAppContext, point, px, size};
 use instrument::view::SynthView;
 use instrument::{SynthState, Waveform};
@@ -716,4 +717,176 @@ fn the_rack_scrolls_so_that_the_last_knob_is_reachable_in_a_narrow_window(cx: &m
     // And back.
     opened.scroll(gain, 400., 0.);
     assert!(opened.control("knob-gain").x > window_right);
+}
+
+/// The mixer section at the right end of the panel: the gain and pan knobs and the mute
+/// button, which edit the record of the track itself.
+const GAIN_KNOB: &str = "knob-gain_db";
+const PAN_KNOB: &str = "knob-pan";
+const MUTE: &str = "mute-track";
+const TRACK_FILE: &str = "state/arrangement/track-1/instance.json";
+
+fn track(opened: &mut Opened<'_>) -> Option<TrackState> {
+    opened.project(|project| {
+        let instance = project.resolve::<TrackState>(&id(TRACK))?;
+        project.state(&instance).cloned()
+    })
+}
+
+fn track_file(opened: &mut Opened<'_>) -> String {
+    std::fs::read_to_string(opened.path(TRACK_FILE)).unwrap()
+}
+
+/// The two channels of a render, apart.
+fn channels(interleaved: &[f32]) -> (Vec<f32>, Vec<f32>) {
+    let channel = |first: usize| interleaved.iter().skip(first).step_by(2).copied().collect();
+    (channel(0), channel(1))
+}
+
+/// Plays the note of `part` and renders past the attack, so the level is steady.
+fn playing(opened: &mut Opened<'_>) -> Vec<f32> {
+    opened.keys("space");
+    opened.settle();
+    opened.render(24_000);
+    opened.render(12_000)
+}
+
+#[gpui::test]
+fn a_drag_of_the_gain_knob_is_one_undo_step_and_the_level_follows_every_move(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open_panel(cx);
+    let loud = support::peak(&playing(&mut opened));
+    assert!(loud > 0.0);
+
+    let knob = opened.control(GAIN_KNOB);
+    opened.press(knob);
+    // A quarter of the travel down, on a range of 66 dB.
+    opened.drag_to(knob + point(px(0.), px(40.)));
+    assert!(opened.gesture_open());
+    let gain = track(&mut opened).unwrap().gain_db;
+    assert!((-17.0..-16.0).contains(&gain), "{gain}");
+    // The file waits for the end of the drag. The sound does not.
+    assert!(track_file(&mut opened).contains("\"gain_db\": 0.0"));
+    opened.settle();
+    opened.render(24_000);
+    let quieter = support::peak(&opened.render(12_000));
+    assert!(quieter < loud * 0.3, "{loud} then {quieter}");
+    assert_eq!(opened.undo_label(), None);
+
+    opened.release(knob + point(px(0.), px(40.)));
+    assert!(!opened.gesture_open());
+    assert_eq!(opened.undo_label().as_deref(), Some("Change gain"));
+    assert!(track_file(&mut opened).contains(&format!("\"gain_db\": {gain:?}")));
+
+    // One step: one undo puts it back, in the project, in the file and in the sound.
+    opened.keys("cmd-z");
+    assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
+    assert!(track_file(&mut opened).contains("\"gain_db\": 0.0"));
+    opened.settle();
+    opened.render(24_000);
+    // As loud as before, within what a later stretch of the same note differs by.
+    let again = support::peak(&opened.render(12_000));
+    assert!((again - loud).abs() < loud * 0.01, "{loud} then {again}");
+    assert_eq!(opened.undo_label(), None);
+}
+
+#[gpui::test]
+fn the_pan_knob_moves_the_track_to_one_channel(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let (left, right) = channels(&playing(&mut opened));
+    assert_eq!(left, right);
+
+    // Past the end of the travel: hard left.
+    let knob = opened.control(PAN_KNOB);
+    opened.drag(knob, knob + point(px(0.), px(400.)));
+    assert_eq!(track(&mut opened).unwrap().pan, -1.0);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change pan"));
+    opened.settle();
+    opened.render(24_000);
+    let (left, right) = channels(&opened.render(12_000));
+    assert_eq!(support::peak(&right), 0.0);
+    assert!(support::peak(&left) > 0.0);
+
+    // A double click puts it back in the middle, as its own step.
+    opened.double_click(knob);
+    assert_eq!(track(&mut opened).unwrap().pan, 0.0);
+    opened.settle();
+    opened.render(24_000);
+    let (left, right) = channels(&opened.render(12_000));
+    assert_eq!(left, right);
+    opened.keys("cmd-z");
+    assert_eq!(track(&mut opened).unwrap().pan, -1.0);
+}
+
+#[gpui::test]
+fn the_mute_button_is_one_undo_step_and_silences_the_track(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let loud = support::peak(&playing(&mut opened));
+
+    let mute = opened.control(MUTE);
+    opened.click(mute);
+    assert_eq!(track(&mut opened).unwrap().mute, true);
+    assert_eq!(opened.undo_label().as_deref(), Some("Mute track"));
+    assert!(track_file(&mut opened).contains("\"mute\": true"));
+    opened.settle();
+    opened.render(24_000);
+    assert_eq!(support::peak(&opened.render(12_000)), 0.0);
+
+    // The button is the way back too, and it is another step.
+    let mute = opened.control(MUTE);
+    opened.click(mute);
+    assert_eq!(track(&mut opened).unwrap().mute, false);
+    assert_eq!(opened.undo_label().as_deref(), Some("Unmute track"));
+    opened.settle();
+    opened.render(24_000);
+    let again = support::peak(&opened.render(12_000));
+    assert!((again - loud).abs() < loud * 0.01, "{loud} then {again}");
+
+    opened.keys("cmd-z");
+    assert_eq!(track(&mut opened).unwrap().mute, true);
+    opened.keys("cmd-z");
+    assert_eq!(track(&mut opened).unwrap().mute, false);
+    assert_eq!(opened.undo_label(), None);
+    assert!(track_file(&mut opened).contains("\"mute\": false"));
+
+    // Tab reaches it after the two knobs, and enter is the click.
+    let gain = opened.control(GAIN_KNOB);
+    opened.click(gain);
+    opened.keys("tab");
+    opened.keys("tab");
+    opened.press_enter();
+    assert_eq!(track(&mut opened).unwrap().mute, true);
+}
+
+#[gpui::test]
+fn an_outside_edit_of_the_mixer_shows_in_the_panel_and_undo_takes_it_back(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let before = track_file(&mut opened);
+    let path = opened.path(TRACK_FILE);
+    let record = r#"{"tool": "arrangement.track", "state": {"name": "Track 1", "gain_db": -12.0, "pan": 1.0, "mute": true}}"#;
+    std::fs::write(&path, record).unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[path]));
+    let changed = track(&mut opened).unwrap();
+    assert_eq!(
+        (changed.gain_db, changed.pan, changed.mute),
+        (-12.0, 1.0, true)
+    );
+
+    // The knobs hold no value of their own: a key steps from what the file said.
+    let gain = opened.control(GAIN_KNOB);
+    opened.click(gain);
+    opened.keys("up");
+    assert_eq!(track(&mut opened).unwrap().gain_db, -10.7);
+    let pan = opened.control(PAN_KNOB);
+    opened.click(pan);
+    opened.keys("down");
+    assert_eq!(track(&mut opened).unwrap().pan, 0.96);
+
+    // Three steps back: the two keys and the file change. The file is what it was.
+    for _ in 0..3 {
+        opened.keys("cmd-z");
+    }
+    assert_eq!(track_file(&mut opened), before);
+    assert_eq!(opened.undo_label(), None);
 }

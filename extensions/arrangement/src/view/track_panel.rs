@@ -10,21 +10,78 @@
 //! made again when the tool in it changes. Effects will come and go: [`device_slots`] then
 //! reads them from the project, and the panel makes its list again on `Created` and `Deleted`
 //! inside the track, keeping the device of every slot that stays, so that an open knob drag
-//! of another device goes on. The mixer controls of the track (gain, pan, mute) are not
-//! devices: they get a fixed section at the right end of the row in `render`, after the rack.
+//! of another device goes on.
+//!
+//! The mixer of the track (gain, pan and mute) is not a device. It is a fixed section at the
+//! right end of the row, after the rack and outside what scrolls, and it is the one thing the
+//! panel edits itself: those three values are in the track record.
 
 use gpui::{
-    AnyView, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Window, div,
-    prelude::*, px,
+    AnyView, App, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Window,
+    div, prelude::*, px,
 };
-use sound_core::{Instance, InstanceId, InvalidInstanceId, ProjectEvent};
+use sound_core::{Changes, Instance, InstanceId, InvalidInstanceId, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::card::Card;
+use sound_ui::components::knob::{Knob, KnobChange, KnobRange, short};
 use sound_ui::{ActiveTheme, Session, Views};
 
 use super::layout::{HEADER_WIDTH, RULER_HEIGHT};
 use super::paint::accent;
 use crate::{INSTRUMENT, TrackState};
+
+/// The room of one control and the knob in it, as in the card of the synth.
+const CONTROL_WIDTH: f32 = 64.;
+const KNOB_SIZE: f32 = 44.;
+
+/// A knob of the mixer section: what it edits, and what an undo step of it is called.
+struct Control {
+    field: &'static str,
+    label: &'static str,
+    undo_label: &'static str,
+    range: (f32, f32),
+    set: fn(&mut TrackState, f32),
+    get: fn(&TrackState) -> f32,
+    readout: fn(f32) -> String,
+}
+
+impl Control {
+    fn knob_range(&self) -> KnobRange {
+        KnobRange::linear(self.range.0, self.range.1)
+    }
+}
+
+const GAIN: Control = Control {
+    field: "gain_db",
+    label: "Gain",
+    undo_label: "Change gain",
+    range: TrackState::GAIN_DB,
+    set: |track, value| track.gain_db = value,
+    get: |track| track.gain_db,
+    readout: |value| format!("{} dB", short(value)),
+};
+
+const PAN: Control = Control {
+    field: "pan",
+    label: "Pan",
+    undo_label: "Change pan",
+    range: TrackState::PAN,
+    set: |track, value| track.pan = value,
+    get: |track| track.pan,
+    readout: pan_readout,
+};
+
+/// The pan as people read it: `C` in the middle, else how far to a side in percent.
+fn pan_readout(pan: f32) -> String {
+    let percent = short(pan.abs() * 100.);
+    if pan < 0. {
+        format!("{percent}L")
+    } else if pan > 0. {
+        format!("{percent}R")
+    } else {
+        "C".to_string()
+    }
+}
 
 /// What the panel asks of the view that holds it.
 pub enum TrackPanelEvent {
@@ -59,9 +116,13 @@ pub struct TrackPanel {
     session: Entity<Session>,
     track: Instance<TrackState>,
     devices: Vec<Device>,
+    /// Whether a drag of a mixer knob has the gesture of the session open.
+    dragging: bool,
     /// Not a tab stop. It tells whether the focus is inside the panel.
     focus_handle: FocusHandle,
     close_focus: FocusHandle,
+    /// The knobs bring their own. A button takes one to be a tab stop and show a ring.
+    mute_focus: FocusHandle,
 }
 
 impl EventEmitter<TrackPanelEvent> for TrackPanel {}
@@ -79,8 +140,13 @@ impl TrackPanel {
             else {
                 return;
             };
-            // The name and the colour. The view that holds the panel closes it with its track.
+            // The name, the colour and the mixer. The view that holds the panel closes it
+            // with its track. A track deleted under a knob drag finishes the gesture and does
+            // not cancel it: the delete was the last write.
             if id == panel.track.id() {
+                if matches!(event, ProjectEvent::Deleted(_)) {
+                    panel.end_drag(cx);
+                }
                 cx.notify();
             }
             // A slot got another tool, lost its record or got one: from a file or an undo.
@@ -95,12 +161,22 @@ impl TrackPanel {
             }
         })
         .detach();
+        // The net under every other way to go: undo and redo wait for an open gesture.
+        cx.on_release(|panel, cx| {
+            if std::mem::take(&mut panel.dragging) {
+                let session = panel.session.clone();
+                session.update(cx, |session, cx| session.finish_gesture(cx));
+            }
+        })
+        .detach();
         let mut panel = Self {
             session,
             track: track.clone(),
             devices: Vec::new(),
+            dragging: false,
             focus_handle: cx.focus_handle(),
             close_focus: cx.focus_handle().tab_stop(true),
+            mute_focus: cx.focus_handle().tab_stop(true),
         };
         panel.set_track(track, window, cx);
         panel
@@ -115,13 +191,15 @@ impl TrackPanel {
         self.devices.iter().map(|device| device.view.as_ref())
     }
 
-    /// Shows another track.
+    /// Shows another track. A knob drag of the track it leaves ends first, so no gesture of
+    /// this panel is ever left open.
     pub fn set_track(
         &mut self,
         track: Instance<TrackState>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.end_drag(cx);
         let slots = device_slots(track.id()).unwrap_or_else(|error| {
             let session = self.session.clone();
             session.update(cx, |session, cx| session.report(error, cx));
@@ -134,6 +212,157 @@ impl TrackPanel {
         self.track = track;
         cx.notify();
     }
+
+    /// A callback of a control. It holds the view weakly, as `cx.listener` does, so the
+    /// listeners of the last frame keep no closed panel and no open drag alive.
+    fn callback<E>(
+        cx: &Context<Self>,
+        f: impl Fn(&mut Self, E, &mut Context<Self>) + 'static,
+    ) -> impl Fn(E, &mut Window, &mut App) + 'static {
+        let panel = cx.weak_entity();
+        move |event, _, cx| {
+            panel.update(cx, |panel, cx| f(panel, event, cx)).ok();
+        }
+    }
+
+    fn end_drag(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.dragging) {
+            self.session
+                .update(cx, |session, cx| session.finish_gesture(cx));
+        }
+    }
+
+    /// One finished change of the track record: a key step, a reset, the mute button.
+    fn commit(
+        &mut self,
+        label: &str,
+        change: impl FnOnce(&mut TrackState),
+        cx: &mut Context<Self>,
+    ) {
+        let track = self.track.clone();
+        self.session.update(cx, |session, cx| {
+            let Some(mut state) = session.project().state(&track).cloned() else {
+                return;
+            };
+            change(&mut state);
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.set(&track, state);
+                project.commit(label, changes)
+            });
+        });
+    }
+
+    fn on_knob(&mut self, control: &Control, change: KnobChange, cx: &mut Context<Self>) {
+        let set = control.set;
+        match change {
+            KnobChange::Drag(value) => {
+                let track = self.track.clone();
+                // A move may still arrive in the frame that lost the record.
+                if self.session.read(cx).project().state(&track).is_none() {
+                    return;
+                }
+                let begun = std::mem::replace(&mut self.dragging, true);
+                self.session.update(cx, |session, cx| {
+                    if !begun {
+                        session.begin_gesture(control.undo_label, cx);
+                    }
+                    session.gesture(cx, |project, edit| {
+                        project.update(edit, &track, |state| set(state, value))
+                    });
+                });
+            }
+            KnobChange::DragEnd => self.end_drag(cx),
+            KnobChange::DragCancel => {
+                if std::mem::take(&mut self.dragging) {
+                    self.session
+                        .update(cx, |session, cx| session.cancel_gesture(cx));
+                }
+            }
+            KnobChange::Set(value) => {
+                self.commit(control.undo_label, |state| set(state, value), cx);
+            }
+        }
+    }
+
+    fn knob(&self, control: &'static Control, track: &TrackState, cx: &mut Context<Self>) -> Knob {
+        let value = (control.get)(track);
+        Knob::new(control.field)
+            .w(px(CONTROL_WIDTH))
+            .size(KNOB_SIZE)
+            .range(control.knob_range())
+            .value(value)
+            // Both knobs rest at 0: no change of level, and the middle.
+            .default_value(0.)
+            .label(control.label)
+            .readout((control.readout)(value))
+            .on_change(Self::callback(cx, move |panel, change, cx| {
+                panel.on_knob(control, change, cx)
+            }))
+    }
+
+    /// The fixed section at the right end: the mixer of the track.
+    fn mixer(&self, track: &TrackState, cx: &mut Context<Self>) -> Div {
+        let theme = cx.theme();
+        let (title, hairline, accent) = (theme.gray_900, theme.alpha_at(0.05), theme.peach);
+        let variant = match track.mute {
+            true => ButtonVariant::SubtleColor(accent),
+            false => ButtonVariant::Subtle,
+        };
+        let mute = Button::new("mute-track", "Mute")
+            .debug_selector(|| "mute-track".to_string())
+            .variant(variant)
+            .size(ButtonSize::Sm)
+            .focus_handle(&self.mute_focus)
+            .on_click(cx.listener(|panel, _, _, cx| {
+                let label = match panel.muted(cx) {
+                    true => "Unmute track",
+                    false => "Mute track",
+                };
+                panel.commit(label, |track| track.mute = !track.mute, cx);
+            }));
+        // The button sits where the knobs are, as the waveform switch of the synth does. It
+        // gets no label under it: it says what it is.
+        let mute = div()
+            .flex()
+            .justify_center()
+            .w(px(CONTROL_WIDTH))
+            .h(px(KNOB_SIZE))
+            .items_center()
+            .child(mute);
+
+        div()
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .p(px(24.))
+            .border_l_1()
+            .border_color(hairline)
+            .child(
+                div()
+                    .text_size(px(14.))
+                    .line_height(px(20.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(title)
+                    .child("Mixer"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(8.))
+                    .child(self.knob(&GAIN, track, cx))
+                    .child(self.knob(&PAN, track, cx))
+                    .child(mute),
+            )
+    }
+
+    fn muted(&self, cx: &App) -> bool {
+        let state = self.session.read(cx).project().state(&self.track);
+        state.is_some_and(|track: &TrackState| track.mute)
+    }
 }
 
 impl Focusable for TrackPanel {
@@ -144,7 +373,9 @@ impl Focusable for TrackPanel {
 
 impl Render for TrackPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let project = self.session.read(cx).project();
+        // Gone: the view that holds the panel closes it after the same event. Read once,
+        // because the mixer section needs the record while it makes its controls.
+        let track = self.session.read(cx).project().state(&self.track).cloned();
         let theme = cx.theme();
         let (background, hairline, text, muted) = (
             theme.gray_100,
@@ -152,8 +383,7 @@ impl Render for TrackPanel {
             theme.gray_900,
             theme.gray_700,
         );
-        // Gone: the view that holds the panel closes it after the same event.
-        let (name, dot) = project.state(&self.track).map_or_else(
+        let (name, dot) = track.as_ref().map_or_else(
             || (String::new(), theme.blue),
             |track| (track.name.clone(), accent(track.colour, theme)),
         );
@@ -266,5 +496,7 @@ impl Render for TrackPanel {
                     .p(px(24.))
                     .children(cards),
             )
+            // The mixer of the track, at the right end and outside what scrolls.
+            .children(track.map(|track| self.mixer(&track, cx)))
     }
 }
