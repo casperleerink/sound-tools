@@ -183,7 +183,11 @@ fn a_mixer_edit_is_one_undo_step_and_undo_brings_the_sound_back() {
     let (changed, _) = render(&mut harness, 8_000);
     assert!(peak(&changed[2_000..]) < peak(&before));
 
+    // One step for the whole file change: the gain and the pan come back together.
+    assert_eq!(harness.project.undo_label(), Some("File change"));
     harness.project.undo().unwrap();
+    // The step before it is the one that made the clip: the file change was one step.
+    assert_eq!(harness.project.undo_label(), Some("Add clip"));
     let (back, right) = render(&mut harness, 8_000);
     assert_eq!(peak(&back[2_000..]), LEVEL);
     // Past the ramp back to the middle, where the two channels are one again.
