@@ -39,7 +39,7 @@ These are also the defaults.
 
 Some starting points: a pluck is `sustain` 0 with `decay_seconds` 0.15 to 0.4. A pad is `attack_seconds` 0.5 or more and `release_seconds` 1 or more. A bass is `cutoff_hz` 300 to 800 with `resonance` near 0.4.
 
-An edit applies while notes are held. The notes go on. Gain, cutoff and resonance move to the new value over 0.05 s, so an edit does not click. A sustain edit glides at the decay speed. Attack, decay and release times apply from the next frame. A waveform edit is a switch, not a fade.
+An edit applies while notes are held. The notes go on. Gain, cutoff and resonance move to the new value over 0.05 s, so an edit does not click. A sustain edit glides at the decay speed. Attack, decay and release times apply at once, also to held notes. A waveform edit is a switch, not a fade.
 
 ## Ports
 
