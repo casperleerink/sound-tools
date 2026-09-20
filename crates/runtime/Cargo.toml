@@ -10,10 +10,22 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 arrangement.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
 hound.workspace = true
 instrument.workspace = true
 sound-core.workspace = true
+sound-ui.workspace = true
 tone.workspace = true
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+gpui_platform = { workspace = true, features = ["test-support"] }
+sound-notes.workspace = true
 tempfile.workspace = true
+
+# Renders the window offscreen. It runs on the main thread (no test harness), because the Metal
+# renderer and the text system need it.
+[[test]]
+name = "snapshots"
+harness = false

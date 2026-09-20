@@ -1,13 +1,16 @@
-//! The project runtime, headless for now. It opens a project folder, keeps it live and plays
-//! it on the default output device until it is told to quit.
+//! The project runtime. It opens a project folder, keeps it live and plays it on the default
+//! output device, in a window or headless.
 //!
 //! ```text
-//! runtime <project-folder>                                 run live
+//! runtime <project-folder>                                 run live in the window
+//! runtime <project-folder> --headless                      run live, commands from stdin
 //! runtime <project-folder> --inspect                       print a summary, open no device
 //! runtime <project-folder> --render <wav> --seconds <n>    render offline
 //! ```
 //!
-//! While it runs it reads one command per line from stdin: `play`, `pause`, `stop`,
+//! Only the first form starts GPUI. Tests, CI and agents use the others.
+//!
+//! Headless, it reads one command per line from stdin: `play`, `pause`, `stop`,
 //! `seek <ticks>`, `undo`, `redo`, `status`, `quit`. The end of stdin also quits. This is
 //! provisional. It is not the protocol of the outer application.
 
@@ -230,12 +233,15 @@ fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match arguments.as_slice() {
-        [folder] => run(Path::new(folder)),
+        [folder] => runtime::window::run(Path::new(folder)),
+        [folder, "--headless"] => run(Path::new(folder)),
         [folder, "--inspect"] => inspect(Path::new(folder)),
         [folder, "--render", wav, "--seconds", seconds] => {
             let seconds = seconds.parse().context("--seconds takes a number")?;
             render(Path::new(folder), Path::new(wav), seconds)
         }
-        _ => bail!("usage: runtime <project-folder> [--inspect | --render <wav> --seconds <n>]"),
+        _ => bail!(
+            "usage: runtime <project-folder> [--headless | --inspect | --render <wav> --seconds <n>]"
+        ),
     }
 }
