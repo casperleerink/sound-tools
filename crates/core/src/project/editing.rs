@@ -171,6 +171,8 @@ pub(crate) struct History {
     /// The live state of such a record is the middle of a gesture, which no undo step may
     /// hold: nobody ever saw it as a result.
     committed: BTreeMap<InstanceId, Option<Record>>,
+    /// The same for `project.json`, which a tempo drag changes per mouse move.
+    committed_project_file: Option<ProjectFile>,
 }
 
 impl History {
@@ -194,6 +196,31 @@ impl History {
         }
     }
 
+    /// The same for `project.json`. A tempo drag publishes a whole tempo map per mouse move,
+    /// so without this a file change during the drag would take the tempo of one mouse move as
+    /// its before side, and undo would land there.
+    pub fn note_committed_project_file(
+        &mut self,
+        change: &mut Option<(ProjectFile, ProjectFile)>,
+        source: Source,
+    ) {
+        let Some((before, after)) = change else {
+            return;
+        };
+        match source {
+            Source::Load => {}
+            Source::Interface => {
+                self.committed_project_file
+                    .get_or_insert_with(|| before.clone());
+            }
+            Source::Outside | Source::History => {
+                if let Some(committed) = &mut self.committed_project_file {
+                    *before = std::mem::replace(committed, after.clone());
+                }
+            }
+        }
+    }
+
     /// The edit of `step` ends. Its before side becomes what was committed under it, so that
     /// the step starts where the step before it ended.
     fn close(&mut self, step: &mut Step) {
@@ -201,6 +228,11 @@ impl History {
             if let Some(committed) = self.committed.remove(id) {
                 *before = committed;
             }
+        }
+        if let Some((before, _)) = &mut step.project_file
+            && let Some(committed) = self.committed_project_file.take()
+        {
+            *before = committed;
         }
     }
 

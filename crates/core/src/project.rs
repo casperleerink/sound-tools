@@ -401,8 +401,10 @@ impl Project {
         for change in &mut records {
             self.history.note_committed(change, source);
         }
-        let project_file = (project_file_before != self.project_file)
+        let mut project_file = (project_file_before != self.project_file)
             .then(|| (project_file_before, self.project_file.clone()));
+        self.history
+            .note_committed_project_file(&mut project_file, source);
         if project_file.is_some() {
             self.push_event(ProjectEvent::ProjectFileChanged);
         }

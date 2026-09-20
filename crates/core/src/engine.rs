@@ -79,6 +79,11 @@ pub struct EngineStatus {
     /// anything above zero is a bug in that processor.
     pub port_misuses: u64,
     pub playing: bool,
+    /// Blocks in which the project position jumped: one per seek and per stop. It only grows,
+    /// so a control side that keeps the last value knows whether a jump happened since, also
+    /// when it polls less often than the engine runs. A view uses it to tell a jump from the
+    /// position moving with playback.
+    pub jumps: u64,
     /// The project position in frames. It advances only while playing. A seek, a stop and a
     /// tempo map change move it.
     pub playhead_frame: Frames,
@@ -301,6 +306,8 @@ impl Engine {
         self.status.port_misuses += port_misuses.get();
         self.status.event_overflows += dropped_events.get();
         self.status.playing = transport.playing;
+        // `jumped` is set for one block, so this counts one per seek and per stop.
+        self.status.jumps += u64::from(transport.jumped);
         self.status.playhead_frame = transport.frame_range.end;
         self.status.playhead_tick = transport.tick_range.end;
         self.transport.finish_block(self.status.playhead_frame);

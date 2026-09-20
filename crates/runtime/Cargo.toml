@@ -14,6 +14,7 @@ gpui.workspace = true
 gpui_platform.workspace = true
 hound.workspace = true
 instrument.workspace = true
+metronome.workspace = true
 sound-core.workspace = true
 sound-ui.workspace = true
 tone.workspace = true

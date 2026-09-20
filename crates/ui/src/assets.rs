@@ -33,6 +33,7 @@ icons!(
     "info",
     "loader-circle",
     "lock",
+    "metronome",
     "mic",
     "minus",
     "music",

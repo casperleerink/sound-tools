@@ -470,3 +470,80 @@ fn deleting_an_instance_removes_its_saved_connections_in_the_same_step() {
     assert_eq!(harness.project.project_file().connections.len(), 2);
     assert_eq!(harness.level(), 0.375);
 }
+
+/// The tempo map that the transport drags: one tempo change at tick 0.
+fn tempo_map(bpm: f64) -> sound_core::TempoMap {
+    let text =
+        format!(r#"{{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": {bpm}}}]}}"#);
+    serde_json::from_str(&text).unwrap()
+}
+
+fn bpm(harness: &Harness) -> f64 {
+    harness.project.project_file().tempo_map.tempo_changes()[0]
+        .bpm
+        .bpm()
+}
+
+#[test]
+fn no_undo_step_of_a_tempo_gesture_holds_the_middle_of_that_gesture() {
+    let mut harness = Harness::new();
+    connected_dc(&mut harness, "dc", 0.25);
+    assert_eq!(bpm(&harness), 120.0);
+
+    // A tempo drag, as the transport publishes it: a whole tempo map per mouse move.
+    let mut edit = harness.project.begin("Change tempo");
+    let mut changes = Changes::new();
+    changes.set_tempo_map(tempo_map(130.0));
+    harness.project.publish(&mut edit, changes).unwrap();
+    assert_eq!(bpm(&harness), 130.0);
+
+    // An agent writes another tempo halfway through the drag. It applies at once.
+    let outside = crate::tools::project_file(&crate::tools::dc_to_device("dc")).replace("120", "90");
+    harness.write_and_apply("project.json", &outside);
+    assert_eq!(bpm(&harness), 90.0);
+
+    // The drag goes on and is the later write.
+    let mut changes = Changes::new();
+    changes.set_tempo_map(tempo_map(140.0));
+    harness.project.publish(&mut edit, changes).unwrap();
+    harness.project.finish(edit).unwrap();
+    assert_eq!(bpm(&harness), 140.0);
+    assert!(harness.read("project.json").contains("140"));
+
+    // Neither step holds 130, the middle of the drag: the drag undoes to what the file wrote,
+    // and the file change undoes to the tempo before the drag.
+    assert_eq!(
+        harness.project.undo().unwrap().as_deref(),
+        Some("Change tempo")
+    );
+    assert_eq!(bpm(&harness), 90.0);
+    assert!(harness.read("project.json").contains("90"));
+    assert_eq!(
+        harness.project.undo().unwrap().as_deref(),
+        Some("File change")
+    );
+    assert_eq!(bpm(&harness), 120.0);
+    assert!(harness.read("project.json").contains("120"));
+
+    // Redo goes the same way back.
+    harness.project.redo().unwrap();
+    assert_eq!(bpm(&harness), 90.0);
+    harness.project.redo().unwrap();
+    assert_eq!(bpm(&harness), 140.0);
+}
+
+#[test]
+fn cancelling_a_tempo_gesture_leaves_what_the_file_holds() {
+    let mut harness = Harness::new();
+    connected_dc(&mut harness, "dc", 0.25);
+    let mut edit = harness.project.begin("Change tempo");
+    let mut changes = Changes::new();
+    changes.set_tempo_map(tempo_map(130.0));
+    harness.project.publish(&mut edit, changes).unwrap();
+
+    let outside = crate::tools::project_file(&crate::tools::dc_to_device("dc")).replace("120", "90");
+    harness.write_and_apply("project.json", &outside);
+    harness.project.cancel(edit).unwrap();
+    assert_eq!(bpm(&harness), 90.0, "a cancel goes back to what the file holds");
+    assert_eq!(harness.project.undo_label(), Some("File change"));
+}
