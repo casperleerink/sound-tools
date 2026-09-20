@@ -54,7 +54,7 @@ This project is in {{time_signature}}: a beat is {{ticks_per_beat}} ticks and a 
 - Pick ids that say what the thing is, unique in their folder: `bass-bars-5-8`, not `clip-1` and not `Bass Line`.
 - To delete, remove the file or the folder. To move, move the file.
 - The composer can undo your change. Keep no copies.
-- `AGENTS.md`, `CLAUDE.md`, `problems.txt` and `agent-docs/` are written by the runtime. Editing them changes nothing.
+- `AGENTS.md`, `CLAUDE.md`, `problems.txt` and the markdown in `agent-docs/` are written by the runtime. Editing them changes nothing.
 
 ## Check your work
 

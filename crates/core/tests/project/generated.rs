@@ -2,11 +2,13 @@
 //! around them: a tool's own summary and a free id.
 
 use sound_core::{
-    AGENT_DOC_FILE, AGENT_DOCS_FOLDER, Changes, Engine, EngineConfig, NO_PROBLEMS, PROBLEMS_FILE,
-    Project,
+    AGENT_DOC_FILE, AGENT_DOCS_FOLDER, AgentDoc, Changes, Engine, EngineConfig, NO_PROBLEMS,
+    PROBLEMS_FILE, Project, RegistryError,
 };
 
-use crate::tools::{BANK_RECORD, Dc, Harness, SAMPLE_RATE, dc_record, id, level_record, registry};
+use crate::tools::{
+    BANK_RECORD, Dc, EXTENSION, Harness, SAMPLE_RATE, dc_record, id, level_record, registry,
+};
 
 #[test]
 fn the_map_is_written_on_open_and_lists_the_docs_of_the_enabled_extensions() {
@@ -28,6 +30,71 @@ fn the_map_is_written_on_open_and_lists_the_docs_of_the_enabled_extensions() {
     assert!(doc.contains("# Test tools\n\nA bar is 3840 ticks in 4/4."));
     let project_json = harness.read(&format!("{AGENT_DOCS_FOLDER}/project-json.md"));
     assert!(project_json.contains(r#""extensions": ["test"],"#));
+}
+
+/// The runtime owns the markdown of the folder and nothing else in it.
+#[test]
+fn only_a_stale_doc_is_taken_out_of_the_docs_folder() {
+    let harness = Harness::new();
+    let folder = harness.path(AGENT_DOCS_FOLDER);
+    std::fs::write(folder.join("recording.md"), "# Recording\n").unwrap();
+    std::fs::write(folder.join("notes.txt"), "my notes").unwrap();
+    std::fs::write(folder.join("take.wav"), [0_u8; 4]).unwrap();
+    std::fs::create_dir(folder.join("mine")).unwrap();
+
+    let harness = harness.reopen();
+    assert!(!folder.join("recording.md").exists(), "a stale doc stays");
+    for kept in ["notes.txt", "take.wav", "mine"] {
+        assert!(folder.join(kept).exists(), "{kept} was taken away");
+    }
+    let doc = harness.read(&format!("{AGENT_DOCS_FOLDER}/test-tools.md"));
+    assert!(doc.contains("# Test tools"), "the docs are written again");
+}
+
+#[test]
+fn a_doc_name_that_is_not_a_file_name_is_refused() {
+    let doc = |name| AgentDoc {
+        name,
+        when: "Never",
+        markdown: "# No\n",
+    };
+    for name in ["../notes", "a/b", "notes.md", "Notes", "", "instance"] {
+        let mut registry = registry();
+        assert_eq!(
+            registry.agent_doc(EXTENSION, doc(name)),
+            Err(RegistryError::InvalidAgentDocName(name)),
+            "{name:?}"
+        );
+        assert_eq!(
+            registry.runtime_agent_doc(doc(name)),
+            Err(RegistryError::InvalidAgentDocName(name)),
+            "{name:?}"
+        );
+    }
+}
+
+/// The doc of `project.json` is in the list from the start, so it is taken like any other.
+#[test]
+fn a_second_doc_of_one_name_is_refused_whoever_registered_the_first() {
+    let doc = |name| AgentDoc {
+        name,
+        when: "Never",
+        markdown: "# No\n",
+    };
+    let mut registry = registry();
+    for name in ["project-json", "test-tools"] {
+        assert_eq!(
+            registry.agent_doc(EXTENSION, doc(name)),
+            Err(RegistryError::DuplicateAgentDoc(name)),
+            "{name}"
+        );
+        assert_eq!(
+            registry.runtime_agent_doc(doc(name)),
+            Err(RegistryError::DuplicateAgentDoc(name)),
+            "{name}"
+        );
+    }
+    assert_eq!(registry.agent_doc(EXTENSION, doc("second")), Ok(()));
 }
 
 #[test]

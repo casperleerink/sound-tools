@@ -21,6 +21,8 @@ pub(crate) const PROJECT_FILE: &str = "project.json";
 pub(crate) const STATE_FOLDER: &str = "state";
 const LOCK_FILE: &str = ".sound-tools.lock";
 const RECORD_EXTENSION: &str = "json";
+/// The generated docs in the agent docs folder. Only these are the runtime's to remove.
+const MARKDOWN_EXTENSION: &str = ".md";
 
 /// The two forms of an instance on disk. The tool decides which one its instances have.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -504,9 +506,10 @@ impl Storage {
         self.write_atomically(&path, contents.as_bytes())
     }
 
-    /// Makes the generated folder `folder` hold exactly `files`, by name and text. Files in it
-    /// that `files` does not name are removed, so a doc of an extension that is no longer
-    /// enabled cannot mislead an agent. Subfolders are left alone: the runtime made none.
+    /// Makes the generated folder `folder` hold `files`, by name and text. A markdown file in
+    /// it that `files` does not name is removed, so a doc of an extension that is no longer
+    /// enabled cannot mislead an agent. Everything else in the folder is left alone: only the
+    /// markdown is the runtime's, and what a composer or an agent puts next to it is theirs.
     pub fn write_generated_folder(
         &self,
         folder: &str,
@@ -524,7 +527,8 @@ impl Storage {
         for entry in entries {
             let entry = entry.map_err(|source| self.io_error(&path, source))?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !files.contains_key(&name) && entry.path().is_file() {
+            let is_stale_doc = name.ends_with(MARKDOWN_EXTENSION) && !files.contains_key(&name);
+            if is_stale_doc && entry.path().is_file() {
                 self.remove_file(&entry.path())?;
             }
         }

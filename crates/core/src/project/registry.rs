@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 use super::Project;
 use super::binding::{BehaviourContext, BehaviourError};
-use super::instance::{Instance, InstanceId, Record, State};
+use super::instance::{Instance, InstanceId, Record, State, is_valid_name};
 use crate::clock::Ticks;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -15,6 +15,10 @@ pub enum RegistryError {
     DuplicateTool(&'static str),
     #[error("an agent doc named {0:?} is already registered")]
     DuplicateAgentDoc(&'static str),
+    #[error(
+        "invalid agent doc name {0:?}: it becomes a file name, so it uses lowercase letters, digits, `-` and `_`"
+    )]
+    InvalidAgentDocName(&'static str),
 }
 
 /// One doc for an agent that works in the project folder with only file access. The runtime
@@ -55,16 +59,29 @@ pub(crate) struct ToolDefinition {
 
 /// Every tool the compiled extensions offer. Registering makes a type available. It creates
 /// no instance and no sound.
-#[derive(Default)]
 pub struct Registry {
     tools: BTreeMap<&'static str, ToolDefinition>,
-    /// In the order they were registered, which is the order of the list in the map.
+    /// In the order they were registered, which is the order of the list in the map. The doc
+    /// of `project.json` is the first, so every project has it and its name is taken.
     agent_docs: Vec<RegisteredDoc>,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Registry {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            tools: BTreeMap::new(),
+            // `project.json` is core, not an extension, so the core brings its doc itself.
+            agent_docs: vec![RegisteredDoc {
+                extension: None,
+                doc: super::generated::PROJECT_FILE_DOC,
+            }],
+        }
     }
 
     /// Registers the tool whose saved state is `S`, under `S::TOOL`, as part of `extension`.
@@ -113,7 +130,13 @@ impl Registry {
         extension: Option<&'static str>,
         doc: AgentDoc,
     ) -> Result<(), RegistryError> {
-        // Two docs of one name would write over each other's file.
+        // The name becomes a file name in the project folder. Without this, `../notes` would
+        // write outside the docs folder.
+        if !is_valid_name(doc.name) {
+            return Err(RegistryError::InvalidAgentDocName(doc.name));
+        }
+        // Two docs of one name would write over each other's file. The doc of `project.json`
+        // is in the list from the start, so its name is taken like any other.
         if self
             .agent_docs
             .iter()
