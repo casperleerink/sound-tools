@@ -7,7 +7,7 @@ The note contract. A tool that sends notes, such as a track, and a tool that pla
 `Note` is one note in a saved record, for example one line of a clip:
 
 ```json
-{"start":0,"length":480,"pitch":60,"velocity":100}
+{"start": 0, "length": 480, "pitch": 60, "velocity": 100}
 ```
 
 | Field | Meaning | Values |
@@ -16,6 +16,8 @@ The note contract. A tool that sends notes, such as a track, and a tool that pla
 | `length` | How long the note is held, in ticks. | whole number, 1 or more |
 | `pitch` | MIDI note number. 60 is middle C, 69 is A4 at 440 Hz. One step is a semitone. | 0 to 127 |
 | `velocity` | How hard the note is played. | 1 to 127 |
+
+This is exactly how the runtime writes a note: spaces after `:` and `,`, and one note per line in a list of notes. Write it the same way, so an edit by an agent and a save by the runtime make no whitespace diff. The compact form without spaces loads too, like any valid JSON.
 
 All four are plain JSON numbers. A value out of range, a fraction or an unknown field does not load, and the message names the range: `pitch must be from 0 to 127, not 128`.
 
@@ -36,6 +38,8 @@ Rules for a sender:
 - Send each event at the frame of its tick: `context.transport.offset_of(tick)`, see "Schedule from the transport" in `crates/core/README.md`.
 - A sender keeps no list of held notes. When the transport says `stopped_playing` or `jumped`, send one `AllOff` at offset 0, before the notes of that block.
 - On one frame, send the offs before the ons. Else the end of one note releases the next note of the same pitch that starts there.
+
+Known limit: `AllOff` releases everything the instrument holds, whoever started it. Once MIDI input feeds the same `notes` port, a transport stop would also release the notes held on the keyboard. This is to be decided with MIDI input.
 
 Rules for an instrument:
 

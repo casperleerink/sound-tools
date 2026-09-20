@@ -19,23 +19,23 @@ The synth owns no children, so an instance is always one file: `state/<name>.jso
     "decay_seconds": 0.2,
     "sustain": 0.7,
     "release_seconds": 0.3,
-    "gain": 0.25
+    "gain": 0.15
   }
 }
 ```
 
-These are also the defaults.
+These are also the defaults, written the way the runtime writes them. Compact JSON loads too.
 
 | Field | Meaning | Values | Default |
 | --- | --- | --- | --- |
 | `waveform` | The oscillator. `"saw"` is bright and full. `"square"` is hollow. | `"saw"`, `"square"` | `"saw"` |
 | `cutoff_hz` | The low-pass filter lets through what is below this frequency. Lower is darker. | 20 to 20000 Hz | 2000 |
-| `resonance` | A peak at the cutoff. 0 is none, 1 is a strong ringing peak. It adds level. | 0 to 1 | 0.2 |
+| `resonance` | A peak at the cutoff. 0 is none, 1 is a strong ringing peak. The synth turns the level down as the resonance goes up, so the peak does not overload the output. | 0 to 1 | 0.2 |
 | `attack_seconds` | From note on to full level. | 0.001 to 10 s | 0.005 |
 | `decay_seconds` | From full level down to the sustain level. | 0.001 to 10 s | 0.2 |
 | `sustain` | The level a held note settles at, as a part of full level. 0 makes every note a pluck. | 0 to 1 | 0.7 |
 | `release_seconds` | From note off to silence. | 0.001 to 10 s | 0.3 |
-| `gain` | Linear output gain. With the defaults one note peaks at 0.35 for velocity 127 and at 0.22 for velocity 100. A chord adds up. | 0 to 1 | 0.25 |
+| `gain` | Linear output gain. With the defaults one note peaks at 0.16 for velocity 127 and at 0.10 for velocity 100. A chord adds up: six notes at velocity 127 peak at 0.47 with the saw and 0.67 with the square. Tracks add up too, and there is no mixer yet, so keep it low. | 0 to 1 | 0.15 |
 
 Some starting points: a pluck is `sustain` 0 with `decay_seconds` 0.15 to 0.4. A pad is `attack_seconds` 0.5 or more and `release_seconds` 1 or more. A bass is `cutoff_hz` 300 to 800 with `resonance` near 0.4.
 
@@ -56,8 +56,10 @@ A track connects both itself. To play a synth straight to the device, add connec
 
 ## How it plays
 
-- 16 voices. Each is one oscillator, one low-pass filter of 12 dB per octave and one envelope. The 17th note takes over a voice: the quietest one that was already released, or the oldest held one. The voice keeps its phase and its loudness, so the takeover does not click.
+- 16 voices. Each is one oscillator, one low-pass filter of 12 dB per octave and one envelope. The 17th note takes over a voice: the quietest one that was already released, by its level at that moment, or the oldest held one. The voice keeps its phase and its loudness, so the takeover does not click.
 - Note on and note off apply on their exact frame. Velocity sets the level with a square curve: velocity 64 is a quarter of velocity 127.
+- The loudest single note is one on the cutoff with `resonance` 1. At `gain` 0.25 and velocity 127 it peaks at 0.38 with the saw and 0.75 with the square.
+- A held note with `sustain` 0 ends by itself after its decay. Its voice is then free, and the later note off does nothing.
 - `Off` releases every held note of its pitch. `AllOff` releases everything. Release tails always sound to their end.
 - A synth with no sounding voice does no work. A voice ends when its release reaches silence, and the output is then exactly zero.
 - Everything is allocated when the synth is created. `process` never allocates.

@@ -20,6 +20,13 @@ fn a_note_line_round_trips_as_plain_numbers() {
 }
 
 #[test]
+fn the_form_the_runtime_writes_loads_to_the_same_note() {
+    let spaced = r#"{"start": 0, "length": 480, "pitch": 60, "velocity": 100}"#;
+    let note: Note = serde_json::from_str(LINE).unwrap();
+    assert_eq!(serde_json::from_str::<Note>(spaced).unwrap(), note);
+}
+
+#[test]
 fn the_ends_of_both_ranges_load() {
     let line = r#"{"start":0,"length":1,"pitch":0,"velocity":1}"#;
     assert!(serde_json::from_str::<Note>(line).is_ok());
