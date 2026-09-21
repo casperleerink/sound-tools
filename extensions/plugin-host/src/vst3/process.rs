@@ -43,6 +43,15 @@ pub struct ParameterChange {
     pub value: ParamValue,
 }
 
+/// What a block says it is: a run on a device, or a render. It is the mode of the
+/// `setupProcessing` the block belongs to, which is what VST 3 asks of a host.
+pub fn process_mode(offline: bool) -> int32 {
+    match offline {
+        true => ProcessModes_::kOffline as int32,
+        false => ProcessModes_::kRealtime as int32,
+    }
+}
+
 /// A VST 3 plugin that is started, with everything one block needs.
 pub struct Vst3Processor {
     processor: ComPtr<IAudioProcessor>,
@@ -65,6 +74,8 @@ pub struct Vst3Processor {
     /// Whether the plugin has been told to start processing. It is told here because this is
     /// the thread VST 3 wants that call on.
     processing: bool,
+    /// What every block says it is. The same mode the plugin was set up with.
+    mode: int32,
 }
 
 // SAFETY: everything a `Vst3Processor` holds is reached from one thread at a time. The engine
@@ -81,6 +92,7 @@ impl Vst3Processor {
         output_channels: &[usize],
         pedal_parameter: Option<ParamID>,
         reports: rtrb::Producer<ParameterChange>,
+        mode: int32,
     ) -> Self {
         let events = ComWrapper::new(HostEventList::new());
         let input_changes = ComWrapper::new(HostParameterChanges::new());
@@ -109,6 +121,7 @@ impl Vst3Processor {
             pedal_parameter,
             reports,
             processing: false,
+            mode,
         }
     }
 }
@@ -164,7 +177,7 @@ impl Started for Vst3Processor {
         // is, so what was in it must not be what a block before wrote.
         self.output_buses.clear(frames);
         let mut data = ProcessData {
-            processMode: ProcessModes_::kRealtime as int32,
+            processMode: self.mode,
             symbolicSampleSize: SymbolicSampleSizes_::kSample32 as int32,
             numSamples: frames as int32,
             numInputs: self.input_buses.count() as int32,
@@ -521,10 +534,22 @@ impl HostParameterQueue {
         self.points.borrow_mut().clear();
     }
 
+    /// Adds one point. When the block has no room left, the newest value takes the place of the
+    /// last point instead of being refused, so the value the block ends on is always the one
+    /// the composer played. Refusing it would leave a pedal that came up in a block full of
+    /// pedal moves holding for ever, `AllOff` and all: the plugin would never hear it go up.
+    /// The points in between are what is lost, which is a pedal that moves in smaller steps
+    /// than this block could carry.
+    ///
+    /// It never says no, so nothing above counts a pedal move as an event that was dropped: the
+    /// value did reach the plugin, at a frame a little later than it was played.
     fn add(&self, offset: int32, value: ParamValue) -> bool {
         let mut points = self.points.borrow_mut();
         if points.len() == POINT_CAPACITY {
-            return false;
+            if let Some(last) = points.last_mut() {
+                *last = (offset, value);
+            }
+            return true;
         }
         points.push((offset, value));
         true
@@ -616,12 +641,30 @@ mod tests {
         assert!(changes.add(7, 10, 0.75));
         assert!(changes.add(8, 0, 1.0));
         assert_eq!(changes.used.get(), 2);
-        for point in 0..POINT_CAPACITY {
-            // The queue of 7 already has two points, so this fills it and then refuses.
-            let room = changes.add(7, point as int32, 0.5);
-            assert_eq!(room, point + 2 < POINT_CAPACITY, "at {point}");
+        for point in 0..POINT_CAPACITY * 2 {
+            assert!(changes.add(7, point as int32, 0.5), "at {point}");
         }
+        assert_eq!(changes.queues[0].points.borrow().len(), POINT_CAPACITY);
         changes.clear();
         assert_eq!(changes.used.get(), 0);
+    }
+
+    /// The last value of a block is the one that was played last, whether or not the block had
+    /// room for every move in it. A pedal that came up in a full block and was refused would
+    /// hold for ever.
+    #[test]
+    fn the_last_value_of_a_full_block_is_the_newest_one_and_not_the_one_before_it() {
+        let changes = HostParameterChanges::new();
+        for point in 0..POINT_CAPACITY {
+            assert!(changes.add(1, point as int32, 0.5));
+        }
+        assert_eq!(changes.queues[0].last(), Some(0.5));
+        // The block is full and the pedal comes up. It is the value the plugin must end on.
+        assert!(changes.add(1, POINT_CAPACITY as int32, 0.0));
+        assert_eq!(changes.queues[0].last(), Some(0.0));
+        assert_eq!(changes.queues[0].points.borrow().len(), POINT_CAPACITY);
+        // And at the frame it was played, not the frame of the point it took the place of.
+        let points = changes.queues[0].points.borrow();
+        assert_eq!(points.last().copied(), Some((POINT_CAPACITY as int32, 0.0)));
     }
 }

@@ -119,9 +119,16 @@ folders covers both.
 The child prints one marked line per plugin. Anything else on its output is the plugin's own
 logging, which real plugins do while they load, and it is ignored.
 
-Every child has `SCAN_TIMEOUT`, ten seconds. Licensed plugins hang while they are listed when
-they cannot reach their server, so a child that does not finish is killed, waited for, and
-reported like one that crashed.
+Every child has `SCAN_TIMEOUT`, ten seconds, and the deadline covers the whole bundle. Licensed
+plugins hang while they are listed when they cannot reach their server, so a child that does
+not finish is killed, waited for, and reported like one that crashed.
+
+The deadline covers the threads that read the child's output as well. Both pipes are read while
+the child runs, so a plugin that prints more than a pipe holds is not blocked on its own write;
+and a pipe ends only when its last writer lets go of it, which a licensing helper that the
+plugin left behind and that inherited the pipe does not do. Such a reader is given a quarter of
+a second after the child has ended and is then left to itself: everything the child printed is
+already read, and the scan goes on.
 
 ### Off the thread that draws, and the cache
 
@@ -168,12 +175,6 @@ So:
 
 A plugin installed while the app runs is not found until the next start.
 
-A sampled instrument streams from disk, and an offline render does not wait for one: it runs
-faster than realtime and takes what the plugin has. Measured with the three sampled VST 3
-instruments of this machine: the render made right after their sample files left the file cache
-is silent, and every render after that is byte for byte the same as the one before it, and the
-same across a close and a reopen. That is the plugin and not the host.
-
 `runtime --plugins` prints every plugin of this machine with its format, its id and how long
 the scan took. It is how a composer or an agent finds the id a record needs.
 
@@ -182,6 +183,28 @@ Search folders are `~/Library/Audio/Plug-Ins/CLAP`, `/Library/Audio/Plug-Ins/CLA
 `/Network/Library/Audio/Plug-Ins/VST3` and `VST3_PATH`. Tests point the host at a folder of
 their own, with the repository's own test plugins in it, so no test needs a plugin of the
 machine, and they never read or write the cache.
+
+## Rendering and playing
+
+A render is not a device run, and a plugin is told which it is in the way its own format has:
+
+- VST 3: `ProcessSetup::processMode` is `kOffline` instead of `kRealtime`, and every
+  `ProcessData` of that setup carries the same mode, which is what the format asks.
+- CLAP: the `clap.render` extension, set on the main thread before the plugin is activated.
+
+It is the one thing a plugin can be told that makes a streaming sampler wait for its samples
+instead of playing the silence of what is not loaded yet. What the engine hands a processor is
+`PrepareConfig::offline`, which is the whole of what the core knows about this; `runtime::OFFLINE`
+is the engine `--render` and `--inspect` open a project with.
+
+A render also does the main-thread work of the host for every buffer, exactly as a live session
+does (`runtime::render_block`). A plugin may be silent until its host answers it: CLAP has
+`request_callback`, and a VST 3 plugin's controller has to be given back what the plugin changed
+by itself. A render that only ran the engine would write that silence into the file.
+
+Measured with the three sampled VST 3 instruments of this machine, whose samples stream from
+disk: renders of a project whose samples are loaded are byte for byte the same, one after
+another and across a close and a reopen.
 
 ## What a plugin id is
 
@@ -211,7 +234,25 @@ leaves no diff. A plugin's state is not project state: it is never an undo step,
 redo never touch it.
 
 A VST 3 plugin keeps two states, the component's and the controller's, as a preset file does.
-The asset holds both: `SVT3`, the component's state with its length, then the controller's.
+The asset holds both: `SVT3`, the component's state with its length, then the controller's. The
+controller's state is asked of the edit controller interface whatever object it is, because one
+object that is both halves does not promise that its two states are the same bytes.
+
+The state in the project is the composer's sound, so nothing replaces it with a guess:
+
+- A plugin half that answers `kNotImplemented` or `kResultFalse` keeps no such state, which is
+  what a one-object plugin usually says of its controller half. Any other failure code is a
+  failure: the asset is left exactly as it is and the composer is told
+  (`problems.txt`). A plugin that could not give its state at all is not written at all.
+- A state above `MAX_STATE`, half a gigabyte, is refused before the asset is touched: the two
+  lengths in the file are four bytes each, so a longer one would not read back. The same number
+  bounds what a file that is not ours can make this process allocate.
+- The stream a plugin is given is Steinberg's `MemoryStream` call for call, including a seek
+  past the end: a plugin that leaves room for a header, writes its payload and seeks back to
+  fill the header in is doing something the format allows, and a stream that clamped that seek
+  would write the payload at byte zero for the header to overwrite.
+- A state that could not be written is still to be written: the host tries again at a later
+  poll and when the plugin goes.
 
 What a crash can lose: up to a second of a plugin's own changes, and anything a plugin changed
 without saying so since the project opened.

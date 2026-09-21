@@ -20,7 +20,7 @@
 
 use std::cell::RefCell;
 use std::ffi::{c_char, c_void};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use test_plugin_support as support;
 use vst3::Steinberg::Vst::{
@@ -28,14 +28,16 @@ use vst3::Steinberg::Vst::{
     Event_::EventTypes_, IAudioProcessor, IAudioProcessorTrait, IComponent, IComponentHandler,
     IComponentTrait, IEditController, IEditControllerTrait, IEventListTrait, IMidiMapping,
     IMidiMappingTrait, IParamValueQueueTrait, IParameterChangesTrait, MediaTypes_, ParamID,
-    ParamValue, ParameterInfo, ParameterInfo_::ParameterFlags_, ProcessData, ProcessSetup,
-    RoutingInfo, SpeakerArr, SpeakerArrangement, String128, SymbolicSampleSizes_, TChar,
+    ParamValue, ParameterInfo, ParameterInfo_::ParameterFlags_, ProcessData, ProcessModes_,
+    ProcessSetup, RoutingInfo, SpeakerArr, SpeakerArrangement, String128, SymbolicSampleSizes_,
+    TChar,
 };
 use vst3::Steinberg::{
-    FUnknown, IBStream, IBStreamTrait, IPlugView, IPluginBase, IPluginBaseTrait, IPluginFactory,
-    IPluginFactory2, IPluginFactory2Trait, IPluginFactoryTrait, PClassInfo,
-    PClassInfo_::ClassCardinality_, PClassInfo2, PFactoryInfo, TBool, TUID, int32,
-    kInvalidArgument, kNotImplemented, kResultFalse, kResultOk, kResultTrue, tresult, uint32,
+    FUnknown, IBStream, IBStream_::IStreamSeekMode_, IBStreamTrait, IPlugView, IPluginBase,
+    IPluginBaseTrait, IPluginFactory, IPluginFactory2, IPluginFactory2Trait, IPluginFactoryTrait,
+    PClassInfo, PClassInfo_::ClassCardinality_, PClassInfo2, PFactoryInfo, TBool, TUID, int32,
+    kInternalError, kInvalidArgument, kNotImplemented, kResultFalse, kResultOk, kResultTrue,
+    tresult, uint32,
 };
 use vst3::{Class, ComPtr, ComRef, ComWrapper, Interface, uid};
 
@@ -58,6 +60,11 @@ const TRANSPOSE_RANGE: f64 = 63.0;
 /// How many pedal points one block may carry. Fixed, so `process` never allocates.
 const PEDAL_POINTS: usize = 32;
 
+/// The level the plugin plays at until its controller state says another, and the one it drops
+/// to when it is keeping a controller state and the pedal transposes it. Hundredths.
+const FULL_LEVEL: i32 = 100;
+const HALF_LEVEL: i32 = 50;
+
 /// The plugin. One object for both halves, which VST 3 allows.
 pub struct TestTone {
     audio: RefCell<Audio>,
@@ -66,6 +73,13 @@ pub struct TestTone {
     handler: RefCell<Option<ComPtr<IComponentHandler>>>,
     /// The transpose, read by both halves.
     semitones: AtomicI32,
+    /// How loud the plugin plays, in hundredths. It is the edit controller's own state, which
+    /// is a second state a host must save next to the component's, and this plugin is one
+    /// object for both halves so nothing but asking the controller interface finds it.
+    level: AtomicI32,
+    /// Whether the host has answered this plugin on the main thread. Until it has, a plugin
+    /// that was told to wait for one is silent, as a sampler waiting for its samples is.
+    answered: AtomicBool,
     /// Which plugin of this library this is, for the log.
     plugin: u64,
 }
@@ -78,6 +92,8 @@ struct Audio {
     reports_out: u32,
     /// Whether to say the output is silent and write nothing into it, from the second block on.
     goes_silent: bool,
+    /// Whether this plugin keeps a state in its edit controller as well.
+    controller_state: bool,
 }
 
 // SAFETY: the component is reached from the main thread and the audio thread, never at once:
@@ -99,9 +115,12 @@ impl TestTone {
                 processed: 0,
                 reports_out: support::events_out(),
                 goes_silent: support::told_to(support::SILENT_VARIABLE),
+                controller_state: support::told_to(support::CONTROLLER_STATE_VARIABLE),
             }),
             handler: RefCell::new(None),
             semitones: AtomicI32::new(0),
+            level: AtomicI32::new(FULL_LEVEL),
+            answered: AtomicBool::new(!support::told_to(support::NEEDS_HOST_VARIABLE)),
             plugin: support::next_plugin(),
         }
     }
@@ -222,6 +241,22 @@ impl IComponentTrait for TestTone {
 
     unsafe fn getState(&self, state: *mut IBStream) -> tresult {
         let bytes = support::save_state(self.semitones.load(Ordering::Acquire));
+        // A plugin that writes its payload first and fills the header in afterwards, which is
+        // what a plugin with a chunk length in its header does. The first four bytes are the
+        // header here.
+        if support::told_to(support::HEADER_LAST_VARIABLE) {
+            // SAFETY: the caller gives a stream that lives for this call.
+            let written = unsafe {
+                seek_stream(state, 4)
+                    && write_stream(state, &bytes[4..])
+                    && seek_stream(state, 0)
+                    && write_stream(state, &bytes[..4])
+            };
+            return match written {
+                true => kResultOk,
+                false => kInvalidArgument,
+            };
+        }
         // SAFETY: the caller gives a stream that lives for this call.
         match unsafe { write_stream(state, &bytes) } {
             true => kResultOk,
@@ -279,6 +314,9 @@ impl IAudioProcessorTrait for TestTone {
         }
         self.log("setupProcessing");
         // SAFETY: the caller gave one setup.
+        let mode = unsafe { (*setup).processMode };
+        self.log(&format!("mode[{}]", mode_name(mode)));
+        // SAFETY: as above.
         let sample_rate = unsafe { (*setup).sampleRate };
         if let Ok(mut audio) = self.audio.try_borrow_mut() {
             let semitones = audio.tone.semitones();
@@ -309,9 +347,15 @@ impl IAudioProcessorTrait for TestTone {
                 return kResultFalse;
             };
             // The first one names the thread that processes, which the rest of a log is read
-            // against.
+            // against. A block says what kind of run it belongs to, which must be the mode the
+            // plugin was set up with.
             if audio.processed == 0 {
                 support::log("process", self.plugin, 0);
+                support::log(
+                    &format!("process_mode[{}]", mode_name(data.processMode)),
+                    self.plugin,
+                    0,
+                );
             }
             let frames = data.numSamples.max(0) as usize;
             if data.numOutputs < 1 || data.outputs.is_null() {
@@ -319,6 +363,21 @@ impl IAudioProcessorTrait for TestTone {
             }
             let bus = &mut *data.outputs;
             if bus.numChannels < 2 || bus.__field0.channelBuffers32.is_null() {
+                return kResultOk;
+            }
+            // A plugin that is waiting for its host. It reports a parameter it changed by
+            // itself, which is what a VST 3 plugin has instead of CLAP's callback request, and
+            // makes no sound until the host gives it back through `setParamNormalized`.
+            if !self.answered.load(Ordering::Acquire) {
+                audio.processed += 1;
+                if let Some(changes) = ComRef::from_raw(data.outputParameterChanges) {
+                    let mut index = 0;
+                    let id = TRANSPOSE;
+                    if let Some(queue) = ComRef::from_raw(changes.addParameterData(&id, &mut index))
+                    {
+                        queue.addPoint(0, 0.0, &mut index);
+                    }
+                }
                 return kResultOk;
             }
             // What VST 3 lets a plugin do instead of writing zeros. The host must not play what
@@ -412,6 +471,17 @@ impl IAudioProcessorTrait for TestTone {
             audio
                 .tone
                 .render(&mut left[played..frames], &mut right[played..frames]);
+            // The controller's own state, if this plugin keeps one: how loud it plays. A host
+            // that lost that part of the state plays this plugin at its full level.
+            if audio.controller_state {
+                if transposed {
+                    self.level.store(HALF_LEVEL, Ordering::Release);
+                }
+                let level = self.level.load(Ordering::Acquire) as f32 / FULL_LEVEL as f32;
+                for sample in left.iter_mut() {
+                    *sample *= level;
+                }
+            }
             audio.processed += 1;
 
             // What a host is told about: the transpose the plugin changed by itself, and as
@@ -450,13 +520,38 @@ impl IEditControllerTrait for TestTone {
         unsafe { IComponentTrait::setState(self, state) }
     }
 
-    unsafe fn setState(&self, _state: *mut IBStream) -> tresult {
-        // Everything this plugin keeps is in the component's state.
+    /// The controller's own state, which is the second one a VST 3 host saves. Without the
+    /// switch this plugin keeps everything in the component's state and says so.
+    unsafe fn setState(&self, state: *mut IBStream) -> tresult {
+        if !support::told_to(support::CONTROLLER_STATE_VARIABLE) {
+            return kResultOk;
+        }
+        // SAFETY: the caller gives a stream that lives for this call.
+        let Some(bytes) = (unsafe { read_stream(state) }) else {
+            return kInvalidArgument;
+        };
+        let Some(level) = support::load_controller_state(&bytes) else {
+            return kResultFalse;
+        };
+        self.level.store(level, Ordering::Release);
         kResultOk
     }
 
-    unsafe fn getState(&self, _state: *mut IBStream) -> tresult {
-        kResultOk
+    unsafe fn getState(&self, state: *mut IBStream) -> tresult {
+        // A controller that cannot give its state. A host must keep the file it has.
+        if support::told_to(support::CONTROLLER_FAILS_VARIABLE) {
+            return kInternalError;
+        }
+        if !support::told_to(support::CONTROLLER_STATE_VARIABLE) {
+            // Nothing of its own, which is what a one-object plugin usually says.
+            return kNotImplemented;
+        }
+        let bytes = support::save_controller_state(self.level.load(Ordering::Acquire));
+        // SAFETY: the caller gives a stream that lives for this call.
+        match unsafe { write_stream(state, &bytes) } {
+            true => kResultOk,
+            false => kInvalidArgument,
+        }
     }
 
     unsafe fn getParameterCount(&self) -> int32 {
@@ -525,9 +620,11 @@ impl IEditControllerTrait for TestTone {
     }
 
     unsafe fn setParamNormalized(&self, id: ParamID, value: ParamValue) -> tresult {
-        // The host giving back what the plugin reported. It is already where it belongs.
+        // The host giving back what the plugin reported. It is already where it belongs, and
+        // it is also the main-thread work a plugin that waits for its host waits for.
         if id == TRANSPOSE {
             support::log("setParamNormalized", self.plugin, 0);
+            self.answered.store(true, Ordering::Release);
             let _ = value;
         }
         kResultOk
@@ -722,6 +819,32 @@ unsafe fn read_stream(stream: *mut IBStream) -> Option<Vec<u8>> {
             bytes.extend_from_slice(&chunk[..read as usize]);
         }
         Some(bytes)
+    }
+}
+
+/// Moves the write position of a stream, counted from its start.
+///
+/// # Safety
+///
+/// `stream` must be null or a valid `IBStream` for the length of this call.
+unsafe fn seek_stream(stream: *mut IBStream, to: i64) -> bool {
+    // SAFETY: the caller keeps the contract.
+    unsafe {
+        let Some(stream) = ComRef::from_raw(stream) else {
+            return false;
+        };
+        let mut landed = -1;
+        let result = stream.seek(to, IStreamSeekMode_::kIBSeekSet as int32, &mut landed);
+        result == kResultOk && landed == to
+    }
+}
+
+/// What a process mode is called in the log.
+fn mode_name(mode: int32) -> &'static str {
+    match mode {
+        mode if mode == ProcessModes_::kOffline as int32 => "offline",
+        mode if mode == ProcessModes_::kPrefetch as int32 => "prefetch",
+        _ => "realtime",
     }
 }
 

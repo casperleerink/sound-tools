@@ -24,6 +24,7 @@ use clack_extensions::note_ports::{
     NoteDialect, NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePorts,
     PluginNotePortsImpl,
 };
+use clack_extensions::render::{PluginRender, PluginRenderImpl, RenderMode};
 use clack_extensions::state::{HostState, PluginState, PluginStateImpl};
 use clack_plugin::events::Match;
 use clack_plugin::events::event_types::NoteEndEvent;
@@ -48,6 +49,7 @@ impl Plugin for TestTone {
             .register::<PluginAudioPorts>()
             .register::<PluginNotePorts>()
             .register::<PluginGui>()
+            .register::<PluginRender>()
             .register::<PluginState>();
     }
 }
@@ -69,6 +71,7 @@ impl DefaultPluginFactory for TestTone {
             semitones: AtomicI32::new(0),
             state_is_dirty: AtomicBool::new(false),
             close_the_window: AtomicBool::new(false),
+            answered: AtomicBool::new(!support::told_to(support::NEEDS_HOST_VARIABLE)),
         })
     }
 
@@ -86,6 +89,9 @@ pub struct TestToneShared {
     semitones: AtomicI32,
     state_is_dirty: AtomicBool,
     close_the_window: AtomicBool,
+    /// Whether the host has answered the callback this plugin asked for. Until it has, a plugin
+    /// that was told to wait for one is silent, as a sampler waiting for its samples is.
+    answered: AtomicBool,
 }
 
 impl PluginShared<'_> for TestToneShared {}
@@ -99,6 +105,9 @@ impl<'a> PluginMainThread<'a, TestToneShared> for TestToneMainThread<'a> {
     /// The audio thread asked for this call after it changed the state, or [`PluginGuiImpl::show`]
     /// did because the plugin is to close its own window. Both belong to the main thread.
     fn on_main_thread(&self) {
+        // What a plugin that is waiting for its host waits for. A render that never does the
+        // main-thread work of its host never gets here, and this plugin stays silent.
+        self.shared.answered.store(true, Ordering::Release);
         if self.shared.close_the_window.swap(false, Ordering::AcqRel)
             && let Some(gui) = self.host.shared().get_extension::<HostGui>()
         {
@@ -188,6 +197,23 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
 
     fn hide(&self) -> Result<(), PluginError> {
         log("gui_hide", 0, 0);
+        Ok(())
+    }
+}
+
+/// What kind of run this is. A plugin that streams from disk uses it to wait for its samples
+/// instead of playing silence; this one writes it down, so a test can say what the host said.
+impl PluginRenderImpl for TestToneMainThread<'_> {
+    fn has_hard_realtime_requirement(&self) -> bool {
+        false
+    }
+
+    fn set(&self, mode: RenderMode) -> Result<(), PluginError> {
+        let name = match mode {
+            RenderMode::Offline => "offline",
+            RenderMode::Realtime => "realtime",
+        };
+        log(&format!("mode[{name}]"), 0, 0);
         Ok(())
     }
 }
@@ -306,6 +332,13 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
         // read against.
         if self.processed == 0 {
             log("process", self.plugin, 0);
+        }
+        // A plugin that is waiting for its host: it asks for a callback on the main thread and
+        // makes no sound until it gets one.
+        if !self.shared.answered.load(Ordering::Acquire) {
+            self.processed += 1;
+            self.host.request_callback();
+            return Ok(ProcessStatus::Continue);
         }
         let frames = audio.frames_count() as usize;
         let Some(mut port) = audio.output_port(0) else {

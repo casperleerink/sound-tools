@@ -5,8 +5,10 @@
 //! bundle: a crash costs one bundle and is reported. The child is this program with
 //! [`SCAN_ARGUMENT`], the format and the bundle; tests use a small program of their own.
 //!
-//! Every child has a deadline. A plugin that hangs while it is listed, which licensed ones do
-//! when they cannot reach their server, would otherwise hold the project open for ever.
+//! Every child has a deadline, and it covers the whole bundle: the child, and the threads that
+//! read what it printed. A plugin that hangs while it is listed, which licensed ones do when
+//! they cannot reach their server, would otherwise hold the project open for ever, and so would
+//! one that leaves a helper process behind holding the pipe its output went into.
 //!
 //! The format of a bundle is its file extension, `.clap` or `.vst3`, so one list of folders
 //! covers both and a test folder can hold one of each.
@@ -14,6 +16,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -37,6 +40,15 @@ pub const SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often the child is looked at while the deadline runs. Short enough that a normal scan
 /// pays nothing, long enough that waiting costs no thread.
 const POLL_INTERVAL: Duration = Duration::from_millis(2);
+
+/// How long the threads that read the child's pipes may still take once the child has ended,
+/// inside the deadline of the bundle.
+///
+/// Everything the child printed is in the pipe by the time it exits, so a reader normally ends
+/// in microseconds. One that is still waiting is waiting for a helper process that inherited
+/// the pipe and outlived its parent, which licensed plugins leave behind: that pipe may not end
+/// for the rest of the session, and what it would still carry is not this bundle's.
+const READER_GRACE: Duration = Duration::from_millis(250);
 
 /// One plugin a bundle holds. A bundle can hold several.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,9 +207,12 @@ impl ScanCommand {
         let status = child
             .wait()
             .map_err(|error| format!("the scanner could not be read: {error}"))?;
-        let text = read(output);
+        // The readers get what is left of the bundle's deadline, and no more than the grace: a
+        // pipe that a descendant of the child holds open would otherwise hold the scan.
+        let until = deadline.min(Instant::now() + READER_GRACE);
+        let text = read(output, until);
         if !status.success() {
-            let errors = read(errors);
+            let errors = read(errors, until);
             let message = errors.trim();
             let reason = if message.is_empty() {
                 // A crash gives no message. The exit status says how it ended.
@@ -218,26 +233,60 @@ impl ScanCommand {
     }
 }
 
-/// Reads a pipe of the child on a thread of its own, so the child never blocks on a full one.
-fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Option<JoinHandle<Vec<u8>>> {
-    let mut pipe = pipe?;
-    std::thread::Builder::new()
-        .name("plugin-scan-output".to_string())
-        .spawn(move || {
-            let mut bytes = Vec::new();
-            // A pipe that cannot be read gives what was read before the error.
-            let _read = pipe.read_to_end(&mut bytes);
-            bytes
-        })
-        .ok()
+/// One pipe of the child, being read on a thread of its own.
+struct Draining {
+    reader: JoinHandle<()>,
+    /// What has been read so far. The thread appends to it as the child prints, so whoever
+    /// gives up waiting still has everything the child wrote.
+    bytes: Arc<Mutex<Vec<u8>>>,
 }
 
-/// What such a thread read. A thread that panicked gives nothing, which reads as a child that
-/// printed nothing.
-fn read(reader: Option<JoinHandle<Vec<u8>>>) -> String {
-    let bytes = reader
-        .and_then(|reader| reader.join().ok())
-        .unwrap_or_default();
+/// Reads a pipe of the child on a thread of its own, so the child never blocks on a full one.
+///
+/// Every chunk goes into the shared buffer as it arrives, and not at the end. A pipe ends when
+/// the last writer lets go of it, and a plugin may leave a helper process behind that inherited
+/// it: then this thread waits for that helper and not for the plugin. The bundle is still read,
+/// because what the child printed is already here.
+fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Option<Draining> {
+    let mut pipe = pipe?;
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let filling = bytes.clone();
+    let reader = std::thread::Builder::new()
+        .name("plugin-scan-output".to_string())
+        .spawn(move || {
+            let mut chunk = [0_u8; 8192];
+            // A pipe that cannot be read leaves what was read before the error.
+            while let Ok(read) = pipe.read(&mut chunk) {
+                if read == 0 {
+                    return;
+                }
+                let Ok(mut held) = filling.lock() else {
+                    return;
+                };
+                held.extend_from_slice(&chunk[..read]);
+            }
+        })
+        .ok()?;
+    Some(Draining { reader, bytes })
+}
+
+/// What such a thread has read, waiting for it no longer than the deadline of the bundle.
+///
+/// A thread that is still waiting for a pipe a descendant of the child holds open is left to
+/// it: it ends when that descendant does, it holds nothing but its own pipe, and the scan goes
+/// on. That is what keeps a licensing helper from stopping a scan for ever.
+fn read(draining: Option<Draining>, deadline: Instant) -> String {
+    let Some(draining) = draining else {
+        return String::new();
+    };
+    while !draining.reader.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    let bytes = match draining.bytes.lock() {
+        Ok(bytes) => bytes.clone(),
+        // A thread that panicked, which nothing of ours does while it holds this.
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
     String::from_utf8_lossy(&bytes).into_owned()
 }
 

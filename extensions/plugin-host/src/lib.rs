@@ -252,8 +252,8 @@ fn apply(
     let node = context.processor(PROCESSOR, HostedPlugin::silent)?;
     context.input(NOTES_INPUT, InputEndpoint::new(node, HostedPlugin::NOTES));
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(node, HostedPlugin::AUDIO));
-    let sample_rate = context.prepare_config().sample_rate;
-    match plugins.open(context.id(), state, context.assets(), sample_rate) {
+    let config = context.prepare_config();
+    match plugins.open(context.id(), state, context.assets(), config) {
         Ok(opened) => {
             // Every run hands the engine a plugin. Nothing here asks what the engine already
             // has, so an edit the project rejects leaves the engine and this host as they were.

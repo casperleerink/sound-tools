@@ -206,7 +206,7 @@ fn inspect(folder: &Path) -> Result<()> {
 }
 
 fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
-    let (mut project, mut engine, _plugins) = open_read_only(folder)?;
+    let (mut project, mut engine, plugins) = open_read_only(folder)?;
     print_problems(&project);
     project.engine().play();
     let mut writer = hound::WavWriter::create(
@@ -224,13 +224,17 @@ fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
     while frames_left > 0 {
         let frames = frames_left.min(buffer.len() / OFFLINE.channels);
         let output = &mut buffer[..frames * OFFLINE.channels];
-        engine.process_block(output);
+        // The plugin host is polled for every buffer, as the live loop does: a render answers a
+        // plugin's main-thread requests or it renders what a plugin that is waiting for one
+        // sounds like, which can be nothing at all.
+        for problem in runtime::render_block(&mut project, &mut engine, &plugins, output)? {
+            println!("error: {problem}");
+        }
         for sample in output.iter() {
             peak = peak.max(sample.abs());
             writer.write_sample(*sample)?;
         }
         frames_left -= frames;
-        project.engine().poll()?;
     }
     writer.finalize()?;
     println!("rendered {seconds} s to {}, peak {peak:.4}", wav.display());

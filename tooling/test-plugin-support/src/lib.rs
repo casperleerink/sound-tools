@@ -57,6 +57,42 @@ pub const CLOSE_GUI_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_CLOSE_GUI";
 /// buffers would then play the block before over and over. VST 3 only: CLAP has no such flag.
 pub const SILENT_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SILENT";
 
+/// Makes the VST 3 plugin's edit controller keep a state of its own: how loud it plays. One
+/// object that is both halves does not promise that its two states are the same bytes, and a
+/// host that only asks a controller that is a second object loses this one. VST 3 only.
+pub const CONTROLLER_STATE_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_CONTROLLER_STATE";
+
+/// Makes the VST 3 plugin's edit controller fail to give its state. A host must not write an
+/// empty state over the good one when it cannot get the real one. VST 3 only.
+pub const CONTROLLER_FAILS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_CONTROLLER_FAILS";
+
+/// Makes the VST 3 plugin write its state with the header last: it leaves room, writes the
+/// payload, seeks back and fills the header in. Plugins really do this, and a host stream that
+/// clamps a seek to what it has so far turns it into a state that is not the plugin's.
+/// VST 3 only.
+pub const HEADER_LAST_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_HEADER_LAST";
+
+/// Makes the plugin silent until the host has answered it on the main thread, which is what a
+/// plugin that streams from disk does while it waits for its samples. A render that never does
+/// the main-thread work of its host renders that silence and calls it music.
+///
+/// CLAP asks with `request_callback`. VST 3 has no such call: its plugin reports a parameter it
+/// changed by itself and waits for the host to give it back through `setParamNormalized`, which
+/// is the main-thread work a VST 3 host does for a plugin.
+pub const NEEDS_HOST_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_NEEDS_HOST";
+
+/// Makes the plugin leave a helper process behind while its bundle is listed, one that holds
+/// the output pipe open and outlives the child of the scan, as a licensing helper does.
+///
+/// The value is a path the test owns. The helper holds the pipe until `<path>.stop` is there,
+/// and then makes `<path>.done`, so a test says itself when the helper may go and can wait for
+/// it: nothing of the test is left running. It also gives up by itself after half a minute, so
+/// nothing can wait for ever.
+pub const DESCENDANT_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_DESCENDANT";
+
+/// How long the helper holds the pipe when nobody stops it, in twentieths of a second.
+const DESCENDANT_LIMIT: u32 = 600;
+
 /// The first four bytes of the saved state, so a wrong file is refused instead of read.
 const STATE_MAGIC: [u8; 4] = *b"STT1";
 
@@ -78,11 +114,47 @@ pub fn while_listed(format: &str) {
             println!("test-{format}-plugin: initializing, version 0.1.0, line {line} of noise");
         }
     }
+    if let Some(done) = std::env::var_os(DESCENDANT_VARIABLE) {
+        // A helper that inherits this process's standard output and outlives it. The pipe the
+        // scan reads ends when its last writer lets go, so whoever waits for the end of that
+        // pipe waits for this helper and not for the plugin. The test says when it may go.
+        let script = format!(
+            "n=0; while [ ! -f \"$0.stop\" ] && [ $n -lt {DESCENDANT_LIMIT} ]; do sleep 0.05; n=$((n+1)); done; : > \"$0.done\""
+        );
+        // Starting it blocks this thread for as long as a fork takes, which is what a plugin
+        // that starts a licensing helper does to whoever loads it. This is the child of a
+        // scan; nothing here is near an audio thread.
+        #[allow(clippy::disallowed_methods)]
+        let _started = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .arg(done)
+            .spawn();
+    }
     let hang = std::env::var(HANG_VARIABLE).unwrap_or_default();
     if hang == "1" || hang == format {
         // Long past any deadline a host could give it. Whoever waits must stop waiting.
         std::thread::sleep(std::time::Duration::from_secs(600));
     }
+}
+
+/// The second state of a VST 3 plugin: the one its edit controller keeps, which a host saves
+/// next to the component's. One number, as the component's state is.
+const CONTROLLER_MAGIC: [u8; 4] = *b"STC1";
+
+/// How loud the plugin plays, from the controller's own state, as hundredths.
+pub fn save_controller_state(level: i32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(8);
+    bytes.extend_from_slice(&CONTROLLER_MAGIC);
+    bytes.extend_from_slice(&level.to_le_bytes());
+    bytes
+}
+
+/// What a controller state holds. `None` says the bytes are not one of ours.
+pub fn load_controller_state(bytes: &[u8]) -> Option<i32> {
+    let rest = bytes.strip_prefix(&CONTROLLER_MAGIC)?;
+    let four: [u8; 4] = rest.get(..4)?.try_into().ok()?;
+    Some(i32::from_le_bytes(four))
 }
 
 /// How many things to send out of every process call.

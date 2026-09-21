@@ -5,7 +5,12 @@ use std::time::Duration;
 
 use plugin_host::PluginFormat;
 
-use crate::support::{FORMATS, Harness, Played, id, record, saved_transpose, state_asset};
+use crate::support::{
+    FORMATS, Harness, Played, id, peak, record, saved_controller_level, saved_transpose,
+    state_asset, tell_the_plugin_that_its_controller_fails,
+    tell_the_plugin_to_keep_a_controller_state, tell_the_plugin_to_write_its_header_last,
+    vst3_state,
+};
 
 /// Pedal 100 makes the test plugin transpose by 36 semitones and mark its state dirty.
 fn change_the_state_and_play() -> Vec<Played> {
@@ -213,6 +218,107 @@ fn saved_on_the_way_out(format: PluginFormat) {
     // Undo brings the record back, and with it the plugin, transposed as it was.
     assert!(harness.project.undo().unwrap().is_some());
     assert_eq!(harness.problems(), Vec::<String>::new());
+}
+
+/// VST 3 keeps two states, the component's and the edit controller's, and a plugin that is one
+/// object for both halves may still keep something of its own in each. The host asks the
+/// controller interface whatever the object is, so both parts are in the asset and both come
+/// back: this plugin plays at half its level from its controller state, and it plays that way
+/// again after a reopen with nothing in the clip to make it.
+#[test]
+fn the_controller_state_of_a_one_object_plugin_is_saved_and_comes_back() {
+    tell_the_plugin_to_keep_a_controller_state();
+    let format = PluginFormat::Vst3;
+    let mut harness = Harness::new();
+    harness.add_track(record(format, "piano"), change_the_state_and_play());
+    let before = harness.play(2048);
+    // The pedal transposed the plugin, and with it the level of its controller state went to
+    // half. A note at velocity 100 is a cosine of that amplitude, so this is what half is.
+    let loud = 100.0 / 127.0;
+    assert!(
+        peak(&before.left()) < loud * 0.6,
+        "{}",
+        peak(&before.left())
+    );
+
+    let asset = harness.project.assets().path(&state_asset("piano"));
+    let saved = std::fs::read(&asset).unwrap();
+    assert_eq!(saved_transpose(format, &saved), 36);
+    assert_eq!(saved_controller_level(&saved), Some(50), "{saved:?}");
+
+    // Reopen with no pedal in what is played: the level can only come from the controller part
+    // of the asset.
+    let mut harness = harness.reopen();
+    harness.write_and_apply(
+        "state/track/keys.json",
+        r#"{"tool": "test.keys", "state": {"played": [{"kind": "on", "frame": 128, "pitch": 60, "velocity": 100}]}}"#,
+    );
+    assert_eq!(harness.problems(), Vec::<String>::new());
+    let after = harness.play(2048);
+    assert_eq!(after.left(), before.left());
+}
+
+/// A plugin half that cannot give its state is not an empty state. The file that is there is
+/// the composer's sound, and it stays exactly as it is until the plugin can say what it holds.
+#[test]
+fn a_controller_that_cannot_give_its_state_leaves_the_file_that_is_there_alone() {
+    tell_the_plugin_that_its_controller_fails();
+    let format = PluginFormat::Vst3;
+    let mut harness = Harness::new();
+    // A state the plugin saved before: a transpose of seven and a level of its own.
+    let asset = harness.project.assets().path(&state_asset("piano"));
+    std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
+    let held = vst3_state(&test_plugin_support::save_state(7), b"");
+    std::fs::write(&asset, &held).unwrap();
+
+    harness.add_track(record(format, "piano"), change_the_state_and_play());
+    // The host is polled once, by hand, so the problem of that one save is the one read here.
+    harness.render_without_polling(2048);
+    let problems = harness.plugins.poll(&harness.project);
+    let problems: Vec<String> = problems.iter().map(ToString::to_string).collect();
+    assert!(
+        problems.iter().any(|problem| problem.contains("getState")),
+        "{problems:?}"
+    );
+    assert_eq!(
+        std::fs::read(&asset).unwrap(),
+        held,
+        "the state was damaged"
+    );
+
+    // And closing, which saves every plugin, leaves it alone too.
+    assert_eq!(harness.plugins.close(&harness.project).len(), 1);
+    assert_eq!(
+        std::fs::read(&asset).unwrap(),
+        held,
+        "the state was damaged"
+    );
+}
+
+/// A plugin that leaves room for its header, writes the payload and then seeks back to fill the
+/// header in. A host stream that would not let it seek past what it had written turns that into
+/// a state that is not the plugin's, which is heard on the next open.
+#[test]
+fn a_plugin_that_writes_its_header_last_is_saved_as_it_meant_it() {
+    tell_the_plugin_to_write_its_header_last();
+    let format = PluginFormat::Vst3;
+    let mut harness = Harness::new();
+    harness.add_track(record(format, "piano"), change_the_state_and_play());
+    let before = harness.play(2048);
+
+    let asset = harness.project.assets().path(&state_asset("piano"));
+    let saved = std::fs::read(&asset).unwrap();
+    assert_eq!(saved_transpose(format, &saved), 36);
+
+    // Read back by the plugin itself: the notes are transposed with no pedal to do it.
+    let mut harness = harness.reopen();
+    harness.write_and_apply(
+        "state/track/keys.json",
+        r#"{"tool": "test.keys", "state": {"played": [{"kind": "on", "frame": 128, "pitch": 60, "velocity": 100}]}}"#,
+    );
+    assert_eq!(harness.problems(), Vec::<String>::new());
+    let after = harness.play(2048);
+    assert_eq!(after.left(), before.left());
 }
 
 /// A plugin that says its state changed on every step of a knob drag would have the host

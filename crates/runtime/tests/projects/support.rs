@@ -35,6 +35,9 @@ pub fn clip(start: u64, length: u64, notes: &[(u64, u64, u8)]) -> String {
 pub struct Harness {
     pub project: Project,
     pub engine: Engine,
+    /// The plugin host of this project. A render polls it for every buffer, which is what the
+    /// runtime's own render loop does: a plugin may be waiting for main-thread work.
+    pub plugins: Plugins,
     /// The time of the last outside change. Each one comes a minute after the one before, so
     /// it is an undo step of its own, as for changes made by hand. Without this, outside
     /// changes that a test makes within milliseconds would join (`OUTSIDE_UNDO_WINDOW`).
@@ -50,10 +53,11 @@ impl Harness {
 
     pub fn open(folder: tempfile::TempDir) -> Self {
         let (control, engine) = Engine::new(OFFLINE);
-        let (project, _plugins) = runtime::open_or_create(folder.path(), control).unwrap();
+        let (project, plugins) = runtime::open_or_create(folder.path(), control).unwrap();
         Self {
             project,
             engine,
+            plugins,
             now: Instant::now(),
             folder,
         }
@@ -70,6 +74,7 @@ impl Harness {
         let harness = Self {
             project,
             engine,
+            plugins: plugins.clone(),
             now: Instant::now(),
             folder,
         };
@@ -156,7 +161,8 @@ impl Harness {
     }
 
     pub fn render(&mut self, frames: usize) -> Vec<f32> {
-        let output = runtime::render(&mut self.project, &mut self.engine, frames).unwrap();
+        let output =
+            runtime::render(&mut self.project, &mut self.engine, &self.plugins, frames).unwrap();
         let status = self.project.engine().poll().unwrap();
         assert_eq!((status.event_overflows, status.port_misuses), (0, 0));
         output

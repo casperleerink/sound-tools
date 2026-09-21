@@ -20,11 +20,12 @@ use clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiError, GuiSize, HostGui, HostGuiImpl, PluginGui as ClapGui,
 };
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
+use clack_extensions::render::{PluginRender, RenderMode};
 use clack_extensions::state::{HostState, HostStateImpl, PluginState};
 use clack_host::events::Match;
 use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent};
 use clack_host::prelude::*;
-use sound_core::MAX_BLOCK;
+use sound_core::{MAX_BLOCK, PrepareConfig};
 
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
 use crate::host::{HOST_NAME, HOST_URL, HOST_VENDOR, HOST_VERSION};
@@ -178,7 +179,7 @@ pub fn default_search_paths() -> Vec<std::path::PathBuf> {
 pub fn load(
     found: &ScannedPlugin,
     saved: Option<&[u8]>,
-    sample_rate: u32,
+    config: PrepareConfig,
 ) -> Result<Opening, PluginProblem> {
     let plugin_id = &found.id;
     let fail = |message: String| PluginProblem::DidNotLoad {
@@ -206,6 +207,21 @@ pub fn load(
     )
     .map_err(|error| fail(error.to_string()))?;
 
+    // What kind of run this is, before the plugin is activated and on the main thread, which
+    // is where CLAP puts this call. A plugin that streams from disk may wait for its samples
+    // in an offline render instead of playing silence. A plugin that has no opinion has no
+    // extension, and one that refuses the mode keeps the one it had.
+    if let Some(render) = instance
+        .plugin_shared_handle()
+        .get_extension::<PluginRender>()
+    {
+        let mode = match config.offline {
+            true => RenderMode::Offline,
+            false => RenderMode::Realtime,
+        };
+        let _refused = render.set(&instance.plugin_handle(), mode);
+    }
+
     // The saved state before the plugin is activated, as CLAP asks.
     if let Some(bytes) = saved {
         let state = instance.access_shared_handler(|shared| shared.state.get().copied());
@@ -222,7 +238,7 @@ pub fn load(
 
     let ports = read_ports(&mut instance);
     let configuration = PluginAudioConfiguration {
-        sample_rate: f64::from(sample_rate),
+        sample_rate: f64::from(config.sample_rate),
         min_frames_count: 1,
         max_frames_count: MAX_BLOCK as u32,
     };

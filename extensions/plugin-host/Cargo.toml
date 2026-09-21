@@ -20,6 +20,7 @@ clack-extensions = { workspace = true, features = [
   "audio-ports",
   "gui",
   "note-ports",
+  "render",
   "state",
 ] }
 clack-host.workspace = true
@@ -39,4 +40,5 @@ vst3.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 test-clap-plugin.workspace = true
+test-plugin-support.workspace = true
 test-vst3-plugin.workspace = true

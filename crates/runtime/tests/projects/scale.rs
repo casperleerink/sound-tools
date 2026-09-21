@@ -62,7 +62,7 @@ fn hundred_tracks_of_hundred_clips_open_play_and_take_an_edit() {
 
     let started = Instant::now();
     let (control, mut engine) = sound_core::Engine::new(OFFLINE);
-    let (mut project, _plugins) = runtime::open_or_create(&root, control).unwrap();
+    let (mut project, plugins) = runtime::open_or_create(&root, control).unwrap();
     println!("open: {:?}", started.elapsed());
     assert_eq!(project.problems(), []);
     assert_eq!(project.instances().count() as u64, 3 + TRACKS * (CLIPS + 2));
@@ -72,7 +72,7 @@ fn hundred_tracks_of_hundred_clips_open_play_and_take_an_edit() {
     let seconds = 10;
     let frames = seconds * OFFLINE.sample_rate as usize;
     let started = Instant::now();
-    let before = runtime::render(&mut project, &mut engine, frames).unwrap();
+    let before = runtime::render(&mut project, &mut engine, &plugins, frames).unwrap();
     let ratio = seconds as f64 / started.elapsed().as_secs_f64();
     println!("offline, {seconds} s of playback: {ratio:.1} times realtime");
     assert!(before.iter().any(|sample| sample.abs() > 0.01));
@@ -102,7 +102,7 @@ fn hundred_tracks_of_hundred_clips_open_play_and_take_an_edit() {
         started.elapsed()
     );
 
-    let after = runtime::render(&mut project, &mut engine, frames).unwrap();
+    let after = runtime::render(&mut project, &mut engine, &plugins, frames).unwrap();
     assert!(after.iter().any(|sample| sample.abs() > 0.01));
     let status = project.engine().poll().unwrap();
     assert_eq!((status.event_overflows, status.port_misuses), (0, 0));

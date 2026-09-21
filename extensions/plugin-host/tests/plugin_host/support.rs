@@ -241,6 +241,29 @@ pub fn tell_the_plugin_to_go_silent() {
     unsafe { std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_SILENT", "1") };
 }
 
+/// Makes the VST 3 test plugin keep a state in its edit controller as well as in its component:
+/// how loud it plays, which the pedal halves along with the transpose. Same rules as
+/// [`tell_the_plugin`].
+pub fn tell_the_plugin_to_keep_a_controller_state() {
+    // SAFETY: nextest runs one test per process and this is called before any thread but this
+    // one exists, so no other thread can be reading the environment.
+    unsafe { std::env::set_var(test_plugin_support::CONTROLLER_STATE_VARIABLE, "1") };
+}
+
+/// Makes the VST 3 test plugin's edit controller fail to give its state. Same rules as
+/// [`tell_the_plugin`].
+pub fn tell_the_plugin_that_its_controller_fails() {
+    // SAFETY: as above.
+    unsafe { std::env::set_var(test_plugin_support::CONTROLLER_FAILS_VARIABLE, "1") };
+}
+
+/// Makes the VST 3 test plugin write its state with the header last: room first, then the
+/// payload, then back to the start for the header. Same rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_write_its_header_last() {
+    // SAFETY: as above.
+    unsafe { std::env::set_var(test_plugin_support::HEADER_LAST_VARIABLE, "1") };
+}
+
 /// Makes the test plugin close its own window as soon as the host has shown it, which is what
 /// a composer does with the title bar of a real plugin's window. Same rules as
 /// [`tell_the_plugin`].
@@ -339,6 +362,34 @@ pub fn saved_transpose(format: PluginFormat, bytes: &[u8]) -> i32 {
     i32::from_le_bytes([own[4], own[5], own[6], own[7]])
 }
 
+/// The level the plugin's edit controller saved, out of the controller part of a VST 3 state
+/// asset. `None` says the asset holds no controller state at all.
+pub fn saved_controller_level(bytes: &[u8]) -> Option<i32> {
+    assert_eq!(&bytes[..4], b"SVT3", "not a VST 3 state asset");
+    let length = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    let rest = &bytes[8 + length..];
+    let controller = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
+    test_plugin_support::load_controller_state(&rest[4..4 + controller])
+}
+
+/// A VST 3 state asset as this host writes one, for a test that puts a state in the project
+/// before any plugin has run.
+pub fn vst3_state(component: &[u8], controller: &[u8]) -> Vec<u8> {
+    let mut bytes = b"SVT3".to_vec();
+    bytes.extend_from_slice(&(component.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(component);
+    bytes.extend_from_slice(&(controller.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(controller);
+    bytes
+}
+
+/// The loudest sample of a channel.
+pub fn peak(samples: &[f32]) -> f32 {
+    samples
+        .iter()
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
+}
+
 pub fn state_asset(name: &str) -> AssetName {
     AssetName::new("plugin-state", name, "bin").expect("an asset name")
 }
@@ -355,6 +406,19 @@ pub struct Harness {
 impl Harness {
     pub fn new() -> Self {
         Self::open(tempfile::tempdir().expect("a temporary folder"), true)
+    }
+
+    /// A project whose engine renders instead of playing on a device, which is what `--render`
+    /// opens. Every plugin is told, in the way its own format has for it.
+    pub fn rendering_offline() -> Self {
+        let folder = tempfile::tempdir().expect("a temporary folder");
+        let scan_folder = plugin_folder(folder.path());
+        let plugins = Plugins::new(vec![scan_folder], scanner(), no_cache());
+        Self::with_plugins_and_engine(
+            folder,
+            plugins,
+            EngineConfig::new(SAMPLE_RATE, 2).rendering_offline(),
+        )
     }
 
     /// Opens a folder again, as closing and reopening a project does.
@@ -387,6 +451,15 @@ impl Harness {
     /// A project on `folder` with a host that is already made, for a test that wants to say
     /// how it scans.
     pub fn with_plugins(folder: tempfile::TempDir, plugins: Plugins) -> Self {
+        Self::with_plugins_and_engine(folder, plugins, EngineConfig::new(SAMPLE_RATE, 2))
+    }
+
+    /// The same, with the engine given: a device run or a render.
+    pub fn with_plugins_and_engine(
+        folder: tempfile::TempDir,
+        plugins: Plugins,
+        config: EngineConfig,
+    ) -> Self {
         let mut registry = Registry::new();
         plugin_host::register(&mut registry, plugins.clone()).expect("the plugin host registers");
         registry
@@ -401,7 +474,7 @@ impl Harness {
             .tool::<Picky>("test")
             .expect("the picky tool registers")
             .behaviour(apply_picky);
-        let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+        let (control, engine) = Engine::new(config);
         let project = Project::open(folder.path(), registry, control).expect("an open project");
         Self {
             project,

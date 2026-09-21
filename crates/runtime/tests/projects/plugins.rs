@@ -208,11 +208,44 @@ fn an_offline_render_of_a_read_only_project_plays_the_plugin() {
 
     let root = harness.project.root().to_path_buf();
     let plugins = test_plugin_host(&root, false);
-    let (mut project, mut engine) = runtime::open_read_only_with(&root, plugins).unwrap();
+    let (mut project, mut engine) = runtime::open_read_only_with(&root, plugins.clone()).unwrap();
     assert_eq!(project.problems(), []);
     project.engine().play();
-    let rendered = runtime::render(&mut project, &mut engine, 16_000).unwrap();
+    let rendered = runtime::render(&mut project, &mut engine, &plugins, 16_000).unwrap();
     assert_eq!(difference(&live, &rendered), None);
+}
+
+/// A render does the main-thread work of the plugin host for every buffer, as a live session
+/// does. A plugin may be silent until the host answers it: a sampler that streams from disk
+/// waits that way, and a render that only ran the engine would write its silence to the file
+/// and call it the piece.
+#[test]
+fn a_render_answers_a_plugin_that_is_waiting_for_its_host() {
+    tell_the_plugin_to_wait_for_its_host();
+    for format in [PluginFormat::Clap, PluginFormat::Vst3] {
+        let folder = tempfile::tempdir().unwrap();
+        let (mut harness, _plugins) = Harness::with_test_plugin(folder);
+        write_plugin_track_of(&mut harness, format, "piano", 1, &clip_with_pedal(None));
+        assert_eq!(harness.project.problems(), []);
+
+        let root = harness.project.root().to_path_buf();
+        let plugins = test_plugin_host(&root, false);
+        let (mut project, mut engine) =
+            runtime::open_read_only_with(&root, plugins.clone()).unwrap();
+        project.engine().play();
+        let rendered = runtime::render(&mut project, &mut engine, &plugins, 16_000).unwrap();
+
+        let note = 480 * TICK;
+        let sounded = left(&rendered)[note..].iter().any(|sample| *sample != 0.0);
+        assert!(sounded, "{format:?}: the render is silent");
+    }
+}
+
+/// Makes both test plugins wait for the main-thread work of their host before they sound. The
+/// plugin runs in this process, and nextest gives every test a process of its own.
+fn tell_the_plugin_to_wait_for_its_host() {
+    // SAFETY: nothing but this thread exists yet, so no other thread reads the environment.
+    unsafe { std::env::set_var(test_plugin_support::NEEDS_HOST_VARIABLE, "1") };
 }
 
 /// Both formats in one piece. The two test plugins are the same instrument, so the two tracks

@@ -22,13 +22,15 @@ use sound_ui::{DeviceOffer, Devices, Views};
 
 const PROJECT_FILE: &str = "project.json";
 
-/// Offline renders have no device to ask.
+/// Offline renders have no device to ask. `offline` is what every processor is told, and what a
+/// hosted plugin passes on to the plugin in the way its format intends.
 pub const OFFLINE: EngineConfig = EngineConfig {
     sample_rate: 48_000,
     channels: 2,
     ring_capacity: 64,
     event_capacity: 256,
     processor_slots: 256,
+    offline: true,
 };
 
 /// The same text on every machine and for every build, so a project in git gets no diff from
@@ -318,13 +320,35 @@ pub fn problems(project: &Project) -> String {
     lines.join("\n")
 }
 
+/// One buffer of an offline render: the engine, and then the main-thread work of the plugin
+/// host, exactly as the loop of a live session does.
+///
+/// A render that leaves the host out is a render in which a plugin's main-thread requests are
+/// never answered: a CLAP plugin that asked for a callback waits for ever, and what a VST 3
+/// plugin changed by itself never reaches its controller. A plugin may be silent until it is
+/// answered, so this is not a nicety. Both callers of a render loop go through here.
+pub fn render_block(
+    project: &mut Project,
+    engine: &mut Engine,
+    plugins: &Plugins,
+    output: &mut [f32],
+) -> Result<Vec<plugin_host::PluginProblem>> {
+    engine.process_block(output);
+    project.engine().poll()?;
+    Ok(plugins.poll(project))
+}
+
 /// Renders `frames` frames in device buffers of 512 frames, interleaved by channel.
-pub fn render(project: &mut Project, engine: &mut Engine, frames: usize) -> Result<Vec<f32>> {
+pub fn render(
+    project: &mut Project,
+    engine: &mut Engine,
+    plugins: &Plugins,
+    frames: usize,
+) -> Result<Vec<f32>> {
     let channels = engine.channels();
     let mut output = vec![0.0_f32; frames * channels];
     for buffer in output.chunks_mut(512 * channels) {
-        engine.process_block(buffer);
-        project.engine().poll()?;
+        render_block(project, engine, plugins, buffer)?;
     }
     Ok(output)
 }

@@ -21,33 +21,33 @@ use vst3::Steinberg::Vst::{
     BusDirections_, BusInfo, ControllerNumbers_, IAudioProcessor, IAudioProcessorTrait, IComponent,
     IComponent_iid, IComponentTrait, IConnectionPoint, IConnectionPointTrait, IEditController,
     IEditController_iid, IEditControllerTrait, IMidiMapping, IMidiMappingTrait, MediaTypes_,
-    ParamID, ProcessModes_, ProcessSetup, SpeakerArr, SpeakerArrangement, SymbolicSampleSizes_,
+    ParamID, ProcessSetup, SpeakerArr, SpeakerArrangement, SymbolicSampleSizes_,
 };
-use vst3::Steinberg::{IPluginBaseTrait, TUID, int32, kResultOk, kResultTrue};
+use vst3::Steinberg::{
+    IPluginBaseTrait, TUID, int32, kNotImplemented, kResultFalse, kResultOk, kResultTrue,
+};
 use vst3::{ComPtr, ComWrapper};
 
 use super::context::{Handler, HostContext, as_handler, as_unknown};
 use super::module::Module;
-use super::process::{ParameterChange, REPORT_CAPACITY, Vst3Processor};
+use super::process::{ParameterChange, REPORT_CAPACITY, Vst3Processor, process_mode};
 use super::stream::{MemoryStream, as_stream};
-use super::{class_id_of, refused};
+use super::{MAX_STATE, class_id_of, refused};
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
 use crate::scan::ScannedPlugin;
 use crate::{PluginProblem, processor::not_ours};
+
+use sound_core::PrepareConfig;
 
 /// What a state asset of a VST 3 plugin holds. VST 3 keeps two states, the component's and the
 /// controller's, and a preset file holds both, so this file holds both as well.
 const MAGIC: [u8; 4] = *b"SVT3";
 
-/// The biggest state this host reads back. A plugin that writes more is saved all the same;
-/// this only bounds what a file that is not ours can make this process allocate.
-const MAX_STATE: usize = 512 * 1024 * 1024;
-
 /// Loads the plugin `found` names, with `saved` as its own state, and starts it.
 pub fn load(
     found: &ScannedPlugin,
     saved: Option<&[u8]>,
-    sample_rate: u32,
+    config: PrepareConfig,
 ) -> Result<Opening, PluginProblem> {
     let plugin_id = found.id.clone();
     let fail = |message: String| PluginProblem::DidNotLoad {
@@ -151,11 +151,15 @@ pub fn load(
             1,
         );
 
+        // A render is told to the plugin here and carried in every block below, which is what
+        // VST 3 asks: the mode of a `ProcessData` is the mode of the `setupProcessing` it
+        // belongs to. A streaming sampler may wait for its samples in an offline render.
+        let mode = process_mode(config.offline);
         let mut setup = ProcessSetup {
-            processMode: ProcessModes_::kRealtime as int32,
+            processMode: mode,
             symbolicSampleSize: SymbolicSampleSizes_::kSample32 as int32,
             maxSamplesPerBlock: sound_core::MAX_BLOCK as int32,
-            sampleRate: f64::from(sample_rate),
+            sampleRate: f64::from(config.sample_rate),
         };
         let result = processor.setupProcessing(&mut setup);
         if result != kResultOk && result != kResultTrue {
@@ -176,6 +180,7 @@ pub fn load(
             &outputs,
             pedal_parameter,
             reports,
+            mode,
         );
         let notes = match pedal_parameter {
             Some(_) => Vec::new(),
@@ -298,25 +303,32 @@ impl LoadedPlugin for Vst3Plugin {
     }
 
     fn save_state(&mut self) -> Result<Vec<u8>, String> {
-        let component = MemoryStream::writing();
-        let stream = as_stream(&component).ok_or("the state stream")?;
-        // SAFETY: the component came from the plugin and is alive, and the stream outlives the
-        // call.
-        let result = unsafe { self.joined.component.getState(stream.as_ptr()) };
-        if result != kResultOk && result != kResultTrue {
-            return Err(format!("the plugin answered {result} to getState"));
-        }
-        let mut controller_bytes = Vec::new();
-        if let Some(controller) = &self.joined.separate {
-            let written = MemoryStream::writing();
-            let stream = as_stream(&written).ok_or("the state stream")?;
+        // SAFETY: both objects came from the plugin and are alive, and each stream outlives the
+        // call it is given to.
+        let component = unsafe {
+            asked_for_state("the plugin", |stream| {
+                self.joined.component.getState(stream)
+            })
+        }?;
+        // Whatever object the controller is. One object that implements both interfaces does
+        // not promise that its two states are the same bytes, and the load gives this part back
+        // through `IEditController::setState` whatever the object identity, so the save asks
+        // the same way. Only `initialize` and `terminate` depend on the two being separate.
+        let controller = match &self.joined.controller {
             // SAFETY: as above.
-            let result = unsafe { controller.getState(stream.as_ptr()) };
-            if result == kResultOk || result == kResultTrue {
-                controller_bytes = written.written();
-            }
-        }
-        Ok(write_state(&component.written(), &controller_bytes))
+            Some(controller) => unsafe {
+                asked_for_state("the plugin's controller", |stream| {
+                    controller.getState(stream)
+                })
+            }?,
+            None => None,
+        };
+        // A plugin that keeps no state of its own is not written at all, so nothing replaces
+        // what is in the asset with a file that says "this plugin holds nothing".
+        let Some(component) = component else {
+            return Ok(Vec::new());
+        };
+        write_state(&component, &controller.unwrap_or_default())
     }
 
     fn gui(&mut self) -> Option<&mut dyn PluginGui> {
@@ -454,15 +466,58 @@ unsafe fn pedal_parameter(controller: Option<&ComPtr<IEditController>>) -> Optio
     (result == kResultOk).then_some(id)
 }
 
+/// One half of a plugin's state, out of the plugin.
+///
+/// `Ok(None)` is "this plugin keeps no such state", which VST 3 says with `kNotImplemented` or
+/// `kResultFalse` and which a one-object plugin usually says of its controller half. Every
+/// other failure code is an error, so a plugin that could not give its state does not have an
+/// empty one written over the good file that is already there.
+///
+/// # Safety
+///
+/// The call must go to an object that is alive. The stream it is given lives for the call.
+unsafe fn asked_for_state(
+    whose: &str,
+    call: impl FnOnce(*mut vst3::Steinberg::IBStream) -> int32,
+) -> Result<Option<Vec<u8>>, String> {
+    let written = MemoryStream::writing();
+    let stream = as_stream(&written).ok_or("the state stream")?;
+    // SAFETY: the caller keeps the contract, and the stream outlives the call.
+    let result = not_ours(|| call(stream.as_ptr()));
+    if result == kResultOk || result == kResultTrue {
+        return Ok(Some(written.written()));
+    }
+    // The two ways VST 3 has of saying "not mine". Everything else is a failure.
+    if result == kNotImplemented || result == kResultFalse {
+        return Ok(None);
+    }
+    Err(format!("{whose} answered {result} to getState"))
+}
+
 /// A state asset: the component's state and the controller's, in one file.
-fn write_state(component: &[u8], controller: &[u8]) -> Vec<u8> {
+///
+/// A state that could not be read back is not written: the lengths are four bytes each, so a
+/// part above [`MAX_STATE`] would be written with a length that is not its own and the file
+/// would be unreadable. The asset that is there is left alone and the composer is told.
+fn write_state(component: &[u8], controller: &[u8]) -> Result<Vec<u8>, String> {
+    let too_big = |what: &str, length: usize| {
+        format!(
+            "the {what} state is {length} bytes, more than the {MAX_STATE} a state file holds. The file that is there is left as it is"
+        )
+    };
+    if component.len() > MAX_STATE {
+        return Err(too_big("plugin's", component.len()));
+    }
+    if controller.len() > MAX_STATE {
+        return Err(too_big("plugin controller's", controller.len()));
+    }
     let mut bytes = Vec::with_capacity(MAGIC.len() + 8 + component.len() + controller.len());
     bytes.extend_from_slice(&MAGIC);
     bytes.extend_from_slice(&(component.len() as u32).to_le_bytes());
     bytes.extend_from_slice(component);
     bytes.extend_from_slice(&(controller.len() as u32).to_le_bytes());
     bytes.extend_from_slice(controller);
-    bytes
+    Ok(bytes)
 }
 
 /// The two states in a state asset. An error says the file is not one this host wrote.
@@ -507,6 +562,18 @@ unsafe fn read_state(
     let (component_bytes, controller_bytes) = read_parts(bytes).map_err(not_read)?;
     let saved = MemoryStream::reading(component_bytes);
     let stream = as_stream(&saved).ok_or_else(|| not_read("the state stream".to_string()))?;
+    // A plugin that says it does not take a state is not a failure: a one-object plugin says
+    // exactly that of `setComponentState`, because the state is already where it belongs. Any
+    // other failure code is one, and the plugin does not load: a plugin that came up with half
+    // of its state would write that half over the good file at the next save.
+    let took = |whose: &str, call: &str, result: int32| {
+        let answered = result == kResultOk || result == kResultTrue;
+        let not_mine = result == kNotImplemented || result == kResultFalse;
+        match answered || not_mine {
+            true => Ok(()),
+            false => Err(not_read(format!("{whose} answered {result} to {call}"))),
+        }
+    };
     // SAFETY: the caller keeps the contract, and the stream outlives every call below.
     unsafe {
         let result = not_ours(|| component.setState(stream.as_ptr()));
@@ -519,12 +586,14 @@ unsafe fn read_state(
             // The controller is given the component's state as well, which is how it shows
             // what the component really holds.
             saved.rewind();
-            not_ours(|| controller.setComponentState(stream.as_ptr()));
+            let result = not_ours(|| controller.setComponentState(stream.as_ptr()));
+            took("the plugin's controller", "setComponentState", result)?;
             if !controller_bytes.is_empty() {
                 let own = MemoryStream::reading(controller_bytes);
-                if let Some(own) = as_stream(&own) {
-                    not_ours(|| controller.setState(own.as_ptr()));
-                }
+                let own =
+                    as_stream(&own).ok_or_else(|| not_read("the state stream".to_string()))?;
+                let result = not_ours(|| controller.setState(own.as_ptr()));
+                took("the plugin's controller", "setState", result)?;
             }
         }
     }
@@ -535,9 +604,13 @@ unsafe fn read_state(
 mod tests {
     use super::*;
 
+    fn written(component: &[u8], controller: &[u8]) -> Vec<u8> {
+        write_state(component, controller).expect("a state this size is written")
+    }
+
     #[test]
     fn a_state_asset_holds_both_states_and_reads_back_as_it_was_written() {
-        let bytes = write_state(b"component", b"controller");
+        let bytes = written(b"component", b"controller");
         assert_eq!(
             read_parts(&bytes),
             Ok((&b"component"[..], &b"controller"[..]))
@@ -546,7 +619,7 @@ mod tests {
 
     #[test]
     fn a_state_asset_of_a_plugin_that_has_only_a_component_reads_back() {
-        let bytes = write_state(b"component", b"");
+        let bytes = written(b"component", b"");
         assert_eq!(read_parts(&bytes), Ok((&b"component"[..], &b""[..])));
     }
 
@@ -555,6 +628,20 @@ mod tests {
         assert!(read_parts(b"nonsense").is_err());
         assert!(read_parts(b"SVT3\xff\xff\xff\x0f").is_err());
         assert!(read_parts(b"SVT3\x08\x00\x00\x00ab").is_err());
+    }
+
+    /// A state longer than the four bytes its length is written in would be read back as
+    /// another state, or as nothing. It is refused before the asset is touched, so what the
+    /// plugin saved last is still there.
+    #[test]
+    fn a_state_too_long_to_be_read_back_is_refused_instead_of_written() {
+        // Half a gigabyte of zeros, which the system gives as pages it never has to fill in
+        // because nothing here writes into them. The length is what is checked.
+        let long = vec![0_u8; MAX_STATE + 1];
+        let error = write_state(&long, b"").expect_err("a state this long is refused");
+        assert!(error.contains("left as it is"), "{error}");
+        let error = write_state(b"component", &long).expect_err("a controller state is too");
+        assert!(error.contains("controller"), "{error}");
     }
 
     #[test]

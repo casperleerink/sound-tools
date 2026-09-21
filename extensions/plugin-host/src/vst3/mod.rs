@@ -98,6 +98,15 @@ pub fn class_id_of(text: &str) -> Option<TUID> {
     Some(id)
 }
 
+/// The biggest state this host reads or writes, and the most a plugin may put in one stream.
+///
+/// One number for both sides: a state that would not be read back is not written over the one
+/// that is there, and a file that is not ours cannot make this process allocate more than this.
+/// Real plugin states are kilobytes to a few megabytes; a sampler that keeps its samples in its
+/// state is the only thing that comes near, and half a gigabyte is past any of them. It is also
+/// what keeps the lengths in a state asset inside the four bytes they are written in.
+pub const MAX_STATE: usize = 512 * 1024 * 1024;
+
 /// A call into a plugin that answered with a failure code.
 fn refused(plugin_id: &str, call: &str, result: i32) -> PluginProblem {
     PluginProblem::DidNotLoad {

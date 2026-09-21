@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gpui::WindowHandle;
-use sound_core::{AssetName, Assets, InstanceId, Project};
+use sound_core::{AssetName, Assets, InstanceId, PrepareConfig, Project};
 
 use crate::backend::LoadedPlugin;
 use crate::scan::{Scan, ScanCache, ScanCommand, ScannedPlugin, scan_folders};
@@ -395,7 +395,7 @@ impl Plugins {
         id: &InstanceId,
         record: &PluginRecord,
         assets: &Assets,
-        sample_rate: u32,
+        config: PrepareConfig,
     ) -> Result<Opened, PluginProblem> {
         // Kept for the drop of this host, which is the last moment a plugin can be saved.
         *self.0.assets.borrow_mut() = Some(assets.clone());
@@ -407,7 +407,7 @@ impl Plugins {
             }
         }
         let asset = record.asset();
-        match self.load(id, record, &asset, assets, sample_rate) {
+        match self.load(id, record, &asset, assets, config) {
             Ok(opened) => Ok(opened),
             Err(problem) => {
                 // A plugin the scan has not reached yet is worth trying again when it has.
@@ -425,7 +425,7 @@ impl Plugins {
         record: &PluginRecord,
         asset: &AssetName,
         assets: &Assets,
-        sample_rate: u32,
+        config: PrepareConfig,
     ) -> Result<Opened, PluginProblem> {
         self.ensure_scan();
         let scanned = self.known();
@@ -459,8 +459,8 @@ impl Plugins {
             })?
             .filter(|bytes| !bytes.is_empty());
         let opening = match record.format {
-            PluginFormat::Clap => crate::clap::load(&found, saved.as_deref(), sample_rate),
-            PluginFormat::Vst3 => crate::vst3::load(&found, saved.as_deref(), sample_rate),
+            PluginFormat::Clap => crate::clap::load(&found, saved.as_deref(), config),
+            PluginFormat::Vst3 => crate::vst3::load(&found, saved.as_deref(), config),
         }?;
         let crate::backend::Opening {
             mut plugin,

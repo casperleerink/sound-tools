@@ -187,6 +187,47 @@ fn sends_more_than_any_buffer_holds(format: PluginFormat) {
     assert!(render.first_sound().is_some(), "{format:?}");
 }
 
+/// A pedal that moves more often in one block than the host keeps room for. VST 3 takes the
+/// pedal as points of a parameter, and a block holds a fixed number of them: the value the
+/// block ends on must be the one that was played last. A pedal that came up and was refused
+/// would hold for ever, and the `AllOff` of a stop would not end it either, because that is a
+/// pedal move as well.
+#[test]
+fn a_pedal_that_moves_more_often_than_a_block_holds_still_ends_where_it_was_played() {
+    let mut harness = Harness::new();
+    // Fifty moves inside the first block of sixty-four frames, ending with the pedal up. The
+    // host keeps room for thirty-two points.
+    let mut played = vec![Played::On {
+        frame: 0,
+        pitch: 60,
+        velocity: 100,
+    }];
+    played.extend((0..49).map(|step| Played::Pedal {
+        frame: step,
+        value: 127 - (step as u8 % 8),
+    }));
+    played.push(Played::Pedal {
+        frame: 49,
+        value: 0,
+    });
+    harness.add_track(record(PluginFormat::Vst3, "piano"), played);
+
+    let render = harness.play(512);
+    let right = render.right();
+    // The right channel is the pedal value the plugin really has. It ends the block up.
+    assert_eq!(
+        right[63],
+        0.0,
+        "the pedal never came up: {:?}",
+        &right[56..64]
+    );
+    assert!(
+        right[MAX_BLOCK..].iter().all(|sample| *sample == 0.0),
+        "the pedal is still down after the block: {:?}",
+        &right[MAX_BLOCK..MAX_BLOCK + 8]
+    );
+}
+
 /// VST 3 lets a plugin say its output is silent and leave the buffer as it is. A host that
 /// does not clear its own output buffers would then play the block before over and over.
 #[test]

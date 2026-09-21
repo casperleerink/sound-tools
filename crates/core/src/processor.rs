@@ -22,6 +22,12 @@ pub(crate) type AudioBuffer = [[f32; MAX_BLOCK]; CHANNELS];
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PrepareConfig {
     pub sample_rate: u32,
+    /// Whether this engine renders instead of playing: it runs as fast as it can and no device
+    /// waits for a block. Almost nothing needs it, and nothing here treats a block differently
+    /// because of it. It is for a processor that hosts somebody else's code and has to pass the
+    /// difference on, such as a plugin, which both plugin formats have a way to be told and
+    /// which lets a streaming sampler wait for its samples instead of rendering silence.
+    pub offline: bool,
 }
 
 /// A unit of realtime work in the engine graph.
