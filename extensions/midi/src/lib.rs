@@ -3,7 +3,9 @@
 //!
 //! This extension has no tool and no record. It is a processor in the engine, a device layer
 //! over `midir`, and a recorder. It meets the arrangement only through the note contract
-//! ([`sound_notes`]): the window says which port the notes go to and makes the clip.
+//! ([`sound_notes`]): the window says which port the notes go to and makes the clip. The saved
+//! form of a take lives there too, as [`sound_notes::RawTake`], because the fit extension reads
+//! one and no extension may depend on another.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), sound_core::GraphError> {
@@ -28,7 +30,7 @@ use sound_core::AgentDoc;
 pub use keyboard::{Keyboard, Latency, Lost};
 pub use keys::{Arrived, INPUT_CAPACITY, Input, Keys, Played, REPORT_CAPACITY, Sounded};
 pub use ports::{PortError, Ports};
-pub use take::{RawEvent, RawTake, TAKES_FOLDER, Take, TakeEvent, take_asset};
+pub use take::{Take, TakeEvent};
 
 /// What an agent needs to know about a raw take. Every project gets it, because every project
 /// can be recorded into: the runtime registers it with `runtime_agent_doc`.

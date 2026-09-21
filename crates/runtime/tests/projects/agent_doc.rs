@@ -21,54 +21,6 @@ fn json_examples(markdown: &str) -> Vec<(String, String)> {
     examples
 }
 
-/// A take as the runtime holds it, from a take as it is saved. The ticks are not in the file
-/// and the writer does not use them, so they are all zero here.
-fn take_of(raw: &midi::RawTake) -> midi::Take {
-    let event = |time_us, played| midi::TakeEvent {
-        time_us,
-        tick: sound_core::Ticks(0),
-        played,
-    };
-    let events = raw
-        .events
-        .iter()
-        .map(|saved| match *saved {
-            midi::RawEvent::On {
-                time_us,
-                pitch,
-                velocity,
-            } => event(
-                time_us,
-                midi::Played::On {
-                    pitch: sound_notes::Pitch::new(pitch).unwrap(),
-                    velocity: sound_notes::Velocity::new(velocity).unwrap(),
-                },
-            ),
-            midi::RawEvent::Off {
-                time_us,
-                pitch,
-                velocity,
-            } => event(
-                time_us,
-                midi::Played::Off {
-                    pitch: sound_notes::Pitch::new(pitch).unwrap(),
-                    velocity,
-                },
-            ),
-            midi::RawEvent::Pedal { time_us, value } => event(
-                time_us,
-                midi::Played::Pedal(sound_notes::Pedal::new(value).unwrap()),
-            ),
-        })
-        .collect();
-    midi::Take {
-        start: sound_core::Ticks(raw.start_tick),
-        end: sound_core::Ticks(raw.end_tick),
-        pedal_at_start: sound_notes::Pedal::new(raw.pedal_at_start).unwrap(),
-        events,
-    }
-}
-
 /// The map and every doc it lists, as (path in the project folder, text).
 fn map_and_docs(harness: &Harness) -> Vec<(String, String)> {
     let mut files = vec![AGENT_DOC_FILE.to_string()];
@@ -205,11 +157,11 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .partition(|(path, _)| path.starts_with("assets/"));
         assert_eq!(assets.len(), 1, "{time_signature}");
         for (path, body) in &assets {
-            let raw: midi::RawTake = serde_json::from_str(body).unwrap();
+            let raw: sound_notes::RawTake = serde_json::from_str(body).unwrap();
             // The bytes are those the runtime writes, so an agent reads the real thing.
-            assert_eq!(&take_of(&raw).json(), body, "{path}");
+            assert_eq!(&raw.json(), body, "{path}");
             // A take lives under its own name, which no clip id decides.
-            let folder = format!("{}/", midi::TAKES_FOLDER);
+            let folder = format!("{}/", sound_notes::TAKES_FOLDER);
             let name = path
                 .strip_prefix(&folder)
                 .and_then(|it| it.strip_suffix(".json"));

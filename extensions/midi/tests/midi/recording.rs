@@ -5,6 +5,11 @@ use sound_core::Ticks;
 
 use crate::support::{Harness, TICK, off, on, pedal};
 
+/// The clock the harness plays by: 120 bpm in 4/4 at 48 kHz.
+fn clock() -> sound_core::Clock {
+    sound_core::Clock::new(sound_core::TempoMap::default(), 48_000)
+}
+
 /// Plays from tick 0 and records. Every message is sent at the frame the test chooses, so the
 /// ticks in the take are the ticks the engine really played them on.
 fn recorded(messages: &[(usize, midi::Played)], frames: usize) -> midi::Take {
@@ -34,7 +39,7 @@ fn a_take_holds_the_tick_the_engine_sounded_each_message_on() {
     // Frame 2464 is tick 98.56 and frame 4864 is tick 194.56, and the tick of a frame is the
     // first tick at or after it.
     assert_eq!(ticks, [99, 195]);
-    let clip = take.clip().unwrap();
+    let clip = take.clip(&clock()).unwrap();
     assert_eq!(clip.start, Ticks(0));
     assert_eq!(clip.notes.len(), 1);
     assert_eq!(clip.notes[0].start, Ticks(99));
@@ -64,7 +69,7 @@ fn the_pedal_is_recorded_as_it_was_played() {
         ],
         9600,
     );
-    let clip = take.clip().unwrap();
+    let clip = take.clip(&clock()).unwrap();
     let values: Vec<u8> = clip.pedal.iter().map(|it| it.value.value()).collect();
     assert_eq!(values, [127, 0]);
     assert_eq!(clip.notes.len(), 1);
@@ -89,7 +94,7 @@ fn a_key_held_before_the_start_is_left_out_of_the_clip() {
     let until = harness.playhead();
     let take = harness.keyboard.finish_recording(until).unwrap();
     assert_eq!(take.events.len(), 2);
-    let clip = take.clip().unwrap();
+    let clip = take.clip(&clock()).unwrap();
     assert_eq!(clip.notes.len(), 1);
     assert_eq!(clip.notes[0].pitch.number(), 64);
 }
@@ -106,7 +111,7 @@ fn a_recording_with_nothing_played_gives_an_empty_take() {
     harness.poll();
     let take = harness.keyboard.finish_recording(Ticks(192)).unwrap();
     assert!(take.is_empty());
-    assert_eq!(take.clip(), None);
+    assert_eq!(take.clip(&clock()), None);
 }
 
 #[test]

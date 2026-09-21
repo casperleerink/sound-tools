@@ -22,7 +22,7 @@ use std::path::Path;
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
-pub use editing::{Changes, Edit, OUTSIDE_UNDO_WINDOW};
+pub use editing::{Changes, Derived, Edit, OUTSIDE_UNDO_WINDOW};
 pub use file::{FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination};
 pub use generated::{AGENT_DOC_FILE, AGENT_DOCS_FOLDER, NO_PROBLEMS, PROBLEMS_FILE};
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
@@ -36,7 +36,7 @@ use instance::Record;
 use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
-use crate::clock::{Clock, Ticks};
+use crate::clock::{Clock, Ticks, TimeSignature};
 use crate::control::EngineControl;
 use crate::graph::GraphError;
 use crate::processor::Processor;
@@ -143,6 +143,9 @@ pub struct Project {
     events: Vec<ProjectEvent>,
     /// By path relative to the project folder.
     file_problems: BTreeMap<String, String>,
+    /// What the derive of an instance could not compute, by instance. It stays until that
+    /// derive runs again, like what a behaviour reports about its own instance.
+    derive_problems: BTreeMap<InstanceId, Vec<String>>,
     /// The generated files may no longer match the project. See `generated.rs`.
     generated_are_stale: bool,
     watcher: Option<Watcher>,
@@ -198,6 +201,7 @@ impl Project {
             history: History::default(),
             events: Vec::new(),
             file_problems: BTreeMap::new(),
+            derive_problems: BTreeMap::new(),
             generated_are_stale: true,
             watcher: None,
         };
@@ -413,25 +417,22 @@ impl Project {
                 path: storage::PROJECT_FILE.to_string(),
                 message: message.clone(),
             });
-        // What a behaviour said about its own instance while it ran. The record is live and
-        // untouched; part of what it asks for is not.
-        let instances = self
-            .bindings
-            .instance_problems()
-            .filter_map(|(id, message)| {
-                let record = self.instances.get(id)?;
-                let path = self.storage.record_path(id, Form::of(record));
-                Some(Problem {
-                    path: self.storage.display_path(&path),
-                    message: message.clone(),
-                })
-            });
-        files.chain(connections).chain(instances).collect()
+        // What a behaviour or a derive said about its own instance while it ran. The record is
+        // live and untouched; part of what it asks for is not.
+        files
+            .chain(connections)
+            .chain(self.instance_problems())
+            .collect()
     }
 
-    /// What every behaviour reported about its own instance, on the path of its record.
+    /// What every behaviour and every derive reported about its own instance, on the path of
+    /// its record.
     fn instance_problems(&self) -> Vec<Problem> {
-        let problems = self.bindings.instance_problems();
+        let derived = self
+            .derive_problems
+            .iter()
+            .flat_map(|(id, messages)| messages.iter().map(move |message| (id, message)));
+        let problems = self.bindings.instance_problems().chain(derived);
         problems
             .filter_map(|(id, message)| {
                 let record = self.instances.get(id)?;
@@ -460,9 +461,14 @@ impl Project {
         // What behaviours said last time, so that `problems.txt` and the views follow a
         // behaviour that starts or stops reporting. Empty in a project with nothing to report.
         let instance_problems_before = self.instance_problems();
+        let time_signature_before = project_file_before.tempo_map.time_signature();
         let mut records = Vec::new();
+        let mut derived = Vec::new();
         let result = self
             .stage(changes, source, &mut records)
+            .and_then(|()| {
+                self.stage_derived(source, time_signature_before, &mut records, &mut derived)
+            })
             .and_then(|()| self.bind(&records));
         if let Err(error) = result {
             for change in records.into_iter().rev() {
@@ -503,7 +509,84 @@ impl Project {
         Ok(Applied {
             records,
             project_file,
+            derived,
         })
+    }
+
+    /// Runs the derives this group asks for and stages what they give, as part of the same
+    /// group. See [`ToolRegistration::derive`].
+    ///
+    /// A derive runs when a record of its tool changed in this group, or when the project's
+    /// time signature changed. What a derive gives is staged and nothing more: it starts no
+    /// second round, so this cannot loop. It does not run while the project loads, nor for
+    /// undo, redo or a cancel, because the files and the undo step already hold what it would
+    /// compute. So a read-only project never derives and never writes.
+    fn stage_derived(
+        &mut self,
+        source: Source,
+        time_signature_before: TimeSignature,
+        records: &mut Vec<RecordChange>,
+        derived: &mut Vec<InstanceId>,
+    ) -> Result<(), ProjectError> {
+        if !matches!(source, Source::Interface | Source::Outside) {
+            return Ok(());
+        }
+        let derives = |project: &Self, id: &InstanceId| {
+            let tool = project.instances.get(id)?.tool;
+            project.registry.definition(tool)?.derive.as_ref()?;
+            Some(())
+        };
+        let signature_changed =
+            self.project_file.tempo_map.time_signature() != time_signature_before;
+        let mut ids: BTreeSet<InstanceId> = BTreeSet::new();
+        if signature_changed {
+            let live = self.instances.keys();
+            ids.extend(live.filter(|id| derives(self, id).is_some()).cloned());
+        }
+        let changed = records.iter().map(|change| &change.id);
+        ids.extend(changed.filter(|id| derives(self, id).is_some()).cloned());
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut changes = Vec::new();
+        let mut reported = Vec::new();
+        for id in ids {
+            // Both borrows are shared: the definition and the project the derive reads.
+            let Some(tool) = self.instances.get(&id).map(|record| record.tool) else {
+                continue;
+            };
+            let derive = self
+                .registry
+                .definition(tool)
+                .and_then(|it| it.derive.as_ref());
+            let Some(derive) = derive else { continue };
+            let mut result = Derived::default();
+            derive(self, &id, &mut result);
+            changes.extend(result.changes.changes);
+            reported.push((id, result.problems));
+        }
+        for (id, problems) in reported {
+            match problems.is_empty() {
+                true => self.derive_problems.remove(&id),
+                false => self.derive_problems.insert(id, problems),
+            };
+        }
+        for change in &changes {
+            if let Change::Set(id, record) = change {
+                record
+                    .state
+                    .validate()
+                    .map_err(|message| ProjectError::InvalidState {
+                        id: id.clone(),
+                        message,
+                    })?;
+            }
+        }
+        let before = records.len();
+        self.stage(changes, source, records)?;
+        derived.extend(records[before..].iter().map(|change| change.id.clone()));
+        Ok(())
     }
 
     /// Changes `instances` and `project_file`, and notes every record change so that a
@@ -608,6 +691,13 @@ impl Project {
                 });
             }
         }
+    }
+
+    /// Whether the records of this tool decide state of their own, see
+    /// [`ToolRegistration::derive`].
+    pub(crate) fn derives(&self, tool: &'static str) -> bool {
+        let definition = self.registry.definition(tool);
+        definition.is_some_and(|definition| definition.derive.is_some())
     }
 
     fn check_tool(&self, tool: &'static str) -> Result<(), ProjectError> {

@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 
 use super::Project;
 use super::binding::{BehaviourContext, BehaviourError};
+use super::editing::Derived;
 use super::instance::{Instance, InstanceId, Record, State, is_valid_name};
 use crate::clock::Ticks;
 
@@ -46,15 +47,22 @@ pub(crate) struct RegisteredDoc {
 type ErasedBehaviour =
     Box<dyn Fn(&dyn Any, &mut BehaviourContext<'_>) -> Result<(), BehaviourError>>;
 
-type ErasedSummary = Box<dyn Fn(&Project, &InstanceId) -> String + Send>;
+/// Not `Send`, for the same reason a behaviour is not: it may read something the tool
+/// keeps on the thread the project lives on, such as a cache of a file it parsed.
+type ErasedSummary = Box<dyn Fn(&Project, &InstanceId) -> String>;
 
-type ErasedEnd = Box<dyn Fn(&Project, &InstanceId) -> Option<Ticks> + Send>;
+type ErasedEnd = Box<dyn Fn(&Project, &InstanceId) -> Option<Ticks>>;
+
+/// Not `Send`, like a behaviour: it may keep control-side state, such as a cache of a big file
+/// it reads.
+type ErasedDerive = Box<dyn Fn(&Project, &InstanceId, &mut Derived)>;
 
 pub(crate) struct ToolDefinition {
     pub extension: &'static str,
     /// Decodes and validates the `state` value of a record. The error names the field.
     pub decode: fn(serde_json::Value) -> Result<Record, String>,
     pub behaviour: Option<ErasedBehaviour>,
+    pub derive: Option<ErasedDerive>,
     pub summary: Option<ErasedSummary>,
     pub end: Option<ErasedEnd>,
     pub owns_children: bool,
@@ -100,6 +108,7 @@ impl Registry {
             extension,
             decode: decode::<S>,
             behaviour: None,
+            derive: None,
             summary: None,
             end: None,
             owns_children: S::OWNS_CHILDREN,
@@ -206,14 +215,35 @@ impl<S: State> ToolRegistration<'_, S> {
         self
     }
 
+    /// What this instance decides about other records and about the tempo map: state that is
+    /// computed from its own, never edited by hand, and always rebuilt from it.
+    ///
+    /// It runs inside the same state application as the change that asked for it, so the
+    /// record, what it decides and the tempo map are one group, one engine batch and one undo
+    /// step. It runs when a record of this tool changed in the group, and when the project's
+    /// time signature changed, which is the other thing a musical grid is made of. It does not
+    /// run while the project loads, for undo, for redo or for a cancel: the files and the undo
+    /// step already hold what it would compute, and a read-only project therefore writes
+    /// nothing. Its own changes never start another round, so it cannot loop.
+    ///
+    /// Keep it a pure function of the project: it may be called several times for one gesture,
+    /// once per mouse move. Say in your agent doc that the records it writes are derived, so an
+    /// agent edits the input and not the result.
+    pub fn derive(self, derive: impl Fn(&Project, &Instance<S>, &mut Derived) + 'static) -> Self {
+        self.definition.derive = Some(Box::new(move |project, id, derived| {
+            // Only called for a live instance of this tool.
+            if let Some(instance) = project.resolve::<S>(id) {
+                derive(project, &instance, derived);
+            }
+        }));
+        self
+    }
+
     /// How an instance of this tool describes itself and what it owns in a project summary,
     /// as lines of plain text. [`Project::summary`] calls it. Without one, a summary lists the
     /// instance and everything inside it as plain records. An owner of many small records
     /// gives one here, so that an agent reads one summary and not every record.
-    pub fn summary(
-        self,
-        summary: impl Fn(&Project, &Instance<S>) -> String + Send + 'static,
-    ) -> Self {
+    pub fn summary(self, summary: impl Fn(&Project, &Instance<S>) -> String + 'static) -> Self {
         self.definition.summary = Some(Box::new(move |project, id| {
             match project.resolve::<S>(id) {
                 Some(instance) => summary(project, &instance),
@@ -228,10 +258,7 @@ impl<S: State> ToolRegistration<'_, S> {
     /// when it has none. [`Project::end`] is the latest of them. The core knows no clips, so
     /// this is how a transport shows a duration. A tool without one does not count: it runs
     /// without a set end.
-    pub fn end(
-        self,
-        end: impl Fn(&Project, &Instance<S>) -> Option<Ticks> + Send + 'static,
-    ) -> Self {
+    pub fn end(self, end: impl Fn(&Project, &Instance<S>) -> Option<Ticks> + 'static) -> Self {
         self.definition.end = Some(Box::new(move |project, id| {
             // Only called for an instance of this tool.
             end(project, &project.resolve::<S>(id)?)

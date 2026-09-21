@@ -68,6 +68,29 @@ impl Changes {
     }
 }
 
+/// What a derive gives back: the changes it adds to the group it runs in, and what it could
+/// not compute. See [`ToolRegistration::derive`](super::ToolRegistration::derive).
+#[derive(Default)]
+pub struct Derived {
+    pub(crate) changes: Changes,
+    pub(crate) problems: Vec<String>,
+}
+
+impl Derived {
+    /// The changes this derive adds to the group.
+    pub fn changes(&mut self) -> &mut Changes {
+        &mut self.changes
+    }
+
+    /// Says that part of the derived state could not be made, without failing the edit. The
+    /// message is listed in [`Project::problems`](super::Project::problems) on the record's
+    /// path until this derive runs again without it, exactly as
+    /// [`BehaviourContext::problem`](super::BehaviourContext::problem) does for a behaviour.
+    pub fn problem(&mut self, message: impl Into<String>) {
+        self.problems.push(message.into());
+    }
+}
+
 /// One record before and after a state application. `None` means the instance did not exist.
 pub(crate) struct RecordChange {
     pub id: InstanceId,
@@ -81,6 +104,10 @@ pub(crate) struct Applied {
     pub records: Vec<RecordChange>,
     /// Before and after.
     pub project_file: Option<(ProjectFile, ProjectFile)>,
+    /// The records a derive wrote. They are in `records` like any other change; this says
+    /// which files a group of outside changes still has to write, because those files hold
+    /// what an agent wrote and not what a derive made of it.
+    pub derived: Vec<InstanceId>,
 }
 
 /// Everything one undo step touched, with the state before the first change and after the
@@ -317,10 +344,12 @@ impl Project {
                     })?;
             }
         }
-        let touches_project_file = changes
-            .changes
-            .iter()
-            .any(|change| !matches!(change, Change::Set(..)));
+        // A derive may rewrite the tempo map, so a change to a record that has one touches
+        // `project.json` as surely as a tempo edit does.
+        let touches_project_file = changes.changes.iter().any(|change| match change {
+            Change::Set(_, record) => self.derives(record.tool),
+            _ => true,
+        });
         if touches_project_file {
             self.sync_project_file();
         }

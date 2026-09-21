@@ -96,6 +96,12 @@ impl Tempo {
     pub fn bpm(self) -> f64 {
         f64::from(self.milli_bpm) / 1000.0
     }
+
+    /// The tempo in thousandths of a bpm, which is how it is held and how all clock math uses
+    /// it. For code that has to work out a frame count exactly, as building a tempo map does.
+    pub fn milli_bpm(self) -> u32 {
+        self.milli_bpm
+    }
 }
 
 impl Default for Tempo {
@@ -473,6 +479,23 @@ impl Clock {
         self.tick_at(Frames(
             (seconds * f64::from(self.sample_rate)).round() as u64
         ))
+    }
+
+    /// Microseconds from the project start, rounded to the nearest microsecond.
+    ///
+    /// This is the unit for a time that has to keep its meaning when the tempo map changes,
+    /// such as a recorded performance. A microsecond is a small part of a frame at every
+    /// sample rate this application allows, so `tick_at_micros(micros_of(tick)) == tick`.
+    pub fn micros_of(&self, tick: Ticks) -> u64 {
+        let frame = self.frame_of(tick).0 as f64;
+        (frame * 1_000_000.0 / f64::from(self.sample_rate)).round() as u64
+    }
+
+    /// The tick of a time in microseconds from the project start: the inverse of
+    /// [`Self::micros_of`].
+    pub fn tick_at_micros(&self, micros: u64) -> Ticks {
+        let frame = micros as f64 * f64::from(self.sample_rate) / 1_000_000.0;
+        self.tick_at(Frames(frame.round() as u64))
     }
 
     fn segment_of_tick(&self, tick: Ticks) -> &Segment {
