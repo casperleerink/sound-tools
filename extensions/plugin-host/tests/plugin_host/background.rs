@@ -26,6 +26,19 @@ fn one_bundle_hangs(format: PluginFormat) -> ScanCommand {
         .with_timeout(DEADLINE)
 }
 
+/// A scanner whose bundles all wait at `gate` until [`open_the_gate`]. Nothing is given up on:
+/// the deadline is the usual one and is never meant to be reached, so a busy machine only
+/// makes the test slower and never makes it fail.
+fn waiting_at(gate: &std::path::Path) -> ScanCommand {
+    let path = gate.to_str().expect("a temporary folder of this test");
+    scanner().with_environment(test_plugin_support::GATE_VARIABLE, path)
+}
+
+fn open_the_gate(gate: &std::path::Path) {
+    let open = std::path::PathBuf::from(format!("{}.go", gate.display()));
+    std::fs::write(open, []).expect("the gate opens");
+}
+
 /// What the composer's thread does while the scan runs: it draws, which means it asks the host
 /// what it knows. None of that may wait for a bundle.
 #[test]
@@ -68,13 +81,17 @@ fn a_scan_in_the_background_never_blocks_the_thread_that_started_it() {
 
 /// A project that names a plugin the scan has not reached yet opens, says so, and plays the
 /// plugin as soon as it turns up. Nothing of the composer's is needed in between.
+///
+/// The scan is held at a gate this test opens itself, so what it checks does not depend on how
+/// busy the machine is. With a bundle that hangs and a short deadline instead, the bundle that
+/// answers was killed on its own deadline when ten tests ran at once.
 #[test]
 fn a_record_waiting_for_the_scan_is_reported_and_plays_when_the_plugin_turns_up() {
     let folder = tempfile::tempdir().unwrap();
-    // The CLAP bundle is scanned first, in path order, and hangs. So the VST 3 record the
-    // project names is not there when the project opens.
+    // Every bundle waits at the gate, so no plugin of this project is found while it is shut.
+    let gate = folder.path().join("scan-gate");
     let search = vec![plugin_folder(folder.path())];
-    let plugins = Plugins::new(search, one_bundle_hangs(PluginFormat::Clap), no_cache());
+    let plugins = Plugins::new(search, waiting_at(&gate), no_cache());
     plugins.start_scanning();
 
     let mut harness = Harness::with_plugins(folder, plugins);
@@ -96,7 +113,8 @@ fn a_record_waiting_for_the_scan_is_reported_and_plays_when_the_plugin_turns_up(
     );
     assert_eq!(harness.play(2048).first_sound(), None);
 
-    // The scan ends, the host asks for the record to be run again, and it plays.
+    // The gate opens, the scan ends, the host asks for the record to be run again, and it plays.
+    open_the_gate(&gate);
     harness.plugins.wait_for_scan();
     let scan = harness.plugins.scan();
     let vst3 = PluginFormat::Vst3;

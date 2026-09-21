@@ -78,10 +78,12 @@ pub enum PluginProblem {
     WindowDidNotOpen { plugin_id: String, message: String },
 }
 
-/// What [`Plugins::open`] gives back. There is always a plugin: the behaviour hands the engine
-/// a plugin every time it runs, so nothing the engine has depends on what this table remembers.
+/// What [`Plugins::open`] gives back. The behaviour hands the engine whatever is here every
+/// time it runs, so nothing the engine has depends on what this table remembers.
 pub struct Opened {
-    pub started: Box<dyn crate::processor::Started>,
+    /// The audio side of the plugin, or `None` from a host that loads none ([`Plugins::listing`]),
+    /// which is a slot that plays nothing and reports nothing.
+    pub started: Option<Box<dyn crate::processor::Started>>,
     /// What to report about this record every time the behaviour runs, such as a plugin the
     /// sustain pedal cannot reach. These are not failures: the plugin plays.
     pub notes: Vec<PluginProblem>,
@@ -169,6 +171,8 @@ struct Inner {
     retries: RefCell<Vec<InstanceId>>,
     /// A read-only project (`--inspect`, `--render`) never writes plugin state.
     writes_state: bool,
+    /// Whether a record's plugin is loaded at all. `--inspect` does not, see [`Plugins::listing`].
+    loads: bool,
     /// The `assets/` folder of the project, from the first plugin that loaded. Kept so that
     /// dropping the host can still save, see [`Drop`].
     assets: RefCell<Option<Assets>>,
@@ -233,7 +237,7 @@ impl Plugins {
         scanner: ScanCommand,
         cache: ScanCache,
     ) -> Self {
-        Self::with_writing(search_paths, scanner, cache, true)
+        Self::with(search_paths, scanner, cache, true, true)
     }
 
     /// A host for a project that is open read-only. It loads plugins and never writes.
@@ -242,14 +246,34 @@ impl Plugins {
         scanner: ScanCommand,
         cache: ScanCache,
     ) -> Self {
-        Self::with_writing(search_paths, scanner, cache, false)
+        Self::with(search_paths, scanner, cache, false, true)
     }
 
-    fn with_writing(
+    /// A host that looks a plugin up and never loads one. `runtime --inspect` uses it.
+    ///
+    /// Loading a plugin runs somebody else's code in this process, and a plugin that only ever
+    /// loads and goes can take the process down with it: Crow Hill Origins ends `--inspect`
+    /// in a segmentation fault in its own teardown, having never processed a block. Inspecting
+    /// prints a project and makes no sound, so it needs no plugin at all. It still needs the
+    /// scan, because "this machine has no such plugin" is a problem an agent reads.
+    ///
+    /// A slot whose plugin is there plays nothing and reports nothing. What is lost against a
+    /// host that loads is what only the plugin itself can say, such as a note port that takes
+    /// no sustain pedal.
+    pub fn listing(
+        search_paths: Vec<std::path::PathBuf>,
+        scanner: ScanCommand,
+        cache: ScanCache,
+    ) -> Self {
+        Self::with(search_paths, scanner, cache, false, false)
+    }
+
+    fn with(
         search_paths: Vec<std::path::PathBuf>,
         scanner: ScanCommand,
         cache: ScanCache,
         writes_state: bool,
+        loads: bool,
     ) -> Self {
         Self(Rc::new(Inner {
             search_paths,
@@ -262,6 +286,7 @@ impl Plugins {
             waiting: RefCell::new(BTreeSet::new()),
             retries: RefCell::new(Vec::new()),
             writes_state,
+            loads,
             assets: RefCell::new(None),
             table: RefCell::new(Table::default()),
         }))
@@ -467,6 +492,15 @@ impl Plugins {
                 });
             }
         };
+        // A host that only lists has answered the one question it can: this machine has the
+        // plugin. Nothing of the plugin's own code runs in this process, so nothing of it can
+        // fail here, in its `process`, or in the teardown it never expected.
+        if !self.0.loads {
+            return Ok(Opened {
+                started: None,
+                notes: Vec::new(),
+            });
+        }
         // Nothing checks here what the plugin says it is. One record serves an instrument slot
         // and an effect slot, and this host knows no slots: a track decides what it wires a
         // record to. What a plugin declares is what a picker offers it for, and that is not the
@@ -504,7 +538,10 @@ impl Plugins {
                 window: PluginWindow::default(),
             },
         );
-        Ok(Opened { started, notes })
+        Ok(Opened {
+            started: Some(started),
+            notes,
+        })
     }
 
     /// Records whose plugin was not there when their behaviour ran and may be now, because the

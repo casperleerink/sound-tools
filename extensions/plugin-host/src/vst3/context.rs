@@ -359,6 +359,18 @@ impl Handler {
     }
 }
 
+/// The two `restartComponent` flags that really mean "deactivate me and activate me again".
+/// `kReloadComponent` says the plugin was replaced by another one, and `kIoChanged` says its
+/// buses changed, which is the shape of the buffers this host makes for it.
+///
+/// Every other flag is about something a host with a parameter view, a latency line or a
+/// keyboard display would redraw. This build has none of those, so there is nothing for it to
+/// do and nothing to tell the composer. Splice INSTRUMENT sends `kParamTitlesChanged` and
+/// `kParamIDMappingChanged` while a composer opens its window, and calling that "the plugin
+/// asked to be started again" was a false alarm on a plugin that was working.
+const NEEDS_RESTART: int32 =
+    RestartFlags_::kReloadComponent as int32 | RestartFlags_::kIoChanged as int32;
+
 impl IComponentHandlerTrait for Handler {
     unsafe fn beginEdit(&self, _id: ParamID) -> tresult {
         self.open_edits.fetch_add(1, Ordering::AcqRel);
@@ -386,8 +398,7 @@ impl IComponentHandlerTrait for Handler {
         if flags & RestartFlags_::kParamValuesChanged as int32 != 0 {
             self.state_is_dirty.store(true, Ordering::Release);
         }
-        let rest = flags & !(RestartFlags_::kParamValuesChanged as int32);
-        if rest != 0 {
+        if flags & NEEDS_RESTART != 0 {
             self.restart_requested.store(true, Ordering::Release);
         }
         kResultOk
@@ -483,6 +494,65 @@ mod tests {
         let waiting = handler.take_edits();
         assert_eq!(waiting.len(), 1);
         assert!((waiting[0].value - 0.25).abs() < f64::EPSILON);
+    }
+
+    /// Only a plugin that must be deactivated and activated again is worth telling the
+    /// composer about. The flags a host with no parameter view has nothing to do about are
+    /// taken and nothing is said.
+    #[test]
+    fn only_the_two_flags_that_mean_a_restart_are_reported_as_one() {
+        let quiet = [
+            RestartFlags_::kParamTitlesChanged,
+            RestartFlags_::kParamIDMappingChanged,
+            RestartFlags_::kIoTitlesChanged,
+            RestartFlags_::kLatencyChanged,
+            RestartFlags_::kKeyswitchChanged,
+            RestartFlags_::kRoutingInfoChanged,
+            RestartFlags_::kPrefetchableSupportChanged,
+        ];
+        for flag in quiet {
+            let handler = Handler::default();
+            // SAFETY: a plain call of a method that touches nothing but this handler.
+            unsafe { handler.restartComponent(flag as int32) };
+            assert!(
+                !handler.take_restart_requested(),
+                "flag {flag} was called a restart"
+            );
+        }
+
+        for flag in [
+            RestartFlags_::kReloadComponent,
+            RestartFlags_::kIoChanged,
+            // Splice INSTRUMENT's own combination, with one flag that does mean a restart.
+            RestartFlags_::kParamTitlesChanged | RestartFlags_::kIoChanged,
+        ] {
+            let handler = Handler::default();
+            // SAFETY: as above.
+            unsafe { handler.restartComponent(flag as int32) };
+            assert!(
+                handler.take_restart_requested(),
+                "flag {flag} was not called a restart"
+            );
+        }
+    }
+
+    /// What Splice INSTRUMENT really sends: the state the host holds is stale, and nothing
+    /// else. It must be saved again and the composer must not be told anything.
+    #[test]
+    fn the_flags_splice_instrument_sends_only_mark_the_state_to_be_saved() {
+        let handler = Handler::default();
+        let flags = RestartFlags_::kParamTitlesChanged as int32;
+        let and_then = RestartFlags_::kParamIDMappingChanged as int32
+            | RestartFlags_::kParamValuesChanged as int32;
+        // SAFETY: as above.
+        unsafe {
+            handler.restartComponent(flags);
+            handler.restartComponent(and_then);
+            // `restartComponent(0)`, which asks for nothing at all.
+            handler.restartComponent(0);
+        }
+        assert!(!handler.take_restart_requested());
+        assert!(handler.take_state_is_dirty());
     }
 
     #[test]

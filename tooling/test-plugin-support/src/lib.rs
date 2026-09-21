@@ -56,6 +56,19 @@ pub const HANG_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_HANG";
 /// test can see what a picker holds before the scan has found anything.
 pub const SLOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SLOW";
 
+/// A gate the plugin waits at while its bundle is listed: it goes on when `<path>.go` is
+/// there, and the test owns that path.
+///
+/// This is how a test that needs a scan to be part way through says so itself. Doing it with a
+/// bundle that hangs and a short deadline makes the test depend on how busy the machine is:
+/// the bundle that is supposed to answer is killed when ten tests run at once.
+pub const GATE_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_GATE";
+
+/// How long the plugin waits at a gate nobody opens, in twentieths of a second. Longer than
+/// any deadline a test gives a bundle, so a test that forgets to open its gate fails on the
+/// deadline with the scan's own message instead of waiting here.
+const GATE_LIMIT: u32 = 600;
+
 /// How many things to send out of every process call: CLAP events, VST 3 parameter changes. A
 /// host must have somewhere to put them that neither grows nor allocates on the audio thread.
 pub const EVENTS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_EVENTS";
@@ -239,6 +252,15 @@ pub fn while_listed(format: &str) {
             .arg(script)
             .arg(done)
             .spawn();
+    }
+    if let Some(gate) = std::env::var_os(GATE_VARIABLE) {
+        let open = PathBuf::from(format!("{}.go", Path::new(&gate).display()));
+        for _ in 0..GATE_LIMIT {
+            if open.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
     let hang = std::env::var(HANG_VARIABLE).unwrap_or_default();
     if hang == "1" || hang == format {

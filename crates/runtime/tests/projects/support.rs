@@ -203,6 +203,19 @@ pub fn test_plugin_host(root: &Path, writes_state: bool) -> Plugins {
     }
 }
 
+/// The same folder of test plugins, with the host `--inspect` opens: it says which plugins are
+/// there and loads none of them.
+pub fn test_plugin_host_that_only_lists(root: &Path) -> Plugins {
+    let folder = root.join("plugins");
+    test_clap_plugin::install_into(&folder);
+    test_vst3_plugin::install_into(&folder);
+    let scanner = ScanCommand::new(
+        env!("CARGO_BIN_EXE_runtime"),
+        [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
+    );
+    Plugins::listing(vec![folder], scanner, ScanCache::none())
+}
+
 /// The record of a CLAP plugin instrument that names the repository's test plugin.
 pub fn test_plugin(state_asset: &str) -> String {
     test_plugin_of(PluginFormat::Clap, state_asset)
