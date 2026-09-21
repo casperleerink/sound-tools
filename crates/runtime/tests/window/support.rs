@@ -48,11 +48,7 @@ pub fn note(start: u64, length: u64, pitch: u8) -> Note {
 }
 
 pub fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {
-    Clip {
-        start: Ticks(start),
-        length: Length::new(Ticks(length)).unwrap(),
-        notes,
-    }
+    Clip::new(Ticks(start), Length::new(Ticks(length)).unwrap(), notes)
 }
 
 /// Opens the window on a new default project in a temporary folder. `fill` adds to it first.
@@ -126,6 +122,23 @@ impl Opened<'_> {
     pub fn click_is_on(&mut self) -> bool {
         let transport = self.transport();
         self.cx.read(|cx| transport.read(cx).click_is_on())
+    }
+
+    /// Where a MIDI keyboard would put what it plays.
+    pub fn midi_input(&mut self) -> midi::Input {
+        let transport = self.transport();
+        self.cx.read(|cx| transport.read(cx).midi_input()).unwrap()
+    }
+
+    pub fn is_recording(&mut self) -> bool {
+        let transport = self.transport();
+        self.cx.read(|cx| transport.read(cx).is_recording())
+    }
+
+    /// One key of a keyboard, and the blocks that carry it to the instrument and back.
+    pub fn play_midi(&mut self, played: midi::Played) {
+        assert!(self.midi_input().send(played));
+        self.settle();
     }
 
     pub fn playhead(&mut self) -> Playhead {

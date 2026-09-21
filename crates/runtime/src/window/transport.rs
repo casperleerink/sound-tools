@@ -1,6 +1,6 @@
-//! The transport: a floating pill. Play or pause, stop, the position as bar and beat and as
-//! time, a hairline seek strip with the duration when the project has an end, the tempo at the
-//! playhead, and the click.
+//! The transport: a floating pill. Play or pause, stop, record, the position as bar and beat
+//! and as time, a hairline seek strip with the duration when the project has an end, the tempo
+//! at the playhead, and the click.
 //!
 //! It follows the playhead, so it renders every frame while the project plays. It therefore
 //! reads the end of the project, which walks every clip, only after a project event, and
@@ -9,19 +9,24 @@
 //! The tempo is a controlled readout: it reads the tempo map when it renders and keeps no copy,
 //! so a `project.json` written from outside shows at once, also during a drag. A drag is one
 //! gesture of the session and one undo step. The click is not project state at all: it is a
-//! processor in the engine with a switch, see [`metronome`].
+//! processor in the engine with a switch, see [`metronome`]. Neither is the MIDI input, see
+//! [`midi`]: a finished recording is an edit, and nothing before it is.
 
+use std::sync::Arc;
+
+use arrangement::TrackState;
 use gpui::{
     App, BorderStyle, Bounds, BoxShadow, Context, CursorStyle, DispatchPhase, Entity, FocusHandle,
     Hitbox, HitboxBehavior, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Window, canvas, div, fill, hsla, point, prelude::*, px, quad, size,
+    MouseUpEvent, Pixels, Task, Window, canvas, div, fill, hsla, point, prelude::*, px, quad, size,
 };
 use metronome::Click;
-use sound_core::{Changes, ProjectEvent, Tempo, TempoChange, Ticks};
+use midi::{Input, Keyboard, Latency, Lost};
+use sound_core::{Changes, Instance, ProjectEvent, StreamTiming, Tempo, TempoChange, Ticks};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::{ActiveTheme, Playhead, Session, typography};
+use sound_ui::{ActiveTheme, POLL_INTERVAL, Playhead, Session, typography};
 
-use super::tempo;
+use super::{recording, tempo};
 
 const STRIP_WIDTH: f32 = 200.;
 const STRIP_HEIGHT: f32 = 16.;
@@ -66,18 +71,54 @@ pub struct TransportPill {
     scrubbing: bool,
     /// The click in the engine. `None` only when the engine refused it, which is reported.
     click: Option<Click>,
+    /// The MIDI input in the engine. `None` only when the engine refused it, which is reported.
+    keyboard: Option<Keyboard>,
+    /// When the sound of an engine frame reaches the device, for the latency. `None` without a
+    /// device, so an offline window measures nothing instead of guessing.
+    timing: Option<Arc<StreamTiming>>,
+    /// The playhead the last poll saw: where a recording ends when a stop or a seek ends it,
+    /// because the playhead has already moved by then.
+    seen: Playhead,
+    /// The track the take that is running began on. A take goes there, whatever the composer
+    /// selects while it runs.
+    recording_track: Option<Instance<TrackState>>,
     tempo_drag: Option<TempoDrag>,
     play_focus: FocusHandle,
     stop_focus: FocusHandle,
+    record_focus: FocusHandle,
     strip_focus: FocusHandle,
     tempo_focus: FocusHandle,
     click_focus: FocusHandle,
+    /// Drains what the engine reports about the MIDI input, as the session polls the engine.
+    _polling: Task<()>,
 }
 
 impl TransportPill {
     pub fn new(session: Entity<Session>, cx: &mut Context<Self>) -> Self {
+        Self::with_device(session, None, cx)
+    }
+
+    /// The pill of the real window, which has a device and can therefore say how long a key
+    /// press takes to reach the speakers.
+    pub fn with_device(
+        session: Entity<Session>,
+        timing: Option<Arc<StreamTiming>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let playhead = session.read(cx).playhead().clone();
-        cx.observe(&playhead, |_, _, cx| cx.notify()).detach();
+        cx.observe(&playhead, |pill, playhead, cx| {
+            let now = *playhead.read(cx);
+            let stopped = pill.seen.playing && !now.playing;
+            let jumped = pill.seen.jumps != now.jumps;
+            let was = std::mem::replace(&mut pill.seen, now);
+            // A stop, a pause or a seek ends the take. The playhead has already moved, so the
+            // take ends where it was before.
+            if pill.is_recording() && (stopped || jumped) {
+                pill.finish_recording(was.tick, cx);
+            }
+            cx.notify();
+        })
+        .detach();
         // Any record may move the end, and the project file holds the tempo of the times shown.
         // Problems change neither. A notice or a finished edit sends no event at all.
         cx.subscribe(&session, |pill, _, event, cx| {
@@ -104,19 +145,162 @@ impl TransportPill {
                 None
             }
         });
+        // The MIDI input is a processor in the engine too. It plays nowhere until the first
+        // poll wires it to the instrument of the selected track.
+        let keyboard = session.update(cx, |session, cx| match Keyboard::attach(session.engine()) {
+            Ok(keyboard) => Some(keyboard),
+            Err(error) => {
+                session.report(error, cx);
+                None
+            }
+        });
+        // What a key press cost, once, when the window goes away. macOS ends the process
+        // without unwinding, and GPUI drops the views first, so this is the last moment the
+        // numbers exist. A session with no MIDI message prints nothing.
+        cx.on_release(|pill, _| {
+            super::print_midi_report(pill.latency(), pill.lost_messages());
+        })
+        .detach();
+        // Its own timer, next to the one of the session: what the engine reports about the
+        // MIDI input must be drained whether the project plays or not.
+        let polling = cx.spawn(async move |pill, cx| {
+            loop {
+                cx.background_executor().timer(POLL_INTERVAL).await;
+                if pill.update(cx, |pill, cx| pill.poll_input(cx)).is_err() {
+                    break;
+                }
+            }
+        });
         Self {
             end: session.read(cx).project().end(),
             end_is_stale: false,
+            seen: *session.read(cx).playhead().read(cx),
+            recording_track: None,
             session,
             playhead,
             scrubbing: false,
             click,
+            keyboard,
+            timing,
             tempo_drag: None,
             play_focus: cx.focus_handle().tab_stop(true),
             stop_focus: cx.focus_handle().tab_stop(true),
+            record_focus: cx.focus_handle().tab_stop(true),
             strip_focus: cx.focus_handle().tab_stop(true),
             tempo_focus: cx.focus_handle().tab_stop(true),
             click_focus: cx.focus_handle().tab_stop(true),
+            _polling: polling,
+        }
+    }
+
+    /// Takes what the engine reported about the MIDI input and wires the live input to the
+    /// instrument of the selected track. The timer calls it; tests call it to skip the wait.
+    ///
+    /// Nothing here is on the way from a key to its sound: that path is the input ring and the
+    /// audio thread, and it runs whether this is called or not.
+    pub fn poll_input(&mut self, cx: &mut Context<Self>) {
+        let session = self.session.clone();
+        let selected = session.read(cx).selected().cloned();
+        let project = session.read(cx).project();
+        let destination = recording::live_notes_input(project, selected.as_ref());
+        let timing = self.timing.clone();
+        let recording_track = self.recording_track.clone();
+        let Some(keyboard) = self.keyboard.as_mut() else {
+            return;
+        };
+        keyboard.poll(timing.as_deref());
+        // A take goes to the track it began on, so the live input stays there too while it
+        // runs. Selecting another track during a take would otherwise split the two.
+        if recording_track.is_some() || destination == keyboard.destination() {
+            return;
+        }
+        let wired = session.update(cx, |session, _| {
+            keyboard.play_into(session.engine(), destination)
+        });
+        if let Err(error) = wired {
+            session.update(cx, |session, cx| session.report(error, cx));
+        }
+    }
+
+    /// Where a device layer puts the messages it reads. `None` when the engine refused the
+    /// MIDI input.
+    pub fn midi_input(&self) -> Option<Input> {
+        self.keyboard.as_ref().map(Keyboard::input)
+    }
+
+    /// How long a MIDI message took to reach the device, over this session.
+    pub fn latency(&self) -> Latency {
+        self.keyboard
+            .as_ref()
+            .map(Keyboard::latency)
+            .unwrap_or_default()
+    }
+
+    /// Messages that were never played, and messages that are missing from a take.
+    pub fn lost_messages(&self) -> Lost {
+        self.keyboard
+            .as_ref()
+            .map(Keyboard::lost)
+            .unwrap_or_default()
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.keyboard.as_ref().is_some_and(Keyboard::is_recording)
+    }
+
+    /// The record control and the `r` key: start recording from the playhead, or end the take.
+    ///
+    /// Starting also starts playback: the playhead has to move for a take to have any length.
+    /// Ending leaves playback as it is, so a composer can go on listening.
+    pub fn toggle_recording(&mut self, cx: &mut Context<Self>) {
+        let Playhead { playing, tick, .. } = *self.playhead.read(cx);
+        if self.is_recording() {
+            self.finish_recording(tick, cx);
+            return;
+        }
+        let session = self.session.clone();
+        let selected = session.read(cx).selected().cloned();
+        let track = recording::target_track(session.read(cx).project(), selected.as_ref());
+        let Some(keyboard) = self.keyboard.as_mut() else {
+            return;
+        };
+        keyboard.start_recording(tick);
+        self.recording_track = track;
+        if !playing {
+            session.update(cx, |session, _| session.engine().play());
+        }
+        cx.notify();
+    }
+
+    /// Ends the take at `until`: the clip is one undo step, and the raw take is written next
+    /// to it and never touched again.
+    fn finish_recording(&mut self, until: Ticks, cx: &mut Context<Self>) {
+        let session = self.session.clone();
+        let timing = self.timing.clone();
+        let Some(keyboard) = self.keyboard.as_mut() else {
+            return;
+        };
+        // The last block of the take is still in the ring.
+        keyboard.poll(timing.as_deref());
+        let Some(take) = keyboard.finish_recording(until) else {
+            return;
+        };
+        cx.notify();
+        // The track the take began on, not the one that is selected now.
+        let Some(track) = self.recording_track.take() else {
+            return;
+        };
+        let clip = session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                recording::add_take_clip(project, &track, &take)
+            })
+        });
+        let Some(Some(clip)) = clip else {
+            return;
+        };
+        let written = recording::write_take(session.read(cx).project(), &clip, &take);
+        if let Err(error) = written {
+            session.update(cx, |session, cx| session.report(error, cx));
         }
     }
 
@@ -504,11 +688,12 @@ impl Render for TransportPill {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh(cx);
         let theme = cx.theme();
-        let (fill, border, muted, green) = (
+        let (fill, border, muted, green, red) = (
             theme.gray_200.blend(theme.alpha_at(0.06)),
             theme.alpha_at(0.10),
             theme.gray_700,
             theme.green,
+            theme.red,
         );
         let Playhead { playing, tick, .. } = *self.playhead.read(cx);
         let project = self.session.read(cx).project();
@@ -520,6 +705,8 @@ impl Render for TransportPill {
         let strip = self.end.map(|end| self.strip(end, cx));
         let click_on = self.click_is_on();
         let has_click = self.click.is_some();
+        let recording = self.is_recording();
+        let has_keyboard = self.keyboard.is_some();
         let session = self.session.clone();
 
         div()
@@ -570,10 +757,26 @@ impl Render for TransportPill {
                             .variant(ButtonVariant::Ghost)
                             .size(ButtonSize::Sm)
                             .rounded(true)
+                            .debug_selector(|| "stop".to_string())
                             .focus_handle(&self.stop_focus)
                             .on_click(move |_, _, cx: &mut App| {
                                 session.update(cx, |session, _| session.engine().stop())
                             }),
+                    )
+                    // Red, like every record control anywhere, and in the same two variants
+                    // as play: ghost while it is off, a subtle fill while it records.
+                    .child(
+                        Button::icon_only("record", "circle")
+                            .variant(match recording {
+                                true => ButtonVariant::SubtleColor(red),
+                                false => ButtonVariant::GhostColor(red),
+                            })
+                            .size(ButtonSize::Sm)
+                            .rounded(true)
+                            .disabled(!has_keyboard)
+                            .debug_selector(|| "record".to_string())
+                            .focus_handle(&self.record_focus)
+                            .on_click(cx.listener(|pill, _, _, cx| pill.toggle_recording(cx))),
                     ),
             )
             // No fixed widths: tabular numbers keep the pill still, and it grows by one digit
@@ -641,11 +844,7 @@ mod tests {
         let (control, _engine) = Engine::new(OFFLINE);
         let mut project = open_or_create(folder.path(), control).unwrap();
         let mut changes = Changes::new();
-        let clip = Clip {
-            start: Ticks(0),
-            length: Length::new(Ticks(3840)).unwrap(),
-            notes: Vec::new(),
-        };
+        let clip = Clip::new(Ticks(0), Length::new(Ticks(3840)).unwrap(), Vec::new());
         let id = InstanceId::new("arrangement/track-1/part").unwrap();
         changes.create(id, clip);
         project.commit("Add clip", changes).unwrap();

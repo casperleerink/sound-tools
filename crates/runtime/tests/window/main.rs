@@ -15,6 +15,7 @@
 mod clips;
 mod notes;
 mod piece;
+mod recording;
 mod shell;
 mod support;
 mod track_panel;

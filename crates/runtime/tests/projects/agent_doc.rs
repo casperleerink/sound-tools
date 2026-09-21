@@ -21,6 +21,53 @@ fn json_examples(markdown: &str) -> Vec<(String, String)> {
     examples
 }
 
+/// A take as the runtime holds it, from a take as it is saved. The ticks are not in the file
+/// and the writer does not use them, so they are all zero here.
+fn take_of(raw: &midi::RawTake) -> midi::Take {
+    let event = |time_us, played| midi::TakeEvent {
+        time_us,
+        tick: sound_core::Ticks(0),
+        played,
+    };
+    let events = raw
+        .events
+        .iter()
+        .map(|saved| match *saved {
+            midi::RawEvent::On {
+                time_us,
+                pitch,
+                velocity,
+            } => event(
+                time_us,
+                midi::Played::On {
+                    pitch: sound_notes::Pitch::new(pitch).unwrap(),
+                    velocity: sound_notes::Velocity::new(velocity).unwrap(),
+                },
+            ),
+            midi::RawEvent::Off {
+                time_us,
+                pitch,
+                velocity,
+            } => event(
+                time_us,
+                midi::Played::Off {
+                    pitch: sound_notes::Pitch::new(pitch).unwrap(),
+                    velocity,
+                },
+            ),
+            midi::RawEvent::Pedal { time_us, value } => event(
+                time_us,
+                midi::Played::Pedal(sound_notes::Pedal::new(value).unwrap()),
+            ),
+        })
+        .collect();
+    midi::Take {
+        start: sound_core::Ticks(raw.start_tick),
+        end: sound_core::Ticks(raw.end_tick),
+        events,
+    }
+}
+
 /// The map and every doc it lists, as (path in the project folder, text).
 fn map_and_docs(harness: &Harness) -> Vec<(String, String)> {
     let mut files = vec![AGENT_DOC_FILE.to_string()];
@@ -62,6 +109,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "agent-docs/instrument.md",
             "agent-docs/tone.md",
             "agent-docs/inspect.md",
+            "agent-docs/takes.md",
         ]
     );
     for (path, text) in &files {
@@ -142,11 +190,30 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .commit("Set time signature", changes)
             .unwrap();
         harness.project.poll().unwrap();
-        let examples: Vec<(String, String)> = map_and_docs(&harness)
+        let all: Vec<(String, String)> = map_and_docs(&harness)
             .iter()
             .flat_map(|(_, text)| json_examples(text))
             .collect();
-        assert_eq!(examples.len(), 6, "{time_signature}");
+        assert_eq!(all.len(), 8, "{time_signature}");
+
+        // The raw take of a recording is not a record: it is an asset the runtime writes once
+        // and never reads back. Its example is checked as the file it is.
+        let (assets, examples): (Vec<_>, Vec<_>) = all
+            .into_iter()
+            .partition(|(path, _)| path.starts_with("assets/"));
+        assert_eq!(assets.len(), 1, "{time_signature}");
+        for (path, body) in &assets {
+            let raw: midi::RawTake = serde_json::from_str(body).unwrap();
+            let clip = InstanceId::new(&raw.clip).unwrap();
+            assert_eq!(
+                path,
+                &format!("assets/takes/{clip}.json"),
+                "a take example is not at the path of its clip"
+            );
+            // The bytes are those the runtime writes, so an agent reads the real thing.
+            let take = take_of(&raw);
+            assert_eq!(&take.json(&clip).unwrap(), body, "{path}");
+        }
 
         // They are written into an empty folder and are a project that loads whole.
         let folder = tempfile::tempdir().unwrap();
@@ -171,6 +238,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
                 "arrangement/piano",
                 "arrangement/piano/chords-bars-5-8",
                 "arrangement/piano/instrument",
+                "arrangement/piano/take-1",
                 "drone",
             ]
         );
