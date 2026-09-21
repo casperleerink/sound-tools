@@ -63,6 +63,11 @@ const SUSTAIN: ParamID = 1;
 /// whatever the composer does in its window. Saved in the component's state.
 const LEVEL: ParamID = 2;
 
+/// What the effect half adds to every sample. The processor reports it when it learns one, the
+/// way it reports the transpose, because VST 3 has no `mark_dirty`: a reported parameter is how
+/// a host hears that a plugin changed its own state.
+const OFFSET: ParamID = 3;
+
 /// How many semitones the transpose parameter covers, so that a normalized value is exact.
 const TRANSPOSE_RANGE: f64 = 63.0;
 
@@ -82,6 +87,9 @@ pub struct TestTone {
     handler: RefCell<Option<ComPtr<IComponentHandler>>>,
     /// The transpose, read by both halves.
     semitones: AtomicI32,
+    /// What the effect half adds to every sample, in hundredths. The processor learns it from
+    /// a loud input and the component's state saves it.
+    offset: AtomicI32,
     /// How loud the plugin plays, in hundredths. It is the edit controller's own state, which
     /// is a second state a host must save next to the component's, and this plugin is one
     /// object for both halves so nothing but asking the controller interface finds it.
@@ -100,6 +108,8 @@ pub struct TestTone {
 struct Audio {
     tone: support::Tone,
     processed: u64,
+    /// The block from which this plugin gives up and writes nothing, when it was told to.
+    fails_from: Option<u64>,
     /// How many parameter changes to send out of every process call.
     reports_out: u32,
     /// Whether to say the output is silent and write nothing into it, from the second block on.
@@ -125,12 +135,14 @@ impl TestTone {
             audio: RefCell::new(Audio {
                 tone: support::Tone::new(48_000.0),
                 processed: 0,
+                fails_from: support::fails_from(),
                 reports_out: support::events_out(),
                 goes_silent: support::told_to(support::SILENT_VARIABLE),
                 controller_state: support::told_to(support::CONTROLLER_STATE_VARIABLE),
             }),
             handler: RefCell::new(None),
             semitones: AtomicI32::new(0),
+            offset: AtomicI32::new(0),
             level: AtomicI32::new(FULL_LEVEL),
             answered: AtomicBool::new(!support::told_to(support::NEEDS_HOST_VARIABLE)),
             edit_level: AtomicI32::new(support::FULL_EDIT_LEVEL),
@@ -164,10 +176,11 @@ impl TestTone {
 }
 
 /// Every parameter, in the order `getParameterInfo` lists them.
-const PARAMETERS: [(ParamID, &str, &str, ParamValue); 3] = [
+const PARAMETERS: [(ParamID, &str, &str, ParamValue); 4] = [
     (TRANSPOSE, "Transpose", "st", 0.0),
     (SUSTAIN, "Sustain", "", 0.0),
     (LEVEL, "Level", "", 1.0),
+    (OFFSET, "Offset", "", 0.0),
 ];
 
 impl IPluginBaseTrait for TestTone {
@@ -193,12 +206,15 @@ impl IComponentTrait for TestTone {
         kNotImplemented
     }
 
+    /// One audio bus each way and one event input. The audio input is what the effect half is
+    /// played; an instrument gets the silence its host puts there. Told to be audio only, this
+    /// plugin has no event bus at all, which is what an ordinary effect looks like.
     unsafe fn getBusCount(&self, media: int32, direction: int32) -> int32 {
-        let audio_out =
-            media == MediaTypes_::kAudio as int32 && direction == BusDirections_::kOutput as int32;
-        let event_in =
-            media == MediaTypes_::kEvent as int32 && direction == BusDirections_::kInput as int32;
-        int32::from(audio_out || event_in)
+        let audio = media == MediaTypes_::kAudio as int32;
+        let event_in = media == MediaTypes_::kEvent as int32
+            && direction == BusDirections_::kInput as int32
+            && !support::is_audio_only();
+        int32::from(audio || event_in)
     }
 
     unsafe fn getBusInfo(
@@ -223,14 +239,12 @@ impl IComponentTrait for TestTone {
             };
             bus.busType = BusTypes_::kMain as int32;
             bus.flags = BusFlags_::kDefaultActive as uint32;
-            write_utf16(
-                if media == MediaTypes_::kAudio as int32 {
-                    "Output"
-                } else {
-                    "Notes"
-                },
-                &mut bus.name,
-            );
+            let name = match (media == MediaTypes_::kAudio as int32, direction) {
+                (false, _) => "Notes",
+                (true, direction) if direction == BusDirections_::kInput as int32 => "Input",
+                (true, _) => "Output",
+            };
+            write_utf16(name, &mut bus.name);
         }
         kResultOk
     }
@@ -268,22 +282,25 @@ impl IComponentTrait for TestTone {
         let Some(bytes) = (unsafe { read_stream(state) }) else {
             return kInvalidArgument;
         };
-        let Some((semitones, edit_level)) = support::load_state(&bytes) else {
+        let Some(saved) = support::load_state(&bytes) else {
             return kResultFalse;
         };
-        self.semitones.store(semitones, Ordering::Release);
-        self.edit_level.store(edit_level, Ordering::Release);
+        self.semitones.store(saved.semitones, Ordering::Release);
+        self.edit_level.store(saved.edit_level, Ordering::Release);
+        self.offset.store(saved.offset, Ordering::Release);
         if let Ok(mut audio) = self.audio.try_borrow_mut() {
-            audio.tone.set_semitones(semitones);
+            audio.tone.set_semitones(saved.semitones);
+            audio.tone.set_offset(saved.offset);
         }
         kResultOk
     }
 
     unsafe fn getState(&self, state: *mut IBStream) -> tresult {
-        let bytes = support::save_state(
-            self.semitones.load(Ordering::Acquire),
-            self.edit_level.load(Ordering::Acquire),
-        );
+        let bytes = support::save_state(support::SavedState {
+            semitones: self.semitones.load(Ordering::Acquire),
+            edit_level: self.edit_level.load(Ordering::Acquire),
+            offset: self.offset.load(Ordering::Acquire),
+        });
         // A plugin that writes its payload first and fills the header in afterwards, which is
         // what a plugin with a chunk length in its header does. The first four bytes are the
         // header here.
@@ -311,16 +328,23 @@ impl IComponentTrait for TestTone {
 impl IAudioProcessorTrait for TestTone {
     unsafe fn setBusArrangements(
         &self,
-        _inputs: *mut SpeakerArrangement,
+        inputs: *mut SpeakerArrangement,
         num_ins: int32,
         outputs: *mut SpeakerArrangement,
         num_outs: int32,
     ) -> tresult {
-        // Stereo out and nothing in is the only thing this plugin does.
-        // SAFETY: the caller says `outputs` holds `num_outs` arrangements.
-        let stereo =
-            num_outs == 1 && !outputs.is_null() && unsafe { *outputs } == SpeakerArr::kStereo;
-        match num_ins == 0 && stereo {
+        // Stereo in and stereo out is the only thing this plugin does. A host that gives no
+        // input bus at all is taken too: the effect half is then played nothing.
+        let stereo = |pointer: *mut SpeakerArrangement, count: int32, wanted: int32| {
+            if count != wanted || pointer.is_null() {
+                return false;
+            }
+            // SAFETY: the caller says the pointer holds as many arrangements as it says, and
+            // this reads the first of at least one.
+            unsafe { *pointer == SpeakerArr::kStereo }
+        };
+        let taken = stereo(outputs, num_outs, 1) && (num_ins == 0 || stereo(inputs, num_ins, 1));
+        match taken {
             true => kResultTrue,
             false => kResultFalse,
         }
@@ -332,7 +356,9 @@ impl IAudioProcessorTrait for TestTone {
         index: int32,
         arrangement: *mut SpeakerArrangement,
     ) -> tresult {
-        if arrangement.is_null() || index != 0 || direction != BusDirections_::kOutput as int32 {
+        let known = direction == BusDirections_::kOutput as int32
+            || direction == BusDirections_::kInput as int32;
+        if arrangement.is_null() || index != 0 || !known {
             return kInvalidArgument;
         }
         // SAFETY: the caller gave a place to write one arrangement.
@@ -362,9 +388,10 @@ impl IAudioProcessorTrait for TestTone {
         // SAFETY: as above.
         let sample_rate = unsafe { (*setup).sampleRate };
         if let Ok(mut audio) = self.audio.try_borrow_mut() {
-            let semitones = audio.tone.semitones();
+            let (semitones, offset) = (audio.tone.semitones(), audio.tone.offset());
             audio.tone = support::Tone::new(sample_rate as f32);
             audio.tone.set_semitones(semitones);
+            audio.tone.set_offset(offset);
         }
         kResultOk
     }
@@ -401,6 +428,15 @@ impl IAudioProcessorTrait for TestTone {
                 );
             }
             let frames = data.numSamples.max(0) as usize;
+            // A plugin that gives up: it writes nothing into its output and says so, which is
+            // what a host must not turn into a gap in the chain.
+            if audio
+                .fails_from
+                .is_some_and(|block| audio.processed >= block)
+            {
+                audio.processed += 1;
+                return kInternalError;
+            }
             if data.numOutputs < 1 || data.outputs.is_null() {
                 return kResultOk;
             }
@@ -551,6 +587,21 @@ impl IAudioProcessorTrait for TestTone {
                     *sample *= edited;
                 }
             }
+            // The effect half, on top of whatever the instrument half played. An input bus the
+            // host did not give, or one it left empty, is silence: an instrument plays as it
+            // did before this plugin was an effect as well.
+            let played = input_channels(data, frames);
+            let learned = audio.tone.effect(
+                (played.0.unwrap_or_default(), played.1.unwrap_or_default()),
+                left,
+                right,
+            );
+            if learned {
+                // The offset changed, which is a change of this plugin's own state. VST 3 has
+                // no `mark_dirty`: the host learns of it through the parameter the block
+                // reports, which is what it does for the transpose.
+                self.offset.store(audio.tone.offset(), Ordering::Release);
+            }
             audio.processed += 1;
 
             // What a host is told about: the transpose the plugin changed by itself, and as
@@ -568,6 +619,9 @@ impl IAudioProcessorTrait for TestTone {
                 if transposed {
                     let semitones = f64::from(audio.tone.semitones()) / TRANSPOSE_RANGE;
                     report(TRANSPOSE, semitones.clamp(0.0, 1.0));
+                }
+                if learned {
+                    report(OFFSET, f64::from(audio.tone.offset()) / 100.0);
                 }
                 for extra in 0..reports {
                     report(TRANSPOSE + 2 + extra, 0.5);
@@ -958,7 +1012,13 @@ impl IMidiMappingTrait for TestTone {
         controller: i16,
         id: *mut ParamID,
     ) -> tresult {
-        if bus != 0 || controller != ControllerNumbers_::kCtrlSustainOnOff as i16 || id.is_null() {
+        // Told to take no pedal, this plugin maps no parameter to any controller, which is
+        // what a VST 3 plugin that cannot be sent the pedal looks like.
+        if bus != 0
+            || controller != ControllerNumbers_::kCtrlSustainOnOff as i16
+            || id.is_null()
+            || support::takes_no_pedal()
+        {
             return kResultFalse;
         }
         // SAFETY: the caller gave a place to write one parameter id.
@@ -1054,7 +1114,14 @@ impl IPluginFactory2Trait for Factory {
             info.cardinality = ClassCardinality_::kManyInstances as int32;
             write_ascii("Audio Module Class", &mut info.category);
             write_ascii(PLUGIN_NAME, &mut info.name);
-            write_ascii("Instrument|Synth", &mut info.subCategories);
+            // Both, because this one plugin is both: a picker offers it for an instrument slot
+            // and for an effect slot. `Fx` is what VST 3 calls an effect. Told to be audio
+            // only, it says what an ordinary effect says.
+            let categories = match support::is_audio_only() {
+                true => "Fx",
+                false => "Instrument|Fx|Synth",
+            };
+            write_ascii(categories, &mut info.subCategories);
             write_ascii("Sound Tools", &mut info.vendor);
             write_ascii("0.1.0", &mut info.version);
             write_ascii("VST 3.7.0", &mut info.sdkVersion);
@@ -1144,6 +1211,31 @@ unsafe fn seek_stream(stream: *mut IBStream, to: i64) -> bool {
 }
 
 /// What a process mode is called in the log.
+/// The two channels of the first audio input bus of a block, which is what the effect half is
+/// played. `None` for a channel the host did not give: an instrument is played nothing.
+///
+/// # Safety
+///
+/// `data` must be the block the host gave, whose buffers are as long as `frames`.
+unsafe fn input_channels(data: &ProcessData, frames: usize) -> (Option<&[f32]>, Option<&[f32]>) {
+    if data.numInputs < 1 || data.inputs.is_null() {
+        return (None, None);
+    }
+    // SAFETY: the caller keeps the contract, and `numInputs` says there is one bus.
+    unsafe {
+        let bus = &*data.inputs;
+        if bus.__field0.channelBuffers32.is_null() {
+            return (None, None);
+        }
+        let channel = |index: isize| {
+            (bus.numChannels as isize > index).then(|| {
+                std::slice::from_raw_parts(*bus.__field0.channelBuffers32.offset(index), frames)
+            })
+        };
+        (channel(0), channel(1))
+    }
+}
+
 fn mode_name(mode: int32) -> &'static str {
     match mode {
         mode if mode == ProcessModes_::kOffline as int32 => "offline",

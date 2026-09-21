@@ -30,7 +30,7 @@ use sound_core::{MAX_BLOCK, PrepareConfig};
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
 use crate::host::{HOST_NAME, HOST_URL, HOST_VENDOR, HOST_VERSION};
 use crate::processor::{
-    EVENT_CAPACITY, PluginEvent, SUSTAIN_CONTROLLER, Started, copy_out, not_ours,
+    EVENT_CAPACITY, PluginEvent, SUSTAIN_CONTROLLER, Started, copy_in, copy_out, not_ours,
 };
 use crate::scan::ScannedPlugin;
 use crate::window::WindowSize;
@@ -245,11 +245,13 @@ pub fn load(
     let audio = instance
         .activate(|_, _| (), configuration)
         .map_err(|error| fail(error.to_string()))?;
-    let notes = match ports.takes_midi {
-        true => Vec::new(),
-        // Audio inputs say nothing about a plugin: Six Sines is an instrument with a stereo
-        // input for audio-rate modulation. They are fed with silence and it plays its notes.
-        false => vec![PluginProblem::NoPedal {
+    // The pedal is only missing from a plugin that has somewhere to take notes. A plugin with
+    // no note port at all, which is what an ordinary effect is, has no pedal to miss, and this
+    // host cannot ask what a record is for. Audio inputs say nothing either way: Six Sines is
+    // an instrument with a stereo input for audio-rate modulation.
+    let notes = match ports.takes_notes && !ports.takes_midi {
+        false => Vec::new(),
+        true => vec![PluginProblem::NoPedal {
             plugin_id: plugin_id.clone(),
         }],
     };
@@ -437,8 +439,8 @@ struct ClapStarted {
     takes_midi: bool,
     input_ports: AudioPorts,
     output_ports: AudioPorts,
-    /// Silence for the first audio input port of the plugin, one buffer per channel. Empty
-    /// when the plugin takes no audio in, which is the usual case for an instrument.
+    /// The first audio input port of the plugin, one buffer per channel. Empty when the plugin
+    /// takes no audio in, which is the usual case for an instrument.
     input_channels: Vec<Vec<f32>>,
     /// The first audio output port of the plugin, one buffer per channel.
     output_channels: Vec<Vec<f32>>,
@@ -532,7 +534,13 @@ impl Started for ClapStarted {
         true
     }
 
-    fn run(&mut self, frames: usize, left: &mut [f32], right: &mut [f32]) -> bool {
+    fn run(
+        &mut self,
+        frames: usize,
+        input: [&[f32]; sound_core::CHANNELS],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> bool {
         let Self {
             audio,
             input_ports,
@@ -543,15 +551,19 @@ impl Started for ClapStarted {
             ..
         } = self;
 
+        copy_in(input_channels, frames, input);
         let inputs = if input_channels.is_empty() {
             InputAudioBuffers::empty()
         } else {
             input_ports.with_input_buffers([AudioPortBuffer {
                 latency: 0,
                 channels: AudioPortBufferType::f32_input_only(
+                    // Not `constant`: a constant buffer tells the plugin every sample of it is
+                    // the same, which is true of the silence an instrument gets and not of the
+                    // sound an effect is given.
                     input_channels
                         .iter_mut()
-                        .map(|channel| InputChannel::constant(&mut channel[..frames])),
+                        .map(|channel| InputChannel::variable(&mut channel[..frames])),
                 ),
             }])
         };
@@ -590,9 +602,12 @@ impl Started for ClapStarted {
     }
 }
 
-/// What the plugin's ports say: how to send it notes, and how many channels to give it.
+/// What the plugin's ports say: whether and how to send it notes, and how many channels to
+/// give it.
 struct PortLayout {
     dialect: Dialect,
+    /// Whether the plugin has a note input port at all. An ordinary effect has none.
+    takes_notes: bool,
     takes_midi: bool,
     input_channels: usize,
     output_channels: usize,
@@ -607,12 +622,14 @@ fn read_ports(instance: &mut PluginInstance<SoundToolsHost>) -> PortLayout {
     // in as CLAP events, and one stereo port out.
     let mut layout = PortLayout {
         dialect: Dialect::Clap,
+        takes_notes: true,
         takes_midi: false,
         input_channels: 0,
         output_channels: 2,
     };
     if let Some(notes) = notes {
         let mut buffer = NotePortInfoBuffer::new();
+        layout.takes_notes = notes.count(&plugin, true) > 0;
         if let Some(port) = notes.get(&plugin, 0, true, &mut buffer) {
             layout.takes_midi = port.supported_dialects.supports(NoteDialect::Midi);
             let clap = port.supported_dialects.supports(NoteDialect::Clap);

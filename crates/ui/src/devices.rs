@@ -4,8 +4,8 @@
 //! told. This registry is that telling: a list of offers, and a name per tool. Whoever makes
 //! the window fills it, as it fills [`crate::Views`], and installs it as a GPUI global.
 //!
-//! Provisional and small, like the view registry. Today there is one kind of slot, the
-//! instrument of a track.
+//! Provisional and small, like the view registry. There are two kinds of slot, the instrument
+//! of a track and an effect after it, and an offer is made for one of them.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -82,6 +82,7 @@ impl DeviceOffer {
 
 type ListOffers = Rc<dyn Fn() -> Vec<DeviceOffer>>;
 type ListNotes = Rc<dyn Fn() -> Vec<SharedString>>;
+type Generation = Rc<dyn Fn() -> u64>;
 type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>;
 
 /// What a rack says about the instance in a slot: what to call it, and which offer it is.
@@ -93,10 +94,20 @@ pub struct DeviceLabel {
     pub name: SharedString,
 }
 
+/// Which slot of a rack an offer is for. A rack asks for one kind at a time: the picker on the
+/// instrument card offers instruments, and the control that adds one offers effects.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Instrument,
+    Effect,
+}
+
 #[derive(Default)]
 pub struct Devices {
     instruments: Vec<ListOffers>,
+    effects: Vec<ListOffers>,
     notes: Vec<ListNotes>,
+    generations: Vec<Generation>,
     describe: BTreeMap<&'static str, DescribeInstance>,
 }
 
@@ -119,11 +130,22 @@ impl Devices {
         self.instruments.push(Rc::new(list));
     }
 
+    /// Adds a source of effects, asked for like [`Self::instruments`].
+    pub fn effects(&mut self, list: impl Fn() -> Vec<DeviceOffer> + 'static) {
+        self.effects.push(Rc::new(list));
+    }
+
     /// Adds a source of quiet lines a picker shows under its offers: what a source of offers
     /// is still doing, and what it has to say about what it offers. Asked when a picker is
     /// filled, like the offers.
     pub fn notes(&mut self, list: impl Fn() -> Vec<SharedString> + 'static) {
         self.notes.push(Rc::new(list));
+    }
+
+    /// Adds a source of the number behind [`Self::offers_generation`]: a count that goes up
+    /// whenever what this source offers, or what it has to say under its offers, changes.
+    pub fn offers_change(&mut self, generation: impl Fn() -> u64 + 'static) {
+        self.generations.push(Rc::new(generation));
     }
 
     /// Registers what a rack says about an instance of the tool with state `S`.
@@ -137,12 +159,30 @@ impl Devices {
         );
     }
 
-    /// Every instrument on offer, from the installed registry.
-    pub fn offered(cx: &App) -> Vec<DeviceOffer> {
+    /// Everything on offer for one kind of slot, from the installed registry.
+    pub fn offered(slot: Slot, cx: &App) -> Vec<DeviceOffer> {
         let Some(devices) = cx.try_global::<Self>() else {
             return Vec::new();
         };
-        devices.instruments.iter().flat_map(|list| list()).collect()
+        let sources = match slot {
+            Slot::Instrument => &devices.instruments,
+            Slot::Effect => &devices.effects,
+        };
+        sources.iter().flat_map(|list| list()).collect()
+    }
+
+    /// A number that changes when the offers do. A view builds its menus once, because a
+    /// source may have to look at the machine, and builds them again when this changes; the
+    /// plugin host looks for the plugins of this Mac on a thread of its own, so a menu built
+    /// while that runs holds a part of the list and the line that says so.
+    ///
+    /// It reads a counter per source and nothing else, so a poll may ask on every frame.
+    pub fn offers_generation(cx: &App) -> u64 {
+        let Some(devices) = cx.try_global::<Self>() else {
+            return 0;
+        };
+        let sources = devices.generations.iter();
+        sources.fold(0, |total, generation| total.wrapping_add(generation()))
     }
 
     /// Every quiet line under the offers, from the installed registry.

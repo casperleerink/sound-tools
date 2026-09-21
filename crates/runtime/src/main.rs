@@ -257,10 +257,13 @@ fn list_plugins() -> Result<()> {
     let scan = plugins.scan();
     let took = started.elapsed();
     for plugin in &scan.plugins {
-        let kind = if plugin.is_instrument() {
-            "instrument"
-        } else {
-            "not an instrument"
+        // What the plugin says it is, which is what a picker offers it for. A record may name
+        // any plugin in any slot: nothing can check that what a plugin says is true.
+        let kind = match (plugin.is_instrument(), plugin.is_effect()) {
+            (true, true) => "instrument and effect",
+            (true, false) => "instrument",
+            (false, true) => "effect",
+            (false, false) => "neither an instrument nor an effect",
         };
         println!(
             "{:<5} {}  {} {} ({kind}, {})",

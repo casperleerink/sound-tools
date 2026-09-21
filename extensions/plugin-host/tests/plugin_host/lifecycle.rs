@@ -125,6 +125,20 @@ impl Audio {
 /// back what the plugin wrote down. The project and the engine both go before the log is read,
 /// so the log holds the whole life of every plugin.
 fn run(format: PluginFormat, steps: impl FnOnce(&mut Parts<'_>, &Audio)) -> Life {
+    run_with(format, false, steps)
+}
+
+/// The same with a second plugin in the effect slot of the rack, after the instrument. One
+/// wrapper serves both slots, so the thread rules must hold for the effect as well.
+fn run_with_an_effect(format: PluginFormat, steps: impl FnOnce(&mut Parts<'_>, &Audio)) -> Life {
+    run_with(format, true, steps)
+}
+
+fn run_with(
+    format: PluginFormat,
+    with_effect: bool,
+    steps: impl FnOnce(&mut Parts<'_>, &Audio),
+) -> Life {
     let folder = tempfile::tempdir().expect("a temporary folder");
     // Outside the project folder, which goes with the project at the end of this.
     let log_folder = tempfile::tempdir().expect("a temporary folder");
@@ -134,6 +148,9 @@ fn run(format: PluginFormat, steps: impl FnOnce(&mut Parts<'_>, &Audio)) -> Life
     let search = vec![plugin_folder_of(folder.path(), format)];
     let mut harness = Harness::open_with_paths(folder, search, true);
     harness.add_track(record(format, "piano"), played());
+    if with_effect {
+        harness.add_effect(record(format, "trim"));
+    }
     harness.project.engine().play();
 
     {
@@ -352,5 +369,66 @@ fn a_load_that_fails_after_the_plugin_started_still_terminates_it() {
         names,
         ["initialize", "deactivate", "terminate"],
         "{names:?}"
+    );
+}
+
+/// The same rules for a plugin in an effect slot: the record of the effect is deleted while
+/// the audio thread runs, and its plugin is stopped there before the main thread deactivates
+/// it. The instrument of the track goes on playing through all of it.
+#[test]
+fn deleting_an_effect_stops_its_plugin_on_the_audio_thread_and_leaves_the_instrument_playing() {
+    for format in FORMATS {
+        deleting_an_effect_keeps_the_thread_rules(format);
+    }
+}
+
+fn deleting_an_effect_keeps_the_thread_rules(format: PluginFormat) {
+    let life = run_with_an_effect(format, |harness, audio| {
+        let mut changes = Changes::new();
+        changes.delete(&id("track/effect"));
+        harness
+            .project
+            .commit("Delete the effect", changes)
+            .expect("the delete applies");
+        audio.render(2);
+        harness.plugins.poll(harness.project);
+    });
+
+    // Two plugins: the instrument first, then the effect.
+    let plugins = life.plugins();
+    assert_eq!(plugins.len(), 2, "{:?}", life.names());
+    let (instrument, effect) = (plugins[0], plugins[1]);
+    let names = life.names();
+
+    let audio_thread = &life.of("process", effect).thread;
+    assert_eq!(
+        &life.of("stop_processing", effect).thread,
+        audio_thread,
+        "{names:?}"
+    );
+    assert_ne!(
+        &life.of("deactivate", effect).thread,
+        audio_thread,
+        "{names:?}"
+    );
+    assert!(
+        life.position("stop_processing", effect) < life.position("deactivate", effect),
+        "{names:?}"
+    );
+    assert_eq!(
+        life.of("deactivate", effect).processed,
+        life.of("stop_processing", effect).processed,
+        "the effect processed after it was stopped: {names:?}"
+    );
+    // The instrument played on: it was stopped later and after more blocks than the effect,
+    // which is the project closing and not the delete.
+    assert!(
+        life.position("stop_processing", instrument) > life.position("stop_processing", effect),
+        "the instrument stopped before the effect: {names:?}"
+    );
+    assert!(
+        life.of("stop_processing", instrument).processed
+            > life.of("stop_processing", effect).processed,
+        "the instrument played no block after the effect went: {names:?}"
     );
 }

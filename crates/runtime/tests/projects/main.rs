@@ -5,6 +5,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod agent_doc;
+mod effects;
 mod live;
 mod metronome;
 mod mixer;

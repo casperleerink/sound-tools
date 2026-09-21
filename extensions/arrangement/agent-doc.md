@@ -6,6 +6,7 @@ The piece is one arrangement that owns tracks. A track owns its clips and one in
 state/arrangement/instance.json              the arrangement
 state/arrangement/<track>/instance.json      a track
 state/arrangement/<track>/instrument.json    the instrument of the track, always this name
+state/arrangement/<track>/<effect>.json      an effect, named in the track record
 state/arrangement/<track>/<clip>.json        a clip, under any other name
 ```
 
@@ -73,7 +74,15 @@ A clip the composer recorded from a keyboard has a `pedal` list as well. Leave i
 ```json state/arrangement/piano/instance.json
 {
   "tool": "arrangement.track",
-  "state": {"name": "Piano", "colour": "blue", "order": 0, "gain_db": 0.0, "pan": 0.0, "mute": false}
+  "state": {
+    "name": "Piano",
+    "colour": "blue",
+    "order": 0,
+    "gain_db": 0.0,
+    "pan": 0.0,
+    "mute": false,
+    "effects": ["warmth"]
+  }
 }
 ```
 
@@ -83,7 +92,34 @@ A clip the composer recorded from a keyboard has a `pedal` list as well. Leave i
 - `gain_db`: how much louder or quieter the track plays, in decibels, -60 to 6. 0 when left out, which is the sound as the instrument makes it. -6 halves the samples, 6 doubles them, and -60 is as quiet as it goes; for silence use `mute`. Change the sound itself in `instrument.json`; change the balance between tracks here.
 - `pan`: where the track sits between the two channels, -1 to 1. -1 is hard left, 0 the middle, 1 hard right. 0 when left out. A track keeps its loudness wherever it is panned.
 - `mute`: `true` silences the track and changes nothing else. `false` when left out.
+- `effects`: the effects of the track, by file name without `.json`, in the order the sound goes through them. Left out when the track has none, and a track that leaves it out is written back without it.
 - The track plays through the file `instrument.json` in its folder. Its record is in the doc of the instrument, `agent-docs/instrument.md`. A track without it is silent.
+
+## The effects of a track
+
+The sound of a track goes through its instrument, then through each effect in `effects` in that order, then through `gain_db`, `pan` and `mute`. Two lines make one effect: the record in the track folder, and its name in the list.
+
+```json state/arrangement/piano/warmth.json
+{
+  "tool": "plugin",
+  "state": {"format": "clap", "plugin_id": "com.example.warmth", "state_asset": "warmth"}
+}
+```
+
+An effect is any tool with an `audio` input and an `audio` output. Today that is the `plugin` tool, which is the same record as an instrument; `agent-docs/plugins.md` says where the ids come from. The file name is yours: lowercase letters, digits, `-` and `_`, and not `instrument`.
+
+How to:
+
+- **Add an effect**: write its record into the track folder, then put its file name at the end of `effects` in `instance.json`. Write the record first: a name in the list with no record behind it is reported until the file is there.
+- **Reorder**: write `effects` in the order you want. Nothing else moves, and the sound changes at once. `["warmth", "space"]` is the instrument, then warmth, then space.
+- **Remove**: take the name out of `effects` and delete the file. Taking it out of the list alone leaves a record that is reported; deleting the file alone leaves a name that is reported.
+- **Turn one off for a while**: take its name out of `effects` and leave the file where it is. The record and the plugin's own settings stay, and putting the name back brings it back.
+
+What `problems.txt` says about this, and what to do:
+
+- `` `effects` names "space", and this track has no space.json ``: write that record, or take the name out of the list. The track plays through the rest of the chain meanwhile.
+- `` the child "space" takes audio in and makes audio out ``, and the list does not name it: the record is there and nothing goes through it. Add its name to `effects` where you want it, or delete the file.
+- `effects[1] is "warmth", which the list already has`, or a name with a capital letter, or `instrument`: the record itself does not load, so the whole track keeps what it had. Correct the list.
 
 ## The arrangement: `arrangement`
 
@@ -103,5 +139,5 @@ It has no settings. Leave it as it is.
 - Add a track: make a new folder under `state/arrangement/` with `instance.json` first, then `instrument.json`, then its clips. Give it an `order` above the highest one in use and a `colour` no other track has.
 - Move a clip in time: change its `start`. Move it to another track: move the file into the folder of that track.
 - Delete a clip: remove its file. Delete a track: remove its folder.
-- Change the sound of a track: edit its `instrument.json`.
+- Change the sound of a track: edit its `instrument.json`. Put an effect after it, or take one off, with `effects` in `instance.json` and the record next to it.
 - Balance the tracks: set `gain_db` in `instance.json` of each. Put a track to one side with `pan`, and silence one with `"mute": true`. All three apply while the project plays.

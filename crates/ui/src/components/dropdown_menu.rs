@@ -201,6 +201,9 @@ impl RenderOnce for MenuList {
             .map(|(group_ix, entry)| match entry {
                 MenuEntry::Separator => div().h(px(1.)).mx(px(8.)).bg(line).into_any_element(),
                 MenuEntry::Note(note) => div()
+                    .id(("menu-note", group_ix))
+                    // What a test looks a quiet line up by, as a row is looked up by its value.
+                    .debug_selector(move || format!("menu-note-{group_ix}"))
                     .px(px(12.))
                     .py(px(6.))
                     .text_size(px(11.))

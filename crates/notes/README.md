@@ -68,7 +68,7 @@ Rules for an instrument:
 - While the pedal is down (`Pedal::is_down`), an `Off` does not release: the note sounds until the pedal comes up. An `AllOff` puts the pedal up as well, so a stop, a seek or an edit can leave no note hanging under a pedal nobody will lift.
 - An instrument that has no damper may ignore `Pedal`. One that knows half pedal gets the value as it was played.
 
-## The ports of an instrument
+## The ports of an instrument and of an effect
 
 An instrument is any tool whose behaviour names these two ports. An owner finds them by name, `context.child_input("instrument", NOTES_INPUT)`, so any tool with these ports fits.
 
@@ -77,4 +77,10 @@ An instrument is any tool whose behaviour names these two ports. An owner finds 
 | `NOTES_INPUT` | `notes` | event input carrying `NoteEvent` |
 | `AUDIO_OUTPUT` | `audio` | audio output, stereo like every audio port |
 
-`extensions/instrument/tests/synth/support.rs` has a complete small sender: a test track tool with a sequencer processor.
+An effect is any tool with `AUDIO_INPUT` and `AUDIO_OUTPUT`: the sound of whatever comes before it goes in and what it makes comes out. The input has the same name as the output, `audio`, because inputs and outputs are named apart, so a chain reads as `audio` to `audio` and no tool has to invent a name for the one thing it takes.
+
+These names are here, in the note contract crate, and not in a crate of their own, because this is already the crate both sides of a track read and neither depends on the other: the arrangement finds the effects of a track by these names (since step 6 of the second milestone) and the plugin host declares them, and neither knows the other exists. A crate for two constants would buy nothing.
+
+A tool may have all three ports. The plugin host does, whatever the plugin is, because one record serves an instrument slot and an effect slot and the host knows nothing of slots. An instrument's audio input is connected to nothing and is silent.
+
+`extensions/instrument/tests/synth/support.rs` has a complete small sender: a test track tool with a sequencer processor. `extensions/arrangement/tests/arrangement/support.rs` has a complete small effect, `Trim`.

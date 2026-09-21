@@ -17,6 +17,19 @@
 //! So a test presses the pedal to 100, the plugin transposes by 36 from then on, and the host
 //! saves `36` into the project. After a close and a reopen the notes are still transposed, with
 //! no pedal in the clip.
+//!
+//! It is an effect as well as an instrument, in one plugin and one class id, because a second
+//! plugin in each bundle would be a second descriptor, a second class and a second copy of the
+//! window and state code for nothing a test needs. What it adds to whatever it plays is
+//! [`Tone::effect`]: the audio it is given times [`EFFECT_GAIN`] plus its saved `offset`. An
+//! instrument's audio input is connected to nothing, so an instrument with an offset of 0,
+//! which is every state a test has not changed, sounds exactly as it did before effects
+//! existed.
+//!
+//! Two of these chained do something an order can be read out of: at a gain of a half, A then B
+//! is `x / 4 + offset_a / 2 + offset_b`, and the other way round the last two swap. And it
+//! learns: the loudest input sample it has heard from [`LEARN_LEVEL`] up becomes the offset and
+//! the plugin says its state changed, which is what the pedal is for the instrument half.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,6 +50,11 @@ const CHATTER_LINES: usize = 4000;
 /// format makes only that one hang, so a scan can have a bundle that answers next to one that
 /// never does.
 pub const HANG_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_HANG";
+
+/// Takes this many milliseconds to be listed, as a real bundle does: a quarter of a second
+/// each on the machine this was written on. A window opens while a scan of them runs, so a
+/// test can see what a picker holds before the scan has found anything.
+pub const SLOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SLOW";
 
 /// How many things to send out of every process call: CLAP events, VST 3 parameter changes. A
 /// host must have somewhere to put them that neither grows nor allocates on the audio thread.
@@ -118,6 +136,36 @@ pub const WINDOW_HEIGHT: u32 = 240;
 /// buffers would then play the block before over and over. VST 3 only: CLAP has no such flag.
 pub const SILENT_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SILENT";
 
+/// Makes the plugin's `process` fail from this block on, and write nothing into its output,
+/// which is what a plugin that gives up does. A host must not leave a gap in the chain there.
+/// The value is how many blocks it plays first.
+pub const FAIL_FROM_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_FAIL_FROM";
+
+/// How many blocks the plugin plays before it fails, if it was told to fail at all.
+pub fn fails_from() -> Option<u64> {
+    std::env::var(FAIL_FROM_VARIABLE).ok()?.parse().ok()
+}
+
+/// Makes the plugin an audio-only effect: no event input port at all, and it says it is an
+/// effect and not an instrument. A host must not report that the sustain pedal cannot reach a
+/// plugin that has nowhere to take notes.
+pub const AUDIO_ONLY_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_AUDIO_ONLY";
+
+/// Whether this plugin is the audio-only effect of [`AUDIO_ONLY_VARIABLE`].
+pub fn is_audio_only() -> bool {
+    told_to(AUDIO_ONLY_VARIABLE)
+}
+
+/// Makes the plugin take notes and offer the host no way to send the sustain pedal: the CLAP
+/// one takes no MIDI on its note port, and the VST 3 one maps no parameter to controller 64.
+/// A host has to say so, which is the line an audio-only effect must not get.
+pub const NO_PEDAL_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_NO_PEDAL";
+
+/// Whether this plugin takes notes and no pedal.
+pub fn takes_no_pedal() -> bool {
+    told_to(NO_PEDAL_VARIABLE)
+}
+
 /// Makes the VST 3 plugin's edit controller keep a state of its own: how loud it plays. One
 /// object that is both halves does not promise that its two states are the same bytes, and a
 /// host that only asks a controller that is a second object loses this one. VST 3 only.
@@ -197,6 +245,12 @@ pub fn while_listed(format: &str) {
         // Long past any deadline a host could give it. Whoever waits must stop waiting.
         std::thread::sleep(std::time::Duration::from_secs(600));
     }
+    // A bundle that takes as long as a real one, and finishes.
+    if let Ok(milliseconds) = std::env::var(SLOW_VARIABLE)
+        && let Ok(milliseconds) = milliseconds.parse()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(milliseconds));
+    }
 }
 
 /// The second state of a VST 3 plugin: the one its edit controller keeps, which a host saves
@@ -265,13 +319,24 @@ struct Voice {
     phase: f32,
 }
 
-/// The sound of a test plugin: one cosine per key that is down, the pedal on the right, and a
-/// transpose the pedal sets.
+/// How much of its input the effect half of a test plugin passes on. Not 1, so that chaining
+/// two of them is an order a test can read out of the samples.
+pub const EFFECT_GAIN: f32 = 0.5;
+
+/// From this input level the effect half takes the loudest sample it has heard as its new
+/// `offset` and says its state changed. Well above anything a chain of quiet notes makes, so a
+/// test of the order of two effects never changes a state by accident.
+pub const LEARN_LEVEL: f32 = 0.9;
+
+/// The sound of a test plugin: one cosine per key that is down, the pedal on the right, a
+/// transpose the pedal sets, and the effect half that adds what it is played.
 pub struct Tone {
     voices: [Option<Voice>; VOICES],
     sample_rate: f32,
     pedal: u8,
     semitones: i32,
+    /// What the effect half adds to every sample, in hundredths. Part of the saved state.
+    offset: i32,
 }
 
 impl Tone {
@@ -281,6 +346,7 @@ impl Tone {
             sample_rate,
             pedal: 0,
             semitones: 0,
+            offset: 0,
         }
     }
 
@@ -290,6 +356,48 @@ impl Tone {
 
     pub fn set_semitones(&mut self, semitones: i32) {
         self.semitones = semitones;
+    }
+
+    /// What the effect half adds, in hundredths.
+    pub fn offset(&self) -> i32 {
+        self.offset
+    }
+
+    pub fn set_offset(&mut self, offset: i32) {
+        self.offset = offset;
+    }
+
+    /// The effect half: adds `input * EFFECT_GAIN + offset` to what this plugin has already
+    /// written, on both channels. `true` says the offset changed, which is a change of the
+    /// plugin's own state, as [`Self::pedal`] is for the transpose.
+    ///
+    /// Both channels at once, so that both are played with the same offset even in the block
+    /// that learns a new one. A block plays with the offset it began with, so a learned offset
+    /// is heard from the next block. Nothing here allocates.
+    pub fn effect(&mut self, input: (&[f32], &[f32]), left: &mut [f32], right: &mut [f32]) -> bool {
+        let offset = self.offset as f32 / 100.0;
+        let add = |output: &mut [f32], input: &[f32]| {
+            for (sample, played) in output.iter_mut().zip(input) {
+                *sample += played * EFFECT_GAIN + offset;
+            }
+        };
+        add(left, input.0);
+        add(right, input.1);
+        // The loudest input it has ever heard becomes the offset, from `LEARN_LEVEL` up. The
+        // loudest and not the last, so what a block leaves does not depend on where in the
+        // block the samples fell.
+        let mut learned = false;
+        for played in input.0.iter().chain(input.1) {
+            if played.abs() < LEARN_LEVEL {
+                continue;
+            }
+            let heard = (played.abs() * 100.0).round() as i32;
+            if heard > self.offset {
+                self.offset = heard;
+                learned = true;
+            }
+        }
+        learned
     }
 
     /// Everything a stop or a reload resets.
@@ -361,27 +469,53 @@ impl Tone {
 /// `Level` parameter of the VST 3 plugin starts at, and what the CLAP one always plays at.
 pub const FULL_EDIT_LEVEL: i32 = 100;
 
-/// The saved state of a test plugin: a magic number, the transpose, and the level a parameter
-/// edit left the plugin on. The level is in the state because a host that carried an edit to
-/// the processor has to save what the processor now holds.
-pub fn save_state(semitones: i32, edit_level: i32) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(12);
+/// Everything a test plugin keeps between sessions.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct SavedState {
+    /// What the instrument half transposes every note by, which the pedal sets.
+    pub semitones: i32,
+    /// How loud a parameter edit of the composer's left the plugin, in hundredths. It is in
+    /// the state because a host that carried an edit to the processor has to save what the
+    /// processor now holds.
+    pub edit_level: i32,
+    /// What the effect half adds to every sample, in hundredths, which a loud input sets.
+    pub offset: i32,
+}
+
+impl Default for SavedState {
+    fn default() -> Self {
+        Self {
+            semitones: 0,
+            edit_level: FULL_EDIT_LEVEL,
+            offset: 0,
+        }
+    }
+}
+
+/// The saved state of a test plugin: a magic number and the three numbers of [`SavedState`].
+pub fn save_state(state: SavedState) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(16);
     bytes.extend_from_slice(&STATE_MAGIC);
-    bytes.extend_from_slice(&semitones.to_le_bytes());
-    bytes.extend_from_slice(&edit_level.to_le_bytes());
+    bytes.extend_from_slice(&state.semitones.to_le_bytes());
+    bytes.extend_from_slice(&state.edit_level.to_le_bytes());
+    bytes.extend_from_slice(&state.offset.to_le_bytes());
     bytes
 }
 
-/// The transpose and the level in a saved state. `None` says the bytes are not one of ours.
-pub fn load_state(bytes: &[u8]) -> Option<(i32, i32)> {
+/// What a saved state holds. `None` says the bytes are not one of ours. A state that is
+/// shorter than this one writes keeps the defaults for what it does not carry.
+pub fn load_state(bytes: &[u8]) -> Option<SavedState> {
     let rest = bytes.strip_prefix(&STATE_MAGIC)?;
-    let semitones: [u8; 4] = rest.get(..4)?.try_into().ok()?;
-    let level: [u8; 4] = match rest.get(4..8) {
-        Some(four) => four.try_into().ok()?,
-        // A state the CLAP plugin wrote, which keeps no level.
-        None => FULL_EDIT_LEVEL.to_le_bytes(),
+    let number = |at: usize, fallback: i32| match rest.get(at..at + 4) {
+        Some(four) => four.try_into().map(i32::from_le_bytes).ok(),
+        None => Some(fallback),
     };
-    Some((i32::from_le_bytes(semitones), i32::from_le_bytes(level)))
+    let default = SavedState::default();
+    Some(SavedState {
+        semitones: number(0, default.semitones)?,
+        edit_level: number(4, default.edit_level)?,
+        offset: number(8, default.offset)?,
+    })
 }
 
 /// Where `cargo` put a test plugin's dynamic library, building it first.

@@ -35,6 +35,9 @@ pub struct Opened<'a> {
     pub shell: Entity<Shell>,
     pub arrangement: Entity<ArrangementView>,
     pub timeline: Entity<Timeline>,
+    /// What the scan had found the last time a poll asked for a frame, as the window's own
+    /// poll keeps it.
+    scanned: u64,
     pub cx: &'a mut VisualTestContext,
 }
 
@@ -71,9 +74,19 @@ pub fn open_with_test_plugin(
     cx: &mut TestAppContext,
     fill: impl FnOnce(&mut Project),
 ) -> Opened<'_> {
+    open_with_plugin_host(cx, |root| test_plugin_host(root), fill)
+}
+
+/// The same with the host given, for a test that says how the scan behaves. The window starts
+/// the scan on a thread of its own before it opens the project, as the application does.
+pub fn open_with_plugin_host(
+    cx: &mut TestAppContext,
+    host: impl FnOnce(&Path) -> plugin_host::Plugins,
+    fill: impl FnOnce(&mut Project),
+) -> Opened<'_> {
     let folder = tempfile::tempdir().unwrap();
     let (control, engine) = Engine::new(OFFLINE);
-    let plugins = test_plugin_host(folder.path());
+    let plugins = host(folder.path());
     let mut project =
         runtime::open_or_create_with(folder.path(), control, plugins.clone()).unwrap();
     fill(&mut project);
@@ -118,13 +131,26 @@ pub fn open_without_plugin_host(cx: &mut TestAppContext) -> Opened<'_> {
 /// A plugin host that scans one folder with the test plugin in it. The scanner is the real
 /// `runtime` executable, so a scan starts the child process the application starts.
 pub fn test_plugin_host(root: &Path) -> plugin_host::Plugins {
+    slow_test_plugin_host(root, 0)
+}
+
+/// The same with every bundle taking `milliseconds` to be listed, as the real bundles of a
+/// machine do. A window opened while that runs sees what a picker holds before the scan has
+/// found anything.
+pub fn slow_test_plugin_host(root: &Path, milliseconds: u64) -> plugin_host::Plugins {
     let folder = root.join("plugins");
     test_clap_plugin::install_into(&folder);
     test_vst3_plugin::install_into(&folder);
-    let scanner = plugin_host::ScanCommand::new(
+    let mut scanner = plugin_host::ScanCommand::new(
         env!("CARGO_BIN_EXE_runtime"),
         [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
     );
+    if milliseconds > 0 {
+        scanner = scanner.with_environment(
+            test_plugin_support::SLOW_VARIABLE,
+            &milliseconds.to_string(),
+        );
+    }
     plugin_host::Plugins::new(vec![folder], scanner, plugin_host::ScanCache::none())
 }
 
@@ -175,6 +201,7 @@ pub fn open_project(
         shell,
         arrangement,
         timeline,
+        scanned: 0,
         cx,
     }
 }
@@ -195,11 +222,16 @@ impl Opened<'_> {
             return;
         };
         let session = self.session.clone();
+        let scanned = std::mem::replace(&mut self.scanned, plugins.scan_generation());
         let changed = self.cx.update(|_, cx| {
             plugins.poll(session.read(cx).project());
             plugins.settle_windows(cx);
             plugins.take_window_change()
         });
+        // What the window's poll does, in the same order: a frame is asked for while a scan
+        // runs and once more when it learns something or ends, because that is when a menu
+        // that was filled while it ran is filled again.
+        let changed = changed || plugins.scan_is_running() || scanned != self.scanned;
         if changed {
             self.cx
                 .update(|_, cx| session.update(cx, |_, cx| cx.notify()));
@@ -512,6 +544,7 @@ impl Opened<'_> {
             shell,
             arrangement,
             timeline,
+            scanned: _,
             cx,
         } = self;
         drop(plugins);

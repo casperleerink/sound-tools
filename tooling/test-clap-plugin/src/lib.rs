@@ -62,13 +62,26 @@ impl DefaultPluginFactory for TestTone {
         PluginDescriptor::new(PLUGIN_ID, "Sound Tools Test Tone")
             .with_vendor("Sound Tools")
             .with_version("0.1.0")
-            .with_description("A test instrument. One cosine per key, the pedal on the right.")
-            .with_features([c"instrument", c"synthesizer", c"stereo"])
+            .with_description(
+                "A test instrument and effect. One cosine per key, the pedal on the right, and what it is played times a half plus its offset.",
+            )
+            // Both, because this one plugin is both. A picker offers it for an instrument slot
+            // and for an effect slot, and a record names it in either. Told to be audio only,
+            // it says what an ordinary effect says.
+            .with_features(
+                match support::is_audio_only() {
+                    true => [c"audio-effect", c"stereo"].as_slice(),
+                    false => [c"instrument", c"audio-effect", c"synthesizer", c"stereo"].as_slice(),
+                }
+                .iter()
+                .copied(),
+            )
     }
 
     fn new_shared(_host: HostSharedHandle<'_>) -> Result<TestToneShared, PluginError> {
         Ok(TestToneShared {
             semitones: AtomicI32::new(0),
+            offset: AtomicI32::new(0),
             state_is_dirty: AtomicBool::new(false),
             close_the_window: AtomicBool::new(false),
             answered: AtomicBool::new(!support::told_to(support::NEEDS_HOST_VARIABLE)),
@@ -83,10 +96,11 @@ impl DefaultPluginFactory for TestTone {
     }
 }
 
-/// What both threads read: the transpose, whether the host still has to save it, and whether
-/// this plugin is about to close its own window.
+/// What both threads read: the transpose, the offset of the effect half, whether the host
+/// still has to save them, and whether this plugin is about to close its own window.
 pub struct TestToneShared {
     semitones: AtomicI32,
+    offset: AtomicI32,
     state_is_dirty: AtomicBool,
     close_the_window: AtomicBool,
     /// Whether the host has answered the callback this plugin asked for. Until it has, a plugin
@@ -231,37 +245,52 @@ impl PluginRenderImpl for TestToneMainThread<'_> {
 impl PluginStateImpl for TestToneMainThread<'_> {
     fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
         use std::io::Write as _;
-        let semitones = self.shared.semitones.load(Ordering::Acquire);
         // The CLAP plugin has no parameter a host can edit, so its level is always the full
         // one. The two formats keep one state format all the same, so a test reads either.
-        output.write_all(&support::save_state(semitones, support::FULL_EDIT_LEVEL))?;
+        let state = support::SavedState {
+            semitones: self.shared.semitones.load(Ordering::Acquire),
+            edit_level: support::FULL_EDIT_LEVEL,
+            offset: self.shared.offset.load(Ordering::Acquire),
+        };
+        output.write_all(&support::save_state(state))?;
         Ok(())
     }
 
     fn load(&self, input: &mut InputStream) -> Result<(), PluginError> {
         use std::io::Read as _;
-        let mut bytes = [0_u8; 12];
-        input.read_exact(&mut bytes)?;
-        let Some((semitones, _level)) = support::load_state(&bytes) else {
+        // To the end, not a fixed length: a state written before the effect half existed is
+        // shorter, and `load_state` fills in what it does not carry.
+        let mut bytes = Vec::new();
+        input.read_to_end(&mut bytes)?;
+        let Some(state) = support::load_state(&bytes) else {
             return Err(PluginError::Message("not a Test Tone state"));
         };
-        self.shared.semitones.store(semitones, Ordering::Release);
+        self.shared
+            .semitones
+            .store(state.semitones, Ordering::Release);
+        self.shared.offset.store(state.offset, Ordering::Release);
         Ok(())
     }
 }
 
+/// One stereo port each way. The input is what the effect half is played; an instrument gets
+/// silence there, which is what every audio input of a plugin got before effects existed.
 impl PluginAudioPortsImpl for TestToneMainThread<'_> {
-    fn count(&self, is_input: bool) -> u32 {
-        u32::from(!is_input)
+    fn count(&self, _is_input: bool) -> u32 {
+        1
     }
 
     fn get(&self, index: u32, is_input: bool, writer: &mut AudioPortInfoWriter) {
-        if is_input || index != 0 {
+        if index != 0 {
             return;
         }
         writer.set(&AudioPortInfo {
-            id: ClapId::new(0),
-            name: b"main",
+            id: ClapId::new(u32::from(is_input)),
+            name: if is_input {
+                b"in".as_slice()
+            } else {
+                b"main".as_slice()
+            },
             channel_count: 2,
             flags: AudioPortFlags::IS_MAIN,
             port_type: Some(AudioPortType::STEREO),
@@ -270,19 +299,30 @@ impl PluginAudioPortsImpl for TestToneMainThread<'_> {
     }
 }
 
+/// One note input, unless this plugin is the audio-only effect: that one has nowhere to take
+/// notes at all, which is what an ordinary effect looks like.
 impl PluginNotePortsImpl for TestToneMainThread<'_> {
     fn count(&self, is_input: bool) -> u32 {
-        u32::from(is_input)
+        match support::is_audio_only() {
+            true => 0,
+            false => u32::from(is_input),
+        }
     }
 
     fn get(&self, index: u32, is_input: bool, writer: &mut NotePortInfoWriter) {
-        if !is_input || index != 0 {
+        if !is_input || index != 0 || support::is_audio_only() {
             return;
         }
+        // Told to take no pedal, the port takes no MIDI, which is the only way a CLAP plugin
+        // can be sent the sustain pedal: CLAP note events have none.
+        let supported_dialects = match support::takes_no_pedal() {
+            true => NoteDialects::CLAP,
+            false => NoteDialects::CLAP | NoteDialects::MIDI,
+        };
         writer.set(&NotePortInfo {
             id: ClapId::new(0),
             name: b"notes",
-            supported_dialects: NoteDialects::CLAP | NoteDialects::MIDI,
+            supported_dialects,
             preferred_dialect: Some(NoteDialect::Clap),
         });
     }
@@ -292,12 +332,18 @@ pub struct TestToneAudio<'a> {
     shared: &'a TestToneShared,
     host: HostAudioProcessorHandle<'a>,
     tone: support::Tone,
+    /// What the host played into this plugin, one buffer per channel. The input port may not be
+    /// held while the output port is written, so a block is copied here first. It is as long as
+    /// the host said a block can be, so `process` allocates nothing.
+    input: [Vec<f32>; 2],
     /// Which plugin of this library this is, for the log.
     plugin: u64,
     /// Process calls so far, so the log says what happened before and after playing.
     processed: u64,
     /// How many events to send out of every process call.
     events_out: u32,
+    /// The block from which this plugin gives up and writes nothing, when it was told to.
+    fails_from: Option<u64>,
 }
 
 impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for TestToneAudio<'a> {
@@ -311,13 +357,17 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
         log("activate", plugin, 0);
         let mut tone = support::Tone::new(audio_config.sample_rate as f32);
         tone.set_semitones(shared.semitones.load(Ordering::Acquire));
+        tone.set_offset(shared.offset.load(Ordering::Acquire));
+        let block = audio_config.max_frames_count as usize;
         Ok(Self {
             shared,
             host,
             tone,
+            input: [vec![0.0; block], vec![0.0; block]],
             plugin,
             processed: 0,
             events_out: support::events_out(),
+            fails_from: support::fails_from(),
         })
     }
 
@@ -340,6 +390,12 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
         mut audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
+        // A plugin that gives up: it writes nothing into its output and says so, which is
+        // what a host must not turn into a gap in the chain.
+        if self.fails_from.is_some_and(|block| self.processed >= block) {
+            self.processed += 1;
+            return Err(PluginError::Message("this plugin was told to fail"));
+        }
         // The first one names the thread that processes, which is what the rest of a log is
         // read against.
         if self.processed == 0 {
@@ -353,6 +409,18 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
             return Ok(ProcessStatus::Continue);
         }
         let frames = audio.frames_count() as usize;
+        // What the effect half is played, copied out before the output port is taken: the two
+        // ports cannot be held at once. An unconnected input is silence.
+        for channel in &mut self.input {
+            channel[..frames].fill(0.0);
+        }
+        if let Some(port) = audio.input_port(0)
+            && let Some(channels) = port.channels().ok().and_then(|it| it.into_f32())
+        {
+            for (index, played) in channels.iter().enumerate().take(self.input.len()) {
+                self.input[index][..frames].copy_from_slice(&played[..frames]);
+            }
+        }
         let Some(mut port) = audio.output_port(0) else {
             return Ok(ProcessStatus::Sleep);
         };
@@ -387,6 +455,17 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
         }
         self.tone
             .render(&mut left[played..frames], &mut right[played..frames]);
+        // The effect half, on top of whatever the instrument half played. It may learn an
+        // offset from a loud input, which is a change of this plugin's own state.
+        let [input_left, input_right] = &self.input;
+        let played = (&input_left[..frames], &input_right[..frames]);
+        if self.tone.effect(played, left, right) {
+            self.shared
+                .offset
+                .store(self.tone.offset(), Ordering::Release);
+            self.shared.state_is_dirty.store(true, Ordering::Release);
+            self.host.request_callback();
+        }
         self.processed += 1;
         // A plugin that sends more than a host kept room for. Whatever the host does with them,
         // it must not grow a buffer on this thread.

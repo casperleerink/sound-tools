@@ -20,7 +20,7 @@ use vst3::Steinberg::Vst::{
 use vst3::Steinberg::{int32, kInvalidArgument, kResultFalse, kResultOk, kResultTrue, tresult};
 use vst3::{Class, ComPtr, ComWrapper};
 
-use crate::processor::{EVENT_CAPACITY, PluginEvent, Started, copy_out, not_ours};
+use crate::processor::{EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours};
 
 /// How many parameters one block may carry, in each direction. The pedal is the only one this
 /// host sends; a plugin that reports more than this while it plays loses the rest until the
@@ -184,7 +184,13 @@ impl Started for Vst3Processor {
         }
     }
 
-    fn run(&mut self, frames: usize, left: &mut [f32], right: &mut [f32]) -> bool {
+    fn run(
+        &mut self,
+        frames: usize,
+        input: [&[f32]; sound_core::CHANNELS],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> bool {
         if !self.processing {
             // VST 3 puts `setProcessing` on the thread that processes, which is this one.
             // SAFETY: the processor came from the plugin and is alive.
@@ -194,7 +200,10 @@ impl Started for Vst3Processor {
             }
             self.processing = true;
         }
+        // The first bus is what this host plays into; the rest of them get silence, as every
+        // audio input of a plugin did before effects existed.
         self.input_buses.clear(frames);
+        copy_in(self.input_buses.first_mut(), frames, input);
         // A plugin may say its output is silent (`silenceFlags`) and leave the buffer as it
         // is, so what was in it must not be what a block before wrote.
         self.output_buses.clear(frames);
@@ -344,6 +353,11 @@ impl Buses {
     /// The channels of the first bus, which is the one this host plays.
     fn first(&self) -> &[Vec<f32>] {
         &self.channels[..self.first]
+    }
+
+    /// The same, to write into: the first input bus is what the host gives the plugin.
+    fn first_mut(&mut self) -> &mut [Vec<f32>] {
+        &mut self.channels[..self.first]
     }
 }
 

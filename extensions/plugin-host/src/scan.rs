@@ -81,6 +81,18 @@ impl ScannedPlugin {
             .any(|feature| feature.eq_ignore_ascii_case("instrument"))
     }
 
+    /// Whether the plugin says it takes audio in and makes audio out of it. Only these are
+    /// offered for an effect slot of a rack.
+    ///
+    /// CLAP writes `audio-effect` and VST 3 writes `Fx`, so both words count. A plugin that
+    /// says both this and `instrument` is offered in both places; nothing here can tell
+    /// whether either is true.
+    pub fn is_effect(&self) -> bool {
+        self.features.iter().any(|feature| {
+            feature.eq_ignore_ascii_case("audio-effect") || feature.eq_ignore_ascii_case("fx")
+        })
+    }
+
     /// How an offer of this plugin is told from every other in a picker.
     pub fn offer_key(&self) -> String {
         crate::PluginRecord::offer_key(self.format, &self.id)

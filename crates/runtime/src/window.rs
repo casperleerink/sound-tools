@@ -373,6 +373,8 @@ pub fn run(folder: &Path) -> Result<()> {
                 // that is what saves the state of every one of them.
                 let (session, plugins) = (session.downgrade(), weak_plugins.clone());
                 async move |cx| {
+                    // What the scan had found the last time a frame was asked for.
+                    let mut scanned = 0;
                     loop {
                         cx.background_executor()
                             .timer(sound_ui::POLL_INTERVAL)
@@ -401,8 +403,12 @@ pub fn run(folder: &Path) -> Result<()> {
                             session.update(cx, |session, cx| session.rebind(&retries, cx));
                         }
                         // The picker shows what is known and says so quietly while a scan
-                        // runs, so a frame is drawn again while one does.
-                        if plugins.scan_is_running() {
+                        // runs, so a frame is drawn again while one does, and once more on
+                        // the poll that sees the scan learn something or end: that is when a
+                        // menu filled while it ran is filled again.
+                        let generation = plugins.scan_generation();
+                        if plugins.scan_is_running() || generation != scanned {
+                            scanned = generation;
                             session.update(cx, |_, cx| cx.notify());
                         }
                         // The window work that needs the application: the windows of plugins

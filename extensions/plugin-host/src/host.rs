@@ -43,22 +43,23 @@ pub(crate) const HOST_URL: &str = "https://github.com/casperleerink/sound-tools"
 pub(crate) const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Why a plugin record is not playing. Each becomes one line in `problems.txt`.
+///
+/// A message says what happens to the slot and not what happens to the track: this host knows
+/// no slots. What a missing plugin costs is the owner's rule, which for a track is that an
+/// instrument goes silent and an effect lets the sound through. An outside agent read the
+/// older wording, which spoke of the track, and called it a disagreement with the docs.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PluginProblem {
     #[error(
-        "this machine has no {format} plugin with the id {plugin_id:?}. The record is left as it is and the track is silent. Install the plugin, or correct `plugin_id`"
+        "this machine has no {format} plugin with the id {plugin_id:?}. The record is left as it is and nothing plays through it: a missing instrument is silent, a missing effect lets the sound through unchanged. Install the plugin, or correct `plugin_id`"
     )]
     NotInstalled { format: String, plugin_id: String },
     #[error(
-        "the plugins of this machine are still being looked at, so {plugin_id:?} is not there yet. The track is silent until the scan reaches it, which needs nothing of you"
+        "the plugins of this machine are still being looked at, so {plugin_id:?} is not there yet. Nothing plays through it until the scan reaches it, which needs nothing of you"
     )]
     StillScanning { plugin_id: String },
     #[error("the plugin {plugin_id:?} did not load: {message}")]
     DidNotLoad { plugin_id: String, message: String },
-    #[error(
-        "the plugin {plugin_id:?} is not an instrument, so it has no notes to play. Its features are: {features}"
-    )]
-    NotAnInstrument { plugin_id: String, features: String },
     #[error("the state of the plugin {plugin_id:?} could not be read: {message}")]
     StateNotRead { plugin_id: String, message: String },
     #[error("the state of the plugin {plugin_id:?} could not be saved: {message}")]
@@ -322,6 +323,18 @@ impl Plugins {
         }
     }
 
+    /// A number that goes up whenever the scan learns something, and once more when it ends.
+    ///
+    /// Whoever draws a picker keeps it and fills the menu again when it changes, because a
+    /// picker built while a scan ran holds a part of the list and a line that says so. It
+    /// copies nothing, so a poll may ask on every frame.
+    pub fn scan_generation(&self) -> u64 {
+        match self.0.scanned.lock() {
+            Ok(scanned) => scanned.generation,
+            Err(poisoned) => poisoned.into_inner().generation,
+        }
+    }
+
     /// Whether a scan is still running. The picker says so quietly while it is, and whoever
     /// polls asks on every poll, so this copies nothing.
     pub fn scan_is_running(&self) -> bool {
@@ -371,6 +384,15 @@ impl Plugins {
         let mut instruments = self.scan().plugins;
         instruments.retain(ScannedPlugin::is_instrument);
         instruments
+    }
+
+    /// Every effect this machine has, for the picker that adds one to a rack. A plugin decides
+    /// which list it is in by what it declares; nothing checks that it is true, and a record
+    /// written by hand may name any plugin in any slot.
+    pub fn effects(&self) -> Vec<ScannedPlugin> {
+        let mut effects = self.scan().plugins;
+        effects.retain(ScannedPlugin::is_effect);
+        effects
     }
 
     /// The name the maker gave the plugin with this id, when this machine has it. `None` says
@@ -445,12 +467,11 @@ impl Plugins {
                 });
             }
         };
-        if !found.is_instrument() {
-            return Err(PluginProblem::NotAnInstrument {
-                plugin_id: record.plugin_id.clone(),
-                features: found.features.join(", "),
-            });
-        }
+        // Nothing checks here what the plugin says it is. One record serves an instrument slot
+        // and an effect slot, and this host knows no slots: a track decides what it wires a
+        // record to. What a plugin declares is what a picker offers it for, and that is not the
+        // same question: Spectral Freeze on the machine this was written on declares itself an
+        // instrument and is an effect.
         // Empty bytes are a state file that was made to reserve its name, which is how a plugin
         // the window puts on a track gets one, and that the plugin has not written into yet.
         let saved = assets

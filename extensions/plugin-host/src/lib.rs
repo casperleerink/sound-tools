@@ -1,4 +1,5 @@
-//! Plugin host: third-party audio plugins as tools of a project. CLAP instruments for now.
+//! Plugin host: third-party audio plugins as tools of a project, as the instrument of a track
+//! and as effects after it.
 //!
 //! One tool, `plugin`. Its record says which format, which plugin and where the plugin's own
 //! state is kept. A record on disk, usually `instrument.json` inside a track folder:
@@ -10,8 +11,9 @@
 //! }
 //! ```
 //!
-//! It has the ports of the note contract, an event input `notes` and a stereo output `audio`,
-//! so it fits the `instrument` child of a track like any other instrument.
+//! It has three ports of the note contract, an event input `notes`, a stereo input `audio` and
+//! a stereo output `audio`, so one record fits the `instrument` child of a track like any other
+//! instrument and an effect slot after it. Nothing here knows which slot it is in.
 //!
 //! `README.md` in this crate is the guide, and `agent-doc.md` is what an agent reads.
 
@@ -29,7 +31,7 @@ use sound_core::{
     AgentDoc, AssetError, AssetName, Assets, BehaviourContext, BehaviourError, InputEndpoint,
     InvalidAssetName, OutputEndpoint, Registry, RegistryError, State,
 };
-use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
+use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
 pub use host::{PluginProblem, Plugins, WeakPlugins};
 pub use processor::HostedPlugin;
@@ -251,6 +253,10 @@ fn apply(
 ) -> Result<(), BehaviourError> {
     let node = context.processor(PROCESSOR, HostedPlugin::silent)?;
     context.input(NOTES_INPUT, InputEndpoint::new(node, HostedPlugin::NOTES));
+    // Every hosted plugin has all three ports, whatever the plugin is: one record serves an
+    // instrument slot and an effect slot, and this extension knows about neither. An
+    // instrument's audio input is connected to nothing and is silent.
+    context.input(AUDIO_INPUT, InputEndpoint::new(node, HostedPlugin::INPUT));
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(node, HostedPlugin::AUDIO));
     let config = context.prepare_config();
     match plugins.open(context.id(), state, context.assets(), config) {

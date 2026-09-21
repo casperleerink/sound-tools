@@ -102,9 +102,10 @@ devices.instruments(|| vec![DeviceOffer::new(            // what a composer can 
     "Synth",
     |_project, slot, changes| { changes.create(slot.clone(), SynthState::default()); Ok(()) },
 )]);
+devices.effects(|| vec![/* the same, for an effect slot */]);
 
 // In the view:
-let offers = Devices::offered(cx);                       // when the picker is made, not per frame
+let offers = Devices::offered(Slot::Effect, cx);         // when the picker is made, not per frame
 let label = Devices::label_of(&session, &slot, cx);      // `None`: the tool registered nothing
 // When the composer picks one, as one undo step:
 offer.write(session.project(), &slot, &mut changes)?;
@@ -119,6 +120,18 @@ sound away, and for a plugin it would make an empty state file.
 A source of offers is asked every time a picker is filled, not while the window opens, so a
 source that has to look at the machine pays for it then. The plugin host's source scans for
 plugins, which is why a track panel is where that scan happens.
+
+There are two kinds of slot, `Slot::Instrument` and `Slot::Effect`, and an offer is made for
+one of them: the picker on the instrument card asks for instruments and the control that adds
+one at the end of the rack asks for effects. Which list a plugin is in is what it says it is,
+and nothing more; a record written by hand may name any plugin in either place.
+
+A source may learn more while a view is open: the plugin host looks for the plugins of this Mac
+on a thread of its own. So a view keeps `Devices::offers_generation`, a number that changes when
+the offers do, and fills its menus again when it changes. Reading it costs a counter per source,
+so a poll may ask on every frame; reading the offers themselves may cost a look at the machine,
+which is why they are read only then. `devices.offers_change(|| ..)` is how a source provides
+its number.
 
 `DeviceOffer::write` stages a whole record, so choosing replaces what was in the slot and undo
 brings it back. `extensions/arrangement/src/view/track_panel.rs` is the one caller and
