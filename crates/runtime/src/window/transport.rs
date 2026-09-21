@@ -15,12 +15,12 @@
 use std::sync::Arc;
 
 use arrangement::TrackState;
+use fit_tempo::FitState;
 use gpui::{
     App, BorderStyle, Bounds, BoxShadow, Context, CursorStyle, DispatchPhase, Entity, FocusHandle,
     Hitbox, HitboxBehavior, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Task, Window, canvas, div, fill, hsla, point, prelude::*, px, quad, size,
 };
-use fit_tempo::FitState;
 use metronome::Click;
 use midi::{Input, Keyboard, Latency, Lost};
 use sound_core::{Changes, Instance, ProjectEvent, StreamTiming, Tempo, TempoChange, Ticks};
@@ -533,7 +533,6 @@ impl TransportPill {
             .child(div().text_size(px(12.)).text_color(muted).child("bpm"))
             .child(listeners.absolute().size_0())
     }
-
 
     /// The fit of the project, or `None` when it has none. Read on every render, so the
     /// control comes and goes with the fit, also when an agent writes or deletes the record.

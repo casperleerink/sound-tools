@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gpui::{Context, Entity, IntoElement, Render, SharedString, Window, prelude::*};
-use sound_core::{Changes, InstanceId, Project};
+use sound_core::{Changes, InstanceId};
 use sound_notes::Clip;
 use sound_ui::Session;
 use sound_ui::components::dropdown_menu::{
@@ -185,8 +185,7 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
             // The fit belongs to the whole project: it rewrites the tempo map every other
             // part follows. So it sits here and not on the clip, and it is offered only for a
             // clip that came from a recording.
-            command(FIT_TEMPO, "Fit tempo to take".to_string())
-                .disabled(shown.fit_clip.is_none()),
+            command(FIT_TEMPO, "Fit tempo to take".to_string()).disabled(shown.fit_clip.is_none()),
         ])),
         MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().items([

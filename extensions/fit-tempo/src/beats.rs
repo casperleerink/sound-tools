@@ -285,10 +285,14 @@ fn track(envelope: &[f64], local: &[f64]) -> Vec<usize> {
                 best_frame = candidate;
             }
         }
-        if best_frame == usize::MAX {
-            // A sequence may begin anywhere in the first two beats and nowhere later, else the
-            // search would start fresh at every onset and pay no cost at all.
-            if (frame as f64) < period * 2.0 {
+        // A sequence may begin anywhere in the first two beats and nowhere later, else the
+        // search would start fresh at every onset and pay no cost at all. Beginning is worth
+        // it when every predecessor costs more than it is worth, which is what happens in
+        // front of the first note: without this the first beat would be somewhere in the
+        // silence before the playing, and the grid would start there.
+        let may_begin = (frame as f64) < period * 2.0;
+        if best_frame == usize::MAX || (may_begin && best <= 0.0) {
+            if may_begin {
                 score[frame] = envelope[frame];
             }
             continue;
@@ -376,13 +380,24 @@ fn snap(beats: Vec<u64>, onsets: &[Onset]) -> Vec<u64> {
     snapped
 }
 
-/// Extends the grid at both ends so that every note of the take is inside it. The search may
-/// start after the first note and end before the last, and a note outside the grid would land
-/// before the first beat or after the last tempo change.
+/// Makes the grid cover the notes of the take and no more.
+///
+/// The search may start after the first note and end before the last, and a note outside the
+/// grid would land before the first beat or after the last tempo change. It may also reach into
+/// the silence in front of the playing, where there is nothing to be right or wrong about, and
+/// a beat there would push the whole grid a beat later.
 fn cover(mut beats: Vec<u64>, onsets: &[Onset]) -> Vec<u64> {
     let (Some(first), Some(last)) = (onsets.first(), onsets.last()) else {
         return beats;
     };
+    // A beat whose next beat is still before the first note is in the silence in front of the
+    // take, and the same at the end.
+    while beats.len() > 2 && beats[1] <= first.time_us {
+        beats.remove(0);
+    }
+    while beats.len() > 2 && beats[beats.len() - 2] >= last.time_us {
+        beats.pop();
+    }
     if beats.len() < 2 {
         return beats;
     }

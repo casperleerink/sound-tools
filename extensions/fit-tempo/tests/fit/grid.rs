@@ -223,9 +223,13 @@ fn the_take_keeps_its_place_in_real_time() {
     let fitted = fit(&take, signature, 0, BeatRate::Normal).expect("a fit");
     let clock = clock(&fitted.map);
     let start = clock.frame_of(fitted.clip.start).0;
+    // Within one tick: the clip starts on the first tick at or after the moment the recording
+    // began, and the lead has one slow beat per bar, so a tick there is long. The notes are
+    // not rounded with it: each one gets the tick of its own moment.
+    let tick = clock.frame_of(Ticks(fitted.clip.start.0 + 1)).0 - start;
     assert!(
-        start.abs_diff(frame_of(take.start_us)) <= 2,
-        "the clip starts at frame {start}, the take at {}",
+        start.abs_diff(frame_of(take.start_us)) <= tick,
+        "the clip starts at frame {start}, the take at {}, a tick is {tick} frames",
         frame_of(take.start_us)
     );
     // And nothing of the take reaches before the project starts.
