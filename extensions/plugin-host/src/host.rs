@@ -72,16 +72,22 @@ pub enum PluginProblem {
         "the plugin {plugin_id:?} offers the host no way to send the sustain pedal, so the pedal does not reach it. Its notes play"
     )]
     NoPedal { plugin_id: String },
+    #[error(
+        "the plugin {plugin_id:?} moved the parameter its sustain pedal is mapped to. The pedal still reaches the parameter it was mapped to when the plugin loaded, which may now be another control. Open the project again to pick the new mapping up"
+    )]
+    PedalMappingMoved { plugin_id: String },
     #[error("the plugin {plugin_id:?} has no window of its own")]
     NoWindow { plugin_id: String },
     #[error("the window of the plugin {plugin_id:?} did not open: {message}")]
     WindowDidNotOpen { plugin_id: String, message: String },
 }
 
-/// What [`Plugins::open`] gives back. There is always a plugin: the behaviour hands the engine
-/// a plugin every time it runs, so nothing the engine has depends on what this table remembers.
+/// What [`Plugins::open`] gives back. The behaviour hands the engine whatever is here every
+/// time it runs, so nothing the engine has depends on what this table remembers.
 pub struct Opened {
-    pub started: Box<dyn crate::processor::Started>,
+    /// The audio side of the plugin, or `None` from a host that loads none ([`Plugins::listing`]),
+    /// which is a slot that plays nothing and reports nothing.
+    pub started: Option<Box<dyn crate::processor::Started>>,
     /// What to report about this record every time the behaviour runs, such as a plugin the
     /// sustain pedal cannot reach. These are not failures: the plugin plays.
     pub notes: Vec<PluginProblem>,
@@ -169,6 +175,8 @@ struct Inner {
     retries: RefCell<Vec<InstanceId>>,
     /// A read-only project (`--inspect`, `--render`) never writes plugin state.
     writes_state: bool,
+    /// Whether a record's plugin is loaded at all. `--inspect` does not, see [`Plugins::listing`].
+    loads: bool,
     /// The `assets/` folder of the project, from the first plugin that loaded. Kept so that
     /// dropping the host can still save, see [`Drop`].
     assets: RefCell<Option<Assets>>,
@@ -233,7 +241,7 @@ impl Plugins {
         scanner: ScanCommand,
         cache: ScanCache,
     ) -> Self {
-        Self::with_writing(search_paths, scanner, cache, true)
+        Self::with(search_paths, scanner, cache, true, true)
     }
 
     /// A host for a project that is open read-only. It loads plugins and never writes.
@@ -242,14 +250,35 @@ impl Plugins {
         scanner: ScanCommand,
         cache: ScanCache,
     ) -> Self {
-        Self::with_writing(search_paths, scanner, cache, false)
+        Self::with(search_paths, scanner, cache, false, true)
     }
 
-    fn with_writing(
+    /// A host that looks a plugin up and never loads one. `runtime --inspect` uses it.
+    ///
+    /// Loading a plugin runs somebody else's code in this process, and a plugin that only ever
+    /// loads and goes can take the process down with it: Crow Hill Origins ends `--inspect`
+    /// in a segmentation fault in its own teardown, having never processed a block. Inspecting
+    /// prints a project and makes no sound, so it needs no plugin at all.
+    ///
+    /// It still does everything this side can do without the plugin, so that `--inspect`
+    /// reports what it always reported: the scan says whether this machine has the plugin, and
+    /// the state asset is read, so a state file that cannot be read is still a problem an
+    /// agent sees before playback finds it. What is lost is only what the plugin itself can
+    /// say, such as a note port that takes no sustain pedal.
+    pub fn listing(
+        search_paths: Vec<std::path::PathBuf>,
+        scanner: ScanCommand,
+        cache: ScanCache,
+    ) -> Self {
+        Self::with(search_paths, scanner, cache, false, false)
+    }
+
+    fn with(
         search_paths: Vec<std::path::PathBuf>,
         scanner: ScanCommand,
         cache: ScanCache,
         writes_state: bool,
+        loads: bool,
     ) -> Self {
         Self(Rc::new(Inner {
             search_paths,
@@ -262,6 +291,7 @@ impl Plugins {
             waiting: RefCell::new(BTreeSet::new()),
             retries: RefCell::new(Vec::new()),
             writes_state,
+            loads,
             assets: RefCell::new(None),
             table: RefCell::new(Table::default()),
         }))
@@ -481,6 +511,17 @@ impl Plugins {
                 message: error.to_string(),
             })?
             .filter(|bytes| !bytes.is_empty());
+        // A host that only lists stops here, after everything this side can check without the
+        // plugin: the scan has the plugin and its state file can be read. Nothing of the
+        // plugin's own code runs in this process, so nothing of it can fail here, in its
+        // `process`, or in the teardown it never expected. What is left out is only what the
+        // plugin itself would have said.
+        if !self.0.loads {
+            return Ok(Opened {
+                started: None,
+                notes: Vec::new(),
+            });
+        }
         let opening = match record.format {
             PluginFormat::Clap => crate::clap::load(&found, saved.as_deref(), config),
             PluginFormat::Vst3 => crate::vst3::load(&found, saved.as_deref(), config),
@@ -504,7 +545,10 @@ impl Plugins {
                 window: PluginWindow::default(),
             },
         );
-        Ok(Opened { started, notes })
+        Ok(Opened {
+            started: Some(started),
+            notes,
+        })
     }
 
     /// Records whose plugin was not there when their behaviour ran and may be now, because the
@@ -812,6 +856,14 @@ impl Plugins {
             // so the composer is told instead of being left with a plugin that stopped.
             if requests.restart {
                 problems.push(PluginProblem::AskedForRestart {
+                    plugin_id: hosted.plugin_id.clone(),
+                });
+            }
+            // The plugin moved the parameter the sustain pedal reaches. The host looked that
+            // mapping up while the plugin loaded and keeps it, so the pedal goes on reaching
+            // the parameter it reached before, which is now the wrong one.
+            if requests.midi_mapping_changed {
+                problems.push(PluginProblem::PedalMappingMoved {
                     plugin_id: hosted.plugin_id.clone(),
                 });
             }

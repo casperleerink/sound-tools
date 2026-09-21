@@ -55,23 +55,44 @@ runtime . --inspect
 /// The scan runs this same executable with [`plugin_host::SCAN_ARGUMENT`], one child process
 /// per bundle, so a plugin that crashes while it is looked at costs one bundle.
 pub fn plugins(read_only: bool) -> Result<Plugins> {
-    with_cache(read_only, ScanCache::of_this_machine())
+    let loading = if read_only {
+        Loading::Only
+    } else {
+        Loading::AndSaving
+    };
+    with_cache(loading, ScanCache::of_this_machine())
 }
 
 /// The host `runtime --plugins` uses: it looks at every bundle again, whatever the cache of
 /// this machine remembers, and writes the result. That is how a plugin that hung or crashed
 /// once is tried again.
 pub fn plugins_refreshing_the_cache() -> Result<Plugins> {
-    with_cache(true, ScanCache::of_this_machine().refreshing())
+    with_cache(Loading::None, ScanCache::of_this_machine().refreshing())
 }
 
-fn with_cache(read_only: bool, cache: ScanCache) -> Result<Plugins> {
+/// The host `--inspect` uses: it says which plugins this machine has and loads none of them.
+/// See [`Plugins::listing`] for why.
+pub fn plugins_for_inspecting() -> Result<Plugins> {
+    with_cache(Loading::None, ScanCache::of_this_machine())
+}
+
+/// How much of a plugin a host is for.
+enum Loading {
+    /// Loads a plugin and saves its state into the project.
+    AndSaving,
+    /// Loads a plugin and never writes: `--render`.
+    Only,
+    /// Looks a plugin up and never loads one: `--inspect`, `--plugins`.
+    None,
+}
+
+fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
     let scanner = ScanCommand::this_program()?;
     let paths = default_search_paths();
-    Ok(if read_only {
-        Plugins::read_only(paths, scanner, cache)
-    } else {
-        Plugins::new(paths, scanner, cache)
+    Ok(match loading {
+        Loading::AndSaving => Plugins::new(paths, scanner, cache),
+        Loading::Only => Plugins::read_only(paths, scanner, cache),
+        Loading::None => Plugins::listing(paths, scanner, cache),
     })
 }
 
@@ -273,6 +294,15 @@ pub fn open_read_only(folder: &Path) -> Result<(Project, Engine, Plugins)> {
     let plugins = plugins(true)?;
     let (project, engine) = open_read_only_with(folder, plugins.clone())?;
     Ok((project, engine, plugins))
+}
+
+/// Opens the project the way `--inspect` does: without its lock, and with a host that looks a
+/// plugin up and loads none ([`Plugins::listing`]). Inspecting prints a project and makes no
+/// sound, so no third-party code runs in this process and no plugin can end it.
+pub fn open_for_inspect(folder: &Path) -> Result<Project> {
+    let plugins = plugins_for_inspecting()?;
+    let (project, _engine) = open_read_only_with(folder, plugins)?;
+    Ok(project)
 }
 
 /// [`open_read_only`] with a plugin host given, for tests. See [`open_or_create_with`].

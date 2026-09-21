@@ -198,9 +198,11 @@ fn run(folder: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Reads the project without its lock, so it works next to a running runtime.
+/// Reads the project without its lock, so it works next to a running runtime. It loads no
+/// plugin: printing a project needs none, and a plugin that is loaded runs somebody else's
+/// code in this process. A plugin this machine does not have is still named in the problems.
 fn inspect(folder: &Path) -> Result<()> {
-    let (project, _engine, _plugins) = open_read_only(folder)?;
+    let project = runtime::open_for_inspect(folder)?;
     print_summary(&project);
     Ok(())
 }

@@ -31,8 +31,8 @@ use vst3::Steinberg::Vst::{
     IComponentHandlerTrait, IComponentTrait, IEditController, IEditControllerTrait,
     IEventListTrait, IMidiMapping, IMidiMappingTrait, IParamValueQueueTrait,
     IParameterChangesTrait, MediaTypes_, ParamID, ParamValue, ParameterInfo,
-    ParameterInfo_::ParameterFlags_, ProcessData, ProcessModes_, ProcessSetup, RoutingInfo,
-    SpeakerArr, SpeakerArrangement, String128, SymbolicSampleSizes_, TChar,
+    ParameterInfo_::ParameterFlags_, ProcessData, ProcessModes_, ProcessSetup, RestartFlags_,
+    RoutingInfo, SpeakerArr, SpeakerArrangement, String128, SymbolicSampleSizes_, TChar,
 };
 use vst3::Steinberg::{
     FIDString, FUnknown, IBStream, IBStream_::IStreamSeekMode_, IBStreamTrait, IPlugFrame,
@@ -100,6 +100,9 @@ pub struct TestTone {
     /// How loud the plugin plays, in hundredths, as the last `LEVEL` point of a block set it.
     /// The processor writes it and the component's state saves it.
     edit_level: AtomicI32,
+    /// Whether this plugin has already moved its sustain pedal to another parameter, which it
+    /// does once, after the host has looked the mapping up. See [`IMidiMappingTrait`].
+    pedal_moved: Cell<bool>,
     /// Which plugin of this library this is, for the log.
     plugin: u64,
 }
@@ -146,6 +149,7 @@ impl TestTone {
             level: AtomicI32::new(FULL_LEVEL),
             answered: AtomicBool::new(!support::told_to(support::NEEDS_HOST_VARIABLE)),
             edit_level: AtomicI32::new(support::FULL_EDIT_LEVEL),
+            pedal_moved: Cell::new(false),
             plugin: support::next_plugin(),
         }
     }
@@ -1022,7 +1026,28 @@ impl IMidiMappingTrait for TestTone {
             return kResultFalse;
         }
         // SAFETY: the caller gave a place to write one parameter id.
-        unsafe { *id = SUSTAIN };
+        unsafe {
+            *id = if self.pedal_moved.get() {
+                OFFSET
+            } else {
+                SUSTAIN
+            }
+        };
+        // Told to move the pedal: answer the host with the mapping it asked for, then say the
+        // mapping has changed. That is the order a MIDI learn or a loaded preset makes after a
+        // host has looked the mapping up, and it leaves the host holding the older parameter.
+        // Both calls are on the thread the interface lives on, which is where the host is.
+        if support::told_to(support::MOVE_PEDAL_VARIABLE) && !self.pedal_moved.replace(true) {
+            let handler = self.handler.borrow().clone();
+            if let Some(handler) = handler {
+                support::log("pedal_moved", 0, 0);
+                // SAFETY: the handler came from the host and the host keeps it alive until it
+                // takes it back with a null `setComponentHandler`.
+                unsafe {
+                    handler.restartComponent(RestartFlags_::kMidiCCAssignmentChanged as int32)
+                };
+            }
+        }
         kResultOk
     }
 }

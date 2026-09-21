@@ -261,9 +261,10 @@ fn apply(
     let config = context.prepare_config();
     match plugins.open(context.id(), state, context.assets(), config) {
         Ok(opened) => {
-            // Every run hands the engine a plugin. Nothing here asks what the engine already
-            // has, so an edit the project rejects leaves the engine and this host as they were.
-            context.update(node, Some(opened.started))?;
+            // Every run hands the engine what the host opened. Nothing here asks what the
+            // engine already has, so an edit the project rejects leaves the engine and this
+            // host as they were. A host that only lists opens nothing, and the slot is silent.
+            context.update(node, opened.started)?;
             for note in opened.notes {
                 context.problem(note.to_string());
             }

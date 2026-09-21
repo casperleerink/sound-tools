@@ -1,5 +1,7 @@
 # Milestone 2: plugins, MIDI recording and fit tempo
 
+**Done September 21, 2026.** Every step is merged and every check below has evidence in [ARCHITECTURE.md](../ARCHITECTURE.md), "Verified September 21, 2026", with the results and their limits. What is still missing is in "Known gaps after the second milestone" in the same file.
+
 Decided September 20, 2026. This is the plan an orchestrating agent works from. It holds goals, decisions and checks, no implementation. [ARCHITECTURE.md](../ARCHITECTURE.md) stays the source of truth. Each step records what it settles there.
 
 ## Goal
@@ -63,6 +65,8 @@ Audio recording, the in-app agent and the outer application, AU, a plugin sandbo
 | 6 | Effect plugins in the track rack | Effects sit after the instrument in the track panel, in order, and the sound passes through them. |
 | 7 | Fit tempo and steadiness | See the milestone checks below. |
 | 8 | Milestone check | Every check below has evidence, the README is current, and the known gaps are listed. |
+
+Every step is done. Steps 4 and 5 each split in two, as expected.
 
 Steps 0 to 2 are small. Steps 4 and 5 are the largest and may each split in two.
 
