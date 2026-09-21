@@ -10,7 +10,9 @@ use sound_core::{
     EventInput, InputEndpoint, InstanceId, OutputEndpoint, Ports, PrepareConfig, ProcessContext,
     Processor, Project, Registry, State, Tempo, TempoMap, Ticks, TimeSignature,
 };
-use sound_notes::{AUDIO_OUTPUT, Clip, Length, NOTES_INPUT, Note, NoteEvent, Pitch, Velocity};
+use sound_notes::{
+    AUDIO_OUTPUT, Clip, Length, NOTES_INPUT, Note, NoteEvent, Pedal, Pitch, Velocity,
+};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 /// Frames per tick at 120 bpm and 48 kHz.
@@ -34,16 +36,57 @@ pub struct ProbeProcessor {
     /// Held notes per pitch. An `On` adds one. An `Off` releases every note of its pitch, as
     /// the note contract says.
     held: [u32; 128],
+    /// Notes whose key came up while the pedal was down. They sound until it comes up, which
+    /// is what the note contract asks of an instrument.
+    sustained: [u32; 128],
+    pedal: Pedal,
 }
 
 impl ProbeProcessor {
     const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     const OUTPUT: AudioOutput = AudioOutput::new(0);
 
+    pub fn new(scale: f32) -> Self {
+        Self {
+            scale,
+            held: [0; 128],
+            sustained: [0; 128],
+            pedal: Pedal::UP,
+        }
+    }
+
     fn level(&self) -> f32 {
-        let pitches = self.held.iter().enumerate();
-        let sum: u32 = pitches.map(|(pitch, count)| pitch as u32 * count).sum();
+        let pitches = self.held.iter().zip(&self.sustained).enumerate();
+        let sum: u32 = pitches
+            .map(|(pitch, (held, sustained))| pitch as u32 * (held + sustained))
+            .sum();
         self.scale * sum as f32
+    }
+
+    fn handle(&mut self, event: NoteEvent) {
+        match event {
+            NoteEvent::On { pitch, .. } => self.held[usize::from(pitch.number())] += 1,
+            NoteEvent::Off { pitch } => {
+                let pitch = usize::from(pitch.number());
+                if self.pedal.is_down() {
+                    self.sustained[pitch] += self.held[pitch];
+                } else {
+                    self.sustained[pitch] = 0;
+                }
+                self.held[pitch] = 0;
+            }
+            NoteEvent::Pedal(value) => {
+                if self.pedal.is_down() && !value.is_down() {
+                    self.sustained = [0; 128];
+                }
+                self.pedal = value;
+            }
+            NoteEvent::AllOff => {
+                self.held = [0; 128];
+                self.sustained = [0; 128];
+                self.pedal = Pedal::UP;
+            }
+        }
     }
 }
 
@@ -69,11 +112,7 @@ impl Processor for ProbeProcessor {
         let mut events = events.iter().peekable();
         for (frame, sample) in left.iter_mut().enumerate() {
             while let Some(timed) = events.next_if(|timed| timed.offset <= frame) {
-                match timed.event {
-                    NoteEvent::On { pitch, .. } => self.held[usize::from(pitch.number())] += 1,
-                    NoteEvent::Off { pitch } => self.held[usize::from(pitch.number())] = 0,
-                    NoteEvent::AllOff => self.held = [0; 128],
-                }
+                self.handle(timed.event);
             }
             *sample = self.level();
         }
@@ -82,10 +121,7 @@ impl Processor for ProbeProcessor {
 }
 
 fn apply_probe(state: &Probe, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
-    let probe = context.processor("probe", || ProbeProcessor {
-        scale: state.scale,
-        held: [0; 128],
-    })?;
+    let probe = context.processor("probe", || ProbeProcessor::new(state.scale))?;
     context.update(probe, state.scale)?;
     context.input(
         NOTES_INPUT,
@@ -122,11 +158,20 @@ pub fn note(start: u64, length: u64, pitch: u8) -> Note {
 }
 
 pub fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {
-    Clip {
-        start: Ticks(start),
-        length: Length::new(Ticks(length)).unwrap(),
-        notes,
-    }
+    Clip::new(Ticks(start), Length::new(Ticks(length)).unwrap(), notes)
+}
+
+/// A clip with pedal moves, each `(start, value)` counted from the clip start.
+pub fn clip_with_pedal(start: u64, length: u64, notes: Vec<Note>, pedal: &[(u64, u8)]) -> Clip {
+    let mut clip = clip(start, length, notes);
+    clip.pedal = pedal
+        .iter()
+        .map(|&(start, value)| sound_notes::PedalChange {
+            start: Ticks(start),
+            value: Pedal::new(value).unwrap(),
+        })
+        .collect();
+    clip
 }
 
 /// The record of a clip as an agent would write it.

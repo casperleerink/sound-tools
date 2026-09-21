@@ -12,7 +12,7 @@ use std::sync::Arc;
 use sound_core::{
     EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor, Ticks, Transport,
 };
-use sound_notes::{Clip, NoteEvent, Pitch, PlacedNote, Velocity};
+use sound_notes::{Clip, NoteEvent, Pedal, Pitch, PlacedNote, PlacedPedal, Velocity};
 
 /// How long a preview note sounds. Its off comes from the processor after this time, so no
 /// interface can leave one sounding.
@@ -23,29 +23,60 @@ pub const PREVIEW_SECONDS: f32 = 0.3;
 pub const HELD_CAPACITY: usize = 128;
 
 /// Every note of a track at its place on the timeline, sorted by start and then pitch, so a
-/// block finds its notes with one binary search.
+/// block finds its notes with one binary search. The sustain pedal is kept the same way.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct TrackSnapshot {
     notes: Vec<PlacedNote>,
+    pedal: Vec<PlacedPedal>,
 }
 
 impl TrackSnapshot {
-    /// Clips may overlap: the notes of all of them play.
+    /// Clips may overlap: the notes and the pedal moves of all of them play.
     pub fn new<'a>(clips: impl IntoIterator<Item = &'a Clip>) -> Self {
-        let mut notes: Vec<PlacedNote> = clips.into_iter().flat_map(Clip::placed_notes).collect();
+        let mut notes = Vec::new();
+        let mut pedal = Vec::new();
+        for clip in clips {
+            notes.extend(clip.placed_notes());
+            pedal.extend(clip.placed_pedal());
+        }
         // The whole note is the key, so the same clips always give the same order.
         notes.sort_unstable_by_key(|note| (note.start, note.pitch, note.end, note.velocity));
-        Self { notes }
+        pedal.sort_unstable_by_key(|change| (change.start, change.value));
+        Self { notes, pedal }
     }
 
     pub fn notes(&self) -> &[PlacedNote] {
         &self.notes
     }
 
+    pub fn pedal(&self) -> &[PlacedPedal] {
+        &self.pedal
+    }
+
     fn starting_in(&self, range: &Range<Ticks>) -> &[PlacedNote] {
         let first = self.notes.partition_point(|note| note.start < range.start);
         let last = self.notes.partition_point(|note| note.start < range.end);
         self.notes.get(first..last).unwrap_or_default()
+    }
+
+    fn pedal_starting_in(&self, range: &Range<Ticks>) -> &[PlacedPedal] {
+        let first = self
+            .pedal
+            .partition_point(|change| change.start < range.start);
+        let last = self
+            .pedal
+            .partition_point(|change| change.start < range.end);
+        self.pedal.get(first..last).unwrap_or_default()
+    }
+
+    /// Where the pedal stands just before `tick`: the last move before it, or up. Clips may
+    /// overlap, so of several moves at one tick the last in sorted order wins, as for notes.
+    fn pedal_before(&self, tick: Ticks) -> Pedal {
+        let before = self.pedal.partition_point(|change| change.start < tick);
+        self.pedal
+            .get(..before)
+            .and_then(<[PlacedPedal]>::last)
+            .map_or(Pedal::UP, |change| change.value)
     }
 
     /// Where the note that started at `start` with `pitch` ends now. `None` when it is gone.
@@ -95,6 +126,10 @@ pub struct Sequencer {
     preview_wanted: Option<(Pitch, Velocity)>,
     previewed: Option<Previewed>,
     preview_frames: usize,
+    /// Where this sequencer last put the pedal of its instrument. Every block compares it with
+    /// the snapshot, so a seek into a held pedal, and an edit that removes one, both arrive
+    /// with no case of their own.
+    sent_pedal: Pedal,
 }
 
 impl Sequencer {
@@ -110,6 +145,7 @@ impl Default for Sequencer {
             preview_wanted: None,
             previewed: None,
             preview_frames: 0,
+            sent_pedal: Pedal::UP,
         }
     }
 }
@@ -152,6 +188,7 @@ impl Processor for Sequencer {
             preview_wanted,
             previewed,
             preview_frames,
+            sent_pedal,
         } = self;
         let mut sender = Sender {
             event_outputs,
@@ -164,6 +201,8 @@ impl Processor for Sequencer {
             sender.send(0, NoteEvent::AllOff);
             held.clear();
             *previewed = None;
+            // `AllOff` puts the pedal of the instrument up as well.
+            *sent_pedal = Pedal::UP;
         }
         preview(
             preview_wanted,
@@ -173,6 +212,24 @@ impl Processor for Sequencer {
             held,
             &mut sender,
         );
+
+        // The pedal, before the notes of this block: an off at the first tick of the block must
+        // see the pedal the clips ask for. Only while playing, because the pedal of a stopped
+        // project would hold what a keyboard plays into the same instrument.
+        if transport.playing {
+            let wanted = snapshot.pedal_before(range.start);
+            if wanted != *sent_pedal && sender.send(0, NoteEvent::Pedal(wanted)) {
+                *sent_pedal = wanted;
+            }
+            for change in snapshot.pedal_starting_in(&range) {
+                let Some(offset) = transport.offset_of(change.start) else {
+                    continue;
+                };
+                if sender.send(offset, NoteEvent::Pedal(change.value)) {
+                    *sent_pedal = change.value;
+                }
+            }
+        }
 
         // A held note follows the new snapshot: it takes its new end, or it ends now when its
         // note is gone or moved. A note the edit did not touch is found with the same end, so

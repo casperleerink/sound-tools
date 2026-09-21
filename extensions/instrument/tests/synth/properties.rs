@@ -8,7 +8,7 @@ use proptest::prelude::*;
 use sound_core::{Connection, Engine, EngineConfig, State};
 use sound_notes::Note;
 
-use crate::support::{Sequencer, note, peak};
+use crate::support::{Part, Sequencer, note, peak};
 
 /// The ends of a range come up often, because that is where a filter or an envelope breaks.
 fn within(low: f32, high: f32) -> impl Strategy<Value = f32> {
@@ -65,7 +65,7 @@ proptest! {
         let synth = edit.add_processor("synth", Synth::new(first)).unwrap();
         edit.connect(Connection::new(sequencer.id(), Sequencer::NOTES, synth.id(), Synth::NOTES)).unwrap();
         edit.connect(Connection::to_device(synth.id(), Synth::OUTPUT, 0)).unwrap();
-        edit.update(sequencer, Arc::new(notes)).unwrap();
+        edit.update(sequencer, Arc::new(Part { notes, pedal: Vec::new() })).unwrap();
         edit.commit().unwrap();
         control.play();
 

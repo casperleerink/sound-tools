@@ -36,11 +36,11 @@ pub fn zone_at(rect: Rect, x: f32) -> Zone {
 
 /// The empty clip of one bar that a double click makes, in the grid cell under the pointer.
 pub fn new_clip(at: Ticks, time_signature: TimeSignature) -> Clip {
-    Clip {
-        start: snap_floor(at),
-        length: Length::at_least_one(Ticks(time_signature.ticks_per_bar())),
-        notes: Vec::new(),
-    }
+    Clip::new(
+        snap_floor(at),
+        Length::at_least_one(Ticks(time_signature.ticks_per_bar())),
+        Vec::new(),
+    )
 }
 
 /// A shape does not get shorter than one snap step, or than it already was.
@@ -94,10 +94,10 @@ mod tests {
     const BAR: u64 = 3840;
 
     fn clip(start: u64, length: u64, notes: &[(u64, u64)]) -> Clip {
-        Clip {
-            start: Ticks(start),
-            length: Length::new(Ticks(length)).unwrap(),
-            notes: notes
+        Clip::new(
+            Ticks(start),
+            Length::new(Ticks(length)).unwrap(),
+            notes
                 .iter()
                 .map(|&(start, length)| Note {
                     start: Ticks(start),
@@ -106,7 +106,7 @@ mod tests {
                     velocity: Velocity::new(100).unwrap(),
                 })
                 .collect(),
-        }
+        )
     }
 
     fn rect(x: f32, width: f32) -> Rect {

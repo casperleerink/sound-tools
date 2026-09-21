@@ -33,7 +33,7 @@ fn an_invalid_clip_names_the_field_and_the_last_valid_clip_keeps_playing() {
         ),
         (
             r#"{"start": 0, "length": 3840, "notes": [], "name": "Verse"}"#,
-            "state.name: unknown field `name`, expected one of `start`, `length`, `notes`",
+            "state.name: unknown field `name`, expected one of `start`, `length`, `notes`, `pedal`",
         ),
         (
             r#"{"start": 15360, "length": 3840, "notes": [{"start": 0, "length": 480, "pitch": 60, "velocity": 100}, {"start": 15360, "length": 480, "pitch": 60, "velocity": 100}]}"#,

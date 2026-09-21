@@ -8,7 +8,7 @@ use std::f32::consts::{PI, SQRT_2};
 use sound_core::{
     AudioOutput, EventInput, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
 };
-use sound_notes::{NoteEvent, Pitch, Velocity};
+use sound_notes::{NoteEvent, Pedal, Pitch, Velocity};
 
 use crate::{SynthState, Waveform};
 
@@ -121,6 +121,9 @@ enum Stage {
 #[derive(Copy, Clone)]
 struct Voice {
     stage: Stage,
+    /// The key of this note is up and only the sustain pedal keeps it sounding. It is released
+    /// when the pedal comes up.
+    sustained: bool,
     /// None until the first note.
     pitch: Option<Pitch>,
     /// The count of the note on that started this voice. The lowest is the oldest.
@@ -156,6 +159,7 @@ fn sawtooth(phase: f32, phase_step: f32) -> f32 {
 impl Voice {
     const IDLE: Self = Self {
         stage: Stage::Idle,
+        sustained: false,
         pitch: None,
         started: 0,
         phase: 0.0,
@@ -178,12 +182,23 @@ impl Voice {
     }
 
     fn release(&mut self) {
+        self.sustained = false;
         if self.is_held() {
             self.stage = Stage::Release;
         }
     }
 
+    /// The key came up. With the pedal down the note sounds on until the pedal comes up.
+    fn key_up(&mut self, pedal_is_down: bool) {
+        if pedal_is_down && self.is_held() {
+            self.sustained = true;
+        } else {
+            self.release();
+        }
+    }
+
     fn start(&mut self, pitch: Pitch, velocity: Velocity, started: u64, sample_rate: f32) {
+        self.sustained = false;
         let amplitude = (f32::from(velocity.value()) / 127.0).powi(2);
         if self.is_idle() {
             self.phase = START_PHASE;
@@ -277,6 +292,9 @@ pub struct Synth {
     gain: Smoothed,
     voices: [Voice; VOICES],
     notes_started: u64,
+    /// Where the sustain pedal stands. Up after every `AllOff`, so a stop, a seek or an edit
+    /// can leave no note hanging under a pedal nobody will lift.
+    pedal: Pedal,
 }
 
 impl Synth {
@@ -294,6 +312,7 @@ impl Synth {
             gain: Smoothed::new(state.gain),
             voices: [Voice::IDLE; VOICES],
             notes_started: 0,
+            pedal: Pedal::UP,
         }
     }
 
@@ -312,13 +331,31 @@ impl Synth {
             }
             NoteEvent::Off { pitch } => {
                 let of_this_pitch = |voice: &&mut Voice| voice.pitch == Some(pitch);
+                let pedal_is_down = self.pedal.is_down();
                 self.voices
                     .iter_mut()
                     .filter(of_this_pitch)
-                    .for_each(Voice::release);
+                    .for_each(|voice| voice.key_up(pedal_is_down));
             }
-            NoteEvent::AllOff => self.voices.iter_mut().for_each(Voice::release),
+            NoteEvent::Pedal(value) => {
+                // Half pedal is kept as it was played but not acted on: this synth has one
+                // damper. A piano plugin that knows more gets the value it was given.
+                if self.pedal.is_down() && !value.is_down() {
+                    let sustained = self.voices.iter_mut().filter(|voice| voice.sustained);
+                    sustained.for_each(Voice::release);
+                }
+                self.pedal = value;
+            }
+            NoteEvent::AllOff => {
+                self.pedal = Pedal::UP;
+                self.voices.iter_mut().for_each(Voice::release);
+            }
         }
+    }
+
+    /// Where the pedal stands. For tests and for an interface that shows it.
+    pub fn pedal(&self) -> Pedal {
+        self.pedal
     }
 
     fn voice_for_a_new_note(&mut self) -> &mut Voice {

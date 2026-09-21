@@ -334,10 +334,10 @@ mod tests {
     }
 
     fn clip(start: u64, length: u64, notes: &[(u64, u64, u8)]) -> Clip {
-        Clip {
-            start: Ticks(start),
-            length: Length::new(Ticks(length)).unwrap(),
-            notes: notes
+        Clip::new(
+            Ticks(start),
+            Length::new(Ticks(length)).unwrap(),
+            notes
                 .iter()
                 .map(|&(start, length, pitch)| Note {
                     start: Ticks(start),
@@ -346,7 +346,7 @@ mod tests {
                     velocity: Velocity::new(100).unwrap(),
                 })
                 .collect(),
-        }
+        )
     }
 
     #[test]
