@@ -379,3 +379,198 @@ fn the_same_take_gives_the_same_project_file_every_time() {
     let clock = Clock::new(tempo_map(&first), 48_000);
     assert_eq!(clock.tick_at(Frames(0)), Ticks(0));
 }
+
+/// What a take of ten minutes costs. `cargo nextest run -p runtime --run-ignored only -- long`
+///
+/// It prints and asserts little: the numbers go into the pull request and into
+/// ARCHITECTURE.md. What it does hold is that a map of that size still plays and still
+/// answers a steadiness drag inside one display frame.
+#[test]
+#[ignore = "prints numbers and takes a few seconds"]
+fn a_long_take_of_ten_minutes() {
+    // 96 bpm in 4/4 for ten minutes is 960 beats; 380 bars is 1520.
+    let mut harness = recorded(380);
+    let notes = clip_of(&harness).notes.len();
+    let without = render_speed(&mut harness);
+    let plain = std::fs::metadata(harness.path("project.json"))
+        .unwrap()
+        .len();
+
+    let started = std::time::Instant::now();
+    fit(&mut harness);
+    let fitting = started.elapsed();
+    let map = tempo_map(&harness);
+    let fitted = std::fs::metadata(harness.path("project.json"))
+        .unwrap()
+        .len();
+    let with = render_speed(&mut harness);
+
+    // A steadiness drag: one publish per mouse move, which runs the derive again.
+    let mut moves = Vec::new();
+    for step in 1_u16..=20 {
+        let state = FitState {
+            steadiness: f32::from(step) / 100.0,
+            ..fit_state(&harness)
+        };
+        let started = std::time::Instant::now();
+        let mut changes = sound_core::Changes::new();
+        fit_tempo::set_steadiness(&harness.project, &mut changes, state.steadiness);
+        harness
+            .project
+            .commit("Change steadiness", changes)
+            .unwrap();
+        moves.push(started.elapsed());
+    }
+    moves.sort_unstable();
+
+    // What the clock costs per block: a lookup is a binary search over the tempo changes, so
+    // it grows with the logarithm of how many there are, not with how many there are.
+    let plain_clock = Clock::new(TempoMap::default(), 48_000);
+    let fitted_clock = Clock::new(map.clone(), 48_000);
+    let lookups = |clock: &Clock| {
+        let started = std::time::Instant::now();
+        let mut total = 0_u64;
+        for tick in 0..200_000_u64 {
+            total += clock.frame_of(Ticks(tick * 7)).0;
+        }
+        assert!(total > 0);
+        started.elapsed().as_secs_f64() / 200_000.0 * 1e9
+    };
+    let (plain_lookup, fitted_lookup) = (lookups(&plain_clock), lookups(&fitted_clock));
+
+    println!("notes {notes}, tempo changes {}", map.tempo_changes().len());
+    println!(
+        "one tick to frame: {plain_lookup:.1} ns with one tempo change, {fitted_lookup:.1} ns with {}",
+        map.tempo_changes().len()
+    );
+    println!("the fit takes {fitting:?}");
+    println!("project.json: {plain} bytes plain, {fitted} bytes fitted");
+    println!("render: {without:.1} times realtime plain, {with:.1} fitted");
+    println!(
+        "one move of a steadiness drag: median {:?}, worst {:?}",
+        moves[moves.len() / 2],
+        moves[moves.len() - 1]
+    );
+    // For the run on a real device: `FIT_LONG_TAKE_DIR=/private/tmp/long-take` puts the
+    // project somewhere `runtime --headless` can open it.
+    if let Ok(into) = std::env::var("FIT_LONG_TAKE_DIR") {
+        let _ = std::fs::remove_dir_all(&into);
+        let copied = std::process::Command::new("/bin/cp")
+            .arg("-R")
+            .arg(harness.project.root())
+            .arg(&into)
+            .status()
+            .unwrap();
+        assert!(copied.success());
+        println!("wrote the project to {into}");
+    }
+    assert!(map.tempo_changes().len() > 1400);
+    assert!(
+        moves[moves.len() - 1] < std::time::Duration::from_millis(16),
+        "a mouse move of a steadiness drag took {:?}",
+        moves[moves.len() - 1]
+    );
+}
+
+/// How many times faster than realtime the project renders, over ten seconds of it.
+fn render_speed(harness: &mut Harness) -> f64 {
+    harness.project.engine().stop();
+    harness.project.engine().seek(Ticks(0));
+    harness.render(4_800);
+    harness.project.engine().play();
+    let started = std::time::Instant::now();
+    harness.render(480_000);
+    10.0 / started.elapsed().as_secs_f64()
+}
+
+/// Writes a project with a take fitted at double tempo into `FIT_AGENT_DIR`, for the check
+/// with an outside agent. `cargo nextest run -p runtime --run-ignored only -- agent_project`
+#[test]
+#[ignore = "writes a folder for a run with an outside agent"]
+fn write_an_agent_project() {
+    let into = std::env::var("FIT_AGENT_DIR").expect("FIT_AGENT_DIR");
+    let mut harness = recorded(8);
+    let doubled = FitState {
+        beat: BeatRate::Double,
+        ..FitState::new("take-1")
+    };
+    write_fit(&mut harness, &doubled);
+    assert_eq!(harness.project.problems(), []);
+    println!(
+        "{} tempo changes, first downbeat at {}",
+        tempo_map(&harness).tempo_changes().len(),
+        clip_of(&harness).start.0
+    );
+    drop(harness.project);
+    let _ = std::fs::remove_dir_all(&into);
+    let status = std::process::Command::new("/bin/cp")
+        .arg("-R")
+        .arg(harness.folder.path())
+        .arg(&into)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let _ = std::fs::remove_file(format!("{into}/.sound-tools.lock"));
+    let _ = std::fs::remove_file(format!("{into}/problems.txt"));
+    println!("wrote the project to {into}");
+}
+
+/// Prints how far the notes of every other clip land from the beats of the fitted take, in
+/// milliseconds, for the project in `FIT_AGENT_DIR`. For the check with an outside agent:
+/// a part written by hand at bar 5 has to follow the rubato of the playing.
+#[test]
+#[ignore = "measures a folder written by a run with an outside agent"]
+fn measure_a_part_against_the_take() {
+    let folder = std::env::var("FIT_AGENT_DIR").expect("FIT_AGENT_DIR");
+    let (project, _engine, _plugins) =
+        runtime::open_read_only(std::path::Path::new(&folder)).unwrap();
+    let clock = Clock::new(project.project_file().tempo_map.clone(), 48_000);
+    let fit = fit_tempo::fit_of(&project).expect("a fit");
+    let take_name = project.state(&fit).expect("its state").take.clone();
+    let steadiness = project.state(&fit).expect("its state").steadiness;
+
+    let mut take_onsets: Vec<u64> = Vec::new();
+    let mut part_onsets: Vec<(String, u64)> = Vec::new();
+    let instances: Vec<InstanceId> = project.instances().map(|(id, _)| id.clone()).collect();
+    for id in instances {
+        let Some(clip) = project.resolve::<Clip>(&id) else {
+            continue;
+        };
+        let state = project.state(&clip).expect("a clip");
+        let from_take = state.take.as_deref() == Some(take_name.as_str());
+        for note in state.placed_notes() {
+            let frame = clock.frame_of(note.start).0;
+            if from_take {
+                take_onsets.push(frame);
+            } else {
+                part_onsets.push((id.to_string(), frame));
+            }
+        }
+    }
+    take_onsets.sort_unstable();
+    take_onsets.dedup();
+    part_onsets.sort_by_key(|(_, frame)| *frame);
+    assert!(!part_onsets.is_empty(), "no part was added");
+
+    let mut worst = 0.0_f64;
+    let mut errors = Vec::new();
+    for (_, frame) in &part_onsets {
+        let nearest = take_onsets
+            .iter()
+            .map(|onset| onset.abs_diff(*frame))
+            .min()
+            .unwrap_or(u64::MAX);
+        let milliseconds = nearest as f64 / 48.0;
+        worst = worst.max(milliseconds);
+        errors.push(milliseconds);
+    }
+    errors.sort_by(f64::total_cmp);
+    println!(
+        "steadiness {:.0}%: {} notes added against {} take onsets, median {:.1} ms, worst {:.1} ms",
+        steadiness * 100.0,
+        errors.len(),
+        take_onsets.len(),
+        errors[errors.len() / 2],
+        worst
+    );
+}
