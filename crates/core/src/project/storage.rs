@@ -543,33 +543,9 @@ impl Storage {
         }
     }
 
-    /// Writes a temporary file next to the target and renames it into place. A reader sees
-    /// the old file or the new one, never a part. A failure leaves the old file complete.
-    ///
-    /// No `sync_all`: it costs about 6 ms per file on macOS, which made undo of a deleted
-    /// folder of 100 records block for 0.7 s. The rename still protects against a crash of the
-    /// process. Surviving a power loss is left to git and snapshots.
+    /// See the free function of the same name below.
     fn write_atomically(&self, path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
-        let write = || -> io::Result<()> {
-            let folder = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
-            fs::create_dir_all(folder)?;
-            // The name does not end in `.json` and is not a valid instance name, so neither
-            // the scan nor the watcher takes it for a record.
-            let mut temporary = path.as_os_str().to_owned();
-            temporary.push(".tmp");
-            let temporary = PathBuf::from(temporary);
-            let result = fs::File::create(&temporary).and_then(|mut file| {
-                file.write_all(bytes)?;
-                drop(file);
-                fs::rename(&temporary, path)
-            });
-            if result.is_err() {
-                // Best effort: the write already failed, and that error is the one to report.
-                drop(fs::remove_file(&temporary));
-            }
-            result
-        };
-        write().map_err(|source| self.io_error(path, source))
+        write_atomically(path, bytes).map_err(|source| self.io_error(path, source))
     }
 
     fn io_error(&self, path: &Path, source: io::Error) -> StorageError {
@@ -727,4 +703,31 @@ mod tests {
         );
         assert_eq!(layout(r#"["\\\"",[3]]"#), "[\n  \"\\\\\\\"\",\n  [3]\n]\n");
     }
+}
+
+/// Writes a temporary file next to the target and renames it into place. A reader sees the old
+/// file or the new one, never a part. A failure leaves the old file complete. Records and
+/// assets both go through this.
+///
+/// No `sync_all`: it costs about 6 ms per file on macOS, which made undo of a deleted folder of
+/// 100 records block for 0.7 s. The rename still protects against a crash of the process.
+/// Surviving a power loss is left to git and snapshots.
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let folder = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
+    fs::create_dir_all(folder)?;
+    // The name does not end in `.json` and is not a valid instance name, so neither the scan
+    // nor the watcher takes it for a record.
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".tmp");
+    let temporary = PathBuf::from(temporary);
+    let result = fs::File::create(&temporary).and_then(|mut file| {
+        file.write_all(bytes)?;
+        drop(file);
+        fs::rename(&temporary, path)
+    });
+    if result.is_err() {
+        // Best effort: the write already failed, and that error is the one to report.
+        drop(fs::remove_file(&temporary));
+    }
+    result
 }

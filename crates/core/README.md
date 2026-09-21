@@ -216,6 +216,8 @@ Declare everything the instance needs, every time. The core compares with the la
 - `context.processor(name, create)` gives the processor the instance keeps under `name`. `create` runs only the first time. After that you get the same processor back, with its phase, voices and buffers. A name you stop declaring is removed from the engine. So is everything when the instance is deleted. You never remove anything yourself.
 - `context.update(node, update)` sends `Processor::Update`: parameters, or an `Arc` snapshot. Send the current values on every run. It costs no compile.
 - `context.connect(connection)` makes a connection of your own: between your processors, to a child's port, or to the device with `output.to_device(channel)`. The channel is where the left side of the port goes; the right side goes to the channel after it, and is left out when the device has no such channel. Connecting the same port to a channel it already reaches is a `GraphError::DeviceChannelTwice`; the same connection twice is still one connection. `context.device_channels()` says how many there are. A connection you stop declaring is disconnected. These are not saved in `project.json`.
+- `context.problem(message)` says that part of this state is not live, without failing the edit. The message is listed in `project.problems()` on the record's path until the behaviour runs again without it, so `problems.txt` tells an agent. Use it for a state you can play only partly, such as a plugin this machine does not have. A `BehaviourError` is for a real fault and rejects the whole group.
+- `context.assets()` is the `assets/` folder, for a tool whose state names an opaque file: see "Assets" below. `context.prepare_config()` is what every processor of this instance is prepared with, for building something outside a processor that needs the same sample rate.
 - `context.output(name, endpoint)` and `context.input(name, endpoint)` name a port. Named ports are what `project.json` connections and your owner can use. `OutputEndpoint::new(node, Processor::PORT)` makes one. You may pass up the endpoint of a child.
 
 All behaviours of one edit group run inside one engine edit: one batch, at most one compile, everything lands in the same block. If any behaviour returns an error, or the graph refuses (type mismatch, cycle), the whole group is rejected and nothing changes. While a project opens, the failing instance is left out with what it owns and listed as a problem instead, so the rest opens. A `project.json` connection that closes a cycle never rejects anything: it stays saved, unused and listed. Return an error only for real faults. For a state you can play partly, such as a missing child, play what you can.
@@ -258,6 +260,23 @@ For the arrangement this reads: a track owns clip records and one `instrument` c
 Rebuilding a snapshot of a hundred small records on every change is cheap, so do that. A behaviour gets no previous state and has nowhere to keep one. If a rebuild ever shows up in a profile, that is a change to make in the core.
 
 Two instances may declare the same connection, for example an owner and its child both send the child to the device. It is in the graph once and goes when the last one stops declaring it.
+
+### Assets
+
+An asset is bytes the core never looks inside: a raw take, the state of a hosted plugin, later a sample. A record is typed state; an asset is not. Reach them with `context.assets()` in a behaviour or `project.assets()` elsewhere.
+
+```rust
+let name = AssetName::new("plugin-state", "piano", "bin")?;   // assets/plugin-state/piano.bin
+let bytes: Option<Vec<u8>> = assets.read(&name)?;
+assets.write(&name, &bytes)?;                                  // replaces, atomically
+let taken: AssetName = assets.create(&name, &bytes)?;          // takes/take-1, take-2, ...
+```
+
+- Every part of an `AssetName` is lowercase letters, digits, `-` and `_`, checked when it is built. So a name that comes out of a record can never reach outside the project folder. Save the plain name in your state and build the `AssetName` from it, as the plugin host does.
+- `write` renames a temporary file into place: a failed write leaves the old file complete, as a record write does.
+- `create` never opens a file that exists. Use it for something that must never be lost, such as a recorded performance.
+- There is no delete and no listing. The runtime never removes an asset, so an asset whose record is gone stays.
+- An asset is not project state: it is not in the undo history, and the watcher ignores everything outside `state/` and `project.json`.
 
 ### Read and edit from an interface
 
@@ -414,10 +433,11 @@ The saved JSON, as it will appear in `project.json`:
 
 ```sh
 cargo nextest run -p sound-core -p tone
-RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement -p metronome -p midi   # the realtime sanitizer
+RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement -p metronome -p midi -p plugin-host   # the realtime sanitizer
 cargo nextest run -p sound-core --run-ignored only ten_thousand --no-capture   # scale numbers
 cargo run -p runtime -- my-project                        # the window: runs the folder live on the default device
 cargo run -p runtime -- my-project --headless             # the same without a window, commands from stdin
 cargo run -p runtime -- my-project --inspect              # summary, no device, no lock
 cargo run -p runtime -- my-project --render out.wav --seconds 4
+cargo run -p runtime -- --plugins                          # the CLAP plugins of this machine
 ```

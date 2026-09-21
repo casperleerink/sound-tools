@@ -40,8 +40,11 @@ pub(crate) struct RegisteredDoc {
     pub doc: AgentDoc,
 }
 
+/// Not `Send`: a behaviour may keep control-side state that belongs to the thread the project
+/// lives on, such as the plugin instances of a host, which CLAP requires on the main thread.
+/// The project has always lived on one thread.
 type ErasedBehaviour =
-    Box<dyn Fn(&dyn Any, &mut BehaviourContext<'_>) -> Result<(), BehaviourError> + Send>;
+    Box<dyn Fn(&dyn Any, &mut BehaviourContext<'_>) -> Result<(), BehaviourError>>;
 
 type ErasedSummary = Box<dyn Fn(&Project, &InstanceId) -> String + Send>;
 
@@ -191,7 +194,7 @@ impl<S: State> ToolRegistration<'_, S> {
     /// [`BehaviourContext`]. A tool that only holds data for its parent needs none.
     pub fn behaviour(
         self,
-        behaviour: impl Fn(&S, &mut BehaviourContext<'_>) -> Result<(), BehaviourError> + Send + 'static,
+        behaviour: impl Fn(&S, &mut BehaviourContext<'_>) -> Result<(), BehaviourError> + 'static,
     ) -> Self {
         self.definition.behaviour = Some(Box::new(move |state, context| {
             match state.downcast_ref::<S>() {

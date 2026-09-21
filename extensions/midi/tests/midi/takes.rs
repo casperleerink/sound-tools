@@ -1,6 +1,7 @@
 //! The take: what it keeps, the clip it becomes and the file it is written to.
 
-use midi::{Played, RawEvent, RawTake, Take, TakeEvent, take_path};
+use midi::{Played, RawEvent, RawTake, Take, TakeEvent, take_asset};
+use sound_core::Assets;
 use sound_core::{State, Ticks};
 use sound_notes::Pedal;
 
@@ -153,9 +154,10 @@ fn the_raw_take_file_holds_the_times_as_they_arrived_and_both_velocities() {
             },
         ),
     ];
-    let name = take(0, 3840, events).write(folder.path()).unwrap();
+    let assets = Assets::new(folder.path());
+    let name = take(0, 3840, events).write(&assets).unwrap();
     assert_eq!(name, "take-1");
-    let path = take_path(folder.path(), &name);
+    let path = assets.path(&take_asset(&name).unwrap());
     assert!(path.ends_with("assets/takes/take-1.json"));
 
     let text = std::fs::read_to_string(&path).unwrap();
@@ -192,13 +194,14 @@ fn every_take_gets_a_name_of_its_own_and_never_writes_over_one() {
     let folder = tempfile::tempdir().unwrap();
     let first = take(0, 3840, vec![event(0, 0, on(60, 88))]);
     let second = take(0, 3840, vec![event(0, 0, on(64, 70))]);
-    assert_eq!(first.write(folder.path()).unwrap(), "take-1");
-    assert_eq!(second.write(folder.path()).unwrap(), "take-2");
+    let assets = Assets::new(folder.path());
+    assert_eq!(first.write(&assets).unwrap(), "take-1");
+    assert_eq!(second.write(&assets).unwrap(), "take-2");
     // And again in a folder that already holds both, as a second session would.
     let third = take(0, 3840, vec![event(0, 0, on(67, 70))]);
-    assert_eq!(third.write(folder.path()).unwrap(), "take-3");
+    assert_eq!(third.write(&assets).unwrap(), "take-3");
 
-    let of = |name: &str| std::fs::read_to_string(take_path(folder.path(), name)).unwrap();
+    let of = |name: &str| std::fs::read_to_string(assets.path(&take_asset(name).unwrap())).unwrap();
     assert_eq!(of("take-1"), first.json());
     assert_eq!(of("take-2"), second.json());
     assert_ne!(of("take-1"), of("take-2"));
