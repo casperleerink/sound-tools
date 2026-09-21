@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/instrument", "extensions/metronome", "extensions/tone", "tooling/workspace-rules"]
+members = ["crates/core", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/instrument", "extensions/metronome", "extensions/midi", "extensions/tone", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -15,6 +15,7 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e69
 arrangement = { path = "extensions/arrangement" }
 instrument = { path = "extensions/instrument" }
 metronome = { path = "extensions/metronome" }
+midi = { path = "extensions/midi" }
 sound-core = { path = "crates/core" }
 sound-notes = { path = "crates/notes" }
 sound-ui = { path = "crates/ui" }
@@ -24,6 +25,8 @@ cargo_metadata = "0.23"
 cpal = "0.18"
 hound = "3.5"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# MIDI devices and messages. wmidi parses without allocating, so it is safe next to the engine.
+midir = "0.11"
 no_denormals = "0.3"
 # Raw events. The project groups them itself, see ARCHITECTURE.md "Project storage".
 notify = "8.2"
@@ -39,6 +42,7 @@ serde_path_to_error = "0.1"
 tempfile = "3"
 thiserror = "2"
 triple_buffer = "9"
+wmidi = "4"
 
 # Deny a short list of real mistakes. Allow the style group so agents do not fight style lints.
 [workspace.lints.clippy]
@@ -76,6 +80,7 @@ resvg = { opt-level = 3 }
 arrangement = { opt-level = 3 }
 instrument = { opt-level = 3 }
 metronome = { opt-level = 3 }
+midi = { opt-level = 3 }
 runtime = { opt-level = 3 }
 sound-core = { opt-level = 3 }
 sound-notes = { opt-level = 3 }
