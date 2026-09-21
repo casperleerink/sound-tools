@@ -26,6 +26,8 @@ fit_tempo::set_steadiness(project, &mut changes, 0.5);   // 0 as played, 1 one t
 
 The tool sits at the top of `state/` (`Place::Root`). One fit per project: a second record changes nothing and says so in `problems.txt`.
 
+A project made before this step does not list `fit-tempo` in `extensions` in `project.json`, and fitting it fails with `tool "fit-tempo" is not registered, or its extension is not enabled in project.json`. Add `"fit-tempo"` to that list and open the project again. Nothing rewrites it: turning an extension on is the composer's edit, as "Project storage" decides.
+
 ## How a change reaches the tempo map
 
 The tool registers a **derive**, which is the core's way for a record to decide state of its own (`ToolRegistration::derive`, see the [core README](../../crates/core/README.md)). The derive runs inside the same state application as the change that asked for it, so a change of the fit record, from the window or from a file an agent wrote, and a change of the project's time signature, rewrite the tempo map and the clip as one group, one engine batch and one undo step. It does not run while the project loads, nor for undo, redo or a cancel: the files and the undo step already hold what it would compute, so a read-only open never writes.
