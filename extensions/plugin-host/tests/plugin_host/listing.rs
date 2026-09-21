@@ -2,13 +2,14 @@
 //!
 //! Loading a plugin runs somebody else's code in this process, and one that only loads and
 //! goes can take the process down with it. Inspecting prints a project and makes no sound, so
-//! it needs no plugin. What it must keep is the one thing an agent reads from it: a plugin
-//! this machine does not have is still named.
+//! it needs no plugin. What it must keep is everything this side can check without one: a
+//! plugin this machine does not have, and a state file that cannot be read.
 
 use plugin_host::{PluginFormat, PluginRecord, Plugins};
 
 use crate::support::{
-    FORMATS, Harness, Played, lifecycle, no_cache, plugin_folder, record, scanner, tell_the_plugin,
+    FORMATS, Harness, Played, lifecycle, no_cache, plugin_folder, record, scanner, state_asset,
+    tell_the_plugin,
 };
 
 fn listing(folder: &std::path::Path) -> Plugins {
@@ -61,4 +62,33 @@ fn a_plugin_this_machine_does_not_have_is_still_reported_by_a_host_that_only_lis
         problems[0].contains("this machine has no CLAP plugin"),
         "{problems:?}"
     );
+}
+
+/// The other thing this side can check without the plugin: the state file. A record whose
+/// state asset cannot be read would have played silence and said nothing under `--inspect`,
+/// and then failed the moment the composer opened the project for real.
+#[test]
+fn a_state_file_that_cannot_be_read_is_reported_by_a_host_that_only_lists() {
+    for format in FORMATS {
+        let folder = tempfile::tempdir().unwrap();
+        let log = folder.path().join("lifecycle.log");
+        tell_the_plugin(Some(&log), None);
+        let plugins = listing(folder.path());
+        let mut harness = Harness::with_plugins(folder, plugins);
+        // A folder where the bytes of the state belong. Reading it is an error of the
+        // operating system's, which is what a state file nobody may read looks like.
+        let path = harness.project.assets().path(&state_asset("piano"));
+        std::fs::create_dir_all(&path).expect("a folder in the way of the state");
+        harness.add_track(record(format, "piano"), one_note());
+
+        let problems = harness.problems();
+        assert_eq!(problems.len(), 1, "{format:?}: {problems:?}");
+        assert!(
+            problems[0].contains("could not be read"),
+            "{format:?}: {problems:?}"
+        );
+        // And still no plugin of this machine ran in this process.
+        assert_eq!(lifecycle(&log), Vec::new(), "{format:?}");
+    }
+    tell_the_plugin(None, None);
 }

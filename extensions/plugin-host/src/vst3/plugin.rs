@@ -339,6 +339,7 @@ impl LoadedPlugin for Vst3Plugin {
         Requests {
             restart: self.joined.handler.take_restart_requested(),
             state_is_dirty: self.joined.handler.take_state_is_dirty(),
+            midi_mapping_changed: self.joined.handler.take_midi_mapping_changed(),
             // VST 3 has no way for a plugin to close the window it is in: the host owns that
             // window and the plugin only fills it. CLAP's `clap_host_gui.closed` has no
             // counterpart here, so this is always false.

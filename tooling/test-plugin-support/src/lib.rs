@@ -56,6 +56,12 @@ pub const HANG_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_HANG";
 /// test can see what a picker holds before the scan has found anything.
 pub const SLOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SLOW";
 
+/// Makes a VST 3 plugin move the parameter its sustain pedal is mapped to, right after the
+/// host has looked that mapping up, and tell the host with `kMidiCCAssignmentChanged`. That is
+/// what a MIDI learn or a newly loaded preset does. VST 3 only: CLAP sends the pedal as a MIDI
+/// message, so no mapping stands between the two.
+pub const MOVE_PEDAL_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_MOVE_PEDAL";
+
 /// A gate the plugin waits at while its bundle is listed: it goes on when `<path>.go` is
 /// there, and the test owns that path.
 ///

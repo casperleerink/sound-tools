@@ -93,3 +93,52 @@ fn the_state_saved_after_an_edit_holds_what_the_edit_left() {
     );
     tell_the_plugin_to_edit_its_level(0);
 }
+
+/// A plugin that moves the parameter its sustain pedal is mapped to, after the host has looked
+/// that mapping up. VST 3 has no MIDI controller event, so a pedal reaches a plugin only
+/// through the parameter `IMidiMapping` names, and `kMidiCCAssignmentChanged` is how a plugin
+/// says that name has changed, after a MIDI learn or a loaded preset.
+///
+/// This build looks the mapping up once, while the plugin loads, and keeps it. So the pedal
+/// goes on reaching the parameter it reached before, and the composer is told that it may now
+/// be the wrong one instead of being left to wonder why his pedal does nothing.
+#[test]
+fn a_plugin_that_moves_its_pedal_mapping_is_reported_and_the_pedal_still_reaches_the_old_one() {
+    tell_the_plugin(None, None);
+    crate::support::tell_the_plugin_to_move_its_pedal();
+    let mut harness = Harness::new();
+    harness.add_track(
+        record(PluginFormat::Vst3, "piano"),
+        vec![
+            Played::On {
+                frame: 0,
+                pitch: 60,
+                velocity: 100,
+            },
+            Played::Pedal {
+                frame: 64,
+                value: 100,
+            },
+        ],
+    );
+    // Nothing the behaviour reported: the record is fine and the plugin plays.
+    assert_eq!(harness.problems(), Vec::<String>::new());
+
+    harness.project.engine().play();
+    let render = harness.render_without_polling(512);
+    // The pedal still reaches the parameter the host found, which the plugin writes into its
+    // right channel. That is what the message says happens.
+    assert_eq!(render.right()[64], 100.0 / 127.0);
+
+    // The first poll after the load is where the host says so, once.
+    let reported = harness.plugins.poll(&harness.project);
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(
+        reported[0]
+            .to_string()
+            .contains("moved the parameter its sustain pedal is mapped to"),
+        "{reported:?}"
+    );
+    // And not again at the next poll: the plugin said it once.
+    assert_eq!(harness.plugins.poll(&harness.project), Vec::new());
+}

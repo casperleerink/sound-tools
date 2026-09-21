@@ -306,6 +306,9 @@ impl LoadedPlugin for ClapPlugin {
             state_is_dirty: self
                 .instance
                 .access_handler(|main| main.state_is_dirty.replace(false)),
+            // CLAP sends the sustain pedal as a MIDI message, so no mapping stands between the
+            // pedal and the plugin and there is nothing that can move.
+            midi_mapping_changed: false,
             window_closed,
             window_size: (size != 0).then(|| {
                 let size = GuiSize::unpack_from_u64(size);

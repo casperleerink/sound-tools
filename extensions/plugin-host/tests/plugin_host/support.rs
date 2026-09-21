@@ -310,6 +310,15 @@ pub fn tell_the_plugin_to_go_silent() {
     unsafe { std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_SILENT", "1") };
 }
 
+/// Makes the VST 3 test plugin move the parameter its sustain pedal is mapped to, once, right
+/// after the host has looked that mapping up, and tell the host about it. Same rules as
+/// [`tell_the_plugin`].
+pub fn tell_the_plugin_to_move_its_pedal() {
+    // SAFETY: nextest runs one test per process and this is called before any thread but this
+    // one exists, so no other thread can be reading the environment.
+    unsafe { std::env::set_var(test_plugin_support::MOVE_PEDAL_VARIABLE, "1") };
+}
+
 /// Makes the VST 3 test plugin keep a state in its edit controller as well as in its component:
 /// how loud it plays, which the pedal halves along with the transpose. Same rules as
 /// [`tell_the_plugin`].

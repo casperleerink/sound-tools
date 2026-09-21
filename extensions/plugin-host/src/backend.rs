@@ -38,6 +38,11 @@ pub struct Requests {
     pub restart: bool,
     /// The plugin says its own state changed and the host should save it.
     pub state_is_dirty: bool,
+    /// The plugin moved the mapping from a MIDI controller to one of its parameters, which is
+    /// how the sustain pedal reaches a VST 3 plugin. This build looks that mapping up once, so
+    /// the pedal keeps going where it went. CLAP has no such call: there the pedal is a MIDI
+    /// message and no mapping is in the way.
+    pub midi_mapping_changed: bool,
     /// The plugin closed its own window, by its title bar or by losing it. CLAP only: VST 3
     /// has no such call, because there the host owns the window and the plugin only fills it.
     pub window_closed: bool,
