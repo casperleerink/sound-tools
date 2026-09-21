@@ -135,6 +135,12 @@ impl Engine {
         self.channels
     }
 
+    /// Engine time: frames processed since the engine was created, so the first frame of the
+    /// next block. The device callback reads it to tie engine frames to real time.
+    pub fn frames(&self) -> u64 {
+        self.status.frames
+    }
+
     /// Renders the next frames into `output`, interleaved by channel. The device callback,
     /// offline rendering and tests all call this. Samples past the last whole frame are zeroed.
     #[nonblocking]
