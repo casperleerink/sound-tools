@@ -23,9 +23,13 @@ pub struct EngineConfig {
     pub event_capacity: usize,
     /// Processor slots to start with. The table grows when it fills up.
     pub processor_slots: usize,
+    /// Whether this engine renders instead of playing on a device. Every processor is told in
+    /// [`PrepareConfig::offline`]; the engine itself runs exactly the same either way.
+    pub offline: bool,
 }
 
 impl EngineConfig {
+    /// An engine that plays on a device in real time.
     pub fn new(sample_rate: u32, channels: usize) -> Self {
         Self {
             sample_rate,
@@ -33,7 +37,14 @@ impl EngineConfig {
             ring_capacity: 64,
             event_capacity: 256,
             processor_slots: 256,
+            offline: false,
         }
+    }
+
+    /// The same engine, rendering: no device waits for a block, and every processor is told.
+    pub fn rendering_offline(mut self) -> Self {
+        self.offline = true;
+        self
     }
 }
 
@@ -259,6 +270,7 @@ impl Edit<'_> {
     pub(crate) fn prepare_config(&self) -> PrepareConfig {
         PrepareConfig {
             sample_rate: self.control.config.sample_rate,
+            offline: self.control.config.offline,
         }
     }
 

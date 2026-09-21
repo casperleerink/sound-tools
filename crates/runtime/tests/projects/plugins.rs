@@ -1,12 +1,16 @@
-//! A whole project with a CLAP plugin as the instrument of a track: what it plays, what it
+//! A whole project with a hosted plugin as the instrument of a track: what it plays, what it
 //! saves, and what happens when this machine does not have the plugin.
 //!
-//! The plugin is the repository's own test instrument, so CI needs no third-party plugin. Its
-//! left channel is a cosine per key from the frame the note arrived on, its right channel is
-//! the sustain pedal as a number, and its saved state is a transpose that a pedal of 64 or
-//! more sets. See `tooling/test-clap-plugin`.
+//! The plugin is the repository's own test instrument, one per format, so CI needs no
+//! third-party plugin. Its left channel is a cosine per key from the frame the note arrived
+//! on, its right channel is the sustain pedal as a number, and its saved state is a transpose
+//! that a pedal of 64 or more sets. See `tooling/test-plugin-support`.
 
-use crate::support::{Harness, TRACK, clip, difference, test_plugin, test_plugin_host};
+use plugin_host::PluginFormat;
+
+use crate::support::{
+    Harness, TRACK, clip, difference, test_plugin, test_plugin_host, test_plugin_of,
+};
 
 /// Frames per tick at 120 bpm and 48 kHz.
 const TICK: usize = 25;
@@ -25,10 +29,26 @@ fn clip_with_pedal(pedal: Option<u8>) -> String {
 
 /// Writes a track whose instrument is the test plugin, with one clip.
 fn write_plugin_track(harness: &mut Harness, name: &str, clip: &str) {
+    write_plugin_track_of(harness, PluginFormat::Clap, name, 1, clip);
+}
+
+/// The same, for either format and at a chosen place in the arrangement.
+fn write_plugin_track_of(
+    harness: &mut Harness,
+    format: PluginFormat,
+    name: &str,
+    order: u32,
+    clip: &str,
+) {
     let folder = format!("state/arrangement/{name}");
-    let track = TRACK.replace("NAME", name).replace("ORDER", "1");
+    let track = TRACK
+        .replace("NAME", name)
+        .replace("ORDER", &order.to_string());
     harness.write(&format!("{folder}/instance.json"), &track);
-    harness.write(&format!("{folder}/instrument.json"), &test_plugin(name));
+    harness.write(
+        &format!("{folder}/instrument.json"),
+        &test_plugin_of(format, name),
+    );
     harness.write(&format!("{folder}/take.json"), clip);
     let folder = harness.path(&folder);
     assert_eq!(harness.apply(&[folder]), 3);
@@ -188,9 +208,99 @@ fn an_offline_render_of_a_read_only_project_plays_the_plugin() {
 
     let root = harness.project.root().to_path_buf();
     let plugins = test_plugin_host(&root, false);
-    let (mut project, mut engine) = runtime::open_read_only_with(&root, plugins).unwrap();
+    let (mut project, mut engine) = runtime::open_read_only_with(&root, plugins.clone()).unwrap();
     assert_eq!(project.problems(), []);
     project.engine().play();
-    let rendered = runtime::render(&mut project, &mut engine, 16_000).unwrap();
+    let rendered = runtime::render(&mut project, &mut engine, &plugins, 16_000).unwrap();
     assert_eq!(difference(&live, &rendered), None);
+}
+
+/// A render does the main-thread work of the plugin host for every buffer, as a live session
+/// does. A plugin may be silent until the host answers it: a sampler that streams from disk
+/// waits that way, and a render that only ran the engine would write its silence to the file
+/// and call it the piece.
+#[test]
+fn a_render_answers_a_plugin_that_is_waiting_for_its_host() {
+    tell_the_plugin_to_wait_for_its_host();
+    for format in [PluginFormat::Clap, PluginFormat::Vst3] {
+        let folder = tempfile::tempdir().unwrap();
+        let (mut harness, _plugins) = Harness::with_test_plugin(folder);
+        write_plugin_track_of(&mut harness, format, "piano", 1, &clip_with_pedal(None));
+        assert_eq!(harness.project.problems(), []);
+
+        let root = harness.project.root().to_path_buf();
+        let plugins = test_plugin_host(&root, false);
+        let (mut project, mut engine) =
+            runtime::open_read_only_with(&root, plugins.clone()).unwrap();
+        project.engine().play();
+        let rendered = runtime::render(&mut project, &mut engine, &plugins, 16_000).unwrap();
+
+        let note = 480 * TICK;
+        let sounded = left(&rendered)[note..].iter().any(|sample| *sample != 0.0);
+        assert!(sounded, "{format:?}: the render is silent");
+    }
+}
+
+/// Makes both test plugins wait for the main-thread work of their host before they sound. The
+/// plugin runs in this process, and nextest gives every test a process of its own.
+fn tell_the_plugin_to_wait_for_its_host() {
+    // SAFETY: nothing but this thread exists yet, so no other thread reads the environment.
+    unsafe { std::env::set_var(test_plugin_support::NEEDS_HOST_VARIABLE, "1") };
+}
+
+/// Both formats in one piece. The two test plugins are the same instrument, so the two tracks
+/// make the same sound and swapping one for the other is a change a render can be read for.
+#[test]
+fn one_project_plays_a_clap_track_and_a_vst3_track_and_a_swap_is_undone_exactly() {
+    let folder = tempfile::tempdir().unwrap();
+    let (mut harness, _plugins) = Harness::with_test_plugin(folder);
+    write_plugin_track_of(
+        &mut harness,
+        PluginFormat::Clap,
+        "clap-piano",
+        1,
+        &clip_with_pedal(None),
+    );
+    write_plugin_track_of(
+        &mut harness,
+        PluginFormat::Vst3,
+        "vst3-piano",
+        2,
+        &clip_with_pedal(None),
+    );
+    assert_eq!(harness.project.problems(), []);
+
+    // Both play. The two tracks are the same instrument in the two formats, so the piece is
+    // twice one track: a render of it is the sum, and the note is where the clip says.
+    let before = harness.play_from_the_start(16_000);
+    let note = 480 * TICK;
+    assert_eq!(
+        before[..note * 2].iter().find(|sample| **sample != 0.0),
+        None,
+        "something sounded before the note"
+    );
+    assert!(before[note * 2] != 0.0, "the plugins made no sound");
+
+    // Swapping the VST 3 track to CLAP, as an agent editing the file would. It names a state
+    // file of its own, as the window does when a plugin is picked: the state of a VST 3 plugin
+    // is not one a CLAP plugin can read, and a record that took one over would be reported.
+    harness.write(
+        "state/arrangement/vst3-piano/instrument.json",
+        &test_plugin_of(PluginFormat::Clap, "swapped"),
+    );
+    let path = harness.path("state/arrangement/vst3-piano/instrument.json");
+    assert_eq!(harness.apply(&[path]), 1);
+    assert_eq!(harness.project.problems(), []);
+    let swapped = harness.play_from_the_start(16_000);
+    assert_eq!(difference(&before, &swapped), None, "the formats differ");
+
+    // And back by undo. The record is the one it was, and so is the render.
+    assert!(harness.project.undo().unwrap().is_some());
+    assert_eq!(harness.project.problems(), []);
+    let undone = harness.play_from_the_start(16_000);
+    assert_eq!(difference(&before, &undone), None);
+    let record =
+        std::fs::read_to_string(harness.path("state/arrangement/vst3-piano/instrument.json"))
+            .unwrap();
+    assert!(record.contains("vst3"), "{record}");
 }

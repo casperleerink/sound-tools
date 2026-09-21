@@ -358,6 +358,42 @@ impl Project {
         self.instances.get(id)?.state.to_json().ok()
     }
 
+    /// Runs the behaviour of one instance again, with the record it already has.
+    ///
+    /// It is not an edit: nothing is written, nothing is undoable, and the record is untouched.
+    /// It is for a service outside the project that can do more later than it could before, so
+    /// far only the plugin host: a scan that was still running when a plugin record was applied
+    /// has found the plugin, and the behaviour now hands the engine that plugin and stops
+    /// reporting it. A behaviour that fails here leaves the instance as it was, as any failed
+    /// group does.
+    ///
+    /// `Ok(false)` says there is no such instance, which is what a record that went away while
+    /// something waited for it looks like.
+    pub fn rebind(&mut self, id: &InstanceId) -> Result<bool, ProjectError> {
+        let Some(record) = self.instances.get(id).cloned() else {
+            return Ok(false);
+        };
+        // Not the one state application: that one drops a change whose record is the one that
+        // is already there, which is exactly this. The behaviour is run directly instead, as
+        // it would be for a record that really changed, owners included.
+        let instance_problems_before = self.instance_problems();
+        let connection_problems_before = self.bindings.connection_problems().to_vec();
+        self.bind(&[RecordChange {
+            id: id.clone(),
+            before: Some(record.clone()),
+            after: Some(record),
+        }])?;
+        self.push_event(ProjectEvent::Changed(id.clone()));
+        // Both sets, as the one state application does: a behaviour that now declares the port
+        // a saved connection names takes that connection's problem away too.
+        if instance_problems_before != self.instance_problems()
+            || connection_problems_before != self.bindings.connection_problems()
+        {
+            self.push_event(ProjectEvent::ProblemsChanged);
+        }
+        Ok(true)
+    }
+
     /// Takes the events since the last call.
     pub fn drain_events(&mut self) -> Vec<ProjectEvent> {
         std::mem::take(&mut self.events)

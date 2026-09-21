@@ -7,11 +7,11 @@ publish.workspace = true
 [lints]
 workspace = true
 
-# The child process that scans one bundle. The runtime uses its own executable for this; the
+# The child process that lists one bundle. The runtime uses its own executable for this; the
 # tests of this crate use the binary, so they need no runtime.
 [[bin]]
-name = "clap-scan"
-path = "src/bin/clap-scan.rs"
+name = "plugin-scan"
+path = "src/bin/plugin-scan.rs"
 
 [dependencies]
 anyhow.workspace = true
@@ -20,11 +20,13 @@ clack-extensions = { workspace = true, features = [
   "audio-ports",
   "gui",
   "note-ports",
+  "render",
   "state",
 ] }
 clack-host.workspace = true
 gpui.workspace = true
 raw-window-handle.workspace = true
+rtrb.workspace = true
 rtsan-standalone.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -32,8 +34,11 @@ sound-core.workspace = true
 sound-notes.workspace = true
 sound-ui.workspace = true
 thiserror.workspace = true
+vst3.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 test-clap-plugin.workspace = true
+test-plugin-support.workspace = true
+test-vst3-plugin.workspace = true

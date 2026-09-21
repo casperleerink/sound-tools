@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/instrument", "extensions/metronome", "extensions/midi", "extensions/plugin-host", "extensions/tone", "tooling/test-clap-plugin", "tooling/workspace-rules"]
+members = ["crates/core", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/instrument", "extensions/metronome", "extensions/midi", "extensions/plugin-host", "extensions/tone", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -18,6 +18,8 @@ metronome = { path = "extensions/metronome" }
 midi = { path = "extensions/midi" }
 plugin-host = { path = "extensions/plugin-host" }
 test-clap-plugin = { path = "tooling/test-clap-plugin" }
+test-plugin-support = { path = "tooling/test-plugin-support" }
+test-vst3-plugin = { path = "tooling/test-vst3-plugin" }
 sound-core = { path = "crates/core" }
 sound-notes = { path = "crates/notes" }
 sound-ui = { path = "crates/ui" }
@@ -50,6 +52,9 @@ serde_path_to_error = "0.1"
 tempfile = "3"
 thiserror = "2"
 triple_buffer = "9"
+# VST 3 hosting: raw COM bindings generated from the SDK headers. We write the safe layer.
+# The bindings ship with the crate, so no copy of the SDK is needed to build.
+vst3 = "0.3"
 wmidi = "4"
 
 # Deny a short list of real mistakes. Allow the style group so agents do not fight style lints.
@@ -94,6 +99,7 @@ runtime = { opt-level = 3 }
 sound-core = { opt-level = 3 }
 sound-notes = { opt-level = 3 }
 test-clap-plugin = { opt-level = 3 }
+test-vst3-plugin = { opt-level = 3 }
 tone = { opt-level = 3 }
 
 [profile.dbg]

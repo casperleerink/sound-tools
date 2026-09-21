@@ -3,7 +3,7 @@
 A track owns one child named `instrument`. It can be the built-in synth or a third-party
 plugin. This doc is about the plugin.
 
-Only CLAP instruments work today. VST3 and effect plugins are not built yet.
+CLAP and VST 3 instruments work today. Effect plugins are not built yet.
 
 ## The record
 
@@ -17,10 +17,27 @@ track `rhodes`:
 }
 ```
 
+A VST 3 plugin is the same record with another `format` and the class id as its `plugin_id`.
+This is a second track, `strings`, with its own track record and its own state file:
+
+```json state/arrangement/strings/instance.json
+{
+  "tool": "arrangement.track",
+  "state": {"name": "strings", "colour": "sky", "order": 2, "gain_db": 0.0, "pan": 0.0, "mute": false}
+}
+```
+
+```json state/arrangement/strings/instrument.json
+{
+  "tool": "plugin",
+  "state": {"format": "vst3", "plugin_id": "A1B2C3D4E5F60718293A4B5C6D7E8F90", "state_asset": "strings"}
+}
+```
+
 | Field | Meaning |
 | --- | --- |
-| `format` | `clap`. The only one this build hosts. |
-| `plugin_id` | The id the plugin's maker gave it, such as `com.u-he.diva`. Ask the composer for it. It is not the file name of the plugin. |
+| `format` | `clap` or `vst3`. |
+| `plugin_id` | For `clap`, the id the plugin's maker gave it, such as `com.u-he.diva`. For `vst3`, the plugin's class id as thirty-two hex digits, such as `A1B2C3D4E5F60718293A4B5C6D7E8F90`. Neither is the file name of the plugin, and neither is in any file of the project. Get them from `runtime --plugins`, or ask the composer. |
 | `state_asset` | A name you choose for the file that holds the plugin's own settings: `assets/plugin-state/<name>.bin`. Lowercase letters, digits, `-` and `_`. Give every plugin its own name: two records that name one file share it, and two different plugins that name one file cannot read each other's settings. |
 
 The track record itself says nothing about the plugin:
@@ -55,7 +72,7 @@ already, and the app shows every plugin in its picker as out of reach until then
 ## Never edit the state asset
 
 `assets/plugin-state/<name>.bin` holds the plugin's own settings, in a format only that plugin
-understands. Do not open it, do not edit it, do not copy it between plugins. The app writes it
+understands. A VST 3 plugin keeps two states, so its file holds both. Do not open it, do not edit it, do not copy it between plugins. The app writes it
 when the plugin says its settings changed, at most once a second, and when the project closes.
 It is not part of the undo history: undo and redo never change a plugin's settings.
 
@@ -74,22 +91,39 @@ Not from any file. When you can run commands:
 runtime --plugins
 ```
 
-It prints every plugin with its id and whether it is an instrument. `runtime` is the program
-that has this project open. When it is not on your `PATH`, ask the composer for the id.
+It prints every plugin with its format, its id and whether it is an instrument, and it looks at
+every plugin again, so a plugin that failed once is tried again. `runtime` is the program that
+has this project open. When it is not on your `PATH`, ask the composer for the id.
+
+The first line of a plugin is its format, which is what `format` in the record takes:
+
+    clap  com.example.piano                 Example Audio Piano (instrument, instrument synthesizer)
+    vst3  A1B2C3D4E5F60718293A4B5C6D7E8F90  Example Audio Strings (instrument, Instrument Synth)
 
 ## When it does not play
 
 `problems.txt` names the record and says what is wrong. The usual lines:
 
-- `this machine has no CLAP plugin with the id ...`: the id is wrong, or the plugin is not
-  installed here. The record stays as it is and the track is silent, while everything else
-  plays. Correct `plugin_id` and it plays at once, with no restart.
+- `this machine has no CLAP plugin with the id ...`, or `no VST 3 plugin`: the id is wrong, or
+  the plugin is not installed here. The record stays as it is and the track is silent, while
+  everything else plays. Correct `plugin_id` and it plays at once, with no restart.
+- `a vst3 plugin_id is the class id as thirty-two hex digits`: the record itself is refused.
+  You wrote something else, perhaps a CLAP-style id or the plugin's name.
+- `the plugins of this machine are still being looked at`: nothing is wrong. The app looks for
+  plugins on a thread of its own while it opens, so a project never waits for it. The track
+  plays as soon as the scan reaches its plugin, which needs nothing of you. Read
+  `problems.txt` again in a few seconds.
 - `... is not an instrument`: the plugin is an effect. It cannot be the `instrument` of a
   track. Effect plugins are not built yet.
 - `the state of the plugin ... could not be read`: usually two records that name one
   `state_asset` for different plugins. Give each its own name.
-- `... takes no MIDI, so the sustain pedal does not reach it`: the notes play, the pedal does
-  not. There is nothing to fix in the file.
+- `... offers the host no way to send the sustain pedal`: the notes play, the pedal does not.
+  There is nothing to fix in the file. A CLAP plugin whose note port takes no MIDI, or a VST 3
+  plugin that maps no parameter to MIDI controller 64, says this.
 - `... asked to be started again`: the plugin wants the app to reload it, which this build does
   not do. Nothing in the file is wrong. Tell the composer to take the plugin off the track and
   put it back if it stopped sounding.
+
+## VST
+
+VST is a registered trademark of Steinberg Media Technologies GmbH.

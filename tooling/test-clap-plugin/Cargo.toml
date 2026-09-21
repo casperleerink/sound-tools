@@ -18,6 +18,8 @@ clack-extensions = { workspace = true, features = [
   "audio-ports",
   "gui",
   "note-ports",
+  "render",
   "state",
 ] }
 clack-plugin.workspace = true
+test-plugin-support.workspace = true

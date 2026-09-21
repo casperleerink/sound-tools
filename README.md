@@ -27,7 +27,7 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 6. In the transport pill at the bottom: drag the tempo number up or down to change the tempo, and click the metronome to turn the click on or off. The click is not part of the piece and is never in a render.
 7. Plug in a MIDI keyboard and play. It sounds through the instrument of the selected track, with or without playback. Press the red record button, or `r`, to record what you play onto that track from the playhead, and press it again to end the take. The take becomes a clip, with the sustain pedal, as one undo step, and the performance as you played it is kept under `assets/takes/`, which nothing ever changes.
 8. Click the name of a track on the left. Its panel opens below with the synth, and at the right end the mixer of the track: gain, pan and mute. Drag a knob up or down while it plays, and double click a knob to reset it.
-9. Click `Synth` at the top of that card to pick another instrument: the built-in synth, or any CLAP instrument this Mac has. A plugin gets a card with `Open window`, which opens the plugin's own window beside this one. Change a sound there and it is saved with the piece. Picking an instrument is one undo step.
+9. Click `Synth` at the top of that card to pick another instrument: the built-in synth, or any CLAP or VST 3 instrument this Mac has. A CLAP plugin gets a card with `Open window`, which opens the plugin's own window beside this one; a VST 3 plugin plays and has no window of its own yet. Change a sound there and it is saved with the piece. Picking an instrument is one undo step. The app looks for the plugins of this Mac on a thread of its own, so a project always opens at once; the picker says so while it is still looking, and a track whose plugin has not turned up yet is quiet for a moment and then plays.
 10. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
 11. Press cmd-q to quit. Run the same command again and the piece is back.
 
@@ -69,7 +69,7 @@ cargo run -p runtime -- --plugins
 - `--inspect` prints a summary and changes nothing.
 - `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float.
 - `--headless` plays the project live without a window and reads commands from stdin: `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status`, `quit`. It prints every change that arrives from the folder. Only one app can have a project open live. `--inspect` and `--render` work next to it.
-- `--plugins` prints the CLAP plugins of this Mac with their ids, which is what a track record needs when an agent writes one. In the app you pick one by name instead. Each is looked at in a child process, so one that crashes costs that one and is reported.
+- `--plugins` prints the CLAP and VST 3 plugins of this Mac with their ids, which is what a track record needs when an agent writes one. In the app you pick one by name instead. Each is looked at in a child process, so one that crashes costs that one and is reported. It looks at every plugin again, whatever the app remembered, so it is also how a plugin that failed once is tried again.
 
 A release build is `cargo build --release -p runtime`. The binary is `/private/tmp/sound-tools-timing/target/release/runtime`.
 
@@ -88,8 +88,8 @@ cargo deny check
 ```
 
 CI runs the same on macOS, plus the realtime sanitizer from [ENGINEERING.md](ENGINEERING.md) section 3. The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`. The build
-comes first because the tests load the repository's own CLAP plugin, which is a dynamic library
-that `cargo test` does not build.
+comes first because the tests load the repository's own CLAP and VST 3 plugins, which are
+dynamic libraries that `cargo test` does not build.
 
 The two snapshot tests render the UI components and the window to PNGs without opening a window. They print the folder they write to. `cargo run -p gallery` opens the component gallery in a window.
 
@@ -106,3 +106,5 @@ The two snapshot tests render the UI components and the window to PNGs without o
 ## License
 
 [MIT](LICENSE).
+
+VST is a registered trademark of Steinberg Media Technologies GmbH.

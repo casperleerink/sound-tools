@@ -37,8 +37,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: typos
       - run: cargo clippy --workspace --all-targets --locked
-      # Before the tests: they load the repository's own CLAP plugin, which is a dynamic
-      # library that `cargo test` does not build.
+      # Before the tests: they load the repository's own CLAP and VST 3 plugins, which are
+      # dynamic libraries that `cargo test` does not build.
       - run: cargo build --workspace --locked
       - run: cargo nextest run --workspace --locked
       - name: Render gallery snapshots
@@ -54,8 +54,8 @@ jobs:
         run: |
           cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement -p metronome -p midi -p plugin-host --locked
           # Real projects: the sequencer of every track into its synth, with live file edits,
-          # a whole recording from the MIDI input into a clip, and a track whose instrument is
-          # a hosted CLAP plugin.
+          # a whole recording from the MIDI input into a clip, and tracks whose instrument is
+          # a hosted CLAP or VST 3 plugin.
           cargo nextest run -p runtime --test projects --locked
         env:
           RTSAN_ENABLE: 1

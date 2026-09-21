@@ -11,7 +11,8 @@ use anyhow::Result;
 use arrangement::{ArrangementState, Colour};
 use instrument::SynthState;
 use plugin_host::{
-    PluginFormat, PluginRecord, Plugins, ScanCommand, WeakPlugins, default_search_paths,
+    PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK, WeakPlugins,
+    default_search_paths,
 };
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
@@ -21,13 +22,15 @@ use sound_ui::{DeviceOffer, Devices, Views};
 
 const PROJECT_FILE: &str = "project.json";
 
-/// Offline renders have no device to ask.
+/// Offline renders have no device to ask. `offline` is what every processor is told, and what a
+/// hosted plugin passes on to the plugin in the way its format intends.
 pub const OFFLINE: EngineConfig = EngineConfig {
     sample_rate: 48_000,
     channels: 2,
     ring_capacity: 64,
     event_capacity: 256,
     processor_slots: 256,
+    offline: true,
 };
 
 /// The same text on every machine and for every build, so a project in git gets no diff from
@@ -52,12 +55,23 @@ runtime . --inspect
 /// The scan runs this same executable with [`plugin_host::SCAN_ARGUMENT`], one child process
 /// per bundle, so a plugin that crashes while it is looked at costs one bundle.
 pub fn plugins(read_only: bool) -> Result<Plugins> {
+    with_cache(read_only, ScanCache::of_this_machine())
+}
+
+/// The host `runtime --plugins` uses: it looks at every bundle again, whatever the cache of
+/// this machine remembers, and writes the result. That is how a plugin that hung or crashed
+/// once is tried again.
+pub fn plugins_refreshing_the_cache() -> Result<Plugins> {
+    with_cache(true, ScanCache::of_this_machine().refreshing())
+}
+
+fn with_cache(read_only: bool, cache: ScanCache) -> Result<Plugins> {
     let scanner = ScanCommand::this_program()?;
     let paths = default_search_paths();
     Ok(if read_only {
-        Plugins::read_only(paths, scanner)
+        Plugins::read_only(paths, scanner, cache)
     } else {
-        Plugins::new(paths, scanner)
+        Plugins::new(paths, scanner, cache)
     })
 }
 
@@ -100,6 +114,30 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             .needs(instrument::EXTENSION),
         ]
     });
+    // What the picker says under its offers: that the scan of this machine is still running,
+    // and what Steinberg asks of anyone who writes "VST". Their guidelines want the VST
+    // Compatible Logo next to the term and the attribution where the logo does not fit; a menu
+    // row is such a place, so the attribution is what is shown. See the plugin host's README.
+    devices.notes({
+        let plugins = plugins.clone();
+        move || {
+            let Some(plugins) = plugins.upgrade() else {
+                return Vec::new();
+            };
+            let mut notes = Vec::new();
+            if plugins.scan_is_running() {
+                notes.push("Still looking for the plugins of this Mac…".into());
+            }
+            let vst3 = plugins
+                .instruments()
+                .iter()
+                .any(|found| found.format == PluginFormat::Vst3);
+            if vst3 {
+                notes.push(VST_TRADEMARK.into());
+            }
+            notes
+        }
+    });
     devices.instruments(move || {
         let Some(plugins) = plugins.upgrade() else {
             return Vec::new();
@@ -108,9 +146,9 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             .instruments()
             .into_iter()
             .map(|found| {
-                let (id, name) = (found.id.clone(), found.name.clone());
+                let (id, name, format) = (found.id.clone(), found.name.clone(), found.format);
                 let offer = DeviceOffer::new(
-                    PluginRecord::offer_key(PluginFormat::Clap, &id),
+                    found.offer_key(),
                     found.name.clone(),
                     move |project, slot, changes| {
                         // A state file of its own that no plugin has ever written into,
@@ -124,7 +162,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
                         changes.create(
                             slot.clone(),
                             PluginRecord {
-                                format: PluginFormat::Clap,
+                                format,
                                 plugin_id: id.clone(),
                                 state_asset,
                             },
@@ -134,12 +172,8 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
                 )
                 .needs(plugin_host::EXTENSION);
                 match found.vendor.is_empty() {
-                    true => offer.with_detail(PluginFormat::Clap.name()),
-                    false => offer.with_detail(format!(
-                        "{} · {}",
-                        PluginFormat::Clap.name(),
-                        found.vendor
-                    )),
+                    true => offer.with_detail(format.name()),
+                    false => offer.with_detail(format!("{} · {}", format.name(), found.vendor)),
                 }
             })
             .collect()
@@ -178,7 +212,11 @@ pub fn add_track(
     project.commit("Add track", changes)
 }
 
-/// Opens the project with its lock. A folder without a `project.json` becomes the default
+/// Opens the project with its lock, scanning for plugins on this thread the first time a
+/// record needs one. `--headless` may block; the window uses [`open_or_create_with`] with a
+/// host of its own that scans on a thread.
+///
+/// A folder without a `project.json` becomes the default
 /// project: 120 bpm, 4/4, one arrangement with one track and its synth, no clips. Other
 /// files in it, such as `.git` or `.DS_Store`, do not make it an existing project.
 ///
@@ -282,13 +320,35 @@ pub fn problems(project: &Project) -> String {
     lines.join("\n")
 }
 
+/// One buffer of an offline render: the engine, and then the main-thread work of the plugin
+/// host, exactly as the loop of a live session does.
+///
+/// A render that leaves the host out is a render in which a plugin's main-thread requests are
+/// never answered: a CLAP plugin that asked for a callback waits for ever, and what a VST 3
+/// plugin changed by itself never reaches its controller. A plugin may be silent until it is
+/// answered, so this is not a nicety. Both callers of a render loop go through here.
+pub fn render_block(
+    project: &mut Project,
+    engine: &mut Engine,
+    plugins: &Plugins,
+    output: &mut [f32],
+) -> Result<Vec<plugin_host::PluginProblem>> {
+    engine.process_block(output);
+    project.engine().poll()?;
+    Ok(plugins.poll(project))
+}
+
 /// Renders `frames` frames in device buffers of 512 frames, interleaved by channel.
-pub fn render(project: &mut Project, engine: &mut Engine, frames: usize) -> Result<Vec<f32>> {
+pub fn render(
+    project: &mut Project,
+    engine: &mut Engine,
+    plugins: &Plugins,
+    frames: usize,
+) -> Result<Vec<f32>> {
     let channels = engine.channels();
     let mut output = vec![0.0_f32; frames * channels];
     for buffer in output.chunks_mut(512 * channels) {
-        engine.process_block(buffer);
-        project.engine().poll()?;
+        render_block(project, engine, plugins, buffer)?;
     }
     Ok(output)
 }

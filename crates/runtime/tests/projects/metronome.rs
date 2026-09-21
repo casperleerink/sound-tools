@@ -7,10 +7,10 @@ use crate::support::{BAR, Harness};
 
 /// The `--render` path: a second, read-only project on the same folder, next to the live one.
 fn render_offline(harness: &Harness, frames: usize) -> Vec<f32> {
-    let (mut project, mut engine, _plugins) =
+    let (mut project, mut engine, plugins) =
         runtime::open_read_only(harness.project.root()).unwrap();
     project.engine().play();
-    runtime::render(&mut project, &mut engine, frames).unwrap()
+    runtime::render(&mut project, &mut engine, &plugins, frames).unwrap()
 }
 
 #[test]

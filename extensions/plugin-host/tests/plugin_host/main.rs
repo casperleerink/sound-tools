@@ -9,10 +9,12 @@
 #[global_allocator]
 static ALLOCATOR: support::CountingAllocator = support::CountingAllocator;
 
+mod background;
 mod consistency;
 mod lifecycle;
 mod playing;
 mod records;
+mod rendering;
 mod scanning;
 mod state;
 mod support;

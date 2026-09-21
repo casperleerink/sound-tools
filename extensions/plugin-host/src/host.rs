@@ -1,8 +1,9 @@
-//! The plugins this project has loaded, and the host callbacks they call.
+//! The plugins this project has loaded, whatever their format.
 //!
-//! [`Plugins`] lives on the thread the project lives on. CLAP puts a plugin's own handle on the
-//! application's main thread, and only its audio processor may travel to the audio thread. So
-//! this table keeps the handles and hands the audio processors to the engine.
+//! [`Plugins`] lives on the thread the project lives on. Both formats put a plugin's own handle
+//! on the application's main thread and allow only its audio side on the audio thread, so this
+//! table keeps the handles and hands the audio sides to the engine. Nothing here knows CLAP or
+//! VST 3: a format is a [`crate::backend::LoadedPlugin`].
 //!
 //! The rule for saving: a plugin's state is written to its asset when the plugin says it
 //! changed, at the next [`Plugins::poll`] and then at most once a second while it keeps saying
@@ -15,24 +16,19 @@
 //! engine, leaves nothing behind here either.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::{Rc, Weak};
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
-use clack_extensions::gui::{GuiSize, HostGui, HostGuiImpl};
-use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
-use clack_extensions::state::{HostState, HostStateImpl, PluginState};
-use clack_host::prelude::*;
 use gpui::WindowHandle;
-use sound_core::{AssetName, Assets, InstanceId, MAX_BLOCK, Project};
+use sound_core::{AssetName, Assets, InstanceId, PrepareConfig, Project};
 
-use crate::PluginRecord;
-use crate::processor::{Dialect, Loaded};
-use crate::scan::{Scan, ScanCommand, ScannedPlugin, scan};
+use crate::backend::LoadedPlugin;
+use crate::scan::{Scan, ScanCache, ScanCommand, ScannedPlugin, scan_folders};
 use crate::window::{PluginFrame, PluginWindow, Prepared, WindowOwner};
+use crate::{PluginFormat, PluginRecord};
 
 /// How often a plugin that keeps saying its state changed is written. A plugin marks itself
 /// dirty on every step of a knob drag, and serializing a sampler's state is not cheap, so the
@@ -41,10 +37,10 @@ use crate::window::{PluginFrame, PluginWindow, Prepared, WindowOwner};
 const SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// What the host tells a plugin about itself.
-const HOST_NAME: &str = "Sound Tools";
-const HOST_VENDOR: &str = "Sound Tools";
-const HOST_URL: &str = "https://github.com/casperleerink/sound-tools";
-const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const HOST_NAME: &str = "Sound Tools";
+pub(crate) const HOST_VENDOR: &str = "Sound Tools";
+pub(crate) const HOST_URL: &str = "https://github.com/casperleerink/sound-tools";
+pub(crate) const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Why a plugin record is not playing. Each becomes one line in `problems.txt`.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -53,6 +49,10 @@ pub enum PluginProblem {
         "this machine has no {format} plugin with the id {plugin_id:?}. The record is left as it is and the track is silent. Install the plugin, or correct `plugin_id`"
     )]
     NotInstalled { format: String, plugin_id: String },
+    #[error(
+        "the plugins of this machine are still being looked at, so {plugin_id:?} is not there yet. The track is silent until the scan reaches it, which needs nothing of you"
+    )]
+    StillScanning { plugin_id: String },
     #[error("the plugin {plugin_id:?} did not load: {message}")]
     DidNotLoad { plugin_id: String, message: String },
     #[error(
@@ -68,7 +68,7 @@ pub enum PluginProblem {
     )]
     AskedForRestart { plugin_id: String },
     #[error(
-        "the plugin {plugin_id:?} takes no MIDI, so the sustain pedal does not reach it. Its notes play"
+        "the plugin {plugin_id:?} offers the host no way to send the sustain pedal, so the pedal does not reach it. Its notes play"
     )]
     NoPedal { plugin_id: String },
     #[error("the plugin {plugin_id:?} has no window of its own")]
@@ -77,124 +77,32 @@ pub enum PluginProblem {
     WindowDidNotOpen { plugin_id: String, message: String },
 }
 
-/// The handlers a CLAP plugin calls. One set per plugin instance.
-pub struct SoundToolsHost;
-
-impl HostHandlers for SoundToolsHost {
-    type Shared<'a> = SharedCallbacks;
-    type MainThread<'a> = MainThreadCallbacks<'a>;
-    type AudioProcessor<'a> = ();
-
-    fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &SharedCallbacks) {
-        builder.register::<HostState>().register::<HostGui>();
-    }
-}
-
-/// Callbacks a plugin may make from any thread. They only note what was asked for; the work
-/// happens in [`Plugins::poll`] on the main thread.
-#[derive(Default)]
-pub struct SharedCallbacks {
-    callback_requested: AtomicBool,
-    restart_requested: AtomicBool,
-    /// The plugin closed its own window, or lost it. The next poll frees what is left.
-    window_closed: AtomicBool,
-    /// A size the plugin asked its window to be, packed into one number. Zero means none.
-    /// The next poll gives the window that size.
-    window_size_wanted: AtomicU64,
-    /// The plugin's own state extension, if it has one. Filled in while it initializes.
-    state: OnceLock<Option<PluginState>>,
-}
-
-impl<'a> SharedHandler<'a> for SharedCallbacks {
-    fn initializing(&self, instance: InitializingPluginHandle<'a>) {
-        let _ = self.state.set(instance.get_extension());
-    }
-
-    fn request_restart(&self) {
-        self.restart_requested.store(true, Ordering::Release);
-    }
-
-    fn request_process(&self) {
-        // We call the plugin every block while its track exists, so there is nothing to start.
-    }
-
-    fn request_callback(&self) {
-        self.callback_requested.store(true, Ordering::Release);
-    }
-}
-
-/// The window callbacks. A plugin may make them from any thread, so they only note what
-/// happened; [`Plugins::poll`] does the work on the main thread.
-///
-/// A plugin's window is one of ours with the plugin's view in it, see `window.rs`. It is as
-/// big as the plugin asks, whenever it asks. It is never shown or hidden behind the composer's
-/// back: opening and closing one is the composer's, from the card in the rack.
-impl HostGuiImpl for SharedCallbacks {
-    /// Only about resizing an embedded window by dragging its edge, which this host does not
-    /// offer. The plugin says how big it is through `request_resize`.
-    fn resize_hints_changed(&self) {}
-
-    fn request_resize(&self, new_size: GuiSize) -> Result<(), HostError> {
-        // Acknowledged here and done at the next poll, which CLAP allows for a call that may
-        // come from another thread.
-        self.window_size_wanted
-            .store(new_size.pack_to_u64(), Ordering::Release);
-        Ok(())
-    }
-
-    fn request_show(&self) -> Result<(), HostError> {
-        Err(HostError::Message(
-            "a plugin's window is opened from its card in the track panel",
-        ))
-    }
-
-    fn request_hide(&self) -> Result<(), HostError> {
-        Err(HostError::Message(
-            "a plugin's window is closed from its card in the track panel",
-        ))
-    }
-
-    fn closed(&self, _was_destroyed: bool) {
-        self.window_closed.store(true, Ordering::Release);
-    }
-}
-
-pub struct MainThreadCallbacks<'a> {
-    /// The plugin may call `mark_dirty` while it initializes, before the table knows it.
-    /// The lifetime ties this handler to the shared one of the same instance.
-    _shared: &'a SharedCallbacks,
-    state_is_dirty: Cell<bool>,
-}
-
-impl<'a> MainThreadHandler<'a> for MainThreadCallbacks<'a> {}
-
-impl HostStateImpl for MainThreadCallbacks<'_> {
-    fn mark_dirty(&self) {
-        self.state_is_dirty.set(true);
-    }
-}
-
 /// What [`Plugins::open`] gives back. There is always a plugin: the behaviour hands the engine
 /// a plugin every time it runs, so nothing the engine has depends on what this table remembers.
 pub struct Opened {
-    pub started: Loaded,
-    /// What to report about this record every time the behaviour runs, such as a plugin that
-    /// takes no sustain pedal. These are not failures: the plugin plays.
+    pub started: Box<dyn crate::processor::Started>,
+    /// What to report about this record every time the behaviour runs, such as a plugin the
+    /// sustain pedal cannot reach. These are not failures: the plugin plays.
     pub notes: Vec<PluginProblem>,
 }
 
 /// One plugin this project holds, with the record it came from.
 ///
 /// It is `loaded` while a record names it and `retired` once it does not. A retired one is kept
-/// until the engine gives its audio processor back, because dropping it before that would leak
-/// the plugin, which is what clack does on purpose. It is polled and saved until then, so a
+/// until the engine gives its audio side back, because letting it go before that would leave
+/// the two ends of one plugin in different hands. It is polled and saved until then, so a
 /// plugin that is still playing while it waits does not lose what it changes.
 struct Hosted {
+    format: PluginFormat,
     plugin_id: String,
     asset: AssetName,
-    instance: PluginInstance<SoundToolsHost>,
+    plugin: Box<dyn LoadedPlugin>,
     /// When its state was last written, for the once-a-second rule.
     last_saved: Option<Instant>,
+    /// The plugin said its state changed and it is not written yet. It is kept here and not in
+    /// the backend, so that a change the once-a-second rule made wait is written by a later
+    /// poll and is never forgotten.
+    pending_save: bool,
     /// Whether the plugin has a window at all, asked once while it loaded. A card of a rack
     /// reads it on every frame it draws, and a frame must call into no plugin.
     has_window: bool,
@@ -202,12 +110,25 @@ struct Hosted {
     window: PluginWindow,
 }
 
+impl Hosted {
+    /// Whether the record of `id` in the project still says what this entry holds.
+    fn matches(&self, project: &Project, id: &InstanceId) -> bool {
+        let Some(instance) = project.resolve::<PluginRecord>(id) else {
+            return false;
+        };
+        let Some(record) = project.state(&instance) else {
+            return false;
+        };
+        record.format == self.format
+            && record.plugin_id == self.plugin_id
+            && record.asset() == self.asset
+    }
+}
+
 #[derive(Default)]
 struct Table {
     loaded: BTreeMap<InstanceId, Hosted>,
     retired: Vec<Hosted>,
-    /// Bundles that failed to scan, as one line each. The runtime shows them once.
-    notices: Vec<String>,
     /// A plugin's window opened or closed since whoever draws the rack last asked.
     window_changed: bool,
     /// Windows whose plugin has gone. Their views are already freed; taking a window down
@@ -215,12 +136,34 @@ struct Table {
     finished_windows: Vec<WindowHandle<PluginFrame>>,
 }
 
+/// What this machine has, filled in by whoever scans. Shared with the scan thread, so this is
+/// the one place in the host with a lock, and the audio thread never touches it.
+#[derive(Default)]
+struct Scanning {
+    scan: Scan,
+    /// Bundles that failed, as one line each. The runtime shows them once.
+    notices: Vec<String>,
+    /// Goes up whenever the scan learns something, so a poll can tell that a record that was
+    /// waiting for a plugin is worth trying again.
+    generation: u64,
+}
+
 struct Inner {
     search_paths: Vec<std::path::PathBuf>,
     scanner: ScanCommand,
-    /// What this machine has, scanned once per session. Apart from the table, so that reading
-    /// a plugin's name never waits on the table, which a plugin's own call may have borrowed.
-    scanned: RefCell<Option<Scan>>,
+    cache: ScanCache,
+    scanned: Arc<Mutex<Scanning>>,
+    /// Whether a scan has run or is running. A host that scans in the background sets it as it
+    /// starts, so nothing blocks on the first plugin a project names.
+    started: Cell<bool>,
+    /// Ends the scan thread between bundles when the host goes.
+    stop: Arc<AtomicBool>,
+    /// The generation the last poll acted on.
+    seen: Cell<u64>,
+    /// Records whose plugin the scan has not found yet, and the ones that are worth running
+    /// again now that it has.
+    waiting: RefCell<BTreeSet<InstanceId>>,
+    retries: RefCell<Vec<InstanceId>>,
     /// A read-only project (`--inspect`, `--render`) never writes plugin state.
     writes_state: bool,
     /// The `assets/` folder of the project, from the first plugin that loaded. Kept so that
@@ -239,6 +182,7 @@ struct Inner {
 /// with the project still in hand, and leaves nothing for this.
 impl Drop for Inner {
     fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
         let assets = self.writes_state.then(|| self.assets.get_mut().clone());
         let table = self.table.get_mut();
         for hosted in table.loaded.values_mut().chain(&mut table.retired) {
@@ -246,7 +190,7 @@ impl Drop for Inner {
             // held them cannot be taken down from here, and nothing will: this is the project
             // closing, which on macOS is the application quitting.
             // The handle is left where it is: the window goes with the application.
-            let _window = hosted.window.give_up(&mut hosted.instance);
+            let _window = hosted.window.give_up(hosted.plugin.gui());
             if let Some(Some(assets)) = &assets
                 && let Err(problem) = save(hosted, assets)
             {
@@ -281,62 +225,146 @@ impl Plugins {
     }
 
     /// A host that saves plugin state into the project.
-    pub fn new(search_paths: Vec<std::path::PathBuf>, scanner: ScanCommand) -> Self {
-        Self::with_writing(search_paths, scanner, true)
+    pub fn new(
+        search_paths: Vec<std::path::PathBuf>,
+        scanner: ScanCommand,
+        cache: ScanCache,
+    ) -> Self {
+        Self::with_writing(search_paths, scanner, cache, true)
     }
 
     /// A host for a project that is open read-only. It loads plugins and never writes.
-    pub fn read_only(search_paths: Vec<std::path::PathBuf>, scanner: ScanCommand) -> Self {
-        Self::with_writing(search_paths, scanner, false)
+    pub fn read_only(
+        search_paths: Vec<std::path::PathBuf>,
+        scanner: ScanCommand,
+        cache: ScanCache,
+    ) -> Self {
+        Self::with_writing(search_paths, scanner, cache, false)
     }
 
     fn with_writing(
         search_paths: Vec<std::path::PathBuf>,
         scanner: ScanCommand,
+        cache: ScanCache,
         writes_state: bool,
     ) -> Self {
         Self(Rc::new(Inner {
             search_paths,
             scanner,
-            scanned: RefCell::new(None),
+            cache,
+            scanned: Arc::new(Mutex::new(Scanning::default())),
+            started: Cell::new(false),
+            stop: Arc::new(AtomicBool::new(false)),
+            seen: Cell::new(0),
+            waiting: RefCell::new(BTreeSet::new()),
+            retries: RefCell::new(Vec::new()),
             writes_state,
             assets: RefCell::new(None),
             table: RefCell::new(Table::default()),
         }))
     }
 
-    /// Every plugin this machine has, scanned once per session. The first call pays for it,
-    /// and it is a blocking one: a child process per bundle. See README.md, "Scanning".
-    pub fn scan(&self) -> Scan {
-        self.ensure_scan();
-        self.0.scanned.borrow().clone().unwrap_or_default()
-    }
-
-    /// Scans if this session has not yet.
-    fn ensure_scan(&self) {
-        if self.0.scanned.borrow().is_some() {
+    /// Starts the scan on a thread of its own and comes back at once.
+    ///
+    /// The window calls this before it opens a project, so that no plugin of this machine is
+    /// ever looked at on the thread that draws. A record whose plugin the scan has not reached
+    /// yet is reported and played as soon as it turns up, see [`Self::take_retries`].
+    /// `--render`, `--inspect` and `--headless` do not call it and wait for the scan the first
+    /// time a record needs one.
+    pub fn start_scanning(&self) {
+        if self.0.started.replace(true) {
             return;
         }
-        let scanned = scan(&self.0.search_paths, &self.0.scanner);
-        let mut notices = Vec::new();
-        for failure in &scanned.failures {
-            notices.push(format!(
-                "{} could not be scanned: {}",
-                failure.path.display(),
-                failure.message
-            ));
+        let scanned = self.0.scanned.clone();
+        let stop = self.0.stop.clone();
+        let (paths, scanner, cache) = (
+            self.0.search_paths.clone(),
+            self.0.scanner.clone(),
+            self.0.cache.clone(),
+        );
+        // Detached: nothing waits for it. A host that goes sets `stop`, and the thread ends
+        // after the bundle it is on, which is bounded by the deadline of one child.
+        std::thread::Builder::new()
+            .name("plugin-scan".to_string())
+            .spawn(move || {
+                // Whatever ends this thread, the scan is over: it was stopped, or it panicked
+                // inside a bundle. Nothing may wait for a scan that is not running.
+                let _over = Over(scanned.clone());
+                scan_folders(&paths, &scanner, &cache, &stop, |scan| {
+                    publish(&scanned, scan);
+                });
+            })
+            .map_or_else(
+                |error| {
+                    // A machine that cannot start a thread scans where it stands.
+                    eprintln!("error: the plugin scan needs a thread: {error}");
+                    self.0.started.set(false);
+                },
+                |_handle| (),
+            );
+    }
+
+    /// Every plugin this machine has. The first call pays for the scan unless one is already
+    /// running in the background, and then it is what is known so far. See README.md.
+    pub fn scan(&self) -> Scan {
+        self.ensure_scan();
+        self.known()
+    }
+
+    fn known(&self) -> Scan {
+        match self.0.scanned.lock() {
+            Ok(scanned) => scanned.scan.clone(),
+            // A scan thread that panicked leaves what it had. Nothing of ours can panic while
+            // it holds this lock, so this is only so that a project still opens.
+            Err(poisoned) => poisoned.into_inner().scan.clone(),
         }
-        *self.0.scanned.borrow_mut() = Some(scanned);
-        self.0.table.borrow_mut().notices.extend(notices);
+    }
+
+    /// Whether a scan is still running. The picker says so quietly while it is, and whoever
+    /// polls asks on every poll, so this copies nothing.
+    pub fn scan_is_running(&self) -> bool {
+        let finished = match self.0.scanned.lock() {
+            Ok(scanned) => scanned.scan.finished,
+            Err(poisoned) => poisoned.into_inner().scan.finished,
+        };
+        self.0.started.get() && !finished
+    }
+
+    /// Scans if this session has not, and waits for it. Does nothing once a scan has been
+    /// started in the background.
+    fn ensure_scan(&self) {
+        if self.0.started.replace(true) {
+            return;
+        }
+        let scanned = self.0.scanned.clone();
+        scan_folders(
+            &self.0.search_paths,
+            &self.0.scanner,
+            &self.0.cache,
+            &self.0.stop,
+            |scan| publish(&scanned, scan),
+        );
+    }
+
+    /// Waits for the scan to finish, whoever started it. `--render`, `--inspect` and
+    /// `--headless` may block, and this is where they do.
+    pub fn wait_for_scan(&self) {
+        self.ensure_scan();
+        while self.scan_is_running() {
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 
     /// Lines about the scan that a person should see once, such as a bundle that crashed.
     pub fn take_notices(&self) -> Vec<String> {
-        std::mem::take(&mut self.0.table.borrow_mut().notices)
+        match self.0.scanned.lock() {
+            Ok(mut scanned) => std::mem::take(&mut scanned.notices),
+            Err(poisoned) => std::mem::take(&mut poisoned.into_inner().notices),
+        }
     }
 
-    /// Every CLAP instrument this machine has, in one line each, for a picker. It scans on the
-    /// first call of the session, as loading a plugin does.
+    /// Every instrument this machine has, of every format, in one line each, for a picker. It
+    /// scans on the first call of the session, as loading a plugin does.
     pub fn instruments(&self) -> Vec<ScannedPlugin> {
         let mut instruments = self.scan().plugins;
         instruments.retain(ScannedPlugin::is_instrument);
@@ -346,13 +374,10 @@ impl Plugins {
     /// The name the maker gave the plugin with this id, when this machine has it. `None` says
     /// the plugin is missing, which is what the card of a record shows.
     ///
-    /// A card asks on every frame it draws, so this scans nothing, borrows no table and copies
-    /// one name. There is always a scan by then: loading a plugin is what needs one, and a card
-    /// only exists for a record that was loaded or tried.
-    pub fn installed_name(&self, plugin_id: &str) -> Option<String> {
-        let scanned = self.0.scanned.borrow();
-        let found = scanned.as_ref()?.find(plugin_id)?;
-        Some(found.name.clone())
+    /// A card asks on every frame it draws, so this scans nothing and copies one name.
+    pub fn installed_name(&self, format: PluginFormat, plugin_id: &str) -> Option<String> {
+        let scanned = self.0.scanned.lock().ok()?;
+        Some(scanned.scan.find(format, plugin_id)?.name.clone())
     }
 
     /// Loads the plugin the record names and gives it to the caller for the engine.
@@ -370,10 +395,11 @@ impl Plugins {
         id: &InstanceId,
         record: &PluginRecord,
         assets: &Assets,
-        sample_rate: u32,
+        config: PrepareConfig,
     ) -> Result<Opened, PluginProblem> {
         // Kept for the drop of this host, which is the last moment a plugin can be saved.
         *self.0.assets.borrow_mut() = Some(assets.clone());
+        self.0.waiting.borrow_mut().remove(id);
         {
             let mut table = self.0.table.borrow_mut();
             if let Some(hosted) = table.loaded.remove(id) {
@@ -381,8 +407,16 @@ impl Plugins {
             }
         }
         let asset = record.asset();
-        let (started, notes) = self.load(id, record, &asset, assets, sample_rate)?;
-        Ok(Opened { started, notes })
+        match self.load(id, record, &asset, assets, config) {
+            Ok(opened) => Ok(opened),
+            Err(problem) => {
+                // A plugin the scan has not reached yet is worth trying again when it has.
+                if matches!(problem, PluginProblem::StillScanning { .. }) {
+                    self.0.waiting.borrow_mut().insert(id.clone());
+                }
+                Err(problem)
+            }
+        }
     }
 
     fn load(
@@ -391,99 +425,70 @@ impl Plugins {
         record: &PluginRecord,
         asset: &AssetName,
         assets: &Assets,
-        sample_rate: u32,
-    ) -> Result<(Loaded, Vec<PluginProblem>), PluginProblem> {
-        let scanned = self.scan();
-        let found = scanned
-            .find(&record.plugin_id)
-            .ok_or_else(|| PluginProblem::NotInstalled {
-                format: record.format.name().to_string(),
-                plugin_id: record.plugin_id.clone(),
-            })?;
+        config: PrepareConfig,
+    ) -> Result<Opened, PluginProblem> {
+        self.ensure_scan();
+        let scanned = self.known();
+        let found = match scanned.find(record.format, &record.plugin_id) {
+            Some(found) => found.clone(),
+            None if !scanned.finished => {
+                return Err(PluginProblem::StillScanning {
+                    plugin_id: record.plugin_id.clone(),
+                });
+            }
+            None => {
+                return Err(PluginProblem::NotInstalled {
+                    format: record.format.name().to_string(),
+                    plugin_id: record.plugin_id.clone(),
+                });
+            }
+        };
         if !found.is_instrument() {
             return Err(PluginProblem::NotAnInstrument {
                 plugin_id: record.plugin_id.clone(),
                 features: found.features.join(", "),
             });
         }
-        let fail = |message: String| PluginProblem::DidNotLoad {
-            plugin_id: record.plugin_id.clone(),
-            message,
-        };
-
-        // SAFETY: loading a plugin runs its code, which no host can check in advance. The scan
-        // ran this same bundle in a child process first, so a bundle that crashes on load is
-        // already known and never reaches here.
-        let entry = unsafe { clack_host::entry::PluginEntry::load(&found.path) }
-            .map_err(|error| fail(error.to_string()))?;
-        let host_info = HostInfo::new(HOST_NAME, HOST_VENDOR, HOST_URL, HOST_VERSION)
-            .map_err(|error| fail(error.to_string()))?;
-        let plugin_id = std::ffi::CString::new(record.plugin_id.as_str())
-            .map_err(|error| fail(error.to_string()))?;
-        let mut instance = PluginInstance::<SoundToolsHost>::new(
-            |_| SharedCallbacks::default(),
-            |shared| MainThreadCallbacks {
-                _shared: shared,
-                state_is_dirty: Cell::new(false),
-            },
-            &entry,
-            &plugin_id,
-            &host_info,
-        )
-        .map_err(|error| fail(error.to_string()))?;
-
-        // The saved state before the plugin is activated, as CLAP asks.
+        // Empty bytes are a state file that was made to reserve its name, which is how a plugin
+        // the window puts on a track gets one, and that the plugin has not written into yet.
         let saved = assets
             .read(asset)
             .map_err(|error| PluginProblem::StateNotRead {
                 plugin_id: record.plugin_id.clone(),
                 message: error.to_string(),
-            })?;
-        // Empty bytes are a state file that was made to reserve its name, which is how a
-        // plugin the window puts on a track gets one, and that the plugin has not written yet.
-        if let Some(bytes) = saved.filter(|bytes| !bytes.is_empty()) {
-            let state = instance.access_shared_handler(|shared| shared.state.get().copied());
-            if let Some(Some(state)) = state {
-                let mut reader = std::io::Cursor::new(bytes);
-                state
-                    .load(&mut instance.plugin_handle(), &mut reader)
-                    .map_err(|error| PluginProblem::StateNotRead {
-                        plugin_id: record.plugin_id.clone(),
-                        message: error.to_string(),
-                    })?;
-            }
-        }
-
-        let has_window = PluginWindow::is_offered(&mut instance);
-        let ports = read_ports(&mut instance);
-        let configuration = PluginAudioConfiguration {
-            sample_rate: f64::from(sample_rate),
-            min_frames_count: 1,
-            max_frames_count: MAX_BLOCK as u32,
-        };
-        let audio = instance
-            .activate(|_, _| (), configuration)
-            .map_err(|error| fail(error.to_string()))?;
-        let loaded = Loaded::new(
-            audio.into(),
-            ports.dialect,
-            ports.takes_midi,
-            ports.input_channels,
-            ports.output_channels,
-        );
-        let notes = standing_notes(&record.plugin_id, &ports);
+            })?
+            .filter(|bytes| !bytes.is_empty());
+        let opening = match record.format {
+            PluginFormat::Clap => crate::clap::load(&found, saved.as_deref(), config),
+            PluginFormat::Vst3 => crate::vst3::load(&found, saved.as_deref(), config),
+        }?;
+        let crate::backend::Opening {
+            mut plugin,
+            started,
+            notes,
+        } = opening;
+        let has_window = plugin.gui().is_some_and(|gui| gui.is_offered());
         self.0.table.borrow_mut().loaded.insert(
             id.clone(),
             Hosted {
+                format: record.format,
                 plugin_id: record.plugin_id.clone(),
                 asset: asset.clone(),
-                instance,
+                plugin,
                 last_saved: None,
+                pending_save: false,
                 has_window,
                 window: PluginWindow::default(),
             },
         );
-        Ok((loaded, notes))
+        Ok(Opened { started, notes })
+    }
+
+    /// Records whose plugin was not there when their behaviour ran and may be now, because the
+    /// scan has learned something since. Whoever polls runs their behaviour again, which is
+    /// what makes a plugin play and takes its problem away.
+    pub fn take_retries(&self) -> Vec<InstanceId> {
+        std::mem::take(&mut self.0.retries.borrow_mut())
     }
 
     /// Whether the plugin of this record has a window of its own to open. `None` says the
@@ -530,7 +535,14 @@ impl Plugins {
                 return Ok(());
             };
             let plugin_id = hosted.plugin_id.clone();
-            let prepared = hosted.window.prepare(&mut hosted.instance, &plugin_id);
+            let no_window = || PluginProblem::NoWindow {
+                plugin_id: plugin_id.clone(),
+            };
+            let Hosted { window, plugin, .. } = hosted;
+            let prepared = match plugin.gui() {
+                Some(gui) => window.prepare(gui),
+                None => Err(no_window()),
+            };
             table.window_changed = true;
             prepared.map(|prepared| (prepared, plugin_id))?
         };
@@ -570,10 +582,12 @@ impl Plugins {
             table.finished_windows.push(handle);
             return Ok(());
         };
-        match hosted
-            .window
-            .attach(&mut hosted.instance, &plugin_id, handle, view, closed)
-        {
+        let Hosted { window, plugin, .. } = hosted;
+        let attached = match plugin.gui() {
+            Some(gui) => window.attach(gui, handle, view, closed),
+            None => Err((PluginProblem::NoWindow { plugin_id }, handle)),
+        };
+        match attached {
             Ok(()) => Ok(()),
             Err((problem, handle)) => {
                 table.finished_windows.push(handle);
@@ -596,7 +610,7 @@ impl Plugins {
     fn give_up_window(&self, id: &InstanceId) -> Option<WindowHandle<PluginFrame>> {
         let mut table = self.0.table.borrow_mut();
         let hosted = table.loaded.get_mut(id)?;
-        let finished = hosted.window.give_up(&mut hosted.instance);
+        let finished = hosted.window.give_up(hosted.plugin.gui());
         table.window_changed = true;
         finished
     }
@@ -607,7 +621,7 @@ impl Plugins {
     pub(crate) fn window_was_closed(&self, id: &InstanceId) {
         let mut table = self.0.table.borrow_mut();
         if let Some(hosted) = table.loaded.get_mut(id)
-            && hosted.window.give_up(&mut hosted.instance).is_some()
+            && hosted.window.give_up(hosted.plugin.gui()).is_some()
         {
             table.window_changed = true;
         }
@@ -668,9 +682,8 @@ impl Plugins {
     /// Saves the state of every plugin, whether it said so or not, and lets them all go.
     ///
     /// Call it when the project closes. A plugin that changes its state without telling the
-    /// host, which CLAP asks it not to do, is saved here all the same. Nothing is written when
-    /// the bytes are the ones already in the project, so a session that changed nothing leaves
-    /// no diff.
+    /// host is saved here all the same. Nothing is written when the bytes are the ones already
+    /// in the project, so a session that changed nothing leaves no diff.
     pub fn close(&self, project: &Project) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
         let mut table = self.0.table.borrow_mut();
@@ -679,12 +692,11 @@ impl Plugins {
             retired,
             window_changed,
             finished_windows,
-            ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
         for hosted in loaded.values_mut().chain(&mut *retired) {
             // Every window closes with the project, whether it writes or not.
-            if let Some(handle) = hosted.window.give_up(&mut hosted.instance) {
+            if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
                 finished_windows.push(handle);
                 *window_changed = true;
             }
@@ -709,13 +721,13 @@ impl Plugins {
     /// [`Self::poll`] with the time given, so a test can move it.
     pub fn poll_at(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
+        self.note_what_the_scan_found(project);
         let mut table = self.0.table.borrow_mut();
         let Table {
             loaded,
             retired,
             window_changed,
             finished_windows,
-            ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
 
@@ -731,7 +743,7 @@ impl Plugins {
             if let Some(mut hosted) = loaded.remove(&id) {
                 // The window of a plugin that is going goes with it: a record that was deleted
                 // from a file or by an undo leaves no window behind.
-                if let Some(handle) = hosted.window.give_up(&mut hosted.instance) {
+                if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
                     finished_windows.push(handle);
                     *window_changed = true;
                 }
@@ -747,54 +759,35 @@ impl Plugins {
         }
 
         // Retired plugins are served too: one that is still playing, because the engine has
-        // not given its processor back yet, must not miss a callback or lose a change.
+        // not given its audio side back yet, must not miss a callback or lose a change.
         for hosted in loaded.values_mut().chain(&mut *retired) {
-            let requested = hosted.instance.access_shared_handler(|shared| {
-                shared.callback_requested.swap(false, Ordering::AcqRel)
-            });
-            if requested {
-                hosted.instance.call_on_main_thread_callback();
+            let requests = hosted.plugin.poll();
+            if let Some(wanted) = requests.window_size {
+                hosted.window.wants_size(wanted);
             }
-            // A size the plugin asked for. The window takes it at the next frame; there is
-            // nothing of ours that has to follow, because the window holds only the plugin.
-            let wanted = hosted.instance.access_shared_handler(|shared| {
-                shared.window_size_wanted.swap(0, Ordering::AcqRel)
-            });
-            if wanted != 0 {
-                hosted.window.wants_size(GuiSize::unpack_from_u64(wanted));
-            }
-            // The plugin closed its own window, by its title bar or by losing it. `destroy` is
-            // how a host acknowledges that, and this host keeps no window that is not shown.
-            // After the callback above, because a plugin may say so from there.
-            let window_closed = hosted
-                .instance
-                .access_shared_handler(|shared| shared.window_closed.swap(false, Ordering::AcqRel));
-            if window_closed && let Some(handle) = hosted.window.give_up(&mut hosted.instance) {
+            // The plugin closed its own window, by its title bar or by losing it. This host
+            // keeps no window that is not shown.
+            if requests.window_closed
+                && let Some(handle) = hosted.window.give_up(hosted.plugin.gui())
+            {
                 finished_windows.push(handle);
                 *window_changed = true;
             }
             // A plugin that asks to be deactivated and activated again. This build does not,
             // so the composer is told instead of being left with a plugin that stopped.
-            let restart = hosted.instance.access_shared_handler(|shared| {
-                shared.restart_requested.swap(false, Ordering::AcqRel)
-            });
-            if restart {
+            if requests.restart {
                 problems.push(PluginProblem::AskedForRestart {
                     plugin_id: hosted.plugin_id.clone(),
                 });
             }
-            let dirty = hosted
-                .instance
-                .access_handler(|main| main.state_is_dirty.get());
+            hosted.pending_save |= requests.state_is_dirty;
             let due = hosted
                 .last_saved
                 .is_none_or(|last| now.duration_since(last) >= SAVE_INTERVAL);
             if let Some(assets) = assets
-                && dirty
+                && hosted.pending_save
                 && due
             {
-                // The flag stays set until it is written, so a change that waits for the
-                // second to pass is written by a later poll and not forgotten.
                 hosted.last_saved = Some(now);
                 if let Err(problem) = save(hosted, assets) {
                     problems.push(problem);
@@ -802,31 +795,85 @@ impl Plugins {
             }
         }
 
-        // A handle may only go once the engine has given its audio processor back. Until then
-        // dropping it would leak the plugin, which is what clack does on purpose.
-        retired.retain_mut(|plugin| plugin.instance.try_deactivate().is_err());
+        // A plugin may only go once the engine has given its audio side back. Until then
+        // letting it go would leave the two ends of one plugin in different hands.
+        retired.retain_mut(|hosted| !hosted.plugin.released());
         problems
+    }
+
+    /// Records that were waiting for a plugin the scan had not reached. When it has learned
+    /// something since the last poll, their behaviours are worth running again.
+    fn note_what_the_scan_found(&self, project: &Project) {
+        if self.0.waiting.borrow().is_empty() {
+            return;
+        }
+        let generation = match self.0.scanned.lock() {
+            Ok(scanned) => scanned.generation,
+            Err(poisoned) => poisoned.into_inner().generation,
+        };
+        if self.0.seen.replace(generation) == generation {
+            return;
+        }
+        let known = self.known();
+        let mut waiting = self.0.waiting.borrow_mut();
+        let mut retries = self.0.retries.borrow_mut();
+        waiting.retain(|id| {
+            // A record that is gone, or no longer a plugin, waits for nothing.
+            let Some(instance) = project.resolve::<PluginRecord>(id) else {
+                return false;
+            };
+            let Some(record) = project.state(&instance) else {
+                return false;
+            };
+            let found = known.find(record.format, &record.plugin_id).is_some();
+            if found || known.finished {
+                retries.push(id.clone());
+                return false;
+            }
+            true
+        });
     }
 }
 
-impl Hosted {
-    /// Whether the record of `id` in the project still says what this entry holds.
-    fn matches(&self, project: &Project, id: &InstanceId) -> bool {
-        let Some(instance) = project.resolve::<PluginRecord>(id) else {
-            return false;
+/// Says the scan is over, however its thread ended.
+struct Over(Arc<Mutex<Scanning>>);
+
+impl Drop for Over {
+    fn drop(&mut self) {
+        let held = match self.0.lock() {
+            Ok(held) => Some(held),
+            Err(poisoned) => Some(poisoned.into_inner()),
         };
-        let Some(record) = project.state(&instance) else {
-            return false;
-        };
-        record.plugin_id == self.plugin_id && record.asset() == self.asset
+        if let Some(mut held) = held {
+            held.scan.finished = true;
+            held.generation += 1;
+        }
     }
+}
+
+/// Puts what the scan has found where the host can read it, and counts the change so that a
+/// record that is waiting for a plugin is tried again.
+fn publish(scanned: &Arc<Mutex<Scanning>>, scan: &Scan) {
+    let Ok(mut held) = scanned.lock() else {
+        return;
+    };
+    let said = held.scan.failures.len().min(scan.failures.len());
+    for failure in &scan.failures[said..] {
+        held.notices.push(format!(
+            "{} could not be scanned: {}",
+            failure.path.display(),
+            failure.message
+        ));
+    }
+    held.scan = scan.clone();
+    held.generation += 1;
 }
 
 /// Saves a plugin that is going, when the project is one that writes, and puts its handle
-/// where it waits for the engine to give the audio processor back.
+/// where it waits for the engine to give the audio side back.
 fn retire(mut hosted: Hosted, table: &mut Table, assets: Option<&Assets>) {
     // A record that now names another plugin takes the window of the old one with it.
-    if let Some(handle) = hosted.window.give_up(&mut hosted.instance) {
+    if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
         table.finished_windows.push(handle);
         table.window_changed = true;
     }
@@ -843,116 +890,30 @@ fn retire(mut hosted: Hosted, table: &mut Table, assets: Option<&Assets>) {
 /// Writes what the plugin says its state is, into the asset its record names. Bytes that are
 /// already there are not written again, so a session that changed nothing leaves no diff.
 fn save(hosted: &mut Hosted, assets: &Assets) -> Result<(), PluginProblem> {
-    let state = hosted
-        .instance
-        .access_shared_handler(|shared| shared.state.get().copied());
-    let Some(Some(state)) = state else {
-        return Ok(());
-    };
-    let mut bytes = Vec::new();
     let fail = |message: String| PluginProblem::StateNotWritten {
         plugin_id: hosted.plugin_id.clone(),
         message,
     };
-    state
-        .save(&mut hosted.instance.plugin_handle(), &mut bytes)
-        .map_err(|error| fail(error.to_string()))?;
-    let there = assets
-        .read(&hosted.asset)
-        .map_err(|error| fail(error.to_string()))?;
-    if there.as_deref() == Some(bytes.as_slice()) {
-        return Ok(());
-    }
-    assets
-        .write(&hosted.asset, &bytes)
-        .map_err(|error| fail(error.to_string()))
-}
-
-/// What stays true about a plugin while it plays. None of these stops it from sounding, so
-/// they are reported and not errors.
-fn standing_notes(plugin_id: &str, layout: &PortLayout) -> Vec<PluginProblem> {
-    // Audio inputs say nothing: Six Sines is an instrument with a stereo input for audio-rate
-    // modulation. They are fed with silence and the plugin plays its notes.
-    let mut notes = Vec::new();
-    if !layout.takes_midi {
-        notes.push(PluginProblem::NoPedal {
-            plugin_id: plugin_id.to_string(),
-        });
-    }
-    notes
-}
-
-/// What the plugin's ports say: how to send it notes, and how many channels to give it.
-struct PortLayout {
-    dialect: Dialect,
-    takes_midi: bool,
-    input_channels: usize,
-    output_channels: usize,
-}
-
-fn read_ports(instance: &mut PluginInstance<SoundToolsHost>) -> PortLayout {
-    let handle = instance.plugin_shared_handle();
-    let notes = handle.get_extension::<PluginNotePorts>();
-    let audio = handle.get_extension::<PluginAudioPorts>();
-    let plugin = instance.plugin_handle();
-    // A plugin that says nothing about its ports gets what an instrument usually has: notes
-    // in as CLAP events, and one stereo port out.
-    let mut layout = PortLayout {
-        dialect: Dialect::Clap,
-        takes_midi: false,
-        input_channels: 0,
-        output_channels: 2,
+    let bytes = hosted.plugin.save_state().map_err(fail)?;
+    // Cleared only once the bytes are where they belong, so a write that failed is tried again
+    // at a later poll instead of being forgotten.
+    let written = || {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let there = assets
+            .read(&hosted.asset)
+            .map_err(|error| fail(error.to_string()))?;
+        if there.as_deref() == Some(bytes.as_slice()) {
+            return Ok(());
+        }
+        assets
+            .write(&hosted.asset, &bytes)
+            .map_err(|error| fail(error.to_string()))
     };
-    if let Some(notes) = notes {
-        let mut buffer = NotePortInfoBuffer::new();
-        if let Some(port) = notes.get(&plugin, 0, true, &mut buffer) {
-            layout.takes_midi = port.supported_dialects.supports(NoteDialect::Midi);
-            let clap = port.supported_dialects.supports(NoteDialect::Clap);
-            layout.dialect = if clap { Dialect::Clap } else { Dialect::Midi };
-        }
+    let result = written();
+    if result.is_ok() {
+        hosted.pending_save = false;
     }
-    if let Some(audio) = audio {
-        let mut buffer = AudioPortInfoBuffer::new();
-        let mut channels = |is_input: bool| {
-            if audio.count(&plugin, is_input) == 0 {
-                return 0;
-            }
-            audio
-                .get(&plugin, 0, is_input, &mut buffer)
-                .map_or(0, |port| port.channel_count as usize)
-        };
-        layout.input_channels = channels(true);
-        layout.output_channels = channels(false);
-    }
-    layout
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn layout(takes_midi: bool, input_channels: usize) -> PortLayout {
-        PortLayout {
-            dialect: Dialect::Clap,
-            takes_midi,
-            input_channels,
-            output_channels: 2,
-        }
-    }
-
-    /// An instrument with audio inputs is ordinary: they are fed with silence. Six Sines is
-    /// one, with a stereo input for audio-rate modulation.
-    #[test]
-    fn an_instrument_that_takes_midi_has_nothing_to_report_whatever_its_audio_inputs() {
-        assert_eq!(standing_notes("a.b", &layout(true, 0)), []);
-        assert_eq!(standing_notes("a.b", &layout(true, 2)), []);
-    }
-
-    #[test]
-    fn a_plugin_whose_note_port_takes_no_midi_is_reported_for_the_pedal() {
-        let notes = standing_notes("a.b", &layout(false, 0));
-        let messages: Vec<String> = notes.iter().map(ToString::to_string).collect();
-        assert_eq!(messages.len(), 1, "{messages:?}");
-        assert!(messages[0].contains("takes no MIDI"), "{messages:?}");
-    }
+    result
 }
