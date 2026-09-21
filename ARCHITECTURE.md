@@ -868,7 +868,7 @@ Plugins:
 - Vital cannot be loaded at all: its binary is x86_64 only and an arm64 host cannot load it. The scan reports the bundle and the application lives.
 - The Antares effects on this machine open on "No License Found", so no control of a real effect has ever been moved in its own window. That half is proven by the repository's own test plugins only.
 - A plugin that crashes takes the application down with it. That is decided for this milestone, and it is what a composer would notice first if it happened.
-- A plugin installed while the app runs still needs a restart. A plugin's window can go behind the main one (no `set_transient`), cannot be resized by dragging its edge, and nothing remembers where it sat or whether it was open.
+- A plugin installed while the app runs still needs a restart. A plugin's window can go behind the main one (no `set_transient`), cannot be resized by dragging its edge, and nothing remembers where it sat or whether it was open. A plugin that offers only a floating window of its own would be told it has no window; none of this machine's does.
 - Two holes in the scan cache: its key reads the first file in a bundle's binary folder instead of the executable the `Info.plist` names and leaves out the host architecture, and two runtimes writing the cache at once can garble it, which costs a rescan.
 - Symlinks inside `assets/` are followed and an existing `.tmp` symlink is truncated. The scan collects whatever a child prints with no limit, and a plugin that prints the scan's own marker can confuse it. The project folder and the plugins of the machine are trusted.
 - `kParamValuesChanged` is taken as "save the state again" and not answered properly, which would mean reading every parameter off the controller and giving it to the processor. `kReloadComponent` and `kIoChanged` are reported to the composer and not acted on: nothing deactivates and activates a plugin again. `kParamIDMappingChanged` is now ignored, so a plugin that moves its MIDI mapping while it runs keeps the pedal parameter the host found when it loaded.
@@ -898,7 +898,8 @@ Window:
 
 - The window's mouse could not be driven from the session that ran this check, so the fit action, selecting a clip and picking an instrument were reached through the editing path and through file edits. They are covered by the window tests with a simulated mouse.
 - Reordering the rack, renaming a track, copy and paste, multi-select, a velocity lane and adjustable snap are all still file edits or not built.
-- Playback does not stop at the end of the project and there is no loop. Whether the click is on is not saved; there is no `workspace.json`.
+- Playback does not stop at the end of the project and there is no loop. Whether the click is on is not saved; there is no `workspace.json`. Only the window has a click at all, so a measurement of it needs the window.
+- The knob handling of the synth view, the mixer section and an effect card is the same shape written three times (begin, publish, finish, cancel). It is the moment to pull it into a helper and nobody has.
 
 Tooling:
 
