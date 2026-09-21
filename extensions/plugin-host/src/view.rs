@@ -74,13 +74,13 @@ impl PluginView {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
-        if plugins.window_is_open(self.plugin.id()) {
-            plugins.close_window(self.plugin.id());
+        let (id, title) = (self.plugin.id().clone(), self.window_title(&plugins, cx));
+        if plugins.window_is_open(&id) {
+            plugins.close_window(&id, cx);
             cx.notify();
             return;
         }
-        let title = self.window_title(&plugins, cx);
-        if let Err(problem) = plugins.open_window(self.plugin.id(), &title) {
+        if let Err(problem) = plugins.open_window(&id, &title, cx) {
             self.session
                 .update(cx, |session, cx| session.report(problem, cx));
         }

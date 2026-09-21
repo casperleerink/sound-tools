@@ -149,8 +149,9 @@ impl Opened<'_> {
             return;
         };
         let session = self.session.clone();
-        let changed = self.cx.read(|cx| {
+        let changed = self.cx.update(|_, cx| {
             plugins.poll(session.read(cx).project());
+            plugins.settle_windows(cx);
             plugins.take_window_change()
         });
         if changed {

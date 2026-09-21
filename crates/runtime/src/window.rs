@@ -383,6 +383,9 @@ pub fn run(folder: &Path) -> Result<()> {
                         for problem in problems {
                             session.update(cx, |session, cx| session.report(problem, cx));
                         }
+                        // The window work that needs the application: the windows of plugins
+                        // that have gone, and a window whose plugin asked for another size.
+                        cx.update(|cx| plugins.settle_windows(cx));
                         // A plugin's window that opened or closed, which includes one the
                         // plugin itself closed. The card that offers it is drawn again.
                         if plugins.take_window_change() {

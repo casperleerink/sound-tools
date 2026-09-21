@@ -28,9 +28,10 @@
 //! `SOUND_TOOLS_TEST_PLUGIN_CLOSE_GUI` makes it close its own window as soon as it was shown,
 //! which is what a composer does with the title bar of a real plugin's window.
 //!
-//! Its window is a window in name only. It makes no real one, because CI has no display: it
+//! Its window is a window in name only. It draws nothing, because CI has no display: it
 //! answers the calls of the GUI extension and writes them down, so a test can say which call
-//! arrived, in what order and on which thread.
+//! arrived, in what order and on which thread. Like the real plugins this was written against,
+//! it offers an embedded window and not a floating one.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
@@ -197,11 +198,12 @@ impl<'a> PluginMainThread<'a, TestToneShared> for TestToneMainThread<'a> {
 /// The window, in name only: no real one is made, because a test has no display. Every call is
 /// written to the log, with the thread it came in on, so a test reads exactly what a host did.
 ///
-/// Only a floating window is offered, which is the one CLAP says every plugin must support.
+/// Only an embedded window is offered, which is what the real CLAP plugins on the machine this
+/// was written on offer, and what the host asks for.
 impl PluginGuiImpl for TestToneMainThread<'_> {
     fn is_api_supported(&self, configuration: GuiConfiguration) -> bool {
         log("gui_is_api_supported", 0, 0);
-        configuration.is_floating
+        !configuration.is_floating
     }
 
     fn get_preferred_api(&self) -> Option<GuiConfiguration<'_>> {
@@ -211,8 +213,8 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
     fn create(&self, configuration: GuiConfiguration) -> Result<(), PluginError> {
         log("gui_create", 0, 0);
         match configuration.is_floating {
-            true => Ok(()),
-            false => Err(PluginError::Message("this plugin only floats")),
+            false => Ok(()),
+            true => Err(PluginError::Message("this plugin does not float")),
         }
     }
 
@@ -221,7 +223,7 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
     }
 
     fn set_scale(&self, _scale: f64) -> Result<(), PluginError> {
-        Err(PluginError::Message("a floating window scales itself"))
+        Err(PluginError::Message("Cocoa sizes are already logical"))
     }
 
     fn get_size(&self) -> Option<GuiSize> {
@@ -232,16 +234,16 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
     }
 
     fn set_size(&self, _size: GuiSize) -> Result<(), PluginError> {
-        Err(PluginError::Message("a floating window sizes itself"))
+        Err(PluginError::Message("this window is not resizable"))
     }
 
     fn set_parent(&self, _window: GuiWindow) -> Result<(), PluginError> {
-        Err(PluginError::Message("this plugin embeds nowhere"))
+        log("gui_set_parent", 0, 0);
+        Ok(())
     }
 
     fn set_transient(&self, _window: GuiWindow) -> Result<(), PluginError> {
-        log("gui_set_transient", 0, 0);
-        Ok(())
+        Err(PluginError::Message("this plugin does not float"))
     }
 
     /// A line of the log is read by splitting on spaces, so the title goes in with `_` for

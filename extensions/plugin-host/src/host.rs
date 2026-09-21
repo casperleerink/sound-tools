@@ -18,7 +18,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
@@ -26,12 +26,13 @@ use clack_extensions::gui::{GuiSize, HostGui, HostGuiImpl};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::state::{HostState, HostStateImpl, PluginState};
 use clack_host::prelude::*;
+use gpui::WindowHandle;
 use sound_core::{AssetName, Assets, InstanceId, MAX_BLOCK, Project};
 
 use crate::PluginRecord;
 use crate::processor::{Dialect, Loaded};
 use crate::scan::{Scan, ScanCommand, ScannedPlugin, scan};
-use crate::window::PluginWindow;
+use crate::window::{PluginFrame, PluginWindow, Prepared, WindowOwner};
 
 /// How often a plugin that keeps saying its state changed is written. A plugin marks itself
 /// dirty on every step of a knob drag, and serializing a sampler's state is not cheap, so the
@@ -97,6 +98,9 @@ pub struct SharedCallbacks {
     restart_requested: AtomicBool,
     /// The plugin closed its own window, or lost it. The next poll frees what is left.
     window_closed: AtomicBool,
+    /// A size the plugin asked its window to be, packed into one number. Zero means none.
+    /// The next poll gives the window that size.
+    window_size_wanted: AtomicU64,
     /// The plugin's own state extension, if it has one. Filled in while it initializes.
     state: OnceLock<Option<PluginState>>,
 }
@@ -122,16 +126,20 @@ impl<'a> SharedHandler<'a> for SharedCallbacks {
 /// The window callbacks. A plugin may make them from any thread, so they only note what
 /// happened; [`Plugins::poll`] does the work on the main thread.
 ///
-/// Everything but `closed` is about a window the host owns, which this host never has: the
-/// plugin's window is its own floating one, see `window.rs`. So they are refused, which tells
-/// a plugin to size and show its window itself.
+/// A plugin's window is one of ours with the plugin's view in it, see `window.rs`. It is as
+/// big as the plugin asks, whenever it asks. It is never shown or hidden behind the composer's
+/// back: opening and closing one is the composer's, from the card in the rack.
 impl HostGuiImpl for SharedCallbacks {
+    /// Only about resizing an embedded window by dragging its edge, which this host does not
+    /// offer. The plugin says how big it is through `request_resize`.
     fn resize_hints_changed(&self) {}
 
-    fn request_resize(&self, _new_size: GuiSize) -> Result<(), HostError> {
-        Err(HostError::Message(
-            "this host does not size a plugin's window: it is the plugin's own",
-        ))
+    fn request_resize(&self, new_size: GuiSize) -> Result<(), HostError> {
+        // Acknowledged here and done at the next poll, which CLAP allows for a call that may
+        // come from another thread.
+        self.window_size_wanted
+            .store(new_size.pack_to_u64(), Ordering::Release);
+        Ok(())
     }
 
     fn request_show(&self) -> Result<(), HostError> {
@@ -200,6 +208,9 @@ struct Table {
     notices: Vec<String>,
     /// A plugin's window opened or closed since whoever draws the rack last asked.
     window_changed: bool,
+    /// Windows whose plugin has gone. Their views are already freed; taking a window down
+    /// needs the application, which the moments that find them do not have.
+    finished_windows: Vec<WindowHandle<PluginFrame>>,
 }
 
 struct Inner {
@@ -224,9 +235,11 @@ impl Drop for Inner {
         let assets = self.writes_state.then(|| self.assets.get_mut().clone());
         let table = self.table.get_mut();
         for hosted in table.loaded.values_mut().chain(&mut table.retired) {
-            // Every window goes, whether this project writes or not: a window left open would
-            // outlive the project it belongs to.
-            hosted.window.close(&mut hosted.instance);
+            // Every plugin's view goes, whether this project writes or not. The windows that
+            // held them cannot be taken down from here, and nothing will: this is the project
+            // closing, which on macOS is the application quitting.
+            // The handle is left where it is: the window goes with the application.
+            let _window = hosted.window.give_up(&mut hosted.instance);
             if let Some(Some(assets)) = &assets
                 && let Err(problem) = save(hosted, assets)
             {
@@ -466,28 +479,127 @@ impl Plugins {
     }
 
     /// Opens the plugin's own window, or brings the one that is open forward. `title` is what
-    /// the host suggests the plugin call it.
-    pub fn open_window(&self, id: &InstanceId, title: &str) -> Result<(), PluginProblem> {
+    /// the window is called.
+    ///
+    /// It is in three steps because the table may not be borrowed while GPUI runs: opening a
+    /// window draws, and a card being drawn asks this host what its plugin has.
+    pub fn open_window(
+        &self,
+        id: &InstanceId,
+        title: &str,
+        cx: &mut gpui::App,
+    ) -> Result<(), PluginProblem> {
+        // One: what the plugin says, with the table borrowed and no GPUI in sight.
+        let prepared = {
+            let mut table = self.0.table.borrow_mut();
+            let Some(hosted) = table.loaded.get_mut(id) else {
+                // The record names a plugin this machine does not have, or the load failed.
+                // That is reported, and the card shows it instead of offering a window.
+                return Ok(());
+            };
+            let plugin_id = hosted.plugin_id.clone();
+            let prepared = hosted.window.prepare(&mut hosted.instance, &plugin_id);
+            table.window_changed = true;
+            prepared.map(|prepared| (prepared, plugin_id))?
+        };
+        // Two: the window itself, with nothing borrowed.
+        let (prepared, plugin_id) = prepared;
+        let wanted = match prepared {
+            Prepared::AlreadyOpen(handle) => {
+                return handle
+                    .update(cx, |_, window, _| window.activate_window())
+                    .map_err(|error| PluginProblem::WindowDidNotOpen {
+                        plugin_id,
+                        message: error.to_string(),
+                    });
+            }
+            Prepared::Wanted(size) => size,
+        };
+        let owner = WindowOwner {
+            instance: id.clone(),
+            plugins: self.downgrade(),
+        };
+        let (handle, view) =
+            crate::window::open_window(&owner, title, wanted, cx).map_err(|error| {
+                PluginProblem::WindowDidNotOpen {
+                    plugin_id: plugin_id.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+        // Three: the plugin fills it. A window whose plugin went while it opened, or that the
+        // plugin refused, waits for the next poll to be taken down.
         let mut table = self.0.table.borrow_mut();
         let Some(hosted) = table.loaded.get_mut(id) else {
-            // The record names a plugin this machine does not have, or the load failed. That
-            // is already reported, and the card shows it instead of offering a window.
+            table.finished_windows.push(handle);
             return Ok(());
         };
-        let plugin_id = hosted.plugin_id.clone();
-        let result = hosted.window.open(&mut hosted.instance, &plugin_id, title);
-        table.window_changed = true;
-        result
+        match hosted
+            .window
+            .attach(&mut hosted.instance, &plugin_id, handle, view)
+        {
+            Ok(()) => Ok(()),
+            Err((problem, handle)) => {
+                table.finished_windows.push(handle);
+                Err(problem)
+            }
+        }
     }
 
     /// Closes the plugin's own window. Its sound and its state are untouched.
-    pub fn close_window(&self, id: &InstanceId) {
+    pub fn close_window(&self, id: &InstanceId, cx: &mut gpui::App) {
+        let finished = {
+            let mut table = self.0.table.borrow_mut();
+            let Some(hosted) = table.loaded.get_mut(id) else {
+                return;
+            };
+            let finished = hosted.window.give_up(&mut hosted.instance);
+            table.window_changed |= finished.is_some();
+            finished
+        };
+        // Outside the borrow: taking a window down runs GPUI.
+        if let Some(handle) = finished {
+            crate::window::remove(handle, cx);
+        }
+    }
+
+    /// The window of a plugin closed itself, with its own control. Its view is going, so the
+    /// plugin's resources for it are freed here.
+    pub(crate) fn window_was_closed(&self, id: &InstanceId) {
         let mut table = self.0.table.borrow_mut();
         if let Some(hosted) = table.loaded.get_mut(id)
-            && hosted.window.is_open()
+            && hosted.window.give_up(&mut hosted.instance).is_some()
         {
-            hosted.window.close(&mut hosted.instance);
             table.window_changed = true;
+        }
+    }
+
+    /// The window work that needs the application: taking down the windows of plugins that
+    /// have gone, and giving a window the size its plugin asked for. Whoever polls the host
+    /// calls it after [`Self::poll`]; the moments that find such a plugin, a record that was
+    /// deleted or an undo, have no application at hand.
+    pub fn settle_windows(&self, cx: &mut gpui::App) {
+        // Everything is read out first: running GPUI while the table is borrowed would let a
+        // card that is drawn ask this host about its plugin.
+        let (finished, resize) = {
+            let mut table = self.0.table.borrow_mut();
+            let Table {
+                loaded,
+                retired,
+                finished_windows,
+                ..
+            } = &mut *table;
+            let resize: Vec<_> = loaded
+                .values_mut()
+                .chain(retired)
+                .filter_map(|hosted| hosted.window.take_wanted_size())
+                .collect();
+            (std::mem::take(finished_windows), resize)
+        };
+        for (handle, wanted) in resize {
+            crate::window::resize(handle, wanted, cx);
+        }
+        for handle in finished {
+            crate::window::remove(handle, cx);
         }
     }
 
@@ -510,13 +622,14 @@ impl Plugins {
             loaded,
             retired,
             window_changed,
+            finished_windows,
             ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
         for hosted in loaded.values_mut().chain(&mut *retired) {
             // Every window closes with the project, whether it writes or not.
-            if hosted.window.is_open() {
-                hosted.window.close(&mut hosted.instance);
+            if let Some(handle) = hosted.window.give_up(&mut hosted.instance) {
+                finished_windows.push(handle);
                 *window_changed = true;
             }
             if let Some(assets) = assets
@@ -545,6 +658,7 @@ impl Plugins {
             loaded,
             retired,
             window_changed,
+            finished_windows,
             ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
@@ -561,8 +675,8 @@ impl Plugins {
             if let Some(mut hosted) = loaded.remove(&id) {
                 // The window of a plugin that is going goes with it: a record that was deleted
                 // from a file or by an undo leaves no window behind.
-                if hosted.window.is_open() {
-                    hosted.window.close(&mut hosted.instance);
+                if let Some(handle) = hosted.window.give_up(&mut hosted.instance) {
+                    finished_windows.push(handle);
                     *window_changed = true;
                 }
                 // Saved on the way out, so undo of a delete brings the plugin back as it
@@ -585,14 +699,22 @@ impl Plugins {
             if requested {
                 hosted.instance.call_on_main_thread_callback();
             }
+            // A size the plugin asked for. The window takes it at the next frame; there is
+            // nothing of ours that has to follow, because the window holds only the plugin.
+            let wanted = hosted.instance.access_shared_handler(|shared| {
+                shared.window_size_wanted.swap(0, Ordering::AcqRel)
+            });
+            if wanted != 0 {
+                hosted.window.wants_size(GuiSize::unpack_from_u64(wanted));
+            }
             // The plugin closed its own window, by its title bar or by losing it. `destroy` is
             // how a host acknowledges that, and this host keeps no window that is not shown.
             // After the callback above, because a plugin may say so from there.
             let window_closed = hosted
                 .instance
                 .access_shared_handler(|shared| shared.window_closed.swap(false, Ordering::AcqRel));
-            if window_closed {
-                hosted.window.close(&mut hosted.instance);
+            if window_closed && let Some(handle) = hosted.window.give_up(&mut hosted.instance) {
+                finished_windows.push(handle);
                 *window_changed = true;
             }
             // A plugin that asks to be deactivated and activated again. This build does not,
@@ -648,8 +770,8 @@ impl Hosted {
 /// where it waits for the engine to give the audio processor back.
 fn retire(mut hosted: Hosted, table: &mut Table, assets: Option<&Assets>) {
     // A record that now names another plugin takes the window of the old one with it.
-    if hosted.window.is_open() {
-        hosted.window.close(&mut hosted.instance);
+    if let Some(handle) = hosted.window.give_up(&mut hosted.instance) {
+        table.finished_windows.push(handle);
         table.window_changed = true;
     }
     if let Some(assets) = assets

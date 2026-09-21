@@ -37,6 +37,8 @@ no_denormals = "0.3"
 # Raw events. The project groups them itself, see ARCHITECTURE.md "Project storage".
 notify = "8.2"
 proptest = "1"
+# The `NSView` of a GPUI window, which a plugin embeds its own view in. Same version as gpui.
+raw-window-handle = "0.6"
 rtrb = "0.4"
 # Does nothing unless the build sets RTSAN_ENABLE=1. See ENGINEERING.md section 3.
 rtsan-standalone = "0.3"
