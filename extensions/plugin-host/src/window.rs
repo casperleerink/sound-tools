@@ -5,12 +5,14 @@
 //! Nothing about it is saved: where it sat and whether it was open are not part of the piece.
 //!
 //! Nothing here knows a plugin format. What a plugin has to do for a window is
-//! [`crate::backend::PluginGui`], which the CLAP backend fills in. A VST 3 plugin gets its own
-//! window in step 5b and answers `None` until then, so its card says it has none.
+//! [`crate::backend::PluginGui`], which both backends fill in: `clap.rs` with the GUI
+//! extension, `vst3/view.rs` with `IPlugView` and an `IPlugFrame`. Neither format needed
+//! anything of this file.
 //!
 //! Every call of a plugin's window belongs to the main thread, which is where [`crate::Plugins`]
-//! lives. The one callback that does not is CLAP's `clap_host_gui.closed`, which a plugin may
-//! make from any thread; it only sets a flag that the next poll reads.
+//! lives, and both formats say so. The one callback that does not is CLAP's
+//! `clap_host_gui.closed`, which a plugin may make from any thread; it only sets a flag that
+//! the next poll reads.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;

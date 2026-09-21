@@ -1,7 +1,8 @@
 # plugin-host
 
 Third-party audio plugins as tools of a project. CLAP instruments since step 4a of the second
-milestone, VST 3 instruments since step 5a; effects come later. The decisions are in
+milestone, VST 3 instruments since step 5a and their windows since 5b; effects come later. The
+decisions are in
 [ARCHITECTURE.md](../../ARCHITECTURE.md), "Hosting plugins". `agent-doc.md` is what an agent
 reads; this file is for whoever works on the host.
 
@@ -38,7 +39,7 @@ core's `AssetName`, so a record can never point outside the project folder.
 | `window.rs` | The plugin's own window: one window of the application per open plugin. |
 | `view.rs` | The card of a plugin in a rack, and what a rack calls one. |
 | `clap.rs` | The CLAP backend: the host callbacks, loading, the window and playing. |
-| `vst3/` | The VST 3 backend. `module.rs` loads a bundle, `plugin.rs` is the control side, `process.rs` the audio side, `context.rs` what the host is from the plugin's side, `stream.rs` an `IBStream` over bytes. |
+| `vst3/` | The VST 3 backend. `module.rs` loads a bundle, `plugin.rs` is the control side, `process.rs` the audio side, `context.rs` what the host is from the plugin's side, `stream.rs` an `IBStream` over bytes, `view.rs` the plugin's window (`IPlugView`, `IPlugFrame`). |
 | `src/bin/plugin-scan.rs` | The child process, for the tests of this crate. The runtime is its own child. |
 
 ## What each format decides, and what they share
@@ -277,10 +278,9 @@ another state file. `tests/plugin_host/consistency.rs` walks the sequences, for 
 
 ## The plugin's own window
 
-Only CLAP plugins have a window in this build. Step 5b puts a VST 3 plugin's own view
-(`IPlugView`) in one of ours; until then `Vst3Plugin::gui` is `None` and the card says the
-plugin has no window of its own. Everything the window machinery needs of a plugin is
-`backend::PluginGui`, so 5b writes that one implementation and touches nothing else here.
+Both formats put the plugin's own view in a window of ours. The window machinery in `host.rs`
+and `window.rs` knows no format: all it needs of a plugin is `backend::PluginGui`, and the two
+backends fill that in. The VST 3 one is `vst3/view.rs` and it changed nothing of the design.
 
 CLAP offers two ways to show a plugin: a floating window the plugin makes and owns, or a
 window the host makes with the plugin's view embedded in it. The specification calls the
@@ -313,9 +313,34 @@ window and `true` for an embedded one. So this host makes the window.
 - `clap_host_gui.closed` is the one window callback a plugin may make from another thread. Like
   the other cross-thread callbacks it only sets a flag that the next poll reads.
 
+### What VST 3 asks that CLAP does not
+
+`vst3/view.rs`, read from `pluginterfaces/gui/iplugview.h` and not from memory:
+
+- The view comes from the plugin's edit controller, `createView(ViewType::kEditor)`. That is
+  also the only way the format has of asking whether a plugin has a window at all, so
+  `is_offered` makes a view, asks it `isPlatformTypeSupported(kPlatformTypeNSView)` and lets it
+  go again. It is asked once, while the plugin loads; what a card reads is that answer.
+- The order is create, `setFrame`, `getSize`, `attached`, and there is no separate show: a view
+  is on screen as soon as it is attached. `removed` is called for an `attached` that was
+  answered and for nothing else, then a null frame, then the release. The frame goes in before
+  `attached` because the header says a plugin may ask to be resized from inside that call.
+- A plugin that wants another size calls `IPlugFrame::resizeView`, and then, in the words of
+  the header, "in the same callstack, the host has to call IPlugView::onSize". So the frame
+  answers `onSize` inside the request and notes the size for the next poll, which is the one
+  place that has the application and can resize the window. CLAP's `request_resize` only notes.
+- On macOS a `ViewRect` is in logical units, so nothing sets a scale, which is what the CLAP
+  side does too.
+- VST 3 has no way for a plugin to close the window it is in, because the host owns that
+  window. `Requests::window_closed` is therefore always false for a VST 3 plugin.
+- Every call of a view belongs to the thread the user interface lives on. The one call a plugin
+  makes of its own accord is `resizeView`; it is kept in an atomic all the same, so a plugin
+  that calls it from elsewhere cannot make this host unsound.
+
 `tests/plugin_host/window.rs` drives all of it on GPUI's platform for tests, whose windows are
-not real ones, so no display is needed. The plugin then gets no view to draw in, which is the
-one thing those tests cannot cover; it is checked by hand with a real plugin.
+not real ones, so no display is needed, and every check that is about the host and not about
+one format runs for both. The plugin then gets no view to draw in, which is the one thing those
+tests cannot cover; it is checked by hand with a real plugin.
 
 ## Unsafe code
 
@@ -355,12 +380,12 @@ agreement to host or to write plugins.
 Effects, AU, a plugin sandbox, latency compensation, parameter automation, a parameter view,
 presets and program lists, MIDI out of a plugin, more than the first event input and the first
 stereo output, the transport a plugin can read (`ProcessContext` is null, so a plugin that syncs
-to the tempo runs free), a plugin window that follows a drag of its edge, remembering where a
-window sat or whether it was open, a floating window for a plugin that only floats, keeping a
-plugin's window above the main one, and finding a plugin installed while the app runs.
-
-The VST 3 window is step 5b: `IPlugView`, `IPlugFrame` and the Cocoa view of a plugin in one of
-our windows.
+to the tempo runs free), a plugin window that follows a drag of its edge (VST 3 says how, with
+`canResize` and `checkSizeConstraint`, and CLAP does too; neither is wired to a GPUI resize),
+key events passed to a view (`IPlugView::onKeyDown`; a plugin's own `NSView` is in the responder
+chain of our window, so typing in it works through AppKit), remembering where a window sat or
+whether it was open, a floating window for a plugin that only floats, keeping a plugin's window
+above the main one, and finding a plugin installed while the app runs.
 
 Two records may name one `state_asset` and then share it. Nothing refuses either: the project
 runs only the behaviour of the record that was edited, so a complaint about another record

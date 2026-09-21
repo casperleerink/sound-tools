@@ -16,6 +16,7 @@
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
 //! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
 //! - `track-panel-picker.png`: the same with the instrument picker open.
+//! - `track-panel-plugin-vst3.png`: the panel of a track whose instrument is a VST 3 plugin.
 //! - `track-panel-missing.png`: the panel of a track whose plugin this machine does not have.
 //! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the
 //!   plugin host, where every plugin says what the one edit is.
@@ -310,6 +311,7 @@ fn test_plugin_host(root: &std::path::Path) -> Plugins {
 fn set_plugin(
     project: &mut Project,
     track: &str,
+    format: PluginFormat,
     plugin_id: &str,
     state_asset: &str,
 ) -> Result<()> {
@@ -317,7 +319,7 @@ fn set_plugin(
     let mut changes = Changes::new();
     changes.create(
         slot,
-        PluginRecord::new(PluginFormat::Clap, plugin_id, state_asset).context("a plugin record")?,
+        PluginRecord::new(format, plugin_id, state_asset).context("a plugin record")?,
     );
     project.commit("Choose a plugin", changes)?;
     Ok(())
@@ -582,7 +584,13 @@ fn main() -> Result<()> {
     // A track that plays a CLAP plugin: the name of the plugin on the card, with the control
     // that opens the plugin's own window. Then the picker of that card, open.
     let opened = Opened::new(&mut cx, |project| {
-        set_plugin(project, "track-1", test_clap_plugin::PLUGIN_ID, "test-tone")
+        set_plugin(
+            project,
+            "track-1",
+            PluginFormat::Clap,
+            test_clap_plugin::PLUGIN_ID,
+            "test-tone",
+        )
     })?;
     opened.click_track_header(0., &mut cx)?;
     save(&mut cx, &opened, "track-panel-plugin")?;
@@ -598,6 +606,21 @@ fn main() -> Result<()> {
     })?;
     cx.run_until_parked();
     save(&mut cx, &opened, "track-panel-picker")?;
+    drop(opened);
+
+    // The same for a VST 3 plugin. Its card is the CLAP one: the plugin's name and the control
+    // that opens its own window, which it has had since step 5b.
+    let opened = Opened::new(&mut cx, |project| {
+        set_plugin(
+            project,
+            "track-1",
+            PluginFormat::Vst3,
+            test_vst3_plugin::PLUGIN_ID,
+            "test-tone",
+        )
+    })?;
+    opened.click_track_header(0., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-plugin-vst3")?;
     drop(opened);
 
     // A project that does not enable the plugin host, as one made before step 4a has: every
@@ -621,7 +644,13 @@ fn main() -> Result<()> {
     // A plugin this machine does not have: the card says so and names the id, and the record
     // is left exactly as it is.
     let opened = Opened::new(&mut cx, |project| {
-        set_plugin(project, "track-1", "com.example.nowhere", "piano")
+        set_plugin(
+            project,
+            "track-1",
+            PluginFormat::Clap,
+            "com.example.nowhere",
+            "piano",
+        )
     })?;
     opened.click_track_header(0., &mut cx)?;
     save(&mut cx, &opened, "track-panel-missing")?;
