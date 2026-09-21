@@ -11,6 +11,7 @@ use gpui::{
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
     TestAppContext, VisualTestContext, point, px,
 };
+use plugin_host::WeakPlugins;
 use runtime::window::{Shell, TransportPill, bind_keys};
 use runtime::{OFFLINE, open_or_create, views};
 use sound_core::{Engine, InstanceId, Project, Ticks};
@@ -27,6 +28,9 @@ pub const TOP_ROW: f32 = 48.;
 pub struct Opened<'a> {
     pub folder: TempDir,
     pub engine: Engine,
+    /// The plugin host of this project. Held weakly, as the runtime holds it: the project is
+    /// what ends it, and that is what saves the state of every plugin.
+    pub plugins: WeakPlugins,
     pub session: Entity<Session>,
     pub shell: Entity<Shell>,
     pub arrangement: Entity<ArrangementView>,
@@ -55,9 +59,45 @@ pub fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {
 pub fn open_with(cx: &mut TestAppContext, fill: impl FnOnce(&mut Project)) -> Opened<'_> {
     let folder = tempfile::tempdir().unwrap();
     let (control, engine) = Engine::new(OFFLINE);
-    let (mut project, _plugins) = open_or_create(folder.path(), control).unwrap();
+    let (mut project, plugins) = open_or_create(folder.path(), control).unwrap();
     fill(&mut project);
-    open_project(cx, folder, project, engine)
+    open_project(cx, folder, project, engine, plugins.downgrade())
+}
+
+/// The same, with a plugin host that looks only in `plugins/` inside the project folder, where
+/// the repository's own test plugin is put. No plugin of this machine is ever used, so these
+/// tests run the same everywhere.
+pub fn open_with_test_plugin(
+    cx: &mut TestAppContext,
+    fill: impl FnOnce(&mut Project),
+) -> Opened<'_> {
+    let folder = tempfile::tempdir().unwrap();
+    let (control, engine) = Engine::new(OFFLINE);
+    let plugins = test_plugin_host(folder.path());
+    let mut project =
+        runtime::open_or_create_with(folder.path(), control, plugins.clone()).unwrap();
+    fill(&mut project);
+    open_project(cx, folder, project, engine, plugins.downgrade())
+}
+
+/// A plugin host that scans one folder with the test plugin in it. The scanner is the real
+/// `runtime` executable, so a scan starts the child process the application starts.
+pub fn test_plugin_host(root: &Path) -> plugin_host::Plugins {
+    let folder = root.join("plugins");
+    test_clap_plugin::install_into(&folder);
+    let scanner = plugin_host::ScanCommand::new(
+        env!("CARGO_BIN_EXE_runtime"),
+        [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
+    );
+    plugin_host::Plugins::new(vec![folder], scanner)
+}
+
+/// The record of a plugin instrument that names the repository's test plugin.
+pub fn test_plugin_record(state_asset: &str) -> String {
+    format!(
+        r#"{{"tool": "plugin", "state": {{"format": "clap", "plugin_id": "{}", "state_asset": "{state_asset}"}}}}"#,
+        test_clap_plugin::PLUGIN_ID
+    )
 }
 
 /// Opens the window on a project that is open already.
@@ -66,13 +106,14 @@ pub fn open_project(
     folder: TempDir,
     project: Project,
     engine: Engine,
+    plugins: WeakPlugins,
 ) -> Opened<'_> {
     cx.update(sound_ui::init);
     let session = cx.new(|cx| Session::new(project, cx));
     cx.update(bind_keys);
     let (shell, cx) = cx.add_window_view({
-        let session = session.clone();
-        move |window, cx| Shell::new(session, views(), "Test device".into(), window, cx)
+        let (session, plugins) = (session.clone(), plugins.clone());
+        move |window, cx| Shell::new(session, views(plugins), "Test device".into(), window, cx)
     });
     cx.run_until_parked();
     let main = shell
@@ -83,6 +124,7 @@ pub fn open_project(
     Opened {
         folder,
         engine,
+        plugins,
         session,
         shell,
         arrangement,
@@ -97,6 +139,25 @@ impl Opened<'_> {
         self.render(64);
         self.cx.executor().advance_clock(POLL_INTERVAL);
         self.cx.run_until_parked();
+        self.poll_plugins();
+    }
+
+    /// One poll of the plugin host, which the runtime does on its own timer every 16 ms. It is
+    /// what lets go of a plugin whose record no longer names it, and what closes its window.
+    pub fn poll_plugins(&mut self) {
+        let Some(plugins) = self.plugins.upgrade() else {
+            return;
+        };
+        let session = self.session.clone();
+        let changed = self.cx.read(|cx| {
+            plugins.poll(session.read(cx).project());
+            plugins.take_window_change()
+        });
+        if changed {
+            self.cx
+                .update(|_, cx| session.update(cx, |_, cx| cx.notify()));
+            self.cx.run_until_parked();
+        }
     }
 
     /// Runs the engine for `frames` and gives what it played, interleaved.
@@ -258,13 +319,19 @@ impl Opened<'_> {
     /// The middle of a control that names itself for tests: `knob-<id>` or `segment-<value>`.
     /// GPUI knows the bounds of what the last frame painted, and a cached view paints
     /// nothing, so this asks for a whole frame first.
-    pub fn control(&mut self, selector: &'static str) -> Point<Pixels> {
+    pub fn control(&mut self, selector: &str) -> Point<Pixels> {
+        self.find(selector)
+            .unwrap_or_else(|| panic!("nothing on screen is called {selector}"))
+    }
+
+    /// The same, `None` when that control is not on screen. A selector that is made while the
+    /// test runs, such as a menu row of a plugin, is leaked: GPUI keeps them by `&'static str`
+    /// and a test process is short.
+    pub fn find(&mut self, selector: &str) -> Option<Point<Pixels>> {
+        let selector: &'static str = Box::leak(selector.to_string().into_boxed_str());
         self.cx.update(|window, _| window.refresh());
         self.cx.run_until_parked();
-        let bounds = self.cx.debug_bounds(selector);
-        bounds
-            .unwrap_or_else(|| panic!("nothing on screen is called {selector}"))
-            .center()
+        self.cx.debug_bounds(selector).map(|bounds| bounds.center())
     }
 
     pub fn editor(&mut self) -> Option<Entity<NoteEditor>> {
@@ -393,12 +460,14 @@ impl Opened<'_> {
         let Self {
             folder,
             engine,
+            plugins,
             session,
             shell,
             arrangement,
             timeline,
             cx,
         } = self;
+        drop(plugins);
         cx.update(|window, _| window.remove_window());
         drop((engine, shell, arrangement, timeline));
         cx.run_until_parked();

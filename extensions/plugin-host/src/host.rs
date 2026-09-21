@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+use clack_extensions::gui::{GuiSize, HostGui, HostGuiImpl};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::state::{HostState, HostStateImpl, PluginState};
 use clack_host::prelude::*;
@@ -29,7 +30,8 @@ use sound_core::{AssetName, Assets, InstanceId, MAX_BLOCK, Project};
 
 use crate::PluginRecord;
 use crate::processor::{Dialect, Loaded};
-use crate::scan::{Scan, ScanCommand, scan};
+use crate::scan::{Scan, ScanCommand, ScannedPlugin, scan};
+use crate::window::PluginWindow;
 
 /// How often a plugin that keeps saying its state changed is written. A plugin marks itself
 /// dirty on every step of a knob drag, and serializing a sampler's state is not cheap, so the
@@ -68,6 +70,10 @@ pub enum PluginProblem {
         "the plugin {plugin_id:?} takes no MIDI, so the sustain pedal does not reach it. Its notes play"
     )]
     NoPedal { plugin_id: String },
+    #[error("the plugin {plugin_id:?} has no window of its own")]
+    NoWindow { plugin_id: String },
+    #[error("the window of the plugin {plugin_id:?} did not open: {message}")]
+    WindowDidNotOpen { plugin_id: String, message: String },
 }
 
 /// The handlers a CLAP plugin calls. One set per plugin instance.
@@ -79,7 +85,7 @@ impl HostHandlers for SoundToolsHost {
     type AudioProcessor<'a> = ();
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &SharedCallbacks) {
-        builder.register::<HostState>();
+        builder.register::<HostState>().register::<HostGui>();
     }
 }
 
@@ -89,6 +95,8 @@ impl HostHandlers for SoundToolsHost {
 pub struct SharedCallbacks {
     callback_requested: AtomicBool,
     restart_requested: AtomicBool,
+    /// The plugin closed its own window, or lost it. The next poll frees what is left.
+    window_closed: AtomicBool,
     /// The plugin's own state extension, if it has one. Filled in while it initializes.
     state: OnceLock<Option<PluginState>>,
 }
@@ -108,6 +116,38 @@ impl<'a> SharedHandler<'a> for SharedCallbacks {
 
     fn request_callback(&self) {
         self.callback_requested.store(true, Ordering::Release);
+    }
+}
+
+/// The window callbacks. A plugin may make them from any thread, so they only note what
+/// happened; [`Plugins::poll`] does the work on the main thread.
+///
+/// Everything but `closed` is about a window the host owns, which this host never has: the
+/// plugin's window is its own floating one, see `window.rs`. So they are refused, which tells
+/// a plugin to size and show its window itself.
+impl HostGuiImpl for SharedCallbacks {
+    fn resize_hints_changed(&self) {}
+
+    fn request_resize(&self, _new_size: GuiSize) -> Result<(), HostError> {
+        Err(HostError::Message(
+            "this host does not size a plugin's window: it is the plugin's own",
+        ))
+    }
+
+    fn request_show(&self) -> Result<(), HostError> {
+        Err(HostError::Message(
+            "a plugin's window is opened from its card in the track panel",
+        ))
+    }
+
+    fn request_hide(&self) -> Result<(), HostError> {
+        Err(HostError::Message(
+            "a plugin's window is closed from its card in the track panel",
+        ))
+    }
+
+    fn closed(&self, _was_destroyed: bool) {
+        self.window_closed.store(true, Ordering::Release);
     }
 }
 
@@ -147,6 +187,8 @@ struct Hosted {
     instance: PluginInstance<SoundToolsHost>,
     /// When its state was last written, for the once-a-second rule.
     last_saved: Option<Instant>,
+    /// The plugin's own window, while it is open.
+    window: PluginWindow,
 }
 
 #[derive(Default)]
@@ -156,6 +198,8 @@ struct Table {
     retired: Vec<Hosted>,
     /// Bundles that failed to scan, as one line each. The runtime shows them once.
     notices: Vec<String>,
+    /// A plugin's window opened or closed since whoever draws the rack last asked.
+    window_changed: bool,
 }
 
 struct Inner {
@@ -169,23 +213,23 @@ struct Inner {
     table: RefCell<Table>,
 }
 
-/// The last chance to save. On macOS the application ends without unwinding: GPUI drops the
-/// window and its views, and with them the session and the project, and then the process is
-/// gone. Dropping the project drops the registry, the behaviour and this host, so that is the
-/// moment. Whoever polls the host must therefore hold it weakly ([`Plugins::downgrade`]), else
-/// nothing is saved. [`Plugins::close`] does the same with the project still in hand, and
-/// leaves nothing for this.
+/// The last chance to close a plugin's window and to save its state. On macOS the application
+/// ends without unwinding: GPUI drops the window and its views, and with them the session and
+/// the project, and then the process is gone. Dropping the project drops the registry, the
+/// behaviour and this host, so that is the moment. Whoever polls the host must therefore hold
+/// it weakly ([`Plugins::downgrade`]), else nothing is saved. [`Plugins::close`] does the same
+/// with the project still in hand, and leaves nothing for this.
 impl Drop for Inner {
     fn drop(&mut self) {
-        if !self.writes_state {
-            return;
-        }
-        let Some(assets) = self.assets.get_mut().clone() else {
-            return;
-        };
+        let assets = self.writes_state.then(|| self.assets.get_mut().clone());
         let table = self.table.get_mut();
         for hosted in table.loaded.values_mut().chain(&mut table.retired) {
-            if let Err(problem) = save(hosted, &assets) {
+            // Every window goes, whether this project writes or not: a window left open would
+            // outlive the project it belongs to.
+            hosted.window.close(&mut hosted.instance);
+            if let Some(Some(assets)) = &assets
+                && let Err(problem) = save(hosted, assets)
+            {
                 // Nobody is left to tell. The composer at least sees it in the terminal.
                 eprintln!("error: {problem}");
             }
@@ -261,6 +305,20 @@ impl Plugins {
     /// Lines about the scan that a person should see once, such as a bundle that crashed.
     pub fn take_notices(&self) -> Vec<String> {
         std::mem::take(&mut self.0.table.borrow_mut().notices)
+    }
+
+    /// Every CLAP instrument this machine has, in one line each, for a picker. It scans on the
+    /// first call of the session, as loading a plugin does.
+    pub fn instruments(&self) -> Vec<ScannedPlugin> {
+        let mut instruments = self.scan().plugins;
+        instruments.retain(ScannedPlugin::is_instrument);
+        instruments
+    }
+
+    /// The name the maker gave the plugin with this id, when this machine has it. `None` says
+    /// the plugin is missing, which is what the card of a record shows.
+    pub fn installed_name(&self, plugin_id: &str) -> Option<String> {
+        self.scan().find(plugin_id).map(|found| found.name.clone())
     }
 
     /// Loads the plugin the record names and gives it to the caller for the engine.
@@ -384,9 +442,59 @@ impl Plugins {
                 asset: asset.clone(),
                 instance,
                 last_saved: None,
+                window: PluginWindow::default(),
             },
         );
         Ok((loaded, notes))
+    }
+
+    /// Whether the plugin of this record has a window of its own to open.
+    pub fn has_window(&self, id: &InstanceId) -> bool {
+        let mut table = self.0.table.borrow_mut();
+        table
+            .loaded
+            .get_mut(id)
+            .is_some_and(|hosted| PluginWindow::is_offered(&mut hosted.instance))
+    }
+
+    pub fn window_is_open(&self, id: &InstanceId) -> bool {
+        let table = self.0.table.borrow();
+        table
+            .loaded
+            .get(id)
+            .is_some_and(|hosted| hosted.window.is_open())
+    }
+
+    /// Opens the plugin's own window, or brings the one that is open forward. `title` is what
+    /// the host suggests the plugin call it.
+    pub fn open_window(&self, id: &InstanceId, title: &str) -> Result<(), PluginProblem> {
+        let mut table = self.0.table.borrow_mut();
+        let Some(hosted) = table.loaded.get_mut(id) else {
+            // The record names a plugin this machine does not have, or the load failed. That
+            // is already reported, and the card shows it instead of offering a window.
+            return Ok(());
+        };
+        let plugin_id = hosted.plugin_id.clone();
+        let result = hosted.window.open(&mut hosted.instance, &plugin_id, title);
+        table.window_changed = true;
+        result
+    }
+
+    /// Closes the plugin's own window. Its sound and its state are untouched.
+    pub fn close_window(&self, id: &InstanceId) {
+        let mut table = self.0.table.borrow_mut();
+        if let Some(hosted) = table.loaded.get_mut(id)
+            && hosted.window.is_open()
+        {
+            hosted.window.close(&mut hosted.instance);
+            table.window_changed = true;
+        }
+    }
+
+    /// Whether any plugin's window opened or closed since the last call. Whoever polls asks,
+    /// so the card that says "Open window" or "Close window" is drawn again.
+    pub fn take_window_change(&self) -> bool {
+        std::mem::take(&mut self.0.table.borrow_mut().window_changed)
     }
 
     /// Saves the state of every plugin, whether it said so or not, and lets them all go.
@@ -399,14 +507,22 @@ impl Plugins {
         let mut problems = Vec::new();
         let mut table = self.0.table.borrow_mut();
         let Table {
-            loaded, retired, ..
+            loaded,
+            retired,
+            window_changed,
+            ..
         } = &mut *table;
-        if self.0.writes_state {
-            let assets = project.assets();
-            for hosted in loaded.values_mut().chain(&mut *retired) {
-                if let Err(problem) = save(hosted, assets) {
-                    problems.push(problem);
-                }
+        let assets = self.0.writes_state.then(|| project.assets());
+        for hosted in loaded.values_mut().chain(&mut *retired) {
+            // Every window closes with the project, whether it writes or not.
+            if hosted.window.is_open() {
+                hosted.window.close(&mut hosted.instance);
+                *window_changed = true;
+            }
+            if let Some(assets) = assets
+                && let Err(problem) = save(hosted, assets)
+            {
+                problems.push(problem);
             }
         }
         retired.extend(std::mem::take(loaded).into_values());
@@ -426,7 +542,10 @@ impl Plugins {
         let mut problems = Vec::new();
         let mut table = self.0.table.borrow_mut();
         let Table {
-            loaded, retired, ..
+            loaded,
+            retired,
+            window_changed,
+            ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
 
@@ -440,6 +559,12 @@ impl Plugins {
             .collect();
         for id in stale {
             if let Some(mut hosted) = loaded.remove(&id) {
+                // The window of a plugin that is going goes with it: a record that was deleted
+                // from a file or by an undo leaves no window behind.
+                if hosted.window.is_open() {
+                    hosted.window.close(&mut hosted.instance);
+                    *window_changed = true;
+                }
                 // Saved on the way out, so undo of a delete brings the plugin back as it
                 // sounded and not as it was last written.
                 if let Some(assets) = assets
@@ -459,6 +584,16 @@ impl Plugins {
             });
             if requested {
                 hosted.instance.call_on_main_thread_callback();
+            }
+            // The plugin closed its own window, by its title bar or by losing it. `destroy` is
+            // how a host acknowledges that, and this host keeps no window that is not shown.
+            // After the callback above, because a plugin may say so from there.
+            let window_closed = hosted
+                .instance
+                .access_shared_handler(|shared| shared.window_closed.swap(false, Ordering::AcqRel));
+            if window_closed {
+                hosted.window.close(&mut hosted.instance);
+                *window_changed = true;
             }
             // A plugin that asks to be deactivated and activated again. This build does not,
             // so the composer is told instead of being left with a plugin that stopped.
@@ -512,6 +647,11 @@ impl Hosted {
 /// Saves a plugin that is going, when the project is one that writes, and puts its handle
 /// where it waits for the engine to give the audio processor back.
 fn retire(mut hosted: Hosted, table: &mut Table, assets: Option<&Assets>) {
+    // A record that now names another plugin takes the window of the old one with it.
+    if hosted.window.is_open() {
+        hosted.window.close(&mut hosted.instance);
+        table.window_changed = true;
+    }
     if let Some(assets) = assets
         && let Err(problem) = save(&mut hosted, assets)
     {

@@ -258,3 +258,52 @@ fn closing_the_project_stops_every_plugin_before_it_is_deactivated() {
         "the plugin processed after it was stopped: {names:?}"
     );
 }
+
+/// The plugin's own window. CLAP puts every call of the GUI extension on the main thread, so
+/// none of them may arrive on the thread that processes. The window is opened, brought
+/// forward and closed while a real audio thread plays the plugin.
+///
+/// The GUI calls are written down with plugin 0: they are about the plugin itself and not
+/// about one of its audio processors, which are what the numbers count.
+#[test]
+fn the_calls_of_a_plugins_window_are_on_the_main_thread_and_never_on_the_one_that_processes() {
+    let slot = id("track/instrument");
+    let life = run(|harness, audio| {
+        harness
+            .plugins
+            .open_window(&slot, "Piano")
+            .expect("the window opens");
+        audio.render(2);
+        harness
+            .plugins
+            .open_window(&slot, "Piano")
+            .expect("the window comes forward");
+        harness.plugins.close_window(&slot);
+        audio.render(2);
+    });
+
+    let plugin = *life
+        .plugins()
+        .iter()
+        .find(|plugin| **plugin != 0)
+        .expect("an audio processor");
+    let names = life.names();
+    let audio_thread = &life.of("process", plugin).thread;
+    let main_thread = &life.of("activate", plugin).thread;
+    assert_ne!(audio_thread, main_thread, "{names:?}");
+    for call in ["gui_create", "gui_show", "gui_destroy"] {
+        assert_eq!(&life.of(call, 0).thread, main_thread, "{call}: {names:?}");
+    }
+    // One create and one destroy, whatever the audio thread did in between.
+    let created = names.iter().filter(|name| *name == "gui_create(0)").count();
+    let destroyed = names
+        .iter()
+        .filter(|name| *name == "gui_destroy(0)")
+        .count();
+    assert_eq!((created, destroyed), (1, 1), "{names:?}");
+    // The plugin never stopped playing while its window came and went.
+    assert!(
+        life.position("gui_destroy", 0) < life.position("stop_processing", plugin),
+        "{names:?}"
+    );
+}

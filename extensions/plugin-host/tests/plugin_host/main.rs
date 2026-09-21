@@ -16,3 +16,4 @@ mod records;
 mod scanning;
 mod state;
 mod support;
+mod window;

@@ -3,6 +3,7 @@
 
 pub mod assets;
 pub mod components;
+pub mod devices;
 pub mod focus;
 pub mod session;
 pub mod theme;
@@ -10,6 +11,7 @@ pub mod typography;
 pub mod views;
 
 pub use assets::Assets;
+pub use devices::{DeviceOffer, Devices};
 pub use focus::KeyboardFocus;
 pub use session::{POLL_INTERVAL, Playhead, Session};
 pub use theme::{ActiveTheme, Theme};

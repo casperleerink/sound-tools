@@ -18,11 +18,13 @@
 mod host;
 mod processor;
 pub mod scan;
+pub mod view;
+mod window;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, AssetName, BehaviourContext, BehaviourError, InputEndpoint, InvalidAssetName,
-    OutputEndpoint, Registry, RegistryError, State,
+    OutputEndpoint, Project, Registry, RegistryError, State,
 };
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
@@ -72,6 +74,58 @@ impl StateAsset {
         self.0.name()
     }
 }
+
+/// A `state_asset` name that no plugin record of the project uses, from a display name such as
+/// the plugin's own. Everything an asset name may not hold becomes `-`, and a name another
+/// record already has gets a number: `six-sines`, `six-sines-2`.
+///
+/// Whoever writes a record by hand chooses the name themselves, and two records may share one.
+/// This is for a record the window writes, where a shared name would be a surprise.
+pub fn free_state_asset(project: &Project, wanted: &str) -> Result<StateAsset, InvalidAssetName> {
+    let mut taken: Vec<&str> = Vec::new();
+    for (id, tool) in project.instances() {
+        if tool != PluginRecord::TOOL {
+            continue;
+        }
+        let Some(instance) = project.resolve::<PluginRecord>(id) else {
+            continue;
+        };
+        if let Some(record) = project.state(&instance) {
+            taken.push(record.state_asset.name());
+        }
+    }
+    let base = asset_name_of(wanted);
+    // A project holds a finite number of records, so one of these names is free.
+    let free = (1..=taken.len() + 1).find_map(|number| {
+        let name = match number {
+            1 => base.clone(),
+            number => format!("{base}-{number}"),
+        };
+        (!taken.iter().any(|used| *used == name)).then_some(name)
+    });
+    StateAsset::new(free.as_deref().unwrap_or(&base))
+}
+
+/// What an [`AssetName`] may hold, from a display name: lowercase letters, digits and `-`.
+fn asset_name_of(display: &str) -> String {
+    let mut name = String::new();
+    for character in display.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_lowercase() || character.is_ascii_digit() {
+            name.push(character);
+        } else if !name.is_empty() && !name.ends_with('-') {
+            name.push('-');
+        }
+    }
+    let name = name.trim_end_matches('-');
+    if name.is_empty() {
+        FALLBACK_STATE_ASSET.to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// The name a plugin whose own name has nothing an asset name may hold gets.
+const FALLBACK_STATE_ASSET: &str = "plugin";
 
 impl TryFrom<String> for StateAsset {
     type Error = InvalidAssetName;

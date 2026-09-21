@@ -4337,11 +4337,13 @@ version = "0.1.0"
 dependencies = [
  "clack-extensions",
  "clack-host",
+ "gpui",
  "rtsan-standalone",
  "serde",
  "serde_json",
  "sound-core",
  "sound-notes",
+ "sound-ui",
  "tempfile",
  "test-clap-plugin",
  "thiserror 2.0.20",

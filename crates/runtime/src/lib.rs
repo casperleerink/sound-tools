@@ -10,12 +10,14 @@ use std::path::Path;
 use anyhow::Result;
 use arrangement::{ArrangementState, Colour};
 use instrument::SynthState;
-use plugin_host::{Plugins, ScanCommand, default_search_paths};
+use plugin_host::{
+    PluginFormat, PluginRecord, Plugins, ScanCommand, WeakPlugins, default_search_paths,
+};
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
     ProjectError, Registry, SavedDestination, State,
 };
-use sound_ui::Views;
+use sound_ui::{DeviceOffer, Devices, Views};
 
 const PROJECT_FILE: &str = "project.json";
 
@@ -73,13 +75,72 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     Ok(registry)
 }
 
-/// Every bundled extension with a view registers it here. The window names no view type.
-/// `Shell::new` takes the result and installs it.
-pub fn views() -> Views {
+/// Every bundled extension with a view registers it here, and what a rack calls its devices
+/// and what a composer can pick. The window names no view type and no instrument: it takes
+/// both registries and installs them, see `Shell::new`.
+///
+/// This is the one place that knows the built-in synth and the plugin host at once. The
+/// arrangement, which owns the track panel, depends on neither.
+pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut views = Views::new();
+    let mut devices = Devices::new();
     arrangement::view::register(&mut views);
-    instrument::view::register(&mut views);
-    views
+    instrument::view::register(&mut views, &mut devices);
+    plugin_host::view::register(&mut views, &mut devices, plugins.clone());
+    devices.instruments(|| {
+        vec![DeviceOffer::new(
+            SynthState::TOOL,
+            instrument::view::NAME,
+            |_, slot, changes| {
+                changes.create(slot.clone(), SynthState::default());
+                Ok(())
+            },
+        )]
+    });
+    devices.instruments(move || {
+        let Some(plugins) = plugins.upgrade() else {
+            return Vec::new();
+        };
+        plugins
+            .instruments()
+            .into_iter()
+            .map(|found| {
+                let (id, name) = (found.id.clone(), found.name.clone());
+                let offer =
+                    DeviceOffer::new(
+                        format!("{}:{id}", PluginFormat::Clap.name()),
+                        found.name.clone(),
+                        move |project, slot, changes| {
+                            // A state file no other record names, so two plugins never share one
+                            // by accident. Whoever writes a record by hand still may.
+                            let state_asset = plugin_host::free_state_asset(project, &name)
+                                .map_err(|error| ProjectError::InvalidState {
+                                    id: slot.clone(),
+                                    message: error.to_string(),
+                                })?;
+                            changes.create(
+                                slot.clone(),
+                                PluginRecord {
+                                    format: PluginFormat::Clap,
+                                    plugin_id: id.clone(),
+                                    state_asset,
+                                },
+                            );
+                            Ok(())
+                        },
+                    );
+                match found.vendor.is_empty() {
+                    true => offer.with_detail(PluginFormat::Clap.name()),
+                    false => offer.with_detail(format!(
+                        "{} · {}",
+                        PluginFormat::Clap.name(),
+                        found.vendor
+                    )),
+                }
+            })
+            .collect()
+    });
+    (views, devices)
 }
 
 /// The arrangement that "Add track" adds to: the first one at the top of the project.

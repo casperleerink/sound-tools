@@ -17,15 +17,18 @@ path = "src/bin/clap-scan.rs"
 clack-extensions = { workspace = true, features = [
   "clack-host",
   "audio-ports",
+  "gui",
   "note-ports",
   "state",
 ] }
 clack-host.workspace = true
+gpui.workspace = true
 rtsan-standalone.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sound-core.workspace = true
 sound-notes.workspace = true
+sound-ui.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

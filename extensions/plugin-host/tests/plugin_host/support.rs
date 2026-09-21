@@ -233,6 +233,15 @@ pub fn tell_the_plugin(log: Option<&Path>, events: Option<u32>) {
     }
 }
 
+/// Makes the test plugin close its own window as soon as the host has shown it, which is what
+/// a composer does with the title bar of a real plugin's window. Same rules as
+/// [`tell_the_plugin`].
+pub fn tell_the_plugin_to_close_its_window() {
+    // SAFETY: nextest runs one test per process and this is called before any thread but this
+    // one exists, so no other thread can be reading the environment.
+    unsafe { std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_CLOSE_GUI", "1") };
+}
+
 /// One line of the plugin's lifecycle log: the call, which plugin of the library it was about,
 /// the thread it came in on, and how many process calls that plugin had had by then.
 #[derive(Clone, Debug, PartialEq, Eq)]
