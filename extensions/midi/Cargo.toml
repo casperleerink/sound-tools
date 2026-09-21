@@ -10,7 +10,6 @@ workspace = true
 [dependencies]
 midir.workspace = true
 rtrb.workspace = true
-serde.workspace = true
 sound-core.workspace = true
 sound-notes.workspace = true
 thiserror.workspace = true

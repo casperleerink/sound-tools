@@ -177,6 +177,22 @@ A tool without `.behaviour(...)` is plain data. Its owner reads it. Clips are li
 
 `.end(|project, instance| ...)` says where the content of an instance ends on the timeline, as `Option<Ticks>`. `Project::end()` is the latest of them and `None` for a project with no set end. The core knows no clips, so this is how a transport shows a duration. The arrangement gives the end of its last clip.
 
+`.derive(|project, instance, derived| ...)`: state this record decides, which nothing edits by hand. The derive runs inside the same state application as the change that asked for it, so the record and what it decides are one group, one engine batch and one undo step. Use it for a record whose meaning is a rewrite of other records or of the tempo map, as the tempo fit is.
+
+```rust
+registry.tool::<FitState>(EXTENSION)?.derive(|project, fit, derived| {
+    derived.changes().set_tempo_map(map);          // a whole `Changes` group
+    derived.changes().set(&clip, notes);
+    derived.problem("the take of this fit is gone");   // listed on this record's path
+});
+```
+
+- It runs when a record of this tool changed in the group, and when the project's time signature changed, which is the other thing a musical grid is made of. Both are things the core knows about.
+- It does not run while the project loads, nor for undo, redo or a cancel: the files and the undo step already hold what it would compute. So a read-only project (`--inspect`, `--render`) never derives and never writes.
+- What a derive gives never starts another round, so it cannot loop. A derive of one instance never sees what another derive of the same group wrote.
+- Keep it a pure function of the project: a drag runs it once per mouse move. Cache what is expensive behind an `Rc<RefCell<...>>` in the closure, as `extensions/fit-tempo` does with the take it parses.
+- `Derived::problem` says what could not be computed, exactly as `BehaviourContext::problem` does for a behaviour: it is listed in `project.problems()` on the record's path until that derive runs again without it.
+
 Two more things an extension registers, both for agents that work in the project folder with only file access:
 
 - `.summary(|project, instance| ...)` after `.behaviour(...)`: lines of text about one instance and what it owns. `Project::summary(&id)` gives it and `runtime --inspect` prints it. An owner of many small records gives one, so an agent reads one summary and not every record.
@@ -418,7 +434,7 @@ Musical time is whole ticks, 960 per quarter note (`Ticks`). Project time in aud
 - `Tempo`: beats per minute, a beat being a quarter note. 10 to 1000 bpm, held in steps of 0.001 bpm. `Tempo::from_bpm(93.5)?`.
 - `TimeSignature`: numerator 1 to 32, denominator 1, 2, 4, 8, 16 or 32. One per project for now. It converts ticks to and from `BarBeat`, which counts bars and beats from 1 and prints as `bar:beat:tick`, for example `4:3:005`.
 - `TempoMap`: the time signature and a list of tempo changes. Steps only, no ramps. The first change is at tick 0 and the ticks go up. This is the saved form. `with_tempo_at(tick, bpm)` gives the same map with the tempo change that starts there set, or `None` when there is none: it cannot fail, because only a tempo changes and the ticks keep their order.
-- `Clock`: a `TempoMap` compiled for one sample rate. `frame_of(tick)`, `tick_at(frame)`, `seconds_of(tick)`, `tick_at_seconds(seconds)`, `tempo_at(tick)`. A lookup is a binary search over the tempo changes.
+- `Clock`: a `TempoMap` compiled for one sample rate. `frame_of(tick)`, `tick_at(frame)`, `seconds_of(tick)`, `tick_at_seconds(seconds)`, `micros_of(tick)`, `tick_at_micros(micros)`, `tempo_at(tick)`. A lookup is a binary search over the tempo changes. Microseconds are the unit for a time that must keep its meaning when the tempo map changes, such as a recorded performance: `tick_at_micros(micros_of(tick)) == tick` at every sample rate this application allows.
 
 Invalid values cannot be built: the constructors and the JSON loader return a `ClockError`.
 

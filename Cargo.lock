@@ -1774,10 +1774,8 @@ name = "fit-tempo"
 version = "0.1.0"
 dependencies = [
  "serde",
- "serde_json",
  "sound-core",
  "sound-notes",
- "tempfile",
  "thiserror 2.0.20",
 ]
 
@@ -3435,7 +3433,6 @@ version = "0.1.0"
 dependencies = [
  "midir",
  "rtrb",
- "serde",
  "serde_json",
  "sound-core",
  "sound-notes",
