@@ -77,6 +77,9 @@ pub struct TransportPill {
     playhead: Entity<Playhead>,
     /// Derived from the project, never edited here. Read again in `refresh` after an event.
     end: Option<Ticks>,
+    /// The fit of the project, when it has one. Finding it walks every instance, and this is
+    /// read on every frame, so it is kept between events like the end of the project.
+    fit: Option<Instance<FitState>>,
     end_is_stale: bool,
     scrubbing: bool,
     /// The click in the engine. `None` only when the engine refused it, which is reported.
@@ -185,6 +188,7 @@ impl TransportPill {
         });
         Self {
             end: session.read(cx).project().end(),
+            fit: fit_tempo::fit_of(session.read(cx).project()),
             end_is_stale: false,
             seen: *session.read(cx).playhead().read(cx),
             recording_track: None,
@@ -534,17 +538,12 @@ impl TransportPill {
             .child(listeners.absolute().size_0())
     }
 
-    /// The fit of the project, or `None` when it has none. Read on every render, so the
-    /// control comes and goes with the fit, also when an agent writes or deletes the record.
-    fn fit(&self, cx: &App) -> Option<Instance<FitState>> {
-        fit_tempo::fit_of(self.session.read(cx).project())
-    }
-
-    /// The steadiness the transport shows, as a percentage. Read from the project, never kept.
+    /// The steadiness the transport shows, as a percentage. The value is read from the project
+    /// on every render and never kept, so an outside edit shows at once; which instance holds
+    /// it is what `refresh` keeps.
     pub fn shown_steadiness(&self, cx: &App) -> Option<f64> {
-        let fit = self.fit(cx)?;
         let project = self.session.read(cx).project();
-        let state = project.state(&fit)?;
+        let state = project.state(self.fit.as_ref()?)?;
         Some(steadiness::percent_of(state.steadiness))
     }
 
@@ -708,7 +707,9 @@ impl TransportPill {
         if !self.end_is_stale || self.session.read(cx).gesture_open() {
             return;
         }
-        self.end = self.session.read(cx).project().end();
+        let project = self.session.read(cx).project();
+        self.end = project.end();
+        self.fit = fit_tempo::fit_of(project);
         self.end_is_stale = false;
         // Without an end there is no strip, and no mouse up on it would end a drag.
         if self.end.is_none() {

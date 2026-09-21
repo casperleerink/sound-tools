@@ -572,6 +572,17 @@ impl Project {
                 false => self.derive_problems.insert(id, problems),
             };
         }
+        // What a derive said about an instance that is gone, or that is now a record of
+        // another tool, would otherwise be shown on that record's path for ever.
+        let stale: Vec<InstanceId> = self
+            .derive_problems
+            .keys()
+            .filter(|id| derives(self, id).is_none())
+            .cloned()
+            .collect();
+        for id in stale {
+            self.derive_problems.remove(&id);
+        }
         for change in &changes {
             if let Change::Set(id, record) = change {
                 record
