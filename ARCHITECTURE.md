@@ -1,6 +1,6 @@
 # Technical architecture
 
-This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The realtime engine from ENGINEERING.md section 3 is built in `crates/core`, with the musical clock, the transport and the live project folder: tool registration, instances, editing with undo, storage and the file watcher. Tone runs on it as the first tool. The application window shows the arrangement live with the transport and the project menu, and a composer adds, moves, resizes and deletes clips and notes in it with the mouse and the keys. The first milestone was verified on the real application on September 19, 2026, with Claude Code and Codex as outside agents. The agent sidebar and the outer application are not built yet.
+This document records architecture decisions and proposals. The product goals are in [CONCEPT.md](CONCEPT.md). Revised September 21, 2026: the second milestone is built and was verified on the real application, see "Verified September 21, 2026" and "Known gaps after the second milestone". A composer records a piano take from a MIDI keyboard with no click, on a track that plays a CLAP or VST 3 plugin with its own window, and one action fits the project tempo to that take, so the grid follows the playing and everything added afterwards follows it too. Revised September 14, 2026: the v0 is a small DAW with an agent sidebar, built from bundled extensions on a small core. Revised September 19, 2026: the first milestone is cut down and the saved time format, record size and watcher scope are decided. The small GPUI build-loop experiment below has been validated on macOS. An isolated core lifecycle prototype now implements typed state, persistence, editing, offline processing and GPUI views for Tone and an agent-authored Tremolo. The realtime engine from ENGINEERING.md section 3 is built in `crates/core`, with the musical clock, the transport and the live project folder: tool registration, instances, editing with undo, storage and the file watcher. Tone runs on it as the first tool. The application window shows the arrangement live with the transport and the project menu, and a composer adds, moves, resizes and deletes clips and notes in it with the mouse and the keys. The first milestone was verified on the real application on September 19, 2026, with Claude Code and Codex as outside agents. The agent sidebar and the outer application are not built yet.
 
 ## Terms
 
@@ -538,6 +538,25 @@ Left for later, found in the review and not built: steadiness keeps the last bea
 
 Not built: tempo ramps, time signature changes inside a piece, steadiness per section, overdub and merging takes, audio, and a fit that runs off the thread that draws.
 
+#### Three things the steps left, fixed with step 8
+
+- **`runtime --inspect` loads no plugin.** It ended in a segmentation fault on a project whose instrument is Crow Hill Origins, after it had printed everything: the plugin's own teardown when it never processed a block. It did not happen under `--render`, where the plugin processes first, and outside agents use `--inspect`. Printing a project needs no plugin, so `--inspect` opens with `Plugins::listing`, a host that looks a plugin up in the scan and loads none. Nothing of a plugin's own code runs in that process, so no plugin can end it, at load, in `process` or in its teardown. The scan still runs, so the one thing an agent reads from `--inspect` about plugins is unchanged: this machine has no plugin with that id. What is lost is what only the plugin itself can say, such as a note port that takes no sustain pedal, which the running app still reports. `Opened::started` is now an `Option`, and a slot with no plugin loaded is silent and reports nothing.
+- **A scan test that does not watch the clock.** `a_record_waiting_for_the_scan_is_reported_and_plays_when_the_plugin_turns_up` made the scan be part way through by letting one bundle hang and giving every bundle a two second deadline. Under the sanitizer run, with ten tests on this laptop at once, the bundle that was supposed to answer missed that deadline and the test failed. The test plugin now has a gate (`SOUND_TOOLS_TEST_PLUGIN_GATE`): it waits while its bundle is listed until the test makes `<path>.go`. The test holds the scan itself, no bundle is given up on, and a busy machine only makes it slower. The deadline of a bundle is still held by `a_plugin_that_hangs_while_it_is_scanned_is_given_up_on_and_reported`, whose search path has only the hanging bundle in it.
+- **`restartComponent` is only called a restart when it is one.** Two flags mean deactivate and activate again: `kReloadComponent`, the plugin was replaced, and `kIoChanged`, its buses changed. Everything else is about something a host with a parameter view, a latency line or a keyboard display would redraw, and this build has none of those. Splice INSTRUMENT sends `kParamTitlesChanged` and `kParamIDMappingChanged` while a composer opens its window, and the host told him the plugin had asked to be started again, which neither flag means. It now says nothing for them. `kParamValuesChanged` still marks the state to be saved, as before.
+
+#### Verified September 21, 2026
+
+Checked on the finished build on the same Apple Silicon laptop as the first milestone: the release binary for what the owner runs, the window watched taking a live file edit, two outside agents with no context but the project folder, and the real plugins of this machine. Nobody listened: every claim about sound is a render compared with another render, a channel read as a number, or a counter. The owner's three checks by ear are his and are not in this table.
+
+One thing this session could not do that the first milestone's check could: the window's own keys and mouse could not be driven from it, because the machine was in use. So the record button, `Fit tempo to take` and `cmd-z` were reached through the one editing path and through outside file edits, both of which are what the window itself calls, and the window was watched taking an outside edit live. The window tests with simulated mouse and keys cover the controls themselves.
+
+The screenshots, logs, renders and temporary projects of the check are not in the repository. They were under `/private/tmp/m2-check` and are removed.
+
+| Item | Result | Evidence |
+| --- | --- | --- |
+
+Release build, `cargo build --release -p runtime` from an empty release folder: 1 minute 46 seconds, and a binary of 14.4 MB, against 1.5 minutes and 12 MB after the first milestone. The growth is the plugin host, the MIDI layer and the fit.
+
 ### Agent context and tools
 
 The agent works through the live project folder and the runtime protocol, not a separate edit API.
@@ -795,6 +814,11 @@ Second milestone steps:
 - Done September 21, 2026, steps 5a and 5b: VST 3 instruments on the same host design, the scan off the thread that draws with a cache of this machine, and the plugin's own window for both formats. See "Hosting plugins".
 - Done September 21, 2026, step 6: effect plugins in the track rack. A composer adds an effect at the end of the rack of a track, sees it after the instrument, opens its window, removes it, and hears the track through the chain in the running project and in an offline render; the order is the `effects` list of the track record, which an agent reorders with one file edit and one undo step; a missing effect is reported, leaves its record untouched and lets the sound through; a track record from before this loads unchanged and is not rewritten. See "Effect plugins in the track rack" under "Hosting plugins" and the port names of an effect in the note contract. Not built: reordering in the window, bypass, a wet and dry amount, built-in effects of our own, sends and buses, effects on a master or on the device, sidechain inputs, more than the first stereo input and output, latency compensation, parameter automation and views, presets, MIDI effects, and AU.
 
+- Done September 21, 2026, step 7: fit tempo and steadiness. A composer records a take with no click and one action in the project menu moves the tempo map onto his playing; at 0 % steadiness the take sounds exactly where it was heard and at 100 % the beats are even; parts written afterwards follow the take; and an outside agent corrects the octave, the first downbeat or the time signature by editing one file. See "Fit tempo and steadiness" and the derive in "Project storage". Not built: tempo ramps, time signature changes inside a piece, steadiness per section, a way to remove a fit other than undo, and any drawing of the fitted grid.
+- Done September 21, 2026, step 8: the milestone check on the finished build, with the release build, two outside agents and the real plugins of this machine. See "Verified September 21, 2026" and "Known gaps after the second milestone". It also fixed the three things the steps had left: `--inspect` loads no plugin, the scan test holds the scan itself instead of watching a deadline, and only the two `restartComponent` flags that mean a restart are reported as one.
+
+The second milestone is built and was verified on September 21, 2026. What a third milestone starts from: one process that opens a project folder in a window or headless, records a piano take from a keyboard through a third-party plugin, fits the grid to that take, and keeps every change live in both directions while an external coding agent writes parts into the folder.
+
 The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. It was re-checked in the real window and needs no workaround, see "The window and its views". The pinned GPUI has an accessibility tree and focus-visible. The menu trigger and the seek strip use focus-visible; the other components and the accessibility tree are open.
 
 What the second milestone starts from: one process, the project runtime, that opens a project folder in a window or headless, keeps it live in both directions and plays it. An external agent already composes in it through files alone, with `AGENTS.md` as its context, `problems.txt` as its check and one undo step per request by the 15 s rule. The second milestone keeps that and makes the DAW worth using: stereo tracks with gain, pan and mute, MIDI recording, CLAP and VST3 plugins, and fitting the tempo to a free take. The plan is [docs/milestone-2.md](docs/milestone-2.md).
@@ -804,6 +828,68 @@ Open:
 - Declarative parameter metadata and generic parameter controls.
 - Agent integration, the outer application/runtime protocol details and window/workspace composition. Parked September 20, 2026, until the DAW itself is further along. The 15 s rule for one undo step per agent request stays until then.
 - Whether the agent gets the transport and `--inspect` as tools. No agent has used `--inspect` yet: Claude Code ran with file tools only, and Codex had a shell but no `runtime` on its `PATH`. Both managed without it.
+
+### Known gaps after the second milestone
+
+Collected from every step of the milestone and from the check of September 21, 2026. Decided limits are in the sections above and are not repeated here; neither are the "Not built" lists of the step sections, which say what a step chose to leave out. The list after the first milestone follows this one and still holds, with the notes in it saying what the second milestone closed.
+
+Sound:
+
+- **Nobody has listened.** Every claim about sound in this milestone is an offline render compared with another render, a channel read as a number, or a counter. The owner's three checks by ear are the only ones that can say whether it is right.
+- No limiter still. A track has a gain, a pan and a mute and nothing else of a mixer: no solo, sends, buses, master fader, meters or mixer view, and no automation of any of them. The track panel is the only place to reach them.
+- A mono device plays the left channel of a stereo connection and drops the right one. Nothing folds the two together.
+
+MIDI and recording:
+
+- A take's boundaries can be off by up to one 16 ms poll at each end, and a seek during a take is not defined beyond "it ends the take". Selecting a track and pressing record within one poll may still record into the track before it.
+- Two note-ons of one pitch followed by one note off are saved as two notes that end together, which is not what sounded.
+- A long take is turned into a clip and written on the thread that draws.
+- Events dropped because the input buffer of an instrument was full are counted by the engine and not recovered. An `AllOff` or a pedal-up that does not fit when more than 512 events land in one block is not retried, so those keys stay down until the next one.
+- MIDI input exists only in the window. `--headless`, `--render` and `--inspect` have none, so a recording cannot be driven from a script, and a check by hand of the latency needs the window and a person to press `r`.
+- Measured with a virtual MIDI port, never with a real keyboard, on one device at one buffer size. The keyboard's own scan and its cable are before this process and nothing here can see them.
+
+Plugins:
+
+- **Numa Player draws, takes the mouse, keeps its state and is silent in this host**, about -175 dBFS whatever it is given. Step 5b ruled out the offline flag, the transport, the render speed, the bus routing, the edit path and its own master and zone faders, and it asks this host for nothing at all. The owner has never used it and says it is built for Studiologic's own keyboards. It is recorded here as the plugin's, and nobody is spending more time on it.
+- Vital cannot be loaded at all: its binary is x86_64 only and an arm64 host cannot load it. The scan reports the bundle and the application lives.
+- The Antares effects on this machine open on "No License Found", so no control of a real effect has ever been moved in its own window. That half is proven by the repository's own test plugins only.
+- A plugin that crashes takes the application down with it. That is decided for this milestone, and it is what a composer would notice first if it happened.
+- A plugin installed while the app runs still needs a restart. A plugin's window can go behind the main one (no `set_transient`), cannot be resized by dragging its edge, and nothing remembers where it sat or whether it was open.
+- Two holes in the scan cache: its key reads the first file in a bundle's binary folder instead of the executable the `Info.plist` names and leaves out the host architecture, and two runtimes writing the cache at once can garble it, which costs a rescan.
+- Symlinks inside `assets/` are followed and an existing `.tmp` symlink is truncated. The scan collects whatever a child prints with no limit, and a plugin that prints the scan's own marker can confuse it. The project folder and the plugins of the machine are trusted.
+- `kParamValuesChanged` is taken as "save the state again" and not answered properly, which would mean reading every parameter off the controller and giving it to the processor. `kReloadComponent` and `kIoChanged` are reported to the composer and not acted on: nothing deactivates and activates a plugin again. `kParamIDMappingChanged` is now ignored, so a plugin that moves its MIDI mapping while it runs keeps the pedal parameter the host found when it loaded.
+- No AU, no plugin sandbox, no latency compensation, no parameter automation, no generic parameter view, no presets, no MIDI out of a plugin and no MIDI into an effect, which is why Spectral Freeze is silent in an effect slot: it waits for notes no effect gets. `Vst3Gui` is `Send` and `Sync` through the generated COM types although it belongs to the thread the interface lives on; nothing sends one.
+- A card gives an effect no name of its own, so two of one plugin on a track are two cards with one name. `add_effect` reads the project and not the group being built, so two effects in one group need two groups. A `project.json` connection written by hand into the `audio` input of a record in the instrument slot is passed through to that slot's output while its plugin is missing.
+- The tests cannot give a plugin a real view: GPUI's platform for tests has no native window, so `set_parent` and `attached` through the host are covered by the checks by hand only.
+
+Fit tempo:
+
+- The fit runs on the thread that draws: 0.78 s for a take of ten minutes, paid once per fit and once per correction.
+- One beat at a sudden tempo change lands about a fifth of a beat out, 182 ms in the measured case, because the period is measured over a window that holds both tempos. An agent cannot correct that from the record: the fields are the octave, the first downbeat and the time signature.
+- A fit whose take file was deleted while the app was closed is not reported until the next edit of the fit, because a derive does not run on load.
+- A take that begins the very moment recording starts has no room for the bar before its first downbeat. The grid still follows the playing and `problems.txt` says the first few beats are outside the tempo range.
+- Steadiness keeps the last **beat** in place, not the end of a note still held there or a pedal released after it.
+- The beat finder compares scores computed with `ln`, `log2` and `exp`, which Rust allows to differ in the last bit between platforms, so a fit corrected on another machine could pick another beat on a near tie. The saved map and clip are the truth of a project, so nothing changes by opening one somewhere else.
+- A raw take written before step 7 does not load. Only a fit reads a take, and it says so.
+- No tempo ramps, no time signature change inside a piece, no steadiness per section, no way to remove a fit other than undo or deleting the record, and nothing draws the fitted grid beyond the tempo the transport shows.
+
+Project folder and undo:
+
+- An agent that leaves a `.md` in `agent-docs/` loses it on the next write, and nothing warns. A symlinked `agent-docs/` is followed for writing and for the cleanup.
+- The word bound on the agent map is a test and not a design: a doc that grew into the map would pass until it did not.
+- The 15 s rule for one undo step per agent request is still a heuristic. It held for both agents again in this check.
+- An undo step for `project.json` connections can still hold the middle of a gesture. No gesture edits them.
+
+Window:
+
+- The window's own keys and mouse could not be driven from the session that ran this check, so the record button, the fit action and undo were reached through the editing path and through file edits. Both are covered by the window tests with simulated mouse and keys, and the window was watched taking an outside edit live.
+- Reordering the rack, renaming a track, copy and paste, multi-select, a velocity lane and adjustable snap are all still file edits or not built.
+- Playback does not stop at the end of the project and there is no loop. Whether the click is on is not saved; there is no `workspace.json`.
+
+Tooling:
+
+- CI runs on macOS only, needs no plugin, no MIDI device, no audio device and no display, and the list of crates for the realtime sanitizer is kept by hand. It was checked against the processors of this build on September 21, 2026.
+- The checks that need this machine are ignored tests, run by hand: the scale project, the fit end to end, the agent project and its measurement, and the device runs.
 
 ### Known gaps after the first milestone
 

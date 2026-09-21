@@ -1,6 +1,8 @@
 # Sound Tools
 
-A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The first milestone is built. It has tracks, clips, notes, one synth and a window to edit them, and the agent is an external coding agent for now. The second milestone is under way: stereo tracks with gain, pan and mute, a metronome, MIDI recording, CLAP and VST 3 plugins with their own windows, and fitting the project tempo to a take played with no click, so the grid follows the playing.
+A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The agent is an external coding agent, run in the project folder.
+
+Two milestones are built. The first: tracks, clips, notes, one synth and a window to edit them. The second: stereo tracks with gain, pan and mute, a metronome, MIDI recording with the sustain pedal, CLAP and VST 3 plugins as instruments and as effects with their own windows, and **fit tempo** — play freely with no click, and one action moves the grid onto your playing, so bars and beats land where you hear them and everything added afterwards follows. Both were checked on the real application; the second on September 21, 2026, see [ARCHITECTURE.md](ARCHITECTURE.md), "Verified September 21, 2026".
 
 ## Requirements
 
@@ -35,6 +37,27 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 
 Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 
+## A project made before this milestone
+
+It opens and plays as it did, and nothing is rewritten. Two things need one edit of `project.json` before the new parts of the app are within reach. Add them to `extensions` and open the project again:
+
+```json
+"extensions": ["arrangement", "fit-tempo", "instrument", "plugin-host", "tone"]
+```
+
+- `plugin-host` for CLAP and VST 3 plugins. Without it the picker shows every plugin greyed out with that line under it.
+- `fit-tempo` for **Fit tempo to take**. Without it the menu item is greyed out with that line under it.
+
+One thing is reported: a project of the first milestone connects a track once per device channel, and audio is stereo now, so one connection carries both channels. `problems.txt` names the second line and says to remove it. The project sounds as it did in the meantime.
+
+## What to check by ear
+
+Nobody who built this can hear. Three things need the owner, and each takes a few minutes:
+
+1. **Latency.** Plug in your keyboard, click a track name, play. Does it feel like an instrument, or is there a wait? The numbers say 20 ms from key to sound on the built-in speakers; a wired interface should be faster.
+2. **Your pianos.** Put each piano plugin you use on a track (click `Synth` at the top of its card), open its window, load a sound, play. Does it sound the way it does in your other DAW, and does its window work?
+3. **A free take fitted.** Turn the click off, press `r`, play something with rubato, press `r` again. Click the clip, then the project name, then **Fit tempo to take**. Are the bar lines where you hear the beats? Drag `steady` up and back to 0. Does the take still sound as you played it?
+
 ## Work with an agent
 
 The agent is any coding agent that can edit files. The app must be running on the project, else the edits are saved but nobody checks or plays them.
@@ -59,7 +82,7 @@ What the agent uses:
 
 - `AGENTS.md`. The app writes it into the project, with a `CLAUDE.md` that imports it. It is a short map: the folder layout, the bar math of this project, how to check the work, and a list of docs in `agent-docs/` with one line each saying when to open it. The record formats live in those docs, one per extension. Agents read the map by themselves and open only the doc their task needs.
 - `problems.txt`. The app keeps it current while it runs. It lists every file that did not load, and why. `No problems. Every file is live.` means all of it plays. The agent reads it to check its work.
-- `runtime <folder> --inspect`. It prints the tempo, every track and every clip with its bar range. It works next to the running app.
+- `runtime <folder> --inspect`. It prints the tempo, every track and every clip with its bar range, and the problems. It works next to the running app. It loads no plugin: it says which plugin a track names and whether this Mac has it, and runs none of them, so no plugin can end it.
 
 ## Without the window
 
@@ -70,7 +93,7 @@ cargo run -p runtime -- ~/Music/my-piece --headless
 cargo run -p runtime -- --plugins
 ```
 
-- `--inspect` prints a summary and changes nothing.
+- `--inspect` prints a summary and changes nothing. It loads no plugin, so it costs nothing extra and no plugin of this Mac runs in it.
 - `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float.
 - `--headless` plays the project live without a window and reads commands from stdin: `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status`, `quit`. It prints every change that arrives from the folder. Only one app can have a project open live. `--inspect` and `--render` work next to it.
 - `--plugins` prints the CLAP and VST 3 plugins of this Mac with their ids and whether each says it is an instrument, an effect or both, which is what a track record needs when an agent writes one. In the app you pick one by name instead. Each is looked at in a child process, so one that crashes costs that one and is reported. It looks at every plugin again, whatever the app remembered, so it is also how a plugin that failed once is tried again.
