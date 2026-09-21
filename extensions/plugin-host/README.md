@@ -44,14 +44,26 @@ only its audio processor may go to the audio thread. So:
 - `HostedPlugin`, the engine processor, holds the started audio processor and nothing else of
   the plugin. It is sent a plugin through a `Processor::Update` and gets `None` when the plugin
   goes, so the old one rides back to the control thread and is dropped there.
+- CLAP puts `start_processing` and `stop_processing` on the audio thread and wants `deactivate`
+  on the main thread while nothing is processing. So a plugin is stopped before it leaves the
+  audio thread: in `Processor::update` when it is swapped, and in `Processor::leaving`, the
+  core's last call to a processor, when the engine takes it out of its slot. `Drop for Loaded`
+  is the last resort for the engine being torn down, when there is no audio thread left.
+  `tests/plugin_host/lifecycle.rs` drives the engine from a thread of its own and reads what
+  the test plugin wrote down, so what a strict plugin would assert is asserted.
 
 This is why a behaviour is no longer `Send`: it keeps an `Rc` of the host. The project has
 always lived on one thread.
 
 Nothing in `process` allocates, locks or makes a system call, including the translation of
-notes and the sustain pedal. The one exception is the plugin's own `process` call, which is
-wrapped in an `rtsan` `ScopedDisabler`: what a plugin does inside itself is not ours to check.
-The repository's own test plugin does not need it; a real one may.
+notes and the sustain pedal. The plugin's own calls are wrapped in an `rtsan` `ScopedDisabler`,
+one call at a time and nothing of ours inside it: what a plugin does inside itself is not ours
+to check. The repository's own test plugin does not need it; a real one may.
+
+That exemption would also hide a buffer of ours growing while a plugin pushed into it, so the
+plugin is given `OutputEvents::void()`: it takes every event and keeps none. Nothing reads what
+a plugin sends out, because MIDI from a plugin is not built. A test counts every allocation of
+the process while a plugin sends fifty thousand events a block, and the count is zero.
 
 ## Notes, the pedal and stopping
 
@@ -76,6 +88,11 @@ reported, and the application lives. The runtime is its own child, through
 The child prints one marked line per plugin. Anything else on its output is the plugin's own
 logging, which real plugins do while they load, and it is ignored.
 
+Every child has `SCAN_TIMEOUT`, ten seconds. Licensed plugins hang while they are listed when
+they cannot reach their server, and the scan is what a project waits for while it opens, so a
+child that does not finish is killed, waited for, and reported like one that crashed. Ten
+seconds is a thousand times what a real bundle costs and is paid once, by that one bundle.
+
 The scan runs once per session, the first time a record needs a plugin. A project with no
 plugin record never scans. There is no cache: measured September 20, 2026 on an Apple Silicon
 laptop with two real bundles holding three plugins, a whole scan takes 20 to 26 ms, about 10 ms
@@ -94,7 +111,10 @@ plugin in it, so no test needs a plugin of the machine.
 A plugin's state is opaque. Two moments write it:
 
 - While the project is open, when the plugin says its state changed (`clap_host_state.mark_dirty`),
-  at the next `Plugins::poll`, which is every 16 ms in the window and every 5 ms headless.
+  at the next `Plugins::poll`, which is every 16 ms in the window and every 5 ms headless, and
+  then at most once a second while it keeps saying so. A plugin marks itself dirty on every
+  step of a knob drag, and serializing a sampler's state is not cheap. The flag is not cleared
+  until the state is written, so a change that waits for the second is written by a later poll.
 - When the project closes, for every loaded plugin, whether it said so or not. A plugin that
   changes its state without telling the host, which CLAP asks it not to do, keeps its work.
 - When a plugin goes, because its record was deleted or now names another plugin. So undo of a
@@ -104,16 +124,39 @@ Bytes that are already in the project are not written again, so a session that c
 leaves no diff. A plugin's state is not project state: it is never an undo step, and undo and
 redo never touch it.
 
-What a crash can lose: whatever a plugin changed since the last poll that saved it, and
-anything a plugin changed without saying so since the project opened. CLAP asks a plugin to
+What a crash can lose: up to a second of a plugin's own changes, and anything a plugin changed
+without saying so since the project opened. CLAP asks a plugin to
 mark its state dirty whenever it changes, including on a parameter change, so a plugin that
 follows the specification loses at most one poll.
+
+## The table and the engine
+
+The behaviour hands the engine a plugin every time it runs. This host never asks what the
+engine already has, because the answer would be a guess: the project applies an edit group
+whole or not at all, and a group it rejects never reaches the engine although this host has
+already loaded for it.
+
+- `open` lets go of whatever the instance held, saved on the way out, and then loads. A load
+  that fails leaves no entry, so the record and the engine agree: silence and a problem.
+- `poll` lets go of every entry whose record no longer says what the entry holds: deleted, no
+  longer a plugin, or changed by an edit the project rolled back.
+- An entry that has been let go of is still polled and saved until the engine gives its audio
+  processor back, so a plugin that is still playing misses no callback and loses no change.
+
+Loading every time costs nothing: a behaviour runs when its own record changed, on opening the
+project and on a retry, and every change a plugin record can have needs another plugin or
+another state file. `tests/plugin_host/consistency.rs` walks the sequences.
 
 ## What is not built
 
 Effects, VST3, AU, a plugin sandbox, latency compensation, parameter automation, a parameter
 view, presets, MIDI out of a plugin, more than one audio output bus, and the plugin's own
 window with the picker that opens it, which is step 4b.
+
+Two records may name one `state_asset` and then share it. Nothing refuses either: the project
+runs only the behaviour of the record that was edited, so a complaint about another record
+could never be taken back when that other record went. Two records for *different* plugins
+report themselves anyway, because the second cannot read the first one's state.
 
 A plugin that asks to be started again (`request_restart`), which it may do after changing its
 own port layout, is told to the composer instead of being restarted. A plugin that asks for

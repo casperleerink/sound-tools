@@ -21,7 +21,7 @@ track `rhodes`:
 | --- | --- |
 | `format` | `clap`. The only one this build hosts. |
 | `plugin_id` | The id the plugin's maker gave it, such as `com.u-he.diva`. Ask the composer for it. It is not the file name of the plugin. |
-| `state_asset` | A name you choose for the file that holds the plugin's own settings: `assets/plugin-state/<name>.bin`. Lowercase letters, digits, `-` and `_`. Give every plugin in the project its own name. |
+| `state_asset` | A name you choose for the file that holds the plugin's own settings: `assets/plugin-state/<name>.bin`. Lowercase letters, digits, `-` and `_`. Give every plugin its own name: two records that name one file share it, and two different plugins that name one file cannot read each other's settings. |
 
 The track record itself says nothing about the plugin:
 
@@ -40,8 +40,8 @@ gain, pan and mute of the track are the same whichever instrument the track has.
 
 `assets/plugin-state/<name>.bin` holds the plugin's own settings, in a format only that plugin
 understands. Do not open it, do not edit it, do not copy it between plugins. The app writes it
-when the plugin says its settings changed, and when the project closes. It is not part of the
-undo history: undo and redo never change a plugin's settings.
+when the plugin says its settings changed, at most once a second, and when the project closes.
+It is not part of the undo history: undo and redo never change a plugin's settings.
 
 Deleting a plugin's record does not delete its state file. To make the plugin start fresh,
 delete `assets/plugin-state/<name>.bin` while no app has the project open.
@@ -66,8 +66,8 @@ that has this project open. When it is not on your `PATH`, ask the composer for 
   plays. Correct `plugin_id` and it plays at once, with no restart.
 - `... is not an instrument`: the plugin is an effect. It cannot be the `instrument` of a
   track. Effect plugins are not built yet.
-- `the state asset ... is already used by the instance ...`: two plugin records name one file.
-  Give each its own `state_asset`.
+- `the state of the plugin ... could not be read`: usually two records that name one
+  `state_asset` for different plugins. Give each its own name.
 - `... takes no MIDI, so the sustain pedal does not reach it`: the notes play, the pedal does
   not. There is nothing to fix in the file.
 - `... asked to be started again`: the plugin wants the app to reload it, which this build does
