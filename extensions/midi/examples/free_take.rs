@@ -5,12 +5,21 @@
 //! a chord progression with a tempo that wanders and the jitter of a hand, with the sustain
 //! pedal. The same bytes at the same moments on every run.
 //!
+//! Two things to know when a recording is to pick this up.
+//!
+//! Start it **before** whoever records. A process only learns about a MIDI source that turns
+//! up later if it runs a CoreMIDI run loop; the application window does, a test binary does
+//! not. A source that is already there when the other process starts is always found.
+//!
 //! Run it as a built program, not through `cargo run`, when a `cargo` command is already
 //! running: they share one build lock and the player would wait for it.
 //!
+//! The arguments are how long to play, the name of the source, and how long to keep quiet
+//! before the first note, which is what gives a recording its silence in front.
+//!
 //! ```sh
 //! cargo build -p midi --example free_take
-//! /private/tmp/sound-tools-timing/target/debug/examples/free_take 60 "Free Take"
+//! /private/tmp/sound-tools-timing/target/debug/examples/free_take 60 "Free Take" 12
 //! ```
 
 use std::time::{Duration, Instant};
@@ -37,8 +46,15 @@ fn main() {
         .and_then(|it| it.parse().ok())
         .unwrap_or(60.0);
     let name = arguments.next().unwrap_or_else(|| "Free Take".to_string());
+    let quiet: f64 = arguments
+        .next()
+        .and_then(|it| it.parse().ok())
+        .unwrap_or(0.5);
 
-    let (messages, beats) = take(Duration::from_secs_f64(seconds));
+    let (messages, beats) = take(
+        Duration::from_secs_f64(seconds),
+        Duration::from_secs_f64(quiet),
+    );
     let notes = messages.iter().filter(|it| it.1[0] == 0x90).count();
 
     let output = MidiOutput::new("sound-tools free take").expect("a midi client");
@@ -60,10 +76,10 @@ fn main() {
 
 /// Every message of the take with the moment it is played, in order. Building it first means
 /// one thread can play it: a note off never has to wait for a note on that is already past.
-fn take(seconds: Duration) -> (Vec<(Duration, [u8; 3])>, u64) {
+fn take(seconds: Duration, quiet: Duration) -> (Vec<(Duration, [u8; 3])>, u64) {
     let mut messages: Vec<(Duration, [u8; 3])> = Vec::new();
     let mut jitter = Jitter::new();
-    let mut at = Duration::from_millis(500);
+    let mut at = quiet;
     let mut beat = 0_u64;
     while at < seconds {
         let bar = (beat / 4) as usize % BARS.len();
