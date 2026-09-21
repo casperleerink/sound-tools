@@ -133,6 +133,20 @@ fn a_project_that_names_a_plugin_this_machine_does_not_have_opens_and_reports_it
         problems[0].message.contains("com.example.nowhere"),
         "{problems:?}"
     );
+    // What an agent reads. The file follows the plugin, as it follows a record that does not
+    // load, so correcting the id clears the line without the project being opened again.
+    harness.project.poll().unwrap();
+    let text = std::fs::read_to_string(harness.path("problems.txt")).unwrap();
+    assert!(text.contains("com.example.nowhere"), "{text}");
+    harness.write_and_apply(
+        "state/arrangement/piano/instrument.json",
+        &test_plugin("piano"),
+    );
+    harness.project.poll().unwrap();
+    assert_eq!(harness.project.problems(), []);
+    let text = std::fs::read_to_string(harness.path("problems.txt")).unwrap();
+    assert!(text.contains("No problems"), "{text}");
+    harness.write_and_apply("state/arrangement/piano/instrument.json", missing);
 
     // The track is silent and the other one renders exactly as it does without it.
     let with_missing = harness.play(16_000);

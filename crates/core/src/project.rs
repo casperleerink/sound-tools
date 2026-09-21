@@ -393,6 +393,21 @@ impl Project {
         files.chain(connections).chain(instances).collect()
     }
 
+    /// What every behaviour reported about its own instance, on the path of its record.
+    fn instance_problems(&self) -> Vec<Problem> {
+        let problems = self.bindings.instance_problems();
+        problems
+            .filter_map(|(id, message)| {
+                let record = self.instances.get(id)?;
+                let path = self.storage.record_path(id, Form::of(record));
+                Some(Problem {
+                    path: self.storage.display_path(&path),
+                    message: message.clone(),
+                })
+            })
+            .collect()
+    }
+
     /// The one state application. Interface edits, file changes, loading, undo, redo and
     /// cancel all come through here. The group applies whole, as one engine batch, or not at
     /// all. It writes nothing: the caller knows whether files need writing.
@@ -406,6 +421,9 @@ impl Project {
         }
         let project_file_before = self.project_file.clone();
         let problems_before = self.bindings.connection_problems().to_vec();
+        // What behaviours said last time, so that `problems.txt` and the views follow a
+        // behaviour that starts or stops reporting. Empty in a project with nothing to report.
+        let instance_problems_before = self.instance_problems();
         let mut records = Vec::new();
         let result = self
             .stage(changes, source, &mut records)
@@ -441,7 +459,9 @@ impl Project {
         if project_file.is_some() {
             self.push_event(ProjectEvent::ProjectFileChanged);
         }
-        if problems_before != self.bindings.connection_problems() {
+        if problems_before != self.bindings.connection_problems()
+            || instance_problems_before != self.instance_problems()
+        {
             self.push_event(ProjectEvent::ProblemsChanged);
         }
         Ok(Applied {
