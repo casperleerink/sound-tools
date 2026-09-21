@@ -1,14 +1,15 @@
 # Third-party plugins on a track
 
-A track owns one child named `instrument`. It can be the built-in synth or a third-party
-plugin. This doc is about the plugin.
+A track owns one child named `instrument`, and after it the effects its record lists. Either can
+be a third-party plugin. This doc is about the plugin. `agent-docs/arrangement.md` says how a
+track names its effects and in what order they play.
 
-CLAP and VST 3 instruments work today. Effect plugins are not built yet.
+CLAP and VST 3 work, as instruments and as effects. AU does not.
 
 ## The record
 
-A plugin is the tool `plugin`. Put it where the instrument of the track belongs, so for a
-track `rhodes`:
+A plugin is the tool `plugin`. One record serves both places: put it where the instrument of
+the track belongs, so for a track `rhodes`:
 
 ```json state/arrangement/rhodes/instrument.json
 {
@@ -53,6 +54,11 @@ Writing the plugin record over `instrument.json` replaces the synth with the plu
 one undo step. Writing a synth record back replaces the plugin again. Clips, notes and the
 gain, pan and mute of the track are the same whichever instrument the track has.
 
+The same record under any other name in the track folder is an effect, once the track record
+names it in `effects`. Nothing of the record changes: only where the track wires it. A plugin
+that says it is an instrument can be an effect and the other way round; nothing checks, and a
+plugin that takes no audio in replaces the sound that reached it instead of changing it.
+
 The composer can do the same in the app, by picking an instrument on the card of the track
 panel, so the record may change under you. Read it before you write it.
 
@@ -91,30 +97,34 @@ Not from any file. When you can run commands:
 runtime --plugins
 ```
 
-It prints every plugin with its format, its id and whether it is an instrument, and it looks at
-every plugin again, so a plugin that failed once is tried again. `runtime` is the program that
-has this project open. When it is not on your `PATH`, ask the composer for the id.
+It prints every plugin with its format, its id and what it says it is, and it looks at every
+plugin again, so a plugin that failed once is tried again. `runtime` is the program that has
+this project open. When it is not on your `PATH`, ask the composer for the id.
 
-The first line of a plugin is its format, which is what `format` in the record takes:
+The first word of a line is the format, which is what `format` in the record takes:
 
     clap  com.example.piano                 Example Audio Piano (instrument, instrument synthesizer)
     vst3  A1B2C3D4E5F60718293A4B5C6D7E8F90  Example Audio Strings (instrument, Instrument Synth)
+    clap  com.example.warmth                Example Audio Warmth (effect, audio-effect stereo)
+
+What a plugin says it is is what the composer's pickers offer it for, and nothing more: a
+record may name any plugin in either place.
 
 ## When it does not play
 
 `problems.txt` names the record and says what is wrong. The usual lines:
 
 - `this machine has no CLAP plugin with the id ...`, or `no VST 3 plugin`: the id is wrong, or
-  the plugin is not installed here. The record stays as it is and the track is silent, while
-  everything else plays. Correct `plugin_id` and it plays at once, with no restart.
+  the plugin is not installed here. The record stays as it is, while everything else plays.
+  An instrument that is missing leaves its track silent; an effect that is missing lets the
+  sound through unchanged, so the rest of the chain still plays. Correct `plugin_id` and it
+  plays at once, with no restart.
 - `a vst3 plugin_id is the class id as thirty-two hex digits`: the record itself is refused.
   You wrote something else, perhaps a CLAP-style id or the plugin's name.
 - `the plugins of this machine are still being looked at`: nothing is wrong. The app looks for
   plugins on a thread of its own while it opens, so a project never waits for it. The track
   plays as soon as the scan reaches its plugin, which needs nothing of you. Read
   `problems.txt` again in a few seconds.
-- `... is not an instrument`: the plugin is an effect. It cannot be the `instrument` of a
-  track. Effect plugins are not built yet.
 - `the state of the plugin ... could not be read`: usually two records that name one
   `state_asset` for different plugins. Give each its own name.
 - `... offers the host no way to send the sustain pedal`: the notes play, the pedal does not.

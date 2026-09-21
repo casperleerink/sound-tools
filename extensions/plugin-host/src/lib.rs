@@ -1,4 +1,5 @@
-//! Plugin host: third-party audio plugins as tools of a project. CLAP instruments for now.
+//! Plugin host: third-party audio plugins as tools of a project, as the instrument of a track
+//! and as effects after it.
 //!
 //! One tool, `plugin`. Its record says which format, which plugin and where the plugin's own
 //! state is kept. A record on disk, usually `instrument.json` inside a track folder:
@@ -10,8 +11,9 @@
 //! }
 //! ```
 //!
-//! It has the ports of the note contract, an event input `notes` and a stereo output `audio`,
-//! so it fits the `instrument` child of a track like any other instrument.
+//! It has three ports of the note contract, an event input `notes`, a stereo input `audio` and
+//! a stereo output `audio`, so one record fits the `instrument` child of a track like any other
+//! instrument and an effect slot after it. Nothing here knows which slot it is in.
 //!
 //! `README.md` in this crate is the guide, and `agent-doc.md` is what an agent reads.
 

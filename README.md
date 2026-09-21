@@ -1,6 +1,6 @@
 # Sound Tools
 
-A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The first milestone is built. It has tracks, clips, notes, one synth and a window to edit them, and the agent is an external coding agent for now. The second milestone is under way: stereo tracks with gain, pan and mute, a metronome, MIDI recording, and CLAP and VST 3 instruments with their own windows.
+A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The first milestone is built. It has tracks, clips, notes, one synth and a window to edit them, and the agent is an external coding agent for now. The second milestone is under way: stereo tracks with gain, pan and mute, a metronome, MIDI recording, and CLAP and VST 3 plugins with their own windows, as the instrument of a track and as effects after it.
 
 ## Requirements
 
@@ -28,8 +28,9 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 7. Plug in a MIDI keyboard and play. It sounds through the instrument of the selected track, with or without playback. Press the red record button, or `r`, to record what you play onto that track from the playhead, and press it again to end the take. The take becomes a clip, with the sustain pedal, as one undo step, and the performance as you played it is kept under `assets/takes/`, which nothing ever changes.
 8. Click the name of a track on the left. Its panel opens below with the synth, and at the right end the mixer of the track: gain, pan and mute. Drag a knob up or down while it plays, and double click a knob to reset it.
 9. Click `Synth` at the top of that card to pick another instrument: the built-in synth, or any CLAP or VST 3 instrument this Mac has. The card gets `Open window`, which opens the plugin's own window beside this one. Change a sound there and it is saved with the piece. Picking an instrument is one undo step. The app looks for the plugins of this Mac on a thread of its own, so a project always opens at once; the picker says so while it is still looking, and a track whose plugin has not turned up yet is quiet for a moment and then plays.
-10. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
-11. Press cmd-q to quit. Run the same command again and the piece is back.
+10. Click **Add effect** at the end of that rack and pick an effect plugin. It lands after the instrument, and the track plays through it. Add another and it lands after the first. The small `x` on a card takes that effect off. Both are one undo step. To change the order, edit `effects` in the track's `instance.json`, which an agent can do for you; the rack follows at once.
+11. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
+12. Press cmd-q to quit. Run the same command again and the piece is back.
 
 Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 
@@ -49,6 +50,7 @@ The agent is any coding agent that can edit files. The app must be running on th
    - `Add a new track with a simple melody over bars 1 to 4`
    - `Make the bass sound darker`
    - `Turn the piano down a few dB and put the bass a little to the left`
+   - `Put the reverb before the delay on the piano track`
 4. The part shows up and plays while the agent still writes. One cmd-z in the app takes the whole request back.
 
 What the agent uses:
@@ -69,7 +71,7 @@ cargo run -p runtime -- --plugins
 - `--inspect` prints a summary and changes nothing.
 - `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float.
 - `--headless` plays the project live without a window and reads commands from stdin: `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status`, `quit`. It prints every change that arrives from the folder. Only one app can have a project open live. `--inspect` and `--render` work next to it.
-- `--plugins` prints the CLAP and VST 3 plugins of this Mac with their ids, which is what a track record needs when an agent writes one. In the app you pick one by name instead. Each is looked at in a child process, so one that crashes costs that one and is reported. It looks at every plugin again, whatever the app remembered, so it is also how a plugin that failed once is tried again.
+- `--plugins` prints the CLAP and VST 3 plugins of this Mac with their ids and whether each says it is an instrument, an effect or both, which is what a track record needs when an agent writes one. In the app you pick one by name instead. Each is looked at in a child process, so one that crashes costs that one and is reported. It looks at every plugin again, whatever the app remembered, so it is also how a plugin that failed once is tried again.
 
 A release build is `cargo build --release -p runtime`. The binary is `/private/tmp/sound-tools-timing/target/release/runtime`.
 

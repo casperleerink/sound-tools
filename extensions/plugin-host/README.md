@@ -1,8 +1,8 @@
 # plugin-host
 
 Third-party audio plugins as tools of a project. CLAP instruments since step 4a of the second
-milestone, VST 3 instruments since step 5a and their windows since 5b; effects come later. The
-decisions are in
+milestone, VST 3 instruments since step 5a, their windows since 5b, and effects since step 6.
+The decisions are in
 [ARCHITECTURE.md](../../ARCHITECTURE.md), "Hosting plugins". `agent-doc.md` is what an agent
 reads; this file is for whoever works on the host.
 
@@ -20,9 +20,22 @@ the plugin's own settings:
 }
 ```
 
-`format` is `clap` or `vst3`. It declares the ports of the note contract, `notes` in and
-`audio` out, so it fits the `instrument` child of a track like the built-in synth. Nothing in
-the arrangement knows about plugins and nothing here knows about tracks.
+`format` is `clap` or `vst3`. It declares three ports of the note contract, `notes` in, `audio`
+in and `audio` out, so one record fits the `instrument` child of a track like the built-in
+synth and an effect slot after it. Nothing in the arrangement knows about plugins and nothing
+here knows about tracks or slots: which ports a track wires is the track's business.
+
+So nothing here asks what a plugin says it is before it loads one. What a plugin declares is
+what a picker offers it for (`Plugins::instruments`, `Plugins::effects`) and nothing more:
+Spectral Freeze on the machine this was written on declares itself an instrument and is an
+effect, and a record written by hand may name any plugin in either place. A plugin with no
+audio input in an effect slot is given its input and drops it, so what reached it is replaced
+by what it plays.
+
+An instrument's audio input is connected to nothing and is silent, which is what every audio
+input of a plugin got before effects existed. A slot whose plugin is missing, or whose plugin
+failed, copies its input to its output: that is what keeps one missing effect from silencing a
+track, and for an instrument it is the silence it always was.
 
 `state_asset` is a name, not a path: the file is `assets/plugin-state/<name>.bin`, through the
 core's `AssetName`, so a record can never point outside the project folder.
@@ -34,7 +47,7 @@ core's `AssetName`, so a record can never point outside the project folder.
 | `lib.rs` | The record, the format, the tool, the behaviour and `new_state_asset`. |
 | `host.rs` | `Plugins`: the plugins this project has loaded, the saving rule, the problems and the windows. It knows no format. |
 | `backend.rs` | What the host needs of a plugin, whatever its format: `LoadedPlugin`, `PluginGui`, `Requests`. |
-| `processor.rs` | The engine processor around a plugin's audio side: the note contract in, one stereo port out. `Started` is the audio side of a backend. |
+| `processor.rs` | The engine processor around a plugin's audio side: the note contract and one stereo port in, one stereo port out. `Started` is the audio side of a backend. |
 | `scan.rs` | What this machine has, found in a child process per bundle, with the cache of this machine. |
 | `window.rs` | The plugin's own window: one window of the application per open plugin. |
 | `view.rs` | The card of a plugin in a rack, and what a rack calls one. |
@@ -382,8 +395,10 @@ that plugin may still exist; every host this was written against keeps them load
 
 ## What a composer picks
 
-`Plugins::instruments` is every instrument of this machine, of every format, from the scan, for
-a picker. `new_state_asset(assets, wanted)` gives a `state_asset` whose file no plugin has ever
+`Plugins::instruments` is every instrument of this machine and `Plugins::effects` every effect,
+of every format, from the scan, for the two pickers of a rack. A plugin decides which list it
+is in: CLAP's `instrument` and `audio-effect` features, VST 3's `Instrument` and `Fx`
+subcategories. A plugin that says both is in both. `new_state_asset(assets, wanted)` gives a `state_asset` whose file no plugin has ever
 written into: it is `Assets::create` and its numbering, the rule a raw take follows, so the file
 is made and never opened. A plugin that is picked can therefore never come up holding the sound
 an older one left behind, and undo brings the older one back as it sounded. The file is empty
@@ -403,7 +418,7 @@ agreement to host or to write plugins.
 
 ## What is not built
 
-Effects, AU, a plugin sandbox, latency compensation, parameter automation, a parameter view,
+AU, a plugin sandbox, latency compensation, parameter automation, a parameter view,
 presets and program lists, MIDI out of a plugin, more than the first event input and the first
 stereo output, the transport a plugin can read (`ProcessContext` is null, so a plugin that syncs
 to the tempo runs free), answering `kParamValuesChanged` by reading every parameter of the
@@ -428,10 +443,10 @@ Splice INSTRUMENT also sends `kParamTitlesChanged`, `kParamIDMappingChanged` and
 which is a wrong line for a composer to read and is listed for later.
 
 A plugin is an instrument when it says so: the CLAP feature `instrument`, or the VST 3
-subcategory `Instrument`. Nothing checks whether that is true: a plugin that says so and is
-really an effect loads, gets notes and is silent. Audio input ports are no sign of one: Six
-Sines is an instrument with a stereo input for audio-rate modulation. The host gives every
-audio input of a plugin silence.
+subcategory `Instrument`, and an effect by `audio-effect` or `Fx`. Nothing checks whether
+either is true, and nothing can. Audio input ports are no sign of an effect: Six Sines is an
+instrument with a stereo input for audio-rate modulation, and it is offered as an instrument
+because that is what it says.
 
 ## Checks
 
@@ -441,5 +456,12 @@ RTSAN_ENABLE=1 cargo nextest run -p plugin-host
 ```
 
 The tests build `tooling/test-clap-plugin` and `tooling/test-vst3-plugin` themselves and copy
-them into a folder of their own. The two are the same instrument in the two formats, from
+them into a folder of their own. The two are the same plugin in the two formats, from
 `tooling/test-plugin-support`, so a test reads either render the same way.
+
+That one plugin is an instrument and an effect, and says both, because a second plugin in each
+bundle would be a second descriptor, a second class id and a second copy of the window and
+state code for nothing a test needs. In an effect slot it adds what it is played times a half
+plus the offset of its saved state, so two of them chained say by their samples which came
+first; and it learns that offset from an input of 0.9 or more, which is how a test makes an
+effect change its own state, as the pedal does for the instrument half.

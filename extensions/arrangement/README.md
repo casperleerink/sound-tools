@@ -9,10 +9,10 @@ Enable it in `project.json` under `extensions` as `"arrangement"`.
 | Tool | State | Form | Behaviour |
 | --- | --- | --- | --- |
 | `arrangement` | `ArrangementState`, no fields yet | `<name>/instance.json` | none. It owns the tracks and gives the summary. |
-| `arrangement.track` | `TrackState`: `name`, `colour`, `order`, `gain_db`, `pan`, `mute` | `<name>/instance.json` | one `Sequencer` and one `Mixer`: sequencer, child `instrument`, mixer, main output |
+| `arrangement.track` | `TrackState`: `name`, `colour`, `order`, `gain_db`, `pan`, `mute`, `effects` | `<name>/instance.json` | one `Sequencer` and one `Mixer`: sequencer, child `instrument`, the effects in order, mixer, main output |
 | `arrangement.clip` | `sound_notes::Clip`: `start`, `length`, `notes` | `<name>.json` | none, plain data for its track |
 
-`Clip` lives in the contract crate `crates/notes`, because its saved form is what other extensions read. This crate does not depend on any instrument. A track finds its instrument by the child name `instrument` (`INSTRUMENT`) and the port names `NOTES_INPUT` and `AUDIO_OUTPUT`, so any tool with those ports fits. A track without that child loads and is silent.
+`Clip` lives in the contract crate `crates/notes`, because its saved form is what other extensions read. This crate does not depend on any instrument and on no effect. A track finds its instrument by the child name `instrument` (`INSTRUMENT`) and the port names `NOTES_INPUT` and `AUDIO_OUTPUT`, and each of its effects by the name the record lists and the port names `AUDIO_INPUT` and `AUDIO_OUTPUT`, so any tool with those ports fits either place. A track without an instrument loads and is silent.
 
 Each tool says where it lives (`State::PLACE`): the arrangement at the top of `state/`, a track in an arrangement, a clip in a track. A record anywhere else is not loaded and the problem says where it belongs, so an agent that forgot the track folder gets a signal and not silence.
 
@@ -57,9 +57,43 @@ The off comes from the sequencer, not from the interface, `PREVIEW_SECONDS` (0.3
 - An off releases every note of its pitch. So a preview sends no off while a note of the timeline holds its pitch: the off of that note ends both. The other way round, a note of the timeline that ends cuts a preview of its pitch short.
 - An off that does not fit in the event buffer waits for the next block. An on that does not fit is dropped and counted.
 
+## The effects of a track
+
+The chain of a track is its instrument, then its effects in the order `TrackState::effects`
+names them, then its mixer, then the main output. One place decides the order, so a reorder is
+one record and one undo step, and the chain a file says is the chain that plays.
+
+- An effect is a child record of the track with an `audio` input and an `audio` output, under
+  any name but `instrument`. The list holds the child name, so a name in the list is a file
+  next to the track record. Two lines make one effect, and each half without the other is a
+  reported problem that says what to write.
+- What the record refuses, because there would be no order to read: a name that is not a child
+  name, a name twice, and `instrument`. The track then keeps what it had, as for any record
+  that does not load.
+- A record that leaves `effects` out has no effects and is written back without it, so a track
+  of before this existed loads unchanged and gives the same bytes.
+- A listed name whose record is missing, or whose tool has no audio ports, is left out of the
+  chain and reported: the sound goes through the rest, so one missing plugin never silences a
+  track. A child that looks like an effect and is in no list is reported too, because nothing
+  goes through it.
+- `device_slots(project, track)` gives the slots of a track in rack order, which is what the
+  track panel draws. `add_effect(project, changes, track, name)` gives a free slot id and
+  appends its name to the record; the caller puts a record in that id in the same group, as
+  `add_track` takes an instrument, so adding an effect is one undo step. `remove_effect` takes
+  the record and the name out together, so undo brings it back where it was.
+- `add_effect` reads the record of the project and not the group being built, like `free_id`.
+  Two effects in one group need two groups.
+
+The tail of an effect. An effect is a processor like any other: the engine runs it every block,
+whether the project plays or not, so a delay or a reverb rings out after a stop. Taking an
+effect off the track takes its processor out of the graph, so its tail goes with it at once,
+which is the hard switch every routing edit is. A missing plugin is the same: the slot passes
+its input through and what the plugin held is gone.
+
 ## The mixer
 
-One `Mixer` processor per track, after the instrument and before the main output. Audio is stereo everywhere (`sound_core::CHANNELS`), so the mixer is two gains, one per channel.
+One `Mixer` processor per track, after the instrument and every effect, and before the main
+output. Audio is stereo everywhere (`sound_core::CHANNELS`), so the mixer is two gains, one per channel.
 
 - `channel_gains(track)` turns the record into those two gains on the control thread. The audio thread works out no pan law. The behaviour sends them on every run, which costs no compile.
 - The pan law is equal power, scaled so that the middle is exactly 1 in both channels. A centred track at 0 dB is untouched, sample for sample, so a project from before the mixer sounds the same. Hard left or right, the channel that plays it is √2, 3 dB above the middle, and the other is exactly 0. The power of a track is the same wherever it is panned.
@@ -101,15 +135,17 @@ Edit notes with `project.update(&mut edit, &clip, |clip| ...)` on the `Clip` its
 
 A track is not a synth. It owns clips and one child named `instrument`, and any tool with the ports of the note contract fits that slot. So the panel is about the track, and what it shows of the instrument comes from the extension of that instrument.
 
-- The panel is a rack: device cards from left to right, in the order the sound goes through them. Today a track has one device, the instrument. `track_panel::device_slots` gives the ids of the slots of a track, and today that is `<track>/instrument` alone.
+- The panel is a rack: device cards from left to right, in the order the sound goes through them. The instrument of the track first, then its effects. `device_slots(project, track)` gives the ids of those slots, from the track record.
 - For each slot the panel asks the view registry for the view of whatever instance is there: `Views::view_of`. It names no instrument type, and this crate still depends on no instrument. The view goes into a plain card. When the slot is empty, or its tool has no registered view, the card says one quiet line instead: `This track is silent.` or `This tool has no view.`
 - Every card begins with its picker, which is also its title: a quiet dropdown menu whose label is what is in the slot and whose items are what else could go there. Both come from the device registry of the UI SDK (`Devices::label_of`, `Devices::offered`), which whoever makes the window fills, so this crate still knows no instrument and no plugin. The offers are read once per card and not per frame, because a source of them may have to look at the machine. Picking one replaces the whole record of the slot in one commit, named after what was picked (`Choose Six Sines`), so undo brings back what was there. The menu marks what is already in the slot, and picking that does nothing: a fresh record would throw its sound away.
 - The card follows the slot live. When an event names a slot and its tool is not the one the card was made for (another `instrument.json` from outside, a delete, an undo), the panel makes the card again. While the tool stays the same, the device view follows its own record.
+- The rack follows the track record. A change of the track record, or a child of the track coming or going, makes the panel read the slots again; the rebuild keeps the card of every slot that stays, by its slot id, so a knob drag in one card goes on while another is added, removed or moved next to it. So a reorder written from outside shows in the rack, with no card made again.
+- At the end of the rack is a control that adds an effect: the same picker pattern, with what declares itself an effect in it. Picking one is one undo step named after it (`Add Warmth`), and an effect card has a quiet control that takes it off the track, also one step (`Remove Warmth`). Reordering in the window is not built: an agent or a file edit reorders.
 - The mixer of the track is a fixed section at the right end of the row, after the rack and outside what scrolls: a gain knob, a pan knob and a mute button. It is the one thing the panel edits itself, because those three values are in the track record. A knob drag is one gesture and one undo step ("Change gain", "Change pan"), and the button is one commit ("Mute track", "Unmute track"). The panel ends an open drag when it shows another track, when its track is deleted and when it is released, as the note editor does.
 - Apart from that section the panel edits nothing and keeps no state of the project. The other edits are those of the device views, through the session. A knob drag that is open when the panel closes is finished by the device view when it is released.
 - The header is that of the note editor: accent dot, track name, close control. The panel has a focus handle that is no tab stop. It only tells `ArrangementView` whether the focus is inside when the panel closes, so that the focus goes back to the timeline. Tab reaches the close control, then the picker of the first card and the controls of its device, and so on.
 
-How the rack grows. The instrument slot has a fixed name, so its card is made once and made again only when the tool in it changes. Effects will come and go, so they need more than one more id: `device_slots` then reads the effect children from the project, in rack order, and the panel makes its list again on `Created` and `Deleted` inside the track. That rebuild must keep the device of every slot that stays, by its slot id, so that a view with an open knob drag is not dropped for a change next to it. The rendering needs no change, because a card is already made per device, with its own picker, and the rack already scrolls sideways when the cards are wider than the window. Effects are not built, and there are no empty places for them: no sends and no reordering.
+Not in the rack: sends, buses, reordering with the mouse, bypass, and a wet and dry amount.
 
 ### Editing rules
 
@@ -139,6 +175,7 @@ The arrangement registers a summary (`ToolRegistration::summary`), which `runtim
 ```sh
 cargo nextest run -p arrangement -p runtime
 cargo nextest run -p arrangement --test arrangement mixer                         # gain, pan and mute with numbers
+cargo nextest run -p arrangement --test arrangement effects                       # the chain and its order, with numbers
 RTSAN_ENABLE=1 cargo nextest run -p arrangement                                   # with the realtime sanitizer
 cargo nextest run -p runtime --test window                                       # the views with a simulated mouse and keys
 cargo nextest run -p runtime --test window track_panel                           # the track panel and the synth view in it
