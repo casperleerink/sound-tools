@@ -93,8 +93,11 @@ registry, of the same shape as `Views`:
 
 ```rust
 // Filled by whoever makes the window, which is the one place that knows every extension.
-devices.name::<SynthState>(|_| "Synth".into());          // what a rack calls one
-devices.instruments(|| vec![DeviceOffer::new(           // what a composer can pick
+devices.describe::<SynthState>(|_| DeviceLabel {         // what a rack says about one
+    key: SynthState::TOOL.into(),
+    name: "Synth".into(),
+});
+devices.instruments(|| vec![DeviceOffer::new(            // what a composer can pick
     SynthState::TOOL,
     "Synth",
     |_project, slot, changes| { changes.create(slot.clone(), SynthState::default()); Ok(()) },
@@ -102,11 +105,16 @@ devices.instruments(|| vec![DeviceOffer::new(           // what a composer can p
 
 // In the view:
 let offers = Devices::offered(cx);                       // when the picker is made, not per frame
-let name = Devices::name_of(&session, &slot, cx);        // `None`: no name was registered
+let label = Devices::label_of(&session, &slot, cx);      // `None`: the tool registered nothing
 // When the composer picks one, as one undo step:
 offer.write(session.project(), &slot, &mut changes)?;
 project.commit(&format!("Choose {}", offer.name), changes)
 ```
+
+`DeviceLabel::key` is the `DeviceOffer::key` of the offer that would write the record that is
+there. Both sides build it the same way, so a picker marks what is in the slot and does
+nothing when it is picked again. Writing a fresh record over the same device would throw its
+sound away, and for a plugin it would make an empty state file.
 
 A source of offers is asked every time a picker is filled, not while the window opens, so a
 source that has to look at the machine pays for it then. The plugin host's source scans for

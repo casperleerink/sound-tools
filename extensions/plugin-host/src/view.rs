@@ -12,7 +12,7 @@
 use gpui::{Context, Entity, FocusHandle, SharedString, Window, div, prelude::*, px};
 use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::{ActiveTheme, Devices, Session, Views};
+use sound_ui::{ActiveTheme, DeviceLabel, Devices, Session, Views};
 
 use crate::{PluginRecord, Plugins, WeakPlugins};
 
@@ -25,13 +25,16 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
     views.register(move |session, plugin, window, cx| {
         PluginView::new(for_view.clone(), session, plugin, window, cx)
     });
-    devices.name::<PluginRecord>(move |record| match plugins.upgrade() {
+    devices.describe::<PluginRecord>(move |record| {
         // The name its maker gave it, or the id, which is all that is left of a plugin this
         // machine does not have.
-        Some(plugins) => plugins
-            .installed_name(&record.plugin_id)
-            .map_or_else(|| record.plugin_id.clone().into(), SharedString::from),
-        None => record.plugin_id.clone().into(),
+        let installed = plugins
+            .upgrade()
+            .and_then(|plugins| plugins.installed_name(&record.plugin_id));
+        DeviceLabel {
+            key: PluginRecord::offer_key(record.format, &record.plugin_id).into(),
+            name: installed.map_or_else(|| record.plugin_id.clone().into(), SharedString::from),
+        }
     });
 }
 
@@ -128,7 +131,14 @@ impl Render for PluginView {
         }
 
         let id = self.plugin.id();
-        let (has_window, is_open) = (plugins.has_window(id), plugins.window_is_open(id));
+        // `None`: this machine has the plugin but it did not load, which is reported already.
+        let Some(has_window) = plugins.window_offered(id) else {
+            return div().child(line(
+                "This plugin did not load, so there is nothing to open. See problems.txt."
+                    .to_string(),
+            ));
+        };
+        let is_open = plugins.window_is_open(id);
         let label = if is_open {
             "Close window"
         } else {

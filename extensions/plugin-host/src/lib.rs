@@ -153,6 +153,13 @@ pub struct PluginRecord {
 }
 
 impl PluginRecord {
+    /// How an offer of this plugin is told from every other in a picker: the format and the
+    /// plugin's own id. Whoever offers plugins and whoever names what is in a slot build it
+    /// the same way, so a picker can mark the plugin that is already there.
+    pub fn offer_key(format: PluginFormat, plugin_id: &str) -> String {
+        format!("{}:{plugin_id}", format.name())
+    }
+
     pub fn new(format: PluginFormat, plugin_id: &str, state_asset: &str) -> Option<Self> {
         Some(Self {
             format,

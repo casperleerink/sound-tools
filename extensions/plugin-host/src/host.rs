@@ -195,13 +195,15 @@ struct Hosted {
     instance: PluginInstance<SoundToolsHost>,
     /// When its state was last written, for the once-a-second rule.
     last_saved: Option<Instant>,
+    /// Whether the plugin has a window at all, asked once while it loaded. A card of a rack
+    /// reads it on every frame it draws, and a frame must call into no plugin.
+    has_window: bool,
     /// The plugin's own window, while it is open.
     window: PluginWindow,
 }
 
 #[derive(Default)]
 struct Table {
-    scanned: Option<Scan>,
     loaded: BTreeMap<InstanceId, Hosted>,
     retired: Vec<Hosted>,
     /// Bundles that failed to scan, as one line each. The runtime shows them once.
@@ -216,6 +218,9 @@ struct Table {
 struct Inner {
     search_paths: Vec<std::path::PathBuf>,
     scanner: ScanCommand,
+    /// What this machine has, scanned once per session. Apart from the table, so that reading
+    /// a plugin's name never waits on the table, which a plugin's own call may have borrowed.
+    scanned: RefCell<Option<Scan>>,
     /// A read-only project (`--inspect`, `--render`) never writes plugin state.
     writes_state: bool,
     /// The `assets/` folder of the project, from the first plugin that loaded. Kept so that
@@ -224,10 +229,12 @@ struct Inner {
     table: RefCell<Table>,
 }
 
-/// The last chance to close a plugin's window and to save its state. On macOS the application
-/// ends without unwinding: GPUI drops the window and its views, and with them the session and
-/// the project, and then the process is gone. Dropping the project drops the registry, the
-/// behaviour and this host, so that is the moment. Whoever polls the host must therefore hold
+/// The last chance to free what a plugin holds for its window and to save its state. On macOS
+/// the application ends without unwinding: GPUI drops the main window and its views, and with
+/// them the session and the project, and then the process is gone. Dropping the project drops
+/// the registry, the behaviour and this host, so that is the moment. A plugin's window is
+/// still standing then, empty, and goes with the application; the runtime ends the application
+/// with the main window for exactly that reason. Whoever polls the host must therefore hold
 /// it weakly ([`Plugins::downgrade`]), else nothing is saved. [`Plugins::close`] does the same
 /// with the project still in hand, and leaves nothing for this.
 impl Drop for Inner {
@@ -291,33 +298,36 @@ impl Plugins {
         Self(Rc::new(Inner {
             search_paths,
             scanner,
+            scanned: RefCell::new(None),
             writes_state,
             assets: RefCell::new(None),
             table: RefCell::new(Table::default()),
         }))
     }
 
-    /// Every plugin this machine has, scanned once per session. The first call pays for it.
+    /// Every plugin this machine has, scanned once per session. The first call pays for it,
+    /// and it is a blocking one: a child process per bundle. See README.md, "Scanning".
     pub fn scan(&self) -> Scan {
         self.ensure_scan();
-        self.0.table.borrow().scanned.clone().unwrap_or_default()
+        self.0.scanned.borrow().clone().unwrap_or_default()
     }
 
-    /// Scans if this session has not yet, and borrows nothing afterwards.
+    /// Scans if this session has not yet.
     fn ensure_scan(&self) {
-        let mut table = self.0.table.borrow_mut();
-        if table.scanned.is_some() {
+        if self.0.scanned.borrow().is_some() {
             return;
         }
         let scanned = scan(&self.0.search_paths, &self.0.scanner);
+        let mut notices = Vec::new();
         for failure in &scanned.failures {
-            table.notices.push(format!(
+            notices.push(format!(
                 "{} could not be scanned: {}",
                 failure.path.display(),
                 failure.message
             ));
         }
-        table.scanned = Some(scanned);
+        *self.0.scanned.borrow_mut() = Some(scanned);
+        self.0.table.borrow_mut().notices.extend(notices);
     }
 
     /// Lines about the scan that a person should see once, such as a bundle that crashed.
@@ -334,12 +344,14 @@ impl Plugins {
     }
 
     /// The name the maker gave the plugin with this id, when this machine has it. `None` says
-    /// the plugin is missing, which is what the card of a record shows. A card asks on every
-    /// frame it draws, so this copies one name and not the whole scan.
+    /// the plugin is missing, which is what the card of a record shows.
+    ///
+    /// A card asks on every frame it draws, so this scans nothing, borrows no table and copies
+    /// one name. There is always a scan by then: loading a plugin is what needs one, and a card
+    /// only exists for a record that was loaded or tried.
     pub fn installed_name(&self, plugin_id: &str) -> Option<String> {
-        self.ensure_scan();
-        let table = self.0.table.borrow();
-        let found = table.scanned.as_ref()?.find(plugin_id)?;
+        let scanned = self.0.scanned.borrow();
+        let found = scanned.as_ref()?.find(plugin_id)?;
         Some(found.name.clone())
     }
 
@@ -440,6 +452,7 @@ impl Plugins {
             }
         }
 
+        let has_window = PluginWindow::is_offered(&mut instance);
         let ports = read_ports(&mut instance);
         let configuration = PluginAudioConfiguration {
             sample_rate: f64::from(sample_rate),
@@ -464,23 +477,31 @@ impl Plugins {
                 asset: asset.clone(),
                 instance,
                 last_saved: None,
+                has_window,
                 window: PluginWindow::default(),
             },
         );
         Ok((loaded, notes))
     }
 
-    /// Whether the plugin of this record has a window of its own to open.
-    pub fn has_window(&self, id: &InstanceId) -> bool {
-        let mut table = self.0.table.borrow_mut();
-        table
-            .loaded
-            .get_mut(id)
-            .is_some_and(|hosted| PluginWindow::is_offered(&mut hosted.instance))
+    /// Whether the plugin of this record has a window of its own to open. `None` says the
+    /// record has no plugin loaded at all, which is a plugin that did not load and is already
+    /// reported; its card says that instead of offering a window.
+    ///
+    /// A card asks on every frame it draws. The answer is the one the plugin gave while it
+    /// loaded, so this calls into no plugin, and it gives up rather than wait for a table that
+    /// a plugin's own call has borrowed.
+    pub fn window_offered(&self, id: &InstanceId) -> Option<bool> {
+        let table = self.0.table.try_borrow().ok()?;
+        table.loaded.get(id).map(|hosted| hosted.has_window)
     }
 
+    /// Whether the window of this record's plugin is open. Read while drawing a card, so it
+    /// gives up on a table that a plugin's own call has borrowed, as [`Self::window_offered`].
     pub fn window_is_open(&self, id: &InstanceId) -> bool {
-        let table = self.0.table.borrow();
+        let Ok(table) = self.0.table.try_borrow() else {
+            return false;
+        };
         table
             .loaded
             .get(id)
@@ -556,19 +577,21 @@ impl Plugins {
 
     /// Closes the plugin's own window. Its sound and its state are untouched.
     pub fn close_window(&self, id: &InstanceId, cx: &mut gpui::App) {
-        let finished = {
-            let mut table = self.0.table.borrow_mut();
-            let Some(hosted) = table.loaded.get_mut(id) else {
-                return;
-            };
-            let finished = hosted.window.give_up(&mut hosted.instance);
-            table.window_changed |= finished.is_some();
-            finished
-        };
         // Outside the borrow: taking a window down runs GPUI.
-        if let Some(handle) = finished {
+        if let Some(handle) = self.give_up_window(id) {
             crate::window::remove(handle, cx);
         }
+    }
+
+    /// Frees whatever the plugin of `id` holds for a window and gives back the window it was
+    /// in, for the caller to take down.
+    #[must_use]
+    fn give_up_window(&self, id: &InstanceId) -> Option<WindowHandle<PluginFrame>> {
+        let mut table = self.0.table.borrow_mut();
+        let hosted = table.loaded.get_mut(id)?;
+        let finished = hosted.window.give_up(&mut hosted.instance);
+        table.window_changed = true;
+        finished
     }
 
     /// The window of a plugin closed itself, with its own control. Its view is going, so the
@@ -587,8 +610,23 @@ impl Plugins {
     /// calls it after [`Self::poll`]; the moments that find such a plugin, a record that was
     /// deleted or an undo, have no application at hand.
     pub fn settle_windows(&self, cx: &mut gpui::App) {
-        // Everything is read out first: running GPUI while the table is borrowed would let a
-        // card that is drawn ask this host about its plugin.
+        // A window can go without telling this host: GPUI's close callback is best effort, so
+        // a window that answers nothing is one whose view the plugin must let go of.
+        let open: Vec<(InstanceId, WindowHandle<PluginFrame>)> = {
+            let table = self.0.table.borrow();
+            table
+                .loaded
+                .iter()
+                .filter_map(|(id, hosted)| Some((id.clone(), hosted.window.handle()?)))
+                .collect()
+        };
+        for (id, handle) in open {
+            if crate::window::is_gone(handle, cx) {
+                let _window = self.give_up_window(&id);
+            }
+        }
+        // Everything else is read out first: running GPUI while the table is borrowed would
+        // let a card that is drawn ask this host about its plugin.
         let (finished, resize) = {
             let mut table = self.0.table.borrow_mut();
             let Table {

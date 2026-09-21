@@ -9,10 +9,10 @@
 //! unit, the travel of the knob and the name of the undo step.
 
 use gpui::{App, Context, Entity, SharedString, Window, div, prelude::*, px};
-use sound_core::{Changes, Instance, ProjectEvent};
+use sound_core::{Changes, Instance, ProjectEvent, State};
 use sound_ui::components::knob::{Knob, KnobChange, KnobRange, KnobScale, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ActiveTheme, Devices, Session, Views};
+use sound_ui::{ActiveTheme, DeviceLabel, Devices, Session, Views};
 
 use crate::{
     ATTACK, CUTOFF, DECAY, GAIN, Parameter, RELEASE, RESONANCE, SUSTAIN, SynthState, Waveform,
@@ -24,7 +24,10 @@ pub const NAME: &str = "Synth";
 /// Registers the view of the `instrument.synth` tool and what a rack calls one.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register(SynthView::new);
-    devices.name::<SynthState>(|_| NAME.into());
+    devices.describe::<SynthState>(|_| DeviceLabel {
+        key: SynthState::TOOL.into(),
+        name: NAME.into(),
+    });
 }
 
 #[derive(Clone, Copy)]

@@ -29,7 +29,7 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked,
 };
 use sound_ui::components::knob::{Knob, KnobChange, KnobRange, short};
-use sound_ui::{ActiveTheme, DeviceOffer, Devices, Session, Views};
+use sound_ui::{ActiveTheme, DeviceLabel, DeviceOffer, Devices, Session, Views};
 
 use super::layout::{HEADER_WIDTH, RULER_HEIGHT};
 use super::paint::accent;
@@ -136,12 +136,17 @@ impl Device {
                     }
                 })),
         )];
-        let label = device_name(session, &slot, cx);
+        let label = device_label(session, &slot, cx);
         let picker = cx.new(|cx| {
-            DropdownMenu::new(label, entries, cx)
+            let mut picker = DropdownMenu::new(label.name, entries, cx)
                 .debug_name("instrument-picker")
                 .ghost(true)
-                .width(280.)
+                .width(280.);
+            // The offer that is already there is marked, so the menu says what a card holds.
+            if let Some(key) = label.key {
+                picker = picker.selected(key);
+            }
+            picker
         });
         cx.subscribe(&picker, {
             let slot = slot.clone();
@@ -160,16 +165,26 @@ impl Device {
     }
 }
 
-/// What the picker of a slot says: the name the device registry gives what is there, else the
-/// tool name, else that the slot is empty.
-fn device_name(session: &Entity<Session>, slot: &InstanceId, cx: &App) -> SharedString {
-    if let Some(name) = Devices::name_of(session, slot, cx) {
-        return name;
+/// What the picker of a slot says and which offer it marks. The device registry answers for a
+/// tool it knows; else the name is the tool's own, or that the slot is empty, and no offer is
+/// marked.
+struct SlotLabel {
+    name: SharedString,
+    key: Option<SharedString>,
+}
+
+fn device_label(session: &Entity<Session>, slot: &InstanceId, cx: &App) -> SlotLabel {
+    if let Some(DeviceLabel { key, name }) = Devices::label_of(session, slot, cx) {
+        return SlotLabel {
+            name,
+            key: Some(key),
+        };
     }
-    match session.read(cx).project().tool_of(slot) {
+    let name = match session.read(cx).project().tool_of(slot) {
         Some(tool) => tool.into(),
-        None => EMPTY_SLOT.into(),
-    }
+        None => SharedString::from(EMPTY_SLOT),
+    };
+    SlotLabel { name, key: None }
 }
 
 pub struct TrackPanel {
@@ -222,9 +237,14 @@ impl TrackPanel {
             }
             // The tool stayed but its record changed, and a plugin record carries the name of
             // the card: another plugin id, from a file or an undo, renames it.
-            let name = device_name(&session, id, cx);
+            let label = device_label(&session, id, cx);
             let picker = panel.devices[index].picker.clone();
-            picker.update(cx, |picker, cx| picker.set_label(name, cx));
+            picker.update(cx, |picker, cx| {
+                picker.set_label(label.name, cx);
+                if let Some(key) = label.key {
+                    picker.set_selected(key, cx);
+                }
+            });
         })
         .detach();
         // The net under every other way to go: undo and redo wait for an open gesture.
@@ -315,6 +335,11 @@ impl TrackPanel {
     /// record, so undo brings the device that was there back as it was, and a plugin as it
     /// sounded: the host saves one on its way out.
     fn choose(&mut self, slot: &InstanceId, key: &SharedString, cx: &mut Context<Self>) {
+        // What is there already: picking it again would write a fresh record over it, which
+        // for a plugin means a new and empty state file.
+        if device_label(&self.session, slot, cx).key.as_ref() == Some(key) {
+            return;
+        }
         self.end_drag(cx);
         let found = self
             .devices

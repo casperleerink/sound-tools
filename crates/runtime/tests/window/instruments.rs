@@ -155,27 +155,57 @@ fn picking_the_synth_again_after_a_plugin_brings_its_controls_back(cx: &mut Test
     opened.click(knob);
     opened.keys("up");
     assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
-    // A second plugin on another track gets a state file of its own.
+    // The plugin on another track, and picking it again there: the second pick changes
+    // nothing, so the plugin keeps the state file it has and the composer keeps their sound.
     opened.edit(|project| {
         let arrangement = runtime::main_arrangement(project).unwrap();
         runtime::add_track(project, &arrangement)
     });
+    let second_track = "state/arrangement/track-2/instrument.json";
     let header = opened.track_header(1);
     opened.click(header);
     pick(&mut opened, PLUGIN_ITEM);
-    let second =
-        std::fs::read_to_string(opened.path("state/arrangement/track-2/instrument.json")).unwrap();
+    let written = std::fs::read_to_string(opened.path(second_track)).unwrap();
     assert!(
-        second.contains(r#""state_asset": "sound-tools-test-tone""#),
-        "{second}"
+        written.contains(r#""state_asset": "sound-tools-test-tone""#),
+        "{written}"
     );
+    let label = opened.undo_label();
     pick(&mut opened, PLUGIN_ITEM);
-    let third =
-        std::fs::read_to_string(opened.path("state/arrangement/track-2/instrument.json")).unwrap();
-    assert!(
-        third.contains(r#""state_asset": "sound-tools-test-tone-2""#),
-        "{third}"
+    assert_eq!(
+        std::fs::read_to_string(opened.path(second_track)).unwrap(),
+        written
     );
+    assert_eq!(opened.undo_label(), label);
+
+    // The same plugin on the first track as well: the name of the second one is taken.
+    let header = opened.track_header(0);
+    opened.click(header);
+    pick(&mut opened, PLUGIN_ITEM);
+    let first = slot_file(&mut opened).unwrap();
+    assert!(
+        first.contains(r#""state_asset": "sound-tools-test-tone-2""#),
+        "{first}"
+    );
+}
+
+#[gpui::test]
+fn picking_what_is_already_there_changes_nothing(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let knob = opened.control("knob-cutoff_hz");
+    opened.click(knob);
+    opened.keys("up");
+    let (sound, label) = (slot_file(&mut opened), opened.undo_label());
+    assert_eq!(label.as_deref(), Some("Change cutoff"));
+
+    // The menu marks what is in the slot, and picking it writes nothing: a fresh record would
+    // throw the sound away, and for a plugin it would make an empty state file.
+    open_picker(&mut opened);
+    let row = opened.control(SYNTH_ITEM);
+    opened.click(row);
+    assert_eq!(slot_file(&mut opened), sound);
+    assert_eq!(opened.undo_label(), label);
+    assert_eq!(card_names(&mut opened), ["Synth"]);
 }
 
 #[gpui::test]

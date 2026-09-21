@@ -70,8 +70,14 @@ pub(crate) enum Prepared {
 }
 
 /// The plugin's window, from the host's side.
+///
+/// `created` says the plugin holds resources for a window and `open` says which window they
+/// are in. They are apart because the plugin is asked first and the window is made after, so
+/// there is a moment with one and not the other, and an attempt that fails there must still
+/// free what the plugin holds.
 #[derive(Default)]
 pub(crate) struct PluginWindow {
+    created: bool,
     open: Option<WindowHandle<PluginFrame>>,
     /// A size the plugin asked for, until whoever polls gives the window it.
     wanted_size: Option<GuiSize>,
@@ -97,7 +103,9 @@ impl PluginWindow {
     }
 
     /// Whether this plugin has a window at all. A plugin without one is ordinary: it has no
-    /// interface of its own, and its card says so instead of offering to open one.
+    /// interface of its own, and its card says so instead of offering to open one. The host
+    /// asks while the plugin loads and keeps the answer, so that drawing a card calls into no
+    /// plugin; [`Self::prepare`] asks again as the negotiation CLAP puts before `create`.
     pub fn is_offered(instance: &mut PluginInstance<SoundToolsHost>) -> bool {
         let Some(gui) = gui_of(instance) else {
             return false;
@@ -126,15 +134,20 @@ impl PluginWindow {
         };
         let gui = gui_of(instance).ok_or_else(no_window)?;
         let configuration = configuration().ok_or_else(no_window)?;
-        if !gui.is_api_supported(&instance.plugin_handle(), configuration) {
-            return Err(no_window());
+        if !self.created {
+            if !gui.is_api_supported(&instance.plugin_handle(), configuration) {
+                return Err(no_window());
+            }
+            gui.create(&instance.plugin_handle(), configuration)
+                .map_err(|error: GuiError| PluginProblem::WindowDidNotOpen {
+                    plugin_id: plugin_id.to_string(),
+                    message: error.to_string(),
+                })?;
+            // From here the plugin holds resources for a window, and `give_up` frees them.
+            // `create` is never called twice, which CLAP forbids: an attempt whose window did
+            // not open leaves `created` set and comes back here.
+            self.created = true;
         }
-        gui.create(&instance.plugin_handle(), configuration)
-            .map_err(|error: GuiError| PluginProblem::WindowDidNotOpen {
-                plugin_id: plugin_id.to_string(),
-                message: error.to_string(),
-            })?;
-        // From here the plugin holds resources for a window, so every way out frees them.
         Ok(Prepared::Wanted(
             gui.get_size(&instance.plugin_handle())
                 .unwrap_or(DEFAULT_SIZE),
@@ -156,6 +169,7 @@ impl PluginWindow {
             message: error.to_string(),
         };
         let Some(gui) = gui_of(instance) else {
+            self.created = false;
             self.open = None;
             return Err((
                 PluginProblem::NoWindow {
@@ -168,9 +182,10 @@ impl PluginWindow {
         // which is what a test has. The plugin is then shown with nothing to draw in, so the
         // rest of its life can be checked without a display. See `tests/plugin_host/window.rs`.
         let attached = match view {
-            // SAFETY: the view belongs to the window that was just opened and lives as long as
-            // it does. A window is taken down only by `close` or `give_up`, or by its own
-            // close control, and every one of them frees the plugin's resources for it first.
+            // SAFETY: the view belongs to the window that was just opened. Every way that
+            // window can go frees the plugin's resources for it first: `give_up`, the window's
+            // own close control, and the check in `Plugins::settle_windows` for a window that
+            // went without saying so. The application ends before a window it still has.
             Some(view) => unsafe {
                 let parent = clack_extensions::gui::Window::from_cocoa_nsview(view.as_ptr());
                 gui.set_parent(&instance.plugin_handle(), parent)
@@ -189,20 +204,34 @@ impl PluginWindow {
         }
     }
 
-    /// Frees the plugin's view and gives back the window it was in, for the caller to take
-    /// down once nothing is borrowed. Nothing of the plugin's sound or state is touched: a
-    /// plugin goes on playing with no window.
+    /// Frees whatever the plugin holds for a window and gives back the window it was in, for
+    /// the caller to take down once nothing is borrowed. `None` says there is no window to
+    /// take down, which includes an attempt whose window never opened. Nothing of the plugin's
+    /// sound or state is touched: a plugin goes on playing with no window.
     #[must_use]
     pub fn give_up(
         &mut self,
         instance: &mut PluginInstance<SoundToolsHost>,
     ) -> Option<WindowHandle<PluginFrame>> {
-        let handle = self.open.take()?;
-        if let Some(gui) = gui_of(instance) {
+        self.wanted_size = None;
+        if std::mem::take(&mut self.created)
+            && let Some(gui) = gui_of(instance)
+        {
             gui.destroy(&instance.plugin_handle());
         }
-        Some(handle)
+        self.open.take()
     }
+
+    /// The window this plugin is in, if any.
+    pub fn handle(&self) -> Option<WindowHandle<PluginFrame>> {
+        self.open
+    }
+}
+
+/// Whether the application no longer has this window. A window can go without telling this
+/// host: GPUI's close callback is best effort. See [`crate::Plugins::settle_windows`].
+pub(crate) fn is_gone(handle: WindowHandle<PluginFrame>, cx: &mut App) -> bool {
+    handle.update(cx, |_, _, _| ()).is_err()
 }
 
 /// Takes a window down. An error says only that the window was already gone.
@@ -212,7 +241,8 @@ pub(crate) fn remove(handle: WindowHandle<PluginFrame>, cx: &mut App) {
         .ok();
 }
 
-/// Gives a window the size its plugin asked for.
+/// Gives a window the size its plugin asked for. An error says only that the window was
+/// already gone, and then there is nothing to size.
 pub(crate) fn resize(handle: WindowHandle<PluginFrame>, wanted: GuiSize, cx: &mut App) {
     let wanted = size(px(wanted.width as f32), px(wanted.height as f32));
     handle.update(cx, |_, window, _| window.resize(wanted)).ok();

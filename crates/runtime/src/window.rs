@@ -402,13 +402,6 @@ pub fn run(folder: &Path) -> Result<()> {
                 async {}
             })
             .detach();
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
-
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
@@ -429,6 +422,18 @@ pub fn run(folder: &Path) -> Result<()> {
                     Shell::with_device(session.clone(), registries, name, Some(timing), window, cx)
                 })
             });
+            // The application ends with the main window, not with the last one: a plugin's own
+            // window is a window of this application too, and one that is open when the
+            // composer closes the project must not keep the process alive behind it.
+            if let Ok(shell) = &opened {
+                let main = shell.window_id();
+                cx.on_window_closed(move |cx, closed| {
+                    if closed == main {
+                        cx.quit();
+                    }
+                })
+                .detach();
+            }
             let shell = match opened {
                 Ok(window) => {
                     cx.activate(true);

@@ -60,12 +60,21 @@ impl DeviceOffer {
 }
 
 type ListOffers = Rc<dyn Fn() -> Vec<DeviceOffer>>;
-type NameOf = Rc<dyn Fn(&Project, &InstanceId) -> Option<SharedString>>;
+type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>;
+
+/// What a rack says about the instance in a slot: what to call it, and which offer it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviceLabel {
+    /// The [`DeviceOffer::key`] of the offer that would write this record, so a picker can
+    /// mark what is there and leave it alone when it is picked again.
+    pub key: SharedString,
+    pub name: SharedString,
+}
 
 #[derive(Default)]
 pub struct Devices {
     instruments: Vec<ListOffers>,
-    names: BTreeMap<&'static str, NameOf>,
+    describe: BTreeMap<&'static str, DescribeInstance>,
 }
 
 impl Global for Devices {}
@@ -87,13 +96,13 @@ impl Devices {
         self.instruments.push(Rc::new(list));
     }
 
-    /// Registers what to call an instance of the tool with state `S` in a rack.
-    pub fn name<S: State>(&mut self, name: impl Fn(&S) -> SharedString + 'static) {
-        self.names.insert(
+    /// Registers what a rack says about an instance of the tool with state `S`.
+    pub fn describe<S: State>(&mut self, describe: impl Fn(&S) -> DeviceLabel + 'static) {
+        self.describe.insert(
             S::TOOL,
             Rc::new(move |project, id| {
                 let instance = project.resolve::<S>(id)?;
-                Some(name(project.state(&instance)?))
+                Some(describe(project.state(&instance)?))
             }),
         );
     }
@@ -106,12 +115,12 @@ impl Devices {
         devices.instruments.iter().flat_map(|list| list()).collect()
     }
 
-    /// What to call what is in `id`. `None` when the instance is gone or its tool registered
-    /// no name, and then the caller shows the tool name or that the slot is empty.
-    pub fn name_of(session: &Entity<Session>, id: &InstanceId, cx: &App) -> Option<SharedString> {
+    /// What a rack says about what is in `id`. `None` when the instance is gone or its tool
+    /// registered nothing, and then the caller shows the tool name or that the slot is empty.
+    pub fn label_of(session: &Entity<Session>, id: &InstanceId, cx: &App) -> Option<DeviceLabel> {
         let project = session.read(cx).project();
         let tool = project.tool_of(id)?;
-        let name = cx.try_global::<Self>()?.names.get(tool)?.clone();
-        name(project, id)
+        let describe = cx.try_global::<Self>()?.describe.get(tool)?.clone();
+        describe(project, id)
     }
 }

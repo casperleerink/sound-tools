@@ -62,7 +62,7 @@ fn opening_the_window_creates_it_once_shows_it_and_a_second_open_only_brings_it_
     let log = folder.path().join("calls.txt");
     let harness = open(&log);
     let slot = id(SLOT);
-    assert!(harness.plugins.has_window(&slot));
+    assert_eq!(harness.plugins.window_offered(&slot), Some(true));
     assert!(!harness.plugins.window_is_open(&slot));
 
     open_window(&harness, "Piano — Night", cx);
@@ -72,8 +72,10 @@ fn opening_the_window_creates_it_once_shows_it_and_a_second_open_only_brings_it_
     assert_eq!(
         window_calls(&log),
         [
-            // `has_window` asked first, then CLAP's order for an embedded window. There is no
-            // `gui_set_parent`: a window of the test platform has no view of its own.
+            // Once while the plugin loaded, so that drawing a card calls into no plugin, and
+            // once as the negotiation right before `create`, which is CLAP's order for an
+            // embedded window. There is no `gui_set_parent`: a window of the test platform has
+            // no view of its own.
             "gui_is_api_supported",
             "gui_is_api_supported",
             "gui_create",
