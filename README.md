@@ -1,6 +1,6 @@
 # Sound Tools
 
-A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The first milestone is built. It has tracks, clips, notes, one synth and a window to edit them, and the agent is an external coding agent for now.
+A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The first milestone is built. It has tracks, clips, notes, one synth and a window to edit them, and the agent is an external coding agent for now. The second milestone is under way: stereo tracks with gain, pan and mute, a metronome, MIDI recording and CLAP instruments.
 
 ## Requirements
 
@@ -26,9 +26,10 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 5. Press space to play and again to pause. Click the ruler to move the playhead. The view follows it and pages forward while it plays.
 6. In the transport pill at the bottom: drag the tempo number up or down to change the tempo, and click the metronome to turn the click on or off. The click is not part of the piece and is never in a render.
 7. Plug in a MIDI keyboard and play. It sounds through the instrument of the selected track, with or without playback. Press the red record button, or `r`, to record what you play onto that track from the playhead, and press it again to end the take. The take becomes a clip, with the sustain pedal, as one undo step, and the performance as you played it is kept under `assets/takes/`, which nothing ever changes.
-8. Click the name of a track on the left. Its panel opens below with the synth, and at the right end the mixer of the track: gain, pan and mute. Drag a knob up or down while it plays, and double click a knob to reset it.
-9. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
-10. Press cmd-q to quit. Run the same command again and the piece is back.
+8. To play a CLAP plugin instead of the built-in synth, run `cargo run -p runtime -- --plugins` to see what this Mac has, then write the plugin's id into the track's `instrument.json` as the [plugins doc](extensions/plugin-host/agent-doc.md) shows, or ask the agent to. Picking one in the app comes next.
+9. Click the name of a track on the left. Its panel opens below with the synth, and at the right end the mixer of the track: gain, pan and mute. Drag a knob up or down while it plays, and double click a knob to reset it.
+10. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
+11. Press cmd-q to quit. Run the same command again and the piece is back.
 
 Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 
@@ -62,11 +63,13 @@ What the agent uses:
 cargo run -p runtime -- ~/Music/my-piece --inspect
 cargo run -p runtime -- ~/Music/my-piece --render /tmp/my-piece.wav --seconds 16
 cargo run -p runtime -- ~/Music/my-piece --headless
+cargo run -p runtime -- --plugins
 ```
 
 - `--inspect` prints a summary and changes nothing.
 - `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float.
 - `--headless` plays the project live without a window and reads commands from stdin: `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status`, `quit`. It prints every change that arrives from the folder. Only one app can have a project open live. `--inspect` and `--render` work next to it.
+- `--plugins` prints the CLAP plugins of this Mac with their ids, which is what a track record needs. Each is looked at in a child process, so one that crashes costs that one and is reported.
 
 A release build is `cargo build --release -p runtime`. The binary is `/private/tmp/sound-tools-timing/target/release/runtime`.
 
@@ -76,15 +79,17 @@ A release build is `cargo build --release -p runtime`. The binary is `/private/t
 cargo fmt --all --check
 typos
 cargo clippy --workspace --all-targets --locked --config .cargo/ci-config.toml
+cargo build --workspace --locked
 cargo nextest run --workspace --locked
 cargo test -p gallery --test snapshots --locked
 cargo test -p runtime --test snapshots --locked
-cargo build --workspace --locked
 cargo shear
 cargo deny check
 ```
 
-CI runs the same on macOS, plus the realtime sanitizer from [ENGINEERING.md](ENGINEERING.md) section 3. The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`.
+CI runs the same on macOS, plus the realtime sanitizer from [ENGINEERING.md](ENGINEERING.md) section 3. The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`. The build
+comes first because the tests load the repository's own CLAP plugin, which is a dynamic library
+that `cargo test` does not build.
 
 The two snapshot tests render the UI components and the window to PNGs without opening a window. They print the folder they write to. `cargo run -p gallery` opens the component gallery in a window.
 
@@ -96,7 +101,7 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [docs/milestone-2.md](docs/milestone-2.md): the plan for the next milestone. [docs/agent-brief.md](docs/agent-brief.md) is the shared brief for the agents that build it.
 - [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
 - [SDK_SKETCH.md](SDK_SKETCH.md): an early sketch of the extension SDK.
-- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md).
+- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md).
 
 ## License
 

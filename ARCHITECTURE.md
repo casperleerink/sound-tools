@@ -119,7 +119,7 @@ Built in `crates/core/src/project`. The guide for extension authors is [crates/c
 - References are saved instance ids. They resolve to an optional typed instance, own nothing and keep nothing alive. `project.json` connections are references too: an end that does not exist leaves the connection saved, unused and reported, so a connection may arrive before its instance and the data of a missing extension stays intact. Deleting an instance removes the connections that name it, in the same undo step.
 - Not built: a behaviour that reacts to changes of an instance it only references. Parents and children cover the milestone.
 
-Audio plugin hosting belongs entirely to extensions. A bundled plugin host extension provides it for the v0 DAW; the core has no plugin interface. The hosting design is not specified here.
+Audio plugin hosting belongs entirely to extensions. A bundled plugin host extension provides it for the v0 DAW; the core has no plugin interface. The design is in "Hosting plugins" below, built with step 4a of the second milestone.
 
 ## v0: DAW workspace from bundled extensions
 
@@ -133,7 +133,7 @@ The v0 workspace is a small DAW. Its parts are bundled extensions that ship with
 | Sampler | Plays imported samples from project assets. |
 | Effects | Two or three, such as delay, filter and reverb. |
 | MIDI input | Reads every MIDI keyboard of the machine into the instrument of the selected track, and records what is played, see "MIDI input and recording". |
-| Plugin host | Loads third-party audio plugins (VST3, AU, CLAP) as instruments and effects on tracks. |
+| Plugin host | Loads third-party audio plugins (VST3, AU, CLAP) as instruments and effects on tracks. CLAP instruments since step 4a of the second milestone, see "Hosting plugins". |
 | Metronome | The click on the beats of the tempo map. One processor and a switch, no tool and no record, see "The click, the tempo in the transport and following the playhead". |
 
 Build the core and these extensions together. Each extension should be small and finished before starting the next. Order: arrangement and instrument first, since they prove the note contract, the musical clock and live agent edits. Plugin host last, since it depends on the note and audio contracts being stable.
@@ -337,6 +337,64 @@ Latency, and how it is measured:
 
 Not built: overdub, merging takes, a count-in, punch in and out, loop recording, quantize, a MIDI monitor, a device picker, latency compensation, other controllers than the sustain pedal, MIDI output, MIDI files, MIDI clock, audio recording, the pedal in the note editor, and saving anything about MIDI in the project.
 
+#### Project assets, decided September 20, 2026 with step 4a
+
+Built in `crates/core/src/project/assets.rs`. The smallest thing that lets an extension keep an opaque file in the project folder and name it from a record.
+
+- An asset is bytes the core never looks inside: a raw take, the state of a hosted plugin, later a sample. A record is typed state the core reads, writes and undoes. The two are different on purpose, and nothing of the asset facility knows what is in one.
+- `AssetName` is `<folder>/<name>.<extension>` under `assets/`, each part lowercase letters, digits, `-` and `_`. It is checked when it is built, so a name that comes out of a record can never reach outside the project folder. A record holds the plain name, as `plugin.state_asset` does.
+- `Assets` has three calls and no state: `read`, `write` and `create`. `write` renames a temporary file into place, so a failed write leaves the file that was there complete, as a record write does. `create` uses `create_new` in a loop over `<name>-1`, `<name>-2` and never opens a file that exists, for an asset that must never be written over. There is no delete: the runtime never removes an asset.
+- An extension reaches it through `BehaviourContext::assets()` while its behaviour runs, and whoever owns the project through `Project::assets()`.
+- The raw takes of step 3 moved onto it: `Take::write` was its own `create_new` loop and its own idea of where `assets/takes/` is. It keeps its rules and its names, `take-1`, `take-2`, and has less code. So there is one place that knows the folder and one validated name type.
+- Not built: deleting an asset, listing them, reference counting, or anything that knows when an asset has no record left. An asset that nothing names stays.
+
+#### Hosting plugins, decided September 20, 2026 with step 4a
+
+Built in `extensions/plugin-host`, with the CLAP instrument that CI tests against in `tooling/test-clap-plugin`. The core knows no plugins. `extensions/plugin-host/README.md` is the guide.
+
+The tool and its record:
+
+- One tool for a hosted plugin, `plugin`, whose record names the format, the plugin's own id and the file that holds the plugin's own settings: `{"format": "clap", "plugin_id": "com.example.piano", "state_asset": "piano"}`. An agent puts a plugin on a track by writing that record as the track's `instrument`, when it knows the id. VST3 in step 5 is another `format` and another backend behind the same record; effects in step 6 are more slots in the track rack, not another tool.
+- It declares the ports of the note contract, `notes` in and `audio` out, so it fits the `instrument` child of a track like the built-in synth. The arrangement knows nothing of plugins and the host knows nothing of tracks.
+- `state_asset` is a name, not a path: `assets/plugin-state/<name>.bin` through `AssetName`. It is required, and whoever writes the record chooses it. Two records that name one asset are reported, because both would load it and the last one to change would write it.
+- `runtime --plugins` prints every plugin of this machine with its id. A plugin id is in no file, so without it neither a composer nor an agent could write a record.
+
+Threads, which CLAP decides for us:
+
+- A plugin's own handle belongs to the application's main thread and only its audio processor may go to the audio thread. So `Plugins`, the table of loaded plugins, lives on the thread the project lives on, and the engine processor holds the started audio processor and nothing else. The processor is sent its plugin as a `Processor::Update` and is sent `None` when the plugin goes, so the old one rides back to the control thread and is dropped there, as every other returned value does.
+- Therefore a behaviour is no longer `Send`: the plugin host keeps an `Rc` of its table in the behaviour closure. The project has always lived on one thread; it was `Send` and is not any more. Moving the control thread off the main thread, which ENGINEERING.md section 3 leaves open, would need a way to call a plugin's main-thread methods on the main thread anyway.
+- The engine binding gained two things for this: `BehaviourContext::assets()` and `BehaviourContext::prepare_config()`, so a behaviour can build something outside a processor with the same sample rate its processors get.
+
+What a behaviour may report, in the core:
+
+- `BehaviourContext::problem(message)` says that part of a state is not live, without failing the edit. It is listed in `Project::problems()` on the record's path until the behaviour runs again without it. Before this a behaviour could only apply or refuse, and refusing rejects the whole edit group.
+- That is what makes "a missing plugin leaves its record untouched, the project reports it and the track is silent, and everything else plays" true in one place. It holds while the project opens and while it runs: an agent that corrects `plugin_id` in the file hears the plugin at once, with no restart and nothing installed.
+
+Notes and the sustain pedal:
+
+- Notes go as CLAP note events when the plugin's note port takes that dialect, else as raw MIDI. The pedal always goes as raw MIDI controller 64 with its value, 0 to 127, because CLAP note events have no sustain. A plugin whose note port takes no MIDI gets the notes and not the pedal, and its record says so in `problems.txt`.
+- `NoteEvent::AllOff` becomes a note off for every key the wrapper started, plus the pedal up. CLAP has a note off that matches every key, but not every plugin handles one, so the exact keys go out. The wrapper keeps that list as 128 bits.
+- No allocation, lock or system call in the wrapper's `process`, including this translation, checked by the realtime sanitizer. The plugin's own `process` call is inside an `rtsan` `ScopedDisabler`: what a plugin does inside itself is not ours to check.
+
+The scan:
+
+- Loading a plugin runs its code, so the scan runs outside the application's process: one child per bundle, which is the runtime itself with `--scan-clap`. A bundle that crashes is reported and costs that bundle. The child prints one marked line per plugin, and anything else on its output is the plugin's own logging, which real plugins do while they load.
+- No cache. Measured September 20, 2026 on an Apple Silicon laptop with two real bundles holding three plugins: a whole scan takes 20 to 26 ms, about 10 ms per bundle, so fifty plugins would cost half a second once per session. The scan runs the first time a record needs a plugin, so a project with no plugin pays nothing.
+- A plugin is an instrument when it says so in its CLAP features. Nothing checks that this is true. Checked on this machine: Spectral Freeze, which is an effect, declares the features `instrument synthesizer stereo mono`, so the scan lists it as an instrument. A plugin like that loads, gets notes and is silent; the host reports it when it has audio inputs, which such a plugin has.
+
+When plugin state is saved:
+
+- A plugin's state is written to its asset when the plugin says it changed (`clap_host_state.mark_dirty`), at the next poll of the host, which is every 16 ms in the window and every 5 ms headless. The window polls once more on its way out. A read-only project (`--inspect`, `--render`) loads plugins and never writes.
+- A crash can lose what a plugin changed in the last poll, and anything a plugin changed without saying so. CLAP asks a plugin to mark its state dirty whenever it changes, including on a parameter change.
+- Plugin state is not project state: a change of it is never an undo step, and undo and redo never touch the asset. Agents are told not to edit the file.
+
+The test plugin, so that CI needs no third-party plugin:
+
+- `tooling/test-clap-plugin` is a CLAP instrument built by this repository. Its left channel is a cosine per held key from exactly the frame the note arrived on, its right channel is the sustain pedal as a number, and its saved state is a transpose that a pedal of 64 or more sets, which is how a test makes a plugin change its own state without a window. Two environment variables make it abort or print while its bundle is listed, for the tests of a scan that crashes and of a plugin that logs.
+- `cargo test` does not build a dynamic library, so CI builds the workspace before it runs the tests, and the test helper builds the plugin itself as well.
+
+Not built: effects, VST3, AU, a plugin sandbox, latency compensation, parameter automation, a generic parameter view, presets, MIDI out of a plugin, more than one audio output bus, a scan cache, finding a plugin installed while the app runs, and the plugin's own window with the picker that opens it, which is step 4b.
+
 ### Agent context and tools
 
 The agent works through the live project folder and the runtime protocol, not a separate edit API.
@@ -426,7 +484,7 @@ Decided September 19, 2026, how outside changes apply:
 - A file that does not load leaves the live state unchanged, stays on disk and is listed as a problem with the path and the field, for example `state/tone-b.json: state.frequency_hz: invalid type: string "high", expected f32`. The rest of the group still applies. The same goes for records of unknown tools, which are never written or deleted. A problem goes away when the file loads or is gone.
 - Creation and deletion are undoable from both sides. Undo of an outside creation deletes the files, and undo of an outside deletion writes them again with their connections.
 
-Each record identifies its type. There are no schema versions; keeping code and saved data compatible is the composer's and their agent's responsibility. Extensions can register additional asset files for large or unusual data.
+Each record identifies its type. There are no schema versions; keeping code and saved data compatible is the composer's and their agent's responsibility. Extensions can register additional asset files for large or unusual data, see "Project assets" below.
 
 Importing a sample copies it into the project's assets by default. Saved references use that project-owned copy, so moving or deleting the original file does not break the project and its samples travel with it.
 
@@ -588,6 +646,7 @@ Second milestone steps:
 - Done September 20, 2026, step 0: the agent docs as a map with one doc per extension, and the terminal from the project menu. See "Agent docs as a map" and "The terminal from the project menu". Not built: a doc per task (no task needs one yet), other platforms than macOS for the terminal.
 - Done September 20, 2026, step 1: the stereo signal path and the gain, pan and mute of a track, in the record, in the track panel and from a file. See "Stereo signal path and the track mixer". Not built: solo, sends, buses, a master fader, meters, a limiter, a mixer view and automation.
 - Done September 20, 2026, step 2: the metronome, the tempo in the transport and the view that follows the playhead. See "The click, the tempo in the transport and following the playhead". Not built: a click volume, a count-in, tap tempo, tempo ramps, a tempo lane, the time signature in the window, and saving whether the click is on.
+- Done September 20, 2026, step 4a: project assets in the core, and the CLAP host as a bundled extension with the repository's own test plugin. See "Project assets" and "Hosting plugins". A track whose `instrument` record names a CLAP instrument plays its clips and the live keyboard through it, in the window and in an offline render, and the plugin's own state is an asset of the project. What 4b still owes: picking an instrument in the track panel, so a composer never types a plugin id, and opening the plugin's own window with the CLAP `gui` extension. Everything below the window is here: the record, the host, the scan with `runtime --plugins`, the state asset and the problems. Not built, see "Hosting plugins".
 - Done September 20, 2026, step 3: MIDI input, the sustain pedal in the note contract, recording a take into a clip and the raw take under `assets/`. See "MIDI input and recording". Not built: overdub, merging takes, a count-in, punch in and out, loop recording, quantize, a device picker, latency compensation, other controllers than the sustain pedal, MIDI output, MIDI files and audio recording.
 
 The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. It was re-checked in the real window and needs no workaround, see "The window and its views". The pinned GPUI has an accessibility tree and focus-visible. The menu trigger and the seek strip use focus-visible; the other components and the accessibility tree are open.
@@ -627,7 +686,7 @@ Project folder and undo:
 - An undo step for connections can still hold the middle of a gesture. No gesture edits them. Tempo was fixed with step 2 of the second milestone, which gave it a gesture.
 - A file edit of a clip while that clip is dragged across tracks comes back as a second clip.
 - A behaviour does not react to an instance it only references. Port names in `project.json` are strings without a check at build time.
-- No assets, no `workspace.json`, no declarative parameters. No `fsync`, by decision. The file watcher is tried on macOS only.
+- Assets since step 4a of the second milestone, see "Project assets". Nothing deletes one, so an asset that no record names stays. No `workspace.json`, no declarative parameters. No `fsync`, by decision. The file watcher is tried on macOS only.
 - The stdin commands of `--headless` are provisional. They are not the protocol of the outer application.
 
 Window:
