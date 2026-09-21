@@ -397,9 +397,17 @@ pub fn run(folder: &Path) -> Result<()> {
             .detach();
             // The state of every plugin reaches the project when the project is dropped, which
             // GPUI does with the views before any of this runs. See the plugin host.
-            cx.on_app_quit(move |_| {
-                print_device_report(&stream);
-                async {}
+            cx.on_app_quit({
+                let plugins = weak_plugins.clone();
+                move |cx| {
+                    // Before anything of the application is torn down: a plugin must not be
+                    // left holding the view of a window that is going.
+                    if let Some(plugins) = plugins.upgrade() {
+                        plugins.close_all_windows(cx);
+                    }
+                    print_device_report(&stream);
+                    async {}
+                }
             })
             .detach();
             let options = WindowOptions {

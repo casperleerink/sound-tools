@@ -80,6 +80,41 @@ pub fn open_with_test_plugin(
     open_project(cx, folder, project, engine, plugins.downgrade())
 }
 
+/// Opens the window on a project whose `project.json` does not enable the plugin host, as a
+/// project made before step 4a has. Its content is what the default project has.
+pub fn open_without_plugin_host(cx: &mut TestAppContext) -> Opened<'_> {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    let write = |relative: &str, contents: &str| {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    };
+    write(
+        "project.json",
+        r#"{"format": 1, "extensions": ["arrangement", "instrument", "tone"],
+            "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+            "connections": []}"#,
+    );
+    write(
+        "state/arrangement/instance.json",
+        r#"{"tool": "arrangement", "state": {}}"#,
+    );
+    write(
+        "state/arrangement/track-1/instance.json",
+        r#"{"tool": "arrangement.track", "state": {"name": "Track 1", "order": 1}}"#,
+    );
+    write(
+        "state/arrangement/track-1/instrument.json",
+        r#"{"tool": "instrument.synth", "state": {}}"#,
+    );
+    let (control, engine) = Engine::new(OFFLINE);
+    let plugins = test_plugin_host(root);
+    let project = runtime::open_or_create_with(root, control, plugins.clone()).unwrap();
+    assert_eq!(project.problems().len(), 0, "{:?}", project.problems());
+    open_project(cx, folder, project, engine, plugins.downgrade())
+}
+
 /// A plugin host that scans one folder with the test plugin in it. The scanner is the real
 /// `runtime` executable, so a scan starts the child process the application starts.
 pub fn test_plugin_host(root: &Path) -> plugin_host::Plugins {

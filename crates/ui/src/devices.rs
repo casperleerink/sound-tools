@@ -25,6 +25,9 @@ pub struct DeviceOffer {
     pub name: SharedString,
     /// A quiet second line, such as who made the plugin.
     pub detail: Option<SharedString>,
+    /// The extension whose tool this offer writes. A project that does not enable it cannot
+    /// load what the offer writes, so a picker shows the offer and does not take it.
+    pub needs: Option<SharedString>,
     write: Rc<dyn Fn(&Project, &InstanceId, &mut Changes) -> Result<(), ProjectError>>,
 }
 
@@ -38,6 +41,7 @@ impl DeviceOffer {
             key: key.into(),
             name: name.into(),
             detail: None,
+            needs: None,
             write: Rc::new(write),
         }
     }
@@ -47,8 +51,25 @@ impl DeviceOffer {
         self
     }
 
+    /// The extension this offer needs the project to enable.
+    pub fn needs(mut self, extension: impl Into<SharedString>) -> Self {
+        self.needs = Some(extension.into());
+        self
+    }
+
+    /// Whether this project could load what the offer writes. Enabling an extension while a
+    /// project runs is refused, so an offer a project has not enabled stays out of reach until
+    /// the composer edits `project.json` and opens the project again.
+    pub fn is_enabled_in(&self, project: &Project) -> bool {
+        let Some(needs) = &self.needs else {
+            return true;
+        };
+        let enabled = &project.project_file().extensions;
+        enabled.iter().any(|extension| extension == needs.as_ref())
+    }
+
     /// Puts the record of this offer into `slot`. The caller commits the group, so choosing an
-    /// instrument is one undo step.
+    /// instrument is one undo step. Only call it for an offer [`Self::is_enabled_in`] takes.
     pub fn write(
         &self,
         project: &Project,

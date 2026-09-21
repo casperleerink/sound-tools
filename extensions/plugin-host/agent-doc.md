@@ -39,6 +39,19 @@ gain, pan and mute of the track are the same whichever instrument the track has.
 The composer can do the same in the app, by picking an instrument on the card of the track
 panel, so the record may change under you. Read it before you write it.
 
+## The extension has to be enabled
+
+`project.json` lists the extensions this project loads. A project made before the plugin host
+existed does not list it, and then a plugin record does not load: `problems.txt` says the tool
+is not registered. One edit fixes it: add `"plugin-host"` to the
+`extensions` list in `project.json`, so that it reads
+
+    "extensions": ["arrangement", "instrument", "plugin-host", "tone"]
+
+and then tell the composer to open the project again. Enabling an extension while a project
+runs is refused, so nothing of it works until they do. A project this runtime made lists it
+already, and the app shows every plugin in its picker as out of reach until then.
+
 ## Never edit the state asset
 
 `assets/plugin-state/<name>.bin` holds the plugin's own settings, in a format only that plugin
@@ -48,6 +61,10 @@ It is not part of the undo history: undo and redo never change a plugin's settin
 
 Deleting a plugin's record does not delete its state file. To make the plugin start fresh,
 delete `assets/plugin-state/<name>.bin` while no app has the project open.
+
+A file that is already there is never taken up by a plugin the composer picks in the app: that
+gets a name of its own, numbered like a take (`six-sines-1`, `six-sines-2`). Reusing a name is
+for you, when you mean two records to share one sound.
 
 ## Which plugins this machine has
 

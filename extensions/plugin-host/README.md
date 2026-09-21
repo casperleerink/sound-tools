@@ -170,7 +170,13 @@ window and `true` for an embedded one. So this host makes the window.
 - `Plugins::open_window` and `close_window` need the application. `Plugins::poll` and the drop
   of the host do not have it, so they free the plugin's view and leave the window to
   `Plugins::settle_windows`, which whoever polls calls with the application in hand. That call
-  also gives a window the size its plugin asked for.
+  also gives a window the size its plugin asked for. `Plugins::close_all_windows` is what the
+  application calls as it quits, before anything of it is torn down.
+- The plugin lets go of the view it is in before that view is released, whatever takes the
+  window down. Opening a window registers a GPUI `on_window_closed` observer: GPUI removes a
+  window from the application, tells those observers, and only then drops the `Window` it is
+  still holding, which is what releases the `NSWindow` and its view. So the order holds by
+  construction, also when the window's own close control is what took it down.
 - Nothing of GPUI runs while the table of plugins is borrowed: a card that is drawn asks this
   host what its plugin has, and that would be a second borrow. `open_window` is in three
   steps for that reason.
@@ -184,8 +190,11 @@ one thing those tests cannot cover; it is checked by hand with a real plugin.
 ## What a composer picks
 
 `Plugins::instruments` is every CLAP instrument of this machine, from the scan, for a picker.
-`free_state_asset(project, wanted)` gives a `state_asset` name no record of the project uses,
-so a plugin that is picked never shares a state file by accident. The runtime turns both into
+`new_state_asset(assets, wanted)` gives a `state_asset` whose file no plugin has ever written
+into: it is `Assets::create` and its numbering, the rule a raw take follows, so the file is
+made and never opened. A plugin that is picked can therefore never come up holding the sound an
+older one left behind, and undo brings the older one back as it sounded. The file is empty
+until the plugin saves into it, and the host reads an empty one as nothing saved yet. The runtime turns both into
 `sound_ui::DeviceOffer`s for the track panel; nothing here knows about tracks or panels.
 
 ## What is not built

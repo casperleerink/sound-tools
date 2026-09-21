@@ -124,15 +124,20 @@ impl Device {
         // Asked for once per card, not per frame: a source that has to look at this machine,
         // as the plugin host does, pays for it here.
         let offers = Devices::offered(cx);
+        let project = session.read(cx).project();
         let entries = vec![MenuEntry::Group(
             MenuGroup::new()
                 .label("Instrument")
                 .max_height(320.)
                 .items(offers.iter().map(|offer| {
                     let item = MenuItem::new(offer.key.clone(), offer.name.clone());
-                    match &offer.detail {
-                        Some(detail) => item.description(detail.clone()),
-                        None => item,
+                    // An offer this project cannot load is shown and not taken, with the one
+                    // edit that would make it work. Enabling an extension while the project
+                    // runs is refused, and nothing here writes `project.json` for anyone.
+                    match (offer.is_enabled_in(project), &offer.needs, &offer.detail) {
+                        (false, Some(needs), _) => item.disabled(true).description(needed(needs)),
+                        (_, _, Some(detail)) => item.description(detail.clone()),
+                        _ => item,
                     }
                 })),
         )];
@@ -163,6 +168,11 @@ impl Device {
             offers,
         }
     }
+}
+
+/// The one edit that puts an offer this project cannot load within reach.
+fn needed(extension: &SharedString) -> String {
+    format!("Add \"{extension}\" to \"extensions\" in project.json and open the project again.")
 }
 
 /// What the picker of a slot says and which offer it marks. The device registry answers for a
@@ -349,6 +359,11 @@ impl TrackPanel {
         let Some(offer) = found.cloned() else {
             return;
         };
+        // The menu does not take a disabled row, and neither does this: the tool would not
+        // load, so the edit would be refused and the composer would learn nothing.
+        if !offer.is_enabled_in(self.session.read(cx).project()) {
+            return;
+        }
         let slot = slot.clone();
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {

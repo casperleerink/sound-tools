@@ -88,14 +88,17 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     instrument::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     devices.instruments(|| {
-        vec![DeviceOffer::new(
-            SynthState::TOOL,
-            instrument::view::NAME,
-            |_, slot, changes| {
-                changes.create(slot.clone(), SynthState::default());
-                Ok(())
-            },
-        )]
+        vec![
+            DeviceOffer::new(
+                SynthState::TOOL,
+                instrument::view::NAME,
+                |_, slot, changes| {
+                    changes.create(slot.clone(), SynthState::default());
+                    Ok(())
+                },
+            )
+            .needs(instrument::EXTENSION),
+        ]
     });
     devices.instruments(move || {
         let Some(plugins) = plugins.upgrade() else {
@@ -106,29 +109,30 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             .into_iter()
             .map(|found| {
                 let (id, name) = (found.id.clone(), found.name.clone());
-                let offer =
-                    DeviceOffer::new(
-                        format!("{}:{id}", PluginFormat::Clap.name()),
-                        found.name.clone(),
-                        move |project, slot, changes| {
-                            // A state file no other record names, so two plugins never share one
-                            // by accident. Whoever writes a record by hand still may.
-                            let state_asset = plugin_host::free_state_asset(project, &name)
-                                .map_err(|error| ProjectError::InvalidState {
-                                    id: slot.clone(),
-                                    message: error.to_string(),
-                                })?;
-                            changes.create(
-                                slot.clone(),
-                                PluginRecord {
-                                    format: PluginFormat::Clap,
-                                    plugin_id: id.clone(),
-                                    state_asset,
-                                },
-                            );
-                            Ok(())
-                        },
-                    );
+                let offer = DeviceOffer::new(
+                    PluginRecord::offer_key(PluginFormat::Clap, &id),
+                    found.name.clone(),
+                    move |project, slot, changes| {
+                        // A state file of its own that no plugin has ever written into,
+                        // so a plugin that is picked never comes up holding the sound an
+                        // older one left behind.
+                        let state_asset = plugin_host::new_state_asset(project.assets(), &name)
+                            .map_err(|error| ProjectError::InvalidState {
+                                id: slot.clone(),
+                                message: error.to_string(),
+                            })?;
+                        changes.create(
+                            slot.clone(),
+                            PluginRecord {
+                                format: PluginFormat::Clap,
+                                plugin_id: id.clone(),
+                                state_asset,
+                            },
+                        );
+                        Ok(())
+                    },
+                )
+                .needs(plugin_host::EXTENSION);
                 match found.vendor.is_empty() {
                     true => offer.with_detail(PluginFormat::Clap.name()),
                     false => offer.with_detail(format!(

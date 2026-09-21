@@ -239,10 +239,13 @@ impl RenderOnce for MenuList {
                                         .flex_1()
                                         .child(div().truncate().child(item.label.clone()))
                                         .when_some(item.description.clone(), |d, description| {
+                                            // The label truncates and this wraps: a second
+                                            // line is there to be read, and a row is as tall
+                                            // as it needs.
                                             d.child(
                                                 div()
-                                                    .truncate()
                                                     .text_size(px(12.))
+                                                    .line_height(px(16.))
                                                     .font_weight(FontWeight::NORMAL)
                                                     .text_color(muted)
                                                     .child(description),

@@ -23,8 +23,8 @@ mod window;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    AgentDoc, AssetName, BehaviourContext, BehaviourError, InputEndpoint, InvalidAssetName,
-    OutputEndpoint, Project, Registry, RegistryError, State,
+    AgentDoc, AssetError, AssetName, Assets, BehaviourContext, BehaviourError, InputEndpoint,
+    InvalidAssetName, OutputEndpoint, Registry, RegistryError, State,
 };
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
@@ -75,35 +75,20 @@ impl StateAsset {
     }
 }
 
-/// A `state_asset` name that no plugin record of the project uses, from a display name such as
-/// the plugin's own. Everything an asset name may not hold becomes `-`, and a name another
-/// record already has gets a number: `six-sines`, `six-sines-2`.
+/// A `state_asset` for a plugin that is being put on a track: a name no file of the project
+/// has, reserved by making that file.
+///
+/// It is [`Assets::create`] and its numbering, the rule a raw take follows: `six-sines-1`,
+/// `six-sines-2`. The file is never opened, so a new plugin can never come up holding the
+/// sound an older one left behind, and undo brings the older one back as it sounded. The file
+/// is empty until the plugin saves into it, and an empty one is read as nothing saved yet.
 ///
 /// Whoever writes a record by hand chooses the name themselves, and two records may share one.
 /// This is for a record the window writes, where a shared name would be a surprise.
-pub fn free_state_asset(project: &Project, wanted: &str) -> Result<StateAsset, InvalidAssetName> {
-    let mut taken: Vec<&str> = Vec::new();
-    for (id, tool) in project.instances() {
-        if tool != PluginRecord::TOOL {
-            continue;
-        }
-        let Some(instance) = project.resolve::<PluginRecord>(id) else {
-            continue;
-        };
-        if let Some(record) = project.state(&instance) {
-            taken.push(record.state_asset.name());
-        }
-    }
-    let base = asset_name_of(wanted);
-    // A project holds a finite number of records, so one of these names is free.
-    let free = (1..=taken.len() + 1).find_map(|number| {
-        let name = match number {
-            1 => base.clone(),
-            number => format!("{base}-{number}"),
-        };
-        (!taken.iter().any(|used| *used == name)).then_some(name)
-    });
-    StateAsset::new(free.as_deref().unwrap_or(&base))
+pub fn new_state_asset(assets: &Assets, wanted: &str) -> Result<StateAsset, AssetError> {
+    let base = AssetName::new(STATE_FOLDER, &asset_name_of(wanted), STATE_EXTENSION)?;
+    let taken = assets.create(&base, &[])?;
+    Ok(StateAsset(taken))
 }
 
 /// What an [`AssetName`] may hold, from a display name: lowercase letters, digits and `-`.

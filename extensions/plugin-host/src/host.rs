@@ -439,7 +439,9 @@ impl Plugins {
                 plugin_id: record.plugin_id.clone(),
                 message: error.to_string(),
             })?;
-        if let Some(bytes) = saved {
+        // Empty bytes are a state file that was made to reserve its name, which is how a
+        // plugin the window puts on a track gets one, and that the plugin has not written yet.
+        if let Some(bytes) = saved.filter(|bytes| !bytes.is_empty()) {
             let state = instance.access_shared_handler(|shared| shared.state.get().copied());
             if let Some(Some(state)) = state {
                 let mut reader = std::io::Cursor::new(bytes);
@@ -549,13 +551,18 @@ impl Plugins {
             instance: id.clone(),
             plugins: self.downgrade(),
         };
-        let (handle, view) =
-            crate::window::open_window(&owner, title, wanted, cx).map_err(|error| {
-                PluginProblem::WindowDidNotOpen {
-                    plugin_id: plugin_id.clone(),
+        let opened = crate::window::open_window(&owner, title, wanted, cx);
+        let (handle, view, closed) = match opened {
+            Ok(opened) => opened,
+            Err(error) => {
+                // The plugin already holds what it needs for a window. Give it back.
+                let _window = self.give_up_window(id);
+                return Err(PluginProblem::WindowDidNotOpen {
+                    plugin_id,
                     message: error.to_string(),
-                }
-            })?;
+                });
+            }
+        };
         // Three: the plugin fills it. A window whose plugin went while it opened, or that the
         // plugin refused, waits for the next poll to be taken down.
         let mut table = self.0.table.borrow_mut();
@@ -565,7 +572,7 @@ impl Plugins {
         };
         match hosted
             .window
-            .attach(&mut hosted.instance, &plugin_id, handle, view)
+            .attach(&mut hosted.instance, &plugin_id, handle, view, closed)
         {
             Ok(()) => Ok(()),
             Err((problem, handle)) => {
@@ -594,8 +601,9 @@ impl Plugins {
         finished
     }
 
-    /// The window of a plugin closed itself, with its own control. Its view is going, so the
-    /// plugin's resources for it are freed here.
+    /// The window is going, whatever took it down. GPUI tells its observers while it still
+    /// holds the window, so this is the moment the plugin lets go of the view it is in, before
+    /// that view is released. See `window::open_window`.
     pub(crate) fn window_was_closed(&self, id: &InstanceId) {
         let mut table = self.0.table.borrow_mut();
         if let Some(hosted) = table.loaded.get_mut(id)
@@ -610,23 +618,8 @@ impl Plugins {
     /// calls it after [`Self::poll`]; the moments that find such a plugin, a record that was
     /// deleted or an undo, have no application at hand.
     pub fn settle_windows(&self, cx: &mut gpui::App) {
-        // A window can go without telling this host: GPUI's close callback is best effort, so
-        // a window that answers nothing is one whose view the plugin must let go of.
-        let open: Vec<(InstanceId, WindowHandle<PluginFrame>)> = {
-            let table = self.0.table.borrow();
-            table
-                .loaded
-                .iter()
-                .filter_map(|(id, hosted)| Some((id.clone(), hosted.window.handle()?)))
-                .collect()
-        };
-        for (id, handle) in open {
-            if crate::window::is_gone(handle, cx) {
-                let _window = self.give_up_window(&id);
-            }
-        }
-        // Everything else is read out first: running GPUI while the table is borrowed would
-        // let a card that is drawn ask this host about its plugin.
+        // Everything is read out first: running GPUI while the table is borrowed would let a
+        // card that is drawn ask this host about its plugin.
         let (finished, resize) = {
             let mut table = self.0.table.borrow_mut();
             let Table {
@@ -647,6 +640,22 @@ impl Plugins {
         }
         for handle in finished {
             crate::window::remove(handle, cx);
+        }
+    }
+
+    /// Frees the view of every plugin window and takes the windows down. The application
+    /// calls it as it quits, before anything of it is torn down, so that no plugin is left
+    /// holding a view of a window that is going.
+    pub fn close_all_windows(&self, cx: &mut gpui::App) {
+        let open: Vec<InstanceId> = {
+            let table = self.0.table.borrow();
+            let open = table.loaded.iter();
+            open.filter(|(_, hosted)| hosted.window.is_open())
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in open {
+            self.close_window(&id, cx);
         }
     }
 

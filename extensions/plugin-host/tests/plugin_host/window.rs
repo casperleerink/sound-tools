@@ -54,6 +54,17 @@ fn windows(cx: &mut TestAppContext) -> usize {
     cx.update(|cx| cx.windows().len())
 }
 
+/// Takes the window down the way anything but this host would: GPUI's own `remove_window`,
+/// which is what the window's close control ends in.
+fn remove_the_window(cx: &mut TestAppContext) {
+    let handle = cx.update(|cx| cx.windows().first().copied()).unwrap();
+    cx.update(|cx| {
+        handle
+            .update(cx, |_, window, _| window.remove_window())
+            .ok()
+    });
+}
+
 #[gpui::test]
 fn opening_the_window_creates_it_once_shows_it_and_a_second_open_only_brings_it_forward(
     cx: &mut TestAppContext,
@@ -307,4 +318,50 @@ fn the_calls_of_a_plugins_window_are_on_the_main_thread_and_never_on_the_one_tha
     ] {
         assert_eq!(thread_of(call), main_thread, "{call}: {names:?}");
     }
+}
+
+/// The plugin lets go of the view it is in before that view is released, on every path a
+/// window can go by. GPUI tells the observers of a window that closes while it still holds the
+/// window, so `gui_destroy` always comes before the window is one the application no longer
+/// has. Without that the plugin would be left holding a freed `NSView`.
+#[gpui::test]
+fn the_plugin_lets_go_of_its_view_before_the_window_it_is_in_goes(cx: &mut TestAppContext) {
+    let folder = tempfile::tempdir().unwrap();
+    let log = folder.path().join("calls.txt");
+    let harness = open(&log);
+    let slot = id(SLOT);
+
+    // The way the window's own close control goes: GPUI removes the window, and this host is
+    // told while the window is still there.
+    open_window(&harness, "Piano", cx);
+    assert_eq!(windows(cx), 1);
+    remove_the_window(cx);
+    assert_eq!(windows(cx), 0);
+    assert!(!harness.plugins.window_is_open(&slot));
+    assert_eq!(
+        window_calls(&log).last().map(String::as_str),
+        Some("gui_destroy")
+    );
+
+    // The way the card goes: this host frees the view and then takes the window down.
+    open_window(&harness, "Piano", cx);
+    close_window(&harness, cx);
+    assert_eq!(windows(cx), 0);
+    assert_eq!(
+        window_calls(&log).last().map(String::as_str),
+        Some("gui_destroy")
+    );
+
+    // The way quitting goes: every window of every plugin, before anything is torn down.
+    open_window(&harness, "Piano", cx);
+    assert_eq!(windows(cx), 1);
+    cx.update(|cx| harness.plugins.close_all_windows(cx));
+    assert!(!harness.plugins.window_is_open(&slot));
+    assert_eq!(windows(cx), 0);
+    let calls = window_calls(&log);
+    assert_eq!(
+        calls.iter().filter(|call| *call == "gui_destroy").count(),
+        3,
+        "{calls:?}"
+    );
 }

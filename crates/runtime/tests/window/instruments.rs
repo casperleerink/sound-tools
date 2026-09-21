@@ -46,6 +46,23 @@ fn slot_file(opened: &mut Opened<'_>) -> Option<String> {
     std::fs::read_to_string(opened.path(SLOT_FILE)).ok()
 }
 
+/// The state files the project has, by name, in order.
+fn state_assets(opened: &mut Opened<'_>) -> Vec<String> {
+    let folder = opened.path("assets/plugin-state");
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            Some(path.file_stem()?.to_string_lossy().into_owned())
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 /// Opens the picker of the one card of the rack.
 fn open_picker(opened: &mut Opened<'_>) {
     let trigger = opened.control(PICKER);
@@ -70,6 +87,12 @@ fn playing(opened: &mut Opened<'_>) -> Vec<f32> {
     });
     opened.settle();
     opened.render(24_000)
+}
+
+/// The left channel of a render. The test plugin plays its notes there and the pedal on the
+/// right, so this is the sound of the plugin without what the clip is telling it now.
+fn left(render: &[f32]) -> Vec<f32> {
+    render.iter().step_by(2).copied().collect()
 }
 
 fn window_is_open(opened: &mut Opened<'_>) -> bool {
@@ -110,7 +133,7 @@ fn picking_a_plugin_writes_the_record_as_one_undo_step_and_undo_gives_the_synth_
     assert!(record.contains(test_clap_plugin::PLUGIN_ID), "{record}");
     // A state file of its own, from the plugin's name, that no other record uses.
     assert!(
-        record.contains(r#""state_asset": "sound-tools-test-tone""#),
+        record.contains(r#""state_asset": "sound-tools-test-tone-1""#),
         "{record}"
     );
     assert_eq!(
@@ -166,10 +189,6 @@ fn picking_the_synth_again_after_a_plugin_brings_its_controls_back(cx: &mut Test
     opened.click(header);
     pick(&mut opened, PLUGIN_ITEM);
     let written = std::fs::read_to_string(opened.path(second_track)).unwrap();
-    assert!(
-        written.contains(r#""state_asset": "sound-tools-test-tone""#),
-        "{written}"
-    );
     let label = opened.undo_label();
     pick(&mut opened, PLUGIN_ITEM);
     assert_eq!(
@@ -178,15 +197,28 @@ fn picking_the_synth_again_after_a_plugin_brings_its_controls_back(cx: &mut Test
     );
     assert_eq!(opened.undo_label(), label);
 
-    // The same plugin on the first track as well: the name of the second one is taken.
+    // The same plugin on the first track as well. Every pick makes its own state file, from
+    // the plugin's name and a number, as a take does.
     let header = opened.track_header(0);
     opened.click(header);
     pick(&mut opened, PLUGIN_ITEM);
     let first = slot_file(&mut opened).unwrap();
+    let names = state_assets(&mut opened);
+    assert_eq!(names.len(), 3, "{names:?}");
     assert!(
-        first.contains(r#""state_asset": "sound-tools-test-tone-2""#),
-        "{first}"
+        names
+            .iter()
+            .all(|name| name.starts_with("sound-tools-test-tone-")),
+        "{names:?}"
     );
+    for written in [&first, &written] {
+        assert!(
+            names
+                .iter()
+                .any(|name| written.contains(&format!("\"state_asset\": \"{name}\""))),
+            "{written} is none of {names:?}"
+        );
+    }
 }
 
 #[gpui::test]
@@ -321,4 +353,111 @@ fn a_plugin_written_by_hand_gets_the_same_card_and_the_track_can_go_back_to_the_
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
     let record = slot_file(&mut opened).unwrap();
     assert!(record.contains(r#""state_asset": "piano""#), "{record}");
+}
+
+/// A project made before the plugin host existed does not enable it, and enabling an extension
+/// while a project runs is refused. So the picker shows what it cannot take and says what the
+/// one edit is; nothing writes `project.json` for the composer.
+#[gpui::test]
+fn a_project_that_does_not_enable_the_plugin_host_shows_what_to_do(cx: &mut TestAppContext) {
+    let mut opened = support::open_without_plugin_host(cx);
+    let header = opened.track_header(0);
+    opened.click(header);
+    assert_eq!(card_names(&mut opened), ["Synth"]);
+    let before = slot_file(&mut opened);
+
+    // The plugin is offered and not taken: no record, no undo step, no notice.
+    pick(&mut opened, PLUGIN_ITEM);
+    assert_eq!(card_names(&mut opened), ["Synth"]);
+    assert_eq!(slot_file(&mut opened), before);
+    assert_eq!(opened.undo_label(), None);
+    assert_eq!(opened.notice(), None);
+    assert_eq!(opened.project(|project| project.problems().len()), 0);
+
+    // The menu stays open on a row it cannot take. Escape closes it and leaves the panel.
+    opened.keys("escape");
+    assert!(opened.track_panel().is_some());
+
+    // The synth is still there to pick, so the panel works as it always did.
+    let knob = opened.control("knob-cutoff_hz");
+    opened.click(knob);
+    opened.keys("up");
+    assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
+}
+
+/// A project this runtime makes enables every extension it has, so a plugin can be picked in
+/// it without any file edit.
+#[gpui::test]
+fn a_new_project_enables_the_plugin_host(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let enabled = opened.project(|project| project.project_file().extensions.clone());
+    assert!(
+        enabled.iter().any(|name| name == "plugin-host"),
+        "{enabled:?}"
+    );
+    pick(&mut opened, PLUGIN_ITEM);
+    assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
+}
+
+/// The clip of `open_panel`, as a record, with a pedal at tick 0 when `pedal` says so. The
+/// test plugin reads a pedal of 64 or more as a transpose and saves it as its own state, which
+/// is how a test changes a plugin's sound without a window.
+fn clip_record(pedal: Option<u8>) -> String {
+    let pedal = match pedal {
+        Some(value) => format!(r#", "pedal": [{{"start": 0, "value": {value}}}]"#),
+        None => String::new(),
+    };
+    format!(
+        r#"{{"tool": "arrangement.clip", "state": {{"start": 0, "length": {}, "notes": [{{"start": 0, "length": {}, "pitch": 60, "velocity": 100}}]{pedal}}}}}"#,
+        4 * BAR,
+        4 * BAR
+    )
+}
+
+fn write_clip(opened: &mut Opened<'_>, pedal: Option<u8>) {
+    let path = opened.path("state/arrangement/track-1/part.json");
+    std::fs::write(&path, clip_record(pedal)).unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[path]));
+}
+
+/// A plugin that is picked never starts from a state file that was already there, and undo
+/// brings the plugin that was there back as it sounded.
+///
+/// The sequence: pick the plugin, give it a sound of its own, pick the synth, pick the plugin
+/// again. The second one must be silent of the first one's sound, and undoing the two picks
+/// must give the first one back with it.
+#[gpui::test]
+fn a_plugin_that_is_picked_never_starts_from_a_state_file_that_was_there(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    pick(&mut opened, PLUGIN_ITEM);
+    let plain = left(&playing(&mut opened));
+    assert!(support::peak(&plain) > 0.0);
+
+    // A pedal of 100 makes the plugin transpose by 36 and say its state changed, so the host
+    // writes it into the state file the pick made.
+    write_clip(&mut opened, Some(100));
+    let transposed = left(&playing(&mut opened));
+    assert_ne!(transposed, plain);
+    write_clip(&mut opened, None);
+    let kept = left(&playing(&mut opened));
+    assert_eq!(kept, transposed, "the plugin lost its own transpose");
+    let first = state_assets(&mut opened);
+    assert_eq!(first.len(), 1, "{first:?}");
+
+    // The synth, and the same plugin again: a state file of its own, and the sound the plugin
+    // has when nothing was ever saved into it.
+    pick(&mut opened, SYNTH_ITEM);
+    pick(&mut opened, PLUGIN_ITEM);
+    let names = state_assets(&mut opened);
+    assert_eq!(names.len(), 2, "{names:?}");
+    let record = slot_file(&mut opened).unwrap();
+    assert!(!record.contains(&format!("\"{}\"", first[0])), "{record}");
+    assert_eq!(left(&playing(&mut opened)), plain);
+
+    // Two steps back is the first plugin, with the sound it had.
+    opened.keys("cmd-z");
+    opened.keys("cmd-z");
+    let record = slot_file(&mut opened).unwrap();
+    assert!(record.contains(&format!("\"{}\"", first[0])), "{record}");
+    assert_eq!(left(&playing(&mut opened)), transposed);
 }

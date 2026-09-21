@@ -17,6 +17,8 @@
 //! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
 //! - `track-panel-picker.png`: the same with the instrument picker open.
 //! - `track-panel-missing.png`: the panel of a track whose plugin this machine does not have.
+//! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the
+//!   plugin host, where every plugin says what the one edit is.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -68,6 +70,56 @@ impl Opened {
         let plugins = test_plugin_host(&root);
         let mut project = open_or_create_with(&root, control, plugins.clone())?;
         fill(&mut project)?;
+        let plugins = plugins.downgrade();
+        let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
+        let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {
+            let (session, plugins) = (session.clone(), plugins.clone());
+            cx.new(|cx| {
+                let name = "MacBook Pro Speakers".into();
+                Shell::new(session, views(plugins), name, window, cx)
+            })
+        })?;
+        cx.run_until_parked();
+        Ok(Self {
+            _folder: folder,
+            engine,
+            session,
+            window,
+        })
+    }
+
+    /// A project whose `project.json` does not enable the plugin host, as one made before
+    /// step 4a has. Its content is that of the default project.
+    fn without_plugin_host(cx: &mut HeadlessAppContext) -> Result<Self> {
+        let folder = tempfile::tempdir()?;
+        let root = folder.path().join("Night Study");
+        let write = |relative: &str, contents: &str| -> Result<()> {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().context("a parent folder")?)?;
+            std::fs::write(path, contents)?;
+            Ok(())
+        };
+        write(
+            "project.json",
+            r#"{"format": 1, "extensions": ["arrangement", "instrument", "tone"],
+                "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+                "connections": []}"#,
+        )?;
+        write(
+            "state/arrangement/instance.json",
+            r#"{"tool": "arrangement", "state": {}}"#,
+        )?;
+        write(
+            "state/arrangement/track-1/instance.json",
+            r#"{"tool": "arrangement.track", "state": {"name": "Track 1", "order": 1}}"#,
+        )?;
+        write(
+            "state/arrangement/track-1/instrument.json",
+            r#"{"tool": "instrument.synth", "state": {}}"#,
+        )?;
+        let (control, engine) = Engine::new(OFFLINE);
+        let plugins = test_plugin_host(&root);
+        let project = open_or_create_with(&root, control, plugins.clone())?;
         let plugins = plugins.downgrade();
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
         let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {
@@ -545,6 +597,24 @@ fn main() -> Result<()> {
     })?;
     cx.run_until_parked();
     save(&mut cx, &opened, "track-panel-picker")?;
+    drop(opened);
+
+    // A project that does not enable the plugin host, as one made before step 4a has: every
+    // plugin is shown and cannot be taken, with the one edit that would put it within reach.
+    let opened = Opened::without_plugin_host(&mut cx)?;
+    opened.click_track_header(0., &mut cx)?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let picker = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        let picker = panel.read(cx).pickers().next().cloned();
+        picker.context("the card has no picker")
+    })?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        picker.update(cx, |picker, cx| picker.open(window, cx));
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-picker-disabled")?;
     drop(opened);
 
     // A plugin this machine does not have: the card says so and names the id, and the record

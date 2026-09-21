@@ -22,8 +22,8 @@ use std::ptr::NonNull;
 use clack_extensions::gui::{GuiApiType, GuiConfiguration, GuiError, GuiSize, PluginGui};
 use clack_host::prelude::*;
 use gpui::{
-    App, Bounds, Context, IntoElement, Render, TitlebarOptions, Window, WindowBounds, WindowHandle,
-    WindowOptions, div, prelude::*, px, size,
+    App, Bounds, Context, IntoElement, Render, Subscription, TitlebarOptions, Window, WindowBounds,
+    WindowHandle, WindowOptions, div, prelude::*, px, size,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use sound_core::InstanceId;
@@ -79,6 +79,9 @@ pub(crate) enum Prepared {
 pub(crate) struct PluginWindow {
     created: bool,
     open: Option<WindowHandle<PluginFrame>>,
+    /// Frees the plugin's view when the window goes, whatever took it down. See
+    /// [`open_window`] for why this is what keeps the plugin's view inside its parent's life.
+    closed: Option<Subscription>,
     /// A size the plugin asked for, until whoever polls gives the window it.
     wanted_size: Option<GuiSize>,
 }
@@ -162,8 +165,10 @@ impl PluginWindow {
         plugin_id: &str,
         handle: WindowHandle<PluginFrame>,
         view: Option<NonNull<c_void>>,
+        closed: Subscription,
     ) -> Result<(), (PluginProblem, WindowHandle<PluginFrame>)> {
         self.open = Some(handle);
+        self.closed = Some(closed);
         let failed = |error: GuiError| PluginProblem::WindowDidNotOpen {
             plugin_id: plugin_id.to_string(),
             message: error.to_string(),
@@ -171,6 +176,7 @@ impl PluginWindow {
         let Some(gui) = gui_of(instance) else {
             self.created = false;
             self.open = None;
+            self.closed = None;
             return Err((
                 PluginProblem::NoWindow {
                     plugin_id: plugin_id.to_string(),
@@ -214,6 +220,7 @@ impl PluginWindow {
         instance: &mut PluginInstance<SoundToolsHost>,
     ) -> Option<WindowHandle<PluginFrame>> {
         self.wanted_size = None;
+        self.closed = None;
         if std::mem::take(&mut self.created)
             && let Some(gui) = gui_of(instance)
         {
@@ -221,17 +228,6 @@ impl PluginWindow {
         }
         self.open.take()
     }
-
-    /// The window this plugin is in, if any.
-    pub fn handle(&self) -> Option<WindowHandle<PluginFrame>> {
-        self.open
-    }
-}
-
-/// Whether the application no longer has this window. A window can go without telling this
-/// host: GPUI's close callback is best effort. See [`crate::Plugins::settle_windows`].
-pub(crate) fn is_gone(handle: WindowHandle<PluginFrame>, cx: &mut App) -> bool {
-    handle.update(cx, |_, _, _| ()).is_err()
 }
 
 /// Takes a window down. An error says only that the window was already gone.
@@ -248,13 +244,27 @@ pub(crate) fn resize(handle: WindowHandle<PluginFrame>, wanted: GuiSize, cx: &mu
     handle.update(cx, |_, window, _| window.resize(wanted)).ok();
 }
 
-/// Opens one window for a plugin and gives back its handle and the view the plugin fills.
+/// Opens one window for a plugin and gives back its handle, the view the plugin fills and the
+/// subscription that frees that view when the window goes.
+///
+/// The subscription is what keeps the plugin's view inside the life of the view it is in.
+/// GPUI takes a window down in `App::update_window`: it removes the window from the
+/// application, tells the observers of `on_window_closed`, and only then drops the `Window`
+/// it is still holding, which is what releases the `NSWindow` and its view. So an observer
+/// runs while the parent is still there, whatever took the window down: the window's own
+/// close control, [`remove`], or anything else. Read from the pinned GPUI, `App::update_window`
+/// and `SubscriberSet::retain`, which takes its subscribers out before it calls one, so this
+/// may drop its own subscription from inside the call.
 pub(crate) fn open_window(
     owner: &WindowOwner,
     title: &str,
     wanted: GuiSize,
     cx: &mut App,
-) -> anyhow::Result<(WindowHandle<PluginFrame>, Option<NonNull<c_void>>)> {
+) -> anyhow::Result<(
+    WindowHandle<PluginFrame>,
+    Option<NonNull<c_void>>,
+    Subscription,
+)> {
     let bounds = size(px(wanted.width as f32), px(wanted.height as f32));
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, bounds, cx))),
@@ -270,18 +280,21 @@ pub(crate) fn open_window(
     let mut view = None;
     let handle = cx.open_window(options, |window, cx| {
         view = cocoa_view(window);
-        let (instance, plugins) = (owner.instance.clone(), owner.plugins.clone());
-        window.on_window_should_close(cx, move |_, _| {
-            // The composer closed the window with its own control. Its view goes with it, so
-            // the plugin's resources for it are freed before AppKit takes the view away.
-            if let Some(plugins) = plugins.upgrade() {
-                plugins.window_was_closed(&instance);
-            }
-            true
-        });
         cx.new(|_| PluginFrame)
     })?;
-    Ok((handle, view))
+    let (instance, plugins, id) = (
+        owner.instance.clone(),
+        owner.plugins.clone(),
+        handle.window_id(),
+    );
+    let closed = cx.on_window_closed(move |_, closed| {
+        if closed == id
+            && let Some(plugins) = plugins.upgrade()
+        {
+            plugins.window_was_closed(&instance);
+        }
+    });
+    Ok((handle, view, closed))
 }
 
 /// The `NSView` of a window, which is what CLAP's Cocoa API takes as the parent.
