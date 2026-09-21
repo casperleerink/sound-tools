@@ -4,6 +4,7 @@
 //! so it is offered in both pickers. In an effect slot it gets no notes: what comes out of it
 //! is what it is played times a half, plus the offset it has learned and saved.
 
+use arrangement::view::track_panel::remove_control;
 use gpui::TestAppContext;
 use plugin_host::{PluginFormat, PluginRecord};
 
@@ -168,7 +169,9 @@ fn removing_an_effect_is_one_undo_step_and_undo_brings_it_back_as_it_sounded(
     let asset = opened.path("assets/plugin-state/sound-tools-test-tone-2.bin");
     assert!(asset.exists(), "the effect saved no state");
 
-    let remove = opened.control("remove-sound-tools-test-tone");
+    let remove = opened.control(&remove_control(&id(&format!(
+        "{TRACK}/sound-tools-test-tone"
+    ))));
     opened.click(remove);
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
     assert_eq!(
@@ -196,7 +199,7 @@ fn the_control_of_the_second_effect_takes_that_one_off_and_not_the_first(cx: &mu
     let names = ["sound-tools-test-tone", "sound-tools-test-tone-2"];
     assert_eq!(card_names(&mut opened).len(), 3);
 
-    let remove = opened.control(&format!("remove-{}", names[1]));
+    let remove = opened.control(&remove_control(&id(&format!("{TRACK}/{}", names[1]))));
     opened.click(remove);
     assert_eq!(card_names(&mut opened).len(), 2);
     let record = track_file(&mut opened);

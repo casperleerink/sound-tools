@@ -28,8 +28,8 @@
 //!
 //! Two of these chained do something an order can be read out of: at a gain of a half, A then B
 //! is `x / 4 + offset_a / 2 + offset_b`, and the other way round the last two swap. And it
-//! learns: an input sample of [`LEARN_LEVEL`] or more becomes the offset and the plugin says its
-//! state changed, which is what the pedal is for the instrument half.
+//! learns: the loudest input sample it has heard from [`LEARN_LEVEL`] up becomes the offset and
+//! the plugin says its state changed, which is what the pedal is for the instrument half.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
