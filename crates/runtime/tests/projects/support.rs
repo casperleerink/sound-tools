@@ -221,6 +221,44 @@ pub fn test_plugin_of(format: PluginFormat, state_asset: &str) -> String {
     )
 }
 
+/// A state asset that makes the effect half of the test plugin add `offset` hundredths to
+/// every sample, as the host would have saved it.
+///
+/// A CLAP asset is the plugin's own bytes. A VST 3 asset is the container the host writes,
+/// because VST 3 keeps two states: `SVT3`, the component's state with its length, then the
+/// controller's.
+pub fn plugin_state(format: PluginFormat, offset: i32) -> Vec<u8> {
+    let own = test_plugin_support::save_state(test_plugin_support::SavedState {
+        offset,
+        ..Default::default()
+    });
+    match format {
+        PluginFormat::Clap => own,
+        PluginFormat::Vst3 => {
+            let mut bytes = b"SVT3".to_vec();
+            bytes.extend_from_slice(&(own.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&own);
+            bytes.extend_from_slice(&0_u32.to_le_bytes());
+            bytes
+        }
+    }
+}
+
+/// What the effect half of the test plugin saved in an asset, in hundredths.
+pub fn saved_offset(format: PluginFormat, bytes: &[u8]) -> i32 {
+    let own = match format {
+        PluginFormat::Clap => bytes,
+        PluginFormat::Vst3 => {
+            assert_eq!(&bytes[..4], b"SVT3", "not a VST 3 state asset");
+            let length = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+            &bytes[8..8 + length]
+        }
+    };
+    test_plugin_support::load_state(own)
+        .expect("a Test Tone state")
+        .offset
+}
+
 pub fn write(root: &Path, relative: &str, contents: &str) -> PathBuf {
     let path = root.join(relative);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

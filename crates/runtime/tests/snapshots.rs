@@ -18,6 +18,10 @@
 //! - `track-panel-picker.png`: the same with the instrument picker open.
 //! - `track-panel-plugin-vst3.png`: the panel of a track whose instrument is a VST 3 plugin.
 //! - `track-panel-missing.png`: the panel of a track whose plugin this machine does not have.
+//! - `track-panel-effects.png`: the rack with an instrument and two effects, and the control
+//!   that adds one at the end of it.
+//! - `track-panel-effect-picker.png`: the same with that control open.
+//! - `track-panel-effect-missing.png`: an effect whose plugin this machine does not have.
 //! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the
 //!   plugin host, where every plugin says what the one edit is.
 //!
@@ -322,6 +326,25 @@ fn set_plugin(
         PluginRecord::new(format, plugin_id, state_asset).context("a plugin record")?,
     );
     project.commit("Choose a plugin", changes)?;
+    Ok(())
+}
+
+/// Puts a plugin in each of these effect slots of a track, in this order. One group each,
+/// which is what an interface does: `add_effect` reads the track record of the project and not
+/// the group being built.
+fn set_effects(project: &mut Project, track: &str, names: &[&str]) -> Result<()> {
+    let id = InstanceId::new(&format!("arrangement/{track}"))?;
+    for name in names {
+        let track = project
+            .resolve::<TrackState>(&id)
+            .context("the track is not there")?;
+        let mut changes = Changes::new();
+        let slot = arrangement::add_effect(project, &mut changes, &track, name)?;
+        let record =
+            PluginRecord::new(PluginFormat::Clap, test_clap_plugin::PLUGIN_ID, slot.name());
+        changes.create(slot, record.context("a plugin record")?);
+        project.commit(&format!("Add {name}"), changes)?;
+    }
     Ok(())
 }
 
@@ -654,6 +677,55 @@ fn main() -> Result<()> {
     })?;
     opened.click_track_header(0., &mut cx)?;
     save(&mut cx, &opened, "track-panel-missing")?;
+    drop(opened);
+
+    // The rack with an instrument and two effects after it, in the order of the record, with
+    // the control that adds one at the end. Then that control, open, with what this machine
+    // offers as an effect.
+    let opened = Opened::new(&mut cx, |project| {
+        set_plugin(
+            project,
+            "track-1",
+            PluginFormat::Clap,
+            test_clap_plugin::PLUGIN_ID,
+            "test-tone",
+        )?;
+        set_effects(project, "track-1", &["Warmth", "Space"])
+    })?;
+    opened.click_track_header(0., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-effects")?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let add = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        anyhow::Ok(panel.read(cx).add_effect_control().clone())
+    })?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        add.update(cx, |add, cx| add.open(window, cx));
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-effect-picker")?;
+    drop(opened);
+
+    // An effect this machine does not have: the card says so, the rest of the chain plays.
+    let opened = Opened::new(&mut cx, |project| {
+        set_plugin(
+            project,
+            "track-1",
+            PluginFormat::Clap,
+            test_clap_plugin::PLUGIN_ID,
+            "test-tone",
+        )?;
+        set_effects(project, "track-1", &["Warmth"])?;
+        let slot = InstanceId::new("arrangement/track-1/warmth")?;
+        let mut changes = Changes::new();
+        let record = PluginRecord::new(PluginFormat::Clap, "com.example.nowhere", "warmth");
+        changes.create(slot, record.context("a plugin record")?);
+        project.commit("A plugin this machine does not have", changes)?;
+        Ok(())
+    })?;
+    opened.click_track_header(0., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-effect-missing")?;
     drop(opened);
 
     let started = Instant::now();

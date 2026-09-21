@@ -4,8 +4,8 @@
 //! told. This registry is that telling: a list of offers, and a name per tool. Whoever makes
 //! the window fills it, as it fills [`crate::Views`], and installs it as a GPUI global.
 //!
-//! Provisional and small, like the view registry. Today there is one kind of slot, the
-//! instrument of a track.
+//! Provisional and small, like the view registry. There are two kinds of slot, the instrument
+//! of a track and an effect after it, and an offer is made for one of them.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -93,9 +93,18 @@ pub struct DeviceLabel {
     pub name: SharedString,
 }
 
+/// Which slot of a rack an offer is for. A rack asks for one kind at a time: the picker on the
+/// instrument card offers instruments, and the control that adds one offers effects.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Instrument,
+    Effect,
+}
+
 #[derive(Default)]
 pub struct Devices {
     instruments: Vec<ListOffers>,
+    effects: Vec<ListOffers>,
     notes: Vec<ListNotes>,
     describe: BTreeMap<&'static str, DescribeInstance>,
 }
@@ -119,6 +128,11 @@ impl Devices {
         self.instruments.push(Rc::new(list));
     }
 
+    /// Adds a source of effects, asked for like [`Self::instruments`].
+    pub fn effects(&mut self, list: impl Fn() -> Vec<DeviceOffer> + 'static) {
+        self.effects.push(Rc::new(list));
+    }
+
     /// Adds a source of quiet lines a picker shows under its offers: what a source of offers
     /// is still doing, and what it has to say about what it offers. Asked when a picker is
     /// filled, like the offers.
@@ -137,12 +151,16 @@ impl Devices {
         );
     }
 
-    /// Every instrument on offer, from the installed registry.
-    pub fn offered(cx: &App) -> Vec<DeviceOffer> {
+    /// Everything on offer for one kind of slot, from the installed registry.
+    pub fn offered(slot: Slot, cx: &App) -> Vec<DeviceOffer> {
         let Some(devices) = cx.try_global::<Self>() else {
             return Vec::new();
         };
-        devices.instruments.iter().flat_map(|list| list()).collect()
+        let sources = match slot {
+            Slot::Instrument => &devices.instruments,
+            Slot::Effect => &devices.effects,
+        };
+        sources.iter().flat_map(|list| list()).collect()
     }
 
     /// Every quiet line under the offers, from the installed registry.

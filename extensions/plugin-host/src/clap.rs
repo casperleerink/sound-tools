@@ -30,7 +30,7 @@ use sound_core::{MAX_BLOCK, PrepareConfig};
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
 use crate::host::{HOST_NAME, HOST_URL, HOST_VENDOR, HOST_VERSION};
 use crate::processor::{
-    EVENT_CAPACITY, PluginEvent, SUSTAIN_CONTROLLER, Started, copy_out, not_ours,
+    EVENT_CAPACITY, PluginEvent, SUSTAIN_CONTROLLER, Started, copy_in, copy_out, not_ours,
 };
 use crate::scan::ScannedPlugin;
 use crate::window::WindowSize;
@@ -437,8 +437,8 @@ struct ClapStarted {
     takes_midi: bool,
     input_ports: AudioPorts,
     output_ports: AudioPorts,
-    /// Silence for the first audio input port of the plugin, one buffer per channel. Empty
-    /// when the plugin takes no audio in, which is the usual case for an instrument.
+    /// The first audio input port of the plugin, one buffer per channel. Empty when the plugin
+    /// takes no audio in, which is the usual case for an instrument.
     input_channels: Vec<Vec<f32>>,
     /// The first audio output port of the plugin, one buffer per channel.
     output_channels: Vec<Vec<f32>>,
@@ -532,7 +532,13 @@ impl Started for ClapStarted {
         true
     }
 
-    fn run(&mut self, frames: usize, left: &mut [f32], right: &mut [f32]) -> bool {
+    fn run(
+        &mut self,
+        frames: usize,
+        input: [&[f32]; sound_core::CHANNELS],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> bool {
         let Self {
             audio,
             input_ports,
@@ -543,15 +549,19 @@ impl Started for ClapStarted {
             ..
         } = self;
 
+        copy_in(input_channels, frames, input);
         let inputs = if input_channels.is_empty() {
             InputAudioBuffers::empty()
         } else {
             input_ports.with_input_buffers([AudioPortBuffer {
                 latency: 0,
                 channels: AudioPortBufferType::f32_input_only(
+                    // Not `constant`: a constant buffer tells the plugin every sample of it is
+                    // the same, which is true of the silence an instrument gets and not of the
+                    // sound an effect is given.
                     input_channels
                         .iter_mut()
-                        .map(|channel| InputChannel::constant(&mut channel[..frames])),
+                        .map(|channel| InputChannel::variable(&mut channel[..frames])),
                 ),
             }])
         };

@@ -6,6 +6,7 @@
 //! - `notes`: the note editor.
 //! - `track_panel`: the track panel and the view of the synth in it.
 //! - `instruments`: picking the instrument of a track, and the plugin's own window.
+//! - `effects`: adding and removing effects in the rack.
 //! - `transport`: the tempo, the click and the view following the playhead.
 //! - `piece`: a short piece made by hand from the default project, closed and opened again.
 
@@ -14,6 +15,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod clips;
+mod effects;
 mod instruments;
 mod notes;
 mod piece;

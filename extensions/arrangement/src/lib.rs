@@ -26,7 +26,7 @@ use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, Changes, InputEndpoint, Instance, InstanceId,
     OutputEndpoint, Place, Project, ProjectError, Registry, RegistryError, State, Ticks,
 };
-use sound_notes::{AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOOL, Velocity};
+use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOOL, Velocity};
 
 pub use mixer::{ChannelGains, Mixer, RAMP_SECONDS, channel_gains};
 pub use sequencer::{HELD_CAPACITY, PREVIEW_SECONDS, Sequencer, SequencerUpdate, TrackSnapshot};
@@ -124,6 +124,14 @@ pub struct TrackState {
     /// A muted track is silent and keeps everything else as it is.
     #[serde(default)]
     pub mute: bool,
+    /// The effects of the track, by the name of the child that holds each one, in the order
+    /// the sound goes through them: instrument, then these, then the gain, pan and mute.
+    ///
+    /// One place decides the order, so a reorder is one record and one undo step. A record
+    /// that leaves the field out has no effects and is written back without it, so a track of
+    /// before effects existed loads unchanged and gives the same bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<String>,
 }
 
 impl TrackState {
@@ -142,6 +150,7 @@ impl TrackState {
             gain_db: 0.0,
             pan: 0.0,
             mute: false,
+            effects: Vec::new(),
         }
     }
 }
@@ -165,8 +174,40 @@ impl State for TrackState {
             return Err("name must not be empty".to_string());
         }
         in_range("gain_db", self.gain_db, Self::GAIN_DB)?;
-        in_range("pan", self.pan, Self::PAN)
+        in_range("pan", self.pan, Self::PAN)?;
+        // A name in the list is the name of a file in the track folder, and the list decides an
+        // order. A name that is not a child name, a name twice and the name of the instrument
+        // are all lists with no order to read, so they are refused here and the agent is told
+        // where the mistake is. A name with no record is not: that file may still arrive, and
+        // the behaviour reports it.
+        for (index, name) in self.effects.iter().enumerate() {
+            if !is_child_name(name) {
+                return Err(format!(
+                    "effects[{index}] must be the name of a file in the track folder without `.json`: lowercase letters, digits, `-` and `_`, not {name:?}"
+                ));
+            }
+            if name == INSTRUMENT {
+                return Err(format!(
+                    "effects[{index}] must not be {INSTRUMENT:?}: the instrument of a track is its own slot and plays before every effect"
+                ));
+            }
+            if self.effects[..index].contains(name) {
+                return Err(format!(
+                    "effects[{index}] is {name:?}, which the list already has. One effect is one child record: copy the file under another name to use it twice"
+                ));
+            }
+        }
+        Ok(())
     }
+}
+
+/// Whether `name` can be the name of a child record, which is the rule for an instance name.
+fn is_child_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "instance"
+        && name.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || "-_".contains(character)
+        })
 }
 
 /// The doc an agent opens for anything musical: the records of the three tools and how to add,
@@ -193,12 +234,12 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 
 /// Runs when the track record or anything the track owns changes: one snapshot of all its
 /// clips goes to its one sequencer, which keeps its held notes, and the gain, pan and mute of
-/// the record go to its mixer as one gain per channel. The instrument is found by the port
-/// names of the note contract, so any tool with those ports fits.
+/// the record go to its mixer as one gain per channel. The instrument and the effects are
+/// found by the port names of the note contract, so any tool with those ports fits.
 ///
-/// The path of a track is sequencer, instrument, mixer, main output. Both processors keep
-/// what they hold: a note goes on sounding through a pan edit, and a gain ramp through a
-/// clip edit.
+/// The path of a track is sequencer, instrument, the effects in the order of the record,
+/// mixer, main output. Every processor keeps what it holds: a note goes on sounding through a
+/// pan edit, and a gain ramp through a clip edit.
 fn apply_track(
     track: &TrackState,
     context: &mut BehaviourContext<'_>,
@@ -213,14 +254,64 @@ fn apply_track(
     let gains = channel_gains(track);
     let mixer = context.processor(MIXER, || Mixer::new(gains))?;
     context.update(mixer, gains)?;
-    if let Some(audio) = context.child_output(INSTRUMENT, AUDIO_OUTPUT) {
-        context.connect(audio.to(InputEndpoint::new(mixer, Mixer::INPUT)))?;
+
+    // The chain, from the instrument through the effects to the mixer. A slot that is not
+    // there is reported and left out, so the sound goes on through the rest of the chain.
+    let mut sound = context.child_output(INSTRUMENT, AUDIO_OUTPUT);
+    for name in &track.effects {
+        let ports = context
+            .child_input(name, AUDIO_INPUT)
+            .zip(context.child_output(name, AUDIO_OUTPUT));
+        let Some((input, output)) = ports else {
+            let message = missing_effect(context, name);
+            context.problem(message);
+            continue;
+        };
+        if let Some(sound) = sound {
+            context.connect(sound.to(input))?;
+        }
+        sound = Some(output);
     }
+    if let Some(sound) = sound {
+        context.connect(sound.to(InputEndpoint::new(mixer, Mixer::INPUT)))?;
+    }
+    for name in unlisted_effects(track, context) {
+        context.problem(format!(
+            "the child {name:?} takes audio in and makes audio out, and the `effects` list of this track does not name it, so nothing goes through it. Add {name:?} to `effects` where you want it in the chain, or delete the file"
+        ));
+    }
+
     // The main output, for now: the stereo mixer on the first two device channels.
     if context.device_channels() > 0 {
         context.connect(OutputEndpoint::new(mixer, Mixer::OUTPUT).to_device(0))?;
     }
     Ok(())
+}
+
+/// Why a name in `effects` has no effect behind it: no record at all, or one whose tool has
+/// not the ports of an effect.
+fn missing_effect(context: &BehaviourContext<'_>, name: &str) -> String {
+    match context.child_names().any(|child| child == name) {
+        true => format!(
+            "`effects` names {name:?}, and {name}.json in this track holds no tool with an `audio` input and an `audio` output, so the sound passes it by. Put a plugin record there, or take {name:?} out of `effects`"
+        ),
+        false => format!(
+            "`effects` names {name:?}, and this track has no {name}.json, so the sound passes it by. Write that record, or take {name:?} out of `effects`"
+        ),
+    }
+}
+
+/// Children that look like an effect and are not in the list. They are silent otherwise, and
+/// an agent that wrote the record and forgot the list would be left guessing.
+fn unlisted_effects(track: &TrackState, context: &BehaviourContext<'_>) -> Vec<String> {
+    let children = context.child_names();
+    let unlisted = children.filter(|name| {
+        *name != INSTRUMENT
+            && !track.effects.iter().any(|listed| listed == name)
+            && context.child_input(name, AUDIO_INPUT).is_some()
+            && context.child_output(name, AUDIO_OUTPUT).is_some()
+    });
+    unlisted.map(str::to_string).collect()
 }
 
 /// The tracks of an arrangement as people see them: by `order`, then by id.
@@ -275,6 +366,65 @@ pub fn add_track<I: State>(
     let track = changes.create(id, state);
     changes.create(track.id().child(INSTRUMENT)?, instrument);
     Ok(track)
+}
+
+/// The slots of a track in the order the sound goes through them: the instrument, then the
+/// effects the record names. A slot may hold nothing; a name with no record is a slot all the
+/// same, because that is what the record says the track has.
+pub fn device_slots(
+    project: &Project,
+    track: &Instance<TrackState>,
+) -> Result<Vec<InstanceId>, ProjectError> {
+    let mut slots = vec![track.id().child(INSTRUMENT)?];
+    let Some(state) = project.state(track) else {
+        return Ok(slots);
+    };
+    for name in &state.effects {
+        slots.push(track.id().child(name)?);
+    }
+    Ok(slots)
+}
+
+/// Adds an effect slot at the end of the chain of a track, to a group of changes: a free child
+/// id, and the track record with that name appended.
+///
+/// The record of the effect itself is the caller's, as the instrument of [`add_track`] is:
+/// this crate knows no effect. Put any tool with an `audio` input and an `audio` output in the
+/// id this gives back, in the same group, so that adding an effect is one undo step.
+pub fn add_effect(
+    project: &Project,
+    changes: &mut Changes,
+    track: &Instance<TrackState>,
+    name: &str,
+) -> Result<InstanceId, ProjectError> {
+    let missing = || ProjectError::MissingInstance(track.id().clone());
+    let mut state = project.state(track).ok_or_else(missing)?.clone();
+    // A free id: no record of this track, no file on disk, and no name the list already has.
+    // The last of those is what `free_id` cannot see, because a listed name may have no record.
+    let mut slot = project.free_id(&track.id().child(&id_name(name, "effect"))?)?;
+    while state.effects.iter().any(|name| name == slot.name()) {
+        let next = format!("{}-2", slot.name());
+        slot = project.free_id(&track.id().child(&next)?)?;
+    }
+    state.effects.push(slot.name().to_string());
+    changes.set(track, state);
+    Ok(slot)
+}
+
+/// Takes an effect off a track: the record and its name in the list go in one group, so
+/// removing an effect is one undo step and undo brings it back where it was.
+pub fn remove_effect(
+    project: &Project,
+    changes: &mut Changes,
+    track: &Instance<TrackState>,
+    slot: &InstanceId,
+) -> Result<(), ProjectError> {
+    let missing = || ProjectError::MissingInstance(track.id().clone());
+    let mut state = project.state(track).ok_or_else(missing)?.clone();
+    state.effects.retain(|name| name.as_str() != slot.name());
+    changes.set(track, state);
+    changes.delete(slot);
+    Ok(())
 }
 
 /// Adds a clip to a track, to a group of changes. The id comes from `name`, as for a track.

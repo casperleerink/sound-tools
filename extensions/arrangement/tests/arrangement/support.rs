@@ -134,6 +134,94 @@ fn apply_probe(state: &Probe, context: &mut BehaviourContext<'_>) -> Result<(), 
     Ok(())
 }
 
+/// A test effect: every sample becomes `sample * gain + offset`, and what it played a frame
+/// ago comes back times `tail`.
+///
+/// It has the ports of an effect and nothing else, like a hosted plugin in an effect slot, so
+/// the arrangement needs no plugin to be told what a chain does. The offset is what makes two
+/// of them say by their samples which came first: with gains of a half, A then B is
+/// `x / 4 + offset_a / 2 + offset_b`, and the other way round the last two swap. The tail is
+/// what a delay or a reverb has, and it is 0 unless a test asks for one.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Trim {
+    pub gain: f32,
+    #[serde(default)]
+    pub offset: f32,
+    #[serde(default)]
+    pub tail: f32,
+}
+
+impl Trim {
+    pub fn new(gain: f32, offset: f32) -> Self {
+        Self {
+            gain,
+            offset,
+            tail: 0.0,
+        }
+    }
+}
+
+impl State for Trim {
+    const TOOL: &'static str = "test.trim";
+}
+
+pub struct TrimProcessor {
+    settings: Trim,
+    /// What each channel played a frame ago, which is the whole of its tail.
+    held: [f32; 2],
+}
+
+impl TrimProcessor {
+    const INPUT: sound_core::AudioInput = sound_core::AudioInput::new(0);
+    const OUTPUT: AudioOutput = AudioOutput::new(0);
+}
+
+impl Processor for TrimProcessor {
+    type Update = Trim;
+
+    fn ports(&self) -> Ports {
+        Ports::new()
+            .audio_input(Self::INPUT)
+            .audio_output(Self::OUTPUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, settings: &mut Trim) {
+        self.settings = *settings;
+    }
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let input = context.audio_inputs.get(Self::INPUT);
+        let output = context.audio_outputs.get(Self::OUTPUT);
+        let Trim { gain, offset, tail } = self.settings;
+        for ((output, input), held) in output.into_iter().zip(input).zip(&mut self.held) {
+            for (sample, played) in output.iter_mut().zip(input) {
+                *sample = played * gain + offset + *held * tail;
+                *held = *sample;
+            }
+        }
+    }
+}
+
+fn apply_trim(state: &Trim, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    let trim = context.processor("trim", || TrimProcessor {
+        settings: *state,
+        held: [0.0; 2],
+    })?;
+    context.update(trim, *state)?;
+    context.input(
+        sound_notes::AUDIO_INPUT,
+        InputEndpoint::new(trim, TrimProcessor::INPUT),
+    );
+    context.output(
+        AUDIO_OUTPUT,
+        OutputEndpoint::new(trim, TrimProcessor::OUTPUT),
+    );
+    Ok(())
+}
+
 pub fn registry() -> Registry {
     let mut registry = Registry::new();
     arrangement::register(&mut registry).unwrap();
@@ -141,6 +229,7 @@ pub fn registry() -> Registry {
         .tool::<Probe>("test")
         .unwrap()
         .behaviour(apply_probe);
+    registry.tool::<Trim>("test").unwrap().behaviour(apply_trim);
     registry
 }
 

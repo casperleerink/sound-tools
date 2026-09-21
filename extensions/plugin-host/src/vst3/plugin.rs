@@ -147,6 +147,17 @@ pub fn load(
             0,
             1,
         );
+        // The first audio input is the one an effect is played into. A bus that is not active
+        // is one the plugin may ignore, so an effect would be silent without this. An
+        // instrument with an audio input gets the silence it always got.
+        if !inputs.is_empty() {
+            component.activateBus(
+                MediaTypes_::kAudio as int32,
+                BusDirections_::kInput as int32,
+                0,
+                1,
+            );
+        }
         component.activateBus(
             MediaTypes_::kAudio as int32,
             BusDirections_::kOutput as int32,
@@ -438,9 +449,9 @@ unsafe fn bus_channels(component: &ComPtr<IComponent>, direction: int32) -> Vec<
     }
 }
 
-/// Tells the plugin what this host gives each bus. The first output is asked for in stereo,
-/// which is what the engine carries. Whatever the plugin answers, what it really has is what
-/// its buses say afterwards, which the caller reads again.
+/// Tells the plugin what this host gives each bus. The first input and the first output are
+/// asked for in stereo, which is what the engine carries. Whatever the plugin answers, what it
+/// really has is what its buses say afterwards, which the caller reads again.
 ///
 /// # Safety
 ///
@@ -450,6 +461,9 @@ unsafe fn arrange(processor: &ComPtr<IAudioProcessor>, inputs: &[usize], outputs
         inputs.iter().map(|count| speakers(*count)).collect();
     let mut wanted_out: Vec<SpeakerArrangement> =
         outputs.iter().map(|count| speakers(*count)).collect();
+    if let Some(first) = wanted_in.first_mut() {
+        *first = SpeakerArr::kStereo;
+    }
     if let Some(first) = wanted_out.first_mut() {
         *first = SpeakerArr::kStereo;
     }

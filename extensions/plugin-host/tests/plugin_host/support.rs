@@ -177,18 +177,35 @@ impl State for Rack {
     const OWNS_CHILDREN: bool = true;
 }
 
-/// What a track does: the sender into the instrument, and the instrument to the device.
+/// What a track does: the sender into the instrument, the instrument through the effect it has,
+/// and the last of them to the device.
+///
+/// The chain is the one the arrangement builds, in miniature: one fixed effect slot named
+/// `effect`. A slot with no record is left out, as a track leaves one out.
 fn apply_rack(_state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     if let Some(played) = context.child_output("keys", PLAYED_OUTPUT)
         && let Some(notes) = context.child_input("instrument", NOTES_INPUT)
     {
         context.connect(played.to(notes))?;
     }
-    if let Some(audio) = context.child_output("instrument", sound_notes::AUDIO_OUTPUT) {
-        context.connect(audio.to_device(0))?;
+    let mut sound = context.child_output("instrument", sound_notes::AUDIO_OUTPUT);
+    let effect = context
+        .child_input(EFFECT, sound_notes::AUDIO_INPUT)
+        .zip(context.child_output(EFFECT, sound_notes::AUDIO_OUTPUT));
+    if let Some((input, output)) = effect {
+        if let Some(sound) = sound {
+            context.connect(sound.to(input))?;
+        }
+        sound = Some(output);
+    }
+    if let Some(sound) = sound {
+        context.connect(sound.to_device(0))?;
     }
     Ok(())
 }
+
+/// The one effect slot of the test rack, after its instrument.
+pub const EFFECT: &str = "effect";
 
 /// A tool whose behaviour refuses when it is told to, so a test can make the project reject a
 /// whole edit group the way another extension or a bad connection would.
@@ -401,12 +418,12 @@ pub fn record(format: PluginFormat, state_asset: &str) -> PluginRecord {
     PluginRecord::new(format, plugin_id(format), state_asset).expect("a plugin record")
 }
 
-/// The transpose the test plugin saved, out of a state asset.
+/// What the test plugin saved, out of a state asset.
 ///
 /// A CLAP asset is the plugin's own bytes. A VST 3 asset is the container this host writes,
 /// because VST 3 keeps two states: `SVT3`, then the component's state with its length, then
 /// the controller's. Reading it here is also what checks that the container is what it says.
-pub fn saved_transpose(format: PluginFormat, bytes: &[u8]) -> i32 {
+pub fn saved_state(format: PluginFormat, bytes: &[u8]) -> test_plugin_support::SavedState {
     let own = match format {
         PluginFormat::Clap => bytes,
         PluginFormat::Vst3 => {
@@ -415,20 +432,18 @@ pub fn saved_transpose(format: PluginFormat, bytes: &[u8]) -> i32 {
             &bytes[8..8 + length]
         }
     };
-    assert_eq!(&own[..4], b"STT1", "not a Test Tone state");
-    i32::from_le_bytes([own[4], own[5], own[6], own[7]])
+    test_plugin_support::load_state(own).expect("a Test Tone state")
+}
+
+/// The transpose the test plugin saved.
+pub fn saved_transpose(format: PluginFormat, bytes: &[u8]) -> i32 {
+    saved_state(format, bytes).semitones
 }
 
 /// The level a parameter edit left the plugin on, out of the component part of a VST 3 state
 /// asset. It is hundredths, so 100 is the level a plugin nobody edited plays at.
 pub fn saved_edit_level(bytes: &[u8]) -> i32 {
-    assert_eq!(&bytes[..4], b"SVT3", "not a VST 3 state asset");
-    let length = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
-    let own = &bytes[8..8 + length];
-    assert_eq!(&own[..4], b"STT1", "not a Test Tone state");
-    test_plugin_support::load_state(own)
-        .expect("a Test Tone state")
-        .1
+    saved_state(PluginFormat::Vst3, bytes).edit_level
 }
 
 /// The level the plugin's edit controller saved, out of the controller part of a VST 3 state
@@ -562,6 +577,31 @@ impl Harness {
         self.project
             .commit("Add track", changes)
             .expect("the track is added");
+    }
+
+    /// Puts a plugin in the effect slot of the rack, after its instrument.
+    pub fn add_effect(&mut self, record: PluginRecord) {
+        let mut changes = Changes::new();
+        changes.create(id(&format!("track/{EFFECT}")), record);
+        self.project
+            .commit("Add effect", changes)
+            .expect("the effect is added");
+    }
+
+    /// Writes an offset, in hundredths, into the state asset of an effect, as the host would
+    /// have saved it. It is what the effect half of the test plugin adds to every sample.
+    pub fn write_offset(&self, format: PluginFormat, name: &str, offset: i32) {
+        let own = test_plugin_support::save_state(test_plugin_support::SavedState {
+            offset,
+            ..Default::default()
+        });
+        let bytes = match format {
+            PluginFormat::Clap => own,
+            PluginFormat::Vst3 => vst3_state(&own, b""),
+        };
+        let path = self.project.assets().path(&state_asset(name));
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("the folder");
+        std::fs::write(path, bytes).expect("the state asset");
     }
 
     pub fn path(&self, relative: &str) -> PathBuf {

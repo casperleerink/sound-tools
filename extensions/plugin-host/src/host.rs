@@ -55,10 +55,6 @@ pub enum PluginProblem {
     StillScanning { plugin_id: String },
     #[error("the plugin {plugin_id:?} did not load: {message}")]
     DidNotLoad { plugin_id: String, message: String },
-    #[error(
-        "the plugin {plugin_id:?} is not an instrument, so it has no notes to play. Its features are: {features}"
-    )]
-    NotAnInstrument { plugin_id: String, features: String },
     #[error("the state of the plugin {plugin_id:?} could not be read: {message}")]
     StateNotRead { plugin_id: String, message: String },
     #[error("the state of the plugin {plugin_id:?} could not be saved: {message}")]
@@ -373,6 +369,15 @@ impl Plugins {
         instruments
     }
 
+    /// Every effect this machine has, for the picker that adds one to a rack. A plugin decides
+    /// which list it is in by what it declares; nothing checks that it is true, and a record
+    /// written by hand may name any plugin in any slot.
+    pub fn effects(&self) -> Vec<ScannedPlugin> {
+        let mut effects = self.scan().plugins;
+        effects.retain(ScannedPlugin::is_effect);
+        effects
+    }
+
     /// The name the maker gave the plugin with this id, when this machine has it. `None` says
     /// the plugin is missing, which is what the card of a record shows.
     ///
@@ -445,12 +450,11 @@ impl Plugins {
                 });
             }
         };
-        if !found.is_instrument() {
-            return Err(PluginProblem::NotAnInstrument {
-                plugin_id: record.plugin_id.clone(),
-                features: found.features.join(", "),
-            });
-        }
+        // Nothing checks here what the plugin says it is. One record serves an instrument slot
+        // and an effect slot, and this host knows no slots: a track decides what it wires a
+        // record to. What a plugin declares is what a picker offers it for, and that is not the
+        // same question: Spectral Freeze on the machine this was written on declares itself an
+        // instrument and is an effect.
         // Empty bytes are a state file that was made to reserve its name, which is how a plugin
         // the window puts on a track gets one, and that the plugin has not written into yet.
         let saved = assets

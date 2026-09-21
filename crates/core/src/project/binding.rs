@@ -257,6 +257,15 @@ impl BehaviourContext<'_> {
             .filter_map(|(id, record)| Some((id.name(), record.state::<C>()?)))
     }
 
+    /// The names of every owned child, in name order, whatever their tool.
+    ///
+    /// For an owner that finds a child by its ports rather than by its type, and has to say
+    /// something about a child it did not expect. Ask [`Self::child_input`] and
+    /// [`Self::child_output`] what each one exposes.
+    pub fn child_names(&self) -> impl Iterator<Item = &str> {
+        self.id.children_in(self.instances).map(|(id, _)| id.name())
+    }
+
     /// The state of the owned child `name`, when it exists and holds a `C`.
     pub fn child<C: State>(&self, name: &str) -> Option<&C> {
         self.instances.get(&self.id.child(name).ok()?)?.state()

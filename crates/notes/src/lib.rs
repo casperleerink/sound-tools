@@ -1,8 +1,8 @@
 //! The note contract: what a tool that sends notes and a tool that plays them agree on.
 //!
 //! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and
-//! [`Clip`], the realtime [`NoteEvent`] and the port names of an instrument. `README.md` in
-//! this crate is the guide.
+//! [`Clip`], the realtime [`NoteEvent`] and the port names of an instrument and an effect.
+//! `README.md` in this crate is the guide.
 
 use serde::{Deserialize, Serialize};
 use sound_core::{Place, State, Ticks};
@@ -13,8 +13,15 @@ pub const NOTES_INPUT: &str = "notes";
 /// The tool that owns clips. Named here because the clip record is: see [`Clip`].
 pub const TRACK_TOOL: &str = "arrangement.track";
 
-/// The audio output of an instrument. Mono for now.
+/// The audio output of an instrument or an effect. Stereo, like every audio port.
 pub const AUDIO_OUTPUT: &str = "audio";
+
+/// The audio input of an effect. A tool with this input and [`AUDIO_OUTPUT`] is an effect: the
+/// sound of whatever comes before it goes in here and what it makes comes out there.
+///
+/// It has the same name as the output because inputs and outputs are named apart. So a chain
+/// reads as `audio` to `audio`, and no tool has to invent a name for the one thing it takes.
+pub const AUDIO_INPUT: &str = "audio";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum NoteError {

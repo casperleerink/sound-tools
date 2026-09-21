@@ -11,7 +11,7 @@ pub mod typography;
 pub mod views;
 
 pub use assets::Assets;
-pub use devices::{DeviceLabel, DeviceOffer, Devices};
+pub use devices::{DeviceLabel, DeviceOffer, Devices, Slot};
 pub use focus::KeyboardFocus;
 pub use session::{POLL_INTERVAL, Playhead, Session};
 pub use theme::{ActiveTheme, Theme};

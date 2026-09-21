@@ -3,7 +3,14 @@
 //! The plugin's own handle stays on the control thread, see `host.rs`. What comes here is the
 //! part every format allows on the audio thread: CLAP's audio processor, VST 3's
 //! `IAudioProcessor`. This wrapper translates the note contract into what that format takes,
-//! calls the plugin and copies its first output port into our one stereo port.
+//! gives the plugin our one stereo input port, calls it and copies its first output port into
+//! our one stereo output port.
+//!
+//! One wrapper serves an instrument and an effect, because one record does: nothing here knows
+//! which slot it is in. An instrument's input is connected to nothing and is silent, which is
+//! what every audio input of a plugin got before effects existed. A slot with no plugin passes
+//! its input to its output unchanged, so a missing effect is a slot the sound goes through and
+//! not a track that goes silent.
 //!
 //! The translation is here and not in a backend: both formats need the same list of keys that
 //! are down, the same expansion of `AllOff` and the same bound on how many events one block may
@@ -19,7 +26,10 @@
 //! processor back. The backend's own `Drop` is the last resort, for the engine itself being
 //! torn down, when there is no audio thread left to do it on.
 
-use sound_core::{AudioOutput, EventInput, Ports, PrepareConfig, ProcessContext, Processor, Timed};
+use sound_core::{
+    AudioInput, AudioOutput, CHANNELS, EventInput, Ports, PrepareConfig, ProcessContext, Processor,
+    Timed,
+};
 use sound_notes::{NoteEvent, Pedal};
 
 /// How many events one block can carry into the plugin. An `AllOff` alone can be 129 of them.
@@ -54,9 +64,16 @@ pub trait Started: Send {
     /// One event for this block. `false` says there was no room, which the caller counts.
     fn push(&mut self, offset: u32, event: PluginEvent) -> bool;
 
-    /// Runs the plugin for `frames` frames and writes its first output port into `left` and
-    /// `right`. `false` says the plugin failed and is not to be called again.
-    fn run(&mut self, frames: usize, left: &mut [f32], right: &mut [f32]) -> bool;
+    /// Runs the plugin for `frames` frames with `input` on its first audio input port, and
+    /// writes its first output port into `left` and `right`. `false` says the plugin failed
+    /// and is not to be called again.
+    fn run(
+        &mut self,
+        frames: usize,
+        input: [&[f32]; CHANNELS],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> bool;
 
     /// Stops the plugin's processing. The audio thread only, as both formats ask, and only from
     /// the places here that have one. Calling it again does nothing.
@@ -69,6 +86,21 @@ pub trait Started: Send {
 pub fn not_ours<T>(call: impl FnOnce() -> T) -> T {
     let _disabled = rtsan_standalone::ScopedDisabler::default();
     call()
+}
+
+/// Copies our one stereo port into the channels of a plugin's first audio input port.
+///
+/// A plugin that takes one channel gets the left one, which is where a processor that makes
+/// one signal puts it. A plugin that takes more than two gets silence in the rest, as it did
+/// before effects existed. A plugin with no audio input takes nothing: what came before it in
+/// the chain is lost, and what it plays takes its place.
+pub fn copy_in(channels: &mut [Vec<f32>], frames: usize, input: [&[f32]; CHANNELS]) {
+    for (index, channel) in channels.iter_mut().enumerate() {
+        match input.get(index) {
+            Some(samples) => channel[..frames].copy_from_slice(&samples[..frames]),
+            None => channel[..frames].fill(0.0),
+        }
+    }
 }
 
 /// Copies the channels a plugin wrote into our one stereo port. A plugin with one channel is
@@ -104,6 +136,7 @@ pub type HostedUpdate = Option<Box<dyn Started>>;
 
 impl HostedPlugin {
     pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
+    pub const INPUT: AudioInput = AudioInput::new(0);
     pub const AUDIO: AudioOutput = AudioOutput::new(0);
 
     /// A processor with no plugin. It makes no sound.
@@ -121,6 +154,7 @@ impl Processor for HostedPlugin {
 
     fn ports(&self) -> Ports {
         Ports::new()
+            .audio_input(Self::INPUT)
             .event_input(Self::NOTES)
             .audio_output(Self::AUDIO)
     }
@@ -149,19 +183,23 @@ impl Processor for HostedPlugin {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let events = context.event_inputs.get(Self::NOTES);
+        let input = context.audio_inputs.get(Self::INPUT);
         let [left, right] = context.audio_outputs.get(Self::AUDIO);
         let frames = context.frames;
-        let Some(plugin) = self.plugin.as_deref_mut() else {
+        let plugin = self.plugin.as_deref_mut().filter(|_| !self.failed);
+        let Some(plugin) = plugin else {
+            // No plugin, or one that failed: the slot passes what it is given through. For an
+            // instrument that is the silence of an input nothing reaches, and for an effect it
+            // is the track playing on through a slot whose plugin is missing.
+            left[..frames].copy_from_slice(&input[0][..frames]);
+            right[..frames].copy_from_slice(&input[1][..frames]);
             return;
         };
-        if self.failed {
-            return;
-        }
         // More events in one block than the plugin's buffer holds. Counted, never allocated.
         for _ in 0..translate(plugin, events, &mut self.keys_down) {
             context.event_outputs.count_dropped();
         }
-        if !plugin.run(frames, &mut left[..frames], &mut right[..frames]) {
+        if !plugin.run(frames, input, &mut left[..frames], &mut right[..frames]) {
             self.failed = true;
         }
     }
@@ -255,7 +293,13 @@ mod tests {
             true
         }
 
-        fn run(&mut self, _frames: usize, _left: &mut [f32], _right: &mut [f32]) -> bool {
+        fn run(
+            &mut self,
+            _frames: usize,
+            _input: [&[f32]; CHANNELS],
+            _left: &mut [f32],
+            _right: &mut [f32],
+        ) -> bool {
             true
         }
 

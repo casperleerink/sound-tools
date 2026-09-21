@@ -7,7 +7,7 @@
 use plugin_host::PluginFormat;
 use sound_core::Changes;
 
-use crate::support::{FORMATS, Harness, Picky, Played, id, plugin_id, record};
+use crate::support::{FORMATS, Harness, Picky, Played, id, peak, plugin_id, record};
 
 /// A note every 512 frames for long enough that every render of a test finds notes in it.
 /// Engine time never goes back, so each call plays a later part of the same list.
@@ -141,6 +141,68 @@ fn the_same_record_again(format: PluginFormat) {
         1
     );
     assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
+    assert!(plays(&mut harness), "{format:?}");
+}
+
+/// The same two sequences with an effect after the instrument, which is two plugins in one
+/// chain. Both ends of it must still play, and the chain must be whole.
+#[test]
+fn the_same_sequences_with_an_effect_in_the_chain_leave_the_whole_chain_playing() {
+    for format in FORMATS {
+        a_rejected_group_with_an_effect(format);
+        a_delete_and_an_undo_with_an_effect(format);
+    }
+}
+
+fn a_rejected_group_with_an_effect(format: PluginFormat) {
+    let mut harness = Harness::new();
+    harness.add_track(record(format, "piano"), played());
+    // An offset of its own, so that what comes out is the effect's and not the instrument's.
+    harness.write_offset(format, "trim", 25);
+    harness.add_effect(record(format, "trim"));
+    let through = harness.play(4096).samples().to_vec();
+    assert!(plays(&mut harness), "{format:?}");
+
+    // One group: the effect record changes, and a record that refuses goes in with it.
+    let mut changes = Changes::new();
+    changes.create(id("track/effect"), record(format, "other"));
+    changes.create(id("picky"), Picky { refuses: true });
+    let error = harness
+        .project
+        .commit("Change the effect", changes)
+        .expect_err("the group is refused");
+    assert!(error.to_string().contains("refuses"), "{error}");
+
+    assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
+    harness.plugins.poll(&harness.project);
+    assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
+    // The chain is the one it was: the effect still has the state it had.
+    let again = harness.play(4096).samples().to_vec();
+    assert_eq!(peak(&again), peak(&through), "{format:?}");
+    assert!(plays(&mut harness), "{format:?}");
+}
+
+fn a_delete_and_an_undo_with_an_effect(format: PluginFormat) {
+    let mut harness = Harness::new();
+    harness.add_track(record(format, "piano"), played());
+    harness.write_offset(format, "trim", 25);
+    harness.add_effect(record(format, "trim"));
+    let through = harness.play(4096).samples().to_vec();
+
+    let mut changes = Changes::new();
+    changes.delete(&id("track/effect"));
+    harness
+        .project
+        .commit("Delete the effect", changes)
+        .expect("the delete applies");
+    // No poll in between: the host still has the plugin of the record that just went.
+    assert!(harness.project.undo().expect("undo").is_some());
+
+    assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
+    harness.plugins.poll(&harness.project);
+    assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
+    let again = harness.play(4096).samples().to_vec();
+    assert_eq!(peak(&again), peak(&through), "{format:?}");
     assert!(plays(&mut harness), "{format:?}");
 }
 

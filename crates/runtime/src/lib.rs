@@ -138,47 +138,59 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             notes
         }
     });
-    devices.instruments(move || {
-        let Some(plugins) = plugins.upgrade() else {
-            return Vec::new();
-        };
-        plugins
-            .instruments()
-            .into_iter()
-            .map(|found| {
-                let (id, name, format) = (found.id.clone(), found.name.clone(), found.format);
-                let offer = DeviceOffer::new(
-                    found.offer_key(),
-                    found.name.clone(),
-                    move |project, slot, changes| {
-                        // A state file of its own that no plugin has ever written into,
-                        // so a plugin that is picked never comes up holding the sound an
-                        // older one left behind.
-                        let state_asset = plugin_host::new_state_asset(project.assets(), &name)
-                            .map_err(|error| ProjectError::InvalidState {
-                                id: slot.clone(),
-                                message: error.to_string(),
-                            })?;
-                        changes.create(
-                            slot.clone(),
-                            PluginRecord {
-                                format,
-                                plugin_id: id.clone(),
-                                state_asset,
-                            },
-                        );
-                        Ok(())
-                    },
-                )
-                .needs(plugin_host::EXTENSION);
-                match found.vendor.is_empty() {
-                    true => offer.with_detail(format.name()),
-                    false => offer.with_detail(format!("{} · {}", format.name(), found.vendor)),
-                }
-            })
-            .collect()
+    // One record serves both slots, so one function makes both lists. What a plugin says it is
+    // decides which list it is in; a record written by hand may name any plugin in any slot.
+    devices.instruments({
+        let plugins = plugins.clone();
+        move || plugin_offers(&plugins, plugin_host::Plugins::instruments)
     });
+    devices.effects(move || plugin_offers(&plugins, plugin_host::Plugins::effects));
     (views, devices)
+}
+
+/// The plugins `list` gives, as offers for a picker. Each writes the record of that plugin
+/// into the slot it is picked for, with a state file of its own.
+fn plugin_offers(
+    plugins: &WeakPlugins,
+    list: fn(&plugin_host::Plugins) -> Vec<plugin_host::ScannedPlugin>,
+) -> Vec<DeviceOffer> {
+    let Some(plugins) = plugins.upgrade() else {
+        return Vec::new();
+    };
+    list(&plugins)
+        .into_iter()
+        .map(|found| {
+            let (id, name, format) = (found.id.clone(), found.name.clone(), found.format);
+            let offer = DeviceOffer::new(
+                found.offer_key(),
+                found.name.clone(),
+                move |project, slot, changes| {
+                    // A state file of its own that no plugin has ever written into, so a
+                    // plugin that is picked never comes up holding the sound an older one
+                    // left behind.
+                    let state_asset = plugin_host::new_state_asset(project.assets(), &name)
+                        .map_err(|error| ProjectError::InvalidState {
+                            id: slot.clone(),
+                            message: error.to_string(),
+                        })?;
+                    changes.create(
+                        slot.clone(),
+                        PluginRecord {
+                            format,
+                            plugin_id: id.clone(),
+                            state_asset,
+                        },
+                    );
+                    Ok(())
+                },
+            )
+            .needs(plugin_host::EXTENSION);
+            match found.vendor.is_empty() {
+                true => offer.with_detail(format.name()),
+                false => offer.with_detail(format!("{} · {}", format.name(), found.vendor)),
+            }
+        })
+        .collect()
 }
 
 /// The arrangement that "Add track" adds to: the first one at the top of the project.
