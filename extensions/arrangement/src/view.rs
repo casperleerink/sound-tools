@@ -755,9 +755,14 @@ impl Timeline {
         self.selected_clip.as_ref()
     }
 
+    /// Selects a clip. It goes to the session too, as the selected track does: the window
+    /// offers to fit the project tempo to the take of the selected clip, and the arrangement
+    /// knows nothing of takes or of fitting.
     pub fn select_clip(&mut self, clip: Option<InstanceId>, cx: &mut Context<Self>) {
         if self.selected_clip != clip {
-            self.selected_clip = clip;
+            self.selected_clip = clip.clone();
+            self.session
+                .update(cx, |session, cx| session.select_clip(clip, cx));
             cx.notify();
         }
     }

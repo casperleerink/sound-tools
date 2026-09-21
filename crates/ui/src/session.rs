@@ -48,6 +48,8 @@ pub struct Session {
     gesture: Option<ProjectEdit>,
     /// What the composer is working on, see [`Self::select`].
     selected: Option<InstanceId>,
+    /// The clip the composer is working on, see [`Self::select_clip`].
+    selected_clip: Option<InstanceId>,
     /// A stopped engine fails every poll. It is reported once.
     engine_stopped: bool,
     _polling: Task<()>,
@@ -77,6 +79,7 @@ impl Session {
             notice: None,
             gesture: None,
             selected: None,
+            selected_clip: None,
             engine_stopped: false,
             _polling: polling,
         }
@@ -105,6 +108,23 @@ impl Session {
     pub fn select(&mut self, instance: Option<InstanceId>, cx: &mut Context<Self>) {
         if self.selected != instance {
             self.selected = instance;
+            cx.notify();
+        }
+    }
+
+    /// The clip the composer has selected, next to [`Self::selected`], which is a track. It is
+    /// interface state too, and the view that owns the selection publishes it here.
+    ///
+    /// Two fields and not one, because the two are read for different things and both are
+    /// wanted at once: a keyboard plays into the instrument of the selected track while the
+    /// project menu offers to fit the tempo to the take of the selected clip.
+    pub fn selected_clip(&self) -> Option<&InstanceId> {
+        self.selected_clip.as_ref()
+    }
+
+    pub fn select_clip(&mut self, clip: Option<InstanceId>, cx: &mut Context<Self>) {
+        if self.selected_clip != clip {
+            self.selected_clip = clip;
             cx.notify();
         }
     }

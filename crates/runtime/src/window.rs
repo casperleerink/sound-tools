@@ -6,6 +6,7 @@
 
 mod project_menu;
 pub mod recording;
+pub mod steadiness;
 pub mod tempo;
 pub mod transport;
 
