@@ -9,7 +9,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -48,14 +48,12 @@ pub enum PluginProblem {
     AssetTwice { asset: String, other: InstanceId },
     #[error("the state of the plugin {plugin_id:?} could not be read: {message}")]
     StateNotRead { plugin_id: String, message: String },
+    #[error("the state of the plugin {plugin_id:?} could not be saved: {message}")]
+    StateNotWritten { plugin_id: String, message: String },
     #[error(
         "the plugin {plugin_id:?} takes no MIDI, so the sustain pedal does not reach it. Its notes play"
     )]
     NoPedal { plugin_id: String },
-    #[error(
-        "the plugin {plugin_id:?} has {channels} audio input channels, and nothing feeds them here: as the instrument of a track it only gets notes. An effect that says it is an instrument sounds like silence. Effect plugins are not built yet"
-    )]
-    HasAudioInput { plugin_id: String, channels: usize },
 }
 
 /// The handlers a CLAP plugin calls. One set per plugin instance.
@@ -153,7 +151,33 @@ struct Inner {
     scanner: ScanCommand,
     /// A read-only project (`--inspect`, `--render`) never writes plugin state.
     writes_state: bool,
+    /// The `assets/` folder of the project, from the first plugin that loaded. Kept so that
+    /// dropping the host can still save, see [`Drop`].
+    assets: RefCell<Option<Assets>>,
     table: RefCell<Table>,
+}
+
+/// The last chance to save. On macOS the application ends without unwinding: GPUI drops the
+/// window and its views, and with them the session and the project, and then the process is
+/// gone. Dropping the project drops the registry, the behaviour and this host, so that is the
+/// moment. Whoever polls the host must therefore hold it weakly ([`Plugins::downgrade`]), else
+/// nothing is saved. [`Plugins::close`] does the same with the project still in hand, and
+/// leaves nothing for this.
+impl Drop for Inner {
+    fn drop(&mut self) {
+        if !self.writes_state {
+            return;
+        }
+        let Some(assets) = self.assets.get_mut().clone() else {
+            return;
+        };
+        for hosted in self.table.get_mut().loaded.values_mut() {
+            if let Err(problem) = save(hosted, &assets) {
+                // Nobody is left to tell. The composer at least sees it in the terminal.
+                eprintln!("error: {problem}");
+            }
+        }
+    }
 }
 
 /// The plugins of one project. Cheap to clone: every copy is the same table.
@@ -163,7 +187,22 @@ struct Inner {
 #[derive(Clone)]
 pub struct Plugins(Rc<Inner>);
 
+/// A handle that does not keep the plugins alive. Whoever polls the host holds one of these,
+/// so that dropping the project is what ends the host and saves every plugin.
+#[derive(Clone)]
+pub struct WeakPlugins(Weak<Inner>);
+
+impl WeakPlugins {
+    pub fn upgrade(&self) -> Option<Plugins> {
+        self.0.upgrade().map(Plugins)
+    }
+}
+
 impl Plugins {
+    pub fn downgrade(&self) -> WeakPlugins {
+        WeakPlugins(Rc::downgrade(&self.0))
+    }
+
     /// A host that saves plugin state into the project.
     pub fn new(search_paths: Vec<std::path::PathBuf>, scanner: ScanCommand) -> Self {
         Self::with_writing(search_paths, scanner, true)
@@ -183,6 +222,7 @@ impl Plugins {
             search_paths,
             scanner,
             writes_state,
+            assets: RefCell::new(None),
             table: RefCell::new(Table::default()),
         }))
     }
@@ -253,6 +293,8 @@ impl Plugins {
                 None => {}
             }
         }
+        // Kept for the drop of this host, which is the last moment a plugin can be saved.
+        *self.0.assets.borrow_mut() = Some(assets.clone());
         let (started, notes) = self.load(id, record, &asset, assets, sample_rate)?;
         Ok(Opened {
             started: Some(started),
@@ -356,6 +398,30 @@ impl Plugins {
         Ok((loaded, notes))
     }
 
+    /// Saves the state of every plugin, whether it said so or not, and lets them all go.
+    ///
+    /// Call it when the project closes. A plugin that changes its state without telling the
+    /// host, which CLAP asks it not to do, is saved here all the same. Nothing is written when
+    /// the bytes are the ones already in the project, so a session that changed nothing leaves
+    /// no diff.
+    pub fn close(&self, project: &Project) -> Vec<PluginProblem> {
+        let mut problems = Vec::new();
+        let mut table = self.0.table.borrow_mut();
+        for hosted in table.loaded.values_mut() {
+            if !self.0.writes_state {
+                continue;
+            }
+            if let Err(problem) = save(hosted, project.assets()) {
+                problems.push(problem);
+            }
+        }
+        let gone: Vec<Hosted> = std::mem::take(&mut table.loaded).into_values().collect();
+        table.retired.extend(gone.into_iter().map(|hosted| Retired {
+            instance: hosted.instance,
+        }));
+        problems
+    }
+
     /// Main-thread work for every loaded plugin: the callbacks they asked for, the state they
     /// said changed, and the handles of plugins whose record is gone.
     ///
@@ -406,7 +472,8 @@ impl Plugins {
     }
 }
 
-/// Writes what the plugin says its state is, into the asset its record names.
+/// Writes what the plugin says its state is, into the asset its record names. Bytes that are
+/// already there are not written again, so a session that changed nothing leaves no diff.
 fn save(hosted: &mut Hosted, assets: &Assets) -> Result<(), PluginProblem> {
     let state = hosted
         .instance
@@ -415,13 +482,19 @@ fn save(hosted: &mut Hosted, assets: &Assets) -> Result<(), PluginProblem> {
         return Ok(());
     };
     let mut bytes = Vec::new();
-    let fail = |message: String| PluginProblem::DidNotLoad {
+    let fail = |message: String| PluginProblem::StateNotWritten {
         plugin_id: hosted.plugin_id.clone(),
         message,
     };
     state
         .save(&mut hosted.instance.plugin_handle(), &mut bytes)
         .map_err(|error| fail(error.to_string()))?;
+    let there = assets
+        .read(&hosted.asset)
+        .map_err(|error| fail(error.to_string()))?;
+    if there.as_deref() == Some(bytes.as_slice()) {
+        return Ok(());
+    }
     assets
         .write(&hosted.asset, &bytes)
         .map_err(|error| fail(error.to_string()))
@@ -430,13 +503,9 @@ fn save(hosted: &mut Hosted, assets: &Assets) -> Result<(), PluginProblem> {
 /// What stays true about a plugin while it plays. None of these stops it from sounding, so
 /// they are reported and not errors.
 fn standing_notes(plugin_id: &str, layout: &PortLayout) -> Vec<PluginProblem> {
+    // Audio inputs say nothing: Six Sines is an instrument with a stereo input for audio-rate
+    // modulation. They are fed with silence and the plugin plays its notes.
     let mut notes = Vec::new();
-    if layout.input_channels > 0 {
-        notes.push(PluginProblem::HasAudioInput {
-            plugin_id: plugin_id.to_string(),
-            channels: layout.input_channels,
-        });
-    }
     if !layout.takes_midi {
         notes.push(PluginProblem::NoPedal {
             plugin_id: plugin_id.to_string(),
@@ -503,22 +572,19 @@ mod tests {
         }
     }
 
+    /// An instrument with audio inputs is ordinary: they are fed with silence. Six Sines is
+    /// one, with a stereo input for audio-rate modulation.
     #[test]
-    fn an_instrument_with_note_and_audio_ports_as_expected_has_nothing_to_report() {
+    fn an_instrument_that_takes_midi_has_nothing_to_report_whatever_its_audio_inputs() {
         assert_eq!(standing_notes("a.b", &layout(true, 0)), []);
+        assert_eq!(standing_notes("a.b", &layout(true, 2)), []);
     }
 
-    /// A plugin that says it is an instrument but takes audio in is usually an effect with
-    /// the wrong features. It plays notes into silence, and the composer should know why.
     #[test]
-    fn a_plugin_with_audio_inputs_and_one_without_midi_are_both_reported() {
-        let notes = standing_notes("a.b", &layout(false, 2));
+    fn a_plugin_whose_note_port_takes_no_midi_is_reported_for_the_pedal() {
+        let notes = standing_notes("a.b", &layout(false, 0));
         let messages: Vec<String> = notes.iter().map(ToString::to_string).collect();
-        assert_eq!(messages.len(), 2, "{messages:?}");
-        assert!(
-            messages[0].contains("2 audio input channels"),
-            "{messages:?}"
-        );
-        assert!(messages[1].contains("takes no MIDI"), "{messages:?}");
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(messages[0].contains("takes no MIDI"), "{messages:?}");
     }
 }

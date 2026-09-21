@@ -91,15 +91,21 @@ plugin in it, so no test needs a plugin of the machine.
 
 ## When plugin state is saved
 
-A plugin's state is opaque. It is written to its asset when the plugin says it changed
-(`clap_host_state.mark_dirty`), at the next `Plugins::poll`, which is every 16 ms in the window
-and every 5 ms headless. The window polls once more on its way out. A plugin's state is not
-project state: it is never an undo step, and undo and redo never touch it.
+A plugin's state is opaque. Two moments write it:
 
-What a crash can lose: whatever a plugin changed in the last poll, and anything a plugin
-changed without saying so. CLAP asks a plugin to mark its state dirty whenever it changes,
-including on a parameter change, so a plugin that follows the specification loses at most one
-poll.
+- While the project is open, when the plugin says its state changed (`clap_host_state.mark_dirty`),
+  at the next `Plugins::poll`, which is every 16 ms in the window and every 5 ms headless.
+- When the project closes, for every loaded plugin, whether it said so or not. A plugin that
+  changes its state without telling the host, which CLAP asks it not to do, keeps its work.
+
+Bytes that are already in the project are not written again, so a session that changed nothing
+leaves no diff. A plugin's state is not project state: it is never an undo step, and undo and
+redo never touch it.
+
+What a crash can lose: whatever a plugin changed since the last poll that saved it, and
+anything a plugin changed without saying so since the project opened. CLAP asks a plugin to
+mark its state dirty whenever it changes, including on a parameter change, so a plugin that
+follows the specification loses at most one poll.
 
 ## What is not built
 
@@ -109,7 +115,8 @@ window with the picker that opens it, which is step 4b.
 
 A plugin is an instrument when it says so in its CLAP features. Nothing checks whether that is
 true: a plugin with the `instrument` feature that is really an effect loads, gets notes and is
-silent. It is reported when it has audio inputs, which is what such a plugin usually has.
+silent. Audio input ports are no sign of one: Six Sines is an instrument with a stereo input
+for audio-rate modulation. The host gives every audio input of a plugin silence.
 
 ## Checks
 

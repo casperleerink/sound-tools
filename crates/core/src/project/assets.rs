@@ -92,7 +92,8 @@ fn is_name_character(character: char) -> bool {
     character.is_ascii_lowercase() || character.is_ascii_digit() || "-_".contains(character)
 }
 
-/// The `assets/` folder of one project.
+/// The `assets/` folder of one project. Cheap to clone: it is one path.
+#[derive(Clone)]
 pub struct Assets {
     folder: PathBuf,
 }

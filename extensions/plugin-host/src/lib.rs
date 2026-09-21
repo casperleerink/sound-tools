@@ -26,7 +26,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
-pub use host::{PluginProblem, Plugins};
+pub use host::{PluginProblem, Plugins, WeakPlugins};
 pub use processor::HostedPlugin;
 pub use scan::{SCAN_ARGUMENT, ScanCommand, ScannedPlugin, default_search_paths, scan_one_bundle};
 

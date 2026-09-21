@@ -52,8 +52,10 @@ fn changed_plugin_state_is_in_the_project_after_close_and_comes_back_on_reopen()
     assert!(after.right().iter().all(|sample| *sample == 0.0));
 }
 
+/// While it plays, only a plugin that says its state changed is written. Closing writes every
+/// plugin, because a plugin that changes its state without saying so must not lose it.
 #[test]
-fn a_project_that_never_changed_its_plugin_state_writes_no_asset() {
+fn a_plugin_that_says_nothing_is_written_when_the_project_closes_and_not_before() {
     let mut harness = Harness::new();
     harness.add_track(
         record("piano"),
@@ -65,7 +67,24 @@ fn a_project_that_never_changed_its_plugin_state_writes_no_asset() {
     );
     harness.play(1024);
     let asset = harness.project.assets().path(&state_asset("piano"));
-    assert!(!asset.exists(), "{asset:?} was written for nothing");
+    assert!(
+        !asset.exists(),
+        "{asset:?} was written while nothing changed"
+    );
+
+    assert_eq!(harness.plugins.close(&harness.project), []);
+    let saved = std::fs::read(&asset).expect("the state of every plugin is saved on close");
+    assert_eq!(&saved[..4], b"STT1");
+
+    // A session that changes nothing writes nothing again, so a project in git gets no diff.
+    let written = std::fs::metadata(&asset).unwrap().modified().unwrap();
+    let mut harness = harness.reopen();
+    harness.play(1024);
+    assert_eq!(harness.plugins.close(&harness.project), []);
+    assert_eq!(
+        std::fs::metadata(&asset).unwrap().modified().unwrap(),
+        written
+    );
 }
 
 /// Plugin state is opaque and is not project state. An undo of anything else leaves it alone.
@@ -108,4 +127,32 @@ fn a_project_open_read_only_loads_plugins_and_writes_no_state() {
     let after = harness.play(2048);
     assert_eq!(after.left(), before.left());
     assert!(!asset.exists(), "a read-only project wrote {asset:?}");
+}
+
+/// The window is quit without unwinding and GPUI drops the views before any quit handler, so
+/// dropping the project is the one moment that always happens. It must still save.
+#[test]
+fn dropping_the_project_saves_the_state_of_every_plugin() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut harness = Harness::open(folder, true);
+    harness.add_track(record("piano"), change_the_state_and_play());
+    harness.play(2048);
+    let asset = harness.project.assets().path(&state_asset("piano"));
+    std::fs::remove_file(&asset).unwrap();
+
+    // No `close`: only the project and the host go.
+    let Harness {
+        project,
+        plugins,
+        folder,
+        ..
+    } = harness;
+    drop((project, plugins));
+    assert!(asset.exists(), "dropping the project wrote no state");
+    let saved = std::fs::read(&asset).unwrap();
+    assert_eq!(
+        i32::from_le_bytes([saved[4], saved[5], saved[6], saved[7]]),
+        36
+    );
+    drop(folder);
 }

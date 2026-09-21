@@ -380,12 +380,12 @@ The scan:
 
 - Loading a plugin runs its code, so the scan runs outside the application's process: one child per bundle, which is the runtime itself with `--scan-clap`. A bundle that crashes is reported and costs that bundle. The child prints one marked line per plugin, and anything else on its output is the plugin's own logging, which real plugins do while they load.
 - No cache. Measured September 20, 2026 on an Apple Silicon laptop with two real bundles holding three plugins: a whole scan takes 20 to 26 ms, about 10 ms per bundle, so fifty plugins would cost half a second once per session. The scan runs the first time a record needs a plugin, so a project with no plugin pays nothing.
-- A plugin is an instrument when it says so in its CLAP features. Nothing checks that this is true. Checked on this machine: Spectral Freeze, which is an effect, declares the features `instrument synthesizer stereo mono`, so the scan lists it as an instrument. A plugin like that loads, gets notes and is silent; the host reports it when it has audio inputs, which such a plugin has.
+- A plugin is an instrument when it says so in its CLAP features. Nothing checks that this is true, and nothing can. Checked on this machine: Spectral Freeze, which is an effect, declares the features `instrument synthesizer stereo mono`, so the scan lists it as an instrument. A plugin like that loads, gets notes and is silent. Audio input ports are no sign of one either: Six Sines is an instrument with a stereo input for audio-rate modulation. Every audio input of a plugin is fed with silence.
 
 When plugin state is saved:
 
-- A plugin's state is written to its asset when the plugin says it changed (`clap_host_state.mark_dirty`), at the next poll of the host, which is every 16 ms in the window and every 5 ms headless. The window polls once more on its way out. A read-only project (`--inspect`, `--render`) loads plugins and never writes.
-- A crash can lose what a plugin changed in the last poll, and anything a plugin changed without saying so. CLAP asks a plugin to mark its state dirty whenever it changes, including on a parameter change.
+- Two moments write it. While the project is open: when the plugin says its state changed (`clap_host_state.mark_dirty`), at the next poll of the host, which is every 16 ms in the window and every 5 ms headless. And when the project closes: every loaded plugin, whether it said so or not, so a plugin that changes its state without telling the host keeps its work. Bytes that are already in the project are not written again, so a session that changed nothing leaves no diff, and a read-only project (`--inspect`, `--render`) loads plugins and never writes at all.
+- A crash can lose what a plugin changed since the last poll that saved it, and anything a plugin changed without saying so since the project opened. CLAP asks a plugin to mark its state dirty whenever it changes, including on a parameter change.
 - Plugin state is not project state: a change of it is never an undo step, and undo and redo never touch the asset. Agents are told not to edit the file.
 
 The test plugin, so that CI needs no third-party plugin:

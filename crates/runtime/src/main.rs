@@ -167,6 +167,9 @@ fn run(folder: &Path) -> Result<()> {
         std::thread::sleep(Duration::from_millis(5));
     };
 
+    for problem in plugins.close(&project) {
+        println!("error: {problem}");
+    }
     print_status(&mut project, &status);
     let device_status = stream.status();
     let errors = stream.take_errors();
