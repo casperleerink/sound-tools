@@ -55,7 +55,7 @@ pub fn add_take_clip(
     take: &Take,
     take_name: Option<String>,
 ) -> Result<Option<InstanceId>, ProjectError> {
-    let Some(mut clip) = take.clip() else {
+    let Some(mut clip) = take.clip(project.clock()) else {
         return Ok(None);
     };
     // A clip never names a take that is not there: a failed write leaves the field out.
@@ -73,5 +73,5 @@ pub fn add_take_clip(
 /// only copy of what the composer played. The name is never one that was used before, and the
 /// file is created and never opened again, so no take can be written over.
 pub fn write_take(project: &Project, take: &Take) -> Result<String> {
-    Ok(take.write(project.assets())?)
+    Ok(take.raw(project.clock()).write(project.assets())?)
 }

@@ -1,6 +1,6 @@
 # Sound Tools
 
-A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The first milestone is built. It has tracks, clips, notes, one synth and a window to edit them, and the agent is an external coding agent for now. The second milestone is under way: stereo tracks with gain, pan and mute, a metronome, MIDI recording, and CLAP and VST 3 plugins with their own windows, as the instrument of a track and as effects after it.
+A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The first milestone is built. It has tracks, clips, notes, one synth and a window to edit them, and the agent is an external coding agent for now. The second milestone is under way: stereo tracks with gain, pan and mute, a metronome, MIDI recording, CLAP and VST 3 plugins with their own windows, and fitting the project tempo to a take played with no click, so the grid follows the playing.
 
 ## Requirements
 
@@ -29,8 +29,9 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 8. Click the name of a track on the left. Its panel opens below with the synth, and at the right end the mixer of the track: gain, pan and mute. Drag a knob up or down while it plays, and double click a knob to reset it.
 9. Click `Synth` at the top of that card to pick another instrument: the built-in synth, or any CLAP or VST 3 instrument this Mac has. The card gets `Open window`, which opens the plugin's own window beside this one. Change a sound there and it is saved with the piece. Picking an instrument is one undo step. The app looks for the plugins of this Mac on a thread of its own, so a project always opens at once; the picker says so while it is still looking, and a track whose plugin has not turned up yet is quiet for a moment and then plays.
 10. Click **Add effect** at the end of that rack and pick an effect plugin. It lands after the instrument, and the track plays through it. Add another and it lands after the first. The small `x` on a card takes that effect off. Both are one undo step. To change the order, edit `effects` in the track's `instance.json`, which an agent can do for you; the rack follows at once.
-11. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
-12. Press cmd-q to quit. Run the same command again and the piece is back.
+11. Record a take with the click off, click the clip, then click the project name and pick **Fit tempo to take**. The tempo map now follows what you played: the bar lines land on your beats and the take sounds exactly as it did. A `steady` number appears in the transport next to the tempo; drag it up to pull the tempo towards one steady one, and back to 0 for the playing as it was. If the grid runs at twice or half the speed of the music, or the bar lines are in the wrong place, ask an agent: "the grid runs twice as fast as the music, fix the fit". It is one field in `state/fit-tempo.json`.
+12. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
+13. Press cmd-q to quit. Run the same command again and the piece is back.
 
 Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 
@@ -51,6 +52,7 @@ The agent is any coding agent that can edit files. The app must be running on th
    - `Make the bass sound darker`
    - `Turn the piano down a few dB and put the bass a little to the left`
    - `Put the reverb before the delay on the piano track`
+   - `The grid runs twice as fast as the music. Fix the fit`
 4. The part shows up and plays while the agent still writes. One cmd-z in the app takes the whole request back.
 
 What the agent uses:
@@ -103,7 +105,7 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [docs/milestone-2.md](docs/milestone-2.md): the plan for the next milestone. [docs/agent-brief.md](docs/agent-brief.md) is the shared brief for the agents that build it.
 - [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
 - [SDK_SKETCH.md](SDK_SKETCH.md): an early sketch of the extension SDK.
-- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md).
+- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md), [fit-tempo](extensions/fit-tempo/README.md).
 
 ## License
 

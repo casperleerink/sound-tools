@@ -21,54 +21,6 @@ fn json_examples(markdown: &str) -> Vec<(String, String)> {
     examples
 }
 
-/// A take as the runtime holds it, from a take as it is saved. The ticks are not in the file
-/// and the writer does not use them, so they are all zero here.
-fn take_of(raw: &midi::RawTake) -> midi::Take {
-    let event = |time_us, played| midi::TakeEvent {
-        time_us,
-        tick: sound_core::Ticks(0),
-        played,
-    };
-    let events = raw
-        .events
-        .iter()
-        .map(|saved| match *saved {
-            midi::RawEvent::On {
-                time_us,
-                pitch,
-                velocity,
-            } => event(
-                time_us,
-                midi::Played::On {
-                    pitch: sound_notes::Pitch::new(pitch).unwrap(),
-                    velocity: sound_notes::Velocity::new(velocity).unwrap(),
-                },
-            ),
-            midi::RawEvent::Off {
-                time_us,
-                pitch,
-                velocity,
-            } => event(
-                time_us,
-                midi::Played::Off {
-                    pitch: sound_notes::Pitch::new(pitch).unwrap(),
-                    velocity,
-                },
-            ),
-            midi::RawEvent::Pedal { time_us, value } => event(
-                time_us,
-                midi::Played::Pedal(sound_notes::Pedal::new(value).unwrap()),
-            ),
-        })
-        .collect();
-    midi::Take {
-        start: sound_core::Ticks(raw.start_tick),
-        end: sound_core::Ticks(raw.end_tick),
-        pedal_at_start: sound_notes::Pedal::new(raw.pedal_at_start).unwrap(),
-        events,
-    }
-}
-
 /// The map and every doc it lists, as (path in the project folder, text).
 fn map_and_docs(harness: &Harness) -> Vec<(String, String)> {
     let mut files = vec![AGENT_DOC_FILE.to_string()];
@@ -107,6 +59,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "AGENTS.md",
             "agent-docs/project-json.md",
             "agent-docs/arrangement.md",
+            "agent-docs/fit-tempo.md",
             "agent-docs/instrument.md",
             "agent-docs/plugins.md",
             "agent-docs/tone.md",
@@ -140,7 +93,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             );
         }
     }
-    let inspect = &files[6].1;
+    let inspect = &files[7].1;
     assert!(inspect.contains("```sh\nruntime . --inspect\n```"));
     assert_eq!(
         std::fs::read_to_string(harness.path("CLAUDE.md")).unwrap(),
@@ -196,7 +149,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .iter()
             .flat_map(|(_, text)| json_examples(text))
             .collect();
-        assert_eq!(all.len(), 13, "{time_signature}");
+        assert_eq!(all.len(), 14, "{time_signature}");
 
         // The raw take of a recording is not a record: it is an asset the runtime writes once
         // and never reads back. Its example is checked as the file it is.
@@ -205,11 +158,11 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .partition(|(path, _)| path.starts_with("assets/"));
         assert_eq!(assets.len(), 1, "{time_signature}");
         for (path, body) in &assets {
-            let raw: midi::RawTake = serde_json::from_str(body).unwrap();
+            let raw: sound_notes::RawTake = serde_json::from_str(body).unwrap();
             // The bytes are those the runtime writes, so an agent reads the real thing.
-            assert_eq!(&take_of(&raw).json(), body, "{path}");
+            assert_eq!(&raw.json(), body, "{path}");
             // A take lives under its own name, which no clip id decides.
-            let folder = format!("{}/", midi::TAKES_FOLDER);
+            let folder = format!("{}/", sound_notes::TAKES_FOLDER);
             let name = path
                 .strip_prefix(&folder)
                 .and_then(|it| it.strip_suffix(".json"));
@@ -265,6 +218,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
                 "arrangement/strings",
                 "arrangement/strings/instrument",
                 "drone",
+                "fit-tempo",
             ]
         );
 

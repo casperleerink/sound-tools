@@ -79,6 +79,7 @@ fn with_cache(read_only: bool, cache: ScanCache) -> Result<Plugins> {
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
     arrangement::register(&mut registry)?;
+    fit_tempo::register(&mut registry)?;
     instrument::register(&mut registry)?;
     plugin_host::register(&mut registry, plugins)?;
     tone::register(&mut registry)?;

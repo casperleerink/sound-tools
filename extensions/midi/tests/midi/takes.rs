@@ -1,11 +1,17 @@
 //! The take: what it keeps, the clip it becomes and the file it is written to.
 
-use midi::{Played, RawEvent, RawTake, Take, TakeEvent, take_asset};
-use sound_core::Assets;
+use midi::{Played, Take, TakeEvent};
+use sound_core::{Assets, Clock, TempoMap};
 use sound_core::{State, Ticks};
-use sound_notes::Pedal;
+use sound_notes::{Pedal, RawEvent, RawTake, take_asset};
 
 use crate::support::{off, on, pedal, pitch};
+
+/// The clock the take was played by: the default project, 120 bpm in 4/4 at 48 kHz. A quarter
+/// note is 960 ticks and half a second, so tick 960 is 500000 microseconds.
+fn clock() -> Clock {
+    Clock::new(TempoMap::default(), 48_000)
+}
 
 fn event(time_us: u64, tick: u64, played: Played) -> TakeEvent {
     TakeEvent {
@@ -40,7 +46,7 @@ fn a_take_becomes_a_clip_at_the_ticks_the_engine_played() {
         event(500_000, 1920, on(64, 70)),
         event(1_000_000, 2880, off(64)),
     ];
-    let clip = take(960, 4800, events).clip().unwrap();
+    let clip = take(960, 4800, events).clip(&clock()).unwrap();
     assert_eq!(clip.start, Ticks(960));
     assert_eq!(clip.length.ticks(), Ticks(3840));
     let notes: Vec<(u64, u64, u8, u8)> = clip
@@ -63,7 +69,7 @@ fn a_take_becomes_a_clip_at_the_ticks_the_engine_played() {
 #[test]
 fn a_note_that_is_still_held_when_recording_ends_ends_there() {
     let events = vec![event(0, 0, on(60, 88))];
-    let clip = take(0, 1920, events).clip().unwrap();
+    let clip = take(0, 1920, events).clip(&clock()).unwrap();
     assert_eq!(clip.length.ticks(), Ticks(1920));
     assert_eq!(clip.notes[0].length.ticks(), Ticks(1920));
     assert_eq!(clip.validate(), Ok(()));
@@ -75,7 +81,7 @@ fn a_note_that_is_still_held_when_recording_ends_ends_there() {
 fn a_note_off_without_its_note_on_is_left_out_of_the_clip() {
     let events = vec![event(0, 0, off(60)), event(100_000, 480, on(64, 70))];
     let take = take(0, 1920, events);
-    let clip = take.clip().unwrap();
+    let clip = take.clip(&clock()).unwrap();
     assert_eq!(clip.notes.len(), 1);
     assert_eq!(clip.notes[0].pitch.number(), 64);
     assert_eq!(take.events.len(), 2);
@@ -90,7 +96,7 @@ fn two_presses_of_one_pitch_each_get_their_own_note() {
         event(2, 960, off(60)),
         event(3, 1440, off(60)),
     ];
-    let clip = take(0, 1920, events).clip().unwrap();
+    let clip = take(0, 1920, events).clip(&clock()).unwrap();
     let notes: Vec<(u64, u64, u8)> = clip
         .notes
         .iter()
@@ -110,7 +116,7 @@ fn the_pedal_is_in_the_clip_without_the_moves_that_change_nothing() {
         event(4, 1200, pedal(0)),
         event(5, 1440, pedal(64)),
     ];
-    let clip = take(0, 1920, events).clip().unwrap();
+    let clip = take(0, 1920, events).clip(&clock()).unwrap();
     let pedal: Vec<(u64, u8)> = clip
         .pedal
         .iter()
@@ -126,7 +132,7 @@ fn the_pedal_is_in_the_clip_without_the_moves_that_change_nothing() {
 #[test]
 fn the_clip_covers_a_message_on_the_tick_the_recording_ended() {
     let events = vec![event(0, 1920, on(60, 88))];
-    let clip = take(960, 1920, events).clip().unwrap();
+    let clip = take(960, 1920, events).clip(&clock()).unwrap();
     assert_eq!(clip.length.ticks(), Ticks(961));
     assert_eq!(clip.notes[0].start, Ticks(960));
     assert_eq!(clip.validate(), Ok(()));
@@ -136,7 +142,7 @@ fn the_clip_covers_a_message_on_the_tick_the_recording_ended() {
 fn a_take_with_nothing_in_it_makes_no_clip() {
     let take = take(0, 3840, Vec::new());
     assert!(take.is_empty());
-    assert_eq!(take.clip(), None);
+    assert_eq!(take.clip(&clock()), None);
 }
 
 #[test]
@@ -155,7 +161,7 @@ fn the_raw_take_file_holds_the_times_as_they_arrived_and_both_velocities() {
         ),
     ];
     let assets = Assets::new(folder.path());
-    let name = take(0, 3840, events).write(&assets).unwrap();
+    let name = take(0, 3840, events).raw(&clock()).write(&assets).unwrap();
     assert_eq!(name, "take-1");
     let path = assets.path(&take_asset(&name).unwrap());
     assert!(path.ends_with("assets/takes/take-1.json"));
@@ -164,22 +170,29 @@ fn the_raw_take_file_holds_the_times_as_they_arrived_and_both_velocities() {
     let raw: RawTake = serde_json::from_str(&text).unwrap();
     assert_eq!(raw.start_tick, 0);
     assert_eq!(raw.end_tick, 3840);
+    assert_eq!(raw.start_us, 0);
+    // Two bars at 120 bpm.
+    assert_eq!(raw.end_us, 2_000_000);
     assert_eq!(raw.pedal_at_start, 0);
     assert_eq!(
         raw.events,
         [
             RawEvent::Pedal {
                 time_us: 0,
+                sounded_us: 0,
                 value: 127
             },
             RawEvent::On {
                 time_us: 15_230,
+                // Tick 40 at 120 bpm: the block the engine sounded it in, in microseconds.
+                sounded_us: 20_833,
                 pitch: 60,
                 velocity: 88
             },
             // The clip drops the key up velocity. The take is the only place that has it.
             RawEvent::Off {
                 time_us: 412_870,
+                sounded_us: 515_625,
                 pitch: 60,
                 velocity: 31
             },
@@ -195,15 +208,15 @@ fn every_take_gets_a_name_of_its_own_and_never_writes_over_one() {
     let first = take(0, 3840, vec![event(0, 0, on(60, 88))]);
     let second = take(0, 3840, vec![event(0, 0, on(64, 70))]);
     let assets = Assets::new(folder.path());
-    assert_eq!(first.write(&assets).unwrap(), "take-1");
-    assert_eq!(second.write(&assets).unwrap(), "take-2");
+    assert_eq!(first.raw(&clock()).write(&assets).unwrap(), "take-1");
+    assert_eq!(second.raw(&clock()).write(&assets).unwrap(), "take-2");
     // And again in a folder that already holds both, as a second session would.
     let third = take(0, 3840, vec![event(0, 0, on(67, 70))]);
-    assert_eq!(third.write(&assets).unwrap(), "take-3");
+    assert_eq!(third.raw(&clock()).write(&assets).unwrap(), "take-3");
 
     let of = |name: &str| std::fs::read_to_string(assets.path(&take_asset(name).unwrap())).unwrap();
-    assert_eq!(of("take-1"), first.json());
-    assert_eq!(of("take-2"), second.json());
+    assert_eq!(of("take-1"), first.raw(&clock()).json());
+    assert_eq!(of("take-2"), second.raw(&clock()).json());
     assert_ne!(of("take-1"), of("take-2"));
 }
 
@@ -212,7 +225,9 @@ fn every_take_gets_a_name_of_its_own_and_never_writes_over_one() {
 #[test]
 fn a_take_that_begins_under_the_pedal_starts_with_it_down() {
     let events = vec![event(0, 0, on(60, 88)), event(1, 480, off(60))];
-    let clip = take_under_pedal(0, 1920, 127, events).clip().unwrap();
+    let clip = take_under_pedal(0, 1920, 127, events)
+        .clip(&clock())
+        .unwrap();
     let pedal: Vec<(u64, u8)> = clip
         .pedal
         .iter()
@@ -229,7 +244,7 @@ fn a_take_that_begins_under_the_pedal_starts_with_it_down() {
 #[test]
 fn a_take_that_ends_under_the_pedal_lifts_it_at_its_end() {
     let events = vec![event(0, 0, pedal(127)), event(1, 480, on(60, 88))];
-    let clip = take(0, 1920, events).clip().unwrap();
+    let clip = take(0, 1920, events).clip(&clock()).unwrap();
     let moves: Vec<(u64, u8)> = clip
         .pedal
         .iter()
@@ -241,7 +256,7 @@ fn a_take_that_ends_under_the_pedal_lifts_it_at_its_end() {
 
     // A take that ends with the pedal up is not made longer and gets no lift of its own.
     let events = vec![event(0, 0, pedal(127)), event(1, 480, pedal(0))];
-    let clip = take(0, 1920, events).clip().unwrap();
+    let clip = take(0, 1920, events).clip(&clock()).unwrap();
     assert_eq!(clip.length.ticks(), Ticks(1920));
     assert_eq!(clip.pedal.len(), 2);
 }

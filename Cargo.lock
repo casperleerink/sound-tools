@@ -1770,6 +1770,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
+name = "fit-tempo"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sound-core",
+ "sound-notes",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3423,7 +3433,6 @@ version = "0.1.0"
 dependencies = [
  "midir",
  "rtrb",
- "serde",
  "serde_json",
  "sound-core",
  "sound-notes",
@@ -5040,6 +5049,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrangement",
+ "fit-tempo",
  "gpui",
  "gpui_platform",
  "hound",

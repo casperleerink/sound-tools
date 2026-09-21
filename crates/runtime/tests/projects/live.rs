@@ -27,7 +27,13 @@ fn the_default_project_is_a_small_musical_template() {
     let project_file = harness.project.project_file();
     assert_eq!(
         project_file.extensions,
-        ["arrangement", "instrument", "plugin-host", "tone"]
+        [
+            "arrangement",
+            "fit-tempo",
+            "instrument",
+            "plugin-host",
+            "tone"
+        ]
     );
     assert_eq!(project_file.tempo_map, sound_core::TempoMap::default());
     assert_eq!(project_file.connections, []);

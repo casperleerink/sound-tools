@@ -9,6 +9,10 @@
 //! - `transport-recording.png`: the same while it records.
 //! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
 //! - `menu.png`: the project menu, open, after one edit.
+//! - `fit-action.png`: the project menu over a recorded take, with `Fit tempo to take`.
+//! - `fitted.png`: the same project after the fit, with the steadiness control in the
+//!   transport and the clip of the take on the grid the playing made.
+//! - `fit-steady.png`: the same with the steadiness at 60 %.
 //! - `editor.png`: the note editor open on the selected clip, one note selected.
 //! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
 //! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default.
@@ -24,6 +28,8 @@
 //! - `track-panel-effect-missing.png`: an effect whose plugin this machine does not have.
 //! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the
 //!   plugin host, where every plugin says what the one edit is.
+//! - `fit-action-disabled.png`: the project menu of a project made before the fit existed,
+//!   where the fit says what the one edit is.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -51,6 +57,9 @@ use sound_core::{Changes, Engine, Instance, InstanceId, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{Assets, Session};
 use tempfile::TempDir;
+
+#[path = "projects/generated_take.rs"]
+mod generated_take;
 
 const BAR: u64 = 3840;
 
@@ -96,6 +105,16 @@ impl Opened {
     /// A project whose `project.json` does not enable the plugin host, as one made before
     /// step 4a has. Its content is that of the default project.
     fn without_plugin_host(cx: &mut HeadlessAppContext) -> Result<Self> {
+        Self::without_extensions(cx, r#"["arrangement", "instrument", "tone"]"#, |_| Ok(()))
+    }
+
+    /// A project that enables only these extensions, with the default content plus whatever
+    /// `fill` writes into it. For the controls that offer something a project cannot load.
+    fn without_extensions(
+        cx: &mut HeadlessAppContext,
+        extensions: &str,
+        fill: impl FnOnce(&mut Project) -> Result<()>,
+    ) -> Result<Self> {
         let folder = tempfile::tempdir()?;
         let root = folder.path().join("Night Study");
         let write = |relative: &str, contents: &str| -> Result<()> {
@@ -106,9 +125,11 @@ impl Opened {
         };
         write(
             "project.json",
-            r#"{"format": 1, "extensions": ["arrangement", "instrument", "tone"],
-                "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
-                "connections": []}"#,
+            &format!(
+                r#"{{"format": 1, "extensions": {extensions},
+                "tempo_map": {{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": 120.0}}]}},
+                "connections": []}}"#
+            ),
         )?;
         write(
             "state/arrangement/instance.json",
@@ -124,7 +145,8 @@ impl Opened {
         )?;
         let (control, engine) = Engine::new(OFFLINE);
         let plugins = test_plugin_host(&root);
-        let project = open_or_create_with(&root, control, plugins.clone())?;
+        let mut project = open_or_create_with(&root, control, plugins.clone())?;
+        fill(&mut project)?;
         let plugins = plugins.downgrade();
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
         let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {
@@ -444,6 +466,25 @@ fn piece(project: &mut Project) -> Result<()> {
     Ok(())
 }
 
+/// A project with one track and the clip of a recorded take, as a recording leaves it.
+fn recorded(project: &mut Project) -> Result<()> {
+    let take = generated_take::generated_take(8);
+    let name = take.write(project.assets())?;
+    let clock = project.clock().clone();
+    let mut clip = take
+        .clip(|time_us| clock.tick_at_micros(time_us))
+        .context("a take with notes in it")?;
+    clip.take = Some(name);
+    let track = main_arrangement(project)
+        .and_then(|arrangement| arrangement::tracks(project, arrangement.id()).pop())
+        .context("the default project has a track")?
+        .0;
+    let mut changes = Changes::new();
+    changes.create(track.id().child("take")?, clip);
+    project.commit("Record", changes)?;
+    Ok(())
+}
+
 /// The scale project of the milestone: clip `c` of track `t` is one bar at bar `8c + t mod 8`.
 fn scale(project: &mut Project) -> Result<()> {
     for track in 0..100_u64 {
@@ -537,6 +578,85 @@ fn main() -> Result<()> {
     })?;
     cx.run_until_parked();
     save(&mut cx, &opened, "menu")?;
+    drop(opened);
+
+    // A recorded take: the project menu offers to fit the tempo to it once its clip is
+    // selected, and the transport grows a steadiness control once the fit is there.
+    let mut opened = Opened::new(&mut cx, recorded)?;
+    let timeline = opened.timeline_view(&mut cx)?;
+    let take_clip = InstanceId::new("arrangement/track-1/take")?;
+    cx.update(|cx| {
+        timeline.update(cx, |timeline, cx| {
+            timeline.select_clip(Some(take_clip.clone()), cx)
+        })
+    });
+    cx.run_until_parked();
+    let menu = cx.update(|cx| {
+        let shell = opened.window.read(cx)?;
+        anyhow::Ok(shell.project_menu().read(cx).menu().clone())
+    })?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        menu.update(cx, |menu, cx| menu.open(window, cx));
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "fit-action")?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        menu.update(cx, |menu, cx| menu.close(window, cx));
+    })?;
+
+    cx.update(|cx| {
+        opened.session.update(cx, |session, cx| {
+            let clip = session
+                .project()
+                .resolve::<Clip>(&take_clip)
+                .context("the take clip")?;
+            let clip = session.project().state(&clip).context("its state")?.clone();
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                fit_tempo::fit_take(project, &mut changes, &clip)?;
+                project.commit(fit_tempo::FIT_LABEL, changes)
+            });
+            anyhow::Ok(())
+        })
+    })?;
+    opened.play_from(Ticks(5 * BAR), &mut cx)?;
+    let transport = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.transport().clone()))?;
+    anyhow::ensure!(
+        cx.update(|cx| transport.read(cx).shown_steadiness(cx)) == Some(0.0),
+        "the transport shows no steadiness"
+    );
+    save(&mut cx, &opened, "fitted")?;
+
+    cx.update(|cx| {
+        opened.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                fit_tempo::set_steadiness(project, &mut changes, 0.6);
+                project.commit(fit_tempo::STEADINESS_LABEL, changes)
+            });
+        })
+    });
+    cx.run_until_parked();
+    save(&mut cx, &opened, "fit-steady")?;
+    drop(opened);
+
+    // A project made before the fit existed: the action is at 40 % and says the one edit that
+    // brings it within reach, exactly as an instrument the project cannot load does.
+    let extensions = r#"["arrangement", "instrument", "plugin-host", "tone"]"#;
+    let opened = Opened::without_extensions(&mut cx, extensions, recorded)?;
+    let timeline = opened.timeline_view(&mut cx)?;
+    let take_clip = InstanceId::new("arrangement/track-1/take")?;
+    cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.select_clip(Some(take_clip), cx)));
+    cx.run_until_parked();
+    let menu = cx.update(|cx| {
+        let shell = opened.window.read(cx)?;
+        anyhow::Ok(shell.project_menu().read(cx).menu().clone())
+    })?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        menu.update(cx, |menu, cx| menu.open(window, cx));
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "fit-action-disabled")?;
     drop(opened);
 
     // The note editor on the melody, one note selected, stopped at the start of the clip.

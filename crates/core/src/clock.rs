@@ -96,6 +96,12 @@ impl Tempo {
     pub fn bpm(self) -> f64 {
         f64::from(self.milli_bpm) / 1000.0
     }
+
+    /// The tempo in thousandths of a bpm, which is how it is held and how all clock math uses
+    /// it. For code that has to work out a frame count exactly, as building a tempo map does.
+    pub fn milli_bpm(self) -> u32 {
+        self.milli_bpm
+    }
 }
 
 impl Default for Tempo {
@@ -363,24 +369,46 @@ struct Segment {
     /// move the ticks after it early by less than one frame. Every conversion goes through
     /// the same clock, so all parts of the application still agree on the frame of a tick.
     frame: u64,
+    /// The same moment as [`Self::frame`], with the part of a frame it falls inside: the
+    /// position in units of 1/2^[`SUB_FRAME_BITS`] of a frame.
+    ///
+    /// A tempo map with one change per beat has a segment per beat, and a segment that began
+    /// on a whole frame would throw away up to a frame of the moment it really begins on. Over
+    /// a thousand beats that is a part of a second of drift against the performance the map was
+    /// fitted to. Carrying the fraction costs a shift and keeps the map the same piece at every
+    /// sample rate. Every tick still lands on a whole frame: only the start of a segment keeps
+    /// the fraction.
+    start: u128,
     bpm: Tempo,
     /// One tick lasts `frames_per_tick.0 / frames_per_tick.1` frames, in lowest terms.
     frames_per_tick: (u64, u64),
 }
 
+/// How much of a frame a segment start keeps, as a binary fraction. A frame at 48 kHz is 21
+/// microseconds, so this is far below anything the rest of the application can tell apart.
+const SUB_FRAME_BITS: u32 = 32;
+
 impl Segment {
-    fn frame_of(&self, tick: u64) -> u64 {
+    /// The exact position of a tick, in sub-frames.
+    fn start_of(&self, tick: u64) -> u128 {
         let (frames, ticks) = self.frames_per_tick;
-        let since_start =
-            u128::from(tick.saturating_sub(self.tick)) * u128::from(frames) / u128::from(ticks);
-        self.frame
-            .saturating_add(u64::try_from(since_start).unwrap_or(u64::MAX))
+        let since_start = u128::from(tick.saturating_sub(self.tick))
+            * u128::from(frames)
+            * (1_u128 << SUB_FRAME_BITS)
+            / u128::from(ticks);
+        self.start.saturating_add(since_start)
+    }
+
+    fn frame_of(&self, tick: u64) -> u64 {
+        let frame = self.start_of(tick) >> SUB_FRAME_BITS;
+        u64::try_from(frame).unwrap_or(u64::MAX)
     }
 
     fn tick_at(&self, frame: u64) -> u64 {
         let (frames, ticks) = self.frames_per_tick;
-        let since_start = (u128::from(frame.saturating_sub(self.frame)) * u128::from(ticks))
-            .div_ceil(u128::from(frames));
+        let since_start = (u128::from(frame) << SUB_FRAME_BITS).saturating_sub(self.start);
+        let since_start = (since_start * u128::from(ticks))
+            .div_ceil(u128::from(frames) * (1_u128 << SUB_FRAME_BITS));
         self.tick
             .saturating_add(u64::try_from(since_start).unwrap_or(u64::MAX))
     }
@@ -401,13 +429,14 @@ impl Clock {
     /// Conversions are exact from [`MIN_EXACT_SAMPLE_RATE`] up. A sample rate of 0 counts as 1.
     pub fn new(tempo_map: TempoMap, sample_rate: u32) -> Self {
         let sample_rate = sample_rate.max(1);
-        let segment = |tick: Ticks, frame: u64, bpm: Tempo| {
+        let segment = |tick: Ticks, start: u128, bpm: Tempo| {
             let frames = u64::from(sample_rate) * 60_000;
             let ticks = u64::from(bpm.milli_bpm) * TICKS_PER_QUARTER;
             let divisor = greatest_common_divisor(frames, ticks);
             Segment {
                 tick: tick.0,
-                frame,
+                frame: u64::try_from(start >> SUB_FRAME_BITS).unwrap_or(u64::MAX),
+                start,
                 bpm,
                 frames_per_tick: (frames / divisor, ticks / divisor),
             }
@@ -419,7 +448,9 @@ impl Clock {
         let mut later = Vec::with_capacity(changes.len());
         let mut previous = first;
         for change in changes {
-            previous = segment(change.tick, previous.frame_of(change.tick.0), change.bpm);
+            // The exact moment the change falls on, fraction of a frame and all, so a map of a
+            // thousand changes is the same piece as one of two.
+            previous = segment(change.tick, previous.start_of(change.tick.0), change.bpm);
             later.push(previous);
         }
         Self {
@@ -473,6 +504,23 @@ impl Clock {
         self.tick_at(Frames(
             (seconds * f64::from(self.sample_rate)).round() as u64
         ))
+    }
+
+    /// Microseconds from the project start, rounded to the nearest microsecond.
+    ///
+    /// This is the unit for a time that has to keep its meaning when the tempo map changes,
+    /// such as a recorded performance. A microsecond is a small part of a frame at every
+    /// sample rate this application allows, so `tick_at_micros(micros_of(tick)) == tick`.
+    pub fn micros_of(&self, tick: Ticks) -> u64 {
+        let frame = self.frame_of(tick).0 as f64;
+        (frame * 1_000_000.0 / f64::from(self.sample_rate)).round() as u64
+    }
+
+    /// The tick of a time in microseconds from the project start: the inverse of
+    /// [`Self::micros_of`].
+    pub fn tick_at_micros(&self, micros: u64) -> Ticks {
+        let frame = micros as f64 * f64::from(self.sample_rate) / 1_000_000.0;
+        self.tick_at(Frames(frame.round() as u64))
     }
 
     fn segment_of_tick(&self, tick: Ticks) -> &Segment {

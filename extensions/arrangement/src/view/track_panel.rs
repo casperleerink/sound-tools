@@ -217,7 +217,7 @@ impl Device {
 
 /// The one edit that puts an offer this project cannot load within reach.
 fn needed(extension: &SharedString) -> String {
-    format!("Add \"{extension}\" to \"extensions\" in project.json and open the project again.")
+    sound_ui::enable_extension(extension)
 }
 
 /// What the picker of a slot says and which offer it marks. The device registry answers for a

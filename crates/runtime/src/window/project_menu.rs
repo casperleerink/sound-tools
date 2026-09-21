@@ -6,15 +6,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gpui::{Context, Entity, IntoElement, Render, SharedString, Window, prelude::*};
-use sound_core::Project;
-use sound_ui::Session;
+use sound_core::{Changes, InstanceId};
+use sound_notes::Clip;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked,
 };
+use sound_ui::{Session, enable_extension, extension_is_enabled};
 
 use crate::{add_track, main_arrangement};
 
 const ADD_TRACK: &str = "add-track";
+const FIT_TEMPO: &str = "fit-tempo";
 const UNDO: &str = "undo";
 const REDO: &str = "redo";
 const DEVICE: &str = "device";
@@ -33,18 +35,37 @@ pub struct ProjectMenu {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Shown {
     can_add_track: bool,
+    /// The selected clip, when it was recorded and its take can be fitted to.
+    fit_clip: Option<InstanceId>,
+    /// The one edit that would bring the fit within reach, when the project does not enable
+    /// the extension it needs. A project made before the fit existed is such a project.
+    fit_needs: Option<String>,
     undo: Option<String>,
     redo: Option<String>,
 }
 
 impl Shown {
-    fn of(project: &Project) -> Self {
+    fn of(session: &Session) -> Self {
+        let project = session.project();
         Self {
             can_add_track: main_arrangement(project).is_some(),
+            fit_clip: recorded_clip(session).map(|(id, _)| id),
+            fit_needs: (!extension_is_enabled(project, fit_tempo::EXTENSION))
+                .then(|| enable_extension(fit_tempo::EXTENSION)),
             undo: project.undo_label().map(str::to_string),
             redo: project.redo_label().map(str::to_string),
         }
     }
+}
+
+/// The selected clip and its state, when it names a raw take. Fitting the tempo needs a
+/// performance to follow, so a clip that was drawn by hand offers nothing.
+fn recorded_clip(session: &Session) -> Option<(InstanceId, Clip)> {
+    let project = session.project();
+    let clip = project.resolve::<Clip>(session.selected_clip()?)?;
+    let state = project.state(&clip)?;
+    state.take.as_ref()?;
+    Some((clip.id().clone(), state.clone()))
 }
 
 impl ProjectMenu {
@@ -56,7 +77,7 @@ impl ProjectMenu {
         let project = session.read(cx).project();
         let name = project.root().file_name().unwrap_or_default();
         let name = name.to_string_lossy().into_owned();
-        let shown = Shown::of(project);
+        let shown = Shown::of(session.read(cx));
         let items = entries(&shown, &device_name);
         let menu = cx.new(|cx| {
             DropdownMenu::new(name, items, cx)
@@ -68,7 +89,7 @@ impl ProjectMenu {
         // project event, so this follows every notify, and it is cheap: three values to compare,
         // and new items only when one differs. A drag changes none of them until it ends.
         cx.observe(&session, |this, session, cx| {
-            let shown = Shown::of(session.read(cx).project());
+            let shown = Shown::of(session.read(cx));
             if shown != this.shown {
                 let items = entries(&shown, &this.device_name);
                 this.menu.update(cx, |menu, cx| menu.set_entries(items, cx));
@@ -98,6 +119,7 @@ impl ProjectMenu {
                         session.edit(cx, |project| add_track(project, &arrangement));
                     }
                 }
+                FIT_TEMPO => fit_tempo_to_take(session, cx),
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
@@ -106,6 +128,23 @@ impl ProjectMenu {
                 _ => {}
             });
     }
+}
+
+/// Fits the project tempo to the take of the selected clip, as one undo step. The tempo map
+/// and the clip follow in the same group, through the derive of the fit record.
+fn fit_tempo_to_take(session: &mut Session, cx: &mut Context<Session>) {
+    let Some((_, clip)) = recorded_clip(session) else {
+        return;
+    };
+    // The item is at 40 % in that case and says what to add, so a click cannot get here.
+    if !extension_is_enabled(session.project(), fit_tempo::EXTENSION) {
+        return;
+    }
+    session.edit(cx, |project| {
+        let mut changes = Changes::new();
+        fit_tempo::fit_take(project, &mut changes, &clip)?;
+        project.commit(fit_tempo::FIT_LABEL, changes)
+    });
 }
 
 /// The command that opens a terminal in `folder`. macOS only: the system Terminal, which is
@@ -151,8 +190,22 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
     };
     vec![
         MenuEntry::Group(
-            MenuGroup::new()
-                .item(command(ADD_TRACK, "Add track".to_string()).disabled(!shown.can_add_track)),
+            MenuGroup::new().items([
+                command(ADD_TRACK, "Add track".to_string()).disabled(!shown.can_add_track),
+                // The fit belongs to the whole project: it rewrites the tempo map every other
+                // part follows. So it sits here and not on the clip, and it is offered only for a
+                // clip that came from a recording.
+                match &shown.fit_needs {
+                    // The same line an instrument picker gives an offer a project cannot take:
+                    // enabling an extension while a project runs is refused, so it is a file edit
+                    // and a reopen. A project made before the fit existed is such a project.
+                    Some(needed) => command(FIT_TEMPO, "Fit tempo to take".to_string())
+                        .disabled(true)
+                        .description(needed.clone()),
+                    None => command(FIT_TEMPO, "Fit tempo to take".to_string())
+                        .disabled(shown.fit_clip.is_none()),
+                },
+            ]),
         ),
         MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().items([

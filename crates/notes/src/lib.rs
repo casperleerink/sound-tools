@@ -1,11 +1,18 @@
 //! The note contract: what a tool that sends notes and a tool that plays them agree on.
 //!
 //! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and
-//! [`Clip`], the realtime [`NoteEvent`] and the port names of an instrument and an effect.
-//! `README.md` in this crate is the guide.
+//! [`Clip`], the saved [`RawTake`] a recording writes and a fit reads, the realtime
+//! [`NoteEvent`] and the port names of an instrument and an effect. `README.md` in this crate
+//! is the guide.
+
+mod take;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{Place, State, Ticks};
+
+pub use take::{
+    MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
+};
 
 /// The event input of an instrument. It carries [`NoteEvent`].
 pub const NOTES_INPUT: &str = "notes";

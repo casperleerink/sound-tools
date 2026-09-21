@@ -7,9 +7,10 @@
 use std::path::PathBuf;
 
 use metronome::Click;
-use midi::{Keyboard, Played, RawEvent, RawTake, Take};
+use midi::{Keyboard, Played, Take};
 use sound_core::{InstanceId, Ticks};
 use sound_notes::{Clip, Pedal, Pitch, Velocity};
+use sound_notes::{RawEvent, RawTake};
 
 use crate::support::{BAR, Harness, difference};
 
@@ -140,7 +141,7 @@ fn a_take_becomes_a_clip_that_renders_what_was_heard() {
     // 150 bpm from bar 2, written into project.json as an agent would.
     recorder.harness.write_and_apply(
         "project.json",
-        r#"{"format": 1, "extensions": ["arrangement", "instrument", "plugin-host", "tone"], "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 3840, "bpm": 150.0}]}, "connections": []}"#,
+        r#"{"format": 1, "extensions": ["arrangement", "fit-tempo", "instrument", "plugin-host", "tone"], "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 3840, "bpm": 150.0}]}, "connections": []}"#,
     );
     assert_eq!(recorder.harness.project.problems(), []);
 
@@ -154,7 +155,7 @@ fn a_take_becomes_a_clip_that_renders_what_was_heard() {
     ];
     let (take, heard) = recorder.record(&messages, 2 * BAR);
     assert_eq!(take.events.len(), 6);
-    let mut clip = take.clip().unwrap();
+    let mut clip = take.clip(recorder.harness.project.clock()).unwrap();
     recorder.save(&take);
     // The saved clip is the take's clip, plus the name of the raw take it came from.
     clip.take = Some("take-1".to_string());
@@ -297,6 +298,7 @@ fn the_raw_take_holds_what_was_played_in_real_time() {
                 pitch, velocity, ..
             } => RawEvent::On {
                 time_us: 0,
+                sounded_us: 0,
                 pitch,
                 velocity,
             },
@@ -304,10 +306,15 @@ fn the_raw_take_holds_what_was_played_in_real_time() {
                 pitch, velocity, ..
             } => RawEvent::Off {
                 time_us: 0,
+                sounded_us: 0,
                 pitch,
                 velocity,
             },
-            RawEvent::Pedal { value, .. } => RawEvent::Pedal { time_us: 0, value },
+            RawEvent::Pedal { value, .. } => RawEvent::Pedal {
+                time_us: 0,
+                sounded_us: 0,
+                value,
+            },
         })
         .collect();
     assert_eq!(
@@ -315,21 +322,25 @@ fn the_raw_take_holds_what_was_played_in_real_time() {
         [
             RawEvent::Pedal {
                 time_us: 0,
+                sounded_us: 0,
                 value: 127
             },
             RawEvent::On {
                 time_us: 0,
+                sounded_us: 0,
                 pitch: 60,
                 velocity: 88
             },
             // The key up velocity is in the take and nowhere else.
             RawEvent::Off {
                 time_us: 0,
+                sounded_us: 0,
                 pitch: 60,
                 velocity: 31
             },
             RawEvent::Pedal {
                 time_us: 0,
+                sounded_us: 0,
                 value: 0
             },
         ]

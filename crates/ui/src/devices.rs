@@ -61,11 +61,10 @@ impl DeviceOffer {
     /// project runs is refused, so an offer a project has not enabled stays out of reach until
     /// the composer edits `project.json` and opens the project again.
     pub fn is_enabled_in(&self, project: &Project) -> bool {
-        let Some(needs) = &self.needs else {
-            return true;
-        };
-        let enabled = &project.project_file().extensions;
-        enabled.iter().any(|extension| extension == needs.as_ref())
+        match &self.needs {
+            Some(needs) => extension_is_enabled(project, needs),
+            None => true,
+        }
     }
 
     /// Puts the record of this offer into `slot`. The caller commits the group, so choosing an
@@ -201,4 +200,18 @@ impl Devices {
         let describe = cx.try_global::<Self>()?.describe.get(tool)?.clone();
         describe(project, id)
     }
+}
+
+/// Whether `project.json` lists this extension under `extensions`, which is what decides
+/// whether the project can load a record of its tools.
+pub fn extension_is_enabled(project: &Project, extension: &str) -> bool {
+    let enabled = &project.project_file().extensions;
+    enabled.iter().any(|it| it == extension)
+}
+
+/// The one edit that brings an extension within reach. Every control that offers something a
+/// project has not enabled says this and nothing else: enabling an extension while a project
+/// runs is refused, so it is a file edit and a reopen.
+pub fn enable_extension(extension: &str) -> String {
+    format!("Add \"{extension}\" to \"extensions\" in project.json and open the project again.")
 }

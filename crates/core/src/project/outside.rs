@@ -175,7 +175,7 @@ impl Project {
                 self.report_problem(path, message);
                 continue;
             }
-            if let Some(message) = record.place.refuses(record.tool, owner_tool) {
+            if let Some(message) = record.place.refuses(record.tool, &id, owner_tool) {
                 self.report_problem(path, format!("not loaded: {message}"));
                 continue;
             }
@@ -233,9 +233,11 @@ impl Project {
         }
         let count = applied.records.len() + usize::from(applied.project_file.is_some());
         if source == Source::Outside {
+            // The record files hold what was written from outside, but not what a derive made
+            // of it, so those records are written here. Everything else is already on disk.
+            let derived: Vec<InstanceId> = applied.derived.clone();
             self.history.push_outside(OUTSIDE_LABEL, applied, at);
-            // The record files already hold the new state. Only `project.json` may not.
-            self.write(std::iter::empty(), write_project_file)?;
+            self.write(derived.iter(), write_project_file)?;
         }
         Ok(count)
     }

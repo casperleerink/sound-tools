@@ -84,3 +84,18 @@ These names are here, in the note contract crate, and not in a crate of their ow
 A tool may have all three ports. The plugin host does, whatever the plugin is, because one record serves an instrument slot and an effect slot and the host knows nothing of slots. An instrument's audio input is connected to nothing and is silent.
 
 `extensions/instrument/tests/synth/support.rs` has a complete small sender: a test track tool with a sequencer processor. `extensions/arrangement/tests/arrangement/support.rs` has a complete small effect, `Trim`.
+
+## The saved raw take
+
+`RawTake` is the performance a recording writes, under `assets/takes/<name>.json`. It lives here and not in the MIDI extension because two extensions read it and neither may depend on the other: MIDI writes one when a recording ends, and `extensions/fit-tempo` reads one to find the beats and to make the clip again.
+
+```json
+{"start_us": 0, "end_us": 2000000, "start_tick": 0, "end_tick": 3840, "pedal_at_start": 0,
+ "events": [{"kind":"on","time_us":15230,"sounded_us":16000,"pitch":60,"velocity":88}]}
+```
+
+Every time is microseconds, never ticks, because a tick means nothing without a tempo map and the whole point of a fit is that the tempo map changes. `start_us` and `end_us` are where the recording began and ended on the project timeline. Each message carries two times, both counted from the start of the recording: `time_us`, when it reached this process, which is the performance as it was played and what a beat finder works from, and `sounded_us`, when the engine really sounded it, which is the start of the audio block that carried it and what a clip has to reproduce to sound the same. `start_tick` and `end_tick` are the same two moments under the tempo map of that moment, for reading only.
+
+`RawTake::clip(tick_of)` is the one place that turns a performance into a clip. `tick_of` is a function from a place on the project timeline in microseconds to a tick, so recording calls it with the clock of the moment and a fit calls it with the clock of the fitted map. The rules are the same either way: a note still held at the end ends there, a note off with no note on before it is left out, a pedal move that changes nothing is left out, a take that began under a held pedal starts with that value, and one that ends with the pedal down lifts it at its end.
+
+`RawTake::write(assets)` writes it under a name of its own through `Assets::create`, which never opens a file that exists, and `RawTake::read(assets, name)` reads one back and checks it with `RawTake::validate`. A take file is a file an agent reads and someone can damage, so times that are not times are refused before any reader lays out an array over them: a recording longer than `MAX_TAKE_MICROS` (an hour), a moment past `MAX_PROJECT_MICROS`, an end before the start, or messages out of the order they arrived. The file itself is never rewritten. `take_asset(name)` is the `AssetName`. A take written before this crate saved `start_us`, `end_us` and `sounded_us` does not load, and the fit says so.
