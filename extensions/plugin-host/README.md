@@ -320,7 +320,10 @@ window and `true` for an embedded one. So this host makes the window.
 - The view comes from the plugin's edit controller, `createView(ViewType::kEditor)`. That is
   also the only way the format has of asking whether a plugin has a window at all, so
   `is_offered` makes a view, asks it `isPlatformTypeSupported(kPlatformTypeNSView)` and lets it
-  go again. It is asked once, while the plugin loads; what a card reads is that answer.
+  go again. It is asked once, while the plugin loads; what a card reads is that answer. It
+  costs a plugin's whole interface being built once: measured on this machine, it adds 0.07 s
+  to loading LABS, 0.11 s to Numa Player, 0.13 s to Splice INSTRUMENT and 0.98 s to Crow Hill
+  Origins, whose interface is large. See ARCHITECTURE.md for why it is paid.
 - The order is create, `setFrame`, `getSize`, `attached`, and there is no separate show: a view
   is on screen as soon as it is attached. `removed` is called for an `attached` that was
   answered and for nothing else, then a null frame, then the release. The frame goes in before
