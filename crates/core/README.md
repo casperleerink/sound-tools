@@ -261,6 +261,15 @@ Rebuilding a snapshot of a hundred small records on every change is cheap, so do
 
 Two instances may declare the same connection, for example an owner and its child both send the child to the device. It is in the graph once and goes when the last one stops declaring it.
 
+### A processor that must be let go of on the audio thread
+
+`Processor::leaving` is the last call a processor gets. It runs on the audio thread, when the
+engine takes the processor out of its slot and before it rides back to the control thread to be
+dropped. It has an empty default and almost nothing needs it: a processor that owns only memory
+is simply dropped. It is for something that must be released where it was used, such as a
+hosted CLAP plugin, which must be stopped on the audio thread before the main thread may touch
+it. Realtime safe, like `process`.
+
 ### Assets
 
 An asset is bytes the core never looks inside: a raw take, the state of a hosted plugin, later a sample. A record is typed state; an asset is not. Reach them with `context.assets()` in a behaviour or `project.assets()` elsewhere.

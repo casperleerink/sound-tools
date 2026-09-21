@@ -45,6 +45,14 @@ pub trait Processor: Send + 'static {
 
     /// Audio thread. Realtime safe: no allocation, locks, I/O or logging.
     fn process(&mut self, context: &mut ProcessContext<'_>);
+
+    /// Audio thread, the last call this processor gets. It has been taken out of its slot and
+    /// rides back to the control thread, where it is dropped. Realtime safe, like `process`.
+    ///
+    /// Almost nothing needs this: a processor that owns only memory is simply dropped on the
+    /// control thread. It is for something that must be let go of on the audio thread, such as
+    /// a hosted plugin, which CLAP wants stopped there before anyone else touches it.
+    fn leaving(&mut self) {}
 }
 
 /// One block of work for one processor. The engine builds it.
