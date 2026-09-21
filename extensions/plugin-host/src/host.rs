@@ -299,9 +299,15 @@ impl Plugins {
 
     /// Every plugin this machine has, scanned once per session. The first call pays for it.
     pub fn scan(&self) -> Scan {
+        self.ensure_scan();
+        self.0.table.borrow().scanned.clone().unwrap_or_default()
+    }
+
+    /// Scans if this session has not yet, and borrows nothing afterwards.
+    fn ensure_scan(&self) {
         let mut table = self.0.table.borrow_mut();
-        if let Some(scanned) = &table.scanned {
-            return scanned.clone();
+        if table.scanned.is_some() {
+            return;
         }
         let scanned = scan(&self.0.search_paths, &self.0.scanner);
         for failure in &scanned.failures {
@@ -311,8 +317,7 @@ impl Plugins {
                 failure.message
             ));
         }
-        table.scanned = Some(scanned.clone());
-        scanned
+        table.scanned = Some(scanned);
     }
 
     /// Lines about the scan that a person should see once, such as a bundle that crashed.
@@ -329,9 +334,13 @@ impl Plugins {
     }
 
     /// The name the maker gave the plugin with this id, when this machine has it. `None` says
-    /// the plugin is missing, which is what the card of a record shows.
+    /// the plugin is missing, which is what the card of a record shows. A card asks on every
+    /// frame it draws, so this copies one name and not the whole scan.
     pub fn installed_name(&self, plugin_id: &str) -> Option<String> {
-        self.scan().find(plugin_id).map(|found| found.name.clone())
+        self.ensure_scan();
+        let table = self.0.table.borrow();
+        let found = table.scanned.as_ref()?.find(plugin_id)?;
+        Some(found.name.clone())
     }
 
     /// Loads the plugin the record names and gives it to the caller for the engine.
