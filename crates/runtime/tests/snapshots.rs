@@ -4,6 +4,8 @@
 //!
 //! - `default.png`: the default project.
 //! - `piece.png`: three tracks with several clips, playing, one clip selected.
+//! - `transport-click-off.png`: the same with the transport in focus, the click off.
+//! - `transport-click-on.png`: the same with the click on.
 //! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
 //! - `menu.png`: the project menu, open, after one edit.
 //! - `editor.png`: the note editor open on the selected clip, one note selected.
@@ -372,6 +374,18 @@ fn main() -> Result<()> {
     cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.select_clip(Some(selected), cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "piece")?;
+
+    // The transport with the tempo and the click, off and on. The click is a switch on the
+    // engine, not project state: nothing is written and there is no undo step.
+    save(&mut cx, &opened, "transport-click-off")?;
+    let transport = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.transport().clone()))?;
+    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_click(cx)));
+    cx.run_until_parked();
+    anyhow::ensure!(
+        cx.update(|cx| transport.read(cx).click_is_on()),
+        "the click did not come on"
+    );
+    save(&mut cx, &opened, "transport-click-on")?;
 
     // The menu after an edit, so that undo has something to name.
     cx.update(|cx| {

@@ -38,7 +38,7 @@ use gpui::{
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent, State, Ticks, TimeSignature};
 use sound_notes::Clip;
-use sound_ui::{ActiveTheme, KeyboardFocus, Session, Views};
+use sound_ui::{ActiveTheme, KeyboardFocus, Playhead, Session, Views};
 
 use crate::{ArrangementState, TrackState, add_clip, move_clip, tracks};
 use editor::EditorEvent;
@@ -465,6 +465,7 @@ pub enum TimelineEvent {
 
 pub struct Timeline {
     session: Entity<Session>,
+    playhead: Entity<Playhead>,
     arrangement: Instance<ArrangementState>,
     /// Zoom and scroll, kept inside the content by [`Self::set_viewport`]. Scroll and pinch go
     /// on from here, not from what was painted: several events may arrive between two frames.
@@ -475,6 +476,11 @@ pub struct Timeline {
     painted: Rc<Cell<Viewport>>,
     /// The size of the timeline area at the last paint, which the scroll limits depend on.
     painted_size: Rc<Cell<(f32, f32)>>,
+    /// Whether the view follows the playhead. It does while the playhead is on screen, and it
+    /// stops when the composer scrolls it off screen, until the next jump brings it back.
+    follows_playhead: bool,
+    /// The jump count of the last playhead this view saw, see [`Playhead::jumps`].
+    seen_jumps: u64,
     /// The tracks in display order, each with the end of its last clip. Finding the ends walks
     /// every clip, so they are kept between the project events that can change them and are
     /// not read again per paint. Nothing else of the project is kept.
@@ -508,6 +514,13 @@ impl Timeline {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle().tab_stop(true);
+        let playhead = session.read(cx).playhead().clone();
+        let seen_jumps = playhead.read(cx).jumps;
+        // The view follows the playhead. This runs on every playhead change, which is every
+        // frame while playing, and notifies only when the view really moves, so the timeline
+        // is still not painted per frame.
+        cx.observe(&playhead, |timeline, _, cx| timeline.follow_playhead(cx))
+            .detach();
         let project_events = cx.subscribe(&session, |timeline, _, event, cx| {
             let shown = |id: &InstanceId| timeline.shows(id, cx);
             let changed = match event {
@@ -569,10 +582,13 @@ impl Timeline {
         .detach();
         Self {
             session,
+            playhead,
             arrangement,
             viewport: Viewport::default(),
             painted: Rc::default(),
             painted_size: Rc::default(),
+            follows_playhead: true,
+            seen_jumps,
             order: Vec::new(),
             ends: BTreeMap::new(),
             stale: Stale::Everything,
@@ -593,8 +609,17 @@ impl Timeline {
         self.viewport
     }
 
-    /// Sets zoom and scroll, kept inside the content for the size that was last painted.
+    /// Sets zoom and scroll, kept inside the content for the size that was last painted. The
+    /// composer decides here whether the view follows the playhead: scrolling it off screen
+    /// stops the following, and scrolling it back in starts it again.
     pub fn set_viewport(&mut self, viewport: Viewport, cx: &mut Context<Self>) {
+        let placed = self.place_viewport(viewport, cx);
+        let (width, _) = self.painted_size.get();
+        self.follows_playhead = placed.shows(self.playhead.read(cx).tick, width);
+    }
+
+    /// Clamps and applies a viewport, and notifies when it moved. Gives what was applied.
+    fn place_viewport(&mut self, viewport: Viewport, cx: &mut Context<Self>) -> Viewport {
         self.refresh_order(cx);
         let (width, height) = self.painted_size.get();
         let viewport = self.clamped(viewport, width, height, cx);
@@ -602,11 +627,34 @@ impl Timeline {
             self.viewport = viewport;
             cx.notify();
         }
+        viewport
+    }
+
+    /// Keeps the playhead on screen while the project plays, and brings it back after a jump.
+    /// Nothing pulls the view back while the composer has scrolled the playhead off screen:
+    /// the next stop or seek does that.
+    fn follow_playhead(&mut self, cx: &mut Context<Self>) {
+        let playhead = *self.playhead.read(cx);
+        let jumped = playhead.jumps != self.seen_jumps;
+        self.seen_jumps = playhead.jumps;
+        if jumped {
+            self.follows_playhead = true;
+        } else if !playhead.playing || !self.follows_playhead {
+            return;
+        }
+        let (width, _) = self.painted_size.get();
+        if width <= 0.0 {
+            return;
+        }
+        self.place_viewport(self.viewport.following(playhead.tick, width), cx);
     }
 
     fn clamped(&self, viewport: Viewport, width: f32, height: f32, cx: &App) -> Viewport {
+        // The playhead runs past the end of the piece, and the view follows it there, so the
+        // scroll room reaches at least that far. Playback does not stop at the end yet.
+        let end = self.ends.values().max().copied().unwrap_or_default();
         let extent = Extent {
-            end: self.ends.values().max().copied().unwrap_or_default(),
+            end: end.max(self.playhead.read(cx).tick),
             tracks: self.order.len(),
         };
         viewport.clamped(extent, self.time_signature(cx), width, height)

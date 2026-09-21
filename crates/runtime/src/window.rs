@@ -5,7 +5,8 @@
 //! view the installed [`Views`] has for the first instance at the top of the project.
 
 mod project_menu;
-mod transport;
+pub mod tempo;
+pub mod transport;
 
 use std::path::Path;
 use std::rc::Rc;
@@ -23,7 +24,7 @@ use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::{ActiveTheme, Assets, Session, Views, typography};
 
 use project_menu::ProjectMenu;
-use transport::TransportPill;
+pub use transport::TransportPill;
 
 use crate::{open_or_create, views};
 
@@ -94,6 +95,10 @@ impl Shell {
 
     pub fn project_menu(&self) -> &Entity<ProjectMenu> {
         &self.project_menu
+    }
+
+    pub fn transport(&self) -> &Entity<TransportPill> {
+        &self.transport
     }
 
     fn show_main_instance(&mut self, window: &mut Window, cx: &mut Context<Self>) {

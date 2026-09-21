@@ -6,6 +6,7 @@
 
 mod agent_doc;
 mod live;
+mod metronome;
 mod mixer;
 mod scale;
 mod summary;

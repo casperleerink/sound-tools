@@ -15,7 +15,7 @@ use runtime::{OFFLINE, main_arrangement, open_or_create};
 use sound_core::{Changes, Engine, Instance, InstanceId, Ticks};
 use sound_notes::Clip;
 use sound_ui::components::text_input::TextInput;
-use sound_ui::{POLL_INTERVAL, Playhead, Session, Views};
+use sound_ui::{POLL_INTERVAL, Session, Views};
 
 use crate::support::{self, BAR, Opened, TOP_ROW};
 
@@ -69,7 +69,11 @@ fn tab_reaches_the_menu_and_the_transport_and_enter_activates(cx: &mut TestAppCo
     opened.cx.simulate_keystrokes("tab");
     opened.press_enter();
     opened.settle();
-    assert_eq!(opened.playhead(), Playhead::default());
+    let playhead = opened.playhead();
+    assert!(!playhead.playing);
+    assert_eq!(playhead.tick, Ticks(0));
+    // The stop is a jump, which the arrangement view uses to follow the playhead.
+    assert_eq!(playhead.jumps, 1);
 }
 
 #[gpui::test]
@@ -277,8 +281,11 @@ fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
         .update(|_, cx| session.update(cx, |session, cx| session.report("the device is gone", cx)));
     opened.cx.run_until_parked();
 
-    // The menu, the arrangement, play, stop, the seek strip, then the notice.
-    opened.cx.simulate_keystrokes("tab tab tab tab tab tab");
+    // The menu, the arrangement, play, stop, the seek strip, the tempo, the click, then the
+    // notice.
+    opened
+        .cx
+        .simulate_keystrokes("tab tab tab tab tab tab tab tab");
     opened.press_enter();
     opened
         .cx

@@ -11,7 +11,7 @@ use gpui::{
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
     TestAppContext, VisualTestContext, point, px,
 };
-use runtime::window::{Shell, bind_keys};
+use runtime::window::{Shell, TransportPill, bind_keys};
 use runtime::{OFFLINE, open_or_create, views};
 use sound_core::{Engine, InstanceId, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
@@ -28,6 +28,7 @@ pub struct Opened<'a> {
     pub folder: TempDir,
     pub engine: Engine,
     pub session: Entity<Session>,
+    pub shell: Entity<Shell>,
     pub arrangement: Entity<ArrangementView>,
     pub timeline: Entity<Timeline>,
     pub cx: &'a mut VisualTestContext,
@@ -87,6 +88,7 @@ pub fn open_project(
         folder,
         engine,
         session,
+        shell,
         arrangement,
         timeline,
         cx,
@@ -108,6 +110,22 @@ impl Opened<'_> {
             self.engine.process_block(buffer);
         }
         output
+    }
+
+    pub fn transport(&mut self) -> Entity<TransportPill> {
+        let shell = self.shell.clone();
+        self.cx.read(|cx| shell.read(cx).transport().clone())
+    }
+
+    /// The tempo the transport shows, in bpm.
+    pub fn shown_tempo(&mut self) -> f64 {
+        let transport = self.transport();
+        self.cx.read(|cx| transport.read(cx).shown_tempo(cx).bpm())
+    }
+
+    pub fn click_is_on(&mut self) -> bool {
+        let transport = self.transport();
+        self.cx.read(|cx| transport.read(cx).click_is_on())
     }
 
     pub fn playhead(&mut self) -> Playhead {
@@ -363,12 +381,13 @@ impl Opened<'_> {
             folder,
             engine,
             session,
+            shell,
             arrangement,
             timeline,
             cx,
         } = self;
         cx.update(|window, _| window.remove_window());
-        drop((engine, arrangement, timeline));
+        drop((engine, shell, arrangement, timeline));
         cx.run_until_parked();
         // The window held every view, and the views held the session. This was the last hold.
         let released = session.downgrade();

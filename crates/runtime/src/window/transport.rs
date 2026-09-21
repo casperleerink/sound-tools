@@ -1,18 +1,27 @@
 //! The transport: a floating pill. Play or pause, stop, the position as bar and beat and as
-//! time, and a hairline seek strip with the duration when the project has an end.
+//! time, a hairline seek strip with the duration when the project has an end, the tempo at the
+//! playhead, and the click.
 //!
 //! It follows the playhead, so it renders every frame while the project plays. It therefore
 //! reads the end of the project, which walks every clip, only after a project event, and
 //! once for all events of a group.
+//!
+//! The tempo is a controlled readout: it reads the tempo map when it renders and keeps no copy,
+//! so a `project.json` written from outside shows at once, also during a drag. A drag is one
+//! gesture of the session and one undo step. The click is not project state at all: it is a
+//! processor in the engine with a switch, see [`metronome`].
 
 use gpui::{
-    App, BorderStyle, Bounds, BoxShadow, Context, DispatchPhase, Entity, FocusHandle, Hitbox,
-    HitboxBehavior, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Window, canvas, div, fill, hsla, point, prelude::*, px, quad, size,
+    App, BorderStyle, Bounds, BoxShadow, Context, CursorStyle, DispatchPhase, Entity, FocusHandle,
+    Hitbox, HitboxBehavior, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Window, canvas, div, fill, hsla, point, prelude::*, px, quad, size,
 };
-use sound_core::{ProjectEvent, Ticks};
+use metronome::Click;
+use sound_core::{Changes, ProjectEvent, Tempo, TempoChange, Ticks};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::{ActiveTheme, Playhead, Session, typography};
+
+use super::tempo;
 
 const STRIP_WIDTH: f32 = 200.;
 const STRIP_HEIGHT: f32 = 16.;
@@ -29,6 +38,25 @@ fn fraction_at(x: f32, strip_width: f32) -> f32 {
     ((x - KNOB / 2.) / (strip_width - KNOB).max(1.)).clamp(0., 1.)
 }
 
+/// A drag on the tempo number, from mouse down to mouse up.
+struct TempoDrag {
+    /// Where the pointer went down, and the tempo there. A drag works out from these, so a
+    /// drag there and back ends at the tempo it began with.
+    start_y: f32,
+    start_bpm: f64,
+    /// The tick of the tempo change this drag edits, picked at mouse down. By its tick and
+    /// never by its place in the list: an outside edit may add or remove a tempo change while
+    /// the drag goes on, and a drag must never change one that only took the place of the one
+    /// the composer grabbed. A playhead that runs over a later tempo change does not move it
+    /// either.
+    at: Ticks,
+    /// Whether the gesture of the session is open. It begins with the first move that changes
+    /// something, so a press without a move is no undo step.
+    begun: bool,
+    /// The tempo that went out last. Several mouse moves may arrive between two frames.
+    sent: f64,
+}
+
 pub struct TransportPill {
     session: Entity<Session>,
     playhead: Entity<Playhead>,
@@ -36,9 +64,14 @@ pub struct TransportPill {
     end: Option<Ticks>,
     end_is_stale: bool,
     scrubbing: bool,
+    /// The click in the engine. `None` only when the engine refused it, which is reported.
+    click: Option<Click>,
+    tempo_drag: Option<TempoDrag>,
     play_focus: FocusHandle,
     stop_focus: FocusHandle,
     strip_focus: FocusHandle,
+    tempo_focus: FocusHandle,
+    click_focus: FocusHandle,
 }
 
 impl TransportPill {
@@ -62,16 +95,227 @@ impl TransportPill {
             }
         })
         .detach();
+        // The click is a processor in the engine, not project state: attaching it writes
+        // nothing and adds no undo step. It starts off and silent.
+        let click = session.update(cx, |session, cx| match Click::attach(session.engine()) {
+            Ok(click) => Some(click),
+            Err(error) => {
+                session.report(error, cx);
+                None
+            }
+        });
         Self {
             end: session.read(cx).project().end(),
             end_is_stale: false,
             session,
             playhead,
             scrubbing: false,
+            click,
+            tempo_drag: None,
             play_focus: cx.focus_handle().tab_stop(true),
             stop_focus: cx.focus_handle().tab_stop(true),
             strip_focus: cx.focus_handle().tab_stop(true),
+            tempo_focus: cx.focus_handle().tab_stop(true),
+            click_focus: cx.focus_handle().tab_stop(true),
         }
+    }
+
+    /// Whether the click sounds. For tests and for the button.
+    pub fn click_is_on(&self) -> bool {
+        self.click.as_ref().is_some_and(Click::is_on)
+    }
+
+    /// Turns the click on or off. Not an edit: nothing is saved and there is no undo step.
+    pub fn toggle_click(&mut self, cx: &mut Context<Self>) {
+        let Some(click) = &mut self.click else {
+            return;
+        };
+        let on = !click.is_on();
+        self.session.update(cx, |session, cx| {
+            if let Err(error) = click.set_on(session.engine(), on) {
+                session.report(error, cx);
+            }
+        });
+        cx.notify();
+    }
+
+    /// The tempo the transport shows: the one in effect at the playhead. It is read from the
+    /// project on every render, so an outside edit of `project.json` shows at once.
+    pub fn shown_tempo(&self, cx: &App) -> Tempo {
+        self.change_at_playhead(cx).bpm
+    }
+
+    /// The tempo change in effect at the playhead. Read from the project, never kept.
+    fn change_at_playhead(&self, cx: &App) -> TempoChange {
+        let tick = self.playhead.read(cx).tick;
+        let project = self.session.read(cx).project();
+        tempo::change_at(&project.project_file().tempo_map, tick)
+    }
+
+    fn begin_tempo_drag(&mut self, y: f32, cx: &mut Context<Self>) {
+        let change = self.change_at_playhead(cx);
+        self.tempo_drag = Some(TempoDrag {
+            start_y: y,
+            start_bpm: change.bpm.bpm(),
+            at: change.tick,
+            begun: false,
+            sent: change.bpm.bpm(),
+        });
+    }
+
+    /// One mouse move of a tempo drag: the tempo change becomes what the pointer says, through
+    /// the gesture of the session, so playback and every other view follow at once.
+    fn drag_tempo(&mut self, y: f32, fine: bool, cx: &mut Context<Self>) {
+        let Some(drag) = &mut self.tempo_drag else {
+            return;
+        };
+        let bpm = tempo::dragged_bpm(drag.start_bpm, drag.start_y - y, fine);
+        if bpm == drag.sent {
+            return;
+        }
+        let at = drag.at;
+        // The gesture opens with the first move that changes something, so a press without a
+        // move is no undo step. It opens even when the tempo change turns out to be gone: the
+        // empty step is dropped, and the drag must not leave a gesture open.
+        let begun = std::mem::replace(&mut drag.begun, true);
+        drag.sent = bpm;
+        let found = self.session.update(cx, |session, cx| {
+            if !begun {
+                session.begin_gesture(tempo::LABEL, cx);
+            }
+            session.gesture(cx, |project, edit| {
+                // The tempo map the project has now, read here and nowhere earlier. A file
+                // edit during the drag has already applied to it, so this move keeps what it
+                // changed and only sets its own tempo change.
+                let live = &project.project_file().tempo_map;
+                let Some(tempo_map) = tempo::with_bpm(live, at, bpm) else {
+                    return Ok(false);
+                };
+                let mut changes = Changes::new();
+                changes.set_tempo_map(tempo_map);
+                project.publish(edit, changes)?;
+                Ok(true)
+            })
+        });
+        // The tempo change is gone, removed from outside. That delete was the last write, so
+        // the drag finishes and does not cancel, as a clip drag does when its clip is deleted.
+        if found == Some(false) {
+            self.end_tempo_drag(cx);
+        }
+    }
+
+    /// Mouse up: the gesture becomes one undo step and `project.json` is written once.
+    fn end_tempo_drag(&mut self, cx: &mut Context<Self>) {
+        if self.tempo_drag.take().is_some_and(|drag| drag.begun) {
+            self.session
+                .update(cx, |session, cx| session.finish_gesture(cx));
+        }
+    }
+
+    /// Escape: the tempo goes back to what it was at mouse down. Whether there was a drag.
+    fn cancel_tempo_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(drag) = self.tempo_drag.take() else {
+            return false;
+        };
+        if drag.begun {
+            self.session
+                .update(cx, |session, cx| session.cancel_gesture(cx));
+        }
+        true
+    }
+
+    /// An arrow key on the focused tempo: one finished change and one undo step.
+    fn nudge_tempo(&mut self, delta: f64, cx: &mut Context<Self>) {
+        // The mouse has the tempo: a key would fight the next mouse move.
+        if self.tempo_drag.is_some() {
+            return;
+        }
+        let tick = self.playhead.read(cx).tick;
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                // The tempo map the project has now, as in a drag. A key adds to the tempo it
+                // finds and does not round it, so a tempo of 93.5 becomes 94.5.
+                let live = &project.project_file().tempo_map;
+                let change = tempo::change_at(live, tick);
+                let bpm = change.bpm.bpm() + delta;
+                let Some(tempo_map) = tempo::with_bpm(live, change.tick, bpm) else {
+                    return Ok(());
+                };
+                let mut changes = Changes::new();
+                changes.set_tempo_map(tempo_map);
+                project.commit(tempo::LABEL, changes)
+            });
+        });
+    }
+
+    /// The keys of the focused tempo: the arrows step, with shift by a tenth, and escape puts
+    /// a drag back.
+    fn on_tempo_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.control || modifiers.alt || modifiers.platform {
+            return;
+        }
+        let step = match modifiers.shift {
+            true => tempo::FINE_KEY_STEP,
+            false => tempo::KEY_STEP,
+        };
+        match event.keystroke.key.as_str() {
+            "escape" => {
+                if self.cancel_tempo_drag(cx) {
+                    cx.stop_propagation();
+                }
+            }
+            "up" | "right" => {
+                cx.stop_propagation();
+                self.nudge_tempo(step, cx);
+            }
+            "down" | "left" => {
+                cx.stop_propagation();
+                self.nudge_tempo(-step, cx);
+            }
+            _ => {}
+        }
+    }
+
+    /// The tempo at the playhead, as a number that a drag and the arrows change.
+    fn tempo(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = cx.theme();
+        let (muted, ring) = (theme.gray_700, theme.lavender);
+        let tempo = self.shown_tempo(cx);
+        let pill = cx.entity();
+        // A drag goes on wherever the pointer is, so these listeners are not hit tested.
+        let listeners = canvas(
+            |_, _, _| {},
+            move |_, (), window, _| listen_to_tempo(pill, window),
+        );
+        div()
+            .id("tempo")
+            .debug_selector(|| "tempo".to_string())
+            .track_focus(&self.tempo_focus)
+            .on_key_down(cx.listener(|pill, event, _, cx| pill.on_tempo_key(event, cx)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|pill, event: &MouseDownEvent, _, cx| {
+                    pill.begin_tempo_drag(f32::from(event.position.y), cx);
+                }),
+            )
+            .flex()
+            .flex_none()
+            .items_baseline()
+            .gap(px(4.))
+            .px(px(6.))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(Hsla::transparent_black())
+            .focus_visible(move |style| style.border_color(ring))
+            .cursor(CursorStyle::ResizeUpDown)
+            .child(
+                div()
+                    .font(typography::tabular())
+                    .child(tempo::tempo_text(tempo)),
+            )
+            .child(div().text_size(px(12.)).text_color(muted).child("bpm"))
+            .child(listeners.absolute().size_0())
     }
 
     /// Reads the end again when an event made it stale. `render` calls it, so a group of ten
@@ -124,7 +368,7 @@ impl TransportPill {
         }
     }
 
-    fn strip(&self, end: Ticks, cx: &mut Context<Self>) -> impl IntoElement {
+    fn strip(&self, end: Ticks, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = cx.theme();
         let (track, played, ring) = (theme.alpha_at(0.10), theme.gray_950, theme.lavender);
         let tick = self.playhead.read(cx).tick.min(end);
@@ -209,6 +453,35 @@ fn listen(pill: Entity<TransportPill>, strip: Bounds<Pixels>, hitbox: Hitbox, wi
     });
 }
 
+/// A drag on the tempo number goes on wherever the pointer is, until the button is up.
+fn listen_to_tempo(pill: Entity<TransportPill>, window: &mut Window) {
+    window.on_mouse_event({
+        let pill = pill.clone();
+        move |event: &MouseMoveEvent, phase, _, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            pill.update(cx, |pill, cx| {
+                if pill.tempo_drag.is_none() {
+                    return;
+                }
+                if event.dragging() {
+                    let fine = event.modifiers.shift;
+                    pill.drag_tempo(f32::from(event.position.y), fine, cx);
+                } else {
+                    // The button came up somewhere that did not tell this window.
+                    pill.end_tempo_drag(cx);
+                }
+            });
+        }
+    });
+    window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+        if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+            pill.update(cx, |pill, cx| pill.end_tempo_drag(cx));
+        }
+    });
+}
+
 /// Minutes and seconds, as `1:07`.
 fn clock_time(seconds: f64) -> String {
     let seconds = seconds.max(0.) as u64;
@@ -237,13 +510,16 @@ impl Render for TransportPill {
             theme.gray_700,
             theme.green,
         );
-        let Playhead { playing, tick } = *self.playhead.read(cx);
+        let Playhead { playing, tick, .. } = *self.playhead.read(cx);
         let project = self.session.read(cx).project();
         let (bar_beat, time) = position_texts(project, tick);
         let duration = self
             .end
             .map(|end| clock_time(project.clock().seconds_of(end)));
+        let tempo = self.tempo(cx);
         let strip = self.end.map(|end| self.strip(end, cx));
+        let click_on = self.click_is_on();
+        let has_click = self.click.is_some();
         let session = self.session.clone();
 
         div()
@@ -316,6 +592,22 @@ impl Render for TransportPill {
                     .text_color(muted)
                     .child(duration)
             }))
+            .child(tempo)
+            // The click is a reference, not part of the mix, so it takes no accent: a subtle
+            // fill says it sounds, as the mute button of a track does.
+            .child(
+                Button::icon_only("click", "metronome")
+                    .variant(match click_on {
+                        true => ButtonVariant::Subtle,
+                        false => ButtonVariant::Ghost,
+                    })
+                    .size(ButtonSize::Sm)
+                    .rounded(true)
+                    .disabled(!has_click)
+                    .debug_selector(|| "click".to_string())
+                    .focus_handle(&self.click_focus)
+                    .on_click(cx.listener(|pill, _, _, cx| pill.toggle_click(cx))),
+            )
     }
 }
 

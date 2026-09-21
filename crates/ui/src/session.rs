@@ -23,6 +23,10 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(16);
 pub struct Playhead {
     pub playing: bool,
     pub tick: Ticks,
+    /// Jumps of the project position since the engine started: one per seek and per stop. A
+    /// view that keeps the last value knows whether the position jumped or moved with
+    /// playback, which it cannot tell from the tick alone.
+    pub jumps: u64,
 }
 
 /// Where a notice came from decides what clears it.
@@ -222,6 +226,7 @@ impl Session {
         let now = Playhead {
             playing: status.playing,
             tick: status.playhead_tick,
+            jumps: status.jumps,
         };
         self.playhead.update(cx, |playhead, cx| {
             if *playhead != now {

@@ -140,6 +140,28 @@ impl Viewport {
         self.tick_at(0.0)..Ticks(end.ceil().max(0.0) as u64)
     }
 
+    /// Whether a timeline area of this width shows `tick`. The playhead line uses the same
+    /// bounds, so this is exactly "the playhead is on screen".
+    pub fn shows(&self, tick: Ticks, width: f32) -> bool {
+        let x = self.x_of(tick);
+        x >= 0.0 && x < width
+    }
+
+    /// The viewport that brings `tick` into a timeline area of this width, with the playhead
+    /// at the left edge, so the view pages forward. Unchanged when the tick is already shown.
+    ///
+    /// The whole rule for following the playhead is this plus [`Self::shows`]: while playing,
+    /// page forward once the playhead has passed the right edge; on a jump, bring it back in.
+    pub fn following(&self, tick: Ticks, width: f32) -> Self {
+        if self.shows(tick, width) {
+            return *self;
+        }
+        Self {
+            scroll_x: tick.0 as f64 * self.pixels_per_tick(),
+            ..*self
+        }
+    }
+
     /// The track rows a timeline area of this height shows, whole or in part.
     pub fn visible_tracks(&self, height: f32, tracks: usize) -> Range<usize> {
         let row_height = f64::from(TRACK_HEIGHT);
@@ -495,6 +517,48 @@ mod tests {
             far.clamped(small, four_four(), 1600.0, 800.0),
             Viewport::default()
         );
+    }
+
+    #[test]
+    fn the_view_pages_forward_when_the_playhead_passes_the_right_edge() {
+        // 96 px per bar, a 960 px area, tick 0 at the 8 px lead-in: bar 10 is still on screen.
+        let viewport = Viewport::default();
+        let width = 960.0;
+        assert!(viewport.shows(Ticks(0), width));
+        assert!(viewport.shows(Ticks(9 * BAR), width));
+        // Bar 11 starts at 8 + 960, past the right edge.
+        assert!(!viewport.shows(Ticks(10 * BAR), width));
+
+        // Inside the view the viewport does not move at all.
+        assert_eq!(viewport.following(Ticks(5 * BAR), width), viewport);
+        // Past the right edge it pages: the playhead lands at the left edge.
+        let paged = viewport.following(Ticks(10 * BAR), width);
+        assert_eq!(paged.x_of(Ticks(10 * BAR)), LEAD_IN);
+        assert_eq!(paged.pixels_per_quarter, viewport.pixels_per_quarter);
+        assert!(paged.shows(Ticks(10 * BAR), width));
+
+        // A tick left of the view comes back the same way, and tick 0 goes to the start.
+        let scrolled = Viewport {
+            scroll_x: 40.0 * 96.0,
+            ..Viewport::default()
+        };
+        assert!(!scrolled.shows(Ticks(0), width));
+        assert_eq!(scrolled.following(Ticks(0), width).scroll_x, 0.0);
+        assert_eq!(
+            scrolled
+                .following(Ticks(20 * BAR), width)
+                .x_of(Ticks(20 * BAR)),
+            LEAD_IN
+        );
+
+        // Zoomed far in, far into a long piece, the playhead still lands at the left edge.
+        let zoomed = Viewport {
+            pixels_per_quarter: 384.0,
+            scroll_x: 400.0 * 4.0 * 384.0,
+            ..Viewport::default()
+        };
+        let far = Ticks(600 * BAR);
+        assert_eq!(zoomed.following(far, width).x_of(far), LEAD_IN);
     }
 
     #[test]

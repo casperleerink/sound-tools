@@ -318,3 +318,21 @@ fn invalid_json_is_rejected_with_the_reason() {
     let odd_signature = r#"{"time_signature":"4/5","tempo_changes":[{"tick":0,"bpm":120}]}"#;
     assert!(error(odd_signature).contains("time signature 4/5 is not supported"));
 }
+
+#[test]
+fn one_tempo_change_of_a_map_can_be_set_by_its_tick() {
+    let map = tempo_map(&[(0, 120.0), (3840, 60.0), (7680, 93.5)]);
+    let changed = map.with_tempo_at(Ticks(3840), bpm(140.0)).unwrap();
+    assert_eq!(changed.time_signature(), map.time_signature());
+    assert_eq!(changed.tempo_changes()[0], map.tempo_changes()[0]);
+    assert_eq!(changed.tempo_changes()[2], map.tempo_changes()[2]);
+    assert_eq!(changed.tempo_changes()[1].tick, Ticks(3840));
+    assert_eq!(changed.tempo_changes()[1].bpm, bpm(140.0));
+
+    // A tick that no tempo change starts on has nothing to set.
+    assert_eq!(map.with_tempo_at(Ticks(3839), bpm(140.0)), None);
+    assert_eq!(map.with_tempo_at(Ticks(99_999), bpm(140.0)), None);
+    // The result loads and validates like any other map.
+    let text = serde_json::to_string(&changed).unwrap();
+    assert_eq!(serde_json::from_str::<TempoMap>(&text).unwrap(), changed);
+}

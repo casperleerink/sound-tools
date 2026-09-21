@@ -134,6 +134,7 @@ The v0 workspace is a small DAW. Its parts are bundled extensions that ship with
 | Effects | Two or three, such as delay, filter and reverb. |
 | MIDI input | Maps MIDI devices to instrument tracks. |
 | Plugin host | Loads third-party audio plugins (VST3, AU, CLAP) as instruments and effects on tracks. |
+| Metronome | The click on the beats of the tempo map. One processor and a switch, no tool and no record, see "The click, the tempo in the transport and following the playhead". |
 
 Build the core and these extensions together. Each extension should be small and finished before starting the next. Order: arrangement and instrument first, since they prove the note contract, the musical clock and live agent edits. Plugin host last, since it depends on the note and audio contracts being stable.
 
@@ -253,6 +254,39 @@ The path from an instrument to the device is stereo, and a track has a gain, a p
 - Each change is one undo step: a knob drag of the panel is one gesture, the mute button is one commit, a file edit is one group, as for any other record.
 - Measured September 20, 2026, same laptop, dev profile: the project of 100 tracks with 100 clips plays 34 times faster than realtime offline, where it was 62 times in mono. Nearly all of that is the stereo buffers; the mixer of every track costs about 2 %. 100 synths holding a chord each still render 13 times faster than realtime, so a voice costs the same and the difference is the engine moving buffers. On the device, two tracks with five mixer edits written into their files while playing: 0 xruns, 0 late callbacks, slowest callback 236 µs at 44.1 kHz.
 - Not built: solo, sends, buses, a master fader, meters, a limiter, a mixer view, mute on the track header, automation of these values, and a mono device that folds the two channels together.
+
+#### The click, the tempo in the transport and following the playhead, decided September 20, 2026 with step 2
+
+Built in `extensions/metronome`, `crates/runtime/src/window/transport.rs` with `window/tempo.rs`, and `extensions/arrangement/src/view.rs` with `view/layout.rs`.
+
+The click:
+
+- It is a bundled extension with no tool, no record and no agent doc: one processor and a `Click` switch on the engine. A tool would mean a file in `state/`, which would break two of the rules at once: a project of the first milestone would need an edit to get a click, and turning the click on would rewrite a musical record. So the click is not project state at all. Nothing is written, there is no undo step, and `cmd-z` can never toggle it.
+- Only the application window attaches a `Click`, in the transport pill. `--render`, `--inspect` and `--headless` never do, so every render is the same whatever the window does, and every render test of milestone 1 and of later steps stays valid. This is the whole guarantee: it is a property of who calls `Click::attach`, not of a flag that the render path has to honour.
+- The click is therefore not saved and starts off in every session. There is no `workspace.json` yet; when there is one, that is where it belongs.
+- The processor holds no tempo map. Every block it asks `ProcessContext::transport` which ticks the block covers and the clock on which frame each of them lands, so several tempo changes, a tempo map written from outside and any time signature all work with no update at all. A beat is the note value of the time signature's lower number, so 6/8 clicks six times a bar.
+- One click is a 30 ms sine burst that starts at its peak and decays to silence: 1600 Hz on the first beat of a bar, 1000 Hz on the others. That is the only difference between a downbeat and the rest. Synthesized, so there is no sample file and no asset. A stop, a seek or switching the click off fades the sounding click out in 2 ms, so nothing hangs and nothing is cut with a step in the signal. No allocation, lock or syscall in `process`, checked by the realtime sanitizer in the tests of the crate.
+- The click goes to device channels 0 and 1, next to whatever the project connects there. There is no click volume, no count-in and no choice of sound.
+
+The tempo in the transport:
+
+- The transport shows the tempo in effect at the playhead, as a plain number with a muted `bpm`. It is a controlled readout: it reads the tempo map on every render and keeps no copy, so an outside edit of `project.json` shows at once, also during a drag.
+- A drag on the number, and the arrow keys when it has the focus, change the tempo change in effect at the playhead, through `Changes::set_tempo_map` and the one editing path. A drag is one gesture of the session and one undo step named "Change tempo"; each key is its own step. There is no text field and no tempo lane: adding or removing a tempo change is a file edit.
+- A drag names its tempo change by its tick, never by its place in the list, the same rule the arrangement already follows for a selected note ("kept by value, not by index"). An outside edit may add or remove a tempo change while the drag goes on, and a drag must never change one that only took the place of the one the composer grabbed. When the dragged tempo change is removed from outside, the drag finishes and does not cancel: that delete was the last write, and a cancel would bring the change back over it. This is what a clip drag does when its clip is deleted from outside.
+- A drag moves by whole bpm from the tempo it began on and does not snap the result, and with shift by a tenth, the same rule as a clip drag. So a tempo of 93.5 goes to 94.5 and 95.5 and comes back to exactly 93.5, a drag that ends where it began is no undo step, and a fitted tempo, which is fractional everywhere, keeps its fraction. The arrow keys add to the tempo they find, for the same reason.
+- Every move of a drag builds on the tempo map the project has at that moment, read inside the publish and nowhere earlier, so an outside edit of another tempo change that arrived during the drag is kept. A tempo edit replaces the whole map, so an outside change that the watcher has not delivered yet is read in first and then written over by the move: inside the 100 ms quiet window last write wins, as "Project storage" decides, and nothing is built for it.
+- `History` now keeps the committed `project.json` as it already kept the committed record of every instance, so no undo step of a tempo gesture holds the middle of that gesture. Before this, a file change during a tempo drag took the tempo of one mouse move as its before side. The same gap for connections is still open, because no gesture edits them.
+
+Following the playhead:
+
+- While the project plays, the arrangement pages forward when the playhead passes the right edge of the visible range, and the playhead lands back at the left edge. A jump that leaves it off screen, from a stop or a seek, brings it back the same way. While the composer has scrolled the playhead off screen nothing pulls the view back, until the next jump. So there is no follow mode to switch, and the view never fights the composer.
+- The rule is two pure functions in `view/layout.rs` with tests, `Viewport::shows` and `Viewport::following`, plus one bit of view state: whether the view is following, which the composer sets by scrolling.
+- A view cannot tell a seek from fast playback by the tick alone, so `EngineStatus` counts jumps (one per seek and per stop) and `Playhead` carries the count. The core already had the `jumped` flag on the audio thread; this is the same fact on the control side.
+- The scroll room now reaches at least to the playhead, so the view can follow past the end of the piece. Playback still does not stop at the end.
+- The timeline is still a cached view and is not painted per frame while playing: the follow runs on every playhead change but notifies only when the view really moves. Measured September 20, 2026, same laptop, dev profile, on the project of 100 tracks with 100 clips: a frame while playing takes a median of 1.55 ms with the follow and 1.55 ms without it, against 1.97 ms for a frame that rebuilds the scene while scrolling.
+- The note editor does not follow the playhead. It shows one clip.
+
+Not built: a click volume, a count-in, tap tempo, other click sounds, tempo ramps, a tempo lane or tempo track view, editing the time signature in the window, saving whether the click is on, and following the playhead in the note editor.
 
 ### Agent context and tools
 
@@ -479,7 +513,7 @@ Built in `crates/ui` (the bridge), `extensions/arrangement/src/view.rs` and `cra
 - The keys of the window are bound in its key context, and space, cmd-z and shift-cmd-z only outside a text field, so a text field gets a space and its own undo later. When the focused control goes away, the focus returns to the window root, so the keys keep working.
 - A notice knows where it came from. A good edit clears the notice of a failed edit only. One from the engine, the watcher or the device is reported once and stays until it is dismissed.
 - Switching the output device is out of scope for the first milestone: it needs a stream restart and a new prepare at another sample rate. The project menu shows the current device by name only.
-- Not shown anywhere yet: the tempo. It did not fit the transport under the quiet rule. It comes with tempo editing.
+- The tempo is in the transport since step 2 of the second milestone, with the click. See "The click, the tempo in the transport and following the playhead".
 - Quitting: macOS ends the process without unwinding. GPUI drops the window and its views first, so every strong handle to the session lives in a view and the key bindings hold it weakly. The project is then dropped, which removes `problems.txt`, as a clean close must.
 - The repaint issue of the lifecycle prototype was checked in the real window on macOS 26 with the pinned GPUI. A file written from outside shows within one poll while the window is visible and another application has the focus. After hiding the application, deleting a track folder and showing it again without giving it the focus, the window showed the new state. So no workaround is needed. An occluded window may still stop drawing, which is fine: it draws when it is seen again.
 - Measured September 19, 2026 on the same laptop and project, with real mouse events in the headless window: one mouse move of a clip drag, with its publish, every project event and the frame after it, takes 1.8 ms, across tracks 1.9 ms, and one move of a note drag 1.9 ms. They took 3.5 to 4.1 ms before the two fixes above. The publish alone, with the behaviour of the track and a new snapshot of its 100 clips, takes 0.02 ms. `cargo build -p runtime` after a touch of the note editor file takes 1.6 s (2.0, 1.6, 1.6).
@@ -495,7 +529,7 @@ The first milestone is built and was verified on September 19, 2026, see "Verifi
 - Done September 19, 2026: the musical clock and the transport in `crates/core`. Loop playback, tempo ramps and time signature changes are not built yet.
 - Done September 19, 2026: the live project folder in `crates/core`, with tool registration, owned children, references, editing with undo, storage, the watcher and the engine binding. Tone is the first tool on it. `cargo run -p runtime -- <folder>` runs a project headless. Not built: reacting to referenced instances, declarative parameters, assets.
 - Done September 19, 2026: the instrument and the arrangement extensions, the default project, the project summary and the project agent doc. Not built: automation, mixer, mute and solo, loop playback.
-- Done September 19, 2026: the application window with the session bridge, the view registry, the arrangement view, the transport and the project menu. Not built: following the playhead when it leaves the view, device switching, a tempo display.
+- Done September 19, 2026: the application window with the session bridge, the view registry, the arrangement view, the transport and the project menu. Not built at the time: following the playhead when it leaves the view, device switching, a tempo display. The first and the last came with step 2 of the second milestone.
 - Done September 19, 2026: editing clips and notes in the window with the mouse and the keys, the note editor and the preview note. Not built: copy and paste, multi-select, a velocity lane, adjustable snap, splitting clips, selecting a clip with the keys alone, renaming tracks.
 - Done September 19, 2026: the milestone check on the real application, with two outside agents, a release build and the root `README.md`.
 - Done September 20, 2026, after the milestone: the track panel with the view of the synth, see "The window and its views". Not built: effects, the mixer section of a track, an instrument picker, reordering devices.
@@ -504,6 +538,7 @@ Second milestone steps:
 
 - Done September 20, 2026, step 0: the agent docs as a map with one doc per extension, and the terminal from the project menu. See "Agent docs as a map" and "The terminal from the project menu". Not built: a doc per task (no task needs one yet), other platforms than macOS for the terminal.
 - Done September 20, 2026, step 1: the stereo signal path and the gain, pan and mute of a track, in the record, in the track panel and from a file. See "Stereo signal path and the track mixer". Not built: solo, sends, buses, a master fader, meters, a limiter, a mixer view and automation.
+- Done September 20, 2026, step 2: the metronome, the tempo in the transport and the view that follows the playhead. See "The click, the tempo in the transport and following the playhead". Not built: a click volume, a count-in, tap tempo, tempo ramps, a tempo lane, the time signature in the window, and saving whether the click is on.
 
 The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. It was re-checked in the real window and needs no workaround, see "The window and its views". The pinned GPUI has an accessibility tree and focus-visible. The menu trigger and the seek strip use focus-visible; the other components and the accessibility tree are open.
 
@@ -530,16 +565,16 @@ Sound and engine:
 
 Time and transport:
 
-- Playback does not stop at the end of the project and there is no loop. During an agent request the playhead runs far past the piece.
-- The view does not follow the playhead. The tempo shows nowhere in the window.
-- No tempo ramps, no time signature changes, no chase of notes on a seek.
+- Playback does not stop at the end of the project and there is no loop. During an agent request the playhead runs far past the piece. The view follows it there, since step 2 of the second milestone.
+- The view follows the playhead and the transport shows and edits the tempo, since step 2 of the second milestone. Whether the click is on is not saved, so it starts off in every session; there is no `workspace.json` to keep it in yet.
+- No tempo ramps, no time signature changes, no chase of notes on a seek. A tempo change can only be added or removed by editing `project.json`.
 
 Project folder and undo:
 
 - The 15 s rule for one undo step per agent request is a heuristic. It held for both agents, with up to 5 s between two files. A slower agent gets two steps.
 - `problems.txt` does not say which write it has seen. An agent that reads it in the same command as its write can see the old text. The agent doc now says to wait a second.
 - A `problems.txt` left by a crash can be stale.
-- An undo step for tempo or connections can still hold the middle of a gesture. No gesture edits them yet.
+- An undo step for connections can still hold the middle of a gesture. No gesture edits them. Tempo was fixed with step 2 of the second milestone, which gave it a gesture.
 - A file edit of a clip while that clip is dragged across tracks comes back as a second clip.
 - A behaviour does not react to an instance it only references. Port names in `project.json` are strings without a check at build time.
 - No assets, no `workspace.json`, no declarative parameters. No `fsync`, by decision. The file watcher is tried on macOS only.
