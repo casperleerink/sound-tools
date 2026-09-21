@@ -1,14 +1,15 @@
-//! The scan: what CLAP plugins this machine has, found in another process.
+//! The scan: what plugins this machine has, found in another process.
 //!
 //! Loading a plugin means running its code. A plugin that crashes while it is being looked at
 //! must not take the application down, so the scan runs in a child process, one child per
-//! bundle: a crash costs one bundle and is reported. The child is this program with one
-//! argument ([`SCAN_ARGUMENT`]); tests use a small program of their own.
-//!
-//! There is no cache. See README.md for what a scan of this machine costs.
+//! bundle: a crash costs one bundle and is reported. The child is this program with
+//! [`SCAN_ARGUMENT`], the format and the bundle; tests use a small program of their own.
 //!
 //! Every child has a deadline. A plugin that hangs while it is listed, which licensed ones do
 //! when they cannot reach their server, would otherwise hold the project open for ever.
+//!
+//! The format of a bundle is its file extension, `.clap` or `.vst3`, so one list of folders
+//! covers both and a test folder can hold one of each.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -17,34 +18,38 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-/// The argument that makes a program scan one bundle and print the result. The runtime passes
-/// it to its own executable.
-pub const SCAN_ARGUMENT: &str = "--scan-clap";
+use crate::PluginFormat;
+
+/// The argument that makes a program list one bundle. The format and the bundle path follow it.
+/// The runtime passes it to its own executable.
+pub const SCAN_ARGUMENT: &str = "--scan-plugin";
 
 /// Every line the child means is marked with this. Loading a plugin runs its code, and a real
 /// one prints to standard output while it initializes. Without the mark its logging would be
 /// read as a plugin, or would make the whole bundle unreadable.
-const MARK: &str = "sound-tools-clap ";
+const MARK: &str = "sound-tools-plugin ";
 
-/// How long one bundle may take. Measured September 20, 2026 on an Apple Silicon laptop: a real
-/// bundle costs about 10 ms, so this is a thousand times what a working plugin needs, and it is
-/// what a plugin that never answers costs the project once.
+/// How long one bundle may take. A working bundle costs milliseconds; this is what a plugin
+/// that never answers costs, once. See README.md for the measured numbers.
 pub const SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the child is looked at while the deadline runs. Short enough that a normal scan
 /// pays nothing, long enough that waiting costs no thread.
 const POLL_INTERVAL: Duration = Duration::from_millis(2);
 
-/// What a bundle holds. A bundle can hold several plugins.
+/// One plugin a bundle holds. A bundle can hold several.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannedPlugin {
-    /// The plugin's own id, what a record names.
+    pub format: PluginFormat,
+    /// The plugin's own id, what a record names. For CLAP the id its maker chose, for VST 3
+    /// the class id as thirty-two hex digits.
     pub id: String,
     pub name: String,
     pub vendor: String,
     pub version: String,
-    /// The CLAP features of the plugin, such as `instrument` or `audio-effect`.
+    /// What the plugin says it is: CLAP features such as `instrument`, or VST 3 subcategories
+    /// such as `Instrument` and `Synth`.
     pub features: Vec<String>,
     /// The bundle this plugin came from. The child does not know it; the parent fills it in.
     #[serde(default)]
@@ -54,8 +59,18 @@ pub struct ScannedPlugin {
 impl ScannedPlugin {
     /// Whether the plugin plays notes. Only these fit the `instrument` child of a track.
     /// A plugin that says nothing about itself is not offered as one.
+    ///
+    /// CLAP writes `instrument` and VST 3 writes `Instrument`, so the word is what counts and
+    /// not its case.
     pub fn is_instrument(&self) -> bool {
-        self.features.iter().any(|feature| feature == "instrument")
+        self.features
+            .iter()
+            .any(|feature| feature.eq_ignore_ascii_case("instrument"))
+    }
+
+    /// How an offer of this plugin is told from every other in a picker.
+    pub fn offer_key(&self) -> String {
+        crate::PluginRecord::offer_key(self.format, &self.id)
     }
 }
 
@@ -66,18 +81,31 @@ pub struct ScanFailure {
     pub message: String,
 }
 
+/// What this machine has. It grows while a scan runs: a reader sees the bundles that are done.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Scan {
     pub plugins: Vec<ScannedPlugin>,
     pub failures: Vec<ScanFailure>,
     /// Bundles looked at, including the ones that failed.
     pub bundles: usize,
+    /// Whether every bundle has been looked at. While this is false the picker says a scan is
+    /// running, and a plugin that is not in `plugins` yet may still turn up.
+    pub finished: bool,
 }
 
 impl Scan {
-    pub fn find(&self, plugin_id: &str) -> Option<&ScannedPlugin> {
-        self.plugins.iter().find(|plugin| plugin.id == plugin_id)
+    pub fn find(&self, format: PluginFormat, plugin_id: &str) -> Option<&ScannedPlugin> {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.format == format && plugin.id == plugin_id)
     }
+}
+
+/// One bundle to look at: where it is and what format it is.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Bundle {
+    pub path: PathBuf,
+    pub format: PluginFormat,
 }
 
 /// How to start the child that scans one bundle.
@@ -93,7 +121,7 @@ pub struct ScanCommand {
 }
 
 impl ScanCommand {
-    /// A program that takes the bundle path as its last argument.
+    /// A program that takes the format and the bundle path as its last two arguments.
     pub fn new(program: impl Into<PathBuf>, arguments: impl IntoIterator<Item = OsString>) -> Self {
         Self {
             program: program.into(),
@@ -124,15 +152,18 @@ impl ScanCommand {
 
     /// Scans one bundle in a child process. An error here is the child's, not ours: it failed
     /// to start, crashed, or printed something we could not read.
-    fn scan(&self, bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
+    fn scan(&self, bundle: &Bundle) -> Result<Vec<ScannedPlugin>, String> {
         let mut command = Command::new(&self.program);
-        command.args(&self.arguments).arg(bundle);
+        command
+            .args(&self.arguments)
+            .arg(bundle.format.as_str())
+            .arg(&bundle.path);
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
         for (name, value) in &self.environment {
             command.env(name, value);
         }
-        // Blocking here is the point: the scan is what the project waits for, once. `output`
-        // would wait for ever, and a deadline needs a handle to kill.
+        // Blocking here is the point: this runs on the thread that scans, never on the one that
+        // draws. `output` would wait for ever, and a deadline needs a handle to kill.
         #[allow(clippy::disallowed_methods)]
         let mut child = command
             .spawn()
@@ -184,21 +215,15 @@ impl ScanCommand {
 /// How deep to look inside a search folder. Plugins usually sit one folder per vendor deep.
 const MAX_DEPTH: usize = 4;
 
-/// The folders macOS keeps CLAP plugins in, plus `CLAP_PATH` from the environment.
+/// Every folder this machine keeps plugins in, for every format this build hosts.
 pub fn default_search_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        paths.push(PathBuf::from(home).join("Library/Audio/Plug-Ins/CLAP"));
-    }
-    paths.push(PathBuf::from("/Library/Audio/Plug-Ins/CLAP"));
-    if let Some(extra) = std::env::var_os("CLAP_PATH") {
-        paths.extend(std::env::split_paths(&extra));
-    }
+    let mut paths = crate::clap::default_search_paths();
+    paths.extend(crate::vst3::default_search_paths());
     paths
 }
 
-/// Every `.clap` bundle under `folders`, in a fixed order so a scan is repeatable.
-pub fn bundles(folders: &[PathBuf]) -> Vec<PathBuf> {
+/// Every plugin bundle under `folders`, in a fixed order so a scan is repeatable.
+pub fn bundles(folders: &[PathBuf]) -> Vec<Bundle> {
     let mut found = Vec::new();
     for folder in folders {
         collect(folder, 0, &mut found);
@@ -208,7 +233,7 @@ pub fn bundles(folders: &[PathBuf]) -> Vec<PathBuf> {
     found
 }
 
-fn collect(folder: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+fn collect(folder: &Path, depth: usize, found: &mut Vec<Bundle>) {
     if depth > MAX_DEPTH {
         return;
     }
@@ -218,75 +243,28 @@ fn collect(folder: &Path, depth: usize, found: &mut Vec<PathBuf>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path
-            .extension()
-            .is_some_and(|extension| extension == "clap")
-        {
-            // A bundle is a folder on macOS and a file elsewhere. Either way it is one entry
-            // and nothing inside it is another plugin.
-            found.push(path);
+        let format = path.extension().and_then(PluginFormat::of_extension);
+        if let Some(format) = format {
+            // A bundle is a folder on macOS for VST 3 and either for CLAP. Either way it is one
+            // entry and nothing inside it is another plugin.
+            found.push(Bundle { path, format });
         } else if path.is_dir() {
             collect(&path, depth + 1, found);
         }
     }
 }
 
-/// Scans every bundle under `folders`, each in its own child process.
-pub fn scan(folders: &[PathBuf], command: &ScanCommand) -> Scan {
-    let bundles = bundles(folders);
-    let mut scan = Scan {
-        bundles: bundles.len(),
-        ..Scan::default()
-    };
-    for bundle in bundles {
-        match command.scan(&bundle) {
-            Ok(plugins) => scan
-                .plugins
-                .extend(plugins.into_iter().map(|plugin| ScannedPlugin {
-                    path: bundle.clone(),
-                    ..plugin
-                })),
-            Err(message) => scan.failures.push(ScanFailure {
-                path: bundle,
-                message,
-            }),
-        }
-    }
-    scan.plugins.sort_by(|left, right| left.id.cmp(&right.id));
-    scan
-}
-
 /// The child side: loads one bundle and prints one line of JSON per plugin in it.
 ///
 /// Everything that can go wrong here is the plugin's. The caller is a process of its own, so a
 /// crash inside the plugin's own code costs this process and nothing else.
-pub fn scan_one_bundle(bundle: &Path) -> Result<String, String> {
-    // SAFETY: loading a plugin runs its code, which no host can check in advance. This is why
-    // the scan runs in a child process. See the module documentation.
-    let entry = unsafe { clack_host::entry::PluginEntry::load(bundle) }
-        .map_err(|error| format!("{}: {error}", bundle.display()))?;
-    let factory = entry
-        .get_plugin_factory()
-        .ok_or_else(|| format!("{}: the bundle has no plugin factory", bundle.display()))?;
+pub fn scan_one_bundle(format: PluginFormat, bundle: &Path) -> Result<String, String> {
+    let plugins = match format {
+        PluginFormat::Clap => crate::clap::scan_bundle(bundle)?,
+        PluginFormat::Vst3 => crate::vst3::scan_bundle(bundle)?,
+    };
     let mut lines = String::new();
-    for descriptor in factory.plugin_descriptors() {
-        let text = |value: Option<&std::ffi::CStr>| {
-            value.map_or(String::new(), |value| value.to_string_lossy().into_owned())
-        };
-        let Some(id) = descriptor.id() else {
-            continue;
-        };
-        let plugin = ScannedPlugin {
-            id: text(Some(id)),
-            name: text(descriptor.name()),
-            vendor: text(descriptor.vendor()),
-            version: text(descriptor.version()),
-            features: descriptor
-                .features()
-                .map(|feature| feature.to_string_lossy().into_owned())
-                .collect(),
-            path: PathBuf::new(),
-        };
+    for plugin in plugins {
         let line = serde_json::to_string(&plugin)
             .map_err(|error| format!("{}: {error}", bundle.display()))?;
         lines.push_str(MARK);
@@ -294,4 +272,193 @@ pub fn scan_one_bundle(bundle: &Path) -> Result<String, String> {
         lines.push('\n');
     }
     Ok(lines)
+}
+
+/// What this machine's plugins were last time, so that a start pays for nothing it has already
+/// paid for.
+///
+/// It belongs to the machine and not to a project: two projects on one machine have the same
+/// plugins, and a project folder in git must not carry a list of what one laptop happens to
+/// have. A bundle is remembered with the modified time and size of the binary inside it, so a
+/// plugin that was installed or updated is looked at again and nothing else is. A bundle that
+/// crashed or hung is remembered as such and is not tried again on every start; `runtime
+/// --plugins` looks at everything again and writes the result, which is how one that was fixed
+/// comes back.
+#[derive(Clone, Debug)]
+pub struct ScanCache {
+    path: Option<PathBuf>,
+    /// Whether what is in the file may be used. `false` looks at every bundle again.
+    reuse: bool,
+}
+
+/// Where the cache of this machine is kept, unless the environment says otherwise. The variable
+/// is what a test sets so that it never touches the machine's own file.
+const CACHE_VARIABLE: &str = "SOUND_TOOLS_PLUGIN_CACHE";
+
+impl ScanCache {
+    /// The cache of this machine: `~/Library/Caches/sound-tools/plugins.json`.
+    pub fn of_this_machine() -> Self {
+        if let Some(named) = std::env::var_os(CACHE_VARIABLE) {
+            return Self::at(PathBuf::from(named));
+        }
+        let path = std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join("Library/Caches/sound-tools/plugins.json"));
+        Self { path, reuse: true }
+    }
+
+    pub fn at(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: Some(path.into()),
+            reuse: true,
+        }
+    }
+
+    /// Nothing is remembered. Every test uses this, so no test can be changed by what this
+    /// machine has.
+    pub fn none() -> Self {
+        Self {
+            path: None,
+            reuse: true,
+        }
+    }
+
+    /// Looks at every bundle again and writes what it finds. This is what `runtime --plugins`
+    /// does, so a plugin that hung once can be tried again.
+    pub fn refreshing(mut self) -> Self {
+        self.reuse = false;
+        self
+    }
+
+    fn read(&self) -> Vec<CachedBundle> {
+        let Some(path) = self.path.as_ref().filter(|_| self.reuse) else {
+            return Vec::new();
+        };
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Vec::new();
+        };
+        // A cache that cannot be read is no error: everything is scanned again and the file is
+        // written over.
+        serde_json::from_str(&text).unwrap_or_default()
+    }
+
+    fn write(&self, bundles: &[CachedBundle]) {
+        let Some(path) = &self.path else {
+            return;
+        };
+        let Ok(text) = serde_json::to_string_pretty(bundles) else {
+            return;
+        };
+        if let Some(folder) = path.parent() {
+            let _made = std::fs::create_dir_all(folder);
+        }
+        // A cache that cannot be written costs the next start a scan and nothing else.
+        let _written = std::fs::write(path, text);
+    }
+}
+
+/// One bundle as the cache remembers it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CachedBundle {
+    path: PathBuf,
+    format: PluginFormat,
+    /// The modified time of the binary, in nanoseconds since the epoch, and its size. A
+    /// bundle whose binary is the same is not looked at again.
+    modified: u128,
+    size: u64,
+    #[serde(default)]
+    plugins: Vec<ScannedPlugin>,
+    /// Why this bundle has no plugins: it crashed, hung, or is not a plugin at all.
+    #[serde(default)]
+    failure: Option<String>,
+}
+
+/// The modified time and size of what a bundle would load: the binary inside it on macOS, or
+/// the bundle itself when it is a plain file. `None` says the bundle is gone.
+fn stamp(bundle: &Path) -> Option<(u128, u64)> {
+    let binary = std::fs::read_dir(bundle.join("Contents/MacOS"))
+        .ok()
+        .and_then(|mut entries| entries.next()?.ok())
+        .map(|entry| entry.path());
+    let of = binary.as_deref().unwrap_or(bundle);
+    let metadata = std::fs::metadata(of).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some((modified, metadata.len()))
+}
+
+/// Scans every bundle under `folders`, using `cache` for the ones that have not changed, and
+/// tells `progress` after each one so a caller can show what is known while the rest runs.
+///
+/// `stop` ends the scan between bundles, for a host that goes while its scan runs.
+pub fn scan_folders(
+    folders: &[PathBuf],
+    command: &ScanCommand,
+    cache: &ScanCache,
+    stop: &std::sync::atomic::AtomicBool,
+    mut progress: impl FnMut(&Scan),
+) -> Scan {
+    use std::sync::atomic::Ordering;
+
+    let bundles = bundles(folders);
+    let remembered = cache.read();
+    let mut scan = Scan {
+        bundles: bundles.len(),
+        ..Scan::default()
+    };
+    let mut to_remember = Vec::with_capacity(bundles.len());
+    for bundle in bundles {
+        if stop.load(Ordering::Acquire) {
+            return scan;
+        }
+        let stamp = stamp(&bundle.path);
+        let known = stamp.and_then(|(modified, size)| {
+            remembered.iter().find(|entry| {
+                entry.path == bundle.path
+                    && entry.format == bundle.format
+                    && entry.modified == modified
+                    && entry.size == size
+            })
+        });
+        let found = match known {
+            Some(entry) => match &entry.failure {
+                Some(message) => Err(message.clone()),
+                None => Ok(entry.plugins.clone()),
+            },
+            None => command.scan(&bundle),
+        };
+        if let Some((modified, size)) = stamp {
+            to_remember.push(CachedBundle {
+                path: bundle.path.clone(),
+                format: bundle.format,
+                modified,
+                size,
+                plugins: found.clone().unwrap_or_default(),
+                failure: found.as_ref().err().cloned(),
+            });
+        }
+        match found {
+            Ok(plugins) => scan
+                .plugins
+                .extend(plugins.into_iter().map(|plugin| ScannedPlugin {
+                    path: bundle.path.clone(),
+                    ..plugin
+                })),
+            Err(message) => scan.failures.push(ScanFailure {
+                path: bundle.path,
+                message,
+            }),
+        }
+        progress(&scan);
+    }
+    scan.plugins
+        .sort_by(|left, right| (left.format, &left.id).cmp(&(right.format, &right.id)));
+    scan.finished = true;
+    cache.write(&to_remember);
+    progress(&scan);
+    scan
 }

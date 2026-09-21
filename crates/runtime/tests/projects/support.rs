@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use plugin_host::{Plugins, ScanCommand};
+use plugin_host::{PluginFormat, Plugins, ScanCache, ScanCommand};
 use runtime::OFFLINE;
 use sound_core::{Engine, Project};
 
@@ -166,30 +166,52 @@ impl Harness {
         self.project.engine().play();
         self.render(frames)
     }
+
+    /// Plays from the start of the piece, so two renders of one session can be compared
+    /// frame for frame. The plugins are told to release what they hold first, which a stop
+    /// and a seek both do.
+    pub fn play_from_the_start(&mut self, frames: usize) -> Vec<f32> {
+        self.project.engine().stop();
+        self.project.engine().seek(sound_core::Ticks(0));
+        self.render(64);
+        self.play(frames)
+    }
 }
 
-/// A plugin host that scans one folder, with the test plugin in it. The scanner is the real
-/// `runtime` executable with its scan argument, so the child process of a scan is the one the
-/// application uses.
+/// A plugin host that scans one folder, with the test plugin of every format in it. The
+/// scanner is the real `runtime` executable with its scan argument, so the child process of a
+/// scan is the one the application uses. No plugin of this machine is ever listed, and the
+/// cache of this machine is never read or written.
 pub fn test_plugin_host(root: &Path, writes_state: bool) -> Plugins {
     let folder = root.join("plugins");
     test_clap_plugin::install_into(&folder);
+    test_vst3_plugin::install_into(&folder);
     let scanner = ScanCommand::new(
         env!("CARGO_BIN_EXE_runtime"),
         [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
     );
     if writes_state {
-        Plugins::new(vec![folder], scanner)
+        Plugins::new(vec![folder], scanner, ScanCache::none())
     } else {
-        Plugins::read_only(vec![folder], scanner)
+        Plugins::read_only(vec![folder], scanner, ScanCache::none())
     }
 }
 
-/// The record of a plugin instrument that names the repository's test plugin.
+/// The record of a CLAP plugin instrument that names the repository's test plugin.
 pub fn test_plugin(state_asset: &str) -> String {
+    test_plugin_of(PluginFormat::Clap, state_asset)
+}
+
+/// The same for either format. Both test plugins are the same instrument, so a project can
+/// hold one of each and a test can compare what they play.
+pub fn test_plugin_of(format: PluginFormat, state_asset: &str) -> String {
+    let plugin_id = match format {
+        PluginFormat::Clap => test_clap_plugin::PLUGIN_ID,
+        PluginFormat::Vst3 => test_vst3_plugin::PLUGIN_ID,
+    };
     format!(
-        r#"{{"tool": "plugin", "state": {{"format": "clap", "plugin_id": "{}", "state_asset": "{state_asset}"}}}}"#,
-        test_clap_plugin::PLUGIN_ID
+        r#"{{"tool": "plugin", "state": {{"format": "{}", "plugin_id": "{plugin_id}", "state_asset": "{state_asset}"}}}}"#,
+        format.as_str()
     )
 }
 

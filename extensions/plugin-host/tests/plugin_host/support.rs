@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCommand};
+use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand};
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AssetName, BehaviourContext, BehaviourError, Changes, Engine, EngineConfig, EventOutput,
@@ -267,22 +267,68 @@ pub fn lifecycle(path: &Path) -> Vec<LoggedCall> {
         .collect()
 }
 
-/// The folder a scan looks in, with the repository's own test plugin in it.
+/// Every format the repository has a test plugin for. A check that is about the host and not
+/// about one format runs once per format, so both backends answer the same list.
+pub const FORMATS: [PluginFormat; 2] = [PluginFormat::Clap, PluginFormat::Vst3];
+
+/// The folder a scan looks in, with the repository's own test plugins in it, one per format.
 pub fn plugin_folder(root: &Path) -> PathBuf {
     let folder = root.join("plugins");
     test_clap_plugin::install_into(&folder);
+    test_vst3_plugin::install_into(&folder);
     folder
 }
 
-/// The scanner: the `clap-scan` program of this crate, which the runtime does with its own
-/// executable.
-pub fn scanner() -> ScanCommand {
-    ScanCommand::new(env!("CARGO_BIN_EXE_clap-scan"), [])
+/// The same folder with only one format's test plugin in it, for a test that must not find
+/// the other one.
+pub fn plugin_folder_of(root: &Path, format: PluginFormat) -> PathBuf {
+    let folder = root.join("plugins");
+    match format {
+        PluginFormat::Clap => test_clap_plugin::install_into(&folder),
+        PluginFormat::Vst3 => test_vst3_plugin::install_into(&folder),
+    };
+    folder
 }
 
-pub fn record(state_asset: &str) -> PluginRecord {
-    PluginRecord::new(PluginFormat::Clap, test_clap_plugin::PLUGIN_ID, state_asset)
-        .expect("a plugin record")
+/// The scanner: the `plugin-scan` program of this crate, which the runtime does with its own
+/// executable.
+pub fn scanner() -> ScanCommand {
+    ScanCommand::new(env!("CARGO_BIN_EXE_plugin-scan"), [])
+}
+
+/// No test ever reads or writes the cache of this machine.
+pub fn no_cache() -> ScanCache {
+    ScanCache::none()
+}
+
+/// The id of the repository's test plugin of this format.
+pub fn plugin_id(format: PluginFormat) -> &'static str {
+    match format {
+        PluginFormat::Clap => test_clap_plugin::PLUGIN_ID,
+        PluginFormat::Vst3 => test_vst3_plugin::PLUGIN_ID,
+    }
+}
+
+pub fn record(format: PluginFormat, state_asset: &str) -> PluginRecord {
+    PluginRecord::new(format, plugin_id(format), state_asset).expect("a plugin record")
+}
+
+/// The transpose the test plugin saved, out of a state asset.
+///
+/// A CLAP asset is the plugin's own bytes. A VST 3 asset is the container this host writes,
+/// because VST 3 keeps two states: `SVT3`, then the component's state with its length, then
+/// the controller's. Reading it here is also what checks that the container is what it says.
+pub fn saved_transpose(format: PluginFormat, bytes: &[u8]) -> i32 {
+    let own = match format {
+        PluginFormat::Clap => bytes,
+        PluginFormat::Vst3 => {
+            assert_eq!(&bytes[..4], b"SVT3", "not a VST 3 state asset");
+            let length = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+            &bytes[8..8 + length]
+        }
+    };
+    assert_eq!(&own[..4], b"STT1", "not a Test Tone state");
+    i32::from_le_bytes([own[4], own[5], own[6], own[7]])
 }
 
 pub fn state_asset(name: &str) -> AssetName {
@@ -323,10 +369,16 @@ impl Harness {
         writes_state: bool,
     ) -> Self {
         let plugins = if writes_state {
-            Plugins::new(search_paths, scanner())
+            Plugins::new(search_paths, scanner(), no_cache())
         } else {
-            Plugins::read_only(search_paths, scanner())
+            Plugins::read_only(search_paths, scanner(), no_cache())
         };
+        Self::with_plugins(folder, plugins)
+    }
+
+    /// A project on `folder` with a host that is already made, for a test that wants to say
+    /// how it scans.
+    pub fn with_plugins(folder: tempfile::TempDir, plugins: Plugins) -> Self {
         let mut registry = Registry::new();
         plugin_host::register(&mut registry, plugins.clone()).expect("the plugin host registers");
         registry

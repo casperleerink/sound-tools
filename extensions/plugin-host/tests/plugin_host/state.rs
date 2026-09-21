@@ -3,7 +3,9 @@
 
 use std::time::Duration;
 
-use crate::support::{Harness, Played, id, record, state_asset};
+use plugin_host::PluginFormat;
+
+use crate::support::{FORMATS, Harness, Played, id, record, saved_transpose, state_asset};
 
 /// Pedal 100 makes the test plugin transpose by 36 semitones and mark its state dirty.
 fn change_the_state_and_play() -> Vec<Played> {
@@ -22,8 +24,14 @@ fn change_the_state_and_play() -> Vec<Played> {
 
 #[test]
 fn changed_plugin_state_is_in_the_project_after_close_and_comes_back_on_reopen() {
+    for format in FORMATS {
+        state_survives_close_and_reopen(format);
+    }
+}
+
+fn state_survives_close_and_reopen(format: PluginFormat) {
     let mut harness = Harness::new();
-    harness.add_track(record("piano"), change_the_state_and_play());
+    harness.add_track(record(format, "piano"), change_the_state_and_play());
     let before = harness.play(2048);
     assert!(before.first_sound().is_some());
 
@@ -33,11 +41,7 @@ fn changed_plugin_state_is_in_the_project_after_close_and_comes_back_on_reopen()
         "the plugin state was not written to {asset:?}"
     );
     let saved = std::fs::read(&asset).unwrap();
-    assert_eq!(&saved[..4], b"STT1");
-    assert_eq!(
-        i32::from_le_bytes([saved[4], saved[5], saved[6], saved[7]]),
-        36
-    );
+    assert_eq!(saved_transpose(format, &saved), 36, "{format:?}");
 
     // Reopen with the pedal gone from what is played. The notes are still transposed, which
     // can only come from the state the plugin loaded.
@@ -58,9 +62,15 @@ fn changed_plugin_state_is_in_the_project_after_close_and_comes_back_on_reopen()
 /// plugin, because a plugin that changes its state without saying so must not lose it.
 #[test]
 fn a_plugin_that_says_nothing_is_written_when_the_project_closes_and_not_before() {
+    for format in FORMATS {
+        written_on_close_and_not_before(format);
+    }
+}
+
+fn written_on_close_and_not_before(format: PluginFormat) {
     let mut harness = Harness::new();
     harness.add_track(
-        record("piano"),
+        record(format, "piano"),
         vec![Played::On {
             frame: 0,
             pitch: 60,
@@ -76,7 +86,7 @@ fn a_plugin_that_says_nothing_is_written_when_the_project_closes_and_not_before(
 
     assert_eq!(harness.plugins.close(&harness.project), []);
     let saved = std::fs::read(&asset).expect("the state of every plugin is saved on close");
-    assert_eq!(&saved[..4], b"STT1");
+    assert_eq!(saved_transpose(format, &saved), 0, "{format:?}");
 
     // A session that changes nothing writes nothing again, so a project in git gets no diff.
     let written = std::fs::metadata(&asset).unwrap().modified().unwrap();
@@ -92,8 +102,14 @@ fn a_plugin_that_says_nothing_is_written_when_the_project_closes_and_not_before(
 /// Plugin state is opaque and is not project state. An undo of anything else leaves it alone.
 #[test]
 fn undo_and_redo_do_not_touch_plugin_state() {
+    for format in FORMATS {
+        undo_leaves_state_alone(format);
+    }
+}
+
+fn undo_leaves_state_alone(format: PluginFormat) {
     let mut harness = Harness::new();
-    harness.add_track(record("piano"), change_the_state_and_play());
+    harness.add_track(record(format, "piano"), change_the_state_and_play());
     harness.play(2048);
     let asset = harness.project.assets().path(&state_asset("piano"));
     let saved = std::fs::read(&asset).unwrap();
@@ -114,9 +130,15 @@ fn undo_and_redo_do_not_touch_plugin_state() {
 
 #[test]
 fn a_project_open_read_only_loads_plugins_and_writes_no_state() {
+    for format in FORMATS {
+        read_only_writes_no_state(format);
+    }
+}
+
+fn read_only_writes_no_state(format: PluginFormat) {
     let folder = tempfile::tempdir().unwrap();
     let mut harness = Harness::open(folder, true);
-    harness.add_track(record("piano"), change_the_state_and_play());
+    harness.add_track(record(format, "piano"), change_the_state_and_play());
     let before = harness.play(2048);
     let asset = harness.project.assets().path(&state_asset("piano"));
     std::fs::remove_file(&asset).unwrap();
@@ -135,9 +157,15 @@ fn a_project_open_read_only_loads_plugins_and_writes_no_state() {
 /// dropping the project is the one moment that always happens. It must still save.
 #[test]
 fn dropping_the_project_saves_the_state_of_every_plugin() {
+    for format in FORMATS {
+        dropping_saves_every_plugin(format);
+    }
+}
+
+fn dropping_saves_every_plugin(format: PluginFormat) {
     let folder = tempfile::tempdir().unwrap();
     let mut harness = Harness::open(folder, true);
-    harness.add_track(record("piano"), change_the_state_and_play());
+    harness.add_track(record(format, "piano"), change_the_state_and_play());
     harness.play(2048);
     let asset = harness.project.assets().path(&state_asset("piano"));
     std::fs::remove_file(&asset).unwrap();
@@ -152,10 +180,7 @@ fn dropping_the_project_saves_the_state_of_every_plugin() {
     drop((project, plugins));
     assert!(asset.exists(), "dropping the project wrote no state");
     let saved = std::fs::read(&asset).unwrap();
-    assert_eq!(
-        i32::from_le_bytes([saved[4], saved[5], saved[6], saved[7]]),
-        36
-    );
+    assert_eq!(saved_transpose(format, &saved), 36, "{format:?}");
     drop(folder);
 }
 
@@ -163,8 +188,14 @@ fn dropping_the_project_saves_the_state_of_every_plugin() {
 /// out and not left at whatever was last written.
 #[test]
 fn a_plugin_whose_record_goes_is_saved_on_the_way_out() {
+    for format in FORMATS {
+        saved_on_the_way_out(format);
+    }
+}
+
+fn saved_on_the_way_out(format: PluginFormat) {
     let mut harness = Harness::new();
-    harness.add_track(record("piano"), change_the_state_and_play());
+    harness.add_track(record(format, "piano"), change_the_state_and_play());
     harness.play(2048);
     let asset = harness.project.assets().path(&state_asset("piano"));
     std::fs::remove_file(&asset).unwrap();
@@ -177,10 +208,7 @@ fn a_plugin_whose_record_goes_is_saved_on_the_way_out() {
         .unwrap();
     harness.plugins.poll(&harness.project);
     let saved = std::fs::read(&asset).expect("the plugin was saved when its record went");
-    assert_eq!(
-        i32::from_le_bytes([saved[4], saved[5], saved[6], saved[7]]),
-        36
-    );
+    assert_eq!(saved_transpose(format, &saved), 36, "{format:?}");
 
     // Undo brings the record back, and with it the plugin, transposed as it was.
     assert!(harness.project.undo().unwrap().is_some());
@@ -193,6 +221,12 @@ fn a_plugin_whose_record_goes_is_saved_on_the_way_out() {
 /// waiting is written when the plugin goes.
 #[test]
 fn a_plugin_that_keeps_changing_is_written_at_most_once_a_second() {
+    for format in FORMATS {
+        written_at_most_once_a_second(format);
+    }
+}
+
+fn written_at_most_once_a_second(format: PluginFormat) {
     let mut harness = Harness::new();
     // A pedal move every 512 frames, each a different value, so the plugin changes its own
     // state and marks itself dirty again and again.
@@ -202,12 +236,12 @@ fn a_plugin_that_keeps_changing_is_written_at_most_once_a_second() {
             value: 70 + index as u8,
         })
         .collect();
-    harness.add_track(record("piano"), played);
+    harness.add_track(record(format, "piano"), played);
     let asset = harness.project.assets().path(&state_asset("piano"));
 
     let saved = |asset: &std::path::Path| {
         let bytes = std::fs::read(asset).unwrap_or_default();
-        i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]])
+        saved_transpose(format, &bytes)
     };
 
     // The first change is written at once.

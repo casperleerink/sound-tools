@@ -9,6 +9,7 @@
 #[global_allocator]
 static ALLOCATOR: support::CountingAllocator = support::CountingAllocator;
 
+mod background;
 mod consistency;
 mod lifecycle;
 mod playing;

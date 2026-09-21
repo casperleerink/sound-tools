@@ -21,6 +21,7 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
+use plugin_host::PluginFormat;
 use runtime::{OFFLINE, open_or_create, open_read_only, problems, summary};
 use sound_core::{Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks};
 
@@ -134,6 +135,7 @@ fn run(folder: &Path) -> Result<()> {
         config.sample_rate, config.channels
     );
     let (control, engine) = Engine::new(config);
+    // Headless may block on the scan: it has no window to keep answering.
     let (mut project, plugins) = open_or_create(folder, control)?;
     for notice in plugins.take_notices() {
         println!("plugin scan: {notice}");
@@ -241,9 +243,13 @@ fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
 
 /// Prints every plugin this machine has, with how long the scan took. A composer or an agent
 /// needs the plugin's own id to put it on a track, and it is in no file.
+///
+/// It looks at every bundle again and writes what it finds, so it is also how a plugin that
+/// hung or crashed once is tried again: the cache of this machine does not try one twice.
 fn list_plugins() -> Result<()> {
-    let plugins = runtime::plugins(true)?;
+    let plugins = runtime::plugins_refreshing_the_cache()?;
     let started = std::time::Instant::now();
+    plugins.wait_for_scan();
     let scan = plugins.scan();
     let took = started.elapsed();
     for plugin in &scan.plugins {
@@ -253,7 +259,8 @@ fn list_plugins() -> Result<()> {
             "not an instrument"
         };
         println!(
-            "{}  {} {} ({kind}, {})",
+            "{:<5} {}  {} {} ({kind}, {})",
+            plugin.format.as_str(),
             plugin.id,
             plugin.vendor,
             plugin.name,
@@ -269,12 +276,22 @@ fn list_plugins() -> Result<()> {
         scan.plugins.len(),
         scan.failures.len()
     );
+    if scan
+        .plugins
+        .iter()
+        .any(|plugin| plugin.format == PluginFormat::Vst3)
+    {
+        println!("{}", plugin_host::VST_TRADEMARK);
+    }
     Ok(())
 }
 
 /// Prints one line of JSON per plugin in the bundle. See [`plugin_host::scan_one_bundle`].
-fn scan_one_bundle(bundle: &Path) -> Result<()> {
-    match plugin_host::scan_one_bundle(bundle) {
+fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
+    let Some(format) = plugin_host::PluginFormat::of_str(format) else {
+        bail!("{format:?} is not a plugin format this build hosts");
+    };
+    match plugin_host::scan_one_bundle(format, bundle) {
         Ok(lines) => {
             print!("{lines}");
             Ok(())
@@ -293,7 +310,7 @@ fn main() -> Result<()> {
         [folder, "--inspect"] => inspect(Path::new(folder)),
         // The child of a plugin scan. It loads one bundle, which is why it is a process of
         // its own: a plugin that crashes while it is looked at costs this child and no more.
-        [plugin_host::SCAN_ARGUMENT, bundle] => scan_one_bundle(Path::new(bundle)),
+        [plugin_host::SCAN_ARGUMENT, format, bundle] => scan_one_bundle(format, Path::new(bundle)),
         [folder, "--render", wav, "--seconds", seconds] => {
             let seconds = seconds.parse().context("--seconds takes a number")?;
             render(Path::new(folder), Path::new(wav), seconds)

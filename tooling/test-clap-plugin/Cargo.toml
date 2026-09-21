@@ -21,3 +21,4 @@ clack-extensions = { workspace = true, features = [
   "state",
 ] }
 clack-plugin.workspace = true
+test-plugin-support.workspace = true

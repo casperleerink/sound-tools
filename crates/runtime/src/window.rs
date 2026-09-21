@@ -31,7 +31,7 @@ use sound_ui::{ActiveTheme, Assets, Devices, Session, Views, typography};
 use project_menu::ProjectMenu;
 pub use transport::TransportPill;
 
-use crate::{open_or_create, views};
+use crate::{open_or_create_with, views};
 
 actions!(
     sound_tools,
@@ -320,7 +320,13 @@ pub fn run(folder: &Path) -> Result<()> {
     let device_name = device.name()?;
     let config = EngineConfig::new(device.sample_rate(), device.channels());
     let (control, engine) = Engine::new(config);
-    let (mut project, plugins) = open_or_create(folder, control)?;
+    // The scan of this machine runs on a thread of its own from here, so no plugin is ever
+    // looked at on the thread that draws. A project that names a plugin the scan has not
+    // reached yet opens and plays everything else, and the plugin comes in when it turns up:
+    // `take_retries` below runs its behaviour again.
+    let plugins = crate::plugins(false)?;
+    plugins.start_scanning();
+    let mut project = open_or_create_with(folder, control, plugins.clone())?;
     project.watch()?;
     for notice in plugins.take_notices() {
         println!("plugin scan: {notice}");
@@ -382,6 +388,18 @@ pub fn run(folder: &Path) -> Result<()> {
                             session.read_with(cx, |session, _| plugins.poll(session.project()));
                         for problem in problems {
                             session.update(cx, |session, cx| session.report(problem, cx));
+                        }
+                        // Records that were waiting for a plugin the scan had not reached.
+                        // Running their behaviour again is what makes them play and takes
+                        // their problem away. It is not an edit and is never undone.
+                        let retries = plugins.take_retries();
+                        if !retries.is_empty() {
+                            session.update(cx, |session, cx| session.rebind(&retries, cx));
+                        }
+                        // The picker shows what is known and says so quietly while a scan
+                        // runs, so a frame is drawn again while one does.
+                        if plugins.scan_is_running() {
+                            session.update(cx, |_, cx| cx.notify());
                         }
                         // The window work that needs the application: the windows of plugins
                         // that have gone, and a window whose plugin asked for another size.

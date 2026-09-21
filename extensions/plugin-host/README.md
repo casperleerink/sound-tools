@@ -1,9 +1,11 @@
 # plugin-host
 
 Third-party audio plugins as tools of a project. CLAP instruments since step 4a of the second
-milestone; VST3 and effects come later. The decisions are in [ARCHITECTURE.md](../../ARCHITECTURE.md),
-"Hosting plugins". `agent-doc.md` is what an agent reads; this file is for whoever works on the
-host.
+milestone, VST 3 instruments since step 5a; effects come later. The decisions are in
+[ARCHITECTURE.md](../../ARCHITECTURE.md), "Hosting plugins". `agent-doc.md` is what an agent
+reads; this file is for whoever works on the host.
+
+VST is a registered trademark of Steinberg Media Technologies GmbH.
 
 ## The tool
 
@@ -17,9 +19,9 @@ the plugin's own settings:
 }
 ```
 
-It declares the ports of the note contract, `notes` in and `audio` out, so it fits the
-`instrument` child of a track like the built-in synth. Nothing in the arrangement knows about
-plugins and nothing here knows about tracks.
+`format` is `clap` or `vst3`. It declares the ports of the note contract, `notes` in and
+`audio` out, so it fits the `instrument` child of a track like the built-in synth. Nothing in
+the arrangement knows about plugins and nothing here knows about tracks.
 
 `state_asset` is a name, not a path: the file is `assets/plugin-state/<name>.bin`, through the
 core's `AssetName`, so a record can never point outside the project folder.
@@ -28,55 +30,80 @@ core's `AssetName`, so a record can never point outside the project folder.
 
 | File | What is in it |
 | --- | --- |
-| `lib.rs` | The record, the tool, the behaviour and `free_state_asset`. |
-| `host.rs` | `Plugins`: the plugins this project has loaded, and the host callbacks CLAP plugins call. |
-| `processor.rs` | The engine processor around a plugin's audio processor: the note contract in, one stereo port out. |
-| `scan.rs` | What this machine has, found in a child process. |
+| `lib.rs` | The record, the format, the tool, the behaviour and `new_state_asset`. |
+| `host.rs` | `Plugins`: the plugins this project has loaded, the saving rule, the problems and the windows. It knows no format. |
+| `backend.rs` | What the host needs of a plugin, whatever its format: `LoadedPlugin`, `PluginGui`, `Requests`. |
+| `processor.rs` | The engine processor around a plugin's audio side: the note contract in, one stereo port out. `Started` is the audio side of a backend. |
+| `scan.rs` | What this machine has, found in a child process per bundle, with the cache of this machine. |
 | `window.rs` | The plugin's own window: one window of the application per open plugin. |
 | `view.rs` | The card of a plugin in a rack, and what a rack calls one. |
-| `src/bin/clap-scan.rs` | That child process, for the tests of this crate. The runtime is its own child. |
+| `clap.rs` | The CLAP backend: the host callbacks, loading, the window and playing. |
+| `vst3/` | The VST 3 backend. `module.rs` loads a bundle, `plugin.rs` is the control side, `process.rs` the audio side, `context.rs` what the host is from the plugin's side, `stream.rs` an `IBStream` over bytes. |
+| `src/bin/plugin-scan.rs` | The child process, for the tests of this crate. The runtime is its own child. |
 
-## Threads
+## What each format decides, and what they share
 
-CLAP splits a plugin in two. The plugin's own handle belongs to the application's main thread;
-only its audio processor may go to the audio thread. So:
+Both formats split a plugin in two and put the two halves on different threads, so the host is
+built once:
 
-- `Plugins` lives on the thread the project lives on, which is the main thread. It holds every
-  `PluginInstance`, loads them, reads and writes their state and answers their callbacks.
-- `HostedPlugin`, the engine processor, holds the started audio processor and nothing else of
-  the plugin. It is sent a plugin through a `Processor::Update` and gets `None` when the plugin
-  goes, so the old one rides back to the control thread and is dropped there.
-- CLAP puts `start_processing` and `stop_processing` on the audio thread and wants `deactivate`
-  on the main thread while nothing is processing. So a plugin is stopped before it leaves the
-  audio thread: in `Processor::update` when it is swapped, and in `Processor::leaving`, the
-  core's last call to a processor, when the engine takes it out of its slot. `Drop for Loaded`
-  is the last resort for the engine being torn down, when there is no audio thread left.
-  `tests/plugin_host/lifecycle.rs` drives the engine from a thread of its own and reads what
-  the test plugin wrote down, so what a strict plugin would assert is asserted.
+- The plugin's own handle belongs to the application's main thread. Only its audio side may go
+  to the audio thread: CLAP's audio processor, VST 3's `IAudioProcessor`.
+- Starting and stopping the processing belongs to the audio thread. Activating and deactivating
+  belong to the main thread while nothing is processing.
+
+So `Plugins` lives on the thread the project lives on and hands the audio sides to the engine,
+and `HostedPlugin`, the engine processor, holds the audio side and nothing else. It is sent a
+plugin through a `Processor::Update` and gets `None` when the plugin goes, so the old one rides
+back to the control thread and is dropped there. A plugin is stopped before it leaves the audio
+thread: in `Processor::update` when it is swapped, and in `Processor::leaving`, the core's last
+call to a processor. `Drop` on the audio side is the last resort for the engine being torn down,
+when there is no audio thread left. `tests/plugin_host/lifecycle.rs` drives the engine from a
+thread of its own and reads what the test plugin wrote down, for both formats, so what a strict
+plugin would assert is asserted.
+
+The one difference the host had to grow for VST 3 is how a plugin says its state changed. CLAP
+has `clap_host_state.mark_dirty`. VST 3 has no such call: a plugin's controller reports an edit
+through `IComponentHandler::performEdit`, and what the plugin changed by itself comes back in
+the block's output parameter changes. The host reads those on the audio thread into a lock-free
+ring, and the next poll gives them to the plugin's controller with `setParamNormalized`, which
+is how the two halves of a VST 3 plugin stay in step, and marks the state to be saved. The
+once-a-second rule, the saving moments and the asset are the same for both.
 
 This is why a behaviour is no longer `Send`: it keeps an `Rc` of the host. The project has
 always lived on one thread.
 
 Nothing in `process` allocates, locks or makes a system call, including the translation of
-notes and the sustain pedal. The plugin's own calls are wrapped in an `rtsan` `ScopedDisabler`,
-one call at a time and nothing of ours inside it: what a plugin does inside itself is not ours
-to check. The repository's own test plugin does not need it; a real one may.
+notes and the sustain pedal and everything VST 3 needs per block: the event list, the parameter
+changes and the process data are all made when the plugin loads. The plugin's own calls are
+wrapped in an `rtsan` `ScopedDisabler`, one call at a time and nothing of ours inside it: what a
+plugin does inside itself is not ours to check.
 
-That exemption would also hide a buffer of ours growing while a plugin pushed into it, so the
-plugin is given `OutputEvents::void()`: it takes every event and keeps none. Nothing reads what
-a plugin sends out, because MIDI from a plugin is not built. A test counts every allocation of
-the process while a plugin sends fifty thousand events a block, and the count is zero.
+That exemption would also hide a buffer of ours growing while a plugin pushed into it, so a
+CLAP plugin is given `OutputEvents::void()` and a VST 3 plugin is given an event list that
+refuses `addEvent` and parameter queues with a fixed number of points. A test counts every
+allocation of the process while a plugin sends fifty thousand things a block, for both formats,
+and the count is zero.
 
 ## Notes, the pedal and stopping
 
-- A note on and a note off go as CLAP note events when the plugin's note port takes that
-  dialect, else as raw MIDI. The dialect is read once, when the plugin loads.
-- The sustain pedal always goes as raw MIDI controller 64 with its value, 0 to 127: CLAP note
-  events have no sustain. A plugin whose note port takes no MIDI gets the notes and not the
-  pedal, and the record is listed in `problems.txt` saying so.
+The translation of the note contract is in `processor.rs` and is the same for both formats: the
+list of keys that are down, the expansion of `AllOff` into the keys that are really down, and
+the bound of 512 events a block. A backend only says how one event is written down.
+
+- CLAP: a note on and a note off go as CLAP note events when the plugin's note port takes that
+  dialect, else as raw MIDI. The dialect is read once, when the plugin loads. The sustain pedal
+  always goes as raw MIDI controller 64 with its value, 0 to 127: CLAP note events have no
+  sustain.
+- VST 3: notes go as `kNoteOnEvent` and `kNoteOffEvent` with `noteId` -1, so a note off matches
+  by pitch. VST 3 has no MIDI controller event at all. The format's own answer is
+  `IMidiMapping`: the plugin's controller says which parameter MIDI controller 64 is mapped to,
+  and the host sends that parameter as a value from 0 to 1 in the block's parameter changes, at
+  the frame the pedal moved.
+- A plugin that offers neither gets the notes and not the pedal, and the record is listed in
+  `problems.txt` saying so.
 - `NoteEvent::AllOff` becomes a note off for every key this wrapper started, plus the pedal up.
-  CLAP has a note off that matches every key, but not every plugin handles it, so the exact
-  keys go out. The wrapper keeps that list as 128 bits.
+  Both formats have a note off that matches every key, and not every plugin handles one, so the
+  exact keys go out. The wrapper keeps that list as 128 bits.
 - At most 512 events reach the plugin in one block. Anything above that is counted in
   `EngineStatus::event_overflows`, never allocated.
 
@@ -85,40 +112,91 @@ the process while a plugin sends fifty thousand events a block, and the count is
 Loading a plugin runs its code, so the scan never happens in the application's process. One
 child process per bundle: a plugin that crashes while it is looked at costs one bundle and is
 reported, and the application lives. The runtime is its own child, through
-`runtime <bundle> --scan-clap`; the tests of this crate use `clap-scan` in this crate.
+`runtime --scan-plugin <format> <bundle>`; the tests of this crate use `plugin-scan` in this
+crate. The format of a bundle is its file extension, `.clap` or `.vst3`, so one list of search
+folders covers both.
 
 The child prints one marked line per plugin. Anything else on its output is the plugin's own
 logging, which real plugins do while they load, and it is ignored.
 
 Every child has `SCAN_TIMEOUT`, ten seconds. Licensed plugins hang while they are listed when
-they cannot reach their server, and the scan is what a project waits for while it opens, so a
-child that does not finish is killed, waited for, and reported like one that crashed. Ten
-seconds is a thousand times what a real bundle costs and is paid once, by that one bundle.
+they cannot reach their server, so a child that does not finish is killed, waited for, and
+reported like one that crashed.
 
-The scan runs once per session, the first time a record needs a plugin. A project with no
-plugin record never scans. There is no cache: measured September 20, 2026 on an Apple Silicon
-laptop with two real bundles holding three plugins, a whole scan takes 20 to 26 ms, about 10 ms
-per bundle. A machine with fifty plugins would pay half a second, once, so a cache would buy
-nothing yet. A plugin installed while the app runs is not found until the next start.
+### Off the thread that draws, and the cache
 
-`runtime --plugins` prints every plugin of this machine with its id and how long the scan took.
-It is how a composer or an agent finds the id a record needs.
+Measured September 21, 2026 on an Apple Silicon laptop with the 28 bundles this machine really
+has, 26 VST 3 and 2 CLAP:
+
+| | |
+| --- | --- |
+| A whole scan, nothing remembered | 7.9 s |
+| A VST 3 bundle, mean | 216 ms |
+| A VST 3 bundle, slowest | 333 ms (Auto-Tune Vocal EQ) |
+| A VST 3 bundle, fastest that answered | 9 ms |
+| A CLAP bundle | 9 to 12 ms |
+| Bundles that hung | none |
+| Bundles that crashed | none |
+| Bundles that showed a dialog | none |
+| Bundles that could not be loaded | 1 (Vital, an x86_64 binary an arm64 host cannot load) |
+
+A VST 3 bundle costs twenty times a CLAP one because it is a real bundle: `CFBundleCreate`,
+`CFBundleLoadExecutable` and the plugin's static initializers, which for a licensed plugin
+include its licence check.
+
+Eight seconds is far too much to pay on the thread that draws, and it is paid on every start.
+So:
+
+- The window starts the scan on a thread of its own (`Plugins::start_scanning`) before it opens
+  the project, and never waits for it. `--render`, `--inspect`, `--headless` and `--plugins`
+  have no window to keep answering and wait for it the first time a record needs a plugin.
+- There is a cache, and it belongs to the machine and not to any project:
+  `~/Library/Caches/sound-tools/plugins.json`, or `SOUND_TOOLS_PLUGIN_CACHE`. A bundle is
+  remembered by the modified time and size of the binary inside it, so a plugin that was
+  installed or updated is looked at again and nothing else is. A bundle that crashed or hung is
+  remembered as such and is not tried again on every start. `runtime --plugins` looks at
+  everything again and writes the result, which is how one that was fixed comes back.
+- A record whose plugin the scan has not found yet is reported as such, the track is silent, and
+  the host asks for that record's behaviour to be run again when the scan finds it
+  (`Plugins::take_retries` and `Project::rebind`). Nothing of the composer's is needed. Measured
+  on this machine with nothing remembered: the project opens at once, `problems.txt` says three
+  plugins are still being looked at, and twelve seconds later it says "No problems".
+- With the cache, opening this project of three sampled VST 3 instruments costs 0.59 s and the
+  scan nothing; without it, a blocking open costs 6.0 s.
+- The picker shows what is known and says "Still looking for the plugins of this Mac…" while a
+  scan runs.
+
+A plugin installed while the app runs is not found until the next start.
+
+`runtime --plugins` prints every plugin of this machine with its format, its id and how long
+the scan took. It is how a composer or an agent finds the id a record needs.
 
 Search folders are `~/Library/Audio/Plug-Ins/CLAP`, `/Library/Audio/Plug-Ins/CLAP` and
-`CLAP_PATH`. Tests point the host at a folder of their own, with the repository's own test
-plugin in it, so no test needs a plugin of the machine.
+`CLAP_PATH`, plus `~/Library/Audio/Plug-Ins/VST3`, `/Library/Audio/Plug-Ins/VST3`,
+`/Network/Library/Audio/Plug-Ins/VST3` and `VST3_PATH`. Tests point the host at a folder of
+their own, with the repository's own test plugins in it, so no test needs a plugin of the
+machine, and they never read or write the cache.
+
+## What a plugin id is
+
+- CLAP: the id its maker chose, such as `com.u-he.diva`.
+- VST 3: the class id, sixteen bytes, as thirty-two uppercase hex digits. That is what
+  Steinberg's own `FUID::toString` gives on macOS and Linux and what a `.vstpreset` file holds,
+  so the id in a record is the one a plugin's maker publishes. A class id never changes, which
+  is what makes it the name of a plugin for good. A `plugin_id` of a `vst3` record that is not
+  thirty-two hex digits is refused by the record itself, so an agent is told where the mistake
+  is and not that the plugin is missing.
 
 ## When plugin state is saved
 
 A plugin's state is opaque. Two moments write it:
 
-- While the project is open, when the plugin says its state changed (`clap_host_state.mark_dirty`),
-  at the next `Plugins::poll`, which is every 16 ms in the window and every 5 ms headless, and
-  then at most once a second while it keeps saying so. A plugin marks itself dirty on every
-  step of a knob drag, and serializing a sampler's state is not cheap. The flag is not cleared
-  until the state is written, so a change that waits for the second is written by a later poll.
-- When the project closes, for every loaded plugin, whether it said so or not. A plugin that
-  changes its state without telling the host, which CLAP asks it not to do, keeps its work.
+- While the project is open, when the plugin says its state changed, at the next
+  `Plugins::poll`, which is every 16 ms in the window and every 5 ms headless, and then at most
+  once a second while it keeps saying so. A plugin marks itself dirty on every step of a knob
+  drag, and serializing a sampler's state is not cheap. What the host was told is kept until
+  the bytes are written, so a change that waits for the second is written by a later poll.
+- When the project closes, for every loaded plugin, whether it said so or not.
 - When a plugin goes, because its record was deleted or now names another plugin. So undo of a
   delete brings the plugin back as it sounded.
 
@@ -126,10 +204,11 @@ Bytes that are already in the project are not written again, so a session that c
 leaves no diff. A plugin's state is not project state: it is never an undo step, and undo and
 redo never touch it.
 
+A VST 3 plugin keeps two states, the component's and the controller's, as a preset file does.
+The asset holds both: `SVT3`, the component's state with its length, then the controller's.
+
 What a crash can lose: up to a second of a plugin's own changes, and anything a plugin changed
-without saying so since the project opened. CLAP asks a plugin to
-mark its state dirty whenever it changes, including on a parameter change, so a plugin that
-follows the specification loses at most one poll.
+without saying so since the project opened.
 
 ## The table and the engine
 
@@ -143,13 +222,18 @@ already loaded for it.
 - `poll` lets go of every entry whose record no longer says what the entry holds: deleted, no
   longer a plugin, or changed by an edit the project rolled back.
 - An entry that has been let go of is still polled and saved until the engine gives its audio
-  processor back, so a plugin that is still playing misses no callback and loses no change.
+  side back, so a plugin that is still playing misses no callback and loses no change.
 
 Loading every time costs nothing: a behaviour runs when its own record changed, on opening the
 project and on a retry, and every change a plugin record can have needs another plugin or
-another state file. `tests/plugin_host/consistency.rs` walks the sequences.
+another state file. `tests/plugin_host/consistency.rs` walks the sequences, for both formats.
 
 ## The plugin's own window
+
+Only CLAP plugins have a window in this build. Step 5b puts a VST 3 plugin's own view
+(`IPlugView`) in one of ours; until then `Vst3Plugin::gui` is `None` and the card says the
+plugin has no window of its own. Everything the window machinery needs of a plugin is
+`backend::PluginGui`, so 5b writes that one implementation and touches nothing else here.
 
 CLAP offers two ways to show a plugin: a floating window the plugin makes and owns, or a
 window the host makes with the plugin's view embedded in it. The specification calls the
@@ -158,12 +242,11 @@ machine this was written on does: both answer `is_api_supported` with `false` fo
 window and `true` for an embedded one. So this host makes the window.
 
 - One GPUI window per open plugin, beside the main one, with a root view that draws nothing.
-  The plugin gets that window's `NSView` through `set_parent` and fills it.
-- The window is as big as `get_size` says and is not resizable by dragging. A plugin that asks
-  for another size with `request_resize` gets it at the next poll, which is how Six Sines
-  sizes itself as it opens.
-- Opening a window that is open brings it forward. Closing one frees the plugin's view
-  (`destroy`) and takes the window down, and touches nothing of the plugin's sound or state.
+  The plugin gets that window's `NSView` and fills it.
+- The window is as big as the plugin says and is not resizable by dragging. A plugin that asks
+  for another size gets it at the next poll, which is how Six Sines sizes itself as it opens.
+- Opening a window that is open brings it forward. Closing one frees the plugin's view and
+  takes the window down, and touches nothing of the plugin's sound or state.
 - A window goes whenever its plugin does: another plugin in the record, the record deleted
   from a file or by an undo, the track deleted, the project closing. Opening one is not an
   edit, so undo never brings one back.
@@ -187,39 +270,64 @@ window and `true` for an embedded one. So this host makes the window.
 not real ones, so no display is needed. The plugin then gets no view to draw in, which is the
 one thing those tests cannot cover; it is checked by hand with a real plugin.
 
+## Unsafe code
+
+Every call into a plugin is unsafe, and every one of them is behind a safe layer here. CLAP's
+is `clack-host`, so the only `unsafe` on that side is loading a bundle and giving a plugin a
+view. VST 3 has no safe layer on crates.io: `vst3` 0.3 is the raw COM interfaces generated from
+Steinberg's headers, so the safe layer is `src/vst3/` and nothing outside that folder calls a
+VST 3 interface.
+
+A VST 3 bundle is loaded once per process and never unloaded. Unloading runs the plugin's
+static destructors and unregisters its Objective-C classes while views, timers and threads of
+that plugin may still exist; every host this was written against keeps them loaded.
+
 ## What a composer picks
 
-`Plugins::instruments` is every CLAP instrument of this machine, from the scan, for a picker.
-`new_state_asset(assets, wanted)` gives a `state_asset` whose file no plugin has ever written
-into: it is `Assets::create` and its numbering, the rule a raw take follows, so the file is
-made and never opened. A plugin that is picked can therefore never come up holding the sound an
-older one left behind, and undo brings the older one back as it sounded. The file is empty
-until the plugin saves into it, and the host reads an empty one as nothing saved yet. The runtime turns both into
-`sound_ui::DeviceOffer`s for the track panel; nothing here knows about tracks or panels.
+`Plugins::instruments` is every instrument of this machine, of every format, from the scan, for
+a picker. `new_state_asset(assets, wanted)` gives a `state_asset` whose file no plugin has ever
+written into: it is `Assets::create` and its numbering, the rule a raw take follows, so the file
+is made and never opened. A plugin that is picked can therefore never come up holding the sound
+an older one left behind, and undo brings the older one back as it sounded. The file is empty
+until the plugin saves into it, and the host reads an empty one as nothing saved yet. The
+runtime turns both into `sound_ui::DeviceOffer`s for the track panel; nothing here knows about
+tracks or panels.
+
+### Writing "VST"
+
+Steinberg's VST usage guidelines ask for the VST Compatible Logo next to the term, and for the
+attribution notice where the logo does not fit. A row of a menu is such a place, so the picker
+writes the format as `VST 3` in plain text and carries `plugin_host::VST_TRADEMARK`, the
+notice, as a quiet line under its offers whenever it offers a VST 3 plugin. `runtime --plugins`
+prints the same line, and the docs carry it. "VST" is not in the product name, not in the
+company name, and never stylized. The VST 3 SDK is MIT licensed since 3.8 and needs no signed
+agreement to host or to write plugins.
 
 ## What is not built
 
-Effects, VST3, AU, a plugin sandbox, latency compensation, parameter automation, a parameter
-view, presets, MIDI out of a plugin, more than one audio output bus, a plugin window that
-follows a drag of its edge, remembering where a window sat or whether it was open, a floating
-window for a plugin that only floats, and keeping a plugin's window above the main one
-(`set_transient`: it needs a handle to our view that outlives the plugin's window, and on macOS
-the main window is dropped before the project is).
+Effects, AU, a plugin sandbox, latency compensation, parameter automation, a parameter view,
+presets and program lists, MIDI out of a plugin, more than the first event input and the first
+stereo output, the transport a plugin can read (`ProcessContext` is null, so a plugin that syncs
+to the tempo runs free), a plugin window that follows a drag of its edge, remembering where a
+window sat or whether it was open, a floating window for a plugin that only floats, keeping a
+plugin's window above the main one, and finding a plugin installed while the app runs.
+
+The VST 3 window is step 5b: `IPlugView`, `IPlugFrame` and the Cocoa view of a plugin in one of
+our windows.
 
 Two records may name one `state_asset` and then share it. Nothing refuses either: the project
 runs only the behaviour of the record that was edited, so a complaint about another record
 could never be taken back when that other record went. Two records for *different* plugins
 report themselves anyway, because the second cannot read the first one's state.
 
-A plugin that asks to be started again (`request_restart`), which it may do after changing its
-own port layout, is told to the composer instead of being restarted. A plugin that asks for
-audio processing to begin (`request_process`) needs nothing: the host calls every plugin every
-block while its track exists.
+A plugin that asks to be started again, which it may do after changing its own port layout, is
+told to the composer instead of being restarted.
 
-A plugin is an instrument when it says so in its CLAP features. Nothing checks whether that is
-true: a plugin with the `instrument` feature that is really an effect loads, gets notes and is
-silent. Audio input ports are no sign of one: Six Sines is an instrument with a stereo input
-for audio-rate modulation. The host gives every audio input of a plugin silence.
+A plugin is an instrument when it says so: the CLAP feature `instrument`, or the VST 3
+subcategory `Instrument`. Nothing checks whether that is true: a plugin that says so and is
+really an effect loads, gets notes and is silent. Audio input ports are no sign of one: Six
+Sines is an instrument with a stereo input for audio-rate modulation. The host gives every
+audio input of a plugin silence.
 
 ## Checks
 
@@ -228,4 +336,6 @@ cargo nextest run -p plugin-host
 RTSAN_ENABLE=1 cargo nextest run -p plugin-host
 ```
 
-The tests build `tooling/test-clap-plugin` themselves and copy it into a folder of their own.
+The tests build `tooling/test-clap-plugin` and `tooling/test-vst3-plugin` themselves and copy
+them into a folder of their own. The two are the same instrument in the two formats, from
+`tooling/test-plugin-support`, so a test reads either render the same way.

@@ -119,6 +119,9 @@ impl MenuGroup {
 pub enum MenuEntry {
     Group(MenuGroup),
     Separator,
+    /// A quiet line that is not an item: what a source of items is still doing, or what it has
+    /// to say about them. It cannot be picked and the keyboard skips it.
+    Note(SharedString),
 }
 
 /// Every item in render order, with its keyboard index.
@@ -127,7 +130,7 @@ fn flat(entries: &[MenuEntry]) -> Vec<&MenuItem> {
         .iter()
         .flat_map(|entry| match entry {
             MenuEntry::Group(group) => group.items.iter(),
-            MenuEntry::Separator => [].as_slice().iter(),
+            MenuEntry::Separator | MenuEntry::Note(_) => [].as_slice().iter(),
         })
         .collect()
 }
@@ -197,6 +200,14 @@ impl RenderOnce for MenuList {
             .enumerate()
             .map(|(group_ix, entry)| match entry {
                 MenuEntry::Separator => div().h(px(1.)).mx(px(8.)).bg(line).into_any_element(),
+                MenuEntry::Note(note) => div()
+                    .px(px(12.))
+                    .py(px(6.))
+                    .text_size(px(11.))
+                    .line_height(px(15.))
+                    .text_color(muted)
+                    .child(note)
+                    .into_any_element(),
                 MenuEntry::Group(group) => {
                     let rows: Vec<_> = group
                         .items

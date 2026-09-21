@@ -172,7 +172,7 @@ Match what gpui 0.2.2 already pulls in (smol 2, async-task, log, parking_lot, sl
 | MIDI devices | `midir` 0.11 | Used in `extensions/midi`. `connect` takes the `MidiInput`, so one port needs one of its own. |
 | MIDI messages | `wmidi` 4 | 4.0.11. No allocation, so a device thread parses without waiting. |
 | MIDI files | `midly` 0.5 | Dormant but complete. |
-| CLAP hosting | `clack-host` 0.2, `clack-extensions` 0.2 | 0.2.0, September 2026, MIT OR Apache-2.0. The only working Rust CLAP host layer. Used in `extensions/plugin-host` since step 4a of the second milestone. The extensions crate is feature-gated per CLAP extension; we enable `audio-ports`, `note-ports` and `state`. |
+| CLAP hosting | `clack-host` 0.2, `clack-extensions` 0.2 | 0.2.0, September 2026, MIT OR Apache-2.0. The only working Rust CLAP host layer. Used in `extensions/plugin-host` since step 4a of the second milestone. The extensions crate is feature-gated per CLAP extension; we enable `audio-ports`, `gui`, `note-ports` and `state`. |
 | Writing a CLAP plugin | `clack-plugin` 0.2 | Only for `tooling/test-clap-plugin`, the CLAP instrument the repository builds so that CI needs no third-party plugin. |
 | VST3 hosting | `vst3` 0.3 (coupler-rs) | Raw COM bindings; we write the safe layer. The VST3 SDK is MIT licensed since 3.8 (Oct 2025). |
 | AU hosting | `objc2-audio-toolbox`, `objc2-avf-audio` | No mature Rust AU host exists. |

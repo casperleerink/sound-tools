@@ -12,6 +12,8 @@ use std::path::Path;
 use gpui::TestAppContext;
 use sound_core::Changes;
 
+use plugin_host::PluginFormat;
+
 use crate::support::{
     Harness, LoggedCall, id, lifecycle, record, tell_the_plugin,
     tell_the_plugin_to_close_its_window,
@@ -34,7 +36,7 @@ fn window_calls(log: &Path) -> Vec<String> {
 fn open(log: &Path) -> Harness {
     tell_the_plugin(Some(log), None);
     let mut harness = Harness::new();
-    harness.add_track(record("piano"), Vec::new());
+    harness.add_track(record(PluginFormat::Clap, "piano"), Vec::new());
     harness.play(512);
     harness
 }
@@ -179,7 +181,7 @@ fn the_window_goes_when_the_record_names_another_plugin_state(cx: &mut TestAppCo
 
     // Another state file is another plugin as far as the host is concerned: it loads again.
     let mut changes = Changes::new();
-    changes.create(slot.clone(), record("organ"));
+    changes.create(slot.clone(), record(PluginFormat::Clap, "organ"));
     harness.project.commit("Choose organ", changes).unwrap();
     assert!(!harness.plugins.window_is_open(&slot));
     assert!(harness.plugins.take_window_change());
@@ -274,7 +276,7 @@ fn the_calls_of_a_plugins_window_are_on_the_main_thread_and_never_on_the_one_tha
     let log = folder.path().join("calls.txt");
     tell_the_plugin(Some(&log), None);
     let mut harness = Harness::new();
-    harness.add_track(record("piano"), Vec::new());
+    harness.add_track(record(PluginFormat::Clap, "piano"), Vec::new());
     harness.project.engine().play();
 
     // Blocks on a thread of their own, as the device does. The application belongs to this

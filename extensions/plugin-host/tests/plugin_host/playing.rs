@@ -1,13 +1,21 @@
 //! A hosted plugin plays: the notes land on the frames they were sent on, and the sustain
 //! pedal reaches the plugin with its value.
 
-use crate::support::{Harness, Played, record, tell_the_plugin};
+use plugin_host::PluginFormat;
+
+use crate::support::{FORMATS, Harness, Played, record, tell_the_plugin};
 
 #[test]
 fn the_notes_reach_the_plugin_on_the_frames_they_were_sent_on() {
+    for format in FORMATS {
+        notes_on_their_frames(format);
+    }
+}
+
+fn notes_on_their_frames(format: PluginFormat) {
     let mut harness = Harness::new();
     harness.add_track(
-        record("piano"),
+        record(format, "piano"),
         vec![
             Played::On {
                 frame: 100,
@@ -20,23 +28,29 @@ fn the_notes_reach_the_plugin_on_the_frames_they_were_sent_on() {
             },
         ],
     );
-    assert_eq!(harness.problems(), Vec::<String>::new());
+    assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
     let render = harness.play(1024);
     let left = render.left();
 
     // The test plugin starts a cosine at full amplitude, so the note is audible from exactly
     // the frame it arrived on, and silent again from the frame of its note off.
-    assert_eq!(render.first_sound(), Some(100));
-    assert_eq!(left[99], 0.0);
-    assert_ne!(left[100], 0.0);
-    assert_eq!(&left[300..], &vec![0.0; left.len() - 300][..]);
+    assert_eq!(render.first_sound(), Some(100), "{format:?}");
+    assert_eq!(left[99], 0.0, "{format:?}");
+    assert_ne!(left[100], 0.0, "{format:?}");
+    assert_eq!(&left[300..], &vec![0.0; left.len() - 300][..], "{format:?}");
 }
 
 #[test]
 fn the_sustain_pedal_reaches_the_plugin_with_its_value() {
+    for format in FORMATS {
+        pedal_with_its_value(format);
+    }
+}
+
+fn pedal_with_its_value(format: PluginFormat) {
     let mut harness = Harness::new();
     harness.add_track(
-        record("piano"),
+        record(format, "piano"),
         vec![
             Played::Pedal {
                 frame: 64,
@@ -52,19 +66,25 @@ fn the_sustain_pedal_reaches_the_plugin_with_its_value() {
     let right = render.right();
 
     // The test plugin writes the pedal it received into the right channel, as a number.
-    assert_eq!(right[63], 0.0);
-    assert_eq!(right[64], 100.0 / 127.0);
-    assert_eq!(right[255], 100.0 / 127.0);
-    assert_eq!(right[256], 40.0 / 127.0);
+    assert_eq!(right[63], 0.0, "{format:?}");
+    assert_eq!(right[64], 100.0 / 127.0, "{format:?}");
+    assert_eq!(right[255], 100.0 / 127.0, "{format:?}");
+    assert_eq!(right[256], 40.0 / 127.0, "{format:?}");
 }
 
 /// The plugin has no idea the transport stopped. The contract's `AllOff` becomes a note off
 /// for every key this wrapper started, and the pedal up.
 #[test]
 fn all_off_ends_every_key_the_wrapper_started_and_lifts_the_pedal() {
+    for format in FORMATS {
+        all_off_ends_everything(format);
+    }
+}
+
+fn all_off_ends_everything(format: PluginFormat) {
     let mut harness = Harness::new();
     harness.add_track(
-        record("piano"),
+        record(format, "piano"),
         vec![
             Played::On {
                 frame: 0,
@@ -85,16 +105,22 @@ fn all_off_ends_every_key_the_wrapper_started_and_lifts_the_pedal() {
     );
     let render = harness.play(512);
     let (left, right) = (render.left(), render.right());
-    assert_ne!(left[255], 0.0);
-    assert_eq!(&left[256..], &vec![0.0; 256][..]);
-    assert_eq!(right[255], 1.0);
-    assert_eq!(right[256], 0.0);
+    assert_ne!(left[255], 0.0, "{format:?}");
+    assert_eq!(&left[256..], &vec![0.0; 256][..], "{format:?}");
+    assert_eq!(right[255], 1.0, "{format:?}");
+    assert_eq!(right[256], 0.0, "{format:?}");
 }
 
 /// The realtime sanitizer runs over this whole render. It aborts on an allocation, a lock or a
 /// system call anywhere in our own `process`, including the wrapper around the plugin.
 #[test]
 fn the_wrapper_makes_no_allocation_lock_or_system_call_while_it_plays() {
+    for format in FORMATS {
+        no_allocation_while_it_plays(format);
+    }
+}
+
+fn no_allocation_while_it_plays(format: PluginFormat) {
     let mut harness = Harness::new();
     let played = (0..64_u64)
         .flat_map(|index| {
@@ -116,9 +142,12 @@ fn the_wrapper_makes_no_allocation_lock_or_system_call_while_it_plays() {
             ]
         })
         .collect();
-    harness.add_track(record("piano"), played);
+    harness.add_track(record(format, "piano"), played);
     let render = harness.play(4096);
-    assert!(render.samples().iter().any(|sample| *sample != 0.0));
+    assert!(
+        render.samples().iter().any(|sample| *sample != 0.0),
+        "{format:?}"
+    );
 }
 
 /// A plugin may send events out. Nothing here reads them, and a host that gave the plugin a
@@ -128,10 +157,18 @@ fn the_wrapper_makes_no_allocation_lock_or_system_call_while_it_plays() {
 /// events out of every block, and not one allocation.
 #[test]
 fn a_plugin_that_sends_more_events_than_any_buffer_holds_allocates_nothing() {
+    for format in FORMATS {
+        sends_more_than_any_buffer_holds(format);
+    }
+}
+
+/// CLAP sends events out, VST 3 sends parameter changes. Both are things a host must have
+/// somewhere to put that neither grows nor allocates on the audio thread.
+fn sends_more_than_any_buffer_holds(format: PluginFormat) {
     tell_the_plugin(None, Some(50_000));
     let mut harness = Harness::new();
     harness.add_track(
-        record("piano"),
+        record(format, "piano"),
         vec![Played::On {
             frame: 0,
             pitch: 60,
@@ -143,6 +180,6 @@ fn a_plugin_that_sends_more_events_than_any_buffer_holds_allocates_nothing() {
     // be big enough: the growth has to be inside the window that is counted.
     let (render, allocations) = harness.render_counting_allocations(8192);
     tell_the_plugin(None, None);
-    assert_eq!(allocations, 0, "the audio thread allocated");
-    assert!(render.first_sound().is_some());
+    assert_eq!(allocations, 0, "the audio thread allocated, {format:?}");
+    assert!(render.first_sound().is_some(), "{format:?}");
 }

@@ -196,7 +196,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .iter()
             .flat_map(|(_, text)| json_examples(text))
             .collect();
-        assert_eq!(all.len(), 10, "{time_signature}");
+        assert_eq!(all.len(), 12, "{time_signature}");
 
         // The raw take of a recording is not a record: it is an asset the runtime writes once
         // and never reads back. Its example is checked as the file it is.
@@ -235,9 +235,15 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .into_iter()
             .map(|problem| format!("{}: {}", problem.path, problem.message))
             .collect();
-        let expected = "state/arrangement/rhodes/instrument.json: this machine has no CLAP plugin with the id \"com.example.piano\"";
-        assert_eq!(problems.len(), 1, "{time_signature}: {problems:?}");
-        assert!(problems[0].starts_with(expected), "{problems:?}");
+        // One per format: the doc of each names a plugin no machine is expected to have.
+        let expected = [
+            "state/arrangement/rhodes/instrument.json: this machine has no CLAP plugin with the id \"com.example.piano\"",
+            "state/arrangement/strings/instrument.json: this machine has no VST 3 plugin",
+        ];
+        assert_eq!(problems.len(), 2, "{time_signature}: {problems:?}");
+        for (problem, expected) in problems.iter().zip(expected) {
+            assert!(problem.starts_with(expected), "{problems:?}");
+        }
         let instances: Vec<String> = copy
             .project
             .instances()
@@ -253,6 +259,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
                 "arrangement/piano/take-1",
                 "arrangement/rhodes",
                 "arrangement/rhodes/instrument",
+                "arrangement/strings",
+                "arrangement/strings/instrument",
                 "drone",
             ]
         );

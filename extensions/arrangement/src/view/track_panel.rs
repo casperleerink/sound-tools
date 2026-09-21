@@ -125,7 +125,7 @@ impl Device {
         // as the plugin host does, pays for it here.
         let offers = Devices::offered(cx);
         let project = session.read(cx).project();
-        let entries = vec![MenuEntry::Group(
+        let mut entries = vec![MenuEntry::Group(
             MenuGroup::new()
                 .label("Instrument")
                 .max_height(320.)
@@ -141,6 +141,9 @@ impl Device {
                     }
                 })),
         )];
+        // What a source of offers has to say under them: that it is still looking at this
+        // machine, and what it owes whoever made what it offers.
+        entries.extend(Devices::offer_notes(cx).into_iter().map(MenuEntry::Note));
         let label = device_label(session, &slot, cx);
         let picker = cx.new(|cx| {
             let mut picker = DropdownMenu::new(label.name, entries, cx)

@@ -1,0 +1,17 @@
+[package]
+name = "test-vst3-plugin"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# A VST 3 plugin is a dynamic library inside a bundle. `rlib` as well, so `cargo test` and
+# clippy see the crate like any other and the tests of the plugin host can name its path.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+test-plugin-support.workspace = true
+vst3.workspace = true

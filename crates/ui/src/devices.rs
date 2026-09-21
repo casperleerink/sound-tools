@@ -81,6 +81,7 @@ impl DeviceOffer {
 }
 
 type ListOffers = Rc<dyn Fn() -> Vec<DeviceOffer>>;
+type ListNotes = Rc<dyn Fn() -> Vec<SharedString>>;
 type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>;
 
 /// What a rack says about the instance in a slot: what to call it, and which offer it is.
@@ -95,6 +96,7 @@ pub struct DeviceLabel {
 #[derive(Default)]
 pub struct Devices {
     instruments: Vec<ListOffers>,
+    notes: Vec<ListNotes>,
     describe: BTreeMap<&'static str, DescribeInstance>,
 }
 
@@ -117,6 +119,13 @@ impl Devices {
         self.instruments.push(Rc::new(list));
     }
 
+    /// Adds a source of quiet lines a picker shows under its offers: what a source of offers
+    /// is still doing, and what it has to say about what it offers. Asked when a picker is
+    /// filled, like the offers.
+    pub fn notes(&mut self, list: impl Fn() -> Vec<SharedString> + 'static) {
+        self.notes.push(Rc::new(list));
+    }
+
     /// Registers what a rack says about an instance of the tool with state `S`.
     pub fn describe<S: State>(&mut self, describe: impl Fn(&S) -> DeviceLabel + 'static) {
         self.describe.insert(
@@ -134,6 +143,14 @@ impl Devices {
             return Vec::new();
         };
         devices.instruments.iter().flat_map(|list| list()).collect()
+    }
+
+    /// Every quiet line under the offers, from the installed registry.
+    pub fn offer_notes(cx: &App) -> Vec<SharedString> {
+        let Some(devices) = cx.try_global::<Self>() else {
+            return Vec::new();
+        };
+        devices.notes.iter().flat_map(|list| list()).collect()
     }
 
     /// What a rack says about what is in `id`. `None` when the instance is gone or its tool

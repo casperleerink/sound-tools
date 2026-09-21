@@ -30,7 +30,7 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
         // machine does not have.
         let installed = plugins
             .upgrade()
-            .and_then(|plugins| plugins.installed_name(&record.plugin_id));
+            .and_then(|plugins| plugins.installed_name(record.format, &record.plugin_id));
         DeviceLabel {
             key: PluginRecord::offer_key(record.format, &record.plugin_id).into(),
             name: installed.map_or_else(|| record.plugin_id.clone().into(), SharedString::from),
@@ -95,7 +95,7 @@ impl PluginView {
         let project = self.session.read(cx).project();
         let name = project
             .state(&self.plugin)
-            .and_then(|record| plugins.installed_name(&record.plugin_id))
+            .and_then(|record| plugins.installed_name(record.format, &record.plugin_id))
             .unwrap_or_default();
         let folder = project.root().file_name().unwrap_or_default();
         format!("{name} — {}", folder.to_string_lossy())
@@ -120,7 +120,10 @@ impl Render for PluginView {
                 .child(text)
         };
 
-        if plugins.installed_name(&record.plugin_id).is_none() {
+        if plugins
+            .installed_name(record.format, &record.plugin_id)
+            .is_none()
+        {
             // Missing. The card is named by the id, which is all that is left of the plugin.
             // The record stays as it is, the track is silent, and `problems.txt` says the
             // same thing to an agent.

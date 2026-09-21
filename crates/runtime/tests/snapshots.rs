@@ -39,7 +39,7 @@ use gpui::{
     MouseUpEvent, Pixels, PlatformInput, Point, WindowHandle, point, px, size,
 };
 use instrument::SynthState;
-use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCommand};
+use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand};
 use runtime::window::Shell;
 use runtime::{OFFLINE, main_arrangement, open_or_create_with, views};
 use sound_core::{Changes, Engine, Instance, InstanceId, Project, Ticks};
@@ -298,11 +298,12 @@ impl Opened {
 fn test_plugin_host(root: &std::path::Path) -> Plugins {
     let folder = root.join("plugins");
     test_clap_plugin::install_into(&folder);
+    test_vst3_plugin::install_into(&folder);
     let scanner = ScanCommand::new(
         env!("CARGO_BIN_EXE_runtime"),
         [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
     );
-    Plugins::new(vec![folder], scanner)
+    Plugins::new(vec![folder], scanner, ScanCache::none())
 }
 
 /// Puts a plugin record in the `instrument` slot of a track, as picking one does.

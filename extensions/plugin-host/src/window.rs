@@ -1,26 +1,20 @@
 //! The plugin's own window: a window of the application with the plugin's own view inside it.
 //!
-//! CLAP has two ways to show a plugin. The plugin makes a floating window of its own, or it
-//! puts its view into a window the host provides. The specification calls the floating one a
-//! fallback every plugin should support; in practice almost none do. Checked on this machine
-//! on September 20, 2026: both real CLAP instruments here answer `is_api_supported` with
-//! `false` for a floating window and `true` for an embedded one. So the host makes the window
-//! and the plugin fills it.
+//! One GPUI window per open plugin, beside the main one, with an empty root view, as big as
+//! the plugin asked for. The plugin's view is a child of that window's view and draws over it.
+//! Nothing about it is saved: where it sat and whether it was open are not part of the piece.
 //!
-//! It is a window of its own beside the main one, never a panel inside it: one GPUI window per
-//! open plugin, with an empty root view, as big as the plugin asked for. The plugin's view is
-//! a child of that window's view and draws over it. Nothing about it is saved: where it sat and
-//! whether it was open are not part of the piece.
+//! Nothing here knows a plugin format. What a plugin has to do for a window is
+//! [`crate::backend::PluginGui`], which the CLAP backend fills in. A VST 3 plugin gets its own
+//! window in step 5b and answers `None` until then, so its card says it has none.
 //!
-//! Every call of the GUI extension belongs to the main thread, which is where [`crate::Plugins`]
-//! lives. The one callback that does not is `clap_host_gui.closed`, which a plugin may make
-//! from any thread; it only sets a flag that the next poll reads.
+//! Every call of a plugin's window belongs to the main thread, which is where [`crate::Plugins`]
+//! lives. The one callback that does not is CLAP's `clap_host_gui.closed`, which a plugin may
+//! make from any thread; it only sets a flag that the next poll reads.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
-use clack_extensions::gui::{GuiApiType, GuiConfiguration, GuiError, GuiSize, PluginGui};
-use clack_host::prelude::*;
 use gpui::{
     App, Bounds, Context, IntoElement, Render, Subscription, TitlebarOptions, Window, WindowBounds,
     WindowHandle, WindowOptions, div, prelude::*, px, size,
@@ -29,22 +23,23 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use sound_core::InstanceId;
 
 use crate::PluginProblem;
-use crate::host::{SoundToolsHost, WeakPlugins};
+use crate::backend::PluginGui;
+use crate::host::WeakPlugins;
+
+/// How big a plugin's window is, in logical pixels. The formats each have a type of their own
+/// for this and they say the same thing.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct WindowSize {
+    pub width: u32,
+    pub height: u32,
+}
 
 /// How big a plugin's window is when the plugin does not say. Every plugin with a window
-/// answers `get_size`; this is only so that a window is never zero-sized.
-const DEFAULT_SIZE: GuiSize = GuiSize {
+/// answers when it is asked; this is only so that a window is never zero-sized.
+const DEFAULT_SIZE: WindowSize = WindowSize {
     width: 600,
     height: 400,
 };
-
-/// How to show a plugin on this machine: the platform's windowing API, in a window of ours.
-fn configuration() -> Option<GuiConfiguration<'static>> {
-    Some(GuiConfiguration {
-        api_type: GuiApiType::default_for_current_platform()?,
-        is_floating: false,
-    })
-}
 
 /// The root view of a plugin's window. It draws nothing: the plugin's own view is in the same
 /// window and covers it. It exists because a GPUI window needs a root.
@@ -66,24 +61,19 @@ pub(crate) struct WindowOwner {
 /// has to be.
 pub(crate) enum Prepared {
     AlreadyOpen(WindowHandle<PluginFrame>),
-    Wanted(GuiSize),
+    Wanted(WindowSize),
 }
 
-/// The plugin's window, from the host's side.
-///
-/// `created` says the plugin holds resources for a window and `open` says which window they
-/// are in. They are apart because the plugin is asked first and the window is made after, so
-/// there is a moment with one and not the other, and an attempt that fails there must still
-/// free what the plugin holds.
+/// The plugin's window, from the host's side. The plugin's own part of it, what it makes and
+/// frees, is the backend's; this is the window it goes in.
 #[derive(Default)]
 pub(crate) struct PluginWindow {
-    created: bool,
     open: Option<WindowHandle<PluginFrame>>,
     /// Frees the plugin's view when the window goes, whatever took it down. See
     /// [`open_window`] for why this is what keeps the plugin's view inside its parent's life.
     closed: Option<Subscription>,
     /// A size the plugin asked for, until whoever polls gives the window it.
-    wanted_size: Option<GuiSize>,
+    wanted_size: Option<WindowSize>,
 }
 
 impl PluginWindow {
@@ -94,96 +84,43 @@ impl PluginWindow {
     /// The plugin asked its window to be this big. Plugins do it as they open, and again when
     /// their own interface changes. Nothing of ours has to follow: the window holds the plugin
     /// and nothing else.
-    pub fn wants_size(&mut self, wanted: GuiSize) {
+    pub fn wants_size(&mut self, wanted: WindowSize) {
         self.wanted_size = Some(wanted);
     }
 
     /// The window and the size its plugin last asked for, once.
     #[must_use]
-    pub fn take_wanted_size(&mut self) -> Option<(WindowHandle<PluginFrame>, GuiSize)> {
+    pub fn take_wanted_size(&mut self) -> Option<(WindowHandle<PluginFrame>, WindowSize)> {
         let handle = self.open?;
         Some((handle, self.wanted_size.take()?))
-    }
-
-    /// Whether this plugin has a window at all. A plugin without one is ordinary: it has no
-    /// interface of its own, and its card says so instead of offering to open one. The host
-    /// asks while the plugin loads and keeps the answer, so that drawing a card calls into no
-    /// plugin; [`Self::prepare`] asks again as the negotiation CLAP puts before `create`.
-    pub fn is_offered(instance: &mut PluginInstance<SoundToolsHost>) -> bool {
-        let Some(gui) = gui_of(instance) else {
-            return false;
-        };
-        let Some(configuration) = configuration() else {
-            return false;
-        };
-        gui.is_api_supported(&instance.plugin_handle(), configuration)
     }
 
     /// The first half of opening a window: everything the plugin has to say, with nothing of
     /// GPUI running. See [`crate::Plugins::open_window`] for why the two halves are apart.
     ///
-    /// CLAP's order for an embedded window: create, ask how big, put the view in a window,
-    /// show. The scale is left alone, as CLAP says for Cocoa, where sizes are already logical.
-    pub fn prepare(
-        &mut self,
-        instance: &mut PluginInstance<SoundToolsHost>,
-        plugin_id: &str,
-    ) -> Result<Prepared, PluginProblem> {
+    /// The order for an embedded window: create, ask how big, put the view in a window, show.
+    /// The scale is left alone, as both formats say for Cocoa, where sizes are already logical.
+    pub fn prepare(&mut self, gui: &mut dyn PluginGui) -> Result<Prepared, PluginProblem> {
         if let Some(handle) = self.open {
             return Ok(Prepared::AlreadyOpen(handle));
         }
-        let no_window = || PluginProblem::NoWindow {
-            plugin_id: plugin_id.to_string(),
-        };
-        let gui = gui_of(instance).ok_or_else(no_window)?;
-        let configuration = configuration().ok_or_else(no_window)?;
-        if !self.created {
-            if !gui.is_api_supported(&instance.plugin_handle(), configuration) {
-                return Err(no_window());
-            }
-            gui.create(&instance.plugin_handle(), configuration)
-                .map_err(|error: GuiError| PluginProblem::WindowDidNotOpen {
-                    plugin_id: plugin_id.to_string(),
-                    message: error.to_string(),
-                })?;
-            // From here the plugin holds resources for a window, and `give_up` frees them.
-            // `create` is never called twice, which CLAP forbids: an attempt whose window did
-            // not open leaves `created` set and comes back here.
-            self.created = true;
-        }
-        Ok(Prepared::Wanted(
-            gui.get_size(&instance.plugin_handle())
-                .unwrap_or(DEFAULT_SIZE),
-        ))
+        // From here the plugin holds resources for a window, and `give_up` frees them. It is
+        // never made twice: an attempt whose window did not open leaves them and comes back.
+        gui.create()?;
+        Ok(Prepared::Wanted(gui.size().unwrap_or(DEFAULT_SIZE)))
     }
 
     /// The second half: the plugin fills the window that was made for it. On a failure the
     /// window comes back, for the caller to take down once nothing is borrowed.
     pub fn attach(
         &mut self,
-        instance: &mut PluginInstance<SoundToolsHost>,
-        plugin_id: &str,
+        gui: &mut dyn PluginGui,
         handle: WindowHandle<PluginFrame>,
         view: Option<NonNull<c_void>>,
         closed: Subscription,
     ) -> Result<(), (PluginProblem, WindowHandle<PluginFrame>)> {
         self.open = Some(handle);
         self.closed = Some(closed);
-        let failed = |error: GuiError| PluginProblem::WindowDidNotOpen {
-            plugin_id: plugin_id.to_string(),
-            message: error.to_string(),
-        };
-        let Some(gui) = gui_of(instance) else {
-            self.created = false;
-            self.open = None;
-            self.closed = None;
-            return Err((
-                PluginProblem::NoWindow {
-                    plugin_id: plugin_id.to_string(),
-                },
-                handle,
-            ));
-        };
         // A window with no view of its own is the one GPUI makes without a platform behind it,
         // which is what a test has. The plugin is then shown with nothing to draw in, so the
         // rest of its life can be checked without a display. See `tests/plugin_host/window.rs`.
@@ -192,21 +129,15 @@ impl PluginWindow {
             // window can go frees the plugin's resources for it first: `give_up`, the window's
             // own close control, and the check in `Plugins::settle_windows` for a window that
             // went without saying so. The application ends before a window it still has.
-            Some(view) => unsafe {
-                let parent = clack_extensions::gui::Window::from_cocoa_nsview(view.as_ptr());
-                gui.set_parent(&instance.plugin_handle(), parent)
-            },
+            Some(view) => unsafe { gui.set_parent(view) },
             None => Ok(()),
         };
-        match attached.and_then(|()| gui.show(&instance.plugin_handle())) {
+        match attached.and_then(|()| gui.show()) {
             Ok(()) => Ok(()),
-            Err(error) => {
-                let problem = failed(error);
-                match self.give_up(instance) {
-                    Some(handle) => Err((problem, handle)),
-                    None => Ok(()),
-                }
-            }
+            Err(problem) => match self.give_up(Some(gui)) {
+                Some(handle) => Err((problem, handle)),
+                None => Ok(()),
+            },
         }
     }
 
@@ -217,14 +148,12 @@ impl PluginWindow {
     #[must_use]
     pub fn give_up(
         &mut self,
-        instance: &mut PluginInstance<SoundToolsHost>,
+        gui: Option<&mut dyn PluginGui>,
     ) -> Option<WindowHandle<PluginFrame>> {
         self.wanted_size = None;
         self.closed = None;
-        if std::mem::take(&mut self.created)
-            && let Some(gui) = gui_of(instance)
-        {
-            gui.destroy(&instance.plugin_handle());
+        if let Some(gui) = gui {
+            gui.destroy();
         }
         self.open.take()
     }
@@ -239,7 +168,7 @@ pub(crate) fn remove(handle: WindowHandle<PluginFrame>, cx: &mut App) {
 
 /// Gives a window the size its plugin asked for. An error says only that the window was
 /// already gone, and then there is nothing to size.
-pub(crate) fn resize(handle: WindowHandle<PluginFrame>, wanted: GuiSize, cx: &mut App) {
+pub(crate) fn resize(handle: WindowHandle<PluginFrame>, wanted: WindowSize, cx: &mut App) {
     let wanted = size(px(wanted.width as f32), px(wanted.height as f32));
     handle.update(cx, |_, window, _| window.resize(wanted)).ok();
 }
@@ -258,7 +187,7 @@ pub(crate) fn resize(handle: WindowHandle<PluginFrame>, wanted: GuiSize, cx: &mu
 pub(crate) fn open_window(
     owner: &WindowOwner,
     title: &str,
-    wanted: GuiSize,
+    wanted: WindowSize,
     cx: &mut App,
 ) -> anyhow::Result<(
     WindowHandle<PluginFrame>,
@@ -304,8 +233,4 @@ fn cocoa_view(window: &Window) -> Option<NonNull<c_void>> {
         RawWindowHandle::AppKit(handle) => Some(handle.ns_view),
         _ => None,
     }
-}
-
-fn gui_of(instance: &mut PluginInstance<SoundToolsHost>) -> Option<PluginGui> {
-    instance.plugin_shared_handle().get_extension::<PluginGui>()
 }

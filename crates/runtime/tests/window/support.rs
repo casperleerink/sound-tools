@@ -120,11 +120,12 @@ pub fn open_without_plugin_host(cx: &mut TestAppContext) -> Opened<'_> {
 pub fn test_plugin_host(root: &Path) -> plugin_host::Plugins {
     let folder = root.join("plugins");
     test_clap_plugin::install_into(&folder);
+    test_vst3_plugin::install_into(&folder);
     let scanner = plugin_host::ScanCommand::new(
         env!("CARGO_BIN_EXE_runtime"),
         [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
     );
-    plugin_host::Plugins::new(vec![folder], scanner)
+    plugin_host::Plugins::new(vec![folder], scanner, plugin_host::ScanCache::none())
 }
 
 /// The record of a plugin instrument that names the repository's test plugin.

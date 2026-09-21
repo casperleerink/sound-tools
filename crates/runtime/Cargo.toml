@@ -29,6 +29,7 @@ midi.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 test-clap-plugin.workspace = true
+test-vst3-plugin.workspace = true
 
 # Renders the window offscreen. It runs on the main thread (no test harness), because the Metal
 # renderer and the text system need it.

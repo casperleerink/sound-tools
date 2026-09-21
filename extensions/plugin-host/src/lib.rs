@@ -15,10 +15,13 @@
 //!
 //! `README.md` in this crate is the guide, and `agent-doc.md` is what an agent reads.
 
+mod backend;
+mod clap;
 mod host;
 mod processor;
 pub mod scan;
 pub mod view;
+mod vst3;
 mod window;
 
 use serde::{Deserialize, Serialize};
@@ -30,10 +33,19 @@ use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
 pub use host::{PluginProblem, Plugins, WeakPlugins};
 pub use processor::HostedPlugin;
-pub use scan::{SCAN_ARGUMENT, ScanCommand, ScannedPlugin, default_search_paths, scan_one_bundle};
+pub use scan::{
+    SCAN_ARGUMENT, ScanCache, ScanCommand, ScannedPlugin, default_search_paths, scan_one_bundle,
+};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "plugin-host";
+
+/// What Steinberg asks of anyone who writes "VST", from their VST usage guidelines, section
+/// 15. It belongs in product credits and documentation, and wherever the VST Compatible Logo
+/// does not fit. This program shows it in the picker that offers VST 3 plugins and prints it
+/// under `runtime --plugins`; the docs carry it as well. See README.md.
+pub const VST_TRADEMARK: &str =
+    "VST is a registered trademark of Steinberg Media Technologies GmbH.";
 
 /// The name the behaviour gives its one processor.
 const PROCESSOR: &str = "plugin";
@@ -42,19 +54,48 @@ const PROCESSOR: &str = "plugin";
 const STATE_FOLDER: &str = "plugin-state";
 const STATE_EXTENSION: &str = "bin";
 
-/// The plugin formats this build can host. VST3 joins it without changing the record.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The plugin formats this build can host. Each is a backend behind this one record.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginFormat {
     Clap,
+    Vst3,
 }
 
 impl PluginFormat {
+    /// What a person reads. "VST" is Steinberg's trademark and is written as they ask, see
+    /// README.md.
     pub fn name(self) -> &'static str {
         match self {
             Self::Clap => "CLAP",
+            Self::Vst3 => "VST 3",
         }
     }
+
+    /// What a record holds, and what the scanner takes as an argument.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Clap => "clap",
+            Self::Vst3 => "vst3",
+        }
+    }
+
+    pub fn of_str(text: &str) -> Option<Self> {
+        match text {
+            "clap" => Some(Self::Clap),
+            "vst3" => Some(Self::Vst3),
+            _ => None,
+        }
+    }
+
+    /// The format of a bundle, from its file extension. This is how one list of search folders
+    /// covers every format.
+    pub fn of_extension(extension: &std::ffi::OsStr) -> Option<Self> {
+        Self::of_str(extension.to_str()?)
+    }
+
+    /// Every format this build hosts, for a scan and for a picker.
+    pub const ALL: [Self; 2] = [Self::Clap, Self::Vst3];
 }
 
 /// The name of the file that holds the plugin's own state, under `assets/plugin-state/`.
@@ -172,6 +213,14 @@ impl State for PluginRecord {
                 self.plugin_id
             ));
         }
+        // A VST 3 plugin is named by its class id, which is always thirty-two hex digits. An
+        // agent that writes anything else is told here and not by a plugin that is not found.
+        if self.format == PluginFormat::Vst3 && vst3::class_id_of(&self.plugin_id).is_none() {
+            return Err(format!(
+                "a vst3 plugin_id is the class id as thirty-two hex digits, not {:?}. `runtime --plugins` prints them",
+                self.plugin_id
+            ));
+        }
         Ok(())
     }
 }
@@ -208,7 +257,7 @@ fn apply(
         Ok(opened) => {
             // Every run hands the engine a plugin. Nothing here asks what the engine already
             // has, so an edit the project rejects leaves the engine and this host as they were.
-            context.update(node, Some(Box::new(opened.started)))?;
+            context.update(node, Some(opened.started))?;
             for note in opened.notes {
                 context.problem(note.to_string());
             }
