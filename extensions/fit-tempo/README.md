@@ -77,6 +77,7 @@ Measured on an Apple Silicon laptop, dev profile, on a take of ten minutes: 4560
 - One mouse move of a steadiness drag takes 1.6 ms, which is inside a display frame.
 - One tick to frame costs 3.2 ns with one tempo change and 22.2 ns with 1520: a lookup is a binary search, so it grows with the logarithm of the number of changes and not with the number.
 - On the real device at 44.1 kHz, playing that project: 0 xruns, 0 late callbacks, slowest callback 137 µs, against 109 µs for the same project with one tempo change.
+- The click needs nothing of a fit: it holds no tempo map and asks the transport which ticks each block covers, so it lands on the beats of a fitted grid like any other. `the_click_follows_a_fitted_grid` holds that, within one frame.
 
 ## Checks
 

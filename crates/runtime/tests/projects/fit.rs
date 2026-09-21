@@ -786,3 +786,52 @@ fn render_of(folder: &std::path::Path) -> Vec<f32> {
     project.engine().play();
     runtime::render(&mut project, &mut engine, &plugins, 48_000 * 70).expect("a render")
 }
+
+/// The click lands on the beats of a fitted map. It holds no tempo map of its own: every block
+/// it asks the transport which ticks it covers, so a grid that follows a hand needs nothing of
+/// it. This is the check that a fitted project still clicks where the music is.
+#[test]
+fn the_click_follows_a_fitted_grid() {
+    let mut harness = recorded(8);
+    fit(&mut harness);
+    let mut click = metronome::Click::attach(harness.project.engine()).unwrap();
+    click.set_on(harness.project.engine(), true).unwrap();
+    // The take plays too, so the clicks are found in a mix and not in silence.
+    harness.project.engine().stop();
+    harness.project.engine().seek(Ticks(0));
+    harness.render(64);
+    let heard = harness.play(48_000 * 12);
+
+    // A click starts at its peak, so the first frame of each burst is a step in the signal.
+    let mut starts: Vec<u64> = Vec::new();
+    let left: Vec<f32> = heard.iter().step_by(2).copied().collect();
+    for (frame, pair) in left.windows(2).enumerate() {
+        if (pair[1] - pair[0]).abs() > 0.2
+            && starts.last().is_none_or(|last| frame as u64 > last + 480)
+        {
+            starts.push(frame as u64 + 1);
+        }
+    }
+    assert!(
+        starts.len() > 8,
+        "{} clicks in twelve seconds",
+        starts.len()
+    );
+
+    // Every click is on a beat of the fitted map, within a frame.
+    let clock = Clock::new(tempo_map(&harness), 48_000);
+    let beats: Vec<u64> = (0..64)
+        .map(|beat| clock.frame_of(Ticks(beat * 960)).0)
+        .collect();
+    for start in &starts {
+        let nearest = beats
+            .iter()
+            .map(|beat| beat.abs_diff(*start))
+            .min()
+            .unwrap();
+        assert!(
+            nearest <= 1,
+            "a click at frame {start} is {nearest} frames off a beat"
+        );
+    }
+}
