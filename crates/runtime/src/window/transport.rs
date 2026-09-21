@@ -208,16 +208,20 @@ impl TransportPill {
         let Some(keyboard) = self.keyboard.as_mut() else {
             return;
         };
-        keyboard.poll(timing.as_deref());
+        // The poll also makes the port of an earlier `play_into` the one the live input
+        // reaches: the release of what was held went out in a block before it.
+        let polled = session.update(cx, |session, _| {
+            keyboard.poll(session.engine(), timing.as_deref())
+        });
         // A take goes to the track it began on, so the live input stays there too while it
         // runs. Selecting another track during a take would otherwise split the two.
-        if recording_track.is_some() || destination == keyboard.destination() {
-            return;
-        }
-        let wired = session.update(cx, |session, _| {
-            keyboard.play_into(session.engine(), destination)
-        });
-        if let Err(error) = wired {
+        let wired = match recording_track.is_some() {
+            true => Ok(()),
+            false => session.update(cx, |session, _| {
+                keyboard.play_into(session.engine(), destination)
+            }),
+        };
+        if let Err(error) = polled.and(wired) {
             session.update(cx, |session, cx| session.report(error, cx));
         }
     }
@@ -281,27 +285,41 @@ impl TransportPill {
             return;
         };
         // The last block of the take is still in the ring.
-        keyboard.poll(timing.as_deref());
-        let Some(take) = keyboard.finish_recording(until) else {
+        let polled = session.update(cx, |session, _| {
+            keyboard.poll(session.engine(), timing.as_deref())
+        });
+        let take = keyboard.finish_recording(until);
+        if let Err(error) = polled {
+            session.update(cx, |session, cx| session.report(error, cx));
+        }
+        let Some(take) = take else {
             return;
         };
         cx.notify();
         // The track the take began on, not the one that is selected now.
-        let Some(track) = self.recording_track.take() else {
+        let track = self.recording_track.take();
+        if take.is_empty() {
+            // Nothing was played: no clip and no file.
+            return;
+        }
+        // The performance first, and whatever happens to the clip. It is the only copy of what
+        // the composer played, and a clip can fail to be made: its track may be gone.
+        let written = recording::write_take(session.read(cx).project(), &take);
+        let name = match written {
+            Ok(name) => Some(name),
+            Err(error) => {
+                session.update(cx, |session, cx| session.report(error, cx));
+                None
+            }
+        };
+        let Some(track) = track else {
             return;
         };
-        let clip = session.update(cx, |session, cx| {
+        session.update(cx, |session, cx| {
             session.edit(cx, |project| {
-                recording::add_take_clip(project, &track, &take)
+                recording::add_take_clip(project, &track, &take, name)
             })
         });
-        let Some(Some(clip)) = clip else {
-            return;
-        };
-        let written = recording::write_take(session.read(cx).project(), &clip, &take);
-        if let Err(error) = written {
-            session.update(cx, |session, cx| session.report(error, cx));
-        }
     }
 
     /// Whether the click sounds. For tests and for the button.

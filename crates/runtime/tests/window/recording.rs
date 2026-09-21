@@ -60,7 +60,7 @@ fn the_record_button_records_what_is_played_into_a_clip_as_one_undo_step(
     assert_eq!(opened.undo_label(), Some("Record".to_string()));
 
     // One step: undo takes the whole clip away and leaves the raw take.
-    let take_file = opened.path("assets/takes/arrangement/track-1/take.json");
+    let take_file = opened.path("assets/takes/take-1.json");
     assert!(take_file.exists());
     opened.keys("cmd-z");
     assert_eq!(take_clip(&mut opened), None);
@@ -233,4 +233,116 @@ fn a_take_over_an_existing_clip_is_a_new_clip(cx: &mut gpui::TestAppContext) {
     assert_eq!(existing.notes[0].pitch.number(), 48);
     let take = take_clip(&mut opened).unwrap();
     assert_eq!(take.notes[0].pitch.number(), 72);
+}
+
+/// Record, undo, record again: the most common thing a pianist does. The second take must not
+/// write over the first performance. Both clips take the id `take`, because undo frees it, so
+/// a take named after its clip would have truncated the first file.
+#[gpui::test]
+fn a_second_take_after_an_undo_leaves_the_first_one_untouched(cx: &mut gpui::TestAppContext) {
+    let mut opened = opened(cx);
+    let record = |opened: &mut Opened<'_>, pitch: u8| {
+        opened.keys("r");
+        opened.settle();
+        opened.play_midi(on(pitch, 88));
+        opened.render(12_000);
+        opened.settle();
+        opened.play_midi(off(pitch));
+        opened.keys("r");
+        opened.settle();
+    };
+    record(&mut opened, 60);
+    let first = opened.path("assets/takes/take-1.json");
+    let before = std::fs::read_to_string(&first).unwrap();
+    assert!(before.contains(r#""pitch":60"#), "{before}");
+    assert_eq!(
+        take_clip(&mut opened).unwrap().take.as_deref(),
+        Some("take-1")
+    );
+
+    opened.keys("cmd-z");
+    assert_eq!(take_clip(&mut opened), None);
+    record(&mut opened, 64);
+
+    // The clip has the same id as the first one had, and a take of its own.
+    let second = opened.path("assets/takes/take-2.json");
+    assert_eq!(
+        take_clip(&mut opened).unwrap().take.as_deref(),
+        Some("take-2")
+    );
+    assert!(second.exists());
+    assert!(
+        std::fs::read_to_string(&second)
+            .unwrap()
+            .contains(r#""pitch":64"#),
+        "the second take holds the second performance"
+    );
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), before);
+}
+
+/// A clip that is dragged to another track is a delete and a create, so it gets a new id. The
+/// take travels with it, because it is a field of the record and not the path.
+#[gpui::test]
+fn a_clip_dragged_to_another_track_still_names_its_take(cx: &mut gpui::TestAppContext) {
+    let mut opened = open_with(cx, |project| {
+        let arrangement = runtime::main_arrangement(project).unwrap();
+        runtime::add_track(project, &arrangement).unwrap();
+    });
+    opened.settle();
+    opened.keys("r");
+    opened.settle();
+    opened.play_midi(on(60, 88));
+    opened.render(24_000);
+    opened.settle();
+    opened.play_midi(off(60));
+    opened.keys("r");
+    opened.settle();
+    let clip = take_clip(&mut opened).expect("the take became a clip");
+    assert_eq!(clip.take.as_deref(), Some("take-1"));
+
+    // Drag it from the first track row to the second.
+    let from = opened.at(clip.start.0 + 480, 0);
+    let to = opened.at(clip.start.0 + 480, 1);
+    opened.drag(from, to);
+    opened.settle();
+    assert_eq!(opened.clip("arrangement/track-1/take"), None);
+    let moved = opened
+        .clip("arrangement/track-2/take")
+        .expect("the clip moved to the other track");
+    assert_eq!(moved.take.as_deref(), Some("take-1"));
+    assert_eq!(moved.notes, clip.notes);
+    let file = opened.clip_file("arrangement/track-2/take").unwrap();
+    assert!(file.contains(r#""take": "take-1""#), "{file}");
+}
+
+/// The track is deleted while the take runs, so no clip can be made. The performance is still
+/// written: it is the only copy of what the composer played.
+#[gpui::test]
+fn a_take_whose_track_goes_away_is_still_written(cx: &mut gpui::TestAppContext) {
+    let mut opened = opened(cx);
+    opened.keys("r");
+    opened.settle();
+    opened.play_midi(on(60, 88));
+    opened.render(12_000);
+    opened.settle();
+
+    // The track goes, from outside, as an agent would delete it.
+    let folder = opened.path("state/arrangement/track-1");
+    std::fs::remove_dir_all(&folder).unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[folder]));
+    opened.settle();
+    assert!(opened.project(|project| {
+        project
+            .resolve::<Clip>(&id("arrangement/track-1/take"))
+            .is_none()
+    }));
+
+    opened.keys("r");
+    opened.settle();
+    assert!(!opened.is_recording());
+    let take = opened.path("assets/takes/take-1.json");
+    assert!(take.exists(), "the performance was lost with its track");
+    let text = std::fs::read_to_string(&take).unwrap();
+    assert!(text.contains(r#""pitch":60"#), "{text}");
+    assert_eq!(take_clip(&mut opened), None);
 }

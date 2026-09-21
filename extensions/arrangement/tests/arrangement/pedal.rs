@@ -112,3 +112,52 @@ fn a_pedal_record_written_by_hand_loads_and_is_not_rewritten() {
     assert_eq!(harness.problems(), Vec::<String>::new());
     assert_eq!(std::fs::read_to_string(harness.path(CLIP)).unwrap(), json);
 }
+
+/// The pedal of a clip ends with the clip, as a note that is longer than the rest of its clip
+/// ends there. Without this a clip that ends under the pedal sustains for the rest of the
+/// piece: the sequencer would chase its last value for ever.
+#[test]
+fn the_pedal_of_a_clip_ends_with_the_clip() {
+    // One bar of clip, the pedal down from its start and never lifted, and a note after it.
+    let notes = vec![note(0, 480, 60)];
+    let held = clip_with_pedal(0, 3840, notes, &[(0, 127)]);
+    let later = clip(3840, 3840, vec![note(0, 480, 67)]);
+    let mut harness = Harness::with_clips(vec![held, later]);
+    let output = harness.play(7680 * TICK);
+    // The clip ends at tick 3840 and takes its pedal with it, so note 60 is let go there and
+    // only the note of the next clip sounds. Without the lift the level would be 60 + 67.
+    assert_eq!(
+        level_changes(&output),
+        [(0, 60.0), (3840 * TICK, 67.0), (4320 * TICK, 0.0)]
+    );
+}
+
+/// The same for a clip that was trimmed before its lift: the lift is gone with the trim, and
+/// the end of the clip does the work.
+#[test]
+fn a_clip_trimmed_before_its_lift_does_not_sustain_for_ever() {
+    let notes = vec![note(0, 480, 60)];
+    let mut trimmed = clip_with_pedal(0, 3840, notes, &[(0, 127), (1920, 0)]);
+    trimmed.set_length(sound_notes::Length::new(Ticks(960)).unwrap());
+    assert_eq!(trimmed.pedal.len(), 1, "the lift was trimmed away");
+    let mut harness = Harness::with_clips(vec![trimmed]);
+    let output = harness.play(3840 * TICK);
+    assert_eq!(level_changes(&output), [(0, 60.0), (960 * TICK, 0.0)]);
+}
+
+/// A record may hold any number of pedal moves on one tick, and clips that overlap add more.
+/// Only the last of them can apply, so the snapshot keeps one per tick: the work of a block is
+/// then bounded by the ticks it covers, whatever an agent writes.
+#[test]
+fn the_snapshot_keeps_one_pedal_move_per_tick() {
+    let many: Vec<(u64, u8)> = (0..5_000).map(|index| (0, (index % 128) as u8)).collect();
+    let clip = clip_with_pedal(0, 3840, Vec::new(), &many);
+    let snapshot = arrangement::TrackSnapshot::new([&clip]);
+    // One move at tick 0, the highest value of that tick, and the lift at the end of the clip.
+    let moves: Vec<(u64, u8)> = snapshot
+        .pedal()
+        .iter()
+        .map(|change| (change.start.0, change.value.value()))
+        .collect();
+    assert_eq!(moves, [(0, 127), (3840, 0)]);
+}

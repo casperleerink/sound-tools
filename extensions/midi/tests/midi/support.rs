@@ -52,6 +52,8 @@ pub struct Harness {
     pub input: Input,
     ears: Node<Ears>,
     heard: rtrb::Consumer<Heard>,
+    /// Other instruments of the same engine, see [`Harness::add_ears`].
+    others: Vec<(InputEndpoint, rtrb::Consumer<Heard>)>,
 }
 
 impl Harness {
@@ -70,18 +72,40 @@ impl Harness {
             input,
             ears,
             heard,
+            others: Vec::new(),
         };
         let notes = harness.notes_input();
-        harness
-            .keyboard
-            .play_into(&mut harness.control, Some(notes))
-            .unwrap();
+        harness.wire(Some(notes));
         harness
     }
 
     /// The `notes` input of the instrument.
     pub fn notes_input(&self) -> InputEndpoint {
         InputEndpoint::new(self.ears, Ears::NOTES)
+    }
+
+    /// A second instrument in the same engine, as another track's synth is. Gives its `notes`
+    /// port, and [`Self::heard_by`] says what reached it.
+    pub fn add_ears(&mut self) -> InputEndpoint {
+        let (producer, heard) = rtrb::RingBuffer::new(4096);
+        let mut edit = self.control.edit();
+        let name = format!("ears-{}", self.others.len() + 2);
+        let ears = edit.add_processor(&name, Ears(producer)).unwrap();
+        edit.commit().unwrap();
+        let port = InputEndpoint::new(ears, Ears::NOTES);
+        self.others.push((port, heard));
+        port
+    }
+
+    /// Everything a second instrument heard since the last call.
+    pub fn heard_by(&mut self, port: InputEndpoint) -> Vec<Heard> {
+        let found = self.others.iter_mut().find(|(other, _)| *other == port);
+        let (_, ring) = found.expect("no such instrument");
+        let mut heard = Vec::new();
+        while let Ok(event) = ring.pop() {
+            heard.push(event);
+        }
+        heard
     }
 
     /// Runs the engine for `frames` frames in device buffers of `block` frames, and polls the
@@ -93,9 +117,31 @@ impl Harness {
             let now = left.min(block);
             self.engine.process_block(&mut buffer[..now * 2]);
             self.control.poll().unwrap();
-            self.keyboard.poll(None);
+            self.keyboard.poll(&mut self.control, None).unwrap();
             left -= now;
         }
+    }
+
+    /// One poll of the control side, as the interface does it.
+    pub fn poll(&mut self) {
+        self.keyboard.poll(&mut self.control, None).unwrap();
+    }
+
+    /// Sends the live input to a port and runs until the change has happened, as the window
+    /// does over its polls: the release of what was held goes out into the port it played
+    /// into, a block before the connection changes.
+    pub fn wire(&mut self, destination: Option<InputEndpoint>) {
+        self.keyboard
+            .play_into(&mut self.control, destination)
+            .unwrap();
+        for _ in 0..4 {
+            self.poll();
+            if self.keyboard.destination() == destination {
+                return;
+            }
+            self.run(64, 64);
+        }
+        panic!("the live input never reached {destination:?}");
     }
 
     /// Everything the instrument heard since the last call.

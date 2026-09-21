@@ -9,7 +9,9 @@ use sound_core::{
     monotonic_nanos,
 };
 
-use crate::keys::{Input, Keys, Sounded};
+use sound_notes::Pedal;
+
+use crate::keys::{Input, Keys, Played, Sounded};
 use crate::take::{Take, TakeEvent};
 
 /// The name of the processor in the engine graph. Instance processors are named
@@ -85,6 +87,9 @@ struct Recording {
     start: Ticks,
     /// The monotonic time where it began, so the take's times start at zero.
     started_nanos: u64,
+    /// Where the pedal stood when it began, so a take under a held pedal plays back as it
+    /// sounded.
+    pedal_at_start: Pedal,
     events: Vec<TakeEvent>,
 }
 
@@ -98,8 +103,20 @@ pub struct Keyboard {
     reports: rtrb::Consumer<Sounded>,
     lost_reports: Arc<AtomicU64>,
     destination: Option<InputEndpoint>,
+    /// Where the live input should go next. The change waits for the next [`Self::poll`], so
+    /// the release of what was held is out of the processor before the connection goes.
+    wanted: Option<Option<InputEndpoint>>,
     recording: Option<Recording>,
     latency: Latency,
+    /// Where the pedal stands, as the reports have it. A recording that begins under a held
+    /// pedal starts with this value.
+    live_pedal: Pedal,
+    /// The pitches the live input holds, one bit each, as the reports have it. It is what the
+    /// processor holds, so this side can tell whether a release is needed at all.
+    live_notes: u128,
+    /// Reports that were lost. Then this side does not know what is held, and a release is
+    /// sent whether the mirror says so or not.
+    seen_lost_reports: u64,
 }
 
 impl Keyboard {
@@ -115,8 +132,12 @@ impl Keyboard {
             reports,
             lost_reports,
             destination: None,
+            wanted: None,
             recording: None,
             latency: Latency::default(),
+            live_pedal: Pedal::UP,
+            live_notes: 0,
+            seen_lost_reports: 0,
         })
     }
 
@@ -128,16 +149,70 @@ impl Keyboard {
     /// Sends the live input to this port, or to nowhere. It is the `notes` input of the
     /// instrument of the selected track, which the window looks up and passes in.
     ///
+    /// The change itself happens at the next [`Self::poll`]. Everything the live input holds
+    /// is released first, into the instrument it plays into now: a disconnect in this block
+    /// would take the connection away before the offs could go out, and the notes of the old
+    /// instrument would sound for ever.
+    ///
     /// Call it after every change of the project: the endpoint moves when the instrument is
-    /// built again. The same endpoint twice costs nothing and no compile.
+    /// built again. The same endpoint twice costs nothing.
     pub fn play_into(
         &mut self,
-        engine: &mut EngineControl,
+        _engine: &mut EngineControl,
         destination: Option<InputEndpoint>,
     ) -> Result<(), GraphError> {
-        if self.destination == destination {
+        let settled = self.wanted.unwrap_or(self.destination);
+        if settled == destination {
             return Ok(());
         }
+        self.wanted = Some(destination);
+        // Only when something is held. Else the change happens at the next poll with nothing
+        // to wait for, which is what a track selected between two phrases does.
+        if self.holds_anything() {
+            self.release_held();
+        }
+        Ok(())
+    }
+
+    /// Whether the live input may be holding a note or the pedal. It is what the reports say,
+    /// and "yes" whenever a report was lost, because then this side does not know.
+    fn holds_anything(&self) -> bool {
+        self.live_notes != 0
+            || self.live_pedal.is_down()
+            || self.lost_reports.load(Ordering::Relaxed) != self.seen_lost_reports
+    }
+
+    /// Lets go of every note and the pedal the live input holds, at the start of the next
+    /// audio block. See [`Input::release_held`]: this is the same one path.
+    pub fn release_held(&self) {
+        self.input.release_held();
+    }
+
+    /// The port the live input reaches now. It is still the old one until the next poll after
+    /// a [`Self::play_into`].
+    pub fn destination(&self) -> Option<InputEndpoint> {
+        self.destination
+    }
+
+    /// Takes every report the engine sent since the last call: a recording grows by what was
+    /// played, and the latency is measured against `timing` when there is a device. It also
+    /// makes the port of [`Self::play_into`] the one the live input reaches.
+    ///
+    /// Call it regularly. Nothing here is on the way to sound.
+    pub fn poll(
+        &mut self,
+        engine: &mut EngineControl,
+        timing: Option<&StreamTiming>,
+    ) -> Result<(), GraphError> {
+        self.take_reports(timing);
+        // The offs of what was held must reach the instrument that holds the notes, so the
+        // connection stays until the processor says they are out of it.
+        if self.input.release_is_pending() {
+            return Ok(());
+        }
+        let Some(destination) = self.wanted.take() else {
+            return Ok(());
+        };
         let notes = OutputEndpoint::new(self.node, Keys::NOTES);
         let mut edit = engine.edit();
         if let Some(old) = self.destination {
@@ -156,21 +231,19 @@ impl Keyboard {
         Ok(())
     }
 
-    pub fn destination(&self) -> Option<InputEndpoint> {
-        self.destination
-    }
-
-    /// Takes every report the engine sent since the last call: a recording grows by what was
-    /// played, and the latency is measured against `timing` when there is a device.
-    ///
-    /// Call it regularly. Nothing here is on the way to sound.
-    pub fn poll(&mut self, timing: Option<&StreamTiming>) {
+    fn take_reports(&mut self, timing: Option<&StreamTiming>) {
+        self.seen_lost_reports = self.lost_reports.load(Ordering::Relaxed);
         while let Ok(sounded) = self.reports.pop() {
             if let Some(timing) = timing
                 && let Some(sound_nanos) = timing.sound_time_nanos(sounded.frame)
             {
                 self.latency
                     .add(sound_nanos.saturating_sub(sounded.arrived.at_nanos));
+            }
+            match sounded.arrived.played {
+                Played::On { pitch, .. } => self.live_notes |= 1 << pitch.number(),
+                Played::Off { pitch, .. } => self.live_notes &= !(1 << pitch.number()),
+                Played::Pedal(value) => self.live_pedal = value,
             }
             let Some(recording) = &mut self.recording else {
                 continue;
@@ -198,6 +271,7 @@ impl Keyboard {
         self.recording = Some(Recording {
             start: at,
             started_nanos: monotonic_nanos(),
+            pedal_at_start: self.live_pedal,
             events: Vec::new(),
         });
     }
@@ -213,6 +287,7 @@ impl Keyboard {
         Some(Take {
             start: recording.start,
             end: until.max(recording.start),
+            pedal_at_start: recording.pedal_at_start,
             events: recording.events,
         })
     }

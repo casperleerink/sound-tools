@@ -20,7 +20,7 @@ fn recorded(messages: &[(usize, midi::Played)], frames: usize) -> midi::Take {
         harness.input.send(*played);
     }
     harness.run(frames.saturating_sub(sent), 64);
-    harness.keyboard.poll(None);
+    harness.poll();
     let end = Ticks((frames / TICK) as u64);
     harness.keyboard.finish_recording(end).unwrap()
 }
@@ -79,13 +79,13 @@ fn a_key_held_before_the_start_is_left_out_of_the_clip() {
     harness.run(64, 64);
     harness.input.send(on(60, 88));
     harness.run(128, 64);
-    harness.keyboard.poll(None);
+    harness.poll();
     let from = harness.playhead();
     harness.keyboard.start_recording(from);
     harness.input.send(off(60));
     harness.input.send(on(64, 70));
     harness.run(640, 64);
-    harness.keyboard.poll(None);
+    harness.poll();
     let until = harness.playhead();
     let take = harness.keyboard.finish_recording(until).unwrap();
     assert_eq!(take.events.len(), 2);
@@ -103,7 +103,7 @@ fn a_recording_with_nothing_played_gives_an_empty_take() {
     harness.run(64, 64);
     harness.keyboard.start_recording(Ticks(0));
     harness.run(4800, 64);
-    harness.keyboard.poll(None);
+    harness.poll();
     let take = harness.keyboard.finish_recording(Ticks(192)).unwrap();
     assert!(take.is_empty());
     assert_eq!(take.clip(), None);
@@ -115,7 +115,7 @@ fn what_is_played_while_the_project_does_not_play_is_not_recorded() {
     harness.keyboard.start_recording(Ticks(0));
     harness.input.send(on(60, 88));
     harness.run(640, 64);
-    harness.keyboard.poll(None);
+    harness.poll();
     assert!(harness.keyboard.is_recording());
     let take = harness.keyboard.finish_recording(Ticks(0)).unwrap();
     assert!(take.is_empty());
@@ -129,7 +129,7 @@ fn recording_stops_and_a_second_take_is_a_take_of_its_own() {
     harness.keyboard.start_recording(Ticks(0));
     harness.input.send(on(60, 88));
     harness.run(640, 64);
-    harness.keyboard.poll(None);
+    harness.poll();
     let first = harness.keyboard.finish_recording(Ticks(30)).unwrap();
     assert_eq!(first.events.len(), 1);
     assert!(!harness.keyboard.is_recording());
@@ -139,7 +139,7 @@ fn recording_stops_and_a_second_take_is_a_take_of_its_own() {
     harness.keyboard.start_recording(from);
     harness.input.send(on(64, 88));
     harness.run(640, 64);
-    harness.keyboard.poll(None);
+    harness.poll();
     let until = harness.playhead();
     let second = harness.keyboard.finish_recording(until).unwrap();
     assert_eq!(second.events.len(), 1);

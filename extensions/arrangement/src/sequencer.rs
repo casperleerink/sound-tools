@@ -35,13 +35,27 @@ impl TrackSnapshot {
     pub fn new<'a>(clips: impl IntoIterator<Item = &'a Clip>) -> Self {
         let mut notes = Vec::new();
         let mut pedal = Vec::new();
+        let mut own = Vec::new();
         for clip in clips {
             notes.extend(clip.placed_notes());
-            pedal.extend(clip.placed_pedal());
+            own.clear();
+            own.extend(clip.placed_pedal());
+            one_per_tick(&mut own);
+            // The pedal of a clip ends with the clip, as a note that is longer than the rest
+            // of its clip ends there. Without this a clip that ends under the pedal, or one
+            // that was trimmed before its lift, would sustain for the rest of the piece.
+            let ends_down = own.last().is_some_and(|change| change.value.is_down());
+            pedal.append(&mut own);
+            if ends_down {
+                pedal.push(PlacedPedal {
+                    start: clip.end(),
+                    value: Pedal::UP,
+                });
+            }
         }
         // The whole note is the key, so the same clips always give the same order.
         notes.sort_unstable_by_key(|note| (note.start, note.pitch, note.end, note.velocity));
-        pedal.sort_unstable_by_key(|change| (change.start, change.value));
+        one_per_tick(&mut pedal);
         Self { notes, pedal }
     }
 
@@ -90,6 +104,22 @@ impl TrackSnapshot {
             .map(|note| note.end)
             .max()
     }
+}
+
+/// Sorts pedal moves by tick and keeps one per tick, the most pressed of them.
+///
+/// A record may hold any number of moves on one tick, and clips that overlap add more. Only
+/// the last of them can apply, so only it is kept, and the work of a block is then bounded by
+/// the ticks it covers, whatever a record holds.
+fn one_per_tick(pedal: &mut Vec<PlacedPedal>) {
+    pedal.sort_unstable_by_key(|change| (change.start, change.value));
+    pedal.dedup_by(|later, earlier| {
+        let same_tick = later.start == earlier.start;
+        if same_tick {
+            *earlier = *later;
+        }
+        same_tick
+    });
 }
 
 /// What the control side sends to a [`Sequencer`].

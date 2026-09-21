@@ -23,6 +23,16 @@ Three threads, none waiting for another:
 
 So a message waits for the next block and nothing else: no interface, no 16 ms poll, and no allocation, lock or system call in `process`. A message that does not fit in the event buffer of the block stays in the ring and goes out in the next one, so a key press is never lost. Both rings count what they had to drop (`Keyboard::lost`), and both are far larger than any burst a keyboard makes.
 
+## One release path
+
+The processor is the only place that knows what the live input holds, so it is the only place that can let go of it. `Input::release_held` asks it to, and it sends the pedal up and an off for every held pitch at the start of the next block, the pedal first so the offs are not latched under it. Three things ask:
+
+- the port it plays into is about to change (`Keyboard::play_into`), so the offs reach the instrument that holds the notes and not the one that comes next;
+- a port went away while it held keys, which `Ports::refresh` notices: an unplugged keyboard sends no note off, ever;
+- a message did not fit in the input ring, and it may have been an off.
+
+It releases what every keyboard holds, not only the one that went. That is the rule the note contract already has for `AllOff`, and it is why there is one path and not one per reason. `Keyboard::poll` keeps the old connection until the processor says the release is out.
+
 ## Using it
 
 ```rust
@@ -47,7 +57,9 @@ let take = keyboard.finish_recording(playhead);
 
 `Take::clip()` is the music: a note at the tick the engine sounded it, so playing the clip back renders what was heard. A note still held when recording ends ends there. A note off with no note on before it, from a key that was already down, is left out.
 
-`Take::write(root, clip)` writes the performance as it arrived, once, to `assets/takes/<clip id>.json`. That path is the whole link between a clip and its take. Nothing writes it again and nothing removes it, not even undo of the recording. It holds both velocities of every note, the pedal, and the times in microseconds from the start of the recording, which is real time and holds whatever the tempo map does. `agent-doc.md` in this crate is what an agent reads about it; the runtime writes it into every project as `agent-docs/takes.md`.
+`Take::write(root)` writes the performance as it arrived, once, under a name of its own: `assets/takes/take-1.json`, then `take-2` and so on. It gives that name back, and the clip keeps it in its `take` field. The name never comes from a clip id, because a clip id changes when it moves to another track or an agent renames its file, and it is never used twice, also not after an undo took the clip of an earlier take. The file is created with `create_new` and never opened again, so no performance can be written over.
+
+The caller writes the take before it makes the clip, and whatever happens to the clip: a track deleted during the recording leaves the performance in the project all the same. Nothing removes a take, not even undo of the recording. It holds both velocities of every note, the pedal, where the pedal stood when it began, and the times in microseconds from the start of the recording, which is real time and holds whatever the tempo map does. `agent-doc.md` in this crate is what an agent reads about it; the runtime writes it into every project as `agent-docs/takes.md`.
 
 ## Not built
 

@@ -56,7 +56,8 @@ A clip the composer recorded from a keyboard has a `pedal` list as well. Leave i
       {"start": 0, "length": 900, "pitch": 60, "velocity": 88},
       {"start": 940, "length": 880, "pitch": 64, "velocity": 76}
     ],
-    "pedal": [{"start": 0, "value": 127}, {"start": 1880, "value": 0}]
+    "pedal": [{"start": 0, "value": 127}, {"start": 1880, "value": 0}],
+    "take": "take-1"
   }
 }
 ```
@@ -65,7 +66,7 @@ A clip the composer recorded from a keyboard has a `pedal` list as well. Leave i
 - `pedal[].value`: how far the pedal was pressed, 0 to 127, as it was played. It counts as down from 64, and a piano that knows half pedal can use the rest.
 - While the pedal is down a note goes on sounding after its own end, until the pedal comes up. So the notes above sound together until tick 1880.
 - The pedal is not shown in the note editor yet. Edit it here.
-- A recorded clip has a raw take next to it, under `assets/takes/`. Read `agent-docs/takes.md` before you touch anything there.
+- `take`: the raw take this clip was recorded from, the file `assets/takes/take-1.json`. Keep the field as it is when you change the clip, move its file or copy it: it is the only way back to what the composer played. Read `agent-docs/takes.md` before you touch anything under `assets/takes/`.
 
 ## A track: `arrangement.track`
 

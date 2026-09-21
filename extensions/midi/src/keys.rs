@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use sound_core::{
-    EventOutput, Ports, PrepareConfig, ProcessContext, Processor, Ticks, monotonic_nanos,
+    EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor, Ticks,
+    monotonic_nanos,
 };
 use sound_notes::{NoteEvent, Pedal, Pitch, Velocity};
 
@@ -106,6 +107,30 @@ struct Shared {
     /// audio thread has to keep in step. The audio thread never waits for it.
     producer: Mutex<rtrb::Producer<Arrived>>,
     dropped: AtomicU64,
+    /// The one way to say "let go of everything the live input holds", see
+    /// [`Input::release_held`]. Two counters, so a device thread, the control side and the
+    /// audio thread all reach them without waiting for each other, and so that whoever must
+    /// know can see whether the release is out: `asked` only grows, and `released` follows it
+    /// once the events have left the processor.
+    release: Arc<Release>,
+}
+
+/// How many releases were asked for, and how many are out of the processor.
+#[derive(Default)]
+pub(crate) struct Release {
+    asked: AtomicU64,
+    released: AtomicU64,
+}
+
+impl Release {
+    fn ask(&self) {
+        self.asked.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Whether something was asked for that the processor has not sent yet.
+    fn pending(&self) -> bool {
+        self.released.load(Ordering::Relaxed) != self.asked.load(Ordering::Relaxed)
+    }
 }
 
 /// Where a device layer puts the messages it reads. One per open port, all into one ring.
@@ -138,9 +163,30 @@ impl Input {
         };
         if producer.push(arrived).is_err() {
             self.0.dropped.fetch_add(1, Ordering::Relaxed);
+            // A message that was lost may be a note off, and then that note would sound for
+            // ever. Whatever is held goes.
+            self.release_held();
             return false;
         }
         true
+    }
+
+    /// Lets go of every note and the pedal that the live input holds, at the start of the next
+    /// audio block. The device layer calls it when a port goes away, so a keyboard that is
+    /// unplugged with keys down leaves nothing sounding.
+    ///
+    /// It releases what every keyboard holds, not only the one that went. That is the same
+    /// rule the note contract already has for `AllOff`, and it is why there is one release
+    /// path and not one per reason.
+    pub fn release_held(&self) {
+        self.0.release.ask();
+    }
+
+    /// Whether a release was asked for that the processor has not sent yet. Whoever is about
+    /// to take the connection away waits for this to be false, so the offs reach the
+    /// instrument that holds the notes and not the one that comes next.
+    pub fn release_is_pending(&self) -> bool {
+        self.0.release.pending()
     }
 
     /// Messages that did not fit in the ring, so they were never played.
@@ -157,6 +203,16 @@ pub struct Keys {
     input: rtrb::Consumer<Arrived>,
     reports: rtrb::Producer<Sounded>,
     lost_reports: Arc<AtomicU64>,
+    /// Asked for by anything that wants the live input to let go, see [`Input::release_held`].
+    release: Arc<Release>,
+    /// The release this processor took. It tells the control side it is out.
+    taken: u64,
+    /// The pitches the live input holds, and whether it holds the pedal. This is the only
+    /// place that knows, so this is the only place that can release it.
+    held: [bool; 128],
+    pedal_is_down: bool,
+    /// A release that is not out yet, because the event buffer of a block filled up.
+    releasing: bool,
 }
 
 impl Keys {
@@ -168,16 +224,62 @@ impl Keys {
         let (producer, input) = rtrb::RingBuffer::new(INPUT_CAPACITY);
         let (reports, read_reports) = rtrb::RingBuffer::new(REPORT_CAPACITY);
         let lost_reports = Arc::new(AtomicU64::new(0));
+        let release = Arc::new(Release::default());
         let keys = Self {
             input,
             reports,
             lost_reports: lost_reports.clone(),
+            release: release.clone(),
+            taken: 0,
+            held: [false; 128],
+            pedal_is_down: false,
+            releasing: false,
         };
         let shared = Shared {
             producer: Mutex::new(producer),
             dropped: AtomicU64::new(0),
+            release,
         };
         (keys, Input(Arc::new(shared)), read_reports, lost_reports)
+    }
+
+    /// Sends the pedal up and an off for every pitch the live input holds. The pedal goes
+    /// first, else the offs would latch under it and nothing would be released.
+    ///
+    /// What does not fit in this block is sent in the next one: the state of a pitch is
+    /// cleared only when its off is out.
+    fn release(&mut self, event_outputs: &mut EventOutputs<'_>) {
+        if self.pedal_is_down {
+            if !event_outputs.push(Self::NOTES, 0, NoteEvent::Pedal(Pedal::UP)) {
+                return;
+            }
+            self.pedal_is_down = false;
+        }
+        for pitch in 0..self.held.len() {
+            if !self.held[pitch] {
+                continue;
+            }
+            let Ok(number) = u8::try_from(pitch) else {
+                continue;
+            };
+            let Ok(pitch_of) = Pitch::new(number) else {
+                continue;
+            };
+            if !event_outputs.push(Self::NOTES, 0, NoteEvent::Off { pitch: pitch_of }) {
+                return;
+            }
+            self.held[pitch] = false;
+        }
+        self.releasing = false;
+    }
+
+    /// Notes what a message does to the state the release works from.
+    fn note(&mut self, played: Played) {
+        match played {
+            Played::On { pitch, .. } => self.held[usize::from(pitch.number())] = true,
+            Played::Off { pitch, .. } => self.held[usize::from(pitch.number())] = false,
+            Played::Pedal(value) => self.pedal_is_down = value.is_down(),
+        }
     }
 }
 
@@ -202,6 +304,22 @@ impl Processor for Keys {
         // A stop or a seek says nothing about a keyboard: what is held stays held, and the
         // player lifts it. The sequencer of the track sends its own `AllOff`, which does
         // release these notes too. That is the known limit of one `notes` port per instrument.
+        //
+        // A release does: the port it plays into is about to change, a keyboard was unplugged
+        // while it held keys, or a message was lost and may have been an off. It goes out
+        // before whatever arrived after it.
+        let asked = self.release.asked.load(Ordering::Relaxed);
+        if asked != self.taken {
+            self.taken = asked;
+            self.releasing = true;
+        }
+        if self.releasing {
+            self.release(event_outputs);
+            if !self.releasing {
+                // Out. Whoever waits for it may now take the connection away.
+                self.release.released.store(self.taken, Ordering::Relaxed);
+            }
+        }
         while let Ok(arrived) = self.input.peek().copied() {
             // The event buffer is full: the message waits in the ring for the next block, so
             // nothing a keyboard sent is ever lost on the way to the instrument.
@@ -211,6 +329,7 @@ impl Processor for Keys {
             if self.input.pop().is_err() {
                 break;
             }
+            self.note(arrived.played);
             let sounded = Sounded {
                 arrived,
                 frame: *start_frame,

@@ -47,15 +47,19 @@ pub fn live_notes_input(project: &Project, selected: Option<&InstanceId>) -> Opt
     notes_input(project, &track)
 }
 
-/// Adds the clip of a finished take to the track, as one undo step.
+/// Adds the clip of a finished take to the track, as one undo step. `take_name` is the raw
+/// take the clip came from, which is already on disk, or `None` when writing it failed.
 pub fn add_take_clip(
     project: &mut Project,
     track: &Instance<TrackState>,
     take: &Take,
+    take_name: Option<String>,
 ) -> Result<Option<InstanceId>, ProjectError> {
-    let Some(clip) = take.clip() else {
+    let Some(mut clip) = take.clip() else {
         return Ok(None);
     };
+    // A clip never names a take that is not there: a failed write leaves the field out.
+    clip.take = take_name;
     let mut changes = sound_core::Changes::new();
     let clip = arrangement::add_clip(project, &mut changes, track, CLIP_NAME, clip)?;
     let id = clip.id().clone();
@@ -63,9 +67,11 @@ pub fn add_take_clip(
     Ok(Some(id))
 }
 
-/// Writes the raw take next to the clip it became, once. Nothing writes it again and nothing
-/// removes it, not even undo of the recording.
-pub fn write_take(project: &Project, clip: &InstanceId, take: &Take) -> Result<()> {
-    take.write(project.root(), clip)?;
-    Ok(())
+/// Writes the raw take under a name of its own and gives that name, for the clip to keep.
+///
+/// It runs before the clip is made and whatever happens to the clip, because the take is the
+/// only copy of what the composer played. The name is never one that was used before, and the
+/// file is created and never opened again, so no take can be written over.
+pub fn write_take(project: &Project, take: &Take) -> Result<String> {
+    Ok(take.write(project.root())?)
 }

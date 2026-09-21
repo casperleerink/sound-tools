@@ -3,7 +3,7 @@
 
 use midi::INPUT_CAPACITY;
 use sound_core::Ticks;
-use sound_notes::NoteEvent;
+use sound_notes::{NoteEvent, Pedal};
 
 use crate::support::{Harness, off, on, pedal, pitch};
 
@@ -123,25 +123,95 @@ fn messages_that_do_not_fit_the_input_ring_are_counted() {
 fn the_keyboard_plays_where_it_is_wired_and_nowhere_else() {
     let mut harness = Harness::new();
     let notes = harness.notes_input();
-    harness
-        .keyboard
-        .play_into(&mut harness.control, Some(notes))
-        .unwrap();
+    harness.wire(Some(notes));
     assert_eq!(harness.keyboard.destination(), Some(notes));
 
-    harness
-        .keyboard
-        .play_into(&mut harness.control, None)
-        .unwrap();
+    harness.wire(None);
     harness.input.send(on(60, 88));
     harness.run(512, 512);
     assert_eq!(harness.heard(), []);
 
-    harness
-        .keyboard
-        .play_into(&mut harness.control, Some(notes))
-        .unwrap();
+    harness.wire(Some(notes));
     harness.input.send(on(62, 88));
     harness.run(512, 512);
     assert_eq!(harness.heard().len(), 1);
+}
+
+/// Switching the track releases what the keyboard holds into the instrument it plays into
+/// now. Without this the offs would go to the instrument that comes next, or nowhere, and the
+/// notes and the pedal of the old one would sound for ever.
+#[test]
+fn switching_the_port_releases_what_is_held_into_the_port_it_plays_into() {
+    let mut harness = Harness::new();
+    harness.input.send(pedal(127));
+    harness.input.send(on(60, 88));
+    harness.input.send(on(64, 88));
+    harness.run(64, 64);
+    assert_eq!(harness.heard().len(), 3);
+
+    // The other instrument of the same engine: another track's synth, as the window wires it.
+    let other = harness.add_ears();
+    harness.wire(Some(other));
+
+    // The offs went to the instrument that held the notes, not to the new one.
+    let released = harness.heard();
+    assert_eq!(
+        released,
+        [
+            (64, NoteEvent::Pedal(Pedal::UP)),
+            (64, NoteEvent::Off { pitch: pitch(60) }),
+            (64, NoteEvent::Off { pitch: pitch(64) }),
+        ]
+    );
+    assert_eq!(harness.heard_by(other), []);
+
+    // From here on it plays into the new one.
+    harness.input.send(on(67, 88));
+    harness.run(64, 64);
+    assert_eq!(harness.heard(), []);
+    assert_eq!(harness.heard_by(other).len(), 1);
+}
+
+/// A keyboard that is unplugged while it holds keys sends no note off, ever. The device layer
+/// says so through the one release path, which is what this test sends.
+#[test]
+fn a_keyboard_that_goes_away_releases_what_it_held() {
+    let mut harness = Harness::new();
+    harness.input.send(pedal(127));
+    harness.input.send(on(60, 88));
+    harness.run(64, 64);
+    assert_eq!(harness.heard().len(), 2);
+
+    // What `Ports::refresh` calls when a port is gone from the machine.
+    harness.input.release_held();
+    harness.run(64, 64);
+    assert_eq!(
+        harness.heard(),
+        [
+            (64, NoteEvent::Pedal(Pedal::UP)),
+            (64, NoteEvent::Off { pitch: pitch(60) }),
+        ]
+    );
+}
+
+/// A message that did not fit in the input ring may be a note off, and then its note would
+/// sound for ever. Everything held goes instead.
+#[test]
+fn a_message_that_is_lost_releases_what_is_held() {
+    let mut harness = Harness::new();
+    harness.input.send(on(60, 88));
+    harness.run(64, 64);
+    assert_eq!(harness.heard().len(), 1);
+
+    // Fill the ring, then one more, which is the one that is lost.
+    for _ in 0..INPUT_CAPACITY {
+        assert!(harness.input.send(on(72, 100)));
+    }
+    assert!(!harness.input.send(off(72)));
+    assert_eq!(harness.keyboard.lost().input, 1);
+
+    // The release goes out before what is still in the ring, so pitch 60 is let go at once.
+    harness.run(64, 64);
+    let heard = harness.heard();
+    assert_eq!(heard[0], (64, NoteEvent::Off { pitch: pitch(60) }));
 }

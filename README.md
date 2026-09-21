@@ -25,7 +25,7 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 4. Drag on empty space inside the clip to draw a note. It sounds. Drag a note to move it, drag its end to change its length, press delete to remove it.
 5. Press space to play and again to pause. Click the ruler to move the playhead. The view follows it and pages forward while it plays.
 6. In the transport pill at the bottom: drag the tempo number up or down to change the tempo, and click the metronome to turn the click on or off. The click is not part of the piece and is never in a render.
-7. Plug in a MIDI keyboard and play. It sounds through the instrument of the selected track, with or without playback. Press the red record button, or `r`, to record what you play onto that track from the playhead, and press it again to end the take. The take becomes a clip, with the sustain pedal, as one undo step, and the performance as you played it is kept under `assets/takes/`.
+7. Plug in a MIDI keyboard and play. It sounds through the instrument of the selected track, with or without playback. Press the red record button, or `r`, to record what you play onto that track from the playhead, and press it again to end the take. The take becomes a clip, with the sustain pedal, as one undo step, and the performance as you played it is kept under `assets/takes/`, which nothing ever changes.
 8. Click the name of a track on the left. Its panel opens below with the synth, and at the right end the mixer of the track: gain, pan and mute. Drag a knob up or down while it plays, and double click a knob to reset it.
 9. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
 10. Press cmd-q to quit. Run the same command again and the piece is back.

@@ -54,8 +54,14 @@ impl Ports {
         let lister = MidiInput::new(CLIENT)?;
         let ports = lister.ports();
         let present: BTreeSet<String> = ports.iter().map(midir::MidiInputPort::id).collect();
+        let open_before = self.open.len();
         self.open.retain(|id, _| present.contains(id));
         self.failed.retain(|id| present.contains(id));
+        if self.open.len() < open_before {
+            // A keyboard that is unplugged while it holds keys sends no note off, ever. What
+            // the live input holds goes, through the one release path.
+            self.input.release_held();
+        }
 
         let mut opened = Vec::new();
         let mut error = None;

@@ -16,7 +16,7 @@ use crate::support::{BAR, Harness, difference};
 /// The track that a take is recorded into, and its synth.
 const TRACK: &str = "arrangement/track-1";
 const CLIP: &str = "arrangement/track-1/take";
-const TAKE_FILE: &str = "assets/takes/arrangement/track-1/take.json";
+const TAKE_FILE: &str = "assets/takes/take-1.json";
 
 fn on(pitch: u8, velocity: u8) -> Played {
     Played::On {
@@ -53,6 +53,8 @@ impl Recorder {
         keyboard
             .play_into(harness.project.engine(), Some(notes))
             .unwrap();
+        // The poll after it makes the port the one the live input reaches, as the window does.
+        keyboard.poll(harness.project.engine(), None).unwrap();
         Self {
             harness,
             keyboard,
@@ -71,7 +73,9 @@ impl Recorder {
     /// Renders `frames` frames and drains what the engine reported, as the window polls.
     fn render(&mut self, frames: usize) -> Vec<f32> {
         let output = self.harness.render(frames);
-        self.keyboard.poll(None);
+        self.keyboard
+            .poll(self.harness.project.engine(), None)
+            .unwrap();
         output
     }
 
@@ -93,16 +97,20 @@ impl Recorder {
         (take, heard)
     }
 
-    /// Saves the take as the window does: the clip as one undo step, then the raw take.
+    /// Saves the take as the window does: the raw take first, then the clip that names it, as
+    /// one undo step.
     fn save(&mut self, take: &Take) -> InstanceId {
+        let name = runtime::window::recording::write_take(&self.harness.project, take).unwrap();
         let track = InstanceId::new(TRACK).unwrap();
         let track = self.harness.project.resolve(&track).unwrap();
-        let clip =
-            runtime::window::recording::add_take_clip(&mut self.harness.project, &track, take)
-                .unwrap()
-                .unwrap();
-        runtime::window::recording::write_take(&self.harness.project, &clip, take).unwrap();
-        clip
+        runtime::window::recording::add_take_clip(
+            &mut self.harness.project,
+            &track,
+            take,
+            Some(name),
+        )
+        .unwrap()
+        .unwrap()
     }
 
     fn take_file(&self) -> PathBuf {
@@ -146,8 +154,10 @@ fn a_take_becomes_a_clip_that_renders_what_was_heard() {
     ];
     let (take, heard) = recorder.record(&messages, 2 * BAR);
     assert_eq!(take.events.len(), 6);
-    let clip = take.clip().unwrap();
+    let mut clip = take.clip().unwrap();
     recorder.save(&take);
+    // The saved clip is the take's clip, plus the name of the raw take it came from.
+    clip.take = Some("take-1".to_string());
     assert_eq!(recorder.clip(), clip);
     assert_eq!(recorder.harness.project.problems(), []);
 
@@ -273,10 +283,12 @@ fn the_raw_take_holds_what_was_played_in_real_time() {
     let clip = recorder.save(&take);
     assert_eq!(clip.as_str(), CLIP);
 
+    // The clip names its take, and that name is the file.
+    assert_eq!(recorder.clip().take.as_deref(), Some("take-1"));
     let text = std::fs::read_to_string(recorder.take_file()).unwrap();
     let raw: RawTake = serde_json::from_str(&text).unwrap();
-    assert_eq!(raw.clip, CLIP);
     assert_eq!(raw.start_tick, recorder.clip().start.0);
+    assert_eq!(raw.pedal_at_start, 0);
     let kinds: Vec<RawEvent> = raw
         .events
         .iter()

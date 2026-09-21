@@ -64,6 +64,7 @@ fn take_of(raw: &midi::RawTake) -> midi::Take {
     midi::Take {
         start: sound_core::Ticks(raw.start_tick),
         end: sound_core::Ticks(raw.end_tick),
+        pedal_at_start: sound_notes::Pedal::new(raw.pedal_at_start).unwrap(),
         events,
     }
 }
@@ -204,15 +205,15 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         assert_eq!(assets.len(), 1, "{time_signature}");
         for (path, body) in &assets {
             let raw: midi::RawTake = serde_json::from_str(body).unwrap();
-            let clip = InstanceId::new(&raw.clip).unwrap();
-            assert_eq!(
-                path,
-                &format!("assets/takes/{clip}.json"),
-                "a take example is not at the path of its clip"
-            );
             // The bytes are those the runtime writes, so an agent reads the real thing.
-            let take = take_of(&raw);
-            assert_eq!(&take.json(&clip).unwrap(), body, "{path}");
+            assert_eq!(&take_of(&raw).json(), body, "{path}");
+            // A take lives under its own name, which no clip id decides.
+            let folder = format!("{}/", midi::TAKES_FOLDER);
+            let name = path
+                .strip_prefix(&folder)
+                .and_then(|it| it.strip_suffix(".json"));
+            let name = name.unwrap_or_else(|| panic!("{path} is not a take file"));
+            assert!(sound_notes::Clip::is_valid_take_name(name), "{name}");
         }
 
         // They are written into an empty folder and are a project that loads whole.

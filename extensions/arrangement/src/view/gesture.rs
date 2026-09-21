@@ -76,6 +76,19 @@ pub fn resized_left(origin: &Clip, delta: i64) -> Clip {
     for note in &mut clip.notes {
         note.start = shifted(note.start, -delta);
     }
+    // The pedal keeps its place in the project too, as the notes do. The edge stops at the
+    // first note, not at the first pedal move, so a move can fall outside the clip: it goes,
+    // as a note that a resize drops goes, and comes back when the drag goes out again,
+    // because every move starts from the origin.
+    let length = clip.length.ticks().0 as i64;
+    clip.pedal.retain_mut(|change| {
+        let start = (change.start.0 as i64) - delta;
+        let inside = (0..length).contains(&start);
+        if inside {
+            change.start = Ticks(start as u64);
+        }
+        inside
+    });
     clip
 }
 
@@ -87,7 +100,7 @@ pub fn nudged_track(current: usize, tracks: usize, step: i64) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use sound_notes::{Note, Pitch, Velocity};
+    use sound_notes::{Note, Pedal, PedalChange, Pitch, Velocity};
 
     use super::*;
 
@@ -187,6 +200,47 @@ mod tests {
             let placed: Vec<_> = resized.placed_notes().collect();
             assert_eq!(placed, origin.placed_notes().collect::<Vec<_>>());
         }
+    }
+
+    /// The pedal keeps its place in the project when the left edge moves, as the notes do.
+    /// Without this a recorded clip's pedal would slide against its own notes.
+    #[test]
+    fn the_left_edge_keeps_the_pedal_where_it_is_in_the_project() {
+        let mut origin = clip(BAR, BAR, &[(960, 480)]);
+        origin.pedal = vec![
+            // Before the first note, which is where the edge stops.
+            PedalChange {
+                start: Ticks(480),
+                value: Pedal::new(127).unwrap(),
+            },
+            PedalChange {
+                start: Ticks(2880),
+                value: Pedal::UP,
+            },
+        ];
+        // Out to the left by a beat: the clip starts a beat earlier and the moves with it.
+        let grown = resized_left(&origin, -960);
+        let placed = |clip: &Clip| -> Vec<(u64, u8)> {
+            clip.placed_pedal()
+                .map(|change| (change.start.0, change.value.value()))
+                .collect()
+        };
+        assert_eq!(placed(&grown), placed(&origin));
+        assert_eq!(
+            grown
+                .pedal
+                .iter()
+                .map(|change| change.start.0)
+                .collect::<Vec<_>>(),
+            [1440, 3840]
+        );
+
+        // In to the first note: the move that is then before the clip goes, as a note a
+        // resize drops goes, and every move starts from the origin, so it comes back.
+        let at_note = resized_left(&origin, 960);
+        assert_eq!(placed(&at_note), [(BAR + 2880, 0)]);
+        assert_eq!(placed(&resized_left(&origin, 0)), placed(&origin));
+        assert_eq!(resized_left(&origin, 0), origin);
     }
 
     #[test]

@@ -35,7 +35,11 @@ An instrument with one damper, such as the synth here, only asks `is_down()`: wh
 
 The rules are the same for everyone who plays or draws a clip. Note starts count from the clip start. Every note starts inside the clip, below its `length`, else the record does not load. A note that is longer than the rest of the clip ends where the clip ends. `clip.placed_notes()` gives the notes at their project position with these rules applied. `clip.set_length(length)` drops the notes a shorter clip cannot hold. `Length` is the type of both lengths: 1 tick or more. A clip lives directly inside a track (`TRACK_TOOL`, `arrangement.track`). Anywhere else it does not load, because nothing would play it.
 
-`pedal` is a list of `PedalChange`, each a `start` in ticks from the clip start and a `value`. It follows the same rules as the notes, and `clip.placed_pedal()` gives them at their project position. A clip with no pedal leaves the field out of its JSON, so a clip written before the pedal existed loads and is written back byte for byte as it was. `Clip::new(start, length, notes)` makes a clip without pedal, which is every clip that was not recorded.
+`pedal` is a list of `PedalChange`, each a `start` in ticks from the clip start and a `value`. It follows the same rules as the notes: it starts inside the clip, and it ends with the clip, as a note longer than the rest of its clip ends there. `clip.placed_pedal()` gives the moves at their project position. A clip with no pedal leaves the field out of its JSON, so a clip written before the pedal existed loads and is written back byte for byte as it was.
+
+`take` is the raw take a recorded clip came from: the name of a file under `assets/takes/`, without `.json`. It is a saved reference, so it owns nothing and keeps nothing alive, and it travels with the clip through a move, a rename, a resize and a copy. A clip that was not recorded leaves it out. `Clip::is_valid_take_name` is the rule for the name, which `validate` applies: it becomes a file name, so it can never point outside the project folder.
+
+`Clip::new(start, length, notes)` makes a clip with no pedal and no take, which is every clip that was not recorded.
 
 ## The note event
 

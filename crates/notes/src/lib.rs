@@ -116,7 +116,9 @@ impl From<Velocity> for u8 {
 /// It is a number and not a bool because a piano that knows half pedal must lose nothing. The
 /// synth of this repository only asks [`is_down`](Self::is_down), which is MIDI's rule: down
 /// from [`DOWN_FROM`](Self::DOWN_FROM).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(try_from = "i64", into = "u8")]
 pub struct Pedal(u8);
 
@@ -258,6 +260,7 @@ pub struct PlacedPedal {
 /// - A note that is longer than the rest of the clip ends where the clip ends.
 /// - `pedal` is the sustain pedal as it was played, and follows the same rules as the notes.
 ///   A clip that was not recorded leaves it out, and is written back without it.
+/// - `take` names the raw take this clip was recorded from, when it was recorded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Clip {
@@ -268,17 +271,38 @@ pub struct Clip {
     /// and is written back byte for byte as it was.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pedal: Vec<PedalChange>,
+    /// The raw take this clip came from: a saved reference, the name of a file under
+    /// `assets/takes/` without `.json`. It owns nothing and keeps nothing alive, like every
+    /// other reference. A clip that was not recorded leaves it out.
+    ///
+    /// It is a field and not the path of the clip, because the path changes: a clip moves to
+    /// another track, and an agent renames its file. The reference travels with the clip
+    /// through every edit, because every edit keeps the rest of the record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub take: Option<String>,
 }
 
 impl Clip {
-    /// A clip with notes and no pedal, which is every clip that was not recorded.
+    /// A clip with notes, no pedal and no take, which is every clip that was not recorded.
     pub fn new(start: Ticks, length: Length, notes: Vec<Note>) -> Self {
         Self {
             start,
             length,
             notes,
             pedal: Vec::new(),
+            take: None,
         }
+    }
+
+    /// Whether `name` may name a raw take: it becomes a file name, so it follows the rule of
+    /// an instance name. Without this a record could point outside the project folder.
+    pub fn is_valid_take_name(name: &str) -> bool {
+        !name.is_empty()
+            && name.chars().all(|character| {
+                character.is_ascii_lowercase()
+                    || character.is_ascii_digit()
+                    || "-_".contains(character)
+            })
     }
 
     /// The first tick after the clip.
@@ -331,9 +355,14 @@ impl State for Clip {
             return Err(inside("notes", "note", index, note.start));
         }
         let mut pedal = self.pedal.iter().enumerate();
-        match pedal.find(|(_, change)| change.start >= length) {
-            Some((index, change)) => Err(inside("pedal", "pedal", index, change.start)),
-            None => Ok(()),
+        if let Some((index, change)) = pedal.find(|(_, change)| change.start >= length) {
+            return Err(inside("pedal", "pedal", index, change.start));
+        }
+        match &self.take {
+            Some(take) if !Self::is_valid_take_name(take) => Err(format!(
+                "take must be the name of a file under assets/takes/ without `.json`: lowercase letters, digits, `-` and `_`, not {take:?}"
+            )),
+            _ => Ok(()),
         }
     }
 }
