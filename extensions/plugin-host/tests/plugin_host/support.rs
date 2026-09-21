@@ -265,12 +265,39 @@ pub fn tell_the_plugin_to_write_its_header_last() {
 }
 
 /// Makes the test plugin close its own window as soon as the host has shown it, which is what
-/// a composer does with the title bar of a real plugin's window. Same rules as
-/// [`tell_the_plugin`].
+/// a composer does with the title bar of a real plugin's window. CLAP only, because VST 3 has
+/// no such call. Same rules as [`tell_the_plugin`].
 pub fn tell_the_plugin_to_close_its_window() {
     // SAFETY: nextest runs one test per process and this is called before any thread but this
     // one exists, so no other thread can be reading the environment.
-    unsafe { std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_CLOSE_GUI", "1") };
+    unsafe { std::env::set_var(test_plugin_support::CLOSE_GUI_VARIABLE, "1") };
+}
+
+/// Makes the test plugin offer no window of its own at all. Same rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_have_no_window(without: bool) {
+    // SAFETY: as above.
+    unsafe {
+        match without {
+            true => std::env::set_var(test_plugin_support::NO_WINDOW_VARIABLE, "1"),
+            false => std::env::remove_var(test_plugin_support::NO_WINDOW_VARIABLE),
+        }
+    }
+}
+
+/// Makes the test plugin ask its host for this window size as soon as it has a window, the way
+/// a plugin that sizes itself as it opens does. A width of zero stops it asking. Same rules as
+/// [`tell_the_plugin`].
+pub fn tell_the_plugin_to_ask_for_a_window_size(width: u32, height: u32) {
+    // SAFETY: as above.
+    unsafe {
+        match width == 0 || height == 0 {
+            true => std::env::remove_var(test_plugin_support::RESIZE_GUI_VARIABLE),
+            false => std::env::set_var(
+                test_plugin_support::RESIZE_GUI_VARIABLE,
+                format!("{width}x{height}"),
+            ),
+        }
+    }
 }
 
 /// One line of the plugin's lifecycle log: the call, which plugin of the library it was about,

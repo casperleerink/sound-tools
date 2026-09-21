@@ -48,9 +48,29 @@ pub const EVENTS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_EVENTS";
 pub const LOG_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_LOG";
 
 /// Makes the plugin close its own window as soon as the host has shown it, which is what a
-/// composer does with the title bar of a real plugin's window. CLAP only: a VST 3 plugin has
-/// no window before step 5b.
+/// composer does with the title bar of a real plugin's window. CLAP only: VST 3 has no call a
+/// plugin can close its window with, because the host owns that window.
 pub const CLOSE_GUI_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_CLOSE_GUI";
+
+/// Makes the plugin offer no window at all, so a host has to say so instead of offering one.
+/// The CLAP plugin then says no windowing API suits it; the VST 3 one makes no view.
+pub const NO_WINDOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_NO_WINDOW";
+
+/// Makes the plugin ask its host for another window size as soon as it has a window, the way a
+/// plugin that sizes itself as it opens does. The value is `<width>x<height>`.
+pub const RESIZE_GUI_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_RESIZE_GUI";
+
+/// The size a plugin was told to ask its window to be, if it was told.
+pub fn wanted_window_size() -> Option<(u32, u32)> {
+    let told = std::env::var(RESIZE_GUI_VARIABLE).ok()?;
+    let (width, height) = told.split_once('x')?;
+    Some((width.parse().ok()?, height.parse().ok()?))
+}
+
+/// How big a test plugin's window is until it asks for another size. Both formats answer this,
+/// so a test reads either window the same way.
+pub const WINDOW_WIDTH: u32 = 320;
+pub const WINDOW_HEIGHT: u32 = 240;
 
 /// Makes the plugin say its output is silent and write nothing into it, from its second block
 /// on. VST 3 allows that (`silenceFlags`), and a host that does not clear its own output

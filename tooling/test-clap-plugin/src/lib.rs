@@ -131,7 +131,9 @@ impl<'a> PluginMainThread<'a, TestToneShared> for TestToneMainThread<'a> {
 impl PluginGuiImpl for TestToneMainThread<'_> {
     fn is_api_supported(&self, configuration: GuiConfiguration) -> bool {
         log("gui_is_api_supported", 0, 0);
-        !configuration.is_floating
+        // A plugin with no window of its own at all, which a host has to say instead of
+        // offering one. Every windowing API is refused, floating or not.
+        !configuration.is_floating && !support::told_to(support::NO_WINDOW_VARIABLE)
     }
 
     fn get_preferred_api(&self) -> Option<GuiConfiguration<'_>> {
@@ -156,8 +158,8 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
 
     fn get_size(&self) -> Option<GuiSize> {
         Some(GuiSize {
-            width: 320,
-            height: 240,
+            width: support::WINDOW_WIDTH,
+            height: support::WINDOW_HEIGHT,
         })
     }
 
@@ -186,6 +188,14 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
 
     fn show(&self) -> Result<(), PluginError> {
         log("gui_show", 0, 0);
+        // A plugin that sizes itself as it opens, which is what a real one does when its
+        // interface is bigger than the size it first reported.
+        if let Some((width, height)) = support::wanted_window_size()
+            && let Some(gui) = self.host.shared().get_extension::<HostGui>()
+        {
+            log("gui_request_resize", 0, 0);
+            let _asked = gui.request_resize(&self.host.shared(), width, height);
+        }
         // A window the composer closes by its title bar. The host may not be told from inside
         // one of its own calls, so this asks for a call on the main thread and tells it there.
         if support::told_to(support::CLOSE_GUI_VARIABLE) {

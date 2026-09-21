@@ -14,12 +14,14 @@
 //! - `Sustain`, which `IMidiMapping` maps MIDI controller 64 to. That is how the format says a
 //!   host sends the sustain pedal, and it is what the host under test uses.
 //!
-//! It has no window. Step 5b builds `IPlugView` in the host, and this plugin grows one then.
+//! It has a window, `TestView`, which draws nothing: CI has no display. It answers the calls a
+//! host makes of an `IPlugView` and writes each one down with the thread it arrived on, which is
+//! what a real plugin would assert, and it can ask its host to resize it.
 
 #![allow(non_snake_case)]
 
-use std::cell::RefCell;
-use std::ffi::{c_char, c_void};
+use std::cell::{Cell, RefCell};
+use std::ffi::{CStr, c_char, c_void};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use test_plugin_support as support;
@@ -33,11 +35,12 @@ use vst3::Steinberg::Vst::{
     TChar,
 };
 use vst3::Steinberg::{
-    FUnknown, IBStream, IBStream_::IStreamSeekMode_, IBStreamTrait, IPlugView, IPluginBase,
-    IPluginBaseTrait, IPluginFactory, IPluginFactory2, IPluginFactory2Trait, IPluginFactoryTrait,
-    PClassInfo, PClassInfo_::ClassCardinality_, PClassInfo2, PFactoryInfo, TBool, TUID, int32,
-    kInternalError, kInvalidArgument, kNotImplemented, kResultFalse, kResultOk, kResultTrue,
-    tresult, uint32,
+    FIDString, FUnknown, IBStream, IBStream_::IStreamSeekMode_, IBStreamTrait, IPlugFrame,
+    IPlugFrameTrait, IPlugView, IPlugViewTrait, IPluginBase, IPluginBaseTrait, IPluginFactory,
+    IPluginFactory2, IPluginFactory2Trait, IPluginFactoryTrait, PClassInfo,
+    PClassInfo_::ClassCardinality_, PClassInfo2, PFactoryInfo, TBool, TUID, ViewRect, int32,
+    kInternalError, kInvalidArgument, kNotImplemented, kPlatformTypeNSView, kResultFalse,
+    kResultOk, kResultTrue, tresult, uint32,
 };
 use vst3::{Class, ComPtr, ComRef, ComWrapper, Interface, uid};
 
@@ -68,8 +71,8 @@ const HALF_LEVEL: i32 = 50;
 /// The plugin. One object for both halves, which VST 3 allows.
 pub struct TestTone {
     audio: RefCell<Audio>,
-    /// What the host gave `setComponentHandler`, for telling it about an edit. This plugin
-    /// never opens a window, so it only keeps it.
+    /// What the host gave `setComponentHandler`, for telling it about an edit. This plugin's
+    /// window has nothing to move in it, so it only keeps it.
     handler: RefCell<Option<ComPtr<IComponentHandler>>>,
     /// The transpose, read by both halves.
     semitones: AtomicI32,
@@ -638,9 +641,196 @@ impl IEditControllerTrait for TestTone {
         kResultOk
     }
 
-    unsafe fn createView(&self, _name: *const c_char) -> *mut IPlugView {
-        // No window before step 5b. A host must offer none and say so.
-        std::ptr::null_mut()
+    /// The plugin's own window. A host asks for the editor view and puts it in a window of its
+    /// own; see `TestView`.
+    unsafe fn createView(&self, name: *const c_char) -> *mut IPlugView {
+        // A plugin with no window of its own at all, which a host has to say instead of
+        // offering one.
+        if support::told_to(support::NO_WINDOW_VARIABLE) || name.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: the host gives a C string that lives for this call.
+        if unsafe { CStr::from_ptr(name) }.to_bytes() != b"editor" {
+            return std::ptr::null_mut();
+        }
+        support::log("gui_create", 0, 0);
+        let view = ComWrapper::new(TestView::default());
+        // The view keeps a pointer to itself, without a reference, so that it can name itself
+        // in `IPlugFrame::resizeView`. It is only used while the view is alive.
+        if let Some(pointer) = view.as_com_ref::<IPlugView>() {
+            view.remember_itself(pointer.as_ptr());
+        }
+        match view.to_com_ptr::<IPlugView>() {
+            Some(pointer) => pointer.into_raw(),
+            None => std::ptr::null_mut(),
+        }
+    }
+}
+
+/// The plugin's window, in name only: no real view is made, because CI has no display. Every
+/// call is written to the log with the thread it came in on, so a test reads exactly what a
+/// host did and in what order. What only a real window can show is checked by hand.
+#[derive(Default)]
+struct TestView {
+    /// What the host gave `setFrame`, which is what a plugin asks for a resize through.
+    frame: RefCell<Option<ComPtr<IPlugFrame>>>,
+    /// This object as an `IPlugView`, for naming itself to the frame. No reference is counted:
+    /// it is only read while the object is alive, and counting one would keep it alive for ever.
+    itself: Cell<*mut IPlugView>,
+    /// Whether `attached` was answered, so a test can see that `removed` follows exactly one.
+    attached: Cell<bool>,
+    /// The size the host last gave `onSize`, which is what the format says a plugin resizes its
+    /// own view to.
+    sized_to: Cell<Option<(i32, i32)>>,
+}
+
+impl Class for TestView {
+    type Interfaces = (IPlugView,);
+}
+
+impl TestView {
+    fn remember_itself(&self, pointer: *mut IPlugView) {
+        self.itself.set(pointer);
+    }
+
+    /// Asks the host for another window size, as a plugin that sizes itself as it opens does.
+    /// The frame is in place before `attached`, which is the earliest the format allows.
+    fn ask_for_a_resize(&self, width: u32, height: u32) {
+        let frame = self.frame.borrow().clone();
+        let (Some(frame), false) = (frame, self.itself.get().is_null()) else {
+            return;
+        };
+        support::log("gui_request_resize", 0, 0);
+        let mut wanted = ViewRect {
+            left: 0,
+            top: 0,
+            right: width as int32,
+            bottom: height as int32,
+        };
+        // SAFETY: the frame came from the host and is alive, `itself` points at this object,
+        // and the rectangle outlives the call. Nothing of this object is borrowed: the host
+        // answers `onSize` from inside this call, which is what VST 3 asks of it.
+        unsafe { frame.resizeView(self.itself.get(), &mut wanted) };
+    }
+}
+
+impl Drop for TestView {
+    /// The host letting go of the view, which is the last thing a plugin holds for a window.
+    fn drop(&mut self) {
+        support::log("gui_destroy", 0, 0);
+    }
+}
+
+impl IPlugViewTrait for TestView {
+    unsafe fn isPlatformTypeSupported(&self, r#type: FIDString) -> tresult {
+        support::log("gui_is_api_supported", 0, 0);
+        if r#type.is_null() {
+            return kInvalidArgument;
+        }
+        // SAFETY: the host gives a C string that lives for this call.
+        let wanted = unsafe { CStr::from_ptr(r#type) };
+        // SAFETY: the constant is a static C string.
+        let cocoa = unsafe { CStr::from_ptr(kPlatformTypeNSView) };
+        match wanted == cocoa {
+            true => kResultTrue,
+            false => kResultFalse,
+        }
+    }
+
+    unsafe fn attached(&self, parent: *mut c_void, _type: FIDString) -> tresult {
+        support::log("gui_set_parent", 0, 0);
+        if parent.is_null() {
+            return kInvalidArgument;
+        }
+        self.attached.set(true);
+        kResultOk
+    }
+
+    unsafe fn removed(&self) -> tresult {
+        support::log("gui_removed", 0, 0);
+        // A host may only remove a view it attached. A test reads this line to see that it did.
+        if !self.attached.replace(false) {
+            return kInternalError;
+        }
+        kResultOk
+    }
+
+    unsafe fn onWheel(&self, _distance: f32) -> tresult {
+        kNotImplemented
+    }
+
+    unsafe fn onKeyDown(&self, _key: u16, _code: i16, _modifiers: i16) -> tresult {
+        kResultFalse
+    }
+
+    unsafe fn onKeyUp(&self, _key: u16, _code: i16, _modifiers: i16) -> tresult {
+        kResultFalse
+    }
+
+    /// The size the plugin wants to start at. It does not change when the plugin asks for
+    /// another one, so a test can see that the host took the size from the request and not
+    /// from here.
+    unsafe fn getSize(&self, size: *mut ViewRect) -> tresult {
+        if size.is_null() {
+            return kInvalidArgument;
+        }
+        // SAFETY: the host gave a place to write one rectangle.
+        unsafe {
+            *size = ViewRect {
+                left: 0,
+                top: 0,
+                right: support::WINDOW_WIDTH as int32,
+                bottom: support::WINDOW_HEIGHT as int32,
+            };
+        }
+        kResultOk
+    }
+
+    unsafe fn onSize(&self, new_size: *mut ViewRect) -> tresult {
+        support::log("gui_on_size", 0, 0);
+        if new_size.is_null() {
+            return kInvalidArgument;
+        }
+        // SAFETY: the host gives one rectangle that lives for this call.
+        let rect = unsafe { *new_size };
+        self.sized_to
+            .set(Some((rect.right - rect.left, rect.bottom - rect.top)));
+        kResultOk
+    }
+
+    unsafe fn onFocus(&self, _state: TBool) -> tresult {
+        kResultOk
+    }
+
+    unsafe fn setFrame(&self, frame: *mut IPlugFrame) -> tresult {
+        // SAFETY: the host gives a frame that is alive for this call, and `to_com_ptr` counts
+        // the reference this view keeps.
+        let kept = unsafe { ComRef::from_raw(frame) }.map(|frame| frame.to_com_ptr());
+        let had_one = kept.is_some();
+        support::log(
+            if had_one {
+                "gui_set_frame"
+            } else {
+                "gui_clear_frame"
+            },
+            0,
+            0,
+        );
+        *self.frame.borrow_mut() = kept;
+        // A plugin that sizes itself asks as soon as it has somewhere to ask.
+        if had_one && let Some((width, height)) = support::wanted_window_size() {
+            self.ask_for_a_resize(width, height);
+        }
+        kResultOk
+    }
+
+    /// This window is not resizable by dragging, which is what the host expects of it.
+    unsafe fn canResize(&self) -> tresult {
+        kResultFalse
+    }
+
+    unsafe fn checkSizeConstraint(&self, _rect: *mut ViewRect) -> tresult {
+        kResultFalse
     }
 }
 

@@ -32,6 +32,7 @@ use super::context::{Handler, HostContext, as_handler, as_unknown};
 use super::module::Module;
 use super::process::{ParameterChange, REPORT_CAPACITY, Vst3Processor, process_mode};
 use super::stream::{MemoryStream, as_stream};
+use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
 use crate::scan::ScannedPlugin;
@@ -171,6 +172,9 @@ pub fn load(
         }
 
         let pedal_parameter = pedal_parameter(controller.as_ref());
+        // The window side, made here so that nothing but a load ever asks the plugin for a
+        // view. A plugin with no edit controller has no window at all.
+        let gui = Vst3Gui::new(controller.as_ref(), &plugin_id);
         let live = Arc::new(());
         let (reports, changed) = rtrb::RingBuffer::new(REPORT_CAPACITY);
         let started = Vst3Processor::new(
@@ -192,6 +196,7 @@ pub fn load(
             started: Box::new(started),
             plugin: Box::new(Vst3Plugin {
                 _module: module,
+                gui,
                 joined,
                 _context: context,
                 changed,
@@ -267,6 +272,9 @@ pub struct Vst3Plugin {
     /// The bundle this plugin came out of. Nothing unloads one, but a plugin owning its module
     /// says so rather than leaving it to a table somewhere else.
     _module: Rc<Module>,
+    /// The plugin's own window. Declared before [`Self::joined`], so that a plugin being
+    /// dropped releases its view before anything terminates the object that made it.
+    gui: Option<Vst3Gui>,
     joined: Joined,
     /// The plugin holds this for as long as it lives, so it must outlive the plugin.
     _context: ComWrapper<HostContext>,
@@ -295,10 +303,11 @@ impl LoadedPlugin for Vst3Plugin {
         Requests {
             restart: self.joined.handler.take_restart_requested(),
             state_is_dirty: self.joined.handler.take_state_is_dirty(),
-            // A VST 3 plugin has no window before step 5b, so it never closes one and never
-            // asks for a size.
+            // VST 3 has no way for a plugin to close the window it is in: the host owns that
+            // window and the plugin only fills it. CLAP's `clap_host_gui.closed` has no
+            // counterpart here, so this is always false.
             window_closed: false,
-            window_size: None,
+            window_size: self.gui.as_ref().and_then(Vst3Gui::take_wanted_size),
         }
     }
 
@@ -332,14 +341,19 @@ impl LoadedPlugin for Vst3Plugin {
     }
 
     fn gui(&mut self) -> Option<&mut dyn PluginGui> {
-        // Step 5b puts a VST 3 plugin's own window in one of ours, through `IPlugView`. Until
-        // then a card says the plugin has no window of its own, which is the truth here.
-        None
+        // `None` for a plugin with no edit controller: nothing can make a view then.
+        let gui = self.gui.as_mut()?;
+        Some(gui)
     }
 
     fn released(&mut self) -> bool {
         if Arc::get_mut(&mut self.live).is_none() {
             return false;
+        }
+        // Whatever the plugin still holds for a window goes before it is terminated. Every path
+        // that lets a plugin go has already closed its window; this is the one that decides.
+        if let Some(gui) = &mut self.gui {
+            gui.destroy();
         }
         self.joined.let_go();
         true
