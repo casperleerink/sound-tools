@@ -169,8 +169,8 @@ Match what gpui 0.2.2 already pulls in (smol 2, async-task, log, parking_lot, sl
 | Resampling | `rubato` 5 | Five majors in 2026. Pin exactly. |
 | FFT | `realfft` 3.5 / `rustfft` 6.4 | |
 | Filters | Our own RBJ biquad | ~50 lines. `biquad` 0.6 is fine too. |
-| MIDI devices | `midir` 0.11 | |
-| MIDI messages | `wmidi` 4 | No allocation, safe on the audio thread. |
+| MIDI devices | `midir` 0.11 | Used in `extensions/midi`. `connect` takes the `MidiInput`, so one port needs one of its own. |
+| MIDI messages | `wmidi` 4 | 4.0.11. No allocation, so a device thread parses without waiting. |
 | MIDI files | `midly` 0.5 | Dormant but complete. |
 | CLAP hosting | `clack-host` 0.2 | The only working Rust CLAP host layer. Has a cpal example. |
 | VST3 hosting | `vst3` 0.3 (coupler-rs) | Raw COM bindings; we write the safe layer. The VST3 SDK is MIT licensed since 3.8 (Oct 2025). |
@@ -330,7 +330,7 @@ Processors that survive a recompile keep their state, so most routing edits prod
 
 ### Realtime safety checks
 
-- `rtsan-standalone`: `Engine::process_block` is `#[nonblocking]`, which covers every `update` and `process` it calls. The crate reads `RTSAN_ENABLE` in its build script and does nothing without it. Run `RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement -p metronome`, then `RTSAN_ENABLE=1 cargo nextest run -p runtime --test projects`, which plays real projects: every track with its sequencer into its synth, with file edits during playback. Add every new crate with a processor to this list and to the CI step. Checked September 20, 2026: the workspace has five processors outside tests, `Tone`, `Synth`, `Sequencer`, `Mixer` and `Metronome`, and each runs under the sanitizer in the tests of its own crate. CI does, as its last step. This is the one allowed exception to "never vary environment variables": it rebuilds only the sanitizer and our audio crates. One test starts a child that allocates inside `process` and expects the sanitizer to abort it, so a sanitizer that is silently off fails CI.
+- `rtsan-standalone`: `Engine::process_block` is `#[nonblocking]`, which covers every `update` and `process` it calls. The crate reads `RTSAN_ENABLE` in its build script and does nothing without it. Run `RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement -p metronome -p midi`, then `RTSAN_ENABLE=1 cargo nextest run -p runtime --test projects`, which plays real projects: every track with its sequencer into its synth, with file edits during playback, and a whole recording from the MIDI input into a clip. Add every new crate with a processor to this list and to the CI step. Checked September 20, 2026: the workspace has six processors outside tests, `Tone`, `Synth`, `Sequencer`, `Mixer`, `Metronome` and `Keys`, and each runs under the sanitizer in the tests of its own crate. CI does, as its last step. This is the one allowed exception to "never vary environment variables": it rebuilds only the sanitizer and our audio crates. One test starts a child that allocates inside `process` and expects the sanitizer to abort it, so a sanitizer that is silently off fails CI.
 - `no_denormals` wraps the body of `process_block`, so offline renders and the device callback compute the same.
 - Keep the realtime path free of `Mutex`, `Vec::push` beyond capacity, `Box::new`, `Arc` drops, `String` formatting and logging. Report through the return ring instead.
 - Not built yet: hold an App Nap prevention activity on macOS while the engine runs (Zed's `prevent_app_nap`). It belongs with the application window. Zed's own audio locks and allocates in its callback; that is fine for calls and wrong for a DAW.

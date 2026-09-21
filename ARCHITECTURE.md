@@ -132,7 +132,7 @@ The v0 workspace is a small DAW. Its parts are bundled extensions that ship with
 | Instrument | One subtractive synth with a few parameters. |
 | Sampler | Plays imported samples from project assets. |
 | Effects | Two or three, such as delay, filter and reverb. |
-| MIDI input | Maps MIDI devices to instrument tracks. |
+| MIDI input | Reads every MIDI keyboard of the machine into the instrument of the selected track, and records what is played, see "MIDI input and recording". |
 | Plugin host | Loads third-party audio plugins (VST3, AU, CLAP) as instruments and effects on tracks. |
 | Metronome | The click on the beats of the tempo map. One processor and a switch, no tool and no record, see "The click, the tempo in the transport and following the playhead". |
 
@@ -146,7 +146,8 @@ Decided September 19, 2026, the note contract crate: `crates/notes`, package `so
 
 - The saved `Note`. Pitch (0 to 127), velocity (1 to 127) and length (1 tick or more) are types that cannot hold a wrong value, and they save as plain numbers.
 - The saved `Clip`: its start and length in ticks and its notes. It moved here from the arrangement with the arrangement build, because its saved form is what other extensions read. The tool name stays `arrangement.clip`.
-- The realtime `NoteEvent`: `On` with pitch and velocity, `Off` with pitch, and `AllOff`. A sender sends `AllOff` when the transport stops or jumps, and on one frame it sends offs before ons. A sender whose notes can change while they sound, such as a track, keeps a fixed list of the notes it started, so each gets its off.
+- The realtime `NoteEvent`: `On` with pitch and velocity, `Off` with pitch, `Pedal` with the sustain pedal, and `AllOff`. A sender sends `AllOff` when the transport stops or jumps, and on one frame it sends offs before ons and the pedal before both. A sender whose notes can change while they sound, such as a track, keeps a fixed list of the notes it started, so each gets its off.
+- The sustain pedal since step 3 of the second milestone: `Pedal` from 0 to 127 as it was played, down from 64, in the realtime events and in the saved clip. See "MIDI input and recording".
 - Pitch to frequency: twelve equal steps per octave, A4 at 440 Hz.
 - The port names of an instrument: an event input `notes` and an audio output `audio`. An owner finds its instrument by these names, so any tool with these ports fits. The audio is stereo, like every audio port, since step 1 of the second milestone.
 
@@ -288,6 +289,49 @@ Following the playhead:
 
 Not built: a click volume, a count-in, tap tempo, other click sounds, tempo ramps, a tempo lane or tempo track view, editing the time signature in the window, saving whether the click is on, and following the playhead in the note editor.
 
+#### MIDI input and recording, decided September 20, 2026 with step 3
+
+Built in `extensions/midi`, with the sustain pedal in `crates/notes`, the synth and the sequencer, and the wiring in `crates/runtime/src/window/recording.rs` and `window/transport.rs`.
+
+The path from a key to sound:
+
+- MIDI is a bundled extension with no tool, no record and no agent doc about records, like the metronome. It registers one doc about raw takes, which every project gets, because every project can be recorded into. The core still knows no notes and no MIDI.
+- Three threads and no waiting. A device thread reads a message and puts it in a lock-free ring. The audio thread takes what is in the ring at the start of a block and sends it to the instrument at offset 0 of that block. It puts what it sent in a second ring with the tick and the engine frame, which the control side reads for the take and the latency. So a message waits for the next audio block and nothing else, and nothing the interface does can delay sound.
+- The one lock is in the device thread: several ports share one ring, and the producer sits behind a mutex that only other device threads can contend for. One ring with a lock on the writing side is simpler than one ring per port with a list the audio thread has to keep in step, and the audio thread never waits for it.
+- A message sounds at the start of the next block, not at the frame of its tick. That is the simplest rule and it costs nothing: it is what "an event sounds at the start of the next audio block" means. There is no latency compensation.
+- A message that does not fit in the event buffer of its block stays in the ring and goes out in the next one, so a key press is never lost. Both rings count what they had to drop, and the runtime prints those counts at the end.
+
+The sustain pedal, in the note contract:
+
+- `Pedal` is 0 to 127, as it was played, not a bool, so a piano plugin that knows half pedal loses nothing later. It is down from 64, MIDI's own rule. `NoteEvent::Pedal(Pedal)` is the realtime event, and `Clip.pedal` is a list of `{start, value}` in ticks from the clip start, under the same rules as the notes.
+- A clip with no pedal leaves the field out of its JSON. So a project from before the pedal loads, is not rewritten and gives the same bytes.
+- An instrument holds the notes whose key came up while the pedal is down, and releases them when it comes up. `AllOff` puts the pedal up as well. That is what makes "no note is ever stuck" a property of the contract: a stop, a seek and an edit all end in an `AllOff` or in the pedal chase below.
+- The sequencer keeps no list for the pedal, because it is one value. Every block, while the project plays, it compares the pedal of the snapshot just before the block with the last value it sent and sends the difference at offset 0, before the notes. So a seek into a held pedal arrives with the pedal down, and an edit that removes a pedal releases what it held, with no case of its own for either.
+- Accepted and written into the note contract: `AllOff` releases everything the instrument holds, whoever started it, so a transport stop also releases what is held on the keyboard. The alternative is a second sender identity through the whole contract, which buys little: while recording, a stop ends the take anyway.
+
+Recording:
+
+- The record control is in the transport, red, with the key `r`. It records from the playhead onto the selected track, or onto the first track when nothing is selected, so a keyboard always sounds somewhere. Pressing it starts playback when the project is stopped, because a take needs the playhead to move. Pressing it again, or a stop, a pause or a seek, ends the take.
+- A recorded note is saved at the tick where the engine sounded it live, which is the first tick of the block that carried it. So playing the clip back renders what was heard within one tick per note. Notes held when recording ends are ended there; a note off from a key that was already down when it began is left out.
+- One undo step. The clip is one commit labelled "Record". No overdub and no merging: a take over existing clips is a new clip, and the existing overlap rule applies.
+- The selected track reaches MIDI through the session, not through either extension: `Session::select` is interface state in the UI SDK, the arrangement view publishes its track selection there, and the window reads it and wires the `notes` port of the instrument. The core gained one accessor for that, `Project::input_port`. Extensions still depend on nothing of each other.
+- A take goes to the track it began on, and the live input stays there while it runs. Selecting another track during a take would otherwise put the sound on one track and the clip on another.
+- All inputs and all channels are merged. No arm button per track, no input routing, no channel filter and no device picker. The port list is read again every second, so a keyboard plugged in later works without a restart.
+
+The raw take:
+
+- A plain JSON file per recorded clip, at the path of that clip under `assets/takes/`: the clip `arrangement/piano/take-1` has `assets/takes/arrangement/piano/take-1.json`. The path is the whole link between the two, in both directions, and it needs no field anywhere. It repeats the clip id inside the file so an agent that opens a take alone knows where it went.
+- Written once, when the take ends. Never rewritten and never deleted by the runtime, also not by undo: undo removes the clip and leaves the take, and redo gives the clip the same id, so it finds its take again. It holds what arrived, with both velocities of every note and the pedal, and times in microseconds from the start of the recording, which is real time and holds whatever the tempo map does, plus the ticks the recording began and ended on. Step 7 fits the tempo from this.
+- The time is taken when the message reaches this process and not from the port's own timestamp, because several ports each count from a starting point of their own and could not be compared. The resolution is that of the callback.
+- This is one file, not an asset system. Step 4 builds project assets.
+
+Latency, and how it is measured:
+
+- `sound_core::monotonic_nanos` is one clock for the process. The device callback publishes two numbers per buffer into a `StreamTiming` and computes nothing on the audio thread: the monotonic time of engine frame 0, and the output delay the device reports. Keeping the time of frame 0 instead of the last pair makes the two numbers independent, so a reader can never take the time of one callback with the frame count of another.
+- The control side then knows when the sound of any engine frame starts at the device, and a MIDI message carries the time it arrived, so the whole way is one subtraction. What this does not cover is the keyboard's own scan and the USB or DIN transfer, which happen before the message reaches this process.
+
+Not built: overdub, merging takes, a count-in, punch in and out, loop recording, quantize, a MIDI monitor, a device picker, latency compensation, other controllers than the sustain pedal, MIDI output, MIDI files, MIDI clock, audio recording, the pedal in the note editor, and saving anything about MIDI in the project.
+
 ### Agent context and tools
 
 The agent works through the live project folder and the runtime protocol, not a separate edit API.
@@ -411,7 +455,7 @@ One shared audio engine executes sound. The core owns transport operations and p
 
 Audio input and output device selection belong to the core. The engine supports live audio input and multiple output channels, making device channels available to tools through the SDK. Extensions define the musical use of those inputs and outputs.
 
-MIDI device integration belongs to extensions. The core provides precise event timing; extensions connect MIDI keyboards and controllers to tools and define how to interpret their input. MIDI conventions are not required by the core.
+MIDI device integration belongs to extensions. The core provides precise event timing; extensions connect MIDI keyboards and controllers to tools and define how to interpret their input. MIDI conventions are not required by the core. Built in `extensions/midi` since September 20, 2026, see "MIDI input and recording". The core gained one thing for it: `Project::input_port`, the named input port of an instance, so that code below the tools can play into one from outside the project.
 
 Support feedback connections in the audio graph. Each feedback loop requires an explicit delay so execution order is defined. Tools may keep this routing internal. Delay-buffer APIs, minimum delay and processing granularity remain implementation decisions.
 
@@ -539,6 +583,7 @@ Second milestone steps:
 - Done September 20, 2026, step 0: the agent docs as a map with one doc per extension, and the terminal from the project menu. See "Agent docs as a map" and "The terminal from the project menu". Not built: a doc per task (no task needs one yet), other platforms than macOS for the terminal.
 - Done September 20, 2026, step 1: the stereo signal path and the gain, pan and mute of a track, in the record, in the track panel and from a file. See "Stereo signal path and the track mixer". Not built: solo, sends, buses, a master fader, meters, a limiter, a mixer view and automation.
 - Done September 20, 2026, step 2: the metronome, the tempo in the transport and the view that follows the playhead. See "The click, the tempo in the transport and following the playhead". Not built: a click volume, a count-in, tap tempo, tempo ramps, a tempo lane, the time signature in the window, and saving whether the click is on.
+- Done September 20, 2026, step 3: MIDI input, the sustain pedal in the note contract, recording a take into a clip and the raw take under `assets/`. See "MIDI input and recording". Not built: overdub, merging takes, a count-in, punch in and out, loop recording, quantize, a device picker, latency compensation, other controllers than the sustain pedal, MIDI output, MIDI files and audio recording.
 
 The repaint issue from the lifecycle prototype is understood: macOS stops rendering an occluded window. It was re-checked in the real window and needs no workaround, see "The window and its views". The pinned GPUI has an accessibility tree and focus-visible. The menu trigger and the seek strip use focus-visible; the other components and the accessibility tree are open.
 
@@ -558,7 +603,7 @@ Sound and engine:
 
 - Nobody has listened with care. All proof of sound is counters, offline renders and sample comparisons. The synth defaults need an ear.
 - No limiter. Tracks add up, and one square note at full resonance and velocity can peak above 1.0. Since the second milestone a track has a gain, a pan and a mute, and nothing else of a mixer.
-- No feedback connections, no audio input, no device switching, no new `prepare` after a sample rate change. Only f32 output on the default device, only macOS.
+- No feedback connections, no audio input, no device switching, no new `prepare` after a sample rate change. Only f32 output on the default device, only macOS. MIDI input is there since step 3 of the second milestone; audio input is not.
 - No App Nap prevention. A long session in a hidden window is not tried.
 - A routing edit is a hard switch, without a gain ramp. Tone steps its gain. The synth smooths its own. There is no smoothing helper in the SDK.
 - Aliasing of the synth is not measured. Speed on x86 is not measured. No Miri run.
