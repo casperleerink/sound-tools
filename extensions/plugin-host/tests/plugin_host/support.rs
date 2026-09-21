@@ -265,12 +265,69 @@ pub fn tell_the_plugin_to_write_its_header_last() {
 }
 
 /// Makes the test plugin close its own window as soon as the host has shown it, which is what
-/// a composer does with the title bar of a real plugin's window. Same rules as
-/// [`tell_the_plugin`].
+/// a composer does with the title bar of a real plugin's window. CLAP only, because VST 3 has
+/// no such call. Same rules as [`tell_the_plugin`].
 pub fn tell_the_plugin_to_close_its_window() {
     // SAFETY: nextest runs one test per process and this is called before any thread but this
     // one exists, so no other thread can be reading the environment.
-    unsafe { std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_CLOSE_GUI", "1") };
+    unsafe { std::env::set_var(test_plugin_support::CLOSE_GUI_VARIABLE, "1") };
+}
+
+/// Makes the test plugin offer no window of its own at all. Same rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_have_no_window(without: bool) {
+    // SAFETY: as above.
+    unsafe {
+        match without {
+            true => std::env::set_var(test_plugin_support::NO_WINDOW_VARIABLE, "1"),
+            false => std::env::remove_var(test_plugin_support::NO_WINDOW_VARIABLE),
+        }
+    }
+}
+
+/// Makes the test plugin ask its host for this window size as soon as it has a window, the way
+/// a plugin that sizes itself as it opens does. A width of zero stops it asking. Same rules as
+/// [`tell_the_plugin`].
+pub fn tell_the_plugin_to_ask_for_a_window_size(width: u32, height: u32) {
+    // SAFETY: as above.
+    unsafe {
+        match width == 0 || height == 0 {
+            true => std::env::remove_var(test_plugin_support::RESIZE_GUI_VARIABLE),
+            false => std::env::set_var(
+                test_plugin_support::RESIZE_GUI_VARIABLE,
+                format!("{width}x{height}"),
+            ),
+        }
+    }
+}
+
+/// Makes the VST 3 test plugin's view ask for another size from inside `onSize`, which is
+/// inside the host's answer to a request of its own. A width of zero stops it asking. Same
+/// rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_ask_again_from_inside_the_answer(width: u32, height: u32) {
+    // SAFETY: as above.
+    unsafe {
+        match width == 0 || height == 0 {
+            true => std::env::remove_var(test_plugin_support::RESIZE_IN_ON_SIZE_VARIABLE),
+            false => std::env::set_var(
+                test_plugin_support::RESIZE_IN_ON_SIZE_VARIABLE,
+                format!("{width}x{height}"),
+            ),
+        }
+    }
+}
+
+/// Makes the VST 3 test plugin's controller edit its `Level` parameter through the host as
+/// soon as it has a component handler, the way its own window would when the composer turns a
+/// knob: one `beginEdit`, `count` values on the way down, one `endEdit`. The last value is
+/// `1 / count`. Same rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_edit_its_level(count: u32) {
+    // SAFETY: as above.
+    unsafe {
+        match count == 0 {
+            true => std::env::remove_var(test_plugin_support::EDITS_VARIABLE),
+            false => std::env::set_var(test_plugin_support::EDITS_VARIABLE, count.to_string()),
+        }
+    }
 }
 
 /// One line of the plugin's lifecycle log: the call, which plugin of the library it was about,
@@ -360,6 +417,18 @@ pub fn saved_transpose(format: PluginFormat, bytes: &[u8]) -> i32 {
     };
     assert_eq!(&own[..4], b"STT1", "not a Test Tone state");
     i32::from_le_bytes([own[4], own[5], own[6], own[7]])
+}
+
+/// The level a parameter edit left the plugin on, out of the component part of a VST 3 state
+/// asset. It is hundredths, so 100 is the level a plugin nobody edited plays at.
+pub fn saved_edit_level(bytes: &[u8]) -> i32 {
+    assert_eq!(&bytes[..4], b"SVT3", "not a VST 3 state asset");
+    let length = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    let own = &bytes[8..8 + length];
+    assert_eq!(&own[..4], b"STT1", "not a Test Tone state");
+    test_plugin_support::load_state(own)
+        .expect("a Test Tone state")
+        .1
 }
 
 /// The level the plugin's edit controller saved, out of the controller part of a VST 3 state

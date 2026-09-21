@@ -268,7 +268,10 @@ fn a_controller_that_cannot_give_its_state_leaves_the_file_that_is_there_alone()
     // A state the plugin saved before: a transpose of seven and a level of its own.
     let asset = harness.project.assets().path(&state_asset("piano"));
     std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
-    let held = vst3_state(&test_plugin_support::save_state(7), b"");
+    let held = vst3_state(
+        &test_plugin_support::save_state(7, test_plugin_support::FULL_EDIT_LEVEL),
+        b"",
+    );
     std::fs::write(&asset, &held).unwrap();
 
     harness.add_track(record(format, "piano"), change_the_state_and_play());

@@ -2,8 +2,8 @@
 //!
 //! `host.rs` holds the table, the saving rule, the problems and the windows and knows no
 //! format. One backend per format fills these in: `clap.rs` and `vst3/`. A format that cannot
-//! do something says so here rather than in the table; a VST 3 plugin has no window before step
-//! 5b, so its [`LoadedPlugin::gui`] is `None` and the card says the plugin has no window.
+//! do something says so here rather than in the table: [`LoadedPlugin::gui`] is `None` for a
+//! plugin that can have no window at all, and the card then says so.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -38,7 +38,8 @@ pub struct Requests {
     pub restart: bool,
     /// The plugin says its own state changed and the host should save it.
     pub state_is_dirty: bool,
-    /// The plugin closed its own window, by its title bar or by losing it.
+    /// The plugin closed its own window, by its title bar or by losing it. CLAP only: VST 3
+    /// has no such call, because there the host owns the window and the plugin only fills it.
     pub window_closed: bool,
     /// A size the plugin asked its window to be.
     pub window_size: Option<WindowSize>,
@@ -51,7 +52,8 @@ pub trait PluginGui {
     fn is_offered(&mut self) -> bool;
 
     /// The plugin makes what it needs for a window. Never called twice without a
-    /// [`Self::destroy`] in between.
+    /// [`Self::destroy`] in between: CLAP's `gui.create`, and a VST 3 controller making an
+    /// `IPlugView`.
     fn create(&mut self) -> Result<(), PluginProblem>;
 
     /// How big the plugin wants its window, if it says.
@@ -64,7 +66,8 @@ pub trait PluginGui {
     /// `view` must be an `NSView` that stays alive until [`Self::destroy`] has run.
     unsafe fn set_parent(&mut self, view: NonNull<c_void>) -> Result<(), PluginProblem>;
 
-    /// Shows the plugin's view.
+    /// Shows the plugin's view. VST 3 has no such call: a view is on screen as soon as it is
+    /// attached, so its backend answers this with nothing.
     fn show(&mut self) -> Result<(), PluginProblem>;
 
     /// Frees everything the plugin made for its window. Its sound and its state are untouched.

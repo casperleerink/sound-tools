@@ -5,9 +5,10 @@
 //! right channel is the sustain pedal as a number, so a render says which instrument played.
 
 use gpui::TestAppContext;
+use plugin_host::{PluginFormat, PluginRecord};
 use sound_core::Changes;
 
-use crate::support::{self, BAR, Opened, clip, id, note, test_plugin_record};
+use crate::support::{self, BAR, Opened, clip, id, note, test_plugin_id, test_plugin_record};
 
 const TRACK: &str = "arrangement/track-1";
 const SLOT: &str = "arrangement/track-1/instrument";
@@ -15,9 +16,21 @@ const SLOT_FILE: &str = "state/arrangement/track-1/instrument.json";
 const PART: &str = "arrangement/track-1/part";
 const PICKER: &str = "instrument-picker";
 const SYNTH_ITEM: &str = "menu-instrument.synth";
-/// The key of the test plugin in the picker: the format and the plugin's own id.
-const PLUGIN_ITEM: &str = "menu-CLAP:sound-tools.test-tone";
 const PLUGIN_NAME: &str = "Sound Tools Test Tone";
+
+/// The row of the test plugin of `format` in the picker. Its key is the format and the
+/// plugin's own id, which is what tells one offer from another.
+fn plugin_item(format: PluginFormat) -> String {
+    format!(
+        "menu-{}",
+        PluginRecord::offer_key(format, test_plugin_id(format))
+    )
+}
+
+/// The CLAP row, for the checks that are not about a format.
+fn plugin_item_clap() -> String {
+    plugin_item(PluginFormat::Clap)
+}
 
 /// One track with the default synth and a clip of one long note, and the panel of that track
 /// open. Whatever is in the slot plays that note, so a render says what is there.
@@ -101,36 +114,53 @@ fn window_is_open(opened: &mut Opened<'_>) -> bool {
 }
 
 #[gpui::test]
-fn the_picker_offers_the_synth_and_every_clap_instrument_the_scan_found(cx: &mut TestAppContext) {
+fn the_picker_offers_the_synth_and_every_instrument_of_every_format_the_scan_found(
+    cx: &mut TestAppContext,
+) {
     let mut opened = open_panel(cx);
     assert_eq!(card_names(&mut opened), ["Synth"]);
     // Nothing is open, so no row is on screen.
-    assert_eq!(opened.find(PLUGIN_ITEM), None);
+    assert_eq!(opened.find(&plugin_item_clap()), None);
 
     open_picker(&mut opened);
     assert!(opened.find(SYNTH_ITEM).is_some());
-    assert!(opened.find(PLUGIN_ITEM).is_some());
+    // One row per format, each named by its own id, so the two test plugins are two offers.
+    for format in [PluginFormat::Clap, PluginFormat::Vst3] {
+        let row = plugin_item(format);
+        assert!(opened.find(&row).is_some(), "{row}");
+    }
     // Looking is no edit.
     assert_eq!(opened.undo_label(), None);
     // Escape closes the menu and leaves the panel open.
     opened.keys("escape");
-    assert_eq!(opened.find(PLUGIN_ITEM), None);
+    assert_eq!(opened.find(&plugin_item_clap()), None);
     assert!(opened.track_panel().is_some());
 }
 
 #[gpui::test]
-fn picking_a_plugin_writes_the_record_as_one_undo_step_and_undo_gives_the_synth_back(
+fn picking_a_clap_plugin_writes_the_record_as_one_undo_step_and_undo_gives_the_synth_back(
     cx: &mut TestAppContext,
 ) {
+    picking_a_plugin_is_one_undo_step(PluginFormat::Clap, cx);
+}
+
+#[gpui::test]
+fn picking_a_vst3_plugin_writes_the_record_as_one_undo_step_and_undo_gives_the_synth_back(
+    cx: &mut TestAppContext,
+) {
+    picking_a_plugin_is_one_undo_step(PluginFormat::Vst3, cx);
+}
+
+fn picking_a_plugin_is_one_undo_step(format: PluginFormat, cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     let with_synth = playing(&mut opened);
     assert!(support::peak(&with_synth) > 0.0);
 
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item(format));
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
     let record = slot_file(&mut opened).unwrap();
     assert!(record.contains(r#""tool": "plugin""#), "{record}");
-    assert!(record.contains(test_clap_plugin::PLUGIN_ID), "{record}");
+    assert!(record.contains(test_plugin_id(format)), "{record}");
     // A state file of its own, from the plugin's name, that no other record uses.
     assert!(
         record.contains(r#""state_asset": "sound-tools-test-tone-1""#),
@@ -166,7 +196,7 @@ fn picking_a_plugin_writes_the_record_as_one_undo_step_and_undo_gives_the_synth_
 #[gpui::test]
 fn picking_the_synth_again_after_a_plugin_brings_its_controls_back(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item_clap());
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
     // The plugin has a card without knobs, so the cutoff knob of the synth is gone.
     assert_eq!(opened.find("knob-cutoff_hz"), None);
@@ -187,10 +217,10 @@ fn picking_the_synth_again_after_a_plugin_brings_its_controls_back(cx: &mut Test
     let second_track = "state/arrangement/track-2/instrument.json";
     let header = opened.track_header(1);
     opened.click(header);
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item_clap());
     let written = std::fs::read_to_string(opened.path(second_track)).unwrap();
     let label = opened.undo_label();
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item_clap());
     assert_eq!(
         std::fs::read_to_string(opened.path(second_track)).unwrap(),
         written
@@ -201,7 +231,7 @@ fn picking_the_synth_again_after_a_plugin_brings_its_controls_back(cx: &mut Test
     // the plugin's name and a number, as a take does.
     let header = opened.track_header(0);
     opened.click(header);
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item_clap());
     let first = slot_file(&mut opened).unwrap();
     let names = state_assets(&mut opened);
     assert_eq!(names.len(), 3, "{names:?}");
@@ -269,17 +299,28 @@ fn a_plugin_this_machine_does_not_have_shows_its_id_and_the_rest_of_the_panel_wo
     opened.click(mute);
     assert_eq!(opened.undo_label().as_deref(), Some("Mute track"));
     // And the picker is the way out: pick something this machine has.
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item_clap());
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
     assert_eq!(opened.project(|project| project.problems().len()), 0);
 }
 
 #[gpui::test]
-fn the_plugins_window_opens_from_its_card_and_goes_when_another_instrument_is_picked(
+fn the_clap_plugins_window_opens_from_its_card_and_goes_when_another_instrument_is_picked(
     cx: &mut TestAppContext,
 ) {
+    the_window_opens_from_its_card(PluginFormat::Clap, cx);
+}
+
+#[gpui::test]
+fn the_vst3_plugins_window_opens_from_its_card_and_goes_when_another_instrument_is_picked(
+    cx: &mut TestAppContext,
+) {
+    the_window_opens_from_its_card(PluginFormat::Vst3, cx);
+}
+
+fn the_window_opens_from_its_card(format: PluginFormat, cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item(format));
     assert!(!window_is_open(&mut opened));
 
     let button = opened.control("plugin-window");
@@ -307,11 +348,22 @@ fn the_plugins_window_opens_from_its_card_and_goes_when_another_instrument_is_pi
 }
 
 #[gpui::test]
-fn deleting_the_track_from_outside_closes_the_plugins_window_and_undo_brings_it_back_silent(
+fn deleting_the_track_from_outside_closes_a_clap_plugins_window_and_undo_brings_it_back_silent(
     cx: &mut TestAppContext,
 ) {
+    deleting_the_track_closes_the_window(PluginFormat::Clap, cx);
+}
+
+#[gpui::test]
+fn deleting_the_track_from_outside_closes_a_vst3_plugins_window_and_undo_brings_it_back_silent(
+    cx: &mut TestAppContext,
+) {
+    deleting_the_track_closes_the_window(PluginFormat::Vst3, cx);
+}
+
+fn deleting_the_track_closes_the_window(format: PluginFormat, cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item(format));
     let button = opened.control("plugin-window");
     opened.click(button);
     assert!(window_is_open(&mut opened));
@@ -336,12 +388,23 @@ fn deleting_the_track_from_outside_closes_the_plugins_window_and_undo_brings_it_
 }
 
 #[gpui::test]
-fn a_plugin_written_by_hand_gets_the_same_card_and_the_track_can_go_back_to_the_synth(
+fn a_clap_plugin_written_by_hand_gets_the_same_card_and_the_track_can_go_back_to_the_synth(
     cx: &mut TestAppContext,
 ) {
+    a_plugin_written_by_hand_gets_the_same_card(PluginFormat::Clap, cx);
+}
+
+#[gpui::test]
+fn a_vst3_plugin_written_by_hand_gets_the_same_card_and_the_track_can_go_back_to_the_synth(
+    cx: &mut TestAppContext,
+) {
+    a_plugin_written_by_hand_gets_the_same_card(PluginFormat::Vst3, cx);
+}
+
+fn a_plugin_written_by_hand_gets_the_same_card(format: PluginFormat, cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     let path = opened.path(SLOT_FILE);
-    std::fs::write(&path, test_plugin_record("piano")).unwrap();
+    std::fs::write(&path, test_plugin_record(format, "piano")).unwrap();
     opened.edit(|project| project.apply_outside_changes(&[path]));
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
     assert!(opened.find("plugin-window").is_some());
@@ -367,7 +430,7 @@ fn a_project_that_does_not_enable_the_plugin_host_shows_what_to_do(cx: &mut Test
     let before = slot_file(&mut opened);
 
     // The plugin is offered and not taken: no record, no undo step, no notice.
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item_clap());
     assert_eq!(card_names(&mut opened), ["Synth"]);
     assert_eq!(slot_file(&mut opened), before);
     assert_eq!(opened.undo_label(), None);
@@ -395,7 +458,7 @@ fn a_new_project_enables_the_plugin_host(cx: &mut TestAppContext) {
         enabled.iter().any(|name| name == "plugin-host"),
         "{enabled:?}"
     );
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item_clap());
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
 }
 
@@ -429,7 +492,7 @@ fn write_clip(opened: &mut Opened<'_>, pedal: Option<u8>) {
 #[gpui::test]
 fn a_plugin_that_is_picked_never_starts_from_a_state_file_that_was_there(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item_clap());
     let plain = left(&playing(&mut opened));
     assert!(support::peak(&plain) > 0.0);
 
@@ -447,7 +510,7 @@ fn a_plugin_that_is_picked_never_starts_from_a_state_file_that_was_there(cx: &mu
     // The synth, and the same plugin again: a state file of its own, and the sound the plugin
     // has when nothing was ever saved into it.
     pick(&mut opened, SYNTH_ITEM);
-    pick(&mut opened, PLUGIN_ITEM);
+    pick(&mut opened, &plugin_item_clap());
     let names = state_assets(&mut opened);
     assert_eq!(names.len(), 2, "{names:?}");
     let record = slot_file(&mut opened).unwrap();

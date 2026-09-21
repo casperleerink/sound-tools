@@ -1,7 +1,8 @@
 # plugin-host
 
 Third-party audio plugins as tools of a project. CLAP instruments since step 4a of the second
-milestone, VST 3 instruments since step 5a; effects come later. The decisions are in
+milestone, VST 3 instruments since step 5a and their windows since 5b; effects come later. The
+decisions are in
 [ARCHITECTURE.md](../../ARCHITECTURE.md), "Hosting plugins". `agent-doc.md` is what an agent
 reads; this file is for whoever works on the host.
 
@@ -38,7 +39,7 @@ core's `AssetName`, so a record can never point outside the project folder.
 | `window.rs` | The plugin's own window: one window of the application per open plugin. |
 | `view.rs` | The card of a plugin in a rack, and what a rack calls one. |
 | `clap.rs` | The CLAP backend: the host callbacks, loading, the window and playing. |
-| `vst3/` | The VST 3 backend. `module.rs` loads a bundle, `plugin.rs` is the control side, `process.rs` the audio side, `context.rs` what the host is from the plugin's side, `stream.rs` an `IBStream` over bytes. |
+| `vst3/` | The VST 3 backend. `module.rs` loads a bundle, `plugin.rs` is the control side, `process.rs` the audio side, `context.rs` what the host is from the plugin's side, including the edits its controller makes, `stream.rs` an `IBStream` over bytes, `view.rs` the plugin's window (`IPlugView`, `IPlugFrame`). |
 | `src/bin/plugin-scan.rs` | The child process, for the tests of this crate. The runtime is its own child. |
 
 ## What each format decides, and what they share
@@ -61,13 +62,23 @@ when there is no audio thread left. `tests/plugin_host/lifecycle.rs` drives the 
 thread of its own and reads what the test plugin wrote down, for both formats, so what a strict
 plugin would assert is asserted.
 
-The one difference the host had to grow for VST 3 is how a plugin says its state changed. CLAP
-has `clap_host_state.mark_dirty`. VST 3 has no such call: a plugin's controller reports an edit
-through `IComponentHandler::performEdit`, and what the plugin changed by itself comes back in
-the block's output parameter changes. The host reads those on the audio thread into a lock-free
-ring, and the next poll gives them to the plugin's controller with `setParamNormalized`, which
-is how the two halves of a VST 3 plugin stay in step, and marks the state to be saved. The
-once-a-second rule, the saving moments and the asset are the same for both.
+The one difference the host had to grow for VST 3 is that a plugin's two halves only meet
+through the host. CLAP has `clap_host_state.mark_dirty` and one object. VST 3 has neither:
+
+- What the plugin changed by itself comes back in the block's output parameter changes. The
+  host reads those on the audio thread into a lock-free ring, and the next poll gives them to
+  the plugin's controller with `setParamNormalized` and marks the state to be saved.
+- What the composer changed in the plugin's own window arrives at
+  `IComponentHandler::performEdit`, and has to go the other way, to the processor.
+  `ivsteditcontroller.h`: "Allow transfer of parameter editing to component (processor) via
+  host and support automation." The handler keeps the newest value of every parameter, by
+  parameter; the poll moves them into a second ring; `begin_block` empties that ring into the
+  block's `inputParameterChanges`. By parameter, because a knob drag is hundreds of edits of
+  one parameter and only the last is the sound, so what the ring has no room for goes back and
+  waits for the next poll instead of being dropped. A render polls for every block, so a render
+  gets the edits too.
+
+The once-a-second rule, the saving moments and the asset are the same for both.
 
 This is why a behaviour is no longer `Send`: it keeps an `Rc` of the host. The project has
 always lived on one thread.
@@ -277,10 +288,9 @@ another state file. `tests/plugin_host/consistency.rs` walks the sequences, for 
 
 ## The plugin's own window
 
-Only CLAP plugins have a window in this build. Step 5b puts a VST 3 plugin's own view
-(`IPlugView`) in one of ours; until then `Vst3Plugin::gui` is `None` and the card says the
-plugin has no window of its own. Everything the window machinery needs of a plugin is
-`backend::PluginGui`, so 5b writes that one implementation and touches nothing else here.
+Both formats put the plugin's own view in a window of ours. The window machinery in `host.rs`
+and `window.rs` knows no format: all it needs of a plugin is `backend::PluginGui`, and the two
+backends fill that in. The VST 3 one is `vst3/view.rs` and it changed nothing of the design.
 
 CLAP offers two ways to show a plugin: a floating window the plugin makes and owns, or a
 window the host makes with the plugin's view embedded in it. The specification calls the
@@ -313,9 +323,50 @@ window and `true` for an embedded one. So this host makes the window.
 - `clap_host_gui.closed` is the one window callback a plugin may make from another thread. Like
   the other cross-thread callbacks it only sets a flag that the next poll reads.
 
+### What VST 3 asks that CLAP does not
+
+`vst3/view.rs`, read from `pluginterfaces/gui/iplugview.h` and not from memory:
+
+- The view comes from the plugin's edit controller, `createView(ViewType::kEditor)`, and it is
+  made when the composer opens the window and never before. A card offers the window of any
+  plugin with an edit controller; one whose `createView` gives nothing says so once and is not
+  offered a window again this session. Asking at load would mean building the plugin's whole
+  interface, which is 0.97 s for Crow Hill Origins, in every mode, see ARCHITECTURE.md.
+- The order is create, `setFrame`, `getSize`, `attached`, and there is no separate show: a view
+  is on screen as soon as it is attached. `removed` is called for an `attached` that was
+  answered and for nothing else, then a null frame, then the release. The frame goes in before
+  `attached` because the header says a plugin may ask to be resized from inside that call.
+- A plugin that wants another size calls `IPlugFrame::resizeView`, and then, in the words of
+  the header, "in the same callstack, the host has to call IPlugView::onSize". So the frame
+  answers `onSize` inside the request and notes the size for the next poll, which is the one
+  place that has the application and can resize the window. CLAP's `request_resize` only notes.
+  The guards are Steinberg's own, from `editorhost.cpp`: a request that names a view this frame
+  was not given is refused, a request made from inside the answer to another one is refused, a
+  view that already has the size asked for is told nothing, and the view's own size is read
+  afterwards, because that is what the window ends on. Without the second one a plugin that
+  answers `onSize` with the same request runs the host out of stack.
+- A view is taken apart in the order `closePlugView` takes it: the frame first, so the plugin
+  cannot reach an object of ours in the middle of its own removal, then `removed` for an
+  `attached` that was answered and for nothing else, then the release.
+- On macOS a `ViewRect` is in logical units, so nothing sets a scale, which is what the CLAP
+  side does too.
+- VST 3 has no way for a plugin to close the window it is in, because the host owns that
+  window. `Requests::window_closed` is therefore always false for a VST 3 plugin.
+- Every call of a view belongs to the thread the user interface lives on. The one call a plugin
+  makes of its own accord is `resizeView`; it is kept in an atomic all the same, so a plugin
+  that calls it from elsewhere cannot make this host unsound.
+
 `tests/plugin_host/window.rs` drives all of it on GPUI's platform for tests, whose windows are
-not real ones, so no display is needed. The plugin then gets no view to draw in, which is the
-one thing those tests cannot cover; it is checked by hand with a real plugin.
+not real ones, so no display is needed, and every check that is about the host and not about
+one format runs for both. A window of that platform has no `NSView` to give a plugin, so
+`attached` and `removed` never run there; the unit tests in `src/vst3/view.rs` drive the
+backend itself with a parent the test plugin never touches, and cover attaching, a plugin that
+refuses its parent, and a resize asked for from inside `attached`. What is left for a real
+plugin is a view that really draws, which is checked by hand.
+
+`tests/plugin_host/editing.rs` is the other way round: what the composer changes in the
+plugin's window reaching the processor, the last value of a burst winning, and the state saved
+afterwards holding it.
 
 ## Unsafe code
 
@@ -355,12 +406,13 @@ agreement to host or to write plugins.
 Effects, AU, a plugin sandbox, latency compensation, parameter automation, a parameter view,
 presets and program lists, MIDI out of a plugin, more than the first event input and the first
 stereo output, the transport a plugin can read (`ProcessContext` is null, so a plugin that syncs
-to the tempo runs free), a plugin window that follows a drag of its edge, remembering where a
-window sat or whether it was open, a floating window for a plugin that only floats, keeping a
-plugin's window above the main one, and finding a plugin installed while the app runs.
-
-The VST 3 window is step 5b: `IPlugView`, `IPlugFrame` and the Cocoa view of a plugin in one of
-our windows.
+to the tempo runs free), answering `kParamValuesChanged` by reading every parameter of the
+controller back into the processor, a plugin window that follows a drag of its edge (VST 3 says how, with
+`canResize` and `checkSizeConstraint`, and CLAP does too; neither is wired to a GPUI resize),
+key events passed to a view (`IPlugView::onKeyDown`; a plugin's own `NSView` is in the responder
+chain of our window, so typing in it works through AppKit), remembering where a window sat or
+whether it was open, a floating window for a plugin that only floats, keeping a plugin's window
+above the main one, and finding a plugin installed while the app runs.
 
 Two records may name one `state_asset` and then share it. Nothing refuses either: the project
 runs only the behaviour of the record that was edited, so a complaint about another record
@@ -368,7 +420,12 @@ could never be taken back when that other record went. Two records for *differen
 report themselves anyway, because the second cannot read the first one's state.
 
 A plugin that asks to be started again, which it may do after changing its own port layout, is
-told to the composer instead of being restarted.
+told to the composer instead of being restarted. Measured over the five VST 3 instruments of
+this machine, none asks for `kReloadComponent` or `kIoChanged`, the two that would need it.
+LABS, Numa Player and Origins send `kParamValuesChanged` once when their state is read back;
+Splice INSTRUMENT also sends `kParamTitlesChanged`, `kParamIDMappingChanged` and
+`restartComponent(0)`. This build calls the last three a restart although none of them is one,
+which is a wrong line for a composer to read and is listed for later.
 
 A plugin is an instrument when it says so: the CLAP feature `instrument`, or the VST 3
 subcategory `Instrument`. Nothing checks whether that is true: a plugin that says so and is
