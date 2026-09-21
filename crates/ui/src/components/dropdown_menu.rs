@@ -207,8 +207,10 @@ impl RenderOnce for MenuList {
                             let is_selected = selected.as_ref() == Some(&item.value);
                             let on_select = on_select.clone();
                             let value = item.value.clone();
+                            let selector = item.value.clone();
                             div()
                                 .id(("menu-row", row_ix))
+                                .debug_selector(move || format!("menu-{selector}"))
                                 .flex()
                                 .flex_none()
                                 .items_center()
@@ -237,10 +239,13 @@ impl RenderOnce for MenuList {
                                         .flex_1()
                                         .child(div().truncate().child(item.label.clone()))
                                         .when_some(item.description.clone(), |d, description| {
+                                            // The label truncates and this wraps: a second
+                                            // line is there to be read, and a row is as tall
+                                            // as it needs.
                                             d.child(
                                                 div()
-                                                    .truncate()
                                                     .text_size(px(12.))
+                                                    .line_height(px(16.))
                                                     .font_weight(FontWeight::NORMAL)
                                                     .text_color(muted)
                                                     .child(description),
@@ -336,6 +341,8 @@ pub struct DropdownMenu {
     align: Align,
     width: f32,
     ghost: bool,
+    /// What a test looks the trigger up by, see `VisualTestContext::debug_bounds`.
+    debug_name: Option<SharedString>,
 }
 
 impl DropdownMenu {
@@ -356,7 +363,14 @@ impl DropdownMenu {
             align: Align::default(),
             width: 320.,
             ghost: false,
+            debug_name: None,
         }
+    }
+
+    /// Names the trigger for tests, so a simulated mouse can find it.
+    pub fn debug_name(mut self, name: impl Into<SharedString>) -> Self {
+        self.debug_name = Some(name.into());
+        self
     }
 
     pub fn selected(mut self, value: impl Into<SharedString>) -> Self {
@@ -389,6 +403,11 @@ impl DropdownMenu {
         self.selected.as_ref()
     }
 
+    /// What the trigger says.
+    pub fn label(&self) -> &SharedString {
+        &self.label
+    }
+
     /// Replaces the items, for a menu whose labels follow the application, such as
     /// `Undo Move clip`. The keyboard highlight stays when the items are the same ones, so a
     /// change from outside while the menu is open does not take it away.
@@ -404,6 +423,16 @@ impl DropdownMenu {
         }
         self.entries = entries;
         cx.notify();
+    }
+
+    /// Changes what the trigger says, for a menu whose label is what it last picked, such as
+    /// the instrument of a track.
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let label = label.into();
+        if self.label != label {
+            self.label = label;
+            cx.notify();
+        }
     }
 
     pub fn set_selected(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
@@ -476,8 +505,11 @@ impl DropdownMenu {
                     self.pick(value, window, cx);
                 }
             }
-            _ => {}
+            _ => return,
         }
+        // An open menu keeps the key it used. Else escape would also close whatever holds the
+        // menu, such as the track panel behind an instrument picker.
+        cx.stop_propagation();
     }
 }
 
@@ -497,6 +529,9 @@ impl Render for DropdownMenu {
             .flex_none()
             .child(
                 trigger_element
+                    .when_some(self.debug_name.clone(), |element, name| {
+                        element.debug_selector(move || name.to_string())
+                    })
                     .track_focus(&self.trigger_focus)
                     .border_1()
                     .focus_visible(move |s| s.border_color(ring))

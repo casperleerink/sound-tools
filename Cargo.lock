@@ -4335,13 +4335,17 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "plugin-host"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clack-extensions",
  "clack-host",
+ "gpui",
+ "raw-window-handle",
  "rtsan-standalone",
  "serde",
  "serde_json",
  "sound-core",
  "sound-notes",
+ "sound-ui",
  "tempfile",
  "test-clap-plugin",
  "thiserror 2.0.20",

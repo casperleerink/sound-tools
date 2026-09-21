@@ -22,15 +22,25 @@
 //! `SOUND_TOOLS_TEST_PLUGIN_CRASH` aborts, `SOUND_TOOLS_TEST_PLUGIN_CHATTER` prints a line to
 //! standard output as real plugins do, and `SOUND_TOOLS_TEST_PLUGIN_HANG` never returns.
 //! While it plays, which is in the process of whoever loads it:
-//! `SOUND_TOOLS_TEST_PLUGIN_EVENTS` sends that many events out of every process call, and
+//! `SOUND_TOOLS_TEST_PLUGIN_EVENTS` sends that many events out of every process call,
 //! `SOUND_TOOLS_TEST_PLUGIN_LOG` names a file this plugin writes one line to for every
-//! lifecycle call it gets, with the thread it arrived on.
+//! lifecycle call it gets, with the thread it arrived on, and
+//! `SOUND_TOOLS_TEST_PLUGIN_CLOSE_GUI` makes it close its own window as soon as it was shown,
+//! which is what a composer does with the title bar of a real plugin's window.
+//!
+//! Its window is a window in name only. It draws nothing, because CI has no display: it
+//! answers the calls of the GUI extension and writes them down, so a test can say which call
+//! arrived, in what order and on which thread. Like the real plugins this was written against,
+//! it offers an embedded window and not a floating one.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use clack_extensions::audio_ports::{
     AudioPortFlags, AudioPortInfo, AudioPortInfoWriter, AudioPortType, PluginAudioPorts,
     PluginAudioPortsImpl,
+};
+use clack_extensions::gui::{
+    GuiConfiguration, GuiSize, HostGui, PluginGui, PluginGuiImpl, Window as GuiWindow,
 };
 use clack_extensions::note_ports::{
     NoteDialect, NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePorts,
@@ -72,6 +82,10 @@ const EVENTS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_EVENTS";
 /// starts and stops processing on the thread that processes.
 const LOG_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_LOG";
 
+/// Makes the plugin close its own window as soon as the host has shown it, which is what a
+/// composer does with the title bar of a real plugin's window.
+const CLOSE_GUI_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_CLOSE_GUI";
+
 /// Appends `call` to the log file, when there is one. The thread is the number the operating
 /// system gives it, so a test can say "the same thread as `process`" without naming it.
 fn log(call: &str, plugin: u64, processed: u64) {
@@ -105,6 +119,7 @@ impl Plugin for TestTone {
         builder
             .register::<PluginAudioPorts>()
             .register::<PluginNotePorts>()
+            .register::<PluginGui>()
             .register::<PluginState>();
     }
 }
@@ -134,6 +149,7 @@ impl DefaultPluginFactory for TestTone {
         Ok(TestToneShared {
             semitones: AtomicI32::new(0),
             state_is_dirty: AtomicBool::new(false),
+            close_the_window: AtomicBool::new(false),
         })
     }
 
@@ -145,10 +161,12 @@ impl DefaultPluginFactory for TestTone {
     }
 }
 
-/// What both threads read: the transpose and whether the host still has to save it.
+/// What both threads read: the transpose, whether the host still has to save it, and whether
+/// this plugin is about to close its own window.
 pub struct TestToneShared {
     semitones: AtomicI32,
     state_is_dirty: AtomicBool,
+    close_the_window: AtomicBool,
 }
 
 impl PluginShared<'_> for TestToneShared {}
@@ -159,15 +177,99 @@ pub struct TestToneMainThread<'a> {
 }
 
 impl<'a> PluginMainThread<'a, TestToneShared> for TestToneMainThread<'a> {
-    /// The audio thread asked for this call after it changed the state. Only the main thread
-    /// may tell the host that the state is dirty.
+    /// The audio thread asked for this call after it changed the state, or [`PluginGuiImpl::show`]
+    /// did because the plugin is to close its own window. Both belong to the main thread.
     fn on_main_thread(&self) {
+        if self.shared.close_the_window.swap(false, Ordering::AcqRel)
+            && let Some(gui) = self.host.shared().get_extension::<HostGui>()
+        {
+            log("closed", 0, 0);
+            gui.closed(&self.host.shared(), true);
+        }
         if !self.shared.state_is_dirty.swap(false, Ordering::AcqRel) {
             return;
         }
         if let Some(state) = self.host.shared().get_extension::<HostState>() {
             state.mark_dirty(&self.host);
         }
+    }
+}
+
+/// The window, in name only: no real one is made, because a test has no display. Every call is
+/// written to the log, with the thread it came in on, so a test reads exactly what a host did.
+///
+/// Only an embedded window is offered, which is what the real CLAP plugins on the machine this
+/// was written on offer, and what the host asks for.
+impl PluginGuiImpl for TestToneMainThread<'_> {
+    fn is_api_supported(&self, configuration: GuiConfiguration) -> bool {
+        log("gui_is_api_supported", 0, 0);
+        !configuration.is_floating
+    }
+
+    fn get_preferred_api(&self) -> Option<GuiConfiguration<'_>> {
+        None
+    }
+
+    fn create(&self, configuration: GuiConfiguration) -> Result<(), PluginError> {
+        log("gui_create", 0, 0);
+        match configuration.is_floating {
+            false => Ok(()),
+            true => Err(PluginError::Message("this plugin does not float")),
+        }
+    }
+
+    fn destroy(&self) {
+        log("gui_destroy", 0, 0);
+    }
+
+    fn set_scale(&self, _scale: f64) -> Result<(), PluginError> {
+        Err(PluginError::Message("Cocoa sizes are already logical"))
+    }
+
+    fn get_size(&self) -> Option<GuiSize> {
+        Some(GuiSize {
+            width: 320,
+            height: 240,
+        })
+    }
+
+    fn set_size(&self, _size: GuiSize) -> Result<(), PluginError> {
+        Err(PluginError::Message("this window is not resizable"))
+    }
+
+    fn set_parent(&self, _window: GuiWindow) -> Result<(), PluginError> {
+        log("gui_set_parent", 0, 0);
+        Ok(())
+    }
+
+    fn set_transient(&self, _window: GuiWindow) -> Result<(), PluginError> {
+        Err(PluginError::Message("this plugin does not float"))
+    }
+
+    /// A line of the log is read by splitting on spaces, so the title goes in with `_` for
+    /// every space. A test still sees which title the host suggested.
+    fn suggest_title(&self, title: &str) {
+        log(
+            &format!("gui_suggest_title[{}]", title.replace(' ', "_")),
+            0,
+            0,
+        );
+    }
+
+    fn show(&self) -> Result<(), PluginError> {
+        log("gui_show", 0, 0);
+        // A window the composer closes by its title bar. The host may not be told from inside
+        // one of its own calls, so this asks for a call on the main thread and tells it there.
+        if std::env::var_os(CLOSE_GUI_VARIABLE).is_some() {
+            self.shared.close_the_window.store(true, Ordering::Release);
+            self.host.shared().request_callback();
+        }
+        Ok(())
+    }
+
+    fn hide(&self) -> Result<(), PluginError> {
+        log("gui_hide", 0, 0);
+        Ok(())
     }
 }
 

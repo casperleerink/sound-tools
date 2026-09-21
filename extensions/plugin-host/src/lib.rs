@@ -18,11 +18,13 @@
 mod host;
 mod processor;
 pub mod scan;
+pub mod view;
+mod window;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    AgentDoc, AssetName, BehaviourContext, BehaviourError, InputEndpoint, InvalidAssetName,
-    OutputEndpoint, Registry, RegistryError, State,
+    AgentDoc, AssetError, AssetName, Assets, BehaviourContext, BehaviourError, InputEndpoint,
+    InvalidAssetName, OutputEndpoint, Registry, RegistryError, State,
 };
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
@@ -73,6 +75,43 @@ impl StateAsset {
     }
 }
 
+/// A `state_asset` for a plugin that is being put on a track: a name no file of the project
+/// has, reserved by making that file.
+///
+/// It is [`Assets::create`] and its numbering, the rule a raw take follows: `six-sines-1`,
+/// `six-sines-2`. The file is never opened, so a new plugin can never come up holding the
+/// sound an older one left behind, and undo brings the older one back as it sounded. The file
+/// is empty until the plugin saves into it, and an empty one is read as nothing saved yet.
+///
+/// Whoever writes a record by hand chooses the name themselves, and two records may share one.
+/// This is for a record the window writes, where a shared name would be a surprise.
+pub fn new_state_asset(assets: &Assets, wanted: &str) -> Result<StateAsset, AssetError> {
+    let base = AssetName::new(STATE_FOLDER, &asset_name_of(wanted), STATE_EXTENSION)?;
+    let taken = assets.create(&base, &[])?;
+    Ok(StateAsset(taken))
+}
+
+/// What an [`AssetName`] may hold, from a display name: lowercase letters, digits and `-`.
+fn asset_name_of(display: &str) -> String {
+    let mut name = String::new();
+    for character in display.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_lowercase() || character.is_ascii_digit() {
+            name.push(character);
+        } else if !name.is_empty() && !name.ends_with('-') {
+            name.push('-');
+        }
+    }
+    let name = name.trim_end_matches('-');
+    if name.is_empty() {
+        FALLBACK_STATE_ASSET.to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// The name a plugin whose own name has nothing an asset name may hold gets.
+const FALLBACK_STATE_ASSET: &str = "plugin";
+
 impl TryFrom<String> for StateAsset {
     type Error = InvalidAssetName;
 
@@ -99,6 +138,13 @@ pub struct PluginRecord {
 }
 
 impl PluginRecord {
+    /// How an offer of this plugin is told from every other in a picker: the format and the
+    /// plugin's own id. Whoever offers plugins and whoever names what is in a slot build it
+    /// the same way, so a picker can mark the plugin that is already there.
+    pub fn offer_key(format: PluginFormat, plugin_id: &str) -> String {
+        format!("{}:{plugin_id}", format.name())
+    }
+
     pub fn new(format: PluginFormat, plugin_id: &str, state_asset: &str) -> Option<Self> {
         Some(Self {
             format,

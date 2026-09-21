@@ -36,9 +36,13 @@ struct Life {
 }
 
 impl Life {
+    /// The calls about the audio processors, in order. The calls about the plugin itself,
+    /// written down with plugin 0, are not part of what this file is about; `window.rs` reads
+    /// those.
     fn names(&self) -> Vec<String> {
         self.calls
             .iter()
+            .filter(|call| call.plugin != 0)
             .map(|call| format!("{}({})", call.call, call.plugin))
             .collect()
     }
@@ -60,10 +64,16 @@ impl Life {
         found.unwrap_or_else(|| panic!("no {name} of plugin {plugin} in {:?}", self.names()))
     }
 
-    /// Which plugin numbers appear. The library counts them for the whole process, so a test
-    /// reads its own by position and not by a fixed number.
+    /// Which audio processors appear. The library counts them for the whole process, so a test
+    /// reads its own by position and not by a fixed number. Number 0 is not one: it is what a
+    /// call about the plugin itself, such as one of the window, is written down with.
     fn plugins(&self) -> Vec<u64> {
-        let mut plugins: Vec<u64> = self.calls.iter().map(|call| call.plugin).collect();
+        let mut plugins: Vec<u64> = self
+            .calls
+            .iter()
+            .map(|call| call.plugin)
+            .filter(|plugin| *plugin != 0)
+            .collect();
         plugins.sort_unstable();
         plugins.dedup();
         plugins

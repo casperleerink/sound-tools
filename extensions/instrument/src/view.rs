@@ -1,5 +1,6 @@
-//! The view of the synth: its title, then a control for each saved parameter. Whatever hosts
-//! it gives it the surface: the track panel of the arrangement puts it into a device card.
+//! The view of the synth: one control for each saved parameter. Whatever hosts it gives it the
+//! surface and the name: the track panel of the arrangement puts it into a device card whose
+//! own first row says "Synth" and is where another instrument is picked.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every
 //! change goes through the session: a knob drag is one gesture and one undo step, a key step,
@@ -7,19 +8,26 @@
 //! [`Parameter`]s of the crate. What is only about the interface is here: the label, the
 //! unit, the travel of the knob and the name of the undo step.
 
-use gpui::{App, Context, Entity, FontWeight, SharedString, Window, div, prelude::*, px};
-use sound_core::{Changes, Instance, ProjectEvent};
+use gpui::{App, Context, Entity, SharedString, Window, div, prelude::*, px};
+use sound_core::{Changes, Instance, ProjectEvent, State};
 use sound_ui::components::knob::{Knob, KnobChange, KnobRange, KnobScale, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ActiveTheme, Session, Views};
+use sound_ui::{ActiveTheme, DeviceLabel, Devices, Session, Views};
 
 use crate::{
     ATTACK, CUTOFF, DECAY, GAIN, Parameter, RELEASE, RESONANCE, SUSTAIN, SynthState, Waveform,
 };
 
-/// Registers the view of the `instrument.synth` tool.
-pub fn register(views: &mut Views) {
+/// The name the rack puts on the card of a synth.
+pub const NAME: &str = "Synth";
+
+/// Registers the view of the `instrument.synth` tool and what a rack calls one.
+pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register(SynthView::new);
+    devices.describe::<SynthState>(|_| DeviceLabel {
+        key: SynthState::TOOL.into(),
+        name: NAME.into(),
+    });
 }
 
 #[derive(Clone, Copy)]
@@ -242,7 +250,7 @@ impl Render for SynthView {
             return div();
         };
         let theme = cx.theme();
-        let (title, muted) = (theme.gray_900, theme.gray_700);
+        let muted = theme.gray_700;
 
         let selected = WAVEFORMS
             .iter()
@@ -277,26 +285,14 @@ impl Render for SynthView {
             div().flex().gap(px(8.)).children(knobs.collect::<Vec<_>>())
         });
 
+        // No title: the card of a rack says what the device is, because that is also where a
+        // composer picks another one.
         div()
             .flex()
-            .flex_col()
-            .gap(px(16.))
-            .child(
-                div()
-                    .text_size(px(14.))
-                    .line_height(px(20.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(title)
-                    .child("Synth"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(32.))
-                    .child(oscillator)
-                    .children(groups.collect::<Vec<_>>()),
-            )
+            .items_start()
+            .gap(px(32.))
+            .child(oscillator)
+            .children(groups.collect::<Vec<_>>())
     }
 }
 

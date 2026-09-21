@@ -159,7 +159,9 @@ fn the_keys_select_a_track_open_its_panel_and_close_it(cx: &mut TestAppContext) 
     opened.keys("up");
     assert_eq!(opened.panel_track(), Some(id(TRACK)));
 
-    // Tab goes into the panel: the close control, the waveform, then the first knob.
+    // Tab goes into the panel: the close control, the instrument picker of the card, the
+    // waveform, then the first knob.
+    opened.keys("tab");
     opened.keys("tab");
     opened.keys("tab");
     opened.keys("right");

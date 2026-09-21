@@ -15,7 +15,7 @@ use runtime::{OFFLINE, main_arrangement, open_or_create};
 use sound_core::{Changes, Engine, Instance, InstanceId, Ticks};
 use sound_notes::Clip;
 use sound_ui::components::text_input::TextInput;
-use sound_ui::{POLL_INTERVAL, Session, Views};
+use sound_ui::{Devices, POLL_INTERVAL, Session, Views};
 
 use crate::support::{self, BAR, Opened, TOP_ROW};
 
@@ -196,7 +196,15 @@ fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppC
     });
     let (_shell, cx) = cx.add_window_view({
         let session = session.clone();
-        move |window, cx| Shell::new(session, views, "Test device".into(), window, cx)
+        move |window, cx| {
+            Shell::new(
+                session,
+                (views, Devices::new()),
+                "Test device".into(),
+                window,
+                cx,
+            )
+        }
     });
     cx.run_until_parked();
     let field = field.borrow().clone().unwrap();

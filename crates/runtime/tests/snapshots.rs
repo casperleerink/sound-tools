@@ -14,6 +14,11 @@
 //! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default.
 //! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
+//! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
+//! - `track-panel-picker.png`: the same with the instrument picker open.
+//! - `track-panel-missing.png`: the panel of a track whose plugin this machine does not have.
+//! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the
+//!   plugin host, where every plugin says what the one edit is.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -34,8 +39,9 @@ use gpui::{
     MouseUpEvent, Pixels, PlatformInput, Point, WindowHandle, point, px, size,
 };
 use instrument::SynthState;
+use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCommand};
 use runtime::window::Shell;
-use runtime::{OFFLINE, main_arrangement, open_or_create, views};
+use runtime::{OFFLINE, main_arrangement, open_or_create_with, views};
 use sound_core::{Changes, Engine, Instance, InstanceId, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{Assets, Session};
@@ -58,12 +64,70 @@ impl Opened {
         // The folder name is the project name in the window.
         let folder = tempfile::tempdir()?;
         let (control, engine) = Engine::new(OFFLINE);
-        let (mut project, _plugins) = open_or_create(&folder.path().join("Night Study"), control)?;
+        // A plugin host that looks only in a folder of this project, with the repository's
+        // own test plugin in it, so that the picker holds the same plugins everywhere.
+        let root = folder.path().join("Night Study");
+        let plugins = test_plugin_host(&root);
+        let mut project = open_or_create_with(&root, control, plugins.clone())?;
         fill(&mut project)?;
+        let plugins = plugins.downgrade();
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
         let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {
-            let session = session.clone();
-            cx.new(|cx| Shell::new(session, views(), "MacBook Pro Speakers".into(), window, cx))
+            let (session, plugins) = (session.clone(), plugins.clone());
+            cx.new(|cx| {
+                let name = "MacBook Pro Speakers".into();
+                Shell::new(session, views(plugins), name, window, cx)
+            })
+        })?;
+        cx.run_until_parked();
+        Ok(Self {
+            _folder: folder,
+            engine,
+            session,
+            window,
+        })
+    }
+
+    /// A project whose `project.json` does not enable the plugin host, as one made before
+    /// step 4a has. Its content is that of the default project.
+    fn without_plugin_host(cx: &mut HeadlessAppContext) -> Result<Self> {
+        let folder = tempfile::tempdir()?;
+        let root = folder.path().join("Night Study");
+        let write = |relative: &str, contents: &str| -> Result<()> {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().context("a parent folder")?)?;
+            std::fs::write(path, contents)?;
+            Ok(())
+        };
+        write(
+            "project.json",
+            r#"{"format": 1, "extensions": ["arrangement", "instrument", "tone"],
+                "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+                "connections": []}"#,
+        )?;
+        write(
+            "state/arrangement/instance.json",
+            r#"{"tool": "arrangement", "state": {}}"#,
+        )?;
+        write(
+            "state/arrangement/track-1/instance.json",
+            r#"{"tool": "arrangement.track", "state": {"name": "Track 1", "order": 1}}"#,
+        )?;
+        write(
+            "state/arrangement/track-1/instrument.json",
+            r#"{"tool": "instrument.synth", "state": {}}"#,
+        )?;
+        let (control, engine) = Engine::new(OFFLINE);
+        let plugins = test_plugin_host(&root);
+        let project = open_or_create_with(&root, control, plugins.clone())?;
+        let plugins = plugins.downgrade();
+        let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
+        let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {
+            let (session, plugins) = (session.clone(), plugins.clone());
+            cx.new(|cx| {
+                let name = "MacBook Pro Speakers".into();
+                Shell::new(session, views(plugins), name, window, cx)
+            })
         })?;
         cx.run_until_parked();
         Ok(Self {
@@ -227,6 +291,35 @@ impl Opened {
         )?;
         Ok(times)
     }
+}
+
+/// A plugin host that scans one folder inside the project, with the repository's own test
+/// plugin in it. No plugin of this machine is ever listed, so the picker looks the same in CI.
+fn test_plugin_host(root: &std::path::Path) -> Plugins {
+    let folder = root.join("plugins");
+    test_clap_plugin::install_into(&folder);
+    let scanner = ScanCommand::new(
+        env!("CARGO_BIN_EXE_runtime"),
+        [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
+    );
+    Plugins::new(vec![folder], scanner)
+}
+
+/// Puts a plugin record in the `instrument` slot of a track, as picking one does.
+fn set_plugin(
+    project: &mut Project,
+    track: &str,
+    plugin_id: &str,
+    state_asset: &str,
+) -> Result<()> {
+    let slot = InstanceId::new(&format!("arrangement/{track}/instrument"))?;
+    let mut changes = Changes::new();
+    changes.create(
+        slot,
+        PluginRecord::new(PluginFormat::Clap, plugin_id, state_asset).context("a plugin record")?,
+    );
+    project.commit("Choose a plugin", changes)?;
+    Ok(())
 }
 
 fn print_times(what: &str, mut times: Vec<Duration>) {
@@ -483,6 +576,54 @@ fn main() -> Result<()> {
     })?;
     opened.click_track_header(0., &mut cx)?;
     save(&mut cx, &opened, "track-panel-empty")?;
+    drop(opened);
+
+    // A track that plays a CLAP plugin: the name of the plugin on the card, with the control
+    // that opens the plugin's own window. Then the picker of that card, open.
+    let opened = Opened::new(&mut cx, |project| {
+        set_plugin(project, "track-1", test_clap_plugin::PLUGIN_ID, "test-tone")
+    })?;
+    opened.click_track_header(0., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-plugin")?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let picker = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        let picker = panel.read(cx).pickers().next().cloned();
+        picker.context("the card has no picker")
+    })?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        picker.update(cx, |picker, cx| picker.open(window, cx));
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-picker")?;
+    drop(opened);
+
+    // A project that does not enable the plugin host, as one made before step 4a has: every
+    // plugin is shown and cannot be taken, with the one edit that would put it within reach.
+    let opened = Opened::without_plugin_host(&mut cx)?;
+    opened.click_track_header(0., &mut cx)?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let picker = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        let picker = panel.read(cx).pickers().next().cloned();
+        picker.context("the card has no picker")
+    })?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        picker.update(cx, |picker, cx| picker.open(window, cx));
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-picker-disabled")?;
+    drop(opened);
+
+    // A plugin this machine does not have: the card says so and names the id, and the record
+    // is left exactly as it is.
+    let opened = Opened::new(&mut cx, |project| {
+        set_plugin(project, "track-1", "com.example.nowhere", "piano")
+    })?;
+    opened.click_track_header(0., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-missing")?;
     drop(opened);
 
     let started = Instant::now();

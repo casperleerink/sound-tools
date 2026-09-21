@@ -26,7 +26,7 @@ use sound_core::{
 };
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::notice::{Notice, NoticeTone};
-use sound_ui::{ActiveTheme, Assets, Session, Views, typography};
+use sound_ui::{ActiveTheme, Assets, Devices, Session, Views, typography};
 
 use project_menu::ProjectMenu;
 pub use transport::TransportPill;
@@ -62,28 +62,31 @@ pub struct Shell {
 }
 
 impl Shell {
-    /// Installs `views` as the registry of the application, so that no caller can forget it.
+    /// Installs the view and device registries of the application, so that no caller can
+    /// forget them.
     pub fn new(
         session: Entity<Session>,
-        views: Views,
+        registries: (Views, Devices),
         device_name: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::with_device(session, views, device_name, None, window, cx)
+        Self::with_device(session, registries, device_name, None, window, cx)
     }
 
     /// The window of the real runtime, which has a device. Everything else passes `None` for
     /// the timing and measures no latency.
     pub fn with_device(
         session: Entity<Session>,
-        views: Views,
+        registries: (Views, Devices),
         device_name: SharedString,
         timing: Option<Arc<StreamTiming>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (views, devices) = registries;
         views.install(cx);
+        devices.install(cx);
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&session, window, |shell, _, event, window, cx| {
             let at_top = |id: &InstanceId| id.parent().is_none();
@@ -380,24 +383,33 @@ pub fn run(folder: &Path) -> Result<()> {
                         for problem in problems {
                             session.update(cx, |session, cx| session.report(problem, cx));
                         }
+                        // The window work that needs the application: the windows of plugins
+                        // that have gone, and a window whose plugin asked for another size.
+                        cx.update(|cx| plugins.settle_windows(cx));
+                        // A plugin's window that opened or closed, which includes one the
+                        // plugin itself closed. The card that offers it is drawn again.
+                        if plugins.take_window_change() {
+                            session.update(cx, |_, cx| cx.notify());
+                        }
                     }
                 }
             })
             .detach();
             // The state of every plugin reaches the project when the project is dropped, which
             // GPUI does with the views before any of this runs. See the plugin host.
-            cx.on_app_quit(move |_| {
-                print_device_report(&stream);
-                async {}
-            })
-            .detach();
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
-                    cx.quit();
+            cx.on_app_quit({
+                let plugins = weak_plugins.clone();
+                move |cx| {
+                    // Before anything of the application is torn down: a plugin must not be
+                    // left holding the view of a window that is going.
+                    if let Some(plugins) = plugins.upgrade() {
+                        plugins.close_all_windows(cx);
+                    }
+                    print_device_report(&stream);
+                    async {}
                 }
             })
             .detach();
-
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
@@ -413,11 +425,23 @@ pub fn run(folder: &Path) -> Result<()> {
             };
             let opened = cx.open_window(options, |window, cx| {
                 cx.new(|cx| {
-                    let views = views();
+                    let registries = views(weak_plugins.clone());
                     let name = device_name.into();
-                    Shell::with_device(session.clone(), views, name, Some(timing), window, cx)
+                    Shell::with_device(session.clone(), registries, name, Some(timing), window, cx)
                 })
             });
+            // The application ends with the main window, not with the last one: a plugin's own
+            // window is a window of this application too, and one that is open when the
+            // composer closes the project must not keep the process alive behind it.
+            if let Ok(shell) = &opened {
+                let main = shell.window_id();
+                cx.on_window_closed(move |cx, closed| {
+                    if closed == main {
+                        cx.quit();
+                    }
+                })
+                .detach();
+            }
             let shell = match opened {
                 Ok(window) => {
                     cx.activate(true);

@@ -5,6 +5,7 @@
 //! - `clips`: adding, moving, resizing, deleting and nudging clips in the arrangement.
 //! - `notes`: the note editor.
 //! - `track_panel`: the track panel and the view of the synth in it.
+//! - `instruments`: picking the instrument of a track, and the plugin's own window.
 //! - `transport`: the tempo, the click and the view following the playhead.
 //! - `piece`: a short piece made by hand from the default project, closed and opened again.
 
@@ -13,6 +14,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod clips;
+mod instruments;
 mod notes;
 mod piece;
 mod recording;
