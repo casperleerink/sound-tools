@@ -1,6 +1,8 @@
 //! The plugin's own state: saved as an asset when the plugin says it changed, back on reopen,
 //! and untouched by undo.
 
+use std::time::Duration;
+
 use crate::support::{Harness, Played, id, record, state_asset};
 
 /// Pedal 100 makes the test plugin transpose by 36 semitones and mark its state dirty.
@@ -183,4 +185,62 @@ fn a_plugin_whose_record_goes_is_saved_on_the_way_out() {
     // Undo brings the record back, and with it the plugin, transposed as it was.
     assert!(harness.project.undo().unwrap().is_some());
     assert_eq!(harness.problems(), Vec::<String>::new());
+}
+
+/// A plugin that says its state changed on every step of a knob drag would have the host
+/// serialize and write it sixty times a second, and a sampler's state is not small. The first
+/// change is written at once and then at most one a second, and nothing is lost: what is still
+/// waiting is written when the plugin goes.
+#[test]
+fn a_plugin_that_keeps_changing_is_written_at_most_once_a_second() {
+    let mut harness = Harness::new();
+    // A pedal move every 512 frames, each a different value, so the plugin changes its own
+    // state and marks itself dirty again and again.
+    let played = (0..16)
+        .map(|index| Played::Pedal {
+            frame: index * 512,
+            value: 70 + index as u8,
+        })
+        .collect();
+    harness.add_track(record("piano"), played);
+    let asset = harness.project.assets().path(&state_asset("piano"));
+
+    let saved = |asset: &std::path::Path| {
+        let bytes = std::fs::read(asset).unwrap_or_default();
+        i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]])
+    };
+
+    // The first change is written at once.
+    let start = std::time::Instant::now();
+    harness.render_without_polling(1024);
+    harness.plugins.poll_at(&harness.project, start);
+    assert_eq!(saved(&asset), 70 + 1 - 64);
+
+    // Everything in the second after it waits.
+    for step in 1..8 {
+        harness.render_without_polling(1024);
+        harness
+            .plugins
+            .poll_at(&harness.project, start + Duration::from_millis(100 * step));
+    }
+    assert_eq!(
+        saved(&asset),
+        70 + 1 - 64,
+        "the state was written again too soon"
+    );
+
+    // A second later the last change is written, and only once.
+    harness
+        .plugins
+        .poll_at(&harness.project, start + Duration::from_millis(1100));
+    let after_a_second = saved(&asset);
+    assert!(
+        after_a_second > 70 + 1 - 64,
+        "nothing was written after the second"
+    );
+
+    // And what a plugin changes after that is not lost: closing writes it.
+    harness.render_without_polling(1024);
+    assert_eq!(harness.plugins.close(&harness.project), []);
+    assert!(saved(&asset) >= after_a_second);
 }

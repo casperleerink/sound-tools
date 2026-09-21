@@ -1,6 +1,8 @@
 //! The scan: what it finds, what it says about a plugin that is not an instrument, and what
 //! happens when the plugin crashes while it is being looked at.
 
+use std::time::{Duration, Instant};
+
 use plugin_host::{Plugins, ScanCommand};
 
 use crate::support::{plugin_folder, scanner};
@@ -92,4 +94,36 @@ fn a_scanner_that_does_not_exist_is_a_failure_per_bundle_and_not_a_panic() {
         "{:?}",
         scan.failures
     );
+}
+
+/// A plugin that never answers while it is listed. Licensed plugins do this when they cannot
+/// reach their server, and the scan runs while a project opens, so waiting for it would hold
+/// the project open for ever. The child is stopped and the bundle is reported like one that
+/// crashed.
+#[test]
+fn a_plugin_that_hangs_while_it_is_scanned_is_given_up_on_and_reported() {
+    let folder = tempfile::tempdir().unwrap();
+    let hanging = scanner()
+        .with_environment("SOUND_TOOLS_TEST_PLUGIN_HANG", "1")
+        .with_timeout(Duration::from_millis(300));
+    let plugins = Plugins::new(vec![plugin_folder(folder.path())], hanging);
+
+    let started = Instant::now();
+    let scan = plugins.scan();
+    let took = started.elapsed();
+
+    // The plugin sleeps for ten minutes. This came back in a fraction of a second.
+    assert!(took < Duration::from_secs(10), "the scan waited {took:?}");
+    assert_eq!(scan.plugins, []);
+    assert_eq!(scan.failures.len(), 1, "{:?}", scan.failures);
+    assert!(
+        scan.failures[0].message.contains("did not finish within"),
+        "{:?}",
+        scan.failures
+    );
+
+    // It is one line for a person, like any other bundle that could not be read.
+    let notices = plugins.take_notices();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("could not be scanned"), "{notices:?}");
 }

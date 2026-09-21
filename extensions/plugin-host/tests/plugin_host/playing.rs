@@ -1,7 +1,7 @@
 //! A hosted plugin plays: the notes land on the frames they were sent on, and the sustain
 //! pedal reaches the plugin with its value.
 
-use crate::support::{Harness, Played, record};
+use crate::support::{Harness, Played, record, tell_the_plugin};
 
 #[test]
 fn the_notes_reach_the_plugin_on_the_frames_they_were_sent_on() {
@@ -119,4 +119,30 @@ fn the_wrapper_makes_no_allocation_lock_or_system_call_while_it_plays() {
     harness.add_track(record("piano"), played);
     let render = harness.play(4096);
     assert!(render.samples().iter().any(|sample| *sample != 0.0));
+}
+
+/// A plugin may send events out. Nothing here reads them, and a host that gave the plugin a
+/// buffer of its own would have to grow that buffer while the plugin pushed into it, on the
+/// audio thread. The realtime sanitizer cannot see that, because it is switched off for the
+/// plugin's own call, so this counts every allocation of the process instead: fifty thousand
+/// events out of every block, and not one allocation.
+#[test]
+fn a_plugin_that_sends_more_events_than_any_buffer_holds_allocates_nothing() {
+    tell_the_plugin(None, Some(50_000));
+    let mut harness = Harness::new();
+    harness.add_track(
+        record("piano"),
+        vec![Played::On {
+            frame: 0,
+            pitch: 60,
+            velocity: 100,
+        }],
+    );
+    harness.project.engine().play();
+    // From the very first block, because a buffer of the host's own would grow once and then
+    // be big enough: the growth has to be inside the window that is counted.
+    let (render, allocations) = harness.render_counting_allocations(8192);
+    tell_the_plugin(None, None);
+    assert_eq!(allocations, 0, "the audio thread allocated");
+    assert!(render.first_sound().is_some());
 }

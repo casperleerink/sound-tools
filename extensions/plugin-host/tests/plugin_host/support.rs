@@ -14,6 +14,55 @@ use sound_notes::{NOTES_INPUT, NoteEvent, Pedal, Pitch, Velocity};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 
+/// Counts allocations while it is armed, so a test can say that a block of audio made none.
+/// The realtime sanitizer cannot see inside a plugin's own call, and that is exactly where a
+/// buffer the host handed the plugin would grow.
+pub struct CountingAllocator;
+
+static ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static ALLOCATIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+// SAFETY: every call is handed to the system allocator unchanged. The counter only counts.
+unsafe impl std::alloc::GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        if ARMED.load(std::sync::atomic::Ordering::Relaxed) {
+            ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        // SAFETY: the caller keeps the contract of `GlobalAlloc::alloc`.
+        unsafe { std::alloc::System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: std::alloc::Layout) {
+        // SAFETY: the caller keeps the contract of `GlobalAlloc::dealloc`.
+        unsafe { std::alloc::System.dealloc(pointer, layout) }
+    }
+
+    unsafe fn realloc(
+        &self,
+        pointer: *mut u8,
+        layout: std::alloc::Layout,
+        new_size: usize,
+    ) -> *mut u8 {
+        if ARMED.load(std::sync::atomic::Ordering::Relaxed) {
+            ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        // SAFETY: the caller keeps the contract of `GlobalAlloc::realloc`.
+        unsafe { std::alloc::System.realloc(pointer, layout, new_size) }
+    }
+}
+
+/// How many allocations happened anywhere in this process while `work` ran.
+pub fn allocations_during<T>(work: impl FnOnce() -> T) -> (T, u64) {
+    ALLOCATIONS.store(0, std::sync::atomic::Ordering::Relaxed);
+    ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
+    let value = work();
+    ARMED.store(false, std::sync::atomic::Ordering::Relaxed);
+    (
+        value,
+        ALLOCATIONS.load(std::sync::atomic::Ordering::Relaxed),
+    )
+}
+
 /// One thing to play, at an engine frame counted from the first block of the render.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "kind", rename_all = "lowercase")]
@@ -141,8 +190,72 @@ fn apply_rack(_state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), B
     Ok(())
 }
 
+/// A tool whose behaviour refuses when it is told to, so a test can make the project reject a
+/// whole edit group the way another extension or a bad connection would.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Picky {
+    pub refuses: bool,
+}
+
+impl State for Picky {
+    const TOOL: &'static str = "test.picky";
+}
+
+fn apply_picky(state: &Picky, _context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    if state.refuses {
+        return Err(BehaviourError::Other("this record refuses".into()));
+    }
+    Ok(())
+}
+
 pub fn id(id: &str) -> InstanceId {
     InstanceId::new(id).expect("an instance id")
+}
+
+/// Makes the test plugin write a line for every lifecycle call it gets into `path`, and makes
+/// it send `events` events out of every process call.
+///
+/// The plugin runs inside this process, so it reads this process's environment. Nextest gives
+/// every test its own process, so setting it here changes nothing for any other test.
+pub fn tell_the_plugin(log: Option<&Path>, events: Option<u32>) {
+    // SAFETY: nextest runs one test per process and this is called before any thread but this
+    // one exists, so no other thread can be reading the environment.
+    unsafe {
+        match log {
+            Some(path) => std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_LOG", path),
+            None => std::env::remove_var("SOUND_TOOLS_TEST_PLUGIN_LOG"),
+        }
+        match events {
+            Some(count) => std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_EVENTS", count.to_string()),
+            None => std::env::remove_var("SOUND_TOOLS_TEST_PLUGIN_EVENTS"),
+        }
+    }
+}
+
+/// One line of the plugin's lifecycle log: the call, which plugin of the library it was about,
+/// the thread it came in on, and how many process calls that plugin had had by then.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoggedCall {
+    pub call: String,
+    pub plugin: u64,
+    pub thread: String,
+    pub processed: u64,
+}
+
+pub fn lifecycle(path: &Path) -> Vec<LoggedCall> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split(' ');
+            Some(LoggedCall {
+                call: parts.next()?.to_string(),
+                plugin: parts.next()?.strip_prefix("plugin=")?.parse().ok()?,
+                thread: parts.next()?.strip_prefix("thread=")?.to_string(),
+                processed: parts.next()?.strip_prefix("processed=")?.parse().ok()?,
+            })
+        })
+        .collect()
 }
 
 /// The folder a scan looks in, with the repository's own test plugin in it.
@@ -215,6 +328,10 @@ impl Harness {
             .tool::<Rack>("test")
             .expect("the rack tool registers")
             .behaviour(apply_rack);
+        registry
+            .tool::<Picky>("test")
+            .expect("the picky tool registers")
+            .behaviour(apply_picky);
         let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let project = Project::open(folder.path(), registry, control).expect("an open project");
         Self {
@@ -256,6 +373,29 @@ impl Harness {
         problems
             .map(|problem| format!("{}: {}", problem.path, problem.message))
             .collect()
+    }
+
+    /// Renders `frames` frames with nothing but the engine, and counts what was allocated
+    /// anywhere in this process while it did.
+    pub fn render_counting_allocations(&mut self, frames: usize) -> (Render, u64) {
+        let mut output = vec![0.0_f32; frames * 2];
+        let ((), allocations) = allocations_during(|| {
+            for buffer in output.chunks_mut(512 * 2) {
+                self.engine.process_block(buffer);
+            }
+        });
+        (Render { output }, allocations)
+    }
+
+    /// Renders without polling the host, so a test decides itself when the host does its
+    /// main-thread work and at what time.
+    pub fn render_without_polling(&mut self, frames: usize) -> Render {
+        let mut output = vec![0.0_f32; frames * 2];
+        for buffer in output.chunks_mut(512 * 2) {
+            self.engine.process_block(buffer);
+        }
+        self.project.engine().poll().expect("the engine polls");
+        Render { output }
     }
 
     /// Renders `frames` frames in device buffers of 512, interleaved, and polls the host after

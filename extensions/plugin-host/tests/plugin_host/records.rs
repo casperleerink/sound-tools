@@ -97,8 +97,13 @@ fn a_record_whose_plugin_id_becomes_unknown_goes_silent_instead_of_playing_the_o
     assert_eq!(harness.render(512).first_sound(), None);
 }
 
+/// A `state_asset` is a name the agent chooses, and two records may name one file: they then
+/// share it, as two copies of one plugin sharing a preset. Nothing refuses either of them. A
+/// rule about another record could not be taken back when that other record goes, because the
+/// project runs only the behaviour of the record that was edited, and a warning that cannot go
+/// away is worse than the mistake.
 #[test]
-fn two_records_that_name_one_state_asset_are_reported() {
+fn two_records_that_name_one_state_asset_both_load_and_share_it() {
     let mut harness = Harness::new();
     harness.add_track(record("piano"), played());
     harness.write_and_apply(
@@ -108,16 +113,17 @@ fn two_records_that_name_one_state_asset_are_reported() {
             test_clap_plugin::PLUGIN_ID
         ),
     );
-    let problems = harness.problems();
-    assert_eq!(problems.len(), 1, "{problems:?}");
-    assert!(
-        problems[0].contains("already used by the instance"),
-        "{problems:?}"
-    );
-    assert!(
-        problems[0].contains("state/track/second.json"),
-        "{problems:?}"
-    );
+    assert_eq!(harness.problems(), Vec::<String>::new());
+    assert!(harness.play(2048).first_sound().is_some());
+
+    // Taking the second one away leaves nothing behind, because nothing was reported.
+    let mut changes = sound_core::Changes::new();
+    changes.delete(&id("track/second"));
+    harness
+        .project
+        .commit("Delete the second", changes)
+        .expect("the delete applies");
+    assert_eq!(harness.problems(), Vec::<String>::new());
 }
 
 #[test]

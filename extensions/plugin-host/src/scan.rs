@@ -6,10 +6,14 @@
 //! argument ([`SCAN_ARGUMENT`]); tests use a small program of their own.
 //!
 //! There is no cache. See README.md for what a scan of this machine costs.
+//!
+//! Every child has a deadline. A plugin that hangs while it is listed, which licensed ones do
+//! when they cannot reach their server, would otherwise hold the project open for ever.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +25,15 @@ pub const SCAN_ARGUMENT: &str = "--scan-clap";
 /// one prints to standard output while it initializes. Without the mark its logging would be
 /// read as a plugin, or would make the whole bundle unreadable.
 const MARK: &str = "sound-tools-clap ";
+
+/// How long one bundle may take. Measured September 20, 2026 on an Apple Silicon laptop: a real
+/// bundle costs about 10 ms, so this is a thousand times what a working plugin needs, and it is
+/// what a plugin that never answers costs the project once.
+pub const SCAN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How often the child is looked at while the deadline runs. Short enough that a normal scan
+/// pays nothing, long enough that waiting costs no thread.
+const POLL_INTERVAL: Duration = Duration::from_millis(2);
 
 /// What a bundle holds. A bundle can hold several plugins.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +88,8 @@ pub struct ScanCommand {
     /// Extra environment for the child only, so a test can change what the child does without
     /// changing its own environment.
     environment: Vec<(OsString, OsString)>,
+    /// How long one bundle may take before its child is killed.
+    timeout: Duration,
 }
 
 impl ScanCommand {
@@ -84,6 +99,7 @@ impl ScanCommand {
             program: program.into(),
             arguments: arguments.into_iter().collect(),
             environment: Vec::new(),
+            timeout: SCAN_TIMEOUT,
         }
     }
 
@@ -100,17 +116,48 @@ impl ScanCommand {
         self
     }
 
+    /// Another deadline per bundle, so a test does not wait [`SCAN_TIMEOUT`].
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
     /// Scans one bundle in a child process. An error here is the child's, not ours: it failed
     /// to start, crashed, or printed something we could not read.
     fn scan(&self, bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
         let mut command = Command::new(&self.program);
         command.args(&self.arguments).arg(bundle);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
         for (name, value) in &self.environment {
             command.env(name, value);
         }
-        let output = command
-            .output()
+        // Blocking here is the point: the scan is what the project waits for, once. `output`
+        // would wait for ever, and a deadline needs a handle to kill.
+        #[allow(clippy::disallowed_methods)]
+        let mut child = command
+            .spawn()
             .map_err(|error| format!("the scanner did not start: {error}"))?;
+        let deadline = Instant::now() + self.timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {}
+                Err(error) => return Err(format!("the scanner could not be waited for: {error}")),
+            }
+            if Instant::now() >= deadline {
+                // Killed and then waited for, so no child of this process is left behind.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "the scanner did not finish within {:?} and was stopped. The plugin hangs while it is listed",
+                    self.timeout
+                ));
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+        let output = child
+            .wait_with_output()
+            .map_err(|error| format!("the scanner could not be read: {error}"))?;
         if !output.status.success() {
             let message = String::from_utf8_lossy(&output.stderr);
             let message = message.trim();

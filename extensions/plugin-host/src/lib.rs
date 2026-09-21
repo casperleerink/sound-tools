@@ -160,9 +160,9 @@ fn apply(
     let sample_rate = context.prepare_config().sample_rate;
     match plugins.open(context.id(), state, context.assets(), sample_rate) {
         Ok(opened) => {
-            if let Some(started) = opened.started {
-                context.update(node, Some(Box::new(started)))?;
-            }
+            // Every run hands the engine a plugin. Nothing here asks what the engine already
+            // has, so an edit the project rejects leaves the engine and this host as they were.
+            context.update(node, Some(Box::new(opened.started)))?;
             for note in opened.notes {
                 context.problem(note.to_string());
             }

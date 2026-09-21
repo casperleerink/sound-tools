@@ -6,8 +6,15 @@
 //! stereo port.
 //!
 //! Nothing here allocates, locks or makes a system call. Every buffer is made when the plugin
-//! is loaded. What the plugin does inside its own `process` is not ours: the realtime
-//! sanitizer is switched off for exactly that call and for nothing else.
+//! is loaded, and the plugin is given [`OutputEvents::void`], so it has nowhere to make this
+//! thread grow a buffer either. What the plugin does inside its own calls is not ours: the
+//! realtime sanitizer is switched off around each of those calls and around nothing else.
+//!
+//! CLAP wants `start_processing` and `stop_processing` on the audio thread. This wrapper is the
+//! only place that has one, so it stops the plugin before it lets it go: on a swap in
+//! [`Processor::update`] and on [`Processor::leaving`], which is the engine handing the
+//! processor back. [`Drop`] is the last resort, for the engine itself being torn down, when
+//! there is no audio thread left to do it on.
 
 use clack_host::events::Match;
 use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent};
@@ -48,7 +55,6 @@ pub struct Loaded {
     /// The first audio output port of the plugin, one buffer per channel.
     output_channels: Vec<Vec<f32>>,
     input_events: EventBuffer,
-    output_events: EventBuffer,
     /// The plugin's process call failed. It is left silent instead of called again.
     failed: bool,
 }
@@ -71,9 +77,31 @@ impl Loaded {
             input_channels: buffers(input_channel_count),
             output_channels: buffers(output_channel_count),
             input_events: EventBuffer::with_capacity(EVENT_CAPACITY),
-            output_events: EventBuffer::with_capacity(EVENT_CAPACITY),
             failed: false,
         }
+    }
+
+    /// Stops the plugin's processing. Audio thread only, as CLAP asks, and only from the two
+    /// places that have one. Calling it again does nothing.
+    fn stop(&mut self) {
+        // The plugin's own `stop_processing` runs in here.
+        not_ours(|| self.audio.ensure_processing_stopped());
+    }
+}
+
+/// Everything a plugin does inside its own code. The realtime sanitizer is switched off for
+/// exactly the call and nothing around it: what a plugin allocates is its business, what this
+/// crate allocates is a bug.
+fn not_ours<T>(call: impl FnOnce() -> T) -> T {
+    let _disabled = rtsan_standalone::ScopedDisabler::default();
+    call()
+}
+
+impl Drop for Loaded {
+    fn drop(&mut self) {
+        // Reached only when the engine itself is gone, which ends the audio thread before this
+        // runs. Every other way out of the engine stops the plugin there first.
+        self.stop();
     }
 }
 
@@ -116,9 +144,21 @@ impl Processor for HostedPlugin {
 
     fn update(&mut self, update: &mut HostedUpdate) {
         // The plugin that was here goes back inside the update and is dropped on the control
-        // thread. Nothing heap-allocated is dropped here.
+        // thread. It stops here, while this is still the audio thread. Nothing heap-allocated
+        // is dropped here.
+        if let Some(leaving) = self.plugin.as_deref_mut() {
+            leaving.stop();
+        }
         std::mem::swap(&mut self.plugin, update);
         self.keys_down = [false; 128];
+    }
+
+    /// The engine is handing this processor back. The plugin stops here, on the audio thread,
+    /// so that the control thread only ever deactivates one that is already stopped.
+    fn leaving(&mut self) {
+        if let Some(plugin) = self.plugin.as_deref_mut() {
+            plugin.stop();
+        }
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
@@ -159,7 +199,6 @@ impl Processor for HostedPlugin {
 /// events did not fit.
 fn translate(plugin: &mut Loaded, events: &[Timed<NoteEvent>], keys_down: &mut [bool; 128]) -> u64 {
     plugin.input_events.clear();
-    plugin.output_events.clear();
     let mut room = EVENT_CAPACITY;
     let mut dropped = 0;
     for timed in events {
@@ -266,7 +305,6 @@ fn run(plugin: &mut Loaded, frames: usize) -> bool {
         input_channels,
         output_channels,
         input_events,
-        output_events,
         ..
     } = plugin;
 
@@ -295,16 +333,13 @@ fn run(plugin: &mut Loaded, frames: usize) -> bool {
         }])
     };
     let input = input_events.as_input();
-    let mut output = output_events.as_output();
+    // Nothing reads what a plugin sends out: MIDI from a plugin is not built. A void list
+    // takes every event and keeps none, so a plugin that sends thousands grows nothing here.
+    let mut output = OutputEvents::void();
 
-    // The plugin's own code runs here. It may allocate or lock inside; that is its business
-    // and not something this repository can check. Everything of ours around it is checked.
-    let _not_ours = rtsan_standalone::ScopedDisabler::default();
-    let started = match audio.ensure_processing_started() {
+    let started = match not_ours(|| audio.ensure_processing_started()) {
         Ok(started) => started,
         Err(_) => return false,
     };
-    started
-        .process(&inputs, &mut outputs, &input, &mut output, None, None)
-        .is_ok()
+    not_ours(|| started.process(&inputs, &mut outputs, &input, &mut output, None, None)).is_ok()
 }

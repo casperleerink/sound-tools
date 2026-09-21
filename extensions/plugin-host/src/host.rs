@@ -5,24 +5,37 @@
 //! this table keeps the handles and hands the audio processors to the engine.
 //!
 //! The rule for saving: a plugin's state is written to its asset when the plugin says it
-//! changed, at the next [`Plugins::poll`], and for every plugin when the project goes. See
-//! README.md for what a crash can lose.
+//! changed, at the next [`Plugins::poll`] and then at most once a second while it keeps saying
+//! so, and always when the plugin goes or the project closes. See README.md for what a crash
+//! can lose.
+//!
+//! The table never decides what the engine gets. [`Plugins::open`] loads a plugin and hands it
+//! over every time it runs, and [`Plugins::poll`] lets go of every entry whose record no longer
+//! says what the entry holds. So an edit that the project rejects, which never reaches the
+//! engine, leaves nothing behind here either.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::state::{HostState, HostStateImpl, PluginState};
 use clack_host::prelude::*;
-use sound_core::{AssetName, Assets, InstanceId, MAX_BLOCK, Project, State as _};
+use sound_core::{AssetName, Assets, InstanceId, MAX_BLOCK, Project};
 
 use crate::PluginRecord;
 use crate::processor::{Dialect, Loaded};
 use crate::scan::{Scan, ScanCommand, scan};
+
+/// How often a plugin that keeps saying its state changed is written. A plugin marks itself
+/// dirty on every step of a knob drag, and serializing a sampler's state is not cheap, so the
+/// first change is written at once and then at most one write a second. Going or closing
+/// writes whatever is left, so nothing is lost by waiting.
+const SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// What the host tells a plugin about itself.
 const HOST_NAME: &str = "Sound Tools";
@@ -43,10 +56,6 @@ pub enum PluginProblem {
         "the plugin {plugin_id:?} is not an instrument, so it has no notes to play. Its features are: {features}"
     )]
     NotAnInstrument { plugin_id: String, features: String },
-    #[error(
-        "the state asset {asset} is already used by the instance {other}. Both plugins load it and the last one to change writes it. Give each its own `state_asset`"
-    )]
-    AssetTwice { asset: String, other: InstanceId },
     #[error("the state of the plugin {plugin_id:?} could not be read: {message}")]
     StateNotRead { plugin_id: String, message: String },
     #[error("the state of the plugin {plugin_id:?} could not be saved: {message}")]
@@ -117,36 +126,34 @@ impl HostStateImpl for MainThreadCallbacks<'_> {
     }
 }
 
-/// What [`Plugins::open`] gives back.
+/// What [`Plugins::open`] gives back. There is always a plugin: the behaviour hands the engine
+/// a plugin every time it runs, so nothing the engine has depends on what this table remembers.
 pub struct Opened {
-    /// A plugin for the engine, when this call started one. `None` means the plugin that is
-    /// already playing is the right one and keeps its voices.
-    pub started: Option<Loaded>,
+    pub started: Loaded,
     /// What to report about this record every time the behaviour runs, such as a plugin that
     /// takes no sustain pedal. These are not failures: the plugin plays.
     pub notes: Vec<PluginProblem>,
 }
 
-/// One plugin this project has loaded, with the record it came from.
+/// One plugin this project holds, with the record it came from.
+///
+/// It is `loaded` while a record names it and `retired` once it does not. A retired one is kept
+/// until the engine gives its audio processor back, because dropping it before that would leak
+/// the plugin, which is what clack does on purpose. It is polled and saved until then, so a
+/// plugin that is still playing while it waits does not lose what it changes.
 struct Hosted {
     plugin_id: String,
     asset: AssetName,
     instance: PluginInstance<SoundToolsHost>,
-    /// What stays true about this plugin while it plays, such as taking no pedal.
-    notes: Vec<PluginProblem>,
-}
-
-/// A plugin whose record is gone or changed. Its handle can only go once the engine has given
-/// the audio processor back, else clack leaks the instance on purpose.
-struct Retired {
-    instance: PluginInstance<SoundToolsHost>,
+    /// When its state was last written, for the once-a-second rule.
+    last_saved: Option<Instant>,
 }
 
 #[derive(Default)]
 struct Table {
     scanned: Option<Scan>,
     loaded: BTreeMap<InstanceId, Hosted>,
-    retired: Vec<Retired>,
+    retired: Vec<Hosted>,
     /// Bundles that failed to scan, as one line each. The runtime shows them once.
     notices: Vec<String>,
 }
@@ -176,7 +183,8 @@ impl Drop for Inner {
         let Some(assets) = self.assets.get_mut().clone() else {
             return;
         };
-        for hosted in self.table.get_mut().loaded.values_mut() {
+        let table = self.table.get_mut();
+        for hosted in table.loaded.values_mut().chain(&mut table.retired) {
             if let Err(problem) = save(hosted, &assets) {
                 // Nobody is left to tell. The composer at least sees it in the terminal.
                 eprintln!("error: {problem}");
@@ -255,9 +263,16 @@ impl Plugins {
         std::mem::take(&mut self.0.table.borrow_mut().notices)
     }
 
-    /// Makes the instance `id` hold the plugin its record names, and gives the audio processor
-    /// when there is a new one for the engine. `Ok(None)` means the plugin it already has is
-    /// the right one and keeps playing.
+    /// Loads the plugin the record names and gives it to the caller for the engine.
+    ///
+    /// It loads every time. A behaviour runs when its own record changed, on opening the
+    /// project and on a retry, and every change a plugin record can have needs another plugin
+    /// or another state file, so there is nothing to keep. In return nothing here has to guess
+    /// what the engine holds: the caller hands over a plugin on every run, and an edit the
+    /// project rejects simply never reaches the engine.
+    ///
+    /// Whatever this instance held goes first, saved and waiting to be let go of, so a failure
+    /// below leaves no entry behind and the record and the engine agree: silence.
     pub fn open(
         &self,
         id: &InstanceId,
@@ -265,44 +280,17 @@ impl Plugins {
         assets: &Assets,
         sample_rate: u32,
     ) -> Result<Opened, PluginProblem> {
-        let asset = record.asset();
-        {
-            let mut table = self.0.table.borrow_mut();
-            // Two records that name one asset would write over each other's state.
-            let other = table
-                .loaded
-                .iter()
-                .find(|(other, hosted)| *other != id && hosted.asset == asset);
-            if let Some((other, _)) = other {
-                return Err(PluginProblem::AssetTwice {
-                    asset: asset.to_string(),
-                    other: other.clone(),
-                });
-            }
-            match table.loaded.get(id) {
-                // The same plugin and the same state file: it plays on, with its voices.
-                Some(hosted) if hosted.plugin_id == record.plugin_id && hosted.asset == asset => {
-                    return Ok(Opened {
-                        started: None,
-                        notes: hosted.notes.clone(),
-                    });
-                }
-                // Another plugin, or another state file: the one that is there goes.
-                Some(_) => {
-                    if let Some(hosted) = table.loaded.remove(id) {
-                        retire(hosted, &mut table, self.0.writes_state.then_some(assets));
-                    }
-                }
-                None => {}
-            }
-        }
         // Kept for the drop of this host, which is the last moment a plugin can be saved.
         *self.0.assets.borrow_mut() = Some(assets.clone());
+        {
+            let mut table = self.0.table.borrow_mut();
+            if let Some(hosted) = table.loaded.remove(id) {
+                retire(hosted, &mut table, self.0.writes_state.then_some(assets));
+            }
+        }
+        let asset = record.asset();
         let (started, notes) = self.load(id, record, &asset, assets, sample_rate)?;
-        Ok(Opened {
-            started: Some(started),
-            notes,
-        })
+        Ok(Opened { started, notes })
     }
 
     fn load(
@@ -395,7 +383,7 @@ impl Plugins {
                 plugin_id: record.plugin_id.clone(),
                 asset: asset.clone(),
                 instance,
-                notes: notes.clone(),
+                last_saved: None,
             },
         );
         Ok((loaded, notes))
@@ -410,55 +398,62 @@ impl Plugins {
     pub fn close(&self, project: &Project) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
         let mut table = self.0.table.borrow_mut();
+        let Table {
+            loaded, retired, ..
+        } = &mut *table;
         if self.0.writes_state {
-            for hosted in table.loaded.values_mut() {
-                if let Err(problem) = save(hosted, project.assets()) {
+            let assets = project.assets();
+            for hosted in loaded.values_mut().chain(&mut *retired) {
+                if let Err(problem) = save(hosted, assets) {
                     problems.push(problem);
                 }
             }
         }
-        let gone: Vec<Hosted> = std::mem::take(&mut table.loaded).into_values().collect();
-        table.retired.extend(gone.into_iter().map(|hosted| Retired {
-            instance: hosted.instance,
-        }));
+        retired.extend(std::mem::take(loaded).into_values());
         problems
     }
 
-    /// Main-thread work for every loaded plugin: the callbacks they asked for, the state they
-    /// said changed, and the handles of plugins whose record is gone.
+    /// Main-thread work for every plugin this host holds: the callbacks they asked for, the
+    /// state they said changed, and letting go of the ones no record names any more.
     ///
-    /// Call it as often as the project is polled. It writes at most one file per plugin that
-    /// marked its state dirty.
+    /// Call it as often as the project is polled.
     pub fn poll(&self, project: &Project) -> Vec<PluginProblem> {
+        self.poll_at(project, Instant::now())
+    }
+
+    /// [`Self::poll`] with the time given, so a test can move it.
+    pub fn poll_at(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
         let mut table = self.0.table.borrow_mut();
         let Table {
             loaded, retired, ..
         } = &mut *table;
-
-        // A record that is gone, or that is no longer a plugin, takes its plugin with it.
-        let gone: Vec<InstanceId> = loaded
-            .keys()
-            .filter(|id| project.tool_of(id) != Some(PluginRecord::TOOL))
-            .cloned()
-            .collect();
         let assets = self.0.writes_state.then(|| project.assets());
-        for id in gone {
+
+        // Everything the records no longer say. A record that is gone, that is no longer a
+        // plugin, or that names another plugin or another state file than the entry holds:
+        // the last of those is an edit the project rolled back after this host had loaded it.
+        let stale: Vec<InstanceId> = loaded
+            .iter()
+            .filter(|(id, hosted)| !hosted.matches(project, id))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in stale {
             if let Some(mut hosted) = loaded.remove(&id) {
-                // Its state is saved on the way out, so undo of a delete brings the plugin
-                // back as it sounded and not as it was last written.
+                // Saved on the way out, so undo of a delete brings the plugin back as it
+                // sounded and not as it was last written.
                 if let Some(assets) = assets
                     && let Err(problem) = save(&mut hosted, assets)
                 {
                     problems.push(problem);
                 }
-                retired.push(Retired {
-                    instance: hosted.instance,
-                });
+                retired.push(hosted);
             }
         }
 
-        for hosted in loaded.values_mut() {
+        // Retired plugins are served too: one that is still playing, because the engine has
+        // not given its processor back yet, must not miss a callback or lose a change.
+        for hosted in loaded.values_mut().chain(&mut *retired) {
             let requested = hosted.instance.access_shared_handler(|shared| {
                 shared.callback_requested.swap(false, Ordering::AcqRel)
             });
@@ -477,9 +472,18 @@ impl Plugins {
             }
             let dirty = hosted
                 .instance
-                .access_handler(|main| main.state_is_dirty.replace(false));
-            if dirty && self.0.writes_state {
-                if let Err(problem) = save(hosted, project.assets()) {
+                .access_handler(|main| main.state_is_dirty.get());
+            let due = hosted
+                .last_saved
+                .is_none_or(|last| now.duration_since(last) >= SAVE_INTERVAL);
+            if let Some(assets) = assets
+                && dirty
+                && due
+            {
+                // The flag stays set until it is written, so a change that waits for the
+                // second to pass is written by a later poll and not forgotten.
+                hosted.last_saved = Some(now);
+                if let Err(problem) = save(hosted, assets) {
                     problems.push(problem);
                 }
             }
@@ -489,6 +493,19 @@ impl Plugins {
         // dropping it would leak the plugin, which is what clack does on purpose.
         retired.retain_mut(|plugin| plugin.instance.try_deactivate().is_err());
         problems
+    }
+}
+
+impl Hosted {
+    /// Whether the record of `id` in the project still says what this entry holds.
+    fn matches(&self, project: &Project, id: &InstanceId) -> bool {
+        let Some(instance) = project.resolve::<PluginRecord>(id) else {
+            return false;
+        };
+        let Some(record) = project.state(&instance) else {
+            return false;
+        };
+        record.plugin_id == self.plugin_id && record.asset() == self.asset
     }
 }
 
@@ -502,9 +519,7 @@ fn retire(mut hosted: Hosted, table: &mut Table, assets: Option<&Assets>) {
         // sees it in the terminal.
         eprintln!("error: {problem}");
     }
-    table.retired.push(Retired {
-        instance: hosted.instance,
-    });
+    table.retired.push(hosted);
 }
 
 /// Writes what the plugin says its state is, into the asset its record names. Bytes that are
