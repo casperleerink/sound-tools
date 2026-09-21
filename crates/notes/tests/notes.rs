@@ -3,8 +3,8 @@
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them.
 #![allow(clippy::unwrap_used)]
 
-use sound_core::Ticks;
-use sound_notes::{Length, Note, NoteError, NoteEvent, Pitch, Velocity};
+use sound_core::{State, Ticks};
+use sound_notes::{Clip, Length, Note, NoteError, NoteEvent, Pedal, PedalChange, Pitch, Velocity};
 
 const LINE: &str = r#"{"start":0,"length":480,"pitch":60,"velocity":100}"#;
 
@@ -89,6 +89,67 @@ fn a_note_gives_its_own_events() {
     let (pitch, velocity) = (note.pitch, note.velocity);
     assert_eq!(note.on(), NoteEvent::On { pitch, velocity });
     assert_eq!(note.off(), NoteEvent::Off { pitch });
+}
+
+#[test]
+fn the_pedal_is_a_number_from_0_to_127_and_is_down_from_64() {
+    assert_eq!(Pedal::UP.value(), 0);
+    assert!(!Pedal::UP.is_down());
+    assert!(!Pedal::new(63).unwrap().is_down());
+    assert!(Pedal::new(64).unwrap().is_down());
+    assert!(Pedal::new(127).unwrap().is_down());
+    assert_eq!(Pedal::new(128), Err(NoteError::Pedal(128)));
+    assert_eq!(Pedal::nearest(-5).value(), 0);
+    assert_eq!(Pedal::nearest(500).value(), 127);
+    let line = r#"{"start":480,"value":127}"#;
+    let change: PedalChange = serde_json::from_str(line).unwrap();
+    assert_eq!(change.start, Ticks(480));
+    assert_eq!(change.value.value(), 127);
+    assert_eq!(serde_json::to_string(&change).unwrap(), line);
+}
+
+/// A clip of before the pedal existed loads and is written back byte for byte as it was, so
+/// nothing in an old project is rewritten by opening it.
+#[test]
+fn a_clip_without_pedal_loads_and_saves_without_the_field() {
+    let line = r#"{"start":0,"length":3840,"notes":[]}"#;
+    let clip: Clip = serde_json::from_str(line).unwrap();
+    assert!(clip.pedal.is_empty());
+    assert_eq!(serde_json::to_string(&clip).unwrap(), line);
+    assert_eq!(
+        clip,
+        Clip::new(Ticks(0), Length::new(Ticks(3840)).unwrap(), Vec::new())
+    );
+}
+
+#[test]
+fn a_clip_holds_the_pedal_and_places_it_on_the_timeline() {
+    let line = r#"{"start":960,"length":3840,"notes":[],"pedal":[{"start":0,"value":127},{"start":960,"value":0}]}"#;
+    let mut clip: Clip = serde_json::from_str(line).unwrap();
+    assert_eq!(serde_json::to_string(&clip).unwrap(), line);
+    let placed: Vec<_> = clip.placed_pedal().map(|it| (it.start, it.value)).collect();
+    assert_eq!(
+        placed,
+        vec![
+            (Ticks(960), Pedal::new(127).unwrap()),
+            (Ticks(1920), Pedal::UP),
+        ]
+    );
+    // A shorter clip cannot hold a pedal move past its end, as it cannot hold such a note.
+    clip.set_length(Length::new(Ticks(480)).unwrap());
+    assert_eq!(clip.pedal.len(), 1);
+    assert!(clip.validate().is_ok());
+}
+
+#[test]
+fn a_pedal_move_outside_the_clip_does_not_load() {
+    let line = r#"{"start":0,"length":480,"notes":[],"pedal":[{"start":480,"value":64}]}"#;
+    let clip: Clip = serde_json::from_str(line).unwrap();
+    let error = clip.validate().unwrap_err();
+    assert!(
+        error.starts_with("pedal[0].start must be less than"),
+        "{error}"
+    );
 }
 
 #[test]

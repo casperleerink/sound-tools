@@ -10,7 +10,9 @@ use sound_core::{
     OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, Project, Registry, State,
     Ticks,
 };
-use sound_notes::{AUDIO_OUTPUT, Length, NOTES_INPUT, Note, NoteEvent, Pitch, Velocity};
+use sound_notes::{
+    AUDIO_OUTPUT, Length, NOTES_INPUT, Note, NoteEvent, Pedal, PedalChange, Pitch, Velocity,
+};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 
@@ -19,6 +21,9 @@ pub const SAMPLE_RATE: u32 = 48_000;
 #[serde(deny_unknown_fields)]
 pub struct Track {
     pub notes: Vec<Note>,
+    /// Sustain pedal moves at their ticks, as a clip holds them.
+    #[serde(default)]
+    pub pedal: Vec<PedalChange>,
 }
 
 impl State for Track {
@@ -31,15 +36,22 @@ pub const INSTRUMENT: &str = "instrument";
 
 /// Sends the notes of one immutable snapshot from the transport tick range. It keeps no list
 /// of held notes: when the transport stops or jumps it sends one `AllOff`.
+/// What the track sends: its notes and its pedal moves.
+#[derive(Default, PartialEq, Eq)]
+pub struct Part {
+    pub notes: Vec<Note>,
+    pub pedal: Vec<PedalChange>,
+}
+
 #[derive(Default)]
-pub struct Sequencer(Arc<Vec<Note>>);
+pub struct Sequencer(Arc<Part>);
 
 impl Sequencer {
     pub const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
 }
 
 impl Processor for Sequencer {
-    type Update = Arc<Vec<Note>>;
+    type Update = Arc<Part>;
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::NOTES)
@@ -47,7 +59,7 @@ impl Processor for Sequencer {
 
     fn prepare(&mut self, _: &PrepareConfig) {}
 
-    fn update(&mut self, update: &mut Arc<Vec<Note>>) {
+    fn update(&mut self, update: &mut Arc<Part>) {
         // The old snapshot rides back to the control thread inside the update.
         std::mem::swap(&mut self.0, update);
     }
@@ -59,14 +71,21 @@ impl Processor for Sequencer {
                 .event_outputs
                 .push(Self::NOTES, 0, NoteEvent::AllOff);
         }
+        // The pedal first, so an off on the same frame sees where it stands.
+        for change in &self.0.pedal {
+            if let Some(offset) = transport.offset_of(change.start) {
+                let event = NoteEvent::Pedal(change.value);
+                context.event_outputs.push(Self::NOTES, offset, event);
+            }
+        }
         // All offs before all ons: on one frame, a note that ends must not end the note of
         // the same pitch that starts there.
-        for note in self.0.iter() {
+        for note in &self.0.notes {
             if let Some(offset) = transport.offset_of(note.end()) {
                 context.event_outputs.push(Self::NOTES, offset, note.off());
             }
         }
-        for note in self.0.iter() {
+        for note in &self.0.notes {
             if let Some(offset) = transport.offset_of(note.start) {
                 context.event_outputs.push(Self::NOTES, offset, note.on());
             }
@@ -76,7 +95,11 @@ impl Processor for Sequencer {
 
 fn apply_track(state: &Track, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let sequencer = context.processor("sequencer", Sequencer::default)?;
-    context.update(sequencer, Arc::new(state.notes.clone()))?;
+    let part = Part {
+        notes: state.notes.clone(),
+        pedal: state.pedal.clone(),
+    };
+    context.update(sequencer, Arc::new(part))?;
     if let Some(notes) = context.child_input(INSTRUMENT, NOTES_INPUT) {
         context.connect(OutputEndpoint::new(sequencer, Sequencer::NOTES).to(notes))?;
     }
@@ -144,7 +167,13 @@ impl Harness {
 
     pub fn add_track(&mut self, name: &str, notes: Vec<Note>, synth: SynthState) {
         let mut changes = Changes::new();
-        let track = changes.create(id(name), Track { notes });
+        let track = changes.create(
+            id(name),
+            Track {
+                notes,
+                pedal: Vec::new(),
+            },
+        );
         changes.create(track.id().child(INSTRUMENT).unwrap(), synth);
         self.project.commit("Add track", changes).unwrap();
     }
@@ -172,6 +201,14 @@ impl Harness {
     pub fn play(&mut self, frames: usize) -> Vec<f32> {
         self.project.engine().play();
         self.render(frames)
+    }
+}
+
+/// A pedal move at a tick, for the record of a test track.
+pub fn pedal(start: u64, value: u8) -> PedalChange {
+    PedalChange {
+        start: Ticks(start),
+        value: Pedal::new(value).unwrap(),
     }
 }
 

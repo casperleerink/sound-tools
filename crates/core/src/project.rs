@@ -256,6 +256,16 @@ impl Project {
         Ok(self.engine.update(node, update)?)
     }
 
+    /// The input port that the behaviour of `instance` named, for code below the tools that
+    /// plays into an instance from outside the project: MIDI input into the `notes` port of an
+    /// instrument, wired by the window. `None` while the instance has no such port.
+    ///
+    /// The endpoint is a place in the engine graph and changes when the processor behind it is
+    /// built again. Read it again after every change instead of keeping it.
+    pub fn input_port(&self, instance: &InstanceId, port: &str) -> Option<InputEndpoint> {
+        self.bindings.input(instance, port)
+    }
+
     /// The clock the engine plays by, for conversions while reading, such as ticks to seconds.
     pub fn clock(&self) -> &Clock {
         self.engine.clock()

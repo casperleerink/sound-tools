@@ -5,11 +5,13 @@
 //! view the installed [`Views`] has for the first instance at the top of the project.
 
 mod project_menu;
+pub mod recording;
 pub mod tempo;
 pub mod transport;
 
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -18,7 +20,10 @@ use gpui::{
     MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions,
     div, point, prelude::*, px, size,
 };
-use sound_core::{Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, ProjectEvent};
+use midi::{Latency, Lost};
+use sound_core::{
+    Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, ProjectEvent, StreamTiming,
+};
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::{ActiveTheme, Assets, Session, Views, typography};
@@ -30,7 +35,15 @@ use crate::{open_or_create, views};
 
 actions!(
     sound_tools,
-    [TogglePlayback, Undo, Redo, FocusNext, FocusPrevious, Quit]
+    [
+        TogglePlayback,
+        ToggleRecording,
+        Undo,
+        Redo,
+        FocusNext,
+        FocusPrevious,
+        Quit
+    ]
 );
 
 /// Room for the traffic lights of a macOS window, left of the project menu.
@@ -57,6 +70,19 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::with_device(session, views, device_name, None, window, cx)
+    }
+
+    /// The window of the real runtime, which has a device. Everything else passes `None` for
+    /// the timing and measures no latency.
+    pub fn with_device(
+        session: Entity<Session>,
+        views: Views,
+        device_name: SharedString,
+        timing: Option<Arc<StreamTiming>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         views.install(cx);
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&session, window, |shell, _, event, window, cx| {
@@ -79,7 +105,7 @@ impl Shell {
         .detach();
         let mut shell = Self {
             project_menu: cx.new(|cx| ProjectMenu::new(session.clone(), device_name, cx)),
-            transport: cx.new(|cx| TransportPill::new(session.clone(), cx)),
+            transport: cx.new(|cx| TransportPill::with_device(session.clone(), timing, cx)),
             session,
             main: None,
             focus_handle,
@@ -190,6 +216,9 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &TogglePlayback, _, cx| {
                 shell.session.update(cx, Session::toggle_playback)
             }))
+            .on_action(cx.listener(|shell, _: &ToggleRecording, _, cx| {
+                shell.transport.update(cx, TransportPill::toggle_recording)
+            }))
             .on_action(
                 cx.listener(|shell, _: &Undo, _, cx| shell.session.update(cx, Session::undo)),
             )
@@ -234,12 +263,13 @@ impl Render for Shell {
 /// The key context of the window root. Every binding of the window names it.
 const KEY_CONTEXT: &str = "Shell";
 
-/// The keys of the window. Space and undo belong to a focused text field first: there space is
-/// a character and cmd-z is not an undo of the project. Tab moves the focus everywhere.
+/// The keys of the window. Space, record and undo belong to a focused text field first: there
+/// they are characters and cmd-z is not an undo of the project. Tab moves the focus everywhere.
 pub fn bind_keys(cx: &mut App) {
     let outside_text = Some("Shell && !TextInput");
     cx.bind_keys([
         KeyBinding::new("space", TogglePlayback, outside_text),
+        KeyBinding::new("r", ToggleRecording, outside_text),
         KeyBinding::new("cmd-z", Undo, outside_text),
         KeyBinding::new("shift-cmd-z", Redo, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
@@ -256,6 +286,29 @@ fn print_device_report(stream: &OutputStream) {
     println!("xruns: {}", status.xruns);
     println!("late callbacks: {}", status.late_callbacks);
     println!("slowest callback: {:?}", status.slowest_callback);
+    println!("device output latency: {:?}", status.output_latency);
+}
+
+/// What a key press cost, measured over the session. It covers the wait for the next audio
+/// block and the output latency the device reports, not the keyboard and its cable.
+fn print_midi_report(latency: Latency, lost: Lost) {
+    if latency.count() == 0 {
+        return;
+    }
+    println!(
+        "midi to sound over {} messages: mean {:?}, shortest {:?}, longest {:?}, jitter {:?}",
+        latency.count(),
+        latency.mean(),
+        latency.shortest(),
+        latency.longest(),
+        latency.spread()
+    );
+    if lost.any() {
+        println!(
+            "midi lost: {} messages never played, {} missing from a take",
+            lost.input, lost.reports
+        );
+    }
 }
 
 /// Opens the project, starts the device and runs the window until it closes.
@@ -267,6 +320,7 @@ pub fn run(folder: &Path) -> Result<()> {
     let mut project = open_or_create(folder, control)?;
     project.watch()?;
     let stream = Rc::new(device.start(engine)?);
+    let timing = stream.timing().clone();
     let title = project
         .root()
         .file_name()
@@ -324,14 +378,57 @@ pub fn run(folder: &Path) -> Result<()> {
                 ..Default::default()
             };
             let opened = cx.open_window(options, |window, cx| {
-                cx.new(|cx| Shell::new(session, views(), device_name.into(), window, cx))
+                cx.new(|cx| {
+                    let views = views();
+                    let name = device_name.into();
+                    Shell::with_device(session.clone(), views, name, Some(timing), window, cx)
+                })
             });
-            match opened {
-                Ok(_) => cx.activate(true),
+            let shell = match opened {
+                Ok(window) => {
+                    cx.activate(true);
+                    window
+                }
                 Err(error) => {
                     eprintln!("error: the window did not open: {error}");
                     cx.quit();
+                    return;
                 }
+            };
+            // Every MIDI input port of the machine, read into the engine. The list is looked
+            // at again every second, so a keyboard plugged in later works without a restart.
+            let input = shell
+                .read(cx)
+                .ok()
+                .and_then(|shell| shell.transport().read(cx).midi_input());
+            if let Some(input) = input {
+                cx.spawn({
+                    let session = session.downgrade();
+                    async move |cx| {
+                        let mut ports = midi::Ports::new(input);
+                        loop {
+                            // Nothing strong is held across the wait: a handle to the session
+                            // that outlived the window would keep the project open, and its
+                            // lock and `problems.txt` with it.
+                            let Some(session) = session.upgrade() else {
+                                break;
+                            };
+                            match ports.refresh() {
+                                Ok(opened) => {
+                                    for name in opened {
+                                        println!("midi in: {name}");
+                                    }
+                                }
+                                Err(error) => {
+                                    session.update(cx, |session, cx| session.report(error, cx));
+                                }
+                            }
+                            drop(session);
+                            cx.background_executor().timer(Duration::from_secs(1)).await;
+                        }
+                    }
+                })
+                .detach();
             }
         });
     Ok(())

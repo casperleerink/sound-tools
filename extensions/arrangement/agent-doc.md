@@ -42,6 +42,32 @@ This clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one 
 - Two notes of the same pitch that overlap on one track sound as one: the pitch is held until the last of them ends.
 - Clips on one track may overlap in time. The notes of both play.
 
+## A recorded clip: the sustain pedal
+
+A clip the composer recorded from a keyboard has a `pedal` list as well. Leave it out of a clip you write by hand, and keep it when you change one that has it.
+
+```json state/arrangement/piano/take-1.json
+{
+  "tool": "arrangement.clip",
+  "state": {
+    "start": 0,
+    "length": {{four_bars}},
+    "notes": [
+      {"start": 0, "length": 900, "pitch": 60, "velocity": 88},
+      {"start": 940, "length": 880, "pitch": 64, "velocity": 76}
+    ],
+    "pedal": [{"start": 0, "value": 127}, {"start": 1880, "value": 0}],
+    "take": "take-1"
+  }
+}
+```
+
+- `pedal[].start`: where the pedal moved, in ticks from the start of the clip, like a note start. It must be inside the clip.
+- `pedal[].value`: how far the pedal was pressed, 0 to 127, as it was played. It counts as down from 64, and a piano that knows half pedal can use the rest.
+- While the pedal is down a note goes on sounding after its own end, until the pedal comes up. So the notes above sound together until tick 1880.
+- The pedal is not shown in the note editor yet. Edit it here.
+- `take`: the raw take this clip was recorded from, the file `assets/takes/take-1.json`. Keep the field as it is when you change the clip, move its file or copy it: it is the only way back to what the composer played. Read `agent-docs/takes.md` before you touch anything under `assets/takes/`.
+
 ## A track: `arrangement.track`
 
 ```json state/arrangement/piano/instance.json

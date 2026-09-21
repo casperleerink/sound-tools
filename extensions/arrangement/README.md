@@ -28,6 +28,8 @@ Each tool says where it lives (`State::PLACE`): the arrangement at the top of `s
 - Two sounding notes of one pitch on one track sound until the last of them ends. In the note contract an `Off` releases every held note of its pitch, so the sequencer sends the one off with the last holder. The result is the same in any order of ends and with or without a snapshot swap in between.
 - Tracks show by `order`, then by id. `tracks()` gives them in that order. `clips()` gives the clips of a track by start, then by id.
 - A seek or a stop silences what sounds. A note is never started in its middle: there is no chase.
+- A clip may hold the sustain pedal, which a recording writes. While the pedal is down a note goes on sounding after its own end, until the pedal comes up. The pedal of a clip ends with the clip, as a note that is longer than the rest of its clip ends there, so a clip that ends under the pedal does not sustain for the rest of the piece. Pedal moves of clips that overlap all play, in tick order, and the last one wins, including a lift at the end of a clip.
+- A clip may also name the raw take it was recorded from (`take`). The arrangement keeps the field through every edit and never reads it; see `extensions/midi`.
 
 ## The sequencer
 
@@ -39,6 +41,10 @@ No stuck notes. The processor keeps a fixed list of the notes it started (`HELD_
 - On `jumped` or `stopped_playing`: one `AllOff`, and the list is cleared.
 - On one tick, offs go before ons.
 - A note that would be the 129th held one is not played. An on that does not fit in the event buffer is not played and not listed as held. Each such note counts once in `EngineStatus::event_overflows`, which the runtime prints in `status`, after a render and at the end. An off that does not fit stays in the list and goes out in the next block. After the first event that did not fit, nothing more is pushed in that block, so a waiting off counts at most once per block.
+
+The pedal has no list of its own, because it is one value. Every block, while the project plays, the sequencer compares the pedal the snapshot has just before the block with the last value it sent, and sends the difference at offset 0, before the notes. Then it sends the moves inside the block. So a seek into a held pedal arrives with the pedal down, an edit that removes a pedal releases what it held, and a stop or a seek puts it up with the `AllOff`. There is no case of its own for any of them.
+
+The snapshot does two things to the pedal while it builds. It lifts it at the end of every clip whose pedal is down there, so the pedal of a clip ends with the clip. And it keeps one move per tick, the most pressed of them: a record may hold any number on one tick, and the work of a block is then bounded by the ticks it covers.
 
 ### The preview note
 

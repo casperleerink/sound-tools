@@ -61,7 +61,8 @@ A track connects both itself. To play a synth straight to the device, add connec
 - Note on and note off apply on their exact frame. Velocity sets the level with a square curve: velocity 64 is a quarter of velocity 127.
 - The loudest single note is one on the cutoff with `resonance` 1. At `gain` 0.25 and velocity 127 it peaks at 0.38 with the saw and 0.75 with the square.
 - A held note with `sustain` 0 ends by itself after its decay. Its voice is then free, and the later note off does nothing.
-- `Off` releases every held note of its pitch. `AllOff` releases everything. Release tails always sound to their end.
+- `Off` releases every held note of its pitch. `AllOff` releases everything and puts the pedal up. Release tails always sound to their end.
+- The sustain pedal: while it is down (64 or more, the MIDI rule) an `Off` does not release. The note sounds on at its full level, and it is released when the pedal comes up. This synth has one damper: half pedal is taken as it was played and acted on as down or up. A voice held by the pedal is still a held voice for a takeover.
 - A synth with no sounding voice does no work. A voice ends when its release reaches silence, and the output is then exactly zero.
 - Everything is allocated when the synth is created. `process` never allocates.
 

@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use gpui::{Context, Entity, EventEmitter, SharedString, Task, prelude::*};
 use sound_core::{
-    EngineControl, EngineStatus, Project, ProjectEdit, ProjectError, ProjectEvent, Ticks,
+    EngineControl, EngineStatus, InstanceId, Project, ProjectEdit, ProjectError, ProjectEvent,
+    Ticks,
 };
 
 /// How often the session polls. About one display frame, so the playhead moves smoothly.
@@ -45,6 +46,8 @@ pub struct Session {
     notice: Option<(NoticeSource, SharedString)>,
     /// The open gesture, see [`Self::begin_gesture`].
     gesture: Option<ProjectEdit>,
+    /// What the composer is working on, see [`Self::select`].
+    selected: Option<InstanceId>,
     /// A stopped engine fails every poll. It is reported once.
     engine_stopped: bool,
     _polling: Task<()>,
@@ -73,6 +76,7 @@ impl Session {
             playhead: cx.new(|_| Playhead::default()),
             notice: None,
             gesture: None,
+            selected: None,
             engine_stopped: false,
             _polling: polling,
         }
@@ -85,6 +89,24 @@ impl Session {
 
     pub fn playhead(&self) -> &Entity<Playhead> {
         &self.playhead
+    }
+
+    /// The instance the composer is working on, such as the track whose header was clicked
+    /// last. It is interface state: nothing is saved and there is no undo step.
+    ///
+    /// The view that owns a selection publishes it here, and anything outside that view reads
+    /// it. Live MIDI input plays into the instrument of the selected track, and the window
+    /// wires that, so the extension that owns the tracks and the one that reads the keyboard
+    /// need nothing of each other.
+    pub fn selected(&self) -> Option<&InstanceId> {
+        self.selected.as_ref()
+    }
+
+    pub fn select(&mut self, instance: Option<InstanceId>, cx: &mut Context<Self>) {
+        if self.selected != instance {
+            self.selected = instance;
+            cx.notify();
+        }
     }
 
     /// The transport: `play`, `pause`, `stop` and `seek`. The result shows in the

@@ -537,7 +537,7 @@ impl Timeline {
                 ProjectEvent::Deleted(id) => {
                     let changed = shown(id);
                     if timeline.selected_track.as_ref() == Some(id) {
-                        timeline.selected_track = None;
+                        timeline.select_track(None, cx);
                     }
                     if timeline.selected_clip.as_ref() == Some(id) {
                         timeline.selected_clip = None;
@@ -767,12 +767,18 @@ impl Timeline {
     }
 
     /// Selects a track and no clip, so that the keys are about the track.
+    ///
+    /// It goes to the session too. The selected track is what a keyboard plays into and what a
+    /// recording is written to, and the window wires that: the arrangement knows nothing of
+    /// MIDI, and MIDI nothing of tracks.
     pub fn select_track(&mut self, track: Option<InstanceId>, cx: &mut Context<Self>) {
         if track.is_some() {
             self.select_clip(None, cx);
         }
         if self.selected_track != track {
-            self.selected_track = track;
+            self.selected_track = track.clone();
+            self.session
+                .update(cx, |session, cx| session.select(track, cx));
             cx.notify();
         }
     }

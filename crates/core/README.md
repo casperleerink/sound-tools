@@ -302,6 +302,7 @@ A file change, an undo or a redo may write a record while an edit is open on it.
 - An invalid state is rejected with `ProjectError::InvalidState` and nothing changes.
 - A move is a delete and a create in one `Changes` group.
 - `project.send::<P>(&id, name, update)` sends one update to a processor of an instance, outside any edit. See "Updates" above. `ProjectError::MissingProcessor` when the instance has no processor of that name and type.
+- `project.input_port(&id, "notes")` is the input port that the behaviour of an instance named, for code below the tools that plays into an instance from outside the project. MIDI input uses it to reach the `notes` port of an instrument, and the window wires that. The endpoint is a place in the graph and moves when the processor behind it is built again, so read it after every change instead of keeping it.
 
 ### Follow changes
 
@@ -376,6 +377,12 @@ Each call is a message to the audio thread. It applies at the start of the next 
 
 `OutputDevice::start` refuses an engine whose sample rate differs from the device, because the clock would play every tempo at the wrong speed. Build the `EngineConfig` from `device.sample_rate()`.
 
+## When a frame reaches the speakers
+
+`monotonic_nanos()` is one clock for the whole process: nanoseconds since the first call. `OutputStream::timing()` gives a `StreamTiming`, which the device callback fills in with two numbers per buffer and nothing computed on the audio thread. `timing.sound_time_nanos(frame)` is then the moment the sound of an engine frame starts at the device, on that same clock, and `timing.output_latency()` is what the device says it adds after a callback rendered.
+
+Whoever measures the way from an input to its sound stamps the input with `monotonic_nanos()` and subtracts. MIDI input does this, see `extensions/midi`. Never call `monotonic_nanos()` on the audio thread.
+
 ## The musical clock
 
 Musical time is whole ticks, 960 per quarter note (`Ticks`). Project time in audio frames is `Frames`. The two are separate types, so they cannot be mixed up. Save positions and lengths in ticks.
@@ -407,7 +414,7 @@ The saved JSON, as it will appear in `project.json`:
 
 ```sh
 cargo nextest run -p sound-core -p tone
-RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement -p metronome   # the realtime sanitizer
+RTSAN_ENABLE=1 cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement -p metronome -p midi   # the realtime sanitizer
 cargo nextest run -p sound-core --run-ignored only ten_thousand --no-capture   # scale numbers
 cargo run -p runtime -- my-project                        # the window: runs the folder live on the default device
 cargo run -p runtime -- my-project --headless             # the same without a window, commands from stdin

@@ -208,11 +208,7 @@ mod tests {
     }
 
     fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {
-        Clip {
-            start: Ticks(start),
-            length: Length::new(Ticks(length)).unwrap(),
-            notes,
-        }
+        Clip::new(Ticks(start), Length::new(Ticks(length)).unwrap(), notes)
     }
 
     fn length(ticks: u64) -> Length {

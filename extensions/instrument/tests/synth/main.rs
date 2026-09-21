@@ -7,6 +7,7 @@
 
 mod device;
 mod editing;
+mod pedal;
 mod performance;
 mod playing;
 mod properties;

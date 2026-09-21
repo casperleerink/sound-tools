@@ -378,6 +378,12 @@ impl Bindings {
         (*processor_type == TypeId::of::<P>()).then(|| Node::from_id(*node))
     }
 
+    /// The input port that the behaviour of `instance` named, as `project.json` connections
+    /// and its owner see it.
+    pub fn input(&self, instance: &InstanceId, port: &str) -> Option<InputEndpoint> {
+        self.by_instance.get(instance)?.inputs.get(port).copied()
+    }
+
     /// Runs the whole change as one engine edit: one batch and at most one compile. On an
     /// error the engine and the bindings stay as they were.
     ///

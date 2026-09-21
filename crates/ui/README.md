@@ -125,6 +125,8 @@ What the clip and note drags of the arrangement added to this pattern, in `exten
 
 Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Session::toggle_playback` is what space does. The result shows in the `Playhead` after the next poll. `session.engine()` is the whole `EngineControl`, so a view can also add a processor of its own to the graph, outside the project and outside undo. The transport pill does that for the click, see [metronome](../../extensions/metronome/README.md). Keep that for things that are not music: everything a composer saves goes through an edit.
 
+`Session::selected` and `Session::select` are the one instance the composer is working on, such as the track whose header was clicked last. It is interface state: nothing is saved and there is no undo step. The view that owns a selection publishes it, and anything outside that view reads it. The arrangement view publishes its selected track there, and the window uses it to send a MIDI keyboard into the instrument of that track, so the two extensions need nothing of each other.
+
 ### A knob on saved state
 
 `Knob` is controlled, so a view of saved state keeps no copy of it: give the value on every render and handle the `KnobChange`. `extensions/instrument/src/view.rs` is the example, and the mixer section of `extensions/arrangement/src/view/track_panel.rs` is a shorter one.

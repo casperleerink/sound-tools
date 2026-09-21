@@ -18,7 +18,9 @@ pub use clock::{
     TempoChange, TempoMap, Ticks, TimeSignature,
 };
 pub use control::{Edit, EngineConfig, EngineControl, EngineStopped, Node};
-pub use device::{DeviceError, DeviceStatus, OutputDevice, OutputStream};
+pub use device::{
+    DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming, monotonic_nanos,
+};
 pub use engine::{Engine, EngineStatus};
 pub use graph::{Connection, Destination, GraphError, NodeId};
 pub use processor::{

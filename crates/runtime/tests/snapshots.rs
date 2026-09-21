@@ -6,6 +6,7 @@
 //! - `piece.png`: three tracks with several clips, playing, one clip selected.
 //! - `transport-click-off.png`: the same with the transport in focus, the click off.
 //! - `transport-click-on.png`: the same with the click on.
+//! - `transport-recording.png`: the same while it records.
 //! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
 //! - `menu.png`: the project menu, open, after one edit.
 //! - `editor.png`: the note editor open on the selected clip, one note selected.
@@ -246,11 +247,11 @@ fn note(start: u64, length: u64, pitch: u8) -> Result<Note> {
 }
 
 fn clip(start_bar: u64, bars: u64, notes: Vec<Note>) -> Result<Clip> {
-    Ok(Clip {
-        start: Ticks(start_bar * BAR),
-        length: Length::new(Ticks(bars * BAR))?,
+    Ok(Clip::new(
+        Ticks(start_bar * BAR),
+        Length::new(Ticks(bars * BAR))?,
         notes,
-    })
+    ))
 }
 
 fn add_track(
@@ -386,6 +387,19 @@ fn main() -> Result<()> {
         "the click did not come on"
     );
     save(&mut cx, &opened, "transport-click-on")?;
+
+    // Recording: the record control in red, next to play and stop. Nothing is played into it,
+    // so the take is empty and it makes no clip and no file.
+    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
+    cx.run_until_parked();
+    anyhow::ensure!(
+        cx.update(|cx| transport.read(cx).is_recording()),
+        "the recording did not start"
+    );
+    save(&mut cx, &opened, "transport-recording")?;
+    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
+    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_click(cx)));
+    cx.run_until_parked();
 
     // The menu after an edit, so that undo has something to name.
     cx.update(|cx| {
