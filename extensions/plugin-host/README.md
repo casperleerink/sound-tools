@@ -168,6 +168,12 @@ So:
 
 A plugin installed while the app runs is not found until the next start.
 
+A sampled instrument streams from disk, and an offline render does not wait for one: it runs
+faster than realtime and takes what the plugin has. Measured with the three sampled VST 3
+instruments of this machine: the render made right after their sample files left the file cache
+is silent, and every render after that is byte for byte the same as the one before it, and the
+same across a close and a reopen. That is the plugin and not the host.
+
 `runtime --plugins` prints every plugin of this machine with its format, its id and how long
 the scan took. It is how a composer or an agent finds the id a record needs.
 

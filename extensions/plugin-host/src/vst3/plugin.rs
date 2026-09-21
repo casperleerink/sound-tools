@@ -61,8 +61,8 @@ pub fn load(
     let host = as_unknown(&context).ok_or_else(|| fail("the host context".to_string()))?;
 
     // SAFETY: every call below goes to the plugin the factory made, in the order VST 3 gives,
-    // and every pointer either comes from the plugin or outlives the call. A failure leaves
-    // the plugin where it was and this function gives up on it.
+    // and every pointer either comes from the plugin or outlives the call. A failure after
+    // `initialize` is undone by `Joined`, so no plugin is left half-set-up.
     let plugin = unsafe {
         let component: ComPtr<IComponent> = create(module.factory(), &class, &IComponent_iid)
             .ok_or_else(|| {
@@ -72,41 +72,50 @@ pub fn load(
         if result != kResultOk && result != kResultTrue {
             return Err(refused(&plugin_id, "initialize", result));
         }
+        let mut joined = Joined {
+            component: component.clone(),
+            separate: None,
+            controller: None,
+            connection: None,
+            handler: ComWrapper::new(Handler::default()),
+            kept: false,
+        };
 
         // The controller: a second class the component names, or the component itself.
         let mut controller_class: TUID = [0; 16];
         let has_own = component.getControllerClassId(&mut controller_class) == kResultOk
             && controller_class != class;
-        let separate = has_own
+        joined.separate = has_own
             .then(|| {
                 create::<IEditController>(module.factory(), &controller_class, &IEditController_iid)
             })
             .flatten();
-        if let Some(controller) = &separate {
+        if let Some(controller) = &joined.separate {
             let result = not_ours(|| controller.initialize(host.as_ptr()));
             if result != kResultOk && result != kResultTrue {
                 return Err(refused(&plugin_id, "the controller's initialize", result));
             }
         }
-        let controller = separate
+        joined.controller = joined
+            .separate
             .clone()
             .or_else(|| component.cast::<IEditController>());
 
-        let handler = ComWrapper::new(Handler::default());
-        if let Some(controller) = &controller
-            && let Some(pointer) = as_handler(&handler)
+        if let Some(controller) = &joined.controller
+            && let Some(pointer) = as_handler(&joined.handler)
         {
             controller.setComponentHandler(pointer.as_ptr());
         }
 
         // Two objects talk through their connection points, with messages this host makes.
-        let connection = separate.as_ref().and_then(|controller| {
+        joined.connection = joined.separate.as_ref().and_then(|controller| {
             let from = component.cast::<IConnectionPoint>()?;
             let to = controller.cast::<IConnectionPoint>()?;
             from.connect(to.as_ptr());
             to.connect(from.as_ptr());
             Some((from, to))
         });
+        let controller = joined.controller.clone();
 
         if let Some(bytes) = saved {
             read_state(&plugin_id, bytes, &component, controller.as_ref())?;
@@ -153,6 +162,7 @@ pub fn load(
 
         let pedal_parameter = pedal_parameter(controller.as_ref());
         let live = Arc::new(());
+        joined.kept = true;
         let (reports, changed) = rtrb::RingBuffer::new(REPORT_CAPACITY);
         let started = Vst3Processor::new(
             processor,
@@ -171,15 +181,10 @@ pub fn load(
         Opening {
             started: Box::new(started),
             plugin: Box::new(Vst3Plugin {
-                component,
-                controller,
-                separate,
-                connection,
-                handler,
+                joined,
                 _context: context,
                 changed,
                 live,
-                active: true,
             }),
             notes,
         }
@@ -187,8 +192,12 @@ pub fn load(
     Ok(plugin)
 }
 
-/// One loaded VST 3 plugin, from the control thread.
-pub struct Vst3Plugin {
+/// A plugin that is initialized, with its two halves joined and the host's handler in it.
+///
+/// It undoes all of that when it is dropped without [`Self::kept`], so a load that fails part
+/// of the way through leaves no plugin half-set-up, and [`Vst3Plugin::let_go`] is the same
+/// four calls in the same order.
+struct Joined {
     component: ComPtr<IComponent>,
     /// The interface side. The component itself when the plugin is one object.
     controller: Option<ComPtr<IEditController>>,
@@ -196,7 +205,54 @@ pub struct Vst3Plugin {
     /// and disconnected of its own.
     separate: Option<ComPtr<IEditController>>,
     connection: Option<(ComPtr<IConnectionPoint>, ComPtr<IConnectionPoint>)>,
+    /// What the plugin's controller reports to. The plugin holds a pointer to it until the
+    /// handler is taken back below, so it must outlive that call.
     handler: ComWrapper<Handler>,
+    /// Whether a plugin was made of this. A [`Vst3Plugin`] lets go of it itself, when the
+    /// engine has given the audio side back.
+    kept: bool,
+}
+
+impl Joined {
+    /// Everything VST 3 asks a host to do when it is done with a plugin, in that order.
+    /// Calling it again does nothing.
+    fn let_go(&mut self) {
+        if !std::mem::take(&mut self.kept) {
+            return;
+        }
+        // SAFETY: every object came from the plugin and is alive, and nothing else holds the
+        // audio side: `Vst3Plugin::released` checks that before this runs, and a load that
+        // failed never made one.
+        unsafe {
+            not_ours(|| self.component.setActive(0));
+            if let Some((from, to)) = self.connection.take() {
+                from.disconnect(to.as_ptr());
+                to.disconnect(from.as_ptr());
+            }
+            // The plugin lets go of the host's handler before the handler can go, whether the
+            // controller is a second object or the component itself.
+            if let Some(controller) = self.controller.take() {
+                controller.setComponentHandler(std::ptr::null_mut());
+            }
+            if let Some(controller) = &self.separate {
+                not_ours(|| controller.terminate());
+            }
+            not_ours(|| self.component.terminate());
+        }
+    }
+}
+
+impl Drop for Joined {
+    fn drop(&mut self) {
+        // Only a load that failed between `initialize` and the plugin being made. A plugin
+        // that was made has already been let go of, or is one the engine still holds.
+        self.let_go();
+    }
+}
+
+/// One loaded VST 3 plugin, from the control thread.
+pub struct Vst3Plugin {
+    joined: Joined,
     /// The plugin holds this for as long as it lives, so it must outlive the plugin.
     _context: ComWrapper<HostContext>,
     /// What the plugin changed by itself while it played.
@@ -204,7 +260,6 @@ pub struct Vst3Plugin {
     /// The audio side holds a second one of these. While it does, this plugin may not be
     /// deactivated: the two ends would be in different hands.
     live: Arc<()>,
-    active: bool,
 }
 
 impl LoadedPlugin for Vst3Plugin {
@@ -214,17 +269,17 @@ impl LoadedPlugin for Vst3Plugin {
         let mut changed = false;
         while let Ok(change) = self.changed.pop() {
             changed = true;
-            if let Some(controller) = &self.controller {
+            if let Some(controller) = &self.joined.controller {
                 // SAFETY: the controller came from the plugin and is alive.
                 unsafe { controller.setParamNormalized(change.id, change.value) };
             }
         }
         if changed {
-            self.handler.mark_dirty();
+            self.joined.handler.mark_dirty();
         }
         Requests {
-            restart: self.handler.take_restart_requested(),
-            state_is_dirty: self.handler.take_state_is_dirty(),
+            restart: self.joined.handler.take_restart_requested(),
+            state_is_dirty: self.joined.handler.take_state_is_dirty(),
             // A VST 3 plugin has no window before step 5b, so it never closes one and never
             // asks for a size.
             window_closed: false,
@@ -237,12 +292,12 @@ impl LoadedPlugin for Vst3Plugin {
         let stream = as_stream(&component).ok_or("the state stream")?;
         // SAFETY: the component came from the plugin and is alive, and the stream outlives the
         // call.
-        let result = unsafe { self.component.getState(stream.as_ptr()) };
+        let result = unsafe { self.joined.component.getState(stream.as_ptr()) };
         if result != kResultOk && result != kResultTrue {
             return Err(format!("the plugin answered {result} to getState"));
         }
         let mut controller_bytes = Vec::new();
-        if let Some(controller) = &self.separate {
+        if let Some(controller) = &self.joined.separate {
             let written = MemoryStream::writing();
             let stream = as_stream(&written).ok_or("the state stream")?;
             // SAFETY: as above.
@@ -264,31 +319,8 @@ impl LoadedPlugin for Vst3Plugin {
         if Arc::get_mut(&mut self.live).is_none() {
             return false;
         }
-        self.let_go();
+        self.joined.let_go();
         true
-    }
-}
-
-impl Vst3Plugin {
-    /// Everything VST 3 asks a host to do when it is done with a plugin, in that order.
-    fn let_go(&mut self) {
-        if !std::mem::take(&mut self.active) {
-            return;
-        }
-        // SAFETY: every object came from the plugin and is alive, and the audio side has been
-        // given back, which is what `released` checks before this runs.
-        unsafe {
-            not_ours(|| self.component.setActive(0));
-            if let Some((from, to)) = self.connection.take() {
-                from.disconnect(to.as_ptr());
-                to.disconnect(from.as_ptr());
-            }
-            if let Some(controller) = &self.separate {
-                controller.setComponentHandler(std::ptr::null_mut());
-                not_ours(|| controller.terminate());
-            }
-            not_ours(|| self.component.terminate());
-        }
     }
 }
 
@@ -297,8 +329,9 @@ impl Drop for Vst3Plugin {
         // The project is being torn down. A plugin whose audio side is still in an engine that
         // is going is left as it is, exactly as the CLAP backend leaves one: terminating it
         // while another thread may still be in `process` would be worse than not terminating.
-        if Arc::get_mut(&mut self.live).is_some() {
-            self.let_go();
+        // `Joined::let_go` does nothing once `kept` is taken, so this decides.
+        if Arc::get_mut(&mut self.live).is_none() {
+            self.joined.kept = false;
         }
     }
 }
