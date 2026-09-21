@@ -97,6 +97,8 @@ A plugin's state is opaque. Two moments write it:
   at the next `Plugins::poll`, which is every 16 ms in the window and every 5 ms headless.
 - When the project closes, for every loaded plugin, whether it said so or not. A plugin that
   changes its state without telling the host, which CLAP asks it not to do, keeps its work.
+- When a plugin goes, because its record was deleted or now names another plugin. So undo of a
+  delete brings the plugin back as it sounded.
 
 Bytes that are already in the project are not written again, so a session that changed nothing
 leaves no diff. A plugin's state is not project state: it is never an undo step, and undo and

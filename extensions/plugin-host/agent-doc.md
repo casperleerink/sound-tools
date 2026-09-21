@@ -40,8 +40,8 @@ gain, pan and mute of the track are the same whichever instrument the track has.
 
 `assets/plugin-state/<name>.bin` holds the plugin's own settings, in a format only that plugin
 understands. Do not open it, do not edit it, do not copy it between plugins. The app writes it
-when the plugin says its settings changed. It is not part of the undo history: undo and redo
-never change a plugin's settings.
+when the plugin says its settings changed, and when the project closes. It is not part of the
+undo history: undo and redo never change a plugin's settings.
 
 Deleting a plugin's record does not delete its state file. To make the plugin start fresh,
 delete `assets/plugin-state/<name>.bin` while no app has the project open.
@@ -70,3 +70,6 @@ that has this project open. When it is not on your `PATH`, ask the composer for 
   Give each its own `state_asset`.
 - `... takes no MIDI, so the sustain pedal does not reach it`: the notes play, the pedal does
   not. There is nothing to fix in the file.
+- `... asked to be started again`: the plugin wants the app to reload it, which this build does
+  not do. Nothing in the file is wrong. Tell the composer to take the plugin off the track and
+  put it back if it stopped sounding.

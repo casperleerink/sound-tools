@@ -133,21 +133,6 @@ fn a_project_that_names_a_plugin_this_machine_does_not_have_opens_and_reports_it
         problems[0].message.contains("com.example.nowhere"),
         "{problems:?}"
     );
-    // What an agent reads. The file follows the plugin, as it follows a record that does not
-    // load, so correcting the id clears the line without the project being opened again.
-    harness.project.poll().unwrap();
-    let text = std::fs::read_to_string(harness.path("problems.txt")).unwrap();
-    assert!(text.contains("com.example.nowhere"), "{text}");
-    harness.write_and_apply(
-        "state/arrangement/piano/instrument.json",
-        &test_plugin("piano"),
-    );
-    harness.project.poll().unwrap();
-    assert_eq!(harness.project.problems(), []);
-    let text = std::fs::read_to_string(harness.path("problems.txt")).unwrap();
-    assert!(text.contains("No problems"), "{text}");
-    harness.write_and_apply("state/arrangement/piano/instrument.json", missing);
-
     // The track is silent and the other one renders exactly as it does without it.
     let with_missing = harness.play(16_000);
     assert_eq!(difference(&only_pad, &with_missing), None);
@@ -161,6 +146,35 @@ fn a_project_that_names_a_plugin_this_machine_does_not_have_opens_and_reports_it
     assert_eq!(String::from_utf8(bytes).unwrap(), missing);
     assert!(!harness.path("assets/plugin-state/piano.bin").exists());
     assert_eq!(harness.project.problems().len(), 1);
+}
+
+/// What an agent reads. `problems.txt` follows a plugin, as it follows a record that does not
+/// load, so correcting the id clears the line with no restart.
+#[test]
+fn the_problems_file_follows_a_plugin_that_is_corrected() {
+    let folder = tempfile::tempdir().unwrap();
+    let (mut harness, _plugins) = Harness::with_test_plugin(folder);
+    let missing = r#"{"tool": "plugin", "state": {"format": "clap", "plugin_id": "com.example.nowhere", "state_asset": "piano"}}"#;
+    harness.write(
+        "state/arrangement/piano/instance.json",
+        &TRACK.replace("NAME", "piano").replace("ORDER", "1"),
+    );
+    harness.write("state/arrangement/piano/instrument.json", missing);
+    let path = harness.path("state/arrangement/piano");
+    harness.apply(&[path]);
+
+    harness.project.poll().unwrap();
+    let text = std::fs::read_to_string(harness.path("problems.txt")).unwrap();
+    assert!(text.contains("com.example.nowhere"), "{text}");
+
+    harness.write_and_apply(
+        "state/arrangement/piano/instrument.json",
+        &test_plugin("piano"),
+    );
+    harness.project.poll().unwrap();
+    assert_eq!(harness.project.problems(), []);
+    let text = std::fs::read_to_string(harness.path("problems.txt")).unwrap();
+    assert!(text.contains("No problems"), "{text}");
 }
 
 /// `--render` and `--inspect` open the project read-only. They load plugins too, so an offline

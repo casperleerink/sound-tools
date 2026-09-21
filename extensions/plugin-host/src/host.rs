@@ -290,9 +290,7 @@ impl Plugins {
                 // Another plugin, or another state file: the one that is there goes.
                 Some(_) => {
                     if let Some(hosted) = table.loaded.remove(id) {
-                        table.retired.push(Retired {
-                            instance: hosted.instance,
-                        });
+                        retire(hosted, &mut table, self.0.writes_state.then_some(assets));
                     }
                 }
                 None => {}
@@ -444,8 +442,16 @@ impl Plugins {
             .filter(|id| project.tool_of(id) != Some(PluginRecord::TOOL))
             .cloned()
             .collect();
+        let assets = self.0.writes_state.then(|| project.assets());
         for id in gone {
-            if let Some(hosted) = loaded.remove(&id) {
+            if let Some(mut hosted) = loaded.remove(&id) {
+                // Its state is saved on the way out, so undo of a delete brings the plugin
+                // back as it sounded and not as it was last written.
+                if let Some(assets) = assets
+                    && let Err(problem) = save(&mut hosted, assets)
+                {
+                    problems.push(problem);
+                }
                 retired.push(Retired {
                     instance: hosted.instance,
                 });
@@ -484,6 +490,21 @@ impl Plugins {
         retired.retain_mut(|plugin| plugin.instance.try_deactivate().is_err());
         problems
     }
+}
+
+/// Saves a plugin that is going, when the project is one that writes, and puts its handle
+/// where it waits for the engine to give the audio processor back.
+fn retire(mut hosted: Hosted, table: &mut Table, assets: Option<&Assets>) {
+    if let Some(assets) = assets
+        && let Err(problem) = save(&mut hosted, assets)
+    {
+        // The caller is inside a behaviour and has no way to report. The composer at least
+        // sees it in the terminal.
+        eprintln!("error: {problem}");
+    }
+    table.retired.push(Retired {
+        instance: hosted.instance,
+    });
 }
 
 /// Writes what the plugin says its state is, into the asset its record names. Bytes that are

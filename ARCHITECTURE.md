@@ -384,7 +384,7 @@ The scan:
 
 When plugin state is saved:
 
-- Two moments write it. While the project is open: when the plugin says its state changed (`clap_host_state.mark_dirty`), at the next poll of the host, which is every 16 ms in the window and every 5 ms headless. And when the project closes: every loaded plugin, whether it said so or not, so a plugin that changes its state without telling the host keeps its work. Bytes that are already in the project are not written again, so a session that changed nothing leaves no diff, and a read-only project (`--inspect`, `--render`) loads plugins and never writes at all.
+- Two moments write it. While the project is open: when the plugin says its state changed (`clap_host_state.mark_dirty`), at the next poll of the host, which is every 16 ms in the window and every 5 ms headless. And when the project closes, or when a plugin goes because its record was deleted or now names another: every loaded plugin, whether it said so or not, so a plugin that changes its state without telling the host keeps its work, and undo of a delete brings the plugin back as it sounded. Bytes that are already in the project are not written again, so a session that changed nothing leaves no diff, and a read-only project (`--inspect`, `--render`) loads plugins and never writes at all.
 - A crash can lose what a plugin changed since the last poll that saved it, and anything a plugin changed without saying so since the project opened. CLAP asks a plugin to mark its state dirty whenever it changes, including on a parameter change.
 - Plugin state is not project state: a change of it is never an undo step, and undo and redo never touch the asset. Agents are told not to edit the file.
 

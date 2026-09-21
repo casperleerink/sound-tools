@@ -1,7 +1,7 @@
 //! The plugin's own state: saved as an asset when the plugin says it changed, back on reopen,
 //! and untouched by undo.
 
-use crate::support::{Harness, Played, record, state_asset};
+use crate::support::{Harness, Played, id, record, state_asset};
 
 /// Pedal 100 makes the test plugin transpose by 36 semitones and mark its state dirty.
 fn change_the_state_and_play() -> Vec<Played> {
@@ -155,4 +155,32 @@ fn dropping_the_project_saves_the_state_of_every_plugin() {
         36
     );
     drop(folder);
+}
+
+/// Undo of a delete must bring the plugin back as it sounded, so its state is saved on the way
+/// out and not left at whatever was last written.
+#[test]
+fn a_plugin_whose_record_goes_is_saved_on_the_way_out() {
+    let mut harness = Harness::new();
+    harness.add_track(record("piano"), change_the_state_and_play());
+    harness.play(2048);
+    let asset = harness.project.assets().path(&state_asset("piano"));
+    std::fs::remove_file(&asset).unwrap();
+
+    let mut changes = sound_core::Changes::new();
+    changes.delete(&id("track/instrument"));
+    harness
+        .project
+        .commit("Delete the plugin", changes)
+        .unwrap();
+    harness.plugins.poll(&harness.project);
+    let saved = std::fs::read(&asset).expect("the plugin was saved when its record went");
+    assert_eq!(
+        i32::from_le_bytes([saved[4], saved[5], saved[6], saved[7]]),
+        36
+    );
+
+    // Undo brings the record back, and with it the plugin, transposed as it was.
+    assert!(harness.project.undo().unwrap().is_some());
+    assert_eq!(harness.problems(), Vec::<String>::new());
 }
