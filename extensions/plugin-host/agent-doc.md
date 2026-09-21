@@ -91,7 +91,11 @@ for you, when you mean two records to share one sound.
 
 ## Which plugins this machine has
 
-Not from any file. When you can run commands:
+The ids this project already uses are in its own records: every `plugin_id` under `state/` is a
+plugin this machine had when it was written. Read them before you look further; a plugin that
+plays here is one you can name again.
+
+For the rest, not from any file. When you can run commands:
 
 ```sh
 runtime --plugins
@@ -116,9 +120,9 @@ record may name any plugin in either place.
 
 - `this machine has no CLAP plugin with the id ...`, or `no VST 3 plugin`: the id is wrong, or
   the plugin is not installed here. The record stays as it is, while everything else plays.
-  An instrument that is missing leaves its track silent; an effect that is missing lets the
-  sound through unchanged, so the rest of the chain still plays. Correct `plugin_id` and it
-  plays at once, with no restart.
+  A missing instrument leaves its track silent; a missing effect lets the sound through
+  unchanged, so the rest of the chain still plays. Correct `plugin_id` and it plays at once,
+  with no restart.
 - `a vst3 plugin_id is the class id as thirty-two hex digits`: the record itself is refused.
   You wrote something else, perhaps a CLAP-style id or the plugin's name.
 - `the plugins of this machine are still being looked at`: nothing is wrong. The app looks for

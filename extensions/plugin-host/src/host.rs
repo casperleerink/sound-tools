@@ -43,14 +43,19 @@ pub(crate) const HOST_URL: &str = "https://github.com/casperleerink/sound-tools"
 pub(crate) const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Why a plugin record is not playing. Each becomes one line in `problems.txt`.
+///
+/// A message says what happens to the slot and not what happens to the track: this host knows
+/// no slots. What a missing plugin costs is the owner's rule, which for a track is that an
+/// instrument goes silent and an effect lets the sound through. An outside agent read the
+/// older wording, which spoke of the track, and called it a disagreement with the docs.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PluginProblem {
     #[error(
-        "this machine has no {format} plugin with the id {plugin_id:?}. The record is left as it is and the track is silent. Install the plugin, or correct `plugin_id`"
+        "this machine has no {format} plugin with the id {plugin_id:?}. The record is left as it is and nothing plays through it: a missing instrument is silent, a missing effect lets the sound through unchanged. Install the plugin, or correct `plugin_id`"
     )]
     NotInstalled { format: String, plugin_id: String },
     #[error(
-        "the plugins of this machine are still being looked at, so {plugin_id:?} is not there yet. The track is silent until the scan reaches it, which needs nothing of you"
+        "the plugins of this machine are still being looked at, so {plugin_id:?} is not there yet. Nothing plays through it until the scan reaches it, which needs nothing of you"
     )]
     StillScanning { plugin_id: String },
     #[error("the plugin {plugin_id:?} did not load: {message}")]

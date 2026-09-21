@@ -101,10 +101,27 @@ const EMPTY_EFFECT_SLOT: &str = "No effect";
 /// What the control at the end of the rack says.
 const ADD_EFFECT: &str = "Add effect";
 
+/// What the control that takes an effect off the track is called, and what a test finds it by.
+/// It names the slot, because one view draws every card of the rack.
+pub fn remove_control(slot: &InstanceId) -> SharedString {
+    format!("remove-{}", slot.name()).into()
+}
+
+/// The same for the picker of an effect card.
+fn effect_picker(slot: &InstanceId) -> SharedString {
+    format!("effect-picker-{}", slot.name()).into()
+}
+
 /// The menu of offers for a slot, and the quiet lines under them.
+///
+/// `picks_one` says whether the menu chooses what is in a slot, which is what a card does, or
+/// runs a command, which is what the control that adds an effect does. A command leaves no
+/// check behind: the menu would otherwise mark the effect that was added last as if the
+/// control held it.
 fn offer_entries(
     offers: &[DeviceOffer],
     slot: Slot,
+    picks_one: bool,
     session: &Entity<Session>,
     cx: &App,
 ) -> Vec<MenuEntry> {
@@ -118,7 +135,8 @@ fn offer_entries(
             .label(label)
             .max_height(320.)
             .items(offers.iter().map(|offer| {
-                let item = MenuItem::new(offer.key.clone(), offer.name.clone());
+                let item =
+                    MenuItem::new(offer.key.clone(), offer.name.clone()).selectable(picks_one);
                 // An offer this project cannot load is shown and not taken, with the one
                 // edit that would make it work. Enabling an extension while the project
                 // runs is refused, and nothing here writes `project.json` for anyone.
@@ -161,11 +179,11 @@ impl Device {
         // Asked for once per card, not per frame: a source that has to look at this machine,
         // as the plugin host does, pays for it here.
         let offers = Devices::offered(kind, cx);
-        let entries = offer_entries(&offers, kind, session, cx);
+        let entries = offer_entries(&offers, kind, true, session, cx);
         let label = device_label(session, &slot, kind, cx);
         let name = match kind {
-            Slot::Instrument => "instrument-picker",
-            Slot::Effect => "effect-picker",
+            Slot::Instrument => SharedString::from("instrument-picker"),
+            Slot::Effect => effect_picker(&slot),
         };
         let picker = cx.new(|cx| {
             let mut picker = DropdownMenu::new(label.name, entries, cx)
@@ -315,7 +333,7 @@ impl TrackPanel {
         .detach();
         let add_effect = cx.new(|cx| {
             let offers = Devices::offered(Slot::Effect, cx);
-            let entries = offer_entries(&offers, Slot::Effect, &session, cx);
+            let entries = offer_entries(&offers, Slot::Effect, false, &session, cx);
             DropdownMenu::new(ADD_EFFECT, entries, cx)
                 .debug_name("add-effect")
                 .ghost(true)
@@ -683,8 +701,12 @@ impl Render for TrackPanel {
                 title = title.child(device.picker.clone());
                 if device.kind == Slot::Effect {
                     let slot = device.slot.clone();
-                    let remove = Button::icon_only("remove-effect", "x")
-                        .debug_selector(|| "remove-effect".to_string())
+                    // The name of the slot, because every card of the rack is drawn by this
+                    // one view: two controls of one id would be one control to GPUI, and the
+                    // second effect of a track would not be the one that goes.
+                    let name = remove_control(&device.slot);
+                    let remove = Button::icon_only(name.clone(), "x")
+                        .debug_selector(move || name.to_string())
                         // Quiet until it is wanted, like the close control of the panel.
                         .opacity(0.6)
                         .variant(ButtonVariant::Ghost)

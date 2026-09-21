@@ -168,7 +168,7 @@ fn removing_an_effect_is_one_undo_step_and_undo_brings_it_back_as_it_sounded(
     let asset = opened.path("assets/plugin-state/sound-tools-test-tone-2.bin");
     assert!(asset.exists(), "the effect saved no state");
 
-    let remove = opened.control("remove-effect");
+    let remove = opened.control("remove-sound-tools-test-tone");
     opened.click(remove);
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
     assert_eq!(
@@ -183,6 +183,34 @@ fn removing_an_effect_is_one_undo_step_and_undo_brings_it_back_as_it_sounded(
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME, PLUGIN_NAME]);
     opened.project(|project| assert_eq!(project.problems(), []));
     assert_eq!(settled(&mut opened), through);
+}
+
+/// Two effects of the same plugin, and the control of the second one. Every card of the rack
+/// is drawn by one view, so two controls of one element id would be one control to GPUI and
+/// the wrong effect would go. Found by hand with three effects on a track.
+#[gpui::test]
+fn the_control_of_the_second_effect_takes_that_one_off_and_not_the_first(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    add_effect(&mut opened);
+    add_effect(&mut opened);
+    let names = ["sound-tools-test-tone", "sound-tools-test-tone-2"];
+    assert_eq!(card_names(&mut opened).len(), 3);
+
+    let remove = opened.control(&format!("remove-{}", names[1]));
+    opened.click(remove);
+    assert_eq!(card_names(&mut opened).len(), 2);
+    let record = track_file(&mut opened);
+    assert!(record.contains(&format!(r#"["{}"]"#, names[0])), "{record}");
+    assert!(
+        !opened
+            .path(&format!("state/arrangement/track-1/{}.json", names[1]))
+            .exists()
+    );
+    assert!(
+        opened
+            .path(&format!("state/arrangement/track-1/{}.json", names[0]))
+            .exists()
+    );
 }
 
 /// A file edit is the way to reorder, and the window follows it.

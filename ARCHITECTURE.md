@@ -371,7 +371,7 @@ Threads, which CLAP decides for us:
 What a behaviour may report, in the core:
 
 - `BehaviourContext::problem(message)` says that part of a state is not live, without failing the edit. It is listed in `Project::problems()` on the record's path until the behaviour runs again without it. Before this a behaviour could only apply or refuse, and refusing rejects the whole edit group.
-- That is what makes "a missing plugin leaves its record untouched, the project reports it and the track is silent, and everything else plays" true in one place. It holds while the project opens and while it runs: an agent that corrects `plugin_id` in the file hears the plugin at once, with no restart and nothing installed.
+- That is what makes "a missing plugin leaves its record untouched, the project reports it and nothing plays through that slot, and everything else plays" true in one place. Since step 6, what a slot costs is the owner's rule: a missing instrument leaves its track silent, a missing effect lets the sound through. It holds while the project opens and while it runs: an agent that corrects `plugin_id` in the file hears the plugin at once, with no restart and nothing installed.
 
 Notes and the sustain pedal:
 
