@@ -36,6 +36,9 @@ Writing the plugin record over `instrument.json` replaces the synth with the plu
 one undo step. Writing a synth record back replaces the plugin again. Clips, notes and the
 gain, pan and mute of the track are the same whichever instrument the track has.
 
+The composer can do the same in the app, by picking an instrument on the card of the track
+panel, so the record may change under you. Read it before you write it.
+
 ## Never edit the state asset
 
 `assets/plugin-state/<name>.bin` holds the plugin's own settings, in a format only that plugin

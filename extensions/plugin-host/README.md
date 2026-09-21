@@ -28,10 +28,12 @@ core's `AssetName`, so a record can never point outside the project folder.
 
 | File | What is in it |
 | --- | --- |
-| `lib.rs` | The record, the tool and the behaviour. |
+| `lib.rs` | The record, the tool, the behaviour and `free_state_asset`. |
 | `host.rs` | `Plugins`: the plugins this project has loaded, and the host callbacks CLAP plugins call. |
 | `processor.rs` | The engine processor around a plugin's audio processor: the note contract in, one stereo port out. |
 | `scan.rs` | What this machine has, found in a child process. |
+| `window.rs` | The plugin's own window: one window of the application per open plugin. |
+| `view.rs` | The card of a plugin in a rack, and what a rack calls one. |
 | `src/bin/clap-scan.rs` | That child process, for the tests of this crate. The runtime is its own child. |
 
 ## Threads
@@ -147,11 +149,53 @@ Loading every time costs nothing: a behaviour runs when its own record changed, 
 project and on a retry, and every change a plugin record can have needs another plugin or
 another state file. `tests/plugin_host/consistency.rs` walks the sequences.
 
+## The plugin's own window
+
+CLAP offers two ways to show a plugin: a floating window the plugin makes and owns, or a
+window the host makes with the plugin's view embedded in it. The specification calls the
+floating one a fallback every plugin should support. Neither real CLAP instrument on the
+machine this was written on does: both answer `is_api_supported` with `false` for a floating
+window and `true` for an embedded one. So this host makes the window.
+
+- One GPUI window per open plugin, beside the main one, with a root view that draws nothing.
+  The plugin gets that window's `NSView` through `set_parent` and fills it.
+- The window is as big as `get_size` says and is not resizable by dragging. A plugin that asks
+  for another size with `request_resize` gets it at the next poll, which is how Six Sines
+  sizes itself as it opens.
+- Opening a window that is open brings it forward. Closing one frees the plugin's view
+  (`destroy`) and takes the window down, and touches nothing of the plugin's sound or state.
+- A window goes whenever its plugin does: another plugin in the record, the record deleted
+  from a file or by an undo, the track deleted, the project closing. Opening one is not an
+  edit, so undo never brings one back.
+- `Plugins::open_window` and `close_window` need the application. `Plugins::poll` and the drop
+  of the host do not have it, so they free the plugin's view and leave the window to
+  `Plugins::settle_windows`, which whoever polls calls with the application in hand. That call
+  also gives a window the size its plugin asked for.
+- Nothing of GPUI runs while the table of plugins is borrowed: a card that is drawn asks this
+  host what its plugin has, and that would be a second borrow. `open_window` is in three
+  steps for that reason.
+- `clap_host_gui.closed` is the one window callback a plugin may make from another thread. Like
+  the other cross-thread callbacks it only sets a flag that the next poll reads.
+
+`tests/plugin_host/window.rs` drives all of it on GPUI's platform for tests, whose windows are
+not real ones, so no display is needed. The plugin then gets no view to draw in, which is the
+one thing those tests cannot cover; it is checked by hand with a real plugin.
+
+## What a composer picks
+
+`Plugins::instruments` is every CLAP instrument of this machine, from the scan, for a picker.
+`free_state_asset(project, wanted)` gives a `state_asset` name no record of the project uses,
+so a plugin that is picked never shares a state file by accident. The runtime turns both into
+`sound_ui::DeviceOffer`s for the track panel; nothing here knows about tracks or panels.
+
 ## What is not built
 
 Effects, VST3, AU, a plugin sandbox, latency compensation, parameter automation, a parameter
-view, presets, MIDI out of a plugin, more than one audio output bus, and the plugin's own
-window with the picker that opens it, which is step 4b.
+view, presets, MIDI out of a plugin, more than one audio output bus, a plugin window that
+follows a drag of its edge, remembering where a window sat or whether it was open, a floating
+window for a plugin that only floats, and keeping a plugin's window above the main one
+(`set_transient`: it needs a handle to our view that outlives the plugin's window, and on macOS
+the main window is dropped before the project is).
 
 Two records may name one `state_asset` and then share it. Nothing refuses either: the project
 runs only the behaviour of the record that was edited, so a complaint about another record

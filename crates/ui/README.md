@@ -63,7 +63,7 @@ pub fn register(views: &mut Views) {
 }
 ```
 
-The runtime collects the views of every bundled extension and gives them to its window: `Shell::new(session, views, ..)` takes a `Views` and installs it (`views.install(cx)`), so the runtime cannot forget it. It is a GPUI global from then on.
+The runtime collects the views of every bundled extension and gives them to its window: `Shell::new(session, (views, devices), ..)` takes both registries and installs them (`views.install(cx)`), so the runtime cannot forget them. They are GPUI globals from then on. The second one, `Devices`, is below.
 
 A tool that edits what it owns shows that inside its own view. The window has one main area with one root view. Decided for the first milestone: the note editor is a panel inside the arrangement view and belongs to the arrangement extension, which opens it for the selected clip. The window does not know it.
 
@@ -84,6 +84,37 @@ card.child(view.clone())
 - Show something quiet when there is no view. A tool without a view is normal.
 - The hosted view owns its edits and its gestures. The host gives it a surface, such as a card, and nothing else. When the host drops the view during a drag, the view must finish its gesture when it is released (`cx.on_release`), as `SynthView` does.
 - A test with the window of the runtime has the registry through `Shell::new`. A test of a view alone installs one itself: `views.install(cx)`.
+
+### What a composer can put in a slot
+
+A view that hosts a slot of a rack, such as the track panel, also has to offer what else could
+go there and to name what is there. It knows no tool, so it is told. `Devices` is the second
+registry, of the same shape as `Views`:
+
+```rust
+// Filled by whoever makes the window, which is the one place that knows every extension.
+devices.name::<SynthState>(|_| "Synth".into());          // what a rack calls one
+devices.instruments(|| vec![DeviceOffer::new(           // what a composer can pick
+    SynthState::TOOL,
+    "Synth",
+    |_project, slot, changes| { changes.create(slot.clone(), SynthState::default()); Ok(()) },
+)]);
+
+// In the view:
+let offers = Devices::offered(cx);                       // when the picker is made, not per frame
+let name = Devices::name_of(&session, &slot, cx);        // `None`: no name was registered
+// When the composer picks one, as one undo step:
+offer.write(session.project(), &slot, &mut changes)?;
+project.commit(&format!("Choose {}", offer.name), changes)
+```
+
+A source of offers is asked every time a picker is filled, not while the window opens, so a
+source that has to look at the machine pays for it then. The plugin host's source scans for
+plugins, which is why a track panel is where that scan happens.
+
+`DeviceOffer::write` stages a whole record, so choosing replaces what was in the slot and undo
+brings it back. `extensions/arrangement/src/view/track_panel.rs` is the one caller and
+`crates/runtime/src/lib.rs`, `views`, is where the registry is filled.
 
 ## Edit from a view
 
