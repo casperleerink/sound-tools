@@ -22,7 +22,8 @@ const ROW_HEIGHT: f32 = 32.;
 pub struct MenuItem {
     pub value: SharedString,
     label: SharedString,
-    description: Option<SharedString>,
+    /// The muted second line, which says why a row cannot be picked when it cannot.
+    pub description: Option<SharedString>,
     icon: Option<SharedString>,
     shortcut: Option<SharedString>,
     disabled: bool,
@@ -411,6 +412,13 @@ impl DropdownMenu {
     pub fn ghost(mut self, ghost: bool) -> Self {
         self.ghost = ghost;
         self
+    }
+
+    /// The row with this value, wherever it is in the groups.
+    pub fn item(&self, value: &str) -> Option<&MenuItem> {
+        flat(&self.entries)
+            .into_iter()
+            .find(|item| item.value.as_ref() == value)
     }
 
     pub fn value(&self) -> Option<&SharedString> {

@@ -30,7 +30,7 @@ Change `state/fit-tempo.json` and the tempo map and the clip are made again from
 - `beat`: `half`, `normal` or `double`. How many beats the grid has for each beat that was found.
 - `steadiness`: 0 for the tempo as it was played, 1 for one steady tempo. Anything between moves the beats towards even spacing. The notes keep their ticks whatever it is, so a piece can always be turned back to 0.
 
-The file lives at the top of `state/`. One project has one fit; a second `fit-tempo` record changes nothing and says so in `problems.txt`.
+The file is `state/fit-tempo.json` and nowhere else. A `fit-tempo` record under any other name does not load, and the problem says where it belongs: a project has one fit.
 
 ## When the grid is wrong
 
@@ -52,7 +52,9 @@ Then write `"first_downbeat_us": 1436000`. It does not have to be exact: the bea
 
 ## What a correction costs
 
-A correction makes the clip's notes again from the raw take, so it is exact however many times you correct it. **Edits made by hand to that clip before a correction are lost.** One undo brings them back, together with the tempo map and the fit record, because the three are one step. Add parts to other clips, not to the take's clip.
+Changing `take`, `first_downbeat_us` or `beat`, or the project's `time_signature`, makes the clip's notes again from the raw take, so it is exact however many times you correct it. **Edits made by hand to that clip before such a correction are lost.** One undo brings them back, together with the tempo map and the fit record, because the three are one step.
+
+Changing `steadiness` never touches the clip. It writes the tempo map and nothing else, so a note moved by hand, a trimmed clip and a clip moved to another track all survive it.
 
 ## Parts that follow the take
 
@@ -67,6 +69,12 @@ It is a deterministic algorithm, not a model, and it is right about the beat wit
 ## One message you may see
 
 `4 of 91 beats are too far apart or too close together for a tempo between 10 and 1000 bpm` means the take begins the moment recording started, with no silence in front of it, so the bar before the first downbeat has no time to fit in. The grid still follows the playing everywhere else. Move `first_downbeat_us` to a later beat to give it room, or leave it: only the bars before the music are affected.
+
+## Two more messages you may see
+
+`project.json holds a change that did not load ... a record and what it derives are saved together or not at all` means your edit of the fit was refused, and nothing of it applied. The fit writes the tempo map into `project.json`, and that file is not written while it holds something the runtime could not take, such as a change to `extensions`. Fix `project.json` first, then write the fit again.
+
+`assets/takes/take-1.json: ... the most a take may hold is ...`, or `the messages of a take are in the order they arrived`, means the take file is damaged. It is never rewritten by the app. Mend it, then touch `state/fit-tempo.json` — a fit is worked out again when its own record changes.
 
 ## Check your work
 

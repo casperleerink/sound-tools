@@ -540,7 +540,7 @@ impl Timeline {
                         timeline.select_track(None, cx);
                     }
                     if timeline.selected_clip.as_ref() == Some(id) {
-                        timeline.selected_clip = None;
+                        timeline.select_clip(None, cx);
                         timeline.lost_selection = Some(id.clone());
                         timeline.reselect(cx);
                         timeline.forget_group_later(cx);
@@ -719,7 +719,7 @@ impl Timeline {
     /// A move to another track is a delete and a create in one group, and so is its undo and
     /// its redo. The selection goes with the clip: when the selected clip is deleted and the
     /// same group creates a clip of the same name, that one is selected.
-    fn reselect(&mut self, cx: &App) {
+    fn reselect(&mut self, cx: &mut Context<Self>) {
         let Some(lost) = &self.lost_selection else {
             return;
         };
@@ -727,8 +727,11 @@ impl Timeline {
         let mut created = self.created_in_group.iter();
         let found =
             created.find(|id| id.name() == lost.name() && project.resolve::<Clip>(id).is_some());
+        let found = found.cloned();
         if let Some(found) = found {
-            self.selected_clip = Some(found.clone());
+            // Through the one path, so the session hears it too: what the timeline shows as
+            // selected and what the rest of the window offers for it are one thing.
+            self.select_clip(Some(found), cx);
             self.lost_selection = None;
         }
     }

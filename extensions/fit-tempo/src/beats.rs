@@ -61,6 +61,9 @@ const TIGHTNESS: f64 = 20.0;
 /// A beat moves to an onset this close to it.
 pub const SNAP_US: u64 = 30_000;
 
+/// The most frames the search ever lays out, from the longest take a file may hold.
+const MAX_FRAMES: usize = (sound_notes::MAX_TAKE_MICROS / 1_000_000 * FRAME_HZ) as usize + 1;
+
 /// How much a low note counts for over the middle of the take, at an octave below it. A piano
 /// player's left hand marks the beat, so the bass of a group says more about where the beat is
 /// than the notes above it. Without this, playing in which every beat is subdivided evenly,
@@ -164,13 +167,22 @@ pub fn find_beats(events: &[RawEvent]) -> Vec<u64> {
 pub const MIN_ONSETS: usize = 8;
 
 /// The onsets on the search grid. Frame 0 is the start of the recording.
+///
+/// A take is refused before it is read when its times are longer than
+/// [`sound_notes::MAX_TAKE_MICROS`], so this array is at most four hours of frames, 11 MB. The
+/// arithmetic is checked all the same: this is the one place where a number out of a file
+/// decides how much memory is asked for.
 fn envelope(onsets: &[Onset]) -> Vec<f64> {
+    let frame_of = |time_us: u64| {
+        time_us
+            .checked_mul(FRAME_HZ)
+            .map_or(usize::MAX, |scaled| (scaled / 1_000_000) as usize)
+    };
     let last = onsets.last().map_or(0, |onset| onset.time_us);
-    let frames = (last * FRAME_HZ / 1_000_000) as usize + 1;
+    let frames = frame_of(last).saturating_add(1).min(MAX_FRAMES);
     let mut envelope = vec![0.0; frames];
     for onset in onsets {
-        let frame = (onset.time_us * FRAME_HZ / 1_000_000) as usize;
-        if let Some(value) = envelope.get_mut(frame) {
+        if let Some(value) = envelope.get_mut(frame_of(onset.time_us)) {
             *value += onset.weight;
         }
     }

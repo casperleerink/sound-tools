@@ -58,6 +58,43 @@ pub fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {
     Clip::new(Ticks(start), Length::new(Ticks(length)).unwrap(), notes)
 }
 
+/// Opens the window on a project that enables only these extensions, as one made before an
+/// extension existed does. `fill` adds to it first.
+pub fn open_without_extensions<'a>(
+    cx: &'a mut TestAppContext,
+    extensions: &str,
+    fill: impl FnOnce(&mut Project),
+) -> Opened<'a> {
+    let folder = tempfile::tempdir().unwrap();
+    let file = format!(
+        r#"{{"format": 1, "extensions": {extensions}, "tempo_map": {{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": 120.0}}]}}, "connections": []}}"#
+    );
+    let write = |relative: &str, contents: &str| {
+        let path = folder.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    };
+    write("project.json", &file);
+    // The content of the default project, which `open_or_create` only makes for a folder with
+    // no `project.json` at all.
+    write(
+        "state/arrangement/instance.json",
+        r#"{"tool": "arrangement", "state": {}}"#,
+    );
+    write(
+        "state/arrangement/track-1/instance.json",
+        r#"{"tool": "arrangement.track", "state": {"name": "Track 1", "order": 0}}"#,
+    );
+    write(
+        "state/arrangement/track-1/instrument.json",
+        r#"{"tool": "instrument.synth", "state": {}}"#,
+    );
+    let (control, engine) = Engine::new(OFFLINE);
+    let (mut project, plugins) = open_or_create(folder.path(), control).unwrap();
+    fill(&mut project);
+    open_project(cx, folder, project, engine, plugins.downgrade())
+}
+
 /// Opens the window on a new default project in a temporary folder. `fill` adds to it first.
 pub fn open_with(cx: &mut TestAppContext, fill: impl FnOnce(&mut Project)) -> Opened<'_> {
     let folder = tempfile::tempdir().unwrap();

@@ -34,6 +34,6 @@ pub use project::{
     GROUPING_WINDOW, InputEndpoint, Instance, InstanceId, InvalidAssetName, InvalidInstanceId,
     NO_PROBLEMS, OUTSIDE_UNDO_WINDOW, OutputEndpoint, PROBLEMS_FILE, Place, PortReference, Problem,
     Project, ProjectError, ProjectEvent, ProjectFile, Registry, RegistryError, SavedConnection,
-    SavedDestination, State, StorageError, ToolRegistration,
+    SavedDestination, State, StorageError, ToolRegistration, Was,
 };
 pub use transport::Transport;

@@ -27,7 +27,7 @@ use std::rc::Rc;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, Assets, Changes, Derived, Instance, InstanceId, Place, Project, ProjectError,
-    Registry, RegistryError, State, TimeSignature,
+    Registry, RegistryError, State, TimeSignature, Was,
 };
 use sound_notes::{Clip, RawTake};
 
@@ -72,6 +72,12 @@ pub struct FitState {
 }
 
 impl FitState {
+    /// What decides where the beats are, which is everything but the steadiness. When none of
+    /// it changed, the clip is left exactly as it is.
+    fn grid_inputs(&self) -> (&str, u64, BeatRate) {
+        (&self.take, self.first_downbeat_us, self.beat)
+    }
+
     /// The fit of a take, as the window makes it: the first beat is the first downbeat, the
     /// grid runs at the beat that was found, and the tempo follows the playing.
     pub fn new(take: impl Into<String>) -> Self {
@@ -86,8 +92,11 @@ impl FitState {
 
 impl State for FitState {
     const TOOL: &'static str = "fit-tempo";
-    /// The fit is about the whole project, so it sits at the top of `state/`.
-    const PLACE: Place = Place::Root;
+    /// The fit is about the whole project, so it sits at the top of `state/` and only there,
+    /// under one name. A project has one fit by construction: a second record does not load
+    /// and the problem names the one path. Two of them would write over each other's tempo
+    /// map with no way to say which won.
+    const PLACE: Place = Place::Only(DEFAULT_FIT);
 
     fn validate(&self) -> Result<(), String> {
         if !Clip::is_valid_take_name(&self.take) {
@@ -119,24 +128,21 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     let summaries = fits.clone();
     registry
         .tool::<FitState>(EXTENSION)?
-        .derive(move |project, fit, derived| fits.derive(project, fit, derived))
+        .derive(move |project, fit, was, derived| fits.derive(project, fit, was, derived))
         .summary(move |project, fit| summaries.summary(project, fit));
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
 
-/// The fit of a project, or `None` when it has none. The first `fit-tempo` record at the top of
-/// `state/`: one fit per project, and a second one says so in `problems.txt`.
+/// The fit of a project, or `None` when it has none. It is one record at one id, so this is a
+/// lookup and not a walk: the transport asks for it after every project event.
 pub fn fit_of(project: &Project) -> Option<Instance<FitState>> {
-    fits_in(project).into_iter().next()
+    project.resolve::<FitState>(&fit_id())
 }
 
-/// Every fit record of a project, in id order.
-fn fits_in(project: &Project) -> Vec<Instance<FitState>> {
-    let instances = project.instances();
-    let fits = instances.filter(|(_, tool)| *tool == FitState::TOOL);
-    fits.filter_map(|(id, _)| project.resolve::<FitState>(id))
-        .collect()
+/// The one id a fit lives at. The name is fixed, so this cannot fail.
+fn fit_id() -> InstanceId {
+    InstanceId::new(DEFAULT_FIT).unwrap_or_else(|_| unreachable!("a fixed valid name"))
 }
 
 /// The clips that name `take`, in id order. Normally one: the clip the recording made.
@@ -232,7 +238,12 @@ impl Fits {
                 .map_err(|error| error.to_string())
         });
         let fitted = Rc::new(fitted);
-        self.cache.borrow_mut().grid = Some((key, fitted.clone()));
+        // A fit that worked is remembered; one that did not is worked out again next time.
+        // What went wrong is almost always the take file, and an agent that mends it must see
+        // the fit come back without touching the record that names it.
+        if fitted.is_ok() {
+            self.cache.borrow_mut().grid = Some((key, fitted.clone()));
+        }
         fitted
     }
 
@@ -249,23 +260,28 @@ impl Fits {
         Ok(take)
     }
 
-    /// The derive: the tempo map and the clip of the take, in the group that changed the fit.
-    fn derive(&self, project: &Project, fit: &Instance<FitState>, derived: &mut Derived) {
+    /// The derive: the tempo map, and the clip of the take when the beats moved.
+    ///
+    /// The clip is made again from the raw take only when an input that decides where the
+    /// beats are changed: the take, the first downbeat, half, normal or double, or the
+    /// project's time signature. A steadiness change writes the tempo map and nothing else, so
+    /// a note moved by hand, a trimmed clip or a clip dragged somewhere else all survive it.
+    fn derive(
+        &self,
+        project: &Project,
+        fit: &Instance<FitState>,
+        was: Was<'_, FitState>,
+        derived: &mut Derived,
+    ) {
         let Some(state) = project.state(fit) else {
             return;
         };
-        // One fit per project. A second one changes nothing and says so, because two records
-        // writing one tempo map would fight over it with no way to tell which won.
-        let first = fits_in(project).into_iter().next();
-        if first.as_ref().is_some_and(|first| first.id() != fit.id()) {
-            let first = first
-                .map(|first| first.id().to_string())
-                .unwrap_or_default();
-            derived.problem(format!(
-                "a project has one fit, and {first} is it, so this record changes nothing. Delete this file, or delete {first}.json and keep this one"
-            ));
-            return;
-        }
+        let beats_moved = match was {
+            // A fit that was just made, and a time signature that changed under one: the grid
+            // is another grid either way.
+            Was::Created | Was::Unchanged => true,
+            Was::Changed(before) => before.grid_inputs() != state.grid_inputs(),
+        };
         let time_signature = project.project_file().tempo_map.time_signature();
         let fitted = self.fitted(project.assets(), state, time_signature);
         let fitted = match &*fitted {
@@ -280,6 +296,9 @@ impl Fits {
         }
         let map = fitted.map_at(time_signature, state.steadiness);
         derived.changes().set_tempo_map(map);
+        if !beats_moved {
+            return;
+        }
 
         let clips = clips_of_take(project, &state.take);
         let Some((clip, _)) = clips.first() else {

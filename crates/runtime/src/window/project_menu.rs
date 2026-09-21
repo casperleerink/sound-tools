@@ -8,10 +8,10 @@ use std::process::Command;
 use gpui::{Context, Entity, IntoElement, Render, SharedString, Window, prelude::*};
 use sound_core::{Changes, InstanceId};
 use sound_notes::Clip;
-use sound_ui::Session;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked,
 };
+use sound_ui::{Session, enable_extension, extension_is_enabled};
 
 use crate::{add_track, main_arrangement};
 
@@ -37,6 +37,9 @@ struct Shown {
     can_add_track: bool,
     /// The selected clip, when it was recorded and its take can be fitted to.
     fit_clip: Option<InstanceId>,
+    /// The one edit that would bring the fit within reach, when the project does not enable
+    /// the extension it needs. A project made before the fit existed is such a project.
+    fit_needs: Option<String>,
     undo: Option<String>,
     redo: Option<String>,
 }
@@ -47,6 +50,8 @@ impl Shown {
         Self {
             can_add_track: main_arrangement(project).is_some(),
             fit_clip: recorded_clip(session).map(|(id, _)| id),
+            fit_needs: (!extension_is_enabled(project, fit_tempo::EXTENSION))
+                .then(|| enable_extension(fit_tempo::EXTENSION)),
             undo: project.undo_label().map(str::to_string),
             redo: project.redo_label().map(str::to_string),
         }
@@ -131,6 +136,10 @@ fn fit_tempo_to_take(session: &mut Session, cx: &mut Context<Session>) {
     let Some((_, clip)) = recorded_clip(session) else {
         return;
     };
+    // The item is at 40 % in that case and says what to add, so a click cannot get here.
+    if !extension_is_enabled(session.project(), fit_tempo::EXTENSION) {
+        return;
+    }
     session.edit(cx, |project| {
         let mut changes = Changes::new();
         fit_tempo::fit_take(project, &mut changes, &clip)?;
@@ -180,13 +189,24 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
             .disabled(label.is_none())
     };
     vec![
-        MenuEntry::Group(MenuGroup::new().items([
-            command(ADD_TRACK, "Add track".to_string()).disabled(!shown.can_add_track),
-            // The fit belongs to the whole project: it rewrites the tempo map every other
-            // part follows. So it sits here and not on the clip, and it is offered only for a
-            // clip that came from a recording.
-            command(FIT_TEMPO, "Fit tempo to take".to_string()).disabled(shown.fit_clip.is_none()),
-        ])),
+        MenuEntry::Group(
+            MenuGroup::new().items([
+                command(ADD_TRACK, "Add track".to_string()).disabled(!shown.can_add_track),
+                // The fit belongs to the whole project: it rewrites the tempo map every other
+                // part follows. So it sits here and not on the clip, and it is offered only for a
+                // clip that came from a recording.
+                match &shown.fit_needs {
+                    // The same line an instrument picker gives an offer a project cannot take:
+                    // enabling an extension while a project runs is refused, so it is a file edit
+                    // and a reopen. A project made before the fit existed is such a project.
+                    Some(needed) => command(FIT_TEMPO, "Fit tempo to take".to_string())
+                        .disabled(true)
+                        .description(needed.clone()),
+                    None => command(FIT_TEMPO, "Fit tempo to take".to_string())
+                        .disabled(shown.fit_clip.is_none()),
+                },
+            ]),
+        ),
         MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().items([
             history(UNDO, "Undo", shown.undo.as_deref(), "mod+z"),

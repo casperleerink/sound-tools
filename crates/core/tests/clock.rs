@@ -336,3 +336,44 @@ fn one_tempo_change_of_a_map_can_be_set_by_its_tick() {
     let text = serde_json::to_string(&changed).unwrap();
     assert_eq!(serde_json::from_str::<TempoMap>(&text).unwrap(), changed);
 }
+
+/// A map with a tempo change on every beat is the same piece at every sample rate.
+///
+/// Each change starts a segment at the exact moment its tick falls on, fraction of a frame and
+/// all. A segment that began on a whole frame would throw a part of a frame away at every
+/// change, and a thousand changes would then be a piece of a different length at 44.1 kHz than
+/// at 96 kHz. This is what a fitted tempo map is made of, so it is not a corner case.
+#[test]
+fn a_tempo_change_per_beat_gives_the_same_piece_at_every_sample_rate() {
+    let beats = 1500;
+    let changes: Vec<TempoChange> = (0..beats)
+        .map(|beat| TempoChange {
+            tick: Ticks(beat * 960),
+            // A tempo that gives and takes, and never a whole number of frames per beat.
+            bpm: Tempo::from_bpm(96.0 + f64::from((beat % 37) as u32) * 0.137).unwrap(),
+        })
+        .collect();
+    let map = TempoMap::new("4/4".parse().unwrap(), changes).unwrap();
+    let last = Ticks(beats * 960);
+
+    let seconds = |rate: u32| {
+        let clock = Clock::new(map.clone(), rate);
+        clock.frame_of(last).0 as f64 / f64::from(rate)
+    };
+    let at_48 = seconds(48_000);
+    for rate in [16_000, 44_100, 48_000, 88_200, 96_000, 192_000] {
+        let difference = (seconds(rate) - at_48).abs();
+        assert!(
+            difference < 0.001,
+            "{rate} Hz ends {difference} s from 48 kHz over {beats} beats"
+        );
+    }
+    // And every tick still lands on the frame that holds it, and comes back.
+    for rate in [16_000, 44_100, 96_000] {
+        let clock = Clock::new(map.clone(), rate);
+        for beat in [0_u64, 1, 2, 749, 1499, 1500] {
+            let tick = Ticks(beat * 960 + 37);
+            assert_eq!(clock.tick_at(clock.frame_of(tick)), tick, "{rate} Hz");
+        }
+    }
+}

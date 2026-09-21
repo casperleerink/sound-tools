@@ -28,6 +28,8 @@
 //! - `track-panel-effect-missing.png`: an effect whose plugin this machine does not have.
 //! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the
 //!   plugin host, where every plugin says what the one edit is.
+//! - `fit-action-disabled.png`: the project menu of a project made before the fit existed,
+//!   where the fit says what the one edit is.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -103,6 +105,16 @@ impl Opened {
     /// A project whose `project.json` does not enable the plugin host, as one made before
     /// step 4a has. Its content is that of the default project.
     fn without_plugin_host(cx: &mut HeadlessAppContext) -> Result<Self> {
+        Self::without_extensions(cx, r#"["arrangement", "instrument", "tone"]"#, |_| Ok(()))
+    }
+
+    /// A project that enables only these extensions, with the default content plus whatever
+    /// `fill` writes into it. For the controls that offer something a project cannot load.
+    fn without_extensions(
+        cx: &mut HeadlessAppContext,
+        extensions: &str,
+        fill: impl FnOnce(&mut Project) -> Result<()>,
+    ) -> Result<Self> {
         let folder = tempfile::tempdir()?;
         let root = folder.path().join("Night Study");
         let write = |relative: &str, contents: &str| -> Result<()> {
@@ -113,9 +125,11 @@ impl Opened {
         };
         write(
             "project.json",
-            r#"{"format": 1, "extensions": ["arrangement", "instrument", "tone"],
-                "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
-                "connections": []}"#,
+            &format!(
+                r#"{{"format": 1, "extensions": {extensions},
+                "tempo_map": {{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": 120.0}}]}},
+                "connections": []}}"#
+            ),
         )?;
         write(
             "state/arrangement/instance.json",
@@ -131,7 +145,8 @@ impl Opened {
         )?;
         let (control, engine) = Engine::new(OFFLINE);
         let plugins = test_plugin_host(&root);
-        let project = open_or_create_with(&root, control, plugins.clone())?;
+        let mut project = open_or_create_with(&root, control, plugins.clone())?;
+        fill(&mut project)?;
         let plugins = plugins.downgrade();
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
         let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {
@@ -623,6 +638,25 @@ fn main() -> Result<()> {
     });
     cx.run_until_parked();
     save(&mut cx, &opened, "fit-steady")?;
+    drop(opened);
+
+    // A project made before the fit existed: the action is at 40 % and says the one edit that
+    // brings it within reach, exactly as an instrument the project cannot load does.
+    let extensions = r#"["arrangement", "instrument", "plugin-host", "tone"]"#;
+    let opened = Opened::without_extensions(&mut cx, extensions, recorded)?;
+    let timeline = opened.timeline_view(&mut cx)?;
+    let take_clip = InstanceId::new("arrangement/track-1/take")?;
+    cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.select_clip(Some(take_clip), cx)));
+    cx.run_until_parked();
+    let menu = cx.update(|cx| {
+        let shell = opened.window.read(cx)?;
+        anyhow::Ok(shell.project_menu().read(cx).menu().clone())
+    })?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        menu.update(cx, |menu, cx| menu.open(window, cx));
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "fit-action-disabled")?;
     drop(opened);
 
     // The note editor on the melody, one note selected, stopped at the start of the clip.

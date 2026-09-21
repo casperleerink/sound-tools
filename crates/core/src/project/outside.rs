@@ -175,7 +175,7 @@ impl Project {
                 self.report_problem(path, message);
                 continue;
             }
-            if let Some(message) = record.place.refuses(record.tool, owner_tool) {
+            if let Some(message) = record.place.refuses(record.tool, &id, owner_tool) {
                 self.report_problem(path, format!("not loaded: {message}"));
                 continue;
             }

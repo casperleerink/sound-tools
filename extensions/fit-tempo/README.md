@@ -19,12 +19,12 @@ fit_tempo::set_steadiness(project, &mut changes, 0.5);   // 0 as played, 1 one t
 {"tool": "fit-tempo", "state": {"take": "take-1", "first_downbeat_us": 0, "beat": "normal", "steadiness": 0.0}}
 ```
 
-- `take`: the raw take under `assets/takes/`, written by a recording. The clip that names the same take in its own `take` field is the one the fit writes into.
+- `take`: the raw take under `assets/takes/`, written by a recording. The clip that names the same take in its own `take` field is the one the fit writes into. A take whose times are not times — longer than `sound_notes::MAX_TAKE_MICROS` (an hour), out of order, or large enough to overflow a reader — is refused before anything reads it, and the file is never rewritten.
 - `first_downbeat_us`: which moment of the take is beat 1 of a bar, in microseconds from the start of the recording. The beat nearest to it lands on a bar line. `0` is the first beat found.
 - `beat`: `half`, `normal` or `double`.
 - `steadiness`: 0 to 1.
 
-The tool sits at the top of `state/` (`Place::Root`). One fit per project: a second record changes nothing and says so in `problems.txt`.
+The tool sits at one id (`Place::Only("fit-tempo")`), so a project has one fit by construction. A `fit-tempo` record anywhere else does not load and the problem names the one path.
 
 A project made before this step does not list `fit-tempo` in `extensions` in `project.json`, and fitting it fails with `tool "fit-tempo" is not registered, or its extension is not enabled in project.json`. Add `"fit-tempo"` to that list and open the project again. Nothing rewrites it: turning an extension on is the composer's edit, as "Project storage" decides.
 
@@ -32,9 +32,13 @@ A project made before this step does not list `fit-tempo` in `extensions` in `pr
 
 The tool registers a **derive**, which is the core's way for a record to decide state of its own (`ToolRegistration::derive`, see the [core README](../../crates/core/README.md)). The derive runs inside the same state application as the change that asked for it, so a change of the fit record, from the window or from a file an agent wrote, and a change of the project's time signature, rewrite the tempo map and the clip as one group, one engine batch and one undo step. It does not run while the project loads, nor for undo, redo or a cancel: the files and the undo step already hold what it would compute, so a read-only open never writes.
 
-A correction makes the clip's notes again from the raw take, so it is exact however many times it is corrected. **Hand edits to that clip made before a correction are lost.** One undo brings them back with the rest of the step.
+**What it writes depends on what moved.** `Was`, the state the record had before the group, says which of the inputs changed. The clip is made again from the raw take only when an input that decides where the beats are changed: the take, the first downbeat, half, normal or double, or the project's time signature. A **steadiness change writes the tempo map and nothing else**, so a note moved by hand, a trimmed clip and a clip dragged to another track all survive it.
 
-Steadiness never touches the clip. It only rewrites the tempo map, so going back to 0 gives the fitted map again, byte for byte.
+A correction does make the clip's notes again, so it is exact however many times it is corrected. **Hand edits to that clip made before a correction are lost.** One undo brings them back with the rest of the step.
+
+Going back to 0 % steadiness gives the fitted map again, byte for byte.
+
+A derive writes its record and the tempo map together, and the runtime does not write `project.json` while that file holds an outside change that did not load. A change of the fit in that state is **refused** with a message that says to fix `project.json` first: applying the record alone would save the new clip against the old map, and a derive does not run on load, so a reopen would play one against the other.
 
 ## The beat finder, and what it gets wrong
 
@@ -67,7 +71,7 @@ What it cannot know from the timing alone is the octave, where a bar begins and 
 - The first downbeat lands on a bar line. The bars before it hold the beats played before it, the pickup, plus the silence in front of the take: that silence gets as many bars as fit in it at the tempo the take begins with, and never fewer than the pickup needs. So a composer who presses record and then waits gets bars of about the right length in front of the playing, not one bar stretched over the wait.
 - A take that begins the moment recording starts, with no silence at all, has nowhere to put the bar in front of its first downbeat. The fit still follows the playing and says so in `problems.txt`: "4 of 91 beats are too far apart or too close together for a tempo between 10 and 1000 bpm". Leave a beat of silence before playing, or move `first_downbeat_us` later.
 - Every tempo is chosen against the frame the beat has to land on, not against the length of the beat before it, so the rounding of a tempo to 0.001 bpm does not add up over a long take. Measured over 1520 beats: every beat within two frames, 42 µs, of where it belongs.
-- The frames are simulated exactly as `Clock` computes them, at `FIT_SAMPLE_RATE` (48 kHz), because a tempo map is saved without a sample rate and building it against the device of the moment would make one fit two different files on two machines. At another sample rate the clock rounds each tempo change down to a whole frame, so a map with many steps drifts slowly against the take. Fitting again on that machine takes it away.
+- The positions are simulated exactly as `Clock` computes them, in the same sub-frame unit, at `FIT_SAMPLE_RATE` (48 kHz). The rate is fixed so that one take gives one file on every machine, which is what "the same bytes for the same input" asks; it is no longer about correctness at other rates. Measured over 1519 beats in 957 s, the last note lands +0.136 ms from where it was played at 44.1 kHz, +0.146 ms at 48 kHz and +0.146 ms at 96 kHz. Before the clock carried the fraction of a frame across a tempo change those numbers were −1.224, +0.146 and +8.021 ms.
 - Steadiness moves every beat towards even spacing between the first and the last. At 100 % every beat is the same length to within four frames, 83 µs, and every step of the map holds the same tempo to within a hundredth of a bpm.
 
 ## Costs

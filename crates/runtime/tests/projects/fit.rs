@@ -7,7 +7,7 @@
 
 use fit_tempo::{BeatRate, FitState};
 use sound_core::{Clock, Frames, InstanceId, TempoMap, Ticks};
-use sound_notes::Clip;
+use sound_notes::{Clip, RawEvent, RawTake};
 
 use crate::generated_take::{STARTS_AT_US, generated_take};
 use crate::support::Harness;
@@ -216,7 +216,10 @@ fn correcting_a_fit_from_a_file_is_one_undo_step_each() {
         ..FitState::new("take-1")
     };
     write_fit(&mut harness, &doubled);
-    let beats = |harness: &Harness| tempo_map(harness).tempo_changes().len();
+    // How many beats the grid has over the take: the clip covers the same stretch of real
+    // time whatever the rate, so its end in ticks is the beat count. The number of tempo
+    // changes is not, because a beat the step before it already lands right shares that step.
+    let beats = |harness: &Harness| clip_of(harness).end().0 / 960;
     let doubled_beats = beats(&harness);
     let first_file = project_json(&harness);
     let first_clip = clip_json(&harness);
@@ -229,7 +232,7 @@ fn correcting_a_fit_from_a_file_is_one_undo_step_each() {
     write_fit(&mut harness, &normal);
     let normal_beats = beats(&harness);
     assert!(
-        normal_beats * 2 > doubled_beats && normal_beats < doubled_beats,
+        normal_beats.abs_diff(doubled_beats.div_ceil(2)) <= 2,
         "{normal_beats} against {doubled_beats}"
     );
     let normal_file = project_json(&harness);
@@ -242,7 +245,11 @@ fn correcting_a_fit_from_a_file_is_one_undo_step_each() {
         ..doubled.clone()
     };
     write_fit(&mut harness, &half);
-    assert!(beats(&harness) < normal_beats);
+    assert!(
+        beats(&harness).abs_diff(normal_beats.div_ceil(2)) <= 2,
+        "{} against {normal_beats}",
+        beats(&harness)
+    );
 
     // Two undos, and the two states come back exactly.
     harness.project.undo().unwrap();
@@ -321,6 +328,61 @@ fn a_fit_that_cannot_be_made_says_why() {
     assert_ne!(tempo_map(&harness), map);
 }
 
+/// A hand edit of the take's clip survives a steadiness change: steadiness writes the tempo
+/// map and nothing else. A correction of an input that moves the beats does make the clip
+/// again, which is what the agent doc says it costs.
+#[test]
+fn a_steadiness_change_keeps_a_hand_edit_and_a_correction_does_not() {
+    let mut harness = recorded(12);
+    fit(&mut harness);
+    let fitted_file = project_json(&harness);
+
+    // A note moved by hand, and the clip trimmed and moved, as a composer would.
+    let mut edited = clip_of(&harness);
+    edited.notes[3].pitch = sound_notes::Pitch::new(41).unwrap();
+    edited.start = Ticks(edited.start.0 + 240);
+    edited.set_length(sound_notes::Length::new(Ticks(edited.length.ticks().0 - 480)).unwrap());
+    let record = serde_json::json!({"tool": "arrangement.clip", "state": edited});
+    harness.write_and_apply(
+        &format!("state/{CLIP}.json"),
+        &serde_json::to_string(&record).unwrap(),
+    );
+    // The file holds exactly what was written from outside, in that layout. A steadiness
+    // change must not touch it at all, so the bytes are the check.
+    let by_hand = clip_json(&harness);
+    assert_eq!(clip_of(&harness), edited);
+
+    // Steadiness up, and down again. The clip file is byte for byte what the edit left.
+    for steadiness in [0.5_f32, 1.0, 0.0] {
+        let state = FitState {
+            steadiness,
+            ..fit_state(&harness)
+        };
+        write_fit(&mut harness, &state);
+        assert_eq!(
+            clip_json(&harness),
+            by_hand,
+            "steadiness {steadiness} moved a note"
+        );
+    }
+    // And back at 0 % the fitted map is the fitted map again, byte for byte.
+    assert_eq!(project_json(&harness), fitted_file);
+
+    // A correction of the beat does make the clip again, and undo brings the edit back.
+    let corrected = FitState {
+        beat: BeatRate::Half,
+        ..fit_state(&harness)
+    };
+    write_fit(&mut harness, &corrected);
+    assert_ne!(clip_of(&harness), edited, "the clip was not made again");
+    harness.project.undo().unwrap();
+    assert_eq!(
+        clip_of(&harness),
+        edited,
+        "undo did not bring the edit back"
+    );
+}
+
 /// A clip that no longer names the take is reported, and the grid still follows the take.
 #[test]
 fn a_fit_without_a_clip_still_fits_the_grid() {
@@ -335,8 +397,9 @@ fn a_fit_without_a_clip_still_fits_the_grid() {
         &serde_json::to_string(&record).unwrap(),
     );
     // The clip change alone does not run the fit again; the next fit edit does.
+    // An input that moves the beats, so the fit looks for the clip to write.
     let nudged = FitState {
-        steadiness: 0.25,
+        first_downbeat_us: 1_500_000,
         ..fit_state(&harness)
     };
     write_fit(&mut harness, &nudged);
@@ -833,5 +896,234 @@ fn the_click_follows_a_fitted_grid() {
             nearest <= 1,
             "a click at frame {start} is {nearest} frames off a beat"
         );
+    }
+}
+
+/// While `project.json` holds an outside change that did not load, the runtime does not write
+/// it. A fit correction then cannot be saved whole, so it is refused instead of leaving a
+/// project whose clip and tempo map disagree. A reopen plays what it played before.
+#[test]
+fn a_fit_waits_for_a_project_file_that_did_not_load() {
+    let mut harness = recorded(8);
+    fit(&mut harness);
+    let fitted_file = project_json(&harness);
+    let fitted_clip = clip_json(&harness);
+
+    // An `extensions` change is the one thing a running project refuses: the file stays on
+    // disk with something the runtime did not take.
+    let stale = r#"{"format": 1, "extensions": ["arrangement", "instrument"], "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}, "connections": []}"#;
+    harness.write_and_apply("project.json", stale);
+    let problems = harness.project.problems();
+    assert!(
+        problems.iter().any(|it| it.path == "project.json"),
+        "{problems:?}"
+    );
+
+    // A correction now: refused, with a message that says what to fix first.
+    let corrected = FitState {
+        beat: BeatRate::Half,
+        ..fit_state(&harness)
+    };
+    let path = harness.write(&format!("state/{FIT}.json"), &fit_record(&corrected));
+    let applied = harness
+        .project
+        .apply_outside_changes(std::slice::from_ref(&path));
+    let error = applied.expect_err("the group is refused");
+    assert!(
+        error.to_string().contains("saved together or not at all"),
+        "{error}"
+    );
+    // Nothing of the fit moved, and the clip file is the fitted one still.
+    assert_eq!(fit_state(&harness).beat, BeatRate::Normal);
+    assert_eq!(clip_json(&harness), fitted_clip);
+
+    // After the reopen the take plays as it did: the files never disagreed. The fit record on
+    // disk is the corrected one, so `problems.txt` names it until the composer applies it.
+    std::fs::write(harness.path("project.json"), &fitted_file).unwrap();
+    let harness = harness.reopen();
+    assert_eq!(project_json(&harness), fitted_file);
+    assert_eq!(clip_json(&harness), fitted_clip);
+}
+
+/// A take file is a file an agent reads and someone can damage. Times that are not times are
+/// refused before anything is laid out, with a message that names the file and the field, and
+/// the file itself is never rewritten.
+#[test]
+fn a_damaged_take_is_refused_and_never_read() {
+    let mut harness = recorded(8);
+    let path = harness.path("assets/takes/take-1.json");
+    let sound: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let damaged = |change: fn(&mut serde_json::Value)| -> String {
+        let mut take = sound.clone();
+        change(&mut take);
+        serde_json::to_string(&take).unwrap()
+    };
+    let cases = [
+        (
+            "a take of a thousand years",
+            damaged(|take| take["end_us"] = serde_json::json!(1_000_000_000_000_000_u64)),
+            "the most a take may hold",
+        ),
+        (
+            "a message a thousand years in",
+            damaged(|take| take["events"][0]["time_us"] = serde_json::json!(1_000_000_000_000_u64)),
+            "the most a take may hold",
+        ),
+        (
+            "a time that would overflow the search",
+            damaged(|take| take["events"][0]["time_us"] = serde_json::json!(u64::MAX)),
+            "the most a take may hold",
+        ),
+        (
+            "messages out of the order they arrived",
+            damaged(|take| {
+                let later = take["events"][8]["time_us"].clone();
+                take["events"][0]["time_us"] = later;
+            }),
+            "in the order they arrived",
+        ),
+        (
+            "a recording that ends before it begins",
+            damaged(|take| take["start_us"] = serde_json::json!(999_000_000_000_u64)),
+            "does not end before it begins",
+        ),
+    ];
+    for (index, (what, text, says)) in cases.into_iter().enumerate() {
+        std::fs::write(&path, &text).unwrap();
+        // A different record each time: a derive runs when its record changes, so mending or
+        // damaging a take file is seen when the fit is touched, as the agent doc says.
+        let state = FitState {
+            first_downbeat_us: index as u64 + 1,
+            ..FitState::new("take-1")
+        };
+        let started = std::time::Instant::now();
+        write_fit(&mut harness, &state);
+        let problems = harness.project.problems();
+        assert_eq!(problems.len(), 1, "{what}: {problems:?}");
+        assert!(
+            problems[0].message.contains(says),
+            "{what}: {}",
+            problems[0].message
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{what} took {:?}",
+            started.elapsed()
+        );
+        // The take itself is never rewritten, and the message names its file.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text, "{what}");
+        assert!(
+            problems[0].message.contains("assets/takes/take-1.json"),
+            "{what}: {}",
+            problems[0].message
+        );
+    }
+}
+
+/// Playing that is pathological but valid: the fit ends in bounded time with a grid or with a
+/// reason, and never with a panic or an array nobody can hold.
+#[test]
+fn a_pathological_take_ends_in_bounded_time() {
+    let event = |time_us: u64, pitch: u8| RawEvent::On {
+        time_us,
+        sounded_us: time_us,
+        pitch,
+        velocity: 88,
+    };
+    let signature: sound_core::TimeSignature = "4/4".parse().unwrap();
+    let cases: Vec<(&str, Vec<RawEvent>)> = vec![
+        (
+            "four thousand notes in one second",
+            (0..4000)
+                .map(|index| event(index * 250, 40 + (index % 40) as u8))
+                .collect(),
+        ),
+        ("one onset", vec![event(0, 60)]),
+        (
+            "every note at one moment",
+            (0..64).map(|index| event(0, 40 + index as u8)).collect(),
+        ),
+        (
+            "ten minutes of silence in the middle",
+            (0..32)
+                .map(|index| {
+                    let at = if index < 16 {
+                        index * 500_000
+                    } else {
+                        index * 500_000 + 600_000_000
+                    };
+                    event(at, 48 + (index % 12) as u8)
+                })
+                .collect(),
+        ),
+        (
+            "the longest take the format allows",
+            (0..64)
+                .map(|index| event(index * (sound_notes::MAX_TAKE_MICROS / 64), 48))
+                .collect(),
+        ),
+    ];
+    for (what, events) in cases {
+        let take = RawTake {
+            start_us: 0,
+            end_us: events.last().map_or(0, |event| event.time_us()) + 1_000_000,
+            start_tick: 0,
+            end_tick: 0,
+            pedal_at_start: 0,
+            events,
+        };
+        assert_eq!(take.validate(), Ok(()), "{what}");
+        let started = std::time::Instant::now();
+        let fitted = fit_tempo::fit(&take, signature, 0, BeatRate::Normal);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(30),
+            "{what} took {elapsed:?}"
+        );
+        match fitted {
+            Ok(fitted) => assert!(fitted.beat_count() > 0, "{what}"),
+            Err(error) => assert!(!error.to_string().is_empty(), "{what}"),
+        }
+        println!("{what}: {elapsed:?}");
+    }
+}
+
+/// How far the last note of a long fitted take lands from the moment it was played, at three
+/// sample rates. The map is built for 48 kHz; the question is what the other two cost.
+///
+/// `cargo nextest run -p runtime --run-ignored only -E 'test(the_drift)' --no-capture`
+#[test]
+#[ignore = "prints numbers, it asserts only that nothing runs away"]
+fn the_drift_at_other_sample_rates() {
+    let mut harness = recorded(380);
+    fit(&mut harness);
+    let map = tempo_map(&harness);
+    let take = RawTake::read(harness.project.assets(), "take-1").unwrap();
+    // The last key that went down, against the last note of the clip: both are note ons.
+    let last = take
+        .events
+        .iter()
+        .filter(|event| matches!(event, RawEvent::On { .. }))
+        .map(|event| take.start_us + event.sounded_us())
+        .max()
+        .expect("a note");
+    let clip = clip_of(&harness);
+    let note = clip
+        .placed_notes()
+        .map(|note| note.start)
+        .max()
+        .expect("a note");
+    println!(
+        "{} beats over {:.1} s",
+        map.tempo_changes().len(),
+        last as f64 / 1e6
+    );
+    for rate in [44_100, 48_000, 96_000] {
+        let clock = Clock::new(map.clone(), rate);
+        let sounds_at = clock.frame_of(note).0 as f64 / f64::from(rate);
+        let drift = (sounds_at - last as f64 / 1e6) * 1000.0;
+        println!("{rate} Hz: the last note is {drift:+.3} ms from where it was played");
+        assert!(drift.abs() < 1.0, "{rate} Hz drifts {drift} ms");
     }
 }

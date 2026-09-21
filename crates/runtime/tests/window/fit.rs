@@ -125,6 +125,107 @@ fn the_fit_is_offered_for_a_clip_that_was_recorded(cx: &mut TestAppContext) {
     assert_eq!(opened.project(|project| project.problems().len()), 0);
 }
 
+/// The action follows the clip that is shown as selected, through an undo and through a move
+/// to another track. What the timeline shows and what the rest of the window offers for it are
+/// one thing, because one path changes both.
+#[gpui::test]
+fn the_action_follows_the_clip_that_is_selected(cx: &mut TestAppContext) {
+    let mut opened = recorded(cx);
+    select(&mut opened, CLIP);
+    let selected = |opened: &mut Opened<'_>| {
+        let shown = opened
+            .timeline
+            .read_with(opened.cx, |timeline, _| timeline.selected_clip().cloned());
+        let session = opened
+            .session
+            .read_with(opened.cx, |session, _| session.selected_clip().cloned());
+        assert_eq!(session, shown, "the session and the timeline disagree");
+        shown
+    };
+    assert_eq!(selected(&mut opened), Some(id(CLIP)));
+    assert!(pick_fit(&mut opened), "the fit was not offered");
+
+    // Undo of the fit, then undo of the recording: the clip goes, and so does the selection.
+    opened.keys("cmd-z");
+    opened.settle();
+    opened.keys("cmd-z");
+    opened.settle();
+    assert_eq!(selected(&mut opened), None);
+
+    // Back, and selected again by hand, then moved to another track: a delete and a create in
+    // one group, which is what a drag across tracks and its undo both are. The selection goes
+    // with the clip, and so does what the menu offers for it.
+    opened.keys("shift-cmd-z");
+    opened.settle();
+    select(&mut opened, CLIP);
+    opened.session.update(opened.cx, |session, cx| {
+        session.edit(cx, |project| {
+            let arrangement = runtime::main_arrangement(project).unwrap();
+            let mut changes = Changes::new();
+            arrangement::add_track(
+                project,
+                &mut changes,
+                arrangement.id(),
+                "Second",
+                arrangement::Colour::Peach,
+                instrument::SynthState::default(),
+            )?;
+            project.commit("Add track", changes)
+        });
+        session.edit(cx, |project| {
+            let clip = project.resolve::<Clip>(&id(CLIP)).unwrap();
+            let track = project
+                .resolve::<arrangement::TrackState>(&id("arrangement/second"))
+                .unwrap();
+            let mut changes = Changes::new();
+            arrangement::move_clip(project, &mut changes, &clip, &track)?;
+            project.commit("Move clip", changes)
+        });
+    });
+    opened.settle();
+    assert_eq!(selected(&mut opened), Some(id("arrangement/second/take")));
+    assert!(
+        pick_fit(&mut opened),
+        "the fit was not offered after the move"
+    );
+}
+
+/// A project made before the fit existed does not list `fit-tempo` in `extensions`. The action
+/// is then at 40 % with the one edit under it, as an instrument such a project cannot load is,
+/// and clicking it does nothing instead of failing with a tool name.
+#[gpui::test]
+fn the_fit_says_what_a_project_without_the_extension_has_to_add(cx: &mut TestAppContext) {
+    let mut opened = support::open_without_extensions(
+        cx,
+        r#"["arrangement", "instrument", "plugin-host", "tone"]"#,
+        |project| {
+            let take = generated_take::generated_take(8);
+            let name = take.write(project.assets()).unwrap();
+            let clock = project.clock().clone();
+            let mut clip = take.clip(|time_us| clock.tick_at_micros(time_us)).unwrap();
+            clip.take = Some(name);
+            let mut changes = Changes::new();
+            changes.create(id(CLIP), clip);
+            project.commit("Record", changes).unwrap();
+        },
+    );
+    select(&mut opened, CLIP);
+    let item = opened.cx.read(|cx| {
+        let shell = opened.shell.read(cx);
+        let menu = shell.project_menu().read(cx).menu().clone();
+        menu.read(cx).item("fit-tempo").cloned()
+    });
+    let item = item.expect("the menu offers the fit");
+    assert!(item.is_disabled(), "the fit can be picked");
+    assert_eq!(
+        item.description.as_deref(),
+        Some("Add \"fit-tempo\" to \"extensions\" in project.json and open the project again.")
+    );
+    // And picking it anyway changes nothing and reports nothing.
+    assert!(!pick_fit(&mut opened));
+    assert_eq!(opened.notice(), None);
+}
+
 /// The steadiness control shows only when the project has a fit, and it comes and goes with
 /// one written from outside.
 #[gpui::test]

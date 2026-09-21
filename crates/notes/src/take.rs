@@ -51,6 +51,16 @@ pub enum TakeError {
     Asset(String),
 }
 
+/// The longest one recording can be: an hour. A take is one performance, and every reader of
+/// one lays out an array over its length, so a damaged file with a time of a thousand years in
+/// it would ask for memory nobody has. The file itself is never changed: it is refused and
+/// named.
+pub const MAX_TAKE_MICROS: u64 = 60 * 60 * 1_000_000;
+
+/// The furthest a take may sit on the project timeline: a thousand hours, far past anything a
+/// piece is and far below where the arithmetic of a reader could overflow.
+pub const MAX_PROJECT_MICROS: u64 = 1_000 * 60 * 60 * 1_000_000;
+
 impl From<AssetError> for TakeError {
     fn from(error: AssetError) -> Self {
         Self::Asset(error.to_string())
@@ -162,10 +172,58 @@ impl RawTake {
         let bytes = bytes.ok_or_else(|| TakeError::Missing {
             name: name.to_string(),
         })?;
-        serde_json::from_slice(&bytes).map_err(|error| TakeError::Invalid {
+        let take: Self = serde_json::from_slice(&bytes).map_err(|error| TakeError::Invalid {
             name: name.to_string(),
             message: error.to_string(),
-        })
+        })?;
+        take.validate().map_err(|message| TakeError::Invalid {
+            name: name.to_string(),
+            message,
+        })?;
+        Ok(take)
+    }
+
+    /// Whether the times in this take are times: in order, inside the bounds above, and small
+    /// enough that no reader has to guard its own arithmetic. A take this program wrote always
+    /// is; a file that was damaged or written by hand may not be, and then it is refused with
+    /// the reason instead of being read.
+    pub fn validate(&self) -> Result<(), String> {
+        let bound = |field: &str, value: u64, limit: u64| match value <= limit {
+            true => Ok(()),
+            false => Err(format!(
+                "{field} is {value} microseconds, and the most a take may hold is {limit}"
+            )),
+        };
+        bound("start_us", self.start_us, MAX_PROJECT_MICROS)?;
+        bound("end_us", self.end_us, MAX_PROJECT_MICROS)?;
+        if self.end_us < self.start_us {
+            return Err(format!(
+                "end_us is {} and start_us is {}: a recording does not end before it begins",
+                self.end_us, self.start_us
+            ));
+        }
+        bound("the take", self.end_us - self.start_us, MAX_TAKE_MICROS)?;
+        let mut latest = 0;
+        for (index, event) in self.events.iter().enumerate() {
+            bound(
+                &format!("events[{index}].time_us"),
+                event.time_us(),
+                MAX_TAKE_MICROS,
+            )?;
+            bound(
+                &format!("events[{index}].sounded_us"),
+                event.sounded_us(),
+                MAX_TAKE_MICROS,
+            )?;
+            if event.time_us() < latest {
+                return Err(format!(
+                    "events[{index}].time_us is {} and the message before it arrived at {latest}: the messages of a take are in the order they arrived",
+                    event.time_us()
+                ));
+            }
+            latest = event.time_us();
+        }
+        Ok(())
     }
 
     /// Writes the take under a name of its own and gives that name, for the clip to keep.

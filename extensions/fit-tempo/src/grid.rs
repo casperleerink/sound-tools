@@ -249,21 +249,23 @@ fn targets(beats_us: &[u64], lead: usize) -> Vec<u64> {
     targets
 }
 
-/// The tempo map that puts beat `j` on the frame of `targets_us[j]`, and what it could not do.
+/// The tempo map that puts beat `j` on the moment of `targets_us[j]`, and what it could not do.
 fn tempo_map(time_signature: TimeSignature, targets_us: &[u64]) -> (TempoMap, Vec<String>) {
     let ticks_per_beat = time_signature.ticks_per_beat();
-    let frames: Vec<u64> = targets_us.iter().map(|time| frame_of(*time)).collect();
+    let targets: Vec<u128> = targets_us.iter().map(|time| sub_frame_of(*time)).collect();
     let mut changes: Vec<TempoChange> = Vec::new();
     let mut segment: Option<Segment> = None;
-    let mut actual = 0_u64;
+    let mut actual = 0_u128;
     let mut clamped = 0_usize;
-    for (index, target) in frames.iter().enumerate().skip(1) {
+    for (index, target) in targets.iter().enumerate().skip(1) {
         let tick = index as u64 * ticks_per_beat;
         // What this beat needs from where the beat before it really lands, so that the rounding
-        // of every earlier tempo is corrected here instead of adding up.
-        let needed = target.saturating_sub(actual).max(1);
+        // of every earlier tempo is corrected here instead of adding up. The position is exact
+        // to a fraction of a frame, as the clock's is, so the tempos this picks put the beats
+        // where they belong at every sample rate and not only at the one this builds for.
+        let needed = target.saturating_sub(actual).max(1) as f64 / SUB_FRAME as f64;
         let wanted = 60.0 * f64::from(FIT_SAMPLE_RATE) * ticks_per_beat as f64
-            / (TICKS_PER_QUARTER as f64 * needed as f64);
+            / (TICKS_PER_QUARTER as f64 * needed);
         let bpm = Tempo::from_bpm(wanted.clamp(Tempo::MIN_BPM, Tempo::MAX_BPM))
             .unwrap_or_else(|_| Tempo::default());
         if !(Tempo::MIN_BPM..=Tempo::MAX_BPM).contains(&wanted) {
@@ -275,7 +277,8 @@ fn tempo_map(time_signature: TimeSignature, targets_us: &[u64]) -> (TempoMap, Ve
         // tempos differ by a thousandth of a bpm as the rounding is corrected, and 100 %
         // steadiness would not be one tempo but hundreds that are nearly the same.
         let keeps = |segment: &Segment| {
-            segment.bpm == bpm || segment.frame_of(tick).abs_diff(*target) <= TOLERANCE_FRAMES
+            segment.bpm == bpm
+                || segment.start_of(tick).abs_diff(*target) <= TOLERANCE_FRAMES * SUB_FRAME
         };
         let current = match segment.filter(keeps) {
             Some(segment) => segment,
@@ -289,7 +292,7 @@ fn tempo_map(time_signature: TimeSignature, targets_us: &[u64]) -> (TempoMap, Ve
                 fresh
             }
         };
-        actual = current.frame_of(tick);
+        actual = current.start_of(tick);
     }
     let map = TempoMap::new(time_signature, changes)
         .unwrap_or_else(|_| TempoMap::constant(time_signature, Tempo::default()));
@@ -297,7 +300,7 @@ fn tempo_map(time_signature: TimeSignature, targets_us: &[u64]) -> (TempoMap, Ve
     if clamped > 0 {
         problems.push(format!(
             "{clamped} of {} beats are too far apart or too close together for a tempo between {} and {} bpm, so the grid does not follow the playing there",
-            frames.len() - 1,
+            targets.len() - 1,
             Tempo::MIN_BPM,
             Tempo::MAX_BPM
         ));
@@ -305,45 +308,49 @@ fn tempo_map(time_signature: TimeSignature, targets_us: &[u64]) -> (TempoMap, Ve
     (map, problems)
 }
 
-/// How far a beat may land from the frame it was built for before the map gets a step of its
+/// How far a beat may land from the moment it was built for before the map gets a step of its
 /// own for it. One frame at 48 kHz is 21 microseconds, far below a tick.
-const TOLERANCE_FRAMES: u64 = 1;
+const TOLERANCE_FRAMES: u128 = 1;
 
-/// The frame of a project time in microseconds, at the rate a fit is built for.
-fn frame_of(time_us: u64) -> u64 {
-    (time_us as f64 * f64::from(FIT_SAMPLE_RATE) / 1_000_000.0).round() as u64
+/// One frame, in the sub-frame unit the builder and the clock both count in.
+const SUB_FRAME: u128 = 1 << 32;
+
+/// A project time in microseconds as an exact position in sub-frames, at the rate a fit is
+/// built for.
+fn sub_frame_of(time_us: u64) -> u128 {
+    u128::from(time_us) * u128::from(FIT_SAMPLE_RATE) * SUB_FRAME / 1_000_000
 }
 
-/// One stretch of the tempo map, with the same arithmetic [`Clock`] uses, so that the frame
-/// this builder expects for a beat is the frame the clock gives it. A test holds the two
+/// One stretch of the tempo map, with the same arithmetic [`Clock`] uses, so that the moment
+/// this builder expects for a beat is the moment the clock gives it. A test holds the two
 /// together.
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct Segment {
     tick: u64,
-    frame: u64,
+    start: u128,
     bpm: Tempo,
     frames_per_tick: (u64, u64),
 }
 
 impl Segment {
-    fn new(tick: u64, frame: u64, bpm: Tempo) -> Self {
+    fn new(tick: u64, start: u128, bpm: Tempo) -> Self {
         let frames = u64::from(FIT_SAMPLE_RATE) * 60_000;
         let ticks = u64::from(bpm.milli_bpm()) * TICKS_PER_QUARTER;
         let divisor = greatest_common_divisor(frames, ticks);
         Self {
             tick,
-            frame,
+            start,
             bpm,
             frames_per_tick: (frames / divisor, ticks / divisor),
         }
     }
 
-    fn frame_of(&self, tick: u64) -> u64 {
+    /// The exact position of a tick, in sub-frames.
+    fn start_of(&self, tick: u64) -> u128 {
         let (frames, ticks) = self.frames_per_tick;
-        let since =
-            u128::from(tick.saturating_sub(self.tick)) * u128::from(frames) / u128::from(ticks);
-        self.frame
-            .saturating_add(u64::try_from(since).unwrap_or(u64::MAX))
+        let since = u128::from(tick.saturating_sub(self.tick)) * u128::from(frames) * SUB_FRAME
+            / u128::from(ticks);
+        self.start.saturating_add(since)
     }
 }
 

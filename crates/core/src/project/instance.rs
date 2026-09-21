@@ -22,15 +22,28 @@ pub enum Place {
     Root,
     /// Only as a direct child of an instance of the tool with this name.
     In(&'static str),
+    /// Only at the top of `state/` and only under this exact name, so a project has at most
+    /// one instance of the tool. For a tool that decides something about the whole project,
+    /// such as the tempo fit: two of them would write over each other's results with no way to
+    /// say which won. A record anywhere else is not loaded and the problem names the one path.
+    Only(&'static str),
 }
 
 impl Place {
     /// Why an instance of `tool` may not live under `owner`, the tool of its direct owner.
     /// The text tells an agent where the record belongs.
-    pub(crate) fn refuses(self, tool: &str, owner: Option<&str>) -> Option<String> {
+    pub(crate) fn refuses(
+        self,
+        tool: &str,
+        id: &InstanceId,
+        owner: Option<&str>,
+    ) -> Option<String> {
         match (self, owner) {
             (Self::Root, Some(_)) => Some(format!(
                 "an instance of {tool:?} belongs at the top of state/, not inside another instance"
+            )),
+            (Self::Only(name), _) if id.as_str() != name => Some(format!(
+                "a project has one instance of {tool:?} and it lives at state/{name}.json, not at state/{id}.json"
             )),
             (Self::In(wanted), Some(owner)) if owner != wanted => Some(format!(
                 "an instance of {tool:?} belongs directly inside an instance of {wanted:?}, and its owner here is a {owner:?}"

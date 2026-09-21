@@ -10,7 +10,9 @@ mod take;
 use serde::{Deserialize, Serialize};
 use sound_core::{Place, State, Ticks};
 
-pub use take::{RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset};
+pub use take::{
+    MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
+};
 
 /// The event input of an instrument. It carries [`NoteEvent`].
 pub const NOTES_INPUT: &str = "notes";

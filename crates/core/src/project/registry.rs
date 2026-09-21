@@ -55,7 +55,29 @@ type ErasedEnd = Box<dyn Fn(&Project, &InstanceId) -> Option<Ticks>>;
 
 /// Not `Send`, like a behaviour: it may keep control-side state, such as a cache of a big file
 /// it reads.
-type ErasedDerive = Box<dyn Fn(&Project, &InstanceId, &mut Derived)>;
+type ErasedDerive = Box<dyn Fn(&Project, &InstanceId, DerivedFrom<'_>, &mut Derived)>;
+
+/// The untyped form of [`Was`], which only this crate can build.
+pub(crate) enum DerivedFrom<'a> {
+    Created,
+    Changed(&'a Record),
+    Unchanged,
+}
+
+/// What the record of a derived instance was before the group that is running its derive.
+///
+/// A derive that writes several things uses it to write only what really moved: the tempo fit
+/// rewrites the notes of a clip when a field that decides where the beats are changed, and
+/// only the tempo map when the steadiness did, so a hand edit of that clip survives.
+pub enum Was<'a, S> {
+    /// The record was created in this group. There is nothing it was.
+    Created,
+    /// The record changed in this group, from this state.
+    Changed(&'a S),
+    /// The record did not change. Something else this derive follows did, such as the
+    /// project's time signature.
+    Unchanged,
+}
 
 pub(crate) struct ToolDefinition {
     pub extension: &'static str,
@@ -229,11 +251,26 @@ impl<S: State> ToolRegistration<'_, S> {
     /// Keep it a pure function of the project: it may be called several times for one gesture,
     /// once per mouse move. Say in your agent doc that the records it writes are derived, so an
     /// agent edits the input and not the result.
-    pub fn derive(self, derive: impl Fn(&Project, &Instance<S>, &mut Derived) + 'static) -> Self {
-        self.definition.derive = Some(Box::new(move |project, id, derived| {
+    ///
+    /// [`Was`] is what the record was before this group, so a derive that writes several
+    /// things can write only what really moved.
+    pub fn derive(
+        self,
+        derive: impl Fn(&Project, &Instance<S>, Was<'_, S>, &mut Derived) + 'static,
+    ) -> Self {
+        self.definition.derive = Some(Box::new(move |project, id, from, derived| {
+            let was = match from {
+                DerivedFrom::Created => Was::Created,
+                DerivedFrom::Unchanged => Was::Unchanged,
+                // The record of an instance always holds the state type of its tool.
+                DerivedFrom::Changed(record) => match record.state::<S>() {
+                    Some(state) => Was::Changed(state),
+                    None => Was::Unchanged,
+                },
+            };
             // Only called for a live instance of this tool.
             if let Some(instance) = project.resolve::<S>(id) {
-                derive(project, &instance, derived);
+                derive(project, &instance, was, derived);
             }
         }));
         self

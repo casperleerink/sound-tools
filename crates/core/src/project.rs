@@ -26,13 +26,14 @@ pub use editing::{Changes, Derived, Edit, OUTSIDE_UNDO_WINDOW};
 pub use file::{FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination};
 pub use generated::{AGENT_DOC_FILE, AGENT_DOCS_FOLDER, NO_PROBLEMS, PROBLEMS_FILE};
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
-pub use registry::{AgentDoc, Registry, RegistryError, ToolRegistration};
+pub use registry::{AgentDoc, Registry, RegistryError, ToolRegistration, Was};
 pub use storage::StorageError;
 pub use watcher::GROUPING_WINDOW;
 
 use binding::{BindError, Bindings, EngineChange};
 use editing::{Applied, Change, History, RecordChange};
 use instance::Record;
+use registry::DerivedFrom;
 use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
@@ -73,6 +74,10 @@ pub enum ProjectError {
     UnknownTool(&'static str),
     #[error("instance {id}: {message}")]
     InvalidState { id: InstanceId, message: String },
+    #[error(
+        "{path} holds a change that did not load, and {id} decides what is in it, so this cannot be applied: a record and what it derives are saved together or not at all. Fix {path} first"
+    )]
+    DerivesIntoAStaleProjectFile { id: InstanceId, path: String },
     #[error("the behaviour of {instance} failed: {source}")]
     Behaviour {
         instance: InstanceId,
@@ -456,6 +461,11 @@ impl Project {
         if self.read_only && source != Source::Load {
             return Err(ProjectError::ReadOnly);
         }
+        // A group that brings `project.json` itself is the one that makes it load again, so a
+        // derive in it is not writing into a file the runtime has lost track of.
+        let project_file_arrives = changes
+            .iter()
+            .any(|change| matches!(change, Change::ProjectFile(_)));
         let project_file_before = self.project_file.clone();
         let problems_before = self.bindings.connection_problems().to_vec();
         // What behaviours said last time, so that `problems.txt` and the views follow a
@@ -467,7 +477,13 @@ impl Project {
         let result = self
             .stage(changes, source, &mut records)
             .and_then(|()| {
-                self.stage_derived(source, time_signature_before, &mut records, &mut derived)
+                self.stage_derived(
+                    source,
+                    time_signature_before,
+                    project_file_arrives,
+                    &mut records,
+                    &mut derived,
+                )
             })
             .and_then(|()| self.bind(&records));
         if let Err(error) = result {
@@ -525,6 +541,7 @@ impl Project {
         &mut self,
         source: Source,
         time_signature_before: TimeSignature,
+        project_file_arrives: bool,
         records: &mut Vec<RecordChange>,
         derived: &mut Vec<InstanceId>,
     ) -> Result<(), ProjectError> {
@@ -545,8 +562,18 @@ impl Project {
         }
         let changed = records.iter().map(|change| &change.id);
         ids.extend(changed.filter(|id| derives(self, id).is_some()).cloned());
-        if ids.is_empty() {
+        let Some(first) = ids.first().cloned() else {
             return Ok(());
+        };
+        // A derive writes its record and the tempo map together, and `project.json` is not
+        // written while it holds an outside change that did not load. Applying the record
+        // alone would leave a project that plays one thing and opens as another, because a
+        // derive does not run on load. So the whole group waits for that file.
+        if !project_file_arrives && !self.project_file_on_disk_is_known() {
+            return Err(ProjectError::DerivesIntoAStaleProjectFile {
+                id: first,
+                path: storage::PROJECT_FILE.to_string(),
+            });
         }
 
         let mut changes = Vec::new();
@@ -561,8 +588,16 @@ impl Project {
                 .definition(tool)
                 .and_then(|it| it.derive.as_ref());
             let Some(derive) = derive else { continue };
+            // What the record was, so a derive can write only what really moved.
+            let from = match records.iter().find(|change| change.id == id) {
+                None => DerivedFrom::Unchanged,
+                Some(change) => match &change.before {
+                    None => DerivedFrom::Created,
+                    Some(record) => DerivedFrom::Changed(record),
+                },
+            };
             let mut result = Derived::default();
-            derive(self, &id, &mut result);
+            derive(self, &id, from, &mut result);
             changes.extend(result.changes.changes);
             reported.push((id, result.problems));
         }
@@ -614,7 +649,7 @@ impl Project {
                     self.check_tool(record.tool)?;
                     let owner = id.parent().and_then(|parent| self.instances.get(&parent));
                     let owner = owner.map(|owner| owner.tool);
-                    if let Some(message) = record.place.refuses(record.tool, owner)
+                    if let Some(message) = record.place.refuses(record.tool, &id, owner)
                         && id.parent().is_none_or(|_| owner.is_some())
                     {
                         return Err(ProjectError::WrongPlace { id, message });
