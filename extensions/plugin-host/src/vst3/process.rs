@@ -35,6 +35,11 @@ const POINT_CAPACITY: usize = 32;
 /// the plugin goes.
 pub const REPORT_CAPACITY: usize = 512;
 
+/// How many edits of the composer's wait for the audio thread. What does not fit stays on the
+/// host's thread, by parameter, and goes at the next poll, so no parameter ever ends on a value
+/// the composer did not leave it on. See [`crate::vst3::context::Handler`].
+pub const EDIT_CAPACITY: usize = 512;
+
 /// One parameter a plugin changed by itself while it played. The control thread gives it to
 /// the plugin's controller, which is how the two halves stay in step, and saves the state.
 #[derive(Copy, Clone, Debug)]
@@ -71,6 +76,9 @@ pub struct Vst3Processor {
     pedal_parameter: Option<ParamID>,
     /// What the plugin changed by itself, on its way to the control thread.
     reports: rtrb::Producer<ParameterChange>,
+    /// What the composer changed in the plugin's own window, on its way here. The host's thread
+    /// fills it at every poll; this side empties it at the start of every block.
+    edits: rtrb::Consumer<ParameterChange>,
     /// Whether the plugin has been told to start processing. It is told here because this is
     /// the thread VST 3 wants that call on.
     processing: bool,
@@ -92,6 +100,7 @@ impl Vst3Processor {
         output_channels: &[usize],
         pedal_parameter: Option<ParamID>,
         reports: rtrb::Producer<ParameterChange>,
+        edits: rtrb::Consumer<ParameterChange>,
         mode: int32,
     ) -> Self {
         let events = ComWrapper::new(HostEventList::new());
@@ -120,6 +129,7 @@ impl Vst3Processor {
             output_buses: Buses::new(output_channels),
             pedal_parameter,
             reports,
+            edits,
             processing: false,
             mode,
         }
@@ -143,6 +153,18 @@ impl Started for Vst3Processor {
         self.events.clear();
         self.input_changes.clear();
         self.output_changes.clear();
+        // What the composer changed in the plugin's own window since the last block. VST 3
+        // carries an edit to the processor in the block's input parameter changes, and this is
+        // the only place a block is built. At the start of the block, because the value was
+        // already true before this block began. Popping a ring allocates nothing and locks
+        // nothing, and the host's side keeps whatever did not fit.
+        while let Ok(edit) = self.edits.pop() {
+            if !self.input_changes.add(edit.id, 0, edit.value) {
+                // Every queue of this block is taken, which is a plugin with more parameters
+                // at once than this host keeps room for. The rest waits for the next block.
+                break;
+            }
+        }
     }
 
     fn push(&mut self, offset: u32, event: PluginEvent) -> bool {

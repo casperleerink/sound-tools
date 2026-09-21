@@ -22,8 +22,8 @@ use plugin_host::PluginFormat;
 
 use crate::support::{
     FORMATS, Harness, LoggedCall, id, lifecycle, record, tell_the_plugin,
-    tell_the_plugin_to_ask_for_a_window_size, tell_the_plugin_to_close_its_window,
-    tell_the_plugin_to_have_no_window,
+    tell_the_plugin_to_ask_again_from_inside_the_answer, tell_the_plugin_to_ask_for_a_window_size,
+    tell_the_plugin_to_close_its_window, tell_the_plugin_to_have_no_window,
 };
 
 const SLOT: &str = "track/instrument";
@@ -124,13 +124,13 @@ fn a_window_is_made_once(format: PluginFormat, cx: &mut TestAppContext) {
     let slot = id(SLOT);
     assert_eq!(harness.plugins.window_offered(&slot), Some(true));
     assert!(!harness.plugins.window_is_open(&slot));
-    // What each format costs to find out whether the plugin has a window at all. CLAP asks;
-    // VST 3 has no way of asking but to make a view and ask that, so it makes one and lets it
-    // go again, which is what the two extra lines are.
+    // What each format costs to find out whether the plugin has a window at all. CLAP asks,
+    // which is one cheap call. VST 3 has no way of asking but to build the plugin's whole
+    // interface, so it asks nothing and offers the window; see ARCHITECTURE.md.
     let asked = window_calls(&log);
     let expected: &[&str] = match format {
         PluginFormat::Clap => &["gui_is_api_supported"],
-        PluginFormat::Vst3 => &["gui_create", "gui_is_api_supported", "gui_destroy"],
+        PluginFormat::Vst3 => &[],
     };
     assert_eq!(asked, expected, "{format:?}");
 
@@ -232,20 +232,25 @@ fn a_plugin_sizes_its_own_window(format: PluginFormat, cx: &mut TestAppContext) 
     tell_the_plugin_to_ask_for_a_window_size(640, 480);
     let harness = open(format, &log);
     open_window(&harness, "Piano", cx);
-    // The window is still the size the plugin first said: nothing of GPUI may run while the
-    // table of plugins is borrowed, so the request waits for the poll.
-    assert_eq!(
-        window_size(cx),
-        (
-            test_plugin_support::WINDOW_WIDTH,
-            test_plugin_support::WINDOW_HEIGHT
-        ),
-        "{format:?}"
-    );
+    // Where the window is born differs, because the two formats ask at different moments. A
+    // CLAP plugin asks from `show`, which is after the window was made, so the window is still
+    // the size the plugin first reported. A VST 3 plugin asks from `setFrame`, which is before
+    // the host reads its size, so the window is born the size it ended up asking for. Nothing
+    // of GPUI may run while the table of plugins is borrowed either way.
+    if format == PluginFormat::Clap {
+        assert_eq!(
+            window_size(cx),
+            (
+                test_plugin_support::WINDOW_WIDTH,
+                test_plugin_support::WINDOW_HEIGHT
+            ),
+            "{format:?}"
+        );
+    }
     let calls = window_calls(&log);
     assert!(
         calls.contains(&"gui_request_resize".to_string()),
-        "{calls:?}"
+        "{format:?} {calls:?}"
     );
     if format == PluginFormat::Vst3 {
         // The format's own rule: the view is told its new size inside the request.
@@ -261,15 +266,25 @@ fn a_plugin_sizes_its_own_window(format: PluginFormat, cx: &mut TestAppContext) 
 
     harness.plugins.poll(&harness.project);
     cx.update(|cx| harness.plugins.settle_windows(cx));
-    assert_eq!(window_size(cx), (640, 480), "{format:?}");
+    assert_eq!(
+        window_size(cx),
+        (640, 480),
+        "{format:?} {:?}",
+        window_calls(&log)
+    );
 
     close_window(&harness, cx);
     assert_eq!(windows(cx), 0);
     tell_the_plugin_to_ask_for_a_window_size(0, 0);
 }
 
-/// A plugin with no window at all. The card says so instead of offering one, and asking for one
-/// anyway is a reported problem and not a window that never fills.
+/// A plugin with no window at all. Asking for one is a reported problem and not a window that
+/// never fills, and the card stops offering one for the rest of the session.
+///
+/// When the card knows differs by format, and that is the one place where the two do. CLAP is
+/// asked while the plugin loads, so the card never offers a window it cannot open. VST 3 has no
+/// way of being asked but to build the plugin's whole interface, so the card offers one and the
+/// answer arrives the first time the composer asks for it. See ARCHITECTURE.md.
 #[gpui::test]
 fn a_plugin_with_no_window_of_its_own_is_offered_none(cx: &mut TestAppContext) {
     for format in FORMATS {
@@ -283,7 +298,12 @@ fn no_window_is_offered(format: PluginFormat, cx: &mut TestAppContext) {
     tell_the_plugin_to_have_no_window(true);
     let harness = open(format, &log);
     let slot = id(SLOT);
-    assert_eq!(harness.plugins.window_offered(&slot), Some(false));
+    let offered_before = match format {
+        PluginFormat::Clap => Some(false),
+        PluginFormat::Vst3 => Some(true),
+    };
+    assert_eq!(harness.plugins.window_offered(&slot), offered_before);
+
     let problem = cx
         .update(|cx| harness.plugins.open_window(&slot, "Piano", cx))
         .expect_err("a plugin with no window opens none");
@@ -293,7 +313,73 @@ fn no_window_is_offered(format: PluginFormat, cx: &mut TestAppContext) {
     );
     assert_eq!(windows(cx), 0);
     assert!(!harness.plugins.window_is_open(&slot));
+    // Whatever it said before, the card offers nothing now.
+    assert_eq!(harness.plugins.window_offered(&slot), Some(false));
     tell_the_plugin_to_have_no_window(false);
+}
+
+/// Loading a VST 3 plugin asks it nothing about a window, in any mode. Building a plugin's
+/// interface to find out whether it has one costs up to a second of the thread that draws, and
+/// `--render`, `--inspect` and `--headless` can open no window at all. See ARCHITECTURE.md.
+#[test]
+fn loading_a_vst3_plugin_makes_no_view_call_at_all() {
+    let folder = log_folder();
+    let log = folder.path().join("calls.txt");
+    tell_the_plugin(Some(&log), None);
+    let mut harness = Harness::new();
+    harness.add_track(record(PluginFormat::Vst3, "piano"), Vec::new());
+    harness.play(1024);
+    // The plugin is loaded, activated and playing, and its state has been read and saved.
+    harness.plugins.close(&harness.project);
+    let calls = window_calls(&log);
+    assert_eq!(calls, Vec::<String>::new(), "{calls:?}");
+}
+
+/// A plugin that asks to be resized from inside the host's answer to another request of its
+/// own. `editorhost.cpp` refuses the nested one; without that a plugin that answers `onSize`
+/// with the same request runs the host out of stack. Whatever it asks for, the window ends on
+/// the size the view really is.
+#[gpui::test]
+fn a_resize_asked_for_from_inside_the_answer_is_refused_and_the_newest_size_wins(
+    cx: &mut TestAppContext,
+) {
+    // The same size as the outer request, which is the one that never ends without a guard.
+    nested_resize_ends_on(cx, (640, 480), (640, 480));
+    // And another size, which the view really takes, so the window has to follow it.
+    nested_resize_ends_on(cx, (640, 480), (800, 600));
+}
+
+fn nested_resize_ends_on(cx: &mut TestAppContext, asked: (u32, u32), from_inside: (u32, u32)) {
+    let folder = log_folder();
+    let log = folder.path().join("calls.txt");
+    tell_the_plugin_to_ask_for_a_window_size(asked.0, asked.1);
+    tell_the_plugin_to_ask_again_from_inside_the_answer(from_inside.0, from_inside.1);
+    let harness = open(PluginFormat::Vst3, &log);
+    open_window(&harness, "Piano", cx);
+    harness.plugins.poll(&harness.project);
+    cx.update(|cx| harness.plugins.settle_windows(cx));
+
+    let calls = window_calls(&log);
+    // Two requests, one answer: the nested one was refused instead of being let in again.
+    assert_eq!(
+        calls.iter().filter(|call| *call == "gui_on_size").count(),
+        1,
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| *call == "gui_request_resize")
+            .count(),
+        2,
+        "{calls:?}"
+    );
+    assert_eq!(window_size(cx), from_inside, "{calls:?}");
+
+    close_window(&harness, cx);
+    assert_eq!(windows(cx), 0);
+    tell_the_plugin_to_ask_for_a_window_size(0, 0);
+    tell_the_plugin_to_ask_again_from_inside_the_answer(0, 0);
 }
 
 /// CLAP only: a plugin may close the window it was given, and says so with

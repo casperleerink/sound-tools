@@ -11,6 +11,7 @@ static ALLOCATOR: support::CountingAllocator = support::CountingAllocator;
 
 mod background;
 mod consistency;
+mod editing;
 mod lifecycle;
 mod playing;
 mod records;

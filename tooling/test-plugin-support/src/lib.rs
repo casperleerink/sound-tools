@@ -60,11 +60,52 @@ pub const NO_WINDOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_NO_WINDOW";
 /// plugin that sizes itself as it opens does. The value is `<width>x<height>`.
 pub const RESIZE_GUI_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_RESIZE_GUI";
 
+/// Makes the VST 3 plugin's view ask for another size from inside `onSize`, which is inside the
+/// host's answer to a request of its own. A host without a guard runs out of stack on this. The
+/// value is `<width>x<height>`; the same size as the outer request is the worst case, because a
+/// host that only compares sizes would answer for ever. VST 3 only.
+pub const RESIZE_IN_ON_SIZE_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_RESIZE_IN_ON_SIZE";
+
+/// Makes the VST 3 plugin's view ask its host for another size from inside `attached`, which
+/// `iplugview.h` says a plugin may do. The value is `<width>x<height>`. VST 3 only.
+pub const RESIZE_IN_ATTACHED_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_RESIZE_IN_ATTACHED";
+
+/// Makes the VST 3 plugin's view refuse `attached`, so a host has to leave it alone afterwards
+/// and must not call `removed` for an `attached` that never happened. VST 3 only.
+pub const ATTACH_FAILS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_ATTACH_FAILS";
+
+/// Makes the plugin's controller edit a parameter through the host as soon as it has a
+/// component handler, the way a plugin's own window does when the composer turns a knob: a
+/// `beginEdit`, that many `performEdit`s ending on `1 / count`, and an `endEdit`. The plugin's
+/// processor is what reads the parameter, so a host that does not carry the edit across plays
+/// the plugin at its full level. The value is the count.
+pub const EDITS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_EDITS";
+
 /// The size a plugin was told to ask its window to be, if it was told.
 pub fn wanted_window_size() -> Option<(u32, u32)> {
-    let told = std::env::var(RESIZE_GUI_VARIABLE).ok()?;
+    size_from(RESIZE_GUI_VARIABLE)
+}
+
+/// The size a plugin was told to ask for from inside `onSize`, if it was told.
+pub fn wanted_size_in_on_size() -> Option<(u32, u32)> {
+    size_from(RESIZE_IN_ON_SIZE_VARIABLE)
+}
+
+/// The size a plugin was told to ask for from inside `attached`, if it was told.
+pub fn wanted_size_in_attached() -> Option<(u32, u32)> {
+    size_from(RESIZE_IN_ATTACHED_VARIABLE)
+}
+
+fn size_from(variable: &str) -> Option<(u32, u32)> {
+    let told = std::env::var(variable).ok()?;
     let (width, height) = told.split_once('x')?;
     Some((width.parse().ok()?, height.parse().ok()?))
+}
+
+/// How many edits the plugin was told to make. `None` says it was not told.
+pub fn wanted_edits() -> Option<u32> {
+    let count: u32 = std::env::var(EDITS_VARIABLE).ok()?.parse().ok()?;
+    (count > 0).then_some(count)
 }
 
 /// How big a test plugin's window is until it asks for another size. Both formats answer this,
@@ -316,19 +357,31 @@ impl Tone {
     }
 }
 
-/// The saved state of a test plugin: a magic number and the transpose.
-pub fn save_state(semitones: i32) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(8);
+/// How loud a plugin plays when nothing has edited it, as hundredths. It is the level the
+/// `Level` parameter of the VST 3 plugin starts at, and what the CLAP one always plays at.
+pub const FULL_EDIT_LEVEL: i32 = 100;
+
+/// The saved state of a test plugin: a magic number, the transpose, and the level a parameter
+/// edit left the plugin on. The level is in the state because a host that carried an edit to
+/// the processor has to save what the processor now holds.
+pub fn save_state(semitones: i32, edit_level: i32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(12);
     bytes.extend_from_slice(&STATE_MAGIC);
     bytes.extend_from_slice(&semitones.to_le_bytes());
+    bytes.extend_from_slice(&edit_level.to_le_bytes());
     bytes
 }
 
-/// The transpose in a saved state. `None` says the bytes are not one of ours.
-pub fn load_state(bytes: &[u8]) -> Option<i32> {
+/// The transpose and the level in a saved state. `None` says the bytes are not one of ours.
+pub fn load_state(bytes: &[u8]) -> Option<(i32, i32)> {
     let rest = bytes.strip_prefix(&STATE_MAGIC)?;
-    let four: [u8; 4] = rest.get(..4)?.try_into().ok()?;
-    Some(i32::from_le_bytes(four))
+    let semitones: [u8; 4] = rest.get(..4)?.try_into().ok()?;
+    let level: [u8; 4] = match rest.get(4..8) {
+        Some(four) => four.try_into().ok()?,
+        // A state the CLAP plugin wrote, which keeps no level.
+        None => FULL_EDIT_LEVEL.to_le_bytes(),
+    };
+    Some((i32::from_le_bytes(semitones), i32::from_le_bytes(level)))
 }
 
 /// Where `cargo` put a test plugin's dynamic library, building it first.

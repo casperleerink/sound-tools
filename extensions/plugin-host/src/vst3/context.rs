@@ -22,6 +22,7 @@ use vst3::Steinberg::{
 };
 use vst3::{Class, ComPtr, ComWrapper};
 
+use super::process::ParameterChange;
 use crate::host::HOST_NAME;
 
 /// The application the plugin runs in. A plugin gets it as the context of `initialize`.
@@ -294,8 +295,17 @@ impl IAttributeListTrait for HostAttributes {
 /// What the plugin's controller tells the host: a parameter the composer changed in the
 /// plugin's own window, and a plugin that wants to be started again.
 ///
-/// VST 3 has no `mark_dirty`. A parameter edit is the change a host learns about, so an edit
-/// is what marks the state to be saved. See `plugin.rs`.
+/// `ivsteditcontroller.h` says what this interface is for: "Allow transfer of parameter editing
+/// to component (processor) via host and support automation." So an edit is two things here. It
+/// marks the state to be saved, because VST 3 has no `mark_dirty`. And it has to reach the
+/// plugin's processor, because the controller only knows the value and the processor is what
+/// makes the sound: a plugin whose composer turns a knob in its own window hears nothing until
+/// the host carries the edit across. See `plugin.rs` for the way over and `process.rs` for the
+/// block that carries it.
+///
+/// Every call here is `[UI-thread]` by the format, which is the thread the host lives on. The
+/// lock is for a plugin that does not keep to that: nothing of this is on the audio thread, and
+/// a cell borrowed twice would end the process from inside a call of the plugin's.
 #[derive(Default)]
 pub struct Handler {
     state_is_dirty: AtomicBool,
@@ -303,6 +313,11 @@ pub struct Handler {
     /// How many edits are open (`beginEdit` without `endEdit`). Only for the log of the test
     /// plugin and to keep the pair balanced; nothing of the host depends on it.
     open_edits: AtomicI32,
+    /// The newest value of every parameter the controller has edited and the processor has not
+    /// been given yet. By parameter, so the value a composer left a knob on is never the one
+    /// that is dropped: a knob drag is hundreds of edits of one parameter and only the last of
+    /// them is the sound.
+    edits: Mutex<BTreeMap<ParamID, ParamValue>>,
 }
 
 impl Class for Handler {
@@ -324,6 +339,24 @@ impl Handler {
     pub fn take_restart_requested(&self) -> bool {
         self.restart_requested.swap(false, Ordering::AcqRel)
     }
+
+    /// Every parameter edit that is waiting for the processor, newest value each, and nothing
+    /// left behind. The caller is on the host's thread and gives back what would not fit.
+    pub fn take_edits(&self) -> Vec<ParameterChange> {
+        let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
+        std::mem::take(&mut *held)
+            .into_iter()
+            .map(|(id, value)| ParameterChange { id, value })
+            .collect()
+    }
+
+    /// Puts an edit back because the processor had no room for it. A newer edit of the same
+    /// parameter, which the plugin may have made in between, is left as it is: it is the one
+    /// the composer means.
+    pub fn keep_edit(&self, change: ParameterChange) {
+        let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
+        held.entry(change.id).or_insert(change.value);
+    }
 }
 
 impl IComponentHandlerTrait for Handler {
@@ -332,10 +365,14 @@ impl IComponentHandlerTrait for Handler {
         kResultOk
     }
 
-    unsafe fn performEdit(&self, _id: ParamID, _value_normalized: ParamValue) -> tresult {
+    unsafe fn performEdit(&self, id: ParamID, value_normalized: ParamValue) -> tresult {
         // The parameter belongs to the plugin, not to the project: it is saved in the plugin's
         // own state asset and is never an undo step.
         self.state_is_dirty.store(true, Ordering::Release);
+        // And it has to reach the processor, which is the half that makes the sound. The host
+        // carries it in the parameter changes of the next block, see the type documentation.
+        let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
+        held.insert(id, value_normalized);
         kResultOk
     }
 
@@ -400,6 +437,53 @@ unsafe fn read_utf16(string: *const TChar) -> Vec<TChar> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A knob drag is hundreds of edits of one parameter and only the last of them is the
+    /// sound the composer left behind, so that is the one the processor is given.
+    #[test]
+    fn many_edits_of_one_parameter_come_out_as_the_last_value() {
+        let handler = Handler::default();
+        for value in [1.0, 0.75, 0.5, 0.25] {
+            // SAFETY: the call reads nothing but its arguments.
+            unsafe { handler.performEdit(7, value) };
+        }
+        let edits = handler.take_edits();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].id, 7);
+        assert!((edits[0].value - 0.25).abs() < f64::EPSILON);
+        // And nothing is left behind for the next poll.
+        assert!(handler.take_edits().is_empty());
+    }
+
+    /// An edit the processor had no room for comes back, and waits. A newer edit of the same
+    /// parameter, made while it was away, is the one the composer means and stays.
+    #[test]
+    fn an_edit_the_processor_had_no_room_for_waits_and_never_overwrites_a_newer_one() {
+        let handler = Handler::default();
+        // SAFETY: the call reads nothing but its arguments.
+        unsafe { handler.performEdit(7, 1.0) };
+        let edits = handler.take_edits();
+        // The processor was full, and the plugin moved the same knob again in the meantime.
+        // SAFETY: as above.
+        unsafe { handler.performEdit(7, 0.5) };
+        for edit in edits {
+            handler.keep_edit(edit);
+        }
+        let waiting = handler.take_edits();
+        assert_eq!(waiting.len(), 1);
+        assert!((waiting[0].value - 0.5).abs() < f64::EPSILON);
+
+        // A parameter nothing newer touched comes back as it was.
+        // SAFETY: as above.
+        unsafe { handler.performEdit(9, 0.25) };
+        let edits = handler.take_edits();
+        for edit in edits {
+            handler.keep_edit(edit);
+        }
+        let waiting = handler.take_edits();
+        assert_eq!(waiting.len(), 1);
+        assert!((waiting[0].value - 0.25).abs() < f64::EPSILON);
+    }
 
     #[test]
     fn a_name_that_is_longer_than_the_buffer_still_ends_with_a_zero() {

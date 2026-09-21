@@ -300,6 +300,36 @@ pub fn tell_the_plugin_to_ask_for_a_window_size(width: u32, height: u32) {
     }
 }
 
+/// Makes the VST 3 test plugin's view ask for another size from inside `onSize`, which is
+/// inside the host's answer to a request of its own. A width of zero stops it asking. Same
+/// rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_ask_again_from_inside_the_answer(width: u32, height: u32) {
+    // SAFETY: as above.
+    unsafe {
+        match width == 0 || height == 0 {
+            true => std::env::remove_var(test_plugin_support::RESIZE_IN_ON_SIZE_VARIABLE),
+            false => std::env::set_var(
+                test_plugin_support::RESIZE_IN_ON_SIZE_VARIABLE,
+                format!("{width}x{height}"),
+            ),
+        }
+    }
+}
+
+/// Makes the VST 3 test plugin's controller edit its `Level` parameter through the host as
+/// soon as it has a component handler, the way its own window would when the composer turns a
+/// knob: one `beginEdit`, `count` values on the way down, one `endEdit`. The last value is
+/// `1 / count`. Same rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_edit_its_level(count: u32) {
+    // SAFETY: as above.
+    unsafe {
+        match count == 0 {
+            true => std::env::remove_var(test_plugin_support::EDITS_VARIABLE),
+            false => std::env::set_var(test_plugin_support::EDITS_VARIABLE, count.to_string()),
+        }
+    }
+}
+
 /// One line of the plugin's lifecycle log: the call, which plugin of the library it was about,
 /// the thread it came in on, and how many process calls that plugin had had by then.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -387,6 +417,18 @@ pub fn saved_transpose(format: PluginFormat, bytes: &[u8]) -> i32 {
     };
     assert_eq!(&own[..4], b"STT1", "not a Test Tone state");
     i32::from_le_bytes([own[4], own[5], own[6], own[7]])
+}
+
+/// The level a parameter edit left the plugin on, out of the component part of a VST 3 state
+/// asset. It is hundredths, so 100 is the level a plugin nobody edited plays at.
+pub fn saved_edit_level(bytes: &[u8]) -> i32 {
+    assert_eq!(&bytes[..4], b"SVT3", "not a VST 3 state asset");
+    let length = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    let own = &bytes[8..8 + length];
+    assert_eq!(&own[..4], b"STT1", "not a Test Tone state");
+    test_plugin_support::load_state(own)
+        .expect("a Test Tone state")
+        .1
 }
 
 /// The level the plugin's edit controller saved, out of the controller part of a VST 3 state

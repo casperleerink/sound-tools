@@ -28,11 +28,11 @@ use test_plugin_support as support;
 use vst3::Steinberg::Vst::{
     BusDirections_, BusInfo, BusInfo_::BusFlags_, BusTypes_, ControllerNumbers_,
     Event_::EventTypes_, IAudioProcessor, IAudioProcessorTrait, IComponent, IComponentHandler,
-    IComponentTrait, IEditController, IEditControllerTrait, IEventListTrait, IMidiMapping,
-    IMidiMappingTrait, IParamValueQueueTrait, IParameterChangesTrait, MediaTypes_, ParamID,
-    ParamValue, ParameterInfo, ParameterInfo_::ParameterFlags_, ProcessData, ProcessModes_,
-    ProcessSetup, RoutingInfo, SpeakerArr, SpeakerArrangement, String128, SymbolicSampleSizes_,
-    TChar,
+    IComponentHandlerTrait, IComponentTrait, IEditController, IEditControllerTrait,
+    IEventListTrait, IMidiMapping, IMidiMappingTrait, IParamValueQueueTrait,
+    IParameterChangesTrait, MediaTypes_, ParamID, ParamValue, ParameterInfo,
+    ParameterInfo_::ParameterFlags_, ProcessData, ProcessModes_, ProcessSetup, RoutingInfo,
+    SpeakerArr, SpeakerArrangement, String128, SymbolicSampleSizes_, TChar,
 };
 use vst3::Steinberg::{
     FIDString, FUnknown, IBStream, IBStream_::IStreamSeekMode_, IBStreamTrait, IPlugFrame,
@@ -56,6 +56,12 @@ pub const PLUGIN_NAME: &str = "Sound Tools Test Tone";
 /// The parameter the state holds, and the one the sustain pedal is mapped to.
 const TRANSPOSE: ParamID = 0;
 const SUSTAIN: ParamID = 1;
+
+/// How loud the plugin plays, read by the processor out of the block's input parameter changes
+/// and nowhere else. It is what the plugin's controller edits through the host, so a host that
+/// does not carry an edit from the controller to the processor plays this plugin at full level
+/// whatever the composer does in its window. Saved in the component's state.
+const LEVEL: ParamID = 2;
 
 /// How many semitones the transpose parameter covers, so that a normalized value is exact.
 const TRANSPOSE_RANGE: f64 = 63.0;
@@ -83,6 +89,9 @@ pub struct TestTone {
     /// Whether the host has answered this plugin on the main thread. Until it has, a plugin
     /// that was told to wait for one is silent, as a sampler waiting for its samples is.
     answered: AtomicBool,
+    /// How loud the plugin plays, in hundredths, as the last `LEVEL` point of a block set it.
+    /// The processor writes it and the component's state saves it.
+    edit_level: AtomicI32,
     /// Which plugin of this library this is, for the log.
     plugin: u64,
 }
@@ -124,6 +133,7 @@ impl TestTone {
             semitones: AtomicI32::new(0),
             level: AtomicI32::new(FULL_LEVEL),
             answered: AtomicBool::new(!support::told_to(support::NEEDS_HOST_VARIABLE)),
+            edit_level: AtomicI32::new(support::FULL_EDIT_LEVEL),
             plugin: support::next_plugin(),
         }
     }
@@ -132,7 +142,33 @@ impl TestTone {
         let processed = self.audio.try_borrow().map_or(0, |audio| audio.processed);
         support::log(call, self.plugin, processed);
     }
+
+    /// A knob drag, as the format has it: one `beginEdit`, `count` values on the way down, one
+    /// `endEdit`. The last value is `1 / count`, so a host that keeps only the first, or an
+    /// average, or none of them is heard.
+    fn edit_the_level(&self, handler: &ComPtr<IComponentHandler>, count: u32) {
+        support::log("edit_begin", 0, 0);
+        // SAFETY: the handler came from the host and is alive; the host keeps it until it
+        // takes it back with a null `setComponentHandler`.
+        unsafe {
+            handler.beginEdit(LEVEL);
+            for step in 0..count {
+                let value = f64::from(count - step) / f64::from(count);
+                support::log("edit_value", 0, 0);
+                handler.performEdit(LEVEL, value);
+            }
+            handler.endEdit(LEVEL);
+        }
+        support::log("edit_end", 0, 0);
+    }
 }
+
+/// Every parameter, in the order `getParameterInfo` lists them.
+const PARAMETERS: [(ParamID, &str, &str, ParamValue); 3] = [
+    (TRANSPOSE, "Transpose", "st", 0.0),
+    (SUSTAIN, "Sustain", "", 0.0),
+    (LEVEL, "Level", "", 1.0),
+];
 
 impl IPluginBaseTrait for TestTone {
     unsafe fn initialize(&self, _context: *mut FUnknown) -> tresult {
@@ -232,10 +268,11 @@ impl IComponentTrait for TestTone {
         let Some(bytes) = (unsafe { read_stream(state) }) else {
             return kInvalidArgument;
         };
-        let Some(semitones) = support::load_state(&bytes) else {
+        let Some((semitones, edit_level)) = support::load_state(&bytes) else {
             return kResultFalse;
         };
         self.semitones.store(semitones, Ordering::Release);
+        self.edit_level.store(edit_level, Ordering::Release);
         if let Ok(mut audio) = self.audio.try_borrow_mut() {
             audio.tone.set_semitones(semitones);
         }
@@ -243,7 +280,10 @@ impl IComponentTrait for TestTone {
     }
 
     unsafe fn getState(&self, state: *mut IBStream) -> tresult {
-        let bytes = support::save_state(self.semitones.load(Ordering::Acquire));
+        let bytes = support::save_state(
+            self.semitones.load(Ordering::Acquire),
+            self.edit_level.load(Ordering::Acquire),
+        );
         // A plugin that writes its payload first and fills the header in afterwards, which is
         // what a plugin with a chunk length in its header does. The first four bytes are the
         // header here.
@@ -405,7 +445,24 @@ impl IAudioProcessorTrait for TestTone {
                     let Some(queue) = ComRef::from_raw(changes.getParameterData(index)) else {
                         continue;
                     };
-                    if queue.getParameterId() != SUSTAIN {
+                    let id = queue.getParameterId();
+                    // How loud to play, which is what the composer edited in the plugin's own
+                    // window. The last point of the block is the value the knob was left on.
+                    if id == LEVEL {
+                        let mut last = None;
+                        for point in 0..queue.getPointCount() {
+                            let (mut offset, mut value) = (0, 0.0);
+                            if queue.getPoint(point, &mut offset, &mut value) == kResultOk {
+                                last = Some(value);
+                            }
+                        }
+                        if let Some(value) = last {
+                            let level = (value * f64::from(support::FULL_EDIT_LEVEL)).round();
+                            self.edit_level.store(level as i32, Ordering::Release);
+                        }
+                        continue;
+                    }
+                    if id != SUSTAIN {
                         continue;
                     }
                     for point in 0..queue.getPointCount() {
@@ -485,6 +542,15 @@ impl IAudioProcessorTrait for TestTone {
                     *sample *= level;
                 }
             }
+            // And how loud the last parameter edit of the composer's left it. A host that
+            // never carried the edit to this half plays the whole block at the full level.
+            let edited =
+                self.edit_level.load(Ordering::Acquire) as f32 / support::FULL_EDIT_LEVEL as f32;
+            if edited != 1.0 {
+                for sample in left.iter_mut() {
+                    *sample *= edited;
+                }
+            }
             audio.processed += 1;
 
             // What a host is told about: the transpose the plugin changed by itself, and as
@@ -558,25 +624,26 @@ impl IEditControllerTrait for TestTone {
     }
 
     unsafe fn getParameterCount(&self) -> int32 {
-        2
+        3
     }
 
     unsafe fn getParameterInfo(&self, index: int32, info: *mut ParameterInfo) -> tresult {
-        if info.is_null() || !(0..2).contains(&index) {
+        let Some((id, title, units, default)) = PARAMETERS.get(index.max(0) as usize).copied()
+        else {
+            return kInvalidArgument;
+        };
+        if info.is_null() {
             return kInvalidArgument;
         }
         // SAFETY: the caller gave a place to write one parameter.
         unsafe {
             let info = &mut *info;
             *info = std::mem::zeroed();
-            info.id = if index == 0 { TRANSPOSE } else { SUSTAIN };
-            write_utf16(
-                if index == 0 { "Transpose" } else { "Sustain" },
-                &mut info.title,
-            );
-            write_utf16(if index == 0 { "st" } else { "" }, &mut info.units);
+            info.id = id;
+            write_utf16(title, &mut info.title);
+            write_utf16(units, &mut info.units);
             info.stepCount = 0;
-            info.defaultNormalizedValue = 0.0;
+            info.defaultNormalizedValue = default;
             info.unitId = 0;
             info.flags = ParameterFlags_::kCanAutomate as int32;
         }
@@ -618,6 +685,10 @@ impl IEditControllerTrait for TestTone {
     unsafe fn getParamNormalized(&self, id: ParamID) -> ParamValue {
         match id {
             TRANSPOSE => f64::from(self.semitones.load(Ordering::Acquire)) / TRANSPOSE_RANGE,
+            LEVEL => {
+                f64::from(self.edit_level.load(Ordering::Acquire))
+                    / f64::from(support::FULL_EDIT_LEVEL)
+            }
             _ => 0.0,
         }
     }
@@ -637,7 +708,14 @@ impl IEditControllerTrait for TestTone {
         // SAFETY: the host gives a handler that is alive for this call, and `to_com_ptr`
         // counts the reference this plugin keeps.
         let kept = unsafe { ComRef::from_raw(handler) }.map(|handler| handler.to_com_ptr());
+        let given = kept.clone();
         *self.handler.borrow_mut() = kept;
+        // What a plugin's own window does when the composer turns a knob: a burst of edits of
+        // one parameter through the host, ending on the value the knob was left on. The
+        // processor is the half that reads it, so this is what a host has to carry across.
+        if let (Some(handler), Some(count)) = (given, support::wanted_edits()) {
+            self.edit_the_level(&handler, count);
+        }
         kResultOk
     }
 
@@ -670,7 +748,6 @@ impl IEditControllerTrait for TestTone {
 /// The plugin's window, in name only: no real view is made, because CI has no display. Every
 /// call is written to the log with the thread it came in on, so a test reads exactly what a
 /// host did and in what order. What only a real window can show is checked by hand.
-#[derive(Default)]
 struct TestView {
     /// What the host gave `setFrame`, which is what a plugin asks for a resize through.
     frame: RefCell<Option<ComPtr<IPlugFrame>>>,
@@ -679,9 +756,24 @@ struct TestView {
     itself: Cell<*mut IPlugView>,
     /// Whether `attached` was answered, so a test can see that `removed` follows exactly one.
     attached: Cell<bool>,
-    /// The size the host last gave `onSize`, which is what the format says a plugin resizes its
-    /// own view to.
-    sized_to: Cell<Option<(i32, i32)>>,
+    /// How big this view is. A real one resizes its own drawing here and nowhere else, which
+    /// is what `iplugview.h` asks: "Please only resize the platform representation of the view
+    /// when IPlugView::onSize () is called."
+    size: Cell<(int32, int32)>,
+}
+
+impl Default for TestView {
+    fn default() -> Self {
+        Self {
+            frame: RefCell::new(None),
+            itself: Cell::new(std::ptr::null_mut()),
+            attached: Cell::new(false),
+            size: Cell::new((
+                support::WINDOW_WIDTH as int32,
+                support::WINDOW_HEIGHT as int32,
+            )),
+        }
+    }
 }
 
 impl Class for TestView {
@@ -742,7 +834,18 @@ impl IPlugViewTrait for TestView {
         if parent.is_null() {
             return kInvalidArgument;
         }
+        // A plugin that cannot put its view in the parent it was given. A host must leave it
+        // alone afterwards, and `removed` is the other half of an `attached` that worked.
+        if support::told_to(support::ATTACH_FAILS_VARIABLE) {
+            return kInternalError;
+        }
         self.attached.set(true);
+        // `iplugview.h` on `attached`: "Note that in this call the plug-in could call a
+        // IPlugFrame::resizeView ()". This is a plugin that does.
+        if let Some((width, height)) = support::wanted_size_in_attached() {
+            self.ask_for_a_resize(width, height);
+            self.size.set((width as int32, height as int32));
+        }
         kResultOk
     }
 
@@ -774,13 +877,14 @@ impl IPlugViewTrait for TestView {
         if size.is_null() {
             return kInvalidArgument;
         }
+        let (width, height) = self.size.get();
         // SAFETY: the host gave a place to write one rectangle.
         unsafe {
             *size = ViewRect {
                 left: 0,
                 top: 0,
-                right: support::WINDOW_WIDTH as int32,
-                bottom: support::WINDOW_HEIGHT as int32,
+                right: width,
+                bottom: height,
             };
         }
         kResultOk
@@ -793,8 +897,18 @@ impl IPlugViewTrait for TestView {
         }
         // SAFETY: the host gives one rectangle that lives for this call.
         let rect = unsafe { *new_size };
-        self.sized_to
-            .set(Some((rect.right - rect.left, rect.bottom - rect.top)));
+        let told = (rect.right - rect.left, rect.bottom - rect.top);
+        let Some((width, height)) = support::wanted_size_in_on_size() else {
+            self.size.set(told);
+            return kResultOk;
+        };
+        // A plugin that changes its mind inside the host's answer, every time it is asked and
+        // before it has taken any size. A host that lets this call in again is in it for ever:
+        // the view it asks about is still the old size, so the host tells it the new one, and
+        // the view asks again. The size is taken only once the request is over, which is what
+        // makes the window end on it.
+        self.ask_for_a_resize(width, height);
+        self.size.set((width as int32, height as int32));
         kResultOk
     }
 

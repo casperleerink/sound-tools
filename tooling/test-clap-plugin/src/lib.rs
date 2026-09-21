@@ -232,15 +232,17 @@ impl PluginStateImpl for TestToneMainThread<'_> {
     fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
         use std::io::Write as _;
         let semitones = self.shared.semitones.load(Ordering::Acquire);
-        output.write_all(&support::save_state(semitones))?;
+        // The CLAP plugin has no parameter a host can edit, so its level is always the full
+        // one. The two formats keep one state format all the same, so a test reads either.
+        output.write_all(&support::save_state(semitones, support::FULL_EDIT_LEVEL))?;
         Ok(())
     }
 
     fn load(&self, input: &mut InputStream) -> Result<(), PluginError> {
         use std::io::Read as _;
-        let mut bytes = [0_u8; 8];
+        let mut bytes = [0_u8; 12];
         input.read_exact(&mut bytes)?;
-        let Some(semitones) = support::load_state(&bytes) else {
+        let Some((semitones, _level)) = support::load_state(&bytes) else {
             return Err(PluginError::Message("not a Test Tone state"));
         };
         self.shared.semitones.store(semitones, Ordering::Release);

@@ -103,8 +103,10 @@ struct Hosted {
     /// the backend, so that a change the once-a-second rule made wait is written by a later
     /// poll and is never forgotten.
     pending_save: bool,
-    /// Whether the plugin has a window at all, asked once while it loaded. A card of a rack
-    /// reads it on every frame it draws, and a frame must call into no plugin.
+    /// Whether the plugin has a window at all. A card of a rack reads it on every frame it
+    /// draws, and a frame must call into no plugin. CLAP answers it while the plugin loads;
+    /// VST 3 cannot be asked without building the plugin's whole interface, so it says yes and
+    /// [`Plugins::open_window`] writes the answer here the first time one is asked for.
     has_window: bool,
     /// The plugin's own window, while it is open.
     window: PluginWindow,
@@ -538,11 +540,23 @@ impl Plugins {
             let no_window = || PluginProblem::NoWindow {
                 plugin_id: plugin_id.clone(),
             };
-            let Hosted { window, plugin, .. } = hosted;
+            let Hosted {
+                window,
+                plugin,
+                has_window,
+                ..
+            } = hosted;
             let prepared = match plugin.gui() {
                 Some(gui) => window.prepare(gui),
                 None => Err(no_window()),
             };
+            // A plugin that turns out to have no window says so once. The card stops offering
+            // one for the rest of this session, so the composer is not asked to find out again.
+            // A VST 3 plugin is offered a window without being asked, because asking means
+            // building its whole interface; this is where the answer arrives instead.
+            if matches!(prepared, Err(PluginProblem::NoWindow { .. })) {
+                *has_window = false;
+            }
             table.window_changed = true;
             prepared.map(|prepared| (prepared, plugin_id))?
         };
