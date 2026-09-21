@@ -307,6 +307,24 @@ impl TempoMap {
     pub fn tempo_changes(&self) -> &[TempoChange] {
         &self.tempo_changes
     }
+
+    /// The same map with the tempo change that starts exactly at `tick` set to `bpm`. `None`
+    /// when the map has no change there, for example because it was removed from outside.
+    ///
+    /// Only a tempo changes, so the ticks keep their order and the result is valid by
+    /// construction. That is why this cannot fail: an interface that edits one tempo change
+    /// has no error to handle and none to drop.
+    pub fn with_tempo_at(&self, tick: Ticks, bpm: Tempo) -> Option<Self> {
+        let mut tempo_changes = self.tempo_changes.clone();
+        let change = tempo_changes
+            .iter_mut()
+            .find(|change| change.tick == tick)?;
+        change.bpm = bpm;
+        Some(Self {
+            time_signature: self.time_signature,
+            tempo_changes,
+        })
+    }
 }
 
 /// 120 bpm in 4/4.

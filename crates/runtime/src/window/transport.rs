@@ -17,7 +17,7 @@ use gpui::{
     MouseUpEvent, Pixels, Window, canvas, div, fill, hsla, point, prelude::*, px, quad, size,
 };
 use metronome::Click;
-use sound_core::{Changes, ProjectEvent, Tempo, TempoMap, Ticks};
+use sound_core::{Changes, ProjectEvent, Tempo, TempoChange, Ticks};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::{ActiveTheme, Playhead, Session, typography};
 
@@ -44,9 +44,12 @@ struct TempoDrag {
     /// drag there and back ends at the tempo it began with.
     start_y: f32,
     start_bpm: f64,
-    /// The tempo change this drag edits, picked at mouse down. A playhead that runs over a
-    /// later tempo change during the drag must not make it change another one halfway.
-    change: usize,
+    /// The tick of the tempo change this drag edits, picked at mouse down. By its tick and
+    /// never by its place in the list: an outside edit may add or remove a tempo change while
+    /// the drag goes on, and a drag must never change one that only took the place of the one
+    /// the composer grabbed. A playhead that runs over a later tempo change does not move it
+    /// either.
+    at: Ticks,
     /// Whether the gesture of the session is open. It begins with the first move that changes
     /// something, so a press without a move is no undo step.
     begun: bool,
@@ -139,78 +142,65 @@ impl TransportPill {
     /// The tempo the transport shows: the one in effect at the playhead. It is read from the
     /// project on every render, so an outside edit of `project.json` shows at once.
     pub fn shown_tempo(&self, cx: &App) -> Tempo {
-        self.tempo_at_playhead(cx).0
+        self.change_at_playhead(cx).bpm
     }
 
-    /// The tempo in effect at the playhead, and the index of its tempo change.
-    fn tempo_at_playhead(&self, cx: &App) -> (Tempo, usize) {
+    /// The tempo change in effect at the playhead. Read from the project, never kept.
+    fn change_at_playhead(&self, cx: &App) -> TempoChange {
         let tick = self.playhead.read(cx).tick;
         let project = self.session.read(cx).project();
-        let change = tempo::change_at(&project.project_file().tempo_map, tick);
-        (project.clock().tempo_at(tick), change)
-    }
-
-    /// The tempo map with one of its changes set. A failure is reported, never dropped.
-    fn tempo_map_with(
-        &mut self,
-        change: usize,
-        bpm: f64,
-        cx: &mut Context<Self>,
-    ) -> Option<TempoMap> {
-        let current = self
-            .session
-            .read(cx)
-            .project()
-            .project_file()
-            .tempo_map
-            .clone();
-        match tempo::with_bpm(&current, change, bpm) {
-            Ok(tempo_map) => Some(tempo_map),
-            Err(error) => {
-                self.session
-                    .update(cx, |session, cx| session.report(error, cx));
-                None
-            }
-        }
+        tempo::change_at(&project.project_file().tempo_map, tick)
     }
 
     fn begin_tempo_drag(&mut self, y: f32, cx: &mut Context<Self>) {
-        let (tempo, change) = self.tempo_at_playhead(cx);
+        let change = self.change_at_playhead(cx);
         self.tempo_drag = Some(TempoDrag {
             start_y: y,
-            start_bpm: tempo.bpm(),
-            change,
+            start_bpm: change.bpm.bpm(),
+            at: change.tick,
             begun: false,
-            sent: tempo.bpm(),
+            sent: change.bpm.bpm(),
         });
     }
 
     /// One mouse move of a tempo drag: the tempo change becomes what the pointer says, through
     /// the gesture of the session, so playback and every other view follow at once.
     fn drag_tempo(&mut self, y: f32, fine: bool, cx: &mut Context<Self>) {
-        let Some(drag) = &self.tempo_drag else {
+        let Some(drag) = &mut self.tempo_drag else {
             return;
         };
         let bpm = tempo::dragged_bpm(drag.start_bpm, drag.start_y - y, fine);
-        let (change, begun) = (drag.change, drag.begun);
         if bpm == drag.sent {
             return;
         }
-        let Some(tempo_map) = self.tempo_map_with(change, bpm, cx) else {
-            return;
-        };
-        self.session.update(cx, |session, cx| {
+        let at = drag.at;
+        // The gesture opens with the first move that changes something, so a press without a
+        // move is no undo step. It opens even when the tempo change turns out to be gone: the
+        // empty step is dropped, and the drag must not leave a gesture open.
+        let begun = std::mem::replace(&mut drag.begun, true);
+        drag.sent = bpm;
+        let found = self.session.update(cx, |session, cx| {
             if !begun {
                 session.begin_gesture(tempo::LABEL, cx);
             }
             session.gesture(cx, |project, edit| {
+                // The tempo map the project has now, read here and nowhere earlier. A file
+                // edit during the drag has already applied to it, so this move keeps what it
+                // changed and only sets its own tempo change.
+                let live = &project.project_file().tempo_map;
+                let Some(tempo_map) = tempo::with_bpm(live, at, bpm) else {
+                    return Ok(false);
+                };
                 let mut changes = Changes::new();
                 changes.set_tempo_map(tempo_map);
-                project.publish(edit, changes)
-            });
+                project.publish(edit, changes)?;
+                Ok(true)
+            })
         });
-        if let Some(drag) = &mut self.tempo_drag {
-            (drag.begun, drag.sent) = (true, bpm);
+        // The tempo change is gone, removed from outside. That delete was the last write, so
+        // the drag finishes and does not cancel, as a clip drag does when its clip is deleted.
+        if found == Some(false) {
+            self.end_tempo_drag(cx);
         }
     }
 
@@ -240,12 +230,17 @@ impl TransportPill {
         if self.tempo_drag.is_some() {
             return;
         }
-        let (tempo, change) = self.tempo_at_playhead(cx);
-        let Some(tempo_map) = self.tempo_map_with(change, tempo.bpm() + delta, cx) else {
-            return;
-        };
+        let tick = self.playhead.read(cx).tick;
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
+                // The tempo map the project has now, as in a drag. A key adds to the tempo it
+                // finds and does not round it, so a tempo of 93.5 becomes 94.5.
+                let live = &project.project_file().tempo_map;
+                let change = tempo::change_at(live, tick);
+                let bpm = change.bpm.bpm() + delta;
+                let Some(tempo_map) = tempo::with_bpm(live, change.tick, bpm) else {
+                    return Ok(());
+                };
                 let mut changes = Changes::new();
                 changes.set_tempo_map(tempo_map);
                 project.commit(tempo::LABEL, changes)
@@ -286,7 +281,7 @@ impl TransportPill {
     fn tempo(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = cx.theme();
         let (muted, ring) = (theme.gray_700, theme.lavender);
-        let (tempo, _) = self.tempo_at_playhead(cx);
+        let tempo = self.shown_tempo(cx);
         let pill = cx.entity();
         // A drag goes on wherever the pointer is, so these listeners are not hit tested.
         let listeners = canvas(

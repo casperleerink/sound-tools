@@ -382,7 +382,7 @@ Musical time is whole ticks, 960 per quarter note (`Ticks`). Project time in aud
 
 - `Tempo`: beats per minute, a beat being a quarter note. 10 to 1000 bpm, held in steps of 0.001 bpm. `Tempo::from_bpm(93.5)?`.
 - `TimeSignature`: numerator 1 to 32, denominator 1, 2, 4, 8, 16 or 32. One per project for now. It converts ticks to and from `BarBeat`, which counts bars and beats from 1 and prints as `bar:beat:tick`, for example `4:3:005`.
-- `TempoMap`: the time signature and a list of tempo changes. Steps only, no ramps. The first change is at tick 0 and the ticks go up. This is the saved form.
+- `TempoMap`: the time signature and a list of tempo changes. Steps only, no ramps. The first change is at tick 0 and the ticks go up. This is the saved form. `with_tempo_at(tick, bpm)` gives the same map with the tempo change that starts there set, or `None` when there is none: it cannot fail, because only a tempo changes and the ticks keep their order.
 - `Clock`: a `TempoMap` compiled for one sample rate. `frame_of(tick)`, `tick_at(frame)`, `seconds_of(tick)`, `tick_at_seconds(seconds)`, `tempo_at(tick)`. A lookup is a binary search over the tempo changes.
 
 Invalid values cannot be built: the constructors and the JSON loader return a `ClockError`.

@@ -79,7 +79,7 @@ fn an_outside_tempo_edit_shows_in_the_transport_at_once(cx: &mut TestAppContext)
 fn a_tempo_drag_is_one_undo_step_and_the_file_follows(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let from = tempo_control(&mut opened);
-    // Up is faster: half a bpm per pixel, landing on whole numbers.
+    // Up is faster: half a bpm per pixel, in whole bpm from where the drag began.
     opened.drag(from, from - point(px(0.), px(40.)));
     assert_eq!(opened.shown_tempo(), 140.0);
     assert_eq!(opened.undo_label().as_deref(), Some("Change tempo"));
@@ -265,4 +265,153 @@ fn shows_playhead(opened: &mut Opened<'_>) -> bool {
     opened
         .cx
         .read(|cx| timeline.read(cx).viewport().shows(tick, width))
+}
+
+/// A tempo map written from outside while a drag is going on, applied at once as the watcher
+/// does. The drag goes on after it.
+fn outside_during_drag(opened: &mut Opened<'_>, tempo_map: &str) {
+    assert!(opened.gesture_open(), "the drag has not begun");
+    write_tempo_map(opened, tempo_map);
+    assert!(opened.gesture_open(), "the file edit ended the drag");
+}
+
+#[gpui::test]
+fn a_drag_keeps_an_outside_edit_of_another_tempo_change(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let two = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 7680, "bpm": 60.0}]}"#;
+    write_tempo_map(&mut opened, two);
+
+    // A drag on the first tempo change, which is the one at the playhead.
+    let from = tempo_control(&mut opened);
+    opened.press(from);
+    opened.drag_to(from - point(px(0.), px(20.)));
+    assert_eq!(opened.shown_tempo(), 130.0);
+
+    // An agent changes the other tempo change halfway through the drag.
+    let changed = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 130.0}, {"tick": 7680, "bpm": 77.0}]}"#;
+    outside_during_drag(&mut opened, changed);
+
+    // The next move builds on the map the project has now, so both edits survive the mouse up.
+    opened.drag_to(from - point(px(0.), px(40.)));
+    opened.release(from - point(px(0.), px(40.)));
+    assert_eq!(opened.shown_tempo(), 140.0);
+    let file = tempo_in_file(&mut opened);
+    assert!(file.contains("140"), "the drag is not in the file: {file}");
+    assert!(
+        file.contains("77"),
+        "the outside edit was overwritten: {file}"
+    );
+}
+
+#[gpui::test]
+fn a_drag_keeps_its_tempo_change_when_an_earlier_one_is_inserted(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let two = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 7680, "bpm": 60.0}]}"#;
+    write_tempo_map(&mut opened, two);
+    opened.session.update(opened.cx, |session, _| {
+        session.engine().seek(Ticks(2 * BAR))
+    });
+    opened.settle();
+    assert_eq!(opened.shown_tempo(), 60.0);
+
+    // A drag on the tempo change at bar 3, which is index 1 of the map.
+    let from = tempo_control(&mut opened);
+    opened.press(from);
+    opened.drag_to(from - point(px(0.), px(20.)));
+    assert_eq!(opened.shown_tempo(), 70.0);
+
+    // An agent inserts a tempo change before it, so the dragged one is index 2 now.
+    let three = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 3840, "bpm": 90.0}, {"tick": 7680, "bpm": 70.0}]}"#;
+    outside_during_drag(&mut opened, three);
+
+    opened.drag_to(from - point(px(0.), px(40.)));
+    opened.release(from - point(px(0.), px(40.)));
+    assert_eq!(
+        opened.shown_tempo(),
+        80.0,
+        "the drag changed another tempo change"
+    );
+    let file = tempo_in_file(&mut opened);
+    assert!(file.contains("90"), "the inserted change was lost: {file}");
+    assert!(file.contains("80"), "the drag is not in the file: {file}");
+    assert!(file.contains("120"), "the first change moved: {file}");
+}
+
+#[gpui::test]
+fn a_drag_ends_when_its_tempo_change_is_removed_from_outside(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let two = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 7680, "bpm": 60.0}]}"#;
+    write_tempo_map(&mut opened, two);
+    opened.session.update(opened.cx, |session, _| {
+        session.engine().seek(Ticks(2 * BAR))
+    });
+    opened.settle();
+
+    let from = tempo_control(&mut opened);
+    opened.press(from);
+    opened.drag_to(from - point(px(0.), px(20.)));
+    assert_eq!(opened.shown_tempo(), 70.0);
+
+    // An agent removes the tempo change the drag is about.
+    let one = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}"#;
+    outside_during_drag(&mut opened, one);
+
+    // The delete was the last write, so the drag finishes and does not bring it back.
+    opened.drag_to(from - point(px(0.), px(40.)));
+    assert!(!opened.gesture_open(), "the drag did not end");
+    opened.release(from - point(px(0.), px(40.)));
+    assert_eq!(opened.shown_tempo(), 120.0);
+    let file = tempo_in_file(&mut opened);
+    assert!(
+        !file.contains("7680"),
+        "the removed change came back: {file}"
+    );
+    // The drag left no step of its own: it ends on what the file wrote, so there is nothing
+    // of the drag to undo, and undo does not bring the removed tempo change back.
+    opened.keys("cmd-z");
+    assert_eq!(opened.shown_tempo(), 120.0);
+    assert_eq!(tempo_in_file(&mut opened), file);
+}
+
+#[gpui::test]
+fn a_drag_there_and_back_keeps_a_fractional_tempo_and_is_no_undo_step(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let fractional = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 93.5}]}"#;
+    write_tempo_map(&mut opened, fractional);
+    let before = tempo_in_file(&mut opened);
+    let steps = opened.undo_label();
+
+    // A drag moves by whole bpm from the tempo it began on and does not round it.
+    let from = tempo_control(&mut opened);
+    opened.press(from);
+    opened.drag_to(from - point(px(0.), px(2.)));
+    assert_eq!(opened.shown_tempo(), 94.5);
+    opened.drag_to(from - point(px(0.), px(4.)));
+    assert_eq!(opened.shown_tempo(), 95.5);
+
+    // Back where it began: exactly the tempo it started from, and nothing to undo.
+    opened.drag_to(from);
+    opened.release(from);
+    assert_eq!(opened.shown_tempo(), 93.5);
+    assert_eq!(
+        opened.undo_label(),
+        steps,
+        "a drag that ends where it began is a step"
+    );
+    assert_eq!(tempo_in_file(&mut opened), before);
+}
+
+#[gpui::test]
+fn the_arrows_keep_a_fractional_tempo(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let fractional = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 93.5}]}"#;
+    write_tempo_map(&mut opened, fractional);
+    let at = tempo_control(&mut opened);
+    opened.click(at);
+    opened.keys("up");
+    assert_eq!(opened.shown_tempo(), 94.5);
+    opened.keys("shift-down");
+    assert_eq!(opened.shown_tempo(), 94.4);
+    opened.keys("down");
+    assert_eq!(opened.shown_tempo(), 93.4);
 }
