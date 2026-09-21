@@ -55,7 +55,7 @@ pub fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {
 pub fn open_with(cx: &mut TestAppContext, fill: impl FnOnce(&mut Project)) -> Opened<'_> {
     let folder = tempfile::tempdir().unwrap();
     let (control, engine) = Engine::new(OFFLINE);
-    let mut project = open_or_create(folder.path(), control).unwrap();
+    let (mut project, _plugins) = open_or_create(folder.path(), control).unwrap();
     fill(&mut project);
     open_project(cx, folder, project, engine)
 }

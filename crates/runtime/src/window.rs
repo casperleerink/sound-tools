@@ -317,8 +317,11 @@ pub fn run(folder: &Path) -> Result<()> {
     let device_name = device.name()?;
     let config = EngineConfig::new(device.sample_rate(), device.channels());
     let (control, engine) = Engine::new(config);
-    let mut project = open_or_create(folder, control)?;
+    let (mut project, plugins) = open_or_create(folder, control)?;
     project.watch()?;
+    for notice in plugins.take_notices() {
+        println!("plugin scan: {notice}");
+    }
     let stream = Rc::new(device.start(engine)?);
     let timing = stream.timing().clone();
     let title = project
@@ -352,9 +355,41 @@ pub fn run(folder: &Path) -> Result<()> {
                 }
             })
             .detach();
-            cx.on_app_quit(move |_| {
-                print_device_report(&stream);
-                async {}
+            // The plugins of the project: the main-thread callbacks they ask for, and the
+            // state they say changed, written into the project. One poll per session poll.
+            cx.spawn({
+                let (session, plugins) = (session.downgrade(), plugins.clone());
+                async move |cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(sound_ui::POLL_INTERVAL)
+                            .await;
+                        let Some(session) = session.upgrade() else {
+                            break;
+                        };
+                        let problems =
+                            session.read_with(cx, |session, _| plugins.poll(session.project()));
+                        for problem in problems {
+                            session.update(cx, |session, cx| session.report(problem, cx));
+                        }
+                    }
+                }
+            })
+            .detach();
+            cx.on_app_quit({
+                let (session, plugins) = (session.downgrade(), plugins.clone());
+                move |cx| {
+                    // Whatever a plugin changed in the last moments still reaches the project.
+                    if let Some(session) = session.upgrade() {
+                        let saved =
+                            session.read_with(cx, |session, _| plugins.poll(session.project()));
+                        for problem in saved {
+                            eprintln!("error: {problem}");
+                        }
+                    }
+                    print_device_report(&stream);
+                    async {}
+                }
             })
             .detach();
             cx.on_window_closed(|cx, _| {

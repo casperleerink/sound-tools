@@ -108,6 +108,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "agent-docs/project-json.md",
             "agent-docs/arrangement.md",
             "agent-docs/instrument.md",
+            "agent-docs/plugins.md",
             "agent-docs/tone.md",
             "agent-docs/inspect.md",
             "agent-docs/takes.md",
@@ -139,7 +140,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             );
         }
     }
-    let inspect = &files[5].1;
+    let inspect = &files[6].1;
     assert!(inspect.contains("```sh\nruntime . --inspect\n```"));
     assert_eq!(
         std::fs::read_to_string(harness.path("CLAUDE.md")).unwrap(),
@@ -195,7 +196,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .iter()
             .flat_map(|(_, text)| json_examples(text))
             .collect();
-        assert_eq!(all.len(), 8, "{time_signature}");
+        assert_eq!(all.len(), 10, "{time_signature}");
 
         // The raw take of a recording is not a record: it is an asset the runtime writes once
         // and never reads back. Its example is checked as the file it is.
@@ -226,7 +227,17 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             write(folder.path(), path, body);
         }
         let mut copy = Harness::open(folder);
-        assert_eq!(copy.project.problems(), [], "{time_signature}");
+        // The plugin doc names a plugin no machine is expected to have. That is the case its
+        // doc describes: the record loads, the track is silent and the problem names the id.
+        let problems: Vec<String> = copy
+            .project
+            .problems()
+            .into_iter()
+            .map(|problem| format!("{}: {}", problem.path, problem.message))
+            .collect();
+        let expected = "state/arrangement/rhodes/instrument.json: this machine has no CLAP plugin with the id \"com.example.piano\"";
+        assert_eq!(problems.len(), 1, "{time_signature}: {problems:?}");
+        assert!(problems[0].starts_with(expected), "{problems:?}");
         let instances: Vec<String> = copy
             .project
             .instances()
@@ -240,6 +251,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
                 "arrangement/piano/chords-bars-5-8",
                 "arrangement/piano/instrument",
                 "arrangement/piano/take-1",
+                "arrangement/rhodes",
+                "arrangement/rhodes/instrument",
                 "drone",
             ]
         );

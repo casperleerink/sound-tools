@@ -860,7 +860,7 @@ mod tests {
     fn a_scrub_ends_when_the_project_loses_its_end(cx: &mut TestAppContext) {
         let folder = tempfile::tempdir().unwrap();
         let (control, _engine) = Engine::new(OFFLINE);
-        let mut project = open_or_create(folder.path(), control).unwrap();
+        let (mut project, _plugins) = open_or_create(folder.path(), control).unwrap();
         let mut changes = Changes::new();
         let clip = Clip::new(Ticks(0), Length::new(Ticks(3840)).unwrap(), Vec::new());
         let id = InstanceId::new("arrangement/track-1/part").unwrap();

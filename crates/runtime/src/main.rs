@@ -6,6 +6,7 @@
 //! runtime <project-folder> --headless                      run live, commands from stdin
 //! runtime <project-folder> --inspect                       print a summary, open no device
 //! runtime <project-folder> --render <wav> --seconds <n>    render offline
+//! runtime --plugins                                        list the plugins of this machine
 //! ```
 //!
 //! Only the first form starts GPUI. Tests, CI and agents use the others.
@@ -133,7 +134,10 @@ fn run(folder: &Path) -> Result<()> {
         config.sample_rate, config.channels
     );
     let (control, engine) = Engine::new(config);
-    let mut project = open_or_create(folder, control)?;
+    let (mut project, plugins) = open_or_create(folder, control)?;
+    for notice in plugins.take_notices() {
+        println!("plugin scan: {notice}");
+    }
     project.drain_events();
     print_summary(&project);
     project.watch()?;
@@ -146,6 +150,9 @@ fn run(folder: &Path) -> Result<()> {
         // One bad file or one failed write must not end the session. It is reported instead.
         if let Err(error) = project.poll() {
             println!("error: {error}");
+        }
+        for problem in plugins.poll(&project) {
+            println!("error: {problem}");
         }
         print_events(&mut project);
         match lines.try_recv() {
@@ -188,13 +195,13 @@ fn run(folder: &Path) -> Result<()> {
 
 /// Reads the project without its lock, so it works next to a running runtime.
 fn inspect(folder: &Path) -> Result<()> {
-    let (project, _engine) = open_read_only(folder)?;
+    let (project, _engine, _plugins) = open_read_only(folder)?;
     print_summary(&project);
     Ok(())
 }
 
 fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
-    let (mut project, mut engine) = open_read_only(folder)?;
+    let (mut project, mut engine, _plugins) = open_read_only(folder)?;
     print_problems(&project);
     project.engine().play();
     let mut writer = hound::WavWriter::create(
@@ -229,19 +236,67 @@ fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
     Ok(())
 }
 
+/// Prints every plugin this machine has, with how long the scan took. A composer or an agent
+/// needs the plugin's own id to put it on a track, and it is in no file.
+fn list_plugins() -> Result<()> {
+    let plugins = runtime::plugins(true)?;
+    let started = std::time::Instant::now();
+    let scan = plugins.scan();
+    let took = started.elapsed();
+    for plugin in &scan.plugins {
+        let kind = if plugin.is_instrument() {
+            "instrument"
+        } else {
+            "not an instrument"
+        };
+        println!(
+            "{}  {} {} ({kind}, {})",
+            plugin.id,
+            plugin.vendor,
+            plugin.name,
+            plugin.features.join(" ")
+        );
+    }
+    for failure in &scan.failures {
+        println!("{}: {}", failure.path.display(), failure.message);
+    }
+    println!(
+        "{} bundles, {} plugins, {} failed, in {took:?}",
+        scan.bundles,
+        scan.plugins.len(),
+        scan.failures.len()
+    );
+    Ok(())
+}
+
+/// Prints one line of JSON per plugin in the bundle. See [`plugin_host::scan_one_bundle`].
+fn scan_one_bundle(bundle: &Path) -> Result<()> {
+    match plugin_host::scan_one_bundle(bundle) {
+        Ok(lines) => {
+            print!("{lines}");
+            Ok(())
+        }
+        Err(message) => bail!("{message}"),
+    }
+}
+
 fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match arguments.as_slice() {
+        ["--plugins"] => list_plugins(),
         [folder] => runtime::window::run(Path::new(folder)),
         [folder, "--headless"] => run(Path::new(folder)),
         [folder, "--inspect"] => inspect(Path::new(folder)),
+        // The child of a plugin scan. It loads one bundle, which is why it is a process of
+        // its own: a plugin that crashes while it is looked at costs this child and no more.
+        [plugin_host::SCAN_ARGUMENT, bundle] => scan_one_bundle(Path::new(bundle)),
         [folder, "--render", wav, "--seconds", seconds] => {
             let seconds = seconds.parse().context("--seconds takes a number")?;
             render(Path::new(folder), Path::new(wav), seconds)
         }
         _ => bail!(
-            "usage: runtime <project-folder> [--headless | --inspect | --render <wav> --seconds <n>]"
+            "usage: runtime <project-folder> [--headless | --inspect | --render <wav> --seconds <n>]\n       runtime --plugins"
         ),
     }
 }

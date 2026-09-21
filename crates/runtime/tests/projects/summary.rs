@@ -22,8 +22,8 @@ fn the_summary_tells_what_plays_where() {
     harness.write_and_apply("project.json", &project_file);
 
     // A second, read-only open next to the live one sees the same: this is `--inspect`.
-    let (inspected, _engine) = runtime::open_read_only(harness.project.root()).unwrap();
-    let expected = r#"extensions: arrangement, instrument, tone
+    let (inspected, _engine, _plugins) = runtime::open_read_only(harness.project.root()).unwrap();
+    let expected = r#"extensions: arrangement, instrument, plugin-host, tone
 time signature: 4/4, 3840 ticks per bar, 960 ticks per beat
 tempo: 120 bpm from 1:1:000 (tick 0)
 tempo: 90 bpm from 5:1:000 (tick 15360)

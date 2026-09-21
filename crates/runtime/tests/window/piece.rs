@@ -21,7 +21,7 @@ fn draw(opened: &mut Opened<'_>, start: u64, length: u64, pitch: u8) {
 
 /// Plays the first three bars of the project folder offline, without its lock.
 fn rendered(folder: &std::path::Path) -> Vec<f32> {
-    let (mut project, mut engine) = open_read_only(folder).unwrap();
+    let (mut project, mut engine, _plugins) = open_read_only(folder).unwrap();
     project.engine().play();
     let frames = 6 * OFFLINE.sample_rate as usize;
     runtime::render(&mut project, &mut engine, frames).unwrap()
@@ -130,7 +130,7 @@ fn a_short_piece_is_made_by_hand_and_is_there_after_closing_and_opening(cx: &mut
     let folder = opened.close();
 
     let (control, _engine) = Engine::new(OFFLINE);
-    let project = open_or_create(folder.path(), control).unwrap();
+    let (project, _plugins) = open_or_create(folder.path(), control).unwrap();
     assert!(project.problems().is_empty());
     for (clip_id, expected) in &piece {
         let instance = project.resolve::<Clip>(&id(clip_id)).unwrap();
