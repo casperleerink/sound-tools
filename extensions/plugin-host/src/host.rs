@@ -5,7 +5,8 @@
 //! this table keeps the handles and hands the audio processors to the engine.
 //!
 //! The rule for saving: a plugin's state is written to its asset when the plugin says it
-//! changed, at the next [`Plugins::poll`]. See README.md for what a crash can lose.
+//! changed, at the next [`Plugins::poll`], and for every plugin when the project goes. See
+//! README.md for what a crash can lose.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -50,6 +51,10 @@ pub enum PluginProblem {
     StateNotRead { plugin_id: String, message: String },
     #[error("the state of the plugin {plugin_id:?} could not be saved: {message}")]
     StateNotWritten { plugin_id: String, message: String },
+    #[error(
+        "the plugin {plugin_id:?} asked to be started again, which this build does not do. Take it off the track and put it back if it stopped sounding"
+    )]
+    AskedForRestart { plugin_id: String },
     #[error(
         "the plugin {plugin_id:?} takes no MIDI, so the sustain pedal does not reach it. Its notes play"
     )]
@@ -407,12 +412,11 @@ impl Plugins {
     pub fn close(&self, project: &Project) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
         let mut table = self.0.table.borrow_mut();
-        for hosted in table.loaded.values_mut() {
-            if !self.0.writes_state {
-                continue;
-            }
-            if let Err(problem) = save(hosted, project.assets()) {
-                problems.push(problem);
+        if self.0.writes_state {
+            for hosted in table.loaded.values_mut() {
+                if let Err(problem) = save(hosted, project.assets()) {
+                    problems.push(problem);
+                }
             }
         }
         let gone: Vec<Hosted> = std::mem::take(&mut table.loaded).into_values().collect();
@@ -454,6 +458,16 @@ impl Plugins {
             });
             if requested {
                 hosted.instance.call_on_main_thread_callback();
+            }
+            // A plugin that asks to be deactivated and activated again. This build does not,
+            // so the composer is told instead of being left with a plugin that stopped.
+            let restart = hosted.instance.access_shared_handler(|shared| {
+                shared.restart_requested.swap(false, Ordering::AcqRel)
+            });
+            if restart {
+                problems.push(PluginProblem::AskedForRestart {
+                    plugin_id: hosted.plugin_id.clone(),
+                });
             }
             let dirty = hosted
                 .instance

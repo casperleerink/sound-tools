@@ -84,8 +84,6 @@ pub struct HostedPlugin {
     /// The keys this processor has sent a note on for and no note off yet, so an `AllOff`
     /// ends exactly those. A plugin need not understand a note off that matches every key.
     keys_down: [bool; 128],
-    /// Events that did not fit in one block, counted for `EngineStatus::event_overflows`.
-    dropped: u64,
 }
 
 /// What the control side sends: the plugin to play, or nothing. The one that was there rides
@@ -101,7 +99,6 @@ impl HostedPlugin {
         Self {
             plugin: None,
             keys_down: [false; 128],
-            dropped: 0,
         }
     }
 }
@@ -134,9 +131,8 @@ impl Processor for HostedPlugin {
         if plugin.failed {
             return;
         }
-        let dropped = translate(plugin, events, &mut self.keys_down);
-        self.dropped += dropped;
-        for _ in 0..dropped {
+        // More events in one block than the plugin's buffer holds. Counted, never allocated.
+        for _ in 0..translate(plugin, events, &mut self.keys_down) {
             context.event_outputs.count_dropped();
         }
         if !run(plugin, frames) {

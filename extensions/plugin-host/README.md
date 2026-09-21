@@ -113,6 +113,11 @@ Effects, VST3, AU, a plugin sandbox, latency compensation, parameter automation,
 view, presets, MIDI out of a plugin, more than one audio output bus, and the plugin's own
 window with the picker that opens it, which is step 4b.
 
+A plugin that asks to be started again (`request_restart`), which it may do after changing its
+own port layout, is told to the composer instead of being restarted. A plugin that asks for
+audio processing to begin (`request_process`) needs nothing: the host calls every plugin every
+block while its track exists.
+
 A plugin is an instrument when it says so in its CLAP features. Nothing checks whether that is
 true: a plugin with the `instrument` feature that is really an effect loads, gets notes and is
 silent. Audio input ports are no sign of one: Six Sines is an instrument with a stereo input
