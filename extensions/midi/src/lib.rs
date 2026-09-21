@@ -28,7 +28,7 @@ use sound_core::AgentDoc;
 pub use keyboard::{Keyboard, Latency, Lost};
 pub use keys::{Arrived, INPUT_CAPACITY, Input, Keys, Played, REPORT_CAPACITY, Sounded};
 pub use ports::{PortError, Ports};
-pub use take::{RawEvent, RawTake, TAKES_FOLDER, Take, TakeEvent, take_path};
+pub use take::{RawEvent, RawTake, TAKES_FOLDER, Take, TakeEvent, take_asset};
 
 /// What an agent needs to know about a raw take. Every project gets it, because every project
 /// can be recorded into: the runtime registers it with `runtime_agent_doc`.

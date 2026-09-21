@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     BehaviourContext, BehaviourError, Changes, Engine, EngineConfig, OutputEndpoint, Project,
-    ProjectError, State,
+    ProjectError, Registry, State,
 };
 
 use crate::tools::{Constant, Dc, EXTENSION, Gain, SAMPLE_RATE, id, registry};
@@ -242,10 +242,77 @@ fn a_record_whose_behaviour_fails_is_left_out_when_the_project_opens() {
     assert_eq!(level(&mut engine), 0.75);
 }
 
+/// A behaviour that plays only part of its state says so, and the edit still applies.
 #[test]
-fn the_project_can_move_to_another_thread() {
-    fn assert_send<T: Send>() {}
-    assert_send::<Project>();
+fn a_behaviour_reports_a_problem_about_its_instance_without_failing_the_edit() {
+    let mut registry = Registry::new();
+    registry.tool::<Dc>(EXTENSION).unwrap().behaviour(
+        |state: &Dc, context: &mut BehaviourContext<'_>| {
+            let node = context.processor("constant", || Constant::new(0.0))?;
+            context.update(node, state.value)?;
+            context.connect(OutputEndpoint::new(node, Constant::OUTPUT).to_device(0))?;
+            if state.value < 0.0 {
+                context.problem("a negative value is played as it is, but nothing inverts it");
+            }
+            Ok(())
+        },
+    );
+    let folder = tempfile::tempdir().unwrap();
+    let (control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let mut project = Project::open(folder.path(), registry, control).unwrap();
+
+    let mut changes = Changes::new();
+    changes.create(id("dc"), Dc { value: -0.5 });
+    project.commit("Add", changes).unwrap();
+    assert_eq!(level(&mut engine), -0.5);
+    let problems = project.problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].path, "state/dc.json");
+    assert!(problems[0].message.contains("nothing inverts it"));
+
+    // It goes away when the behaviour runs again and does not report it.
+    let dc = project.resolve::<Dc>(&id("dc")).unwrap();
+    let mut edit = project.begin("Change");
+    project
+        .update(&mut edit, &dc, |state| state.value = 0.5)
+        .unwrap();
+    project.finish(edit).unwrap();
+    assert_eq!(project.problems(), []);
+
+    // And with the instance.
+    let mut changes = Changes::new();
+    changes.delete(&id("dc"));
+    project.commit("Delete", changes).unwrap();
+    assert_eq!(project.problems(), []);
+}
+
+/// The project used to be `Send`. It is not since the plugin host: a behaviour may keep
+/// control-side state that belongs to the thread the project lives on, because CLAP requires a
+/// plugin's main-thread calls on the application's main thread. The project has always lived on
+/// one thread. See ARCHITECTURE.md "Hosting plugins".
+#[test]
+fn a_behaviour_may_keep_state_of_its_own_that_cannot_move_to_another_thread() {
+    let runs = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut registry = Registry::new();
+    registry.tool::<Dc>(EXTENSION).unwrap().behaviour({
+        let runs = runs.clone();
+        move |state: &Dc, context: &mut BehaviourContext<'_>| {
+            runs.set(runs.get() + 1);
+            let node = context.processor("constant", || Constant::new(0.0))?;
+            context.update(node, state.value)?;
+            context.connect(OutputEndpoint::new(node, Constant::OUTPUT).to_device(0))?;
+            Ok(())
+        }
+    });
+    let folder = tempfile::tempdir().unwrap();
+    let (control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let mut project = Project::open(folder.path(), registry, control).unwrap();
+
+    let mut changes = Changes::new();
+    changes.create(id("dc"), Dc { value: 0.5 });
+    project.commit("Add", changes).unwrap();
+    assert_eq!(runs.get(), 1);
+    assert_eq!(level(&mut engine), 0.5);
 }
 
 #[test]

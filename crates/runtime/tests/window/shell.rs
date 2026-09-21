@@ -177,7 +177,7 @@ impl Render for FieldView {
 fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppContext) {
     let folder = tempfile::tempdir().unwrap();
     let (control, mut engine) = Engine::new(OFFLINE);
-    let mut project = open_or_create(folder.path(), control).unwrap();
+    let (mut project, _plugins) = open_or_create(folder.path(), control).unwrap();
     let arrangement = main_arrangement(&project).unwrap();
     runtime::add_track(&mut project, &arrangement).unwrap();
     cx.update(sound_ui::init);

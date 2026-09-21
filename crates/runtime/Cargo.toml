@@ -16,6 +16,7 @@ hound.workspace = true
 instrument.workspace = true
 metronome.workspace = true
 midi.workspace = true
+plugin-host.workspace = true
 sound-core.workspace = true
 sound-notes.workspace = true
 sound-ui.workspace = true
@@ -27,6 +28,7 @@ gpui_platform = { workspace = true, features = ["test-support"] }
 midi.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+test-clap-plugin.workspace = true
 
 # Renders the window offscreen. It runs on the main thread (no test harness), because the Metal
 # renderer and the text system need it.

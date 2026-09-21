@@ -10,6 +10,7 @@ use std::path::Path;
 use anyhow::Result;
 use arrangement::{ArrangementState, Colour};
 use instrument::SynthState;
+use plugin_host::{Plugins, ScanCommand, default_search_paths};
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
     ProjectError, Registry, SavedDestination, State,
@@ -43,11 +44,27 @@ runtime . --inspect
 `runtime` is the program that has this project open. When it is not on your `PATH`, ask the composer where it is, or skip this step: `problems.txt` tells you whether your files loaded.",
 };
 
+/// The plugin host of one session: it scans this machine, keeps the plugins a project loads
+/// and saves their state. `read_only` is for `--inspect` and `--render`, which never write.
+///
+/// The scan runs this same executable with [`plugin_host::SCAN_ARGUMENT`], one child process
+/// per bundle, so a plugin that crashes while it is looked at costs one bundle.
+pub fn plugins(read_only: bool) -> Result<Plugins> {
+    let scanner = ScanCommand::this_program()?;
+    let paths = default_search_paths();
+    Ok(if read_only {
+        Plugins::read_only(paths, scanner)
+    } else {
+        Plugins::new(paths, scanner)
+    })
+}
+
 /// Every bundled extension registers here.
-pub fn registry() -> Result<Registry> {
+pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
     arrangement::register(&mut registry)?;
     instrument::register(&mut registry)?;
+    plugin_host::register(&mut registry, plugins)?;
     tone::register(&mut registry)?;
     registry.runtime_agent_doc(INSPECT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
@@ -101,9 +118,21 @@ pub fn add_track(
 /// files in it, such as `.git` or `.DS_Store`, do not make it an existing project.
 ///
 /// Making the default content is not something to undo, so a new project has no history.
-pub fn open_or_create(folder: &Path, control: EngineControl) -> Result<Project> {
+pub fn open_or_create(folder: &Path, control: EngineControl) -> Result<(Project, Plugins)> {
+    let plugins = plugins(false)?;
+    let project = open_or_create_with(folder, control, plugins.clone())?;
+    Ok((project, plugins))
+}
+
+/// [`open_or_create`] with a plugin host given, for tests that look for plugins in a folder of
+/// their own instead of on this machine.
+pub fn open_or_create_with(
+    folder: &Path,
+    control: EngineControl,
+    plugins: Plugins,
+) -> Result<Project> {
     let is_new = !folder.join(PROJECT_FILE).exists();
-    let mut project = Project::open(folder, registry()?, control)?;
+    let mut project = Project::open(folder, registry(plugins)?, control)?;
     // A `state/` folder with content but no project file is someone's work, not a new project.
     if is_new && project.instances().next().is_none() && project.problems().is_empty() {
         arrangement::create_default_project(&mut project, SynthState::default())?;
@@ -114,9 +143,16 @@ pub fn open_or_create(folder: &Path, control: EngineControl) -> Result<Project> 
 
 /// Opens the project without its lock, so it works next to a running runtime. The engine
 /// renders it offline.
-pub fn open_read_only(folder: &Path) -> Result<(Project, Engine)> {
+pub fn open_read_only(folder: &Path) -> Result<(Project, Engine, Plugins)> {
+    let plugins = plugins(true)?;
+    let (project, engine) = open_read_only_with(folder, plugins.clone())?;
+    Ok((project, engine, plugins))
+}
+
+/// [`open_read_only`] with a plugin host given, for tests. See [`open_or_create_with`].
+pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
     let (control, engine) = Engine::new(OFFLINE);
-    let project = Project::open_read_only(folder, registry()?, control)?;
+    let project = Project::open_read_only(folder, registry(plugins)?, control)?;
     Ok((project, engine))
 }
 

@@ -317,8 +317,16 @@ pub fn run(folder: &Path) -> Result<()> {
     let device_name = device.name()?;
     let config = EngineConfig::new(device.sample_rate(), device.channels());
     let (control, engine) = Engine::new(config);
-    let mut project = open_or_create(folder, control)?;
+    let (mut project, plugins) = open_or_create(folder, control)?;
     project.watch()?;
+    for notice in plugins.take_notices() {
+        println!("plugin scan: {notice}");
+    }
+    // From here only the project holds the plugins, so that dropping the project ends them and
+    // saves the state of every one. A handle kept here would outlive the project: this
+    // function returns after the application has quit.
+    let weak_plugins = plugins.downgrade();
+    drop(plugins);
     let stream = Rc::new(device.start(engine)?);
     let timing = stream.timing().clone();
     let title = project
@@ -352,6 +360,32 @@ pub fn run(folder: &Path) -> Result<()> {
                 }
             })
             .detach();
+            // The plugins of the project: the main-thread callbacks they ask for, and the
+            // state they say changed, written into the project. One poll per session poll.
+            cx.spawn({
+                // Nothing strong is held: the plugins must go when the project goes, because
+                // that is what saves the state of every one of them.
+                let (session, plugins) = (session.downgrade(), weak_plugins.clone());
+                async move |cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(sound_ui::POLL_INTERVAL)
+                            .await;
+                        let (Some(session), Some(plugins)) = (session.upgrade(), plugins.upgrade())
+                        else {
+                            break;
+                        };
+                        let problems =
+                            session.read_with(cx, |session, _| plugins.poll(session.project()));
+                        for problem in problems {
+                            session.update(cx, |session, cx| session.report(problem, cx));
+                        }
+                    }
+                }
+            })
+            .detach();
+            // The state of every plugin reaches the project when the project is dropped, which
+            // GPUI does with the views before any of this runs. See the plugin host.
             cx.on_app_quit(move |_| {
                 print_device_report(&stream);
                 async {}

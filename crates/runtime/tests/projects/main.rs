@@ -8,6 +8,7 @@ mod agent_doc;
 mod live;
 mod metronome;
 mod mixer;
+mod plugins;
 mod recording;
 mod scale;
 mod summary;

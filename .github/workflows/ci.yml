@@ -37,12 +37,14 @@ jobs:
       - run: cargo fmt --all --check
       - run: typos
       - run: cargo clippy --workspace --all-targets --locked
+      # Before the tests: they load the repository's own CLAP plugin, which is a dynamic
+      # library that `cargo test` does not build.
+      - run: cargo build --workspace --locked
       - run: cargo nextest run --workspace --locked
       - name: Render gallery snapshots
         run: cargo test -p gallery --test snapshots --locked
       - name: Render window snapshots
         run: cargo test -p runtime --test snapshots --locked
-      - run: cargo build --workspace --locked
       - run: cargo shear
       - run: cargo deny check
 
@@ -50,9 +52,10 @@ jobs:
       # allocates, locks or makes a system call inside Engine::process_block.
       - name: Realtime sanitizer
         run: |
-          cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement -p metronome -p midi --locked
+          cargo nextest run -p sound-core -p tone -p instrument -p sound-notes -p arrangement -p metronome -p midi -p plugin-host --locked
           # Real projects: the sequencer of every track into its synth, with live file edits,
-          # and a whole recording from the MIDI input into a clip.
+          # a whole recording from the MIDI input into a clip, and a track whose instrument is
+          # a hosted CLAP plugin.
           cargo nextest run -p runtime --test projects --locked
         env:
           RTSAN_ENABLE: 1

@@ -62,7 +62,7 @@ fn hundred_tracks_of_hundred_clips_open_play_and_take_an_edit() {
 
     let started = Instant::now();
     let (control, mut engine) = sound_core::Engine::new(OFFLINE);
-    let mut project = runtime::open_or_create(&root, control).unwrap();
+    let (mut project, _plugins) = runtime::open_or_create(&root, control).unwrap();
     println!("open: {:?}", started.elapsed());
     assert_eq!(project.problems(), []);
     assert_eq!(project.instances().count() as u64, 3 + TRACKS * (CLIPS + 2));

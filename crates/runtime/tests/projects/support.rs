@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use plugin_host::{Plugins, ScanCommand};
 use runtime::OFFLINE;
 use sound_core::{Engine, Project};
 
@@ -49,13 +50,42 @@ impl Harness {
 
     pub fn open(folder: tempfile::TempDir) -> Self {
         let (control, engine) = Engine::new(OFFLINE);
-        let project = runtime::open_or_create(folder.path(), control).unwrap();
+        let (project, _plugins) = runtime::open_or_create(folder.path(), control).unwrap();
         Self {
             project,
             engine,
             now: Instant::now(),
             folder,
         }
+    }
+
+    /// A project whose plugin host looks only in `plugins/` inside the project folder, where
+    /// the repository's own test plugin is put. No plugin of this machine is used, so these
+    /// tests run the same in CI.
+    pub fn with_test_plugin(folder: tempfile::TempDir) -> (Self, Plugins) {
+        let (control, engine) = Engine::new(OFFLINE);
+        let plugins = test_plugin_host(folder.path(), true);
+        let project =
+            runtime::open_or_create_with(folder.path(), control, plugins.clone()).unwrap();
+        let harness = Self {
+            project,
+            engine,
+            now: Instant::now(),
+            folder,
+        };
+        (harness, plugins)
+    }
+
+    /// The same folder again, as closing and reopening the project does.
+    pub fn reopen_with_test_plugin(self) -> (Self, Plugins) {
+        let Self {
+            project,
+            engine,
+            folder,
+            ..
+        } = self;
+        drop((project, engine));
+        Self::with_test_plugin(folder)
     }
 
     pub fn reopen(self) -> Self {
@@ -136,6 +166,31 @@ impl Harness {
         self.project.engine().play();
         self.render(frames)
     }
+}
+
+/// A plugin host that scans one folder, with the test plugin in it. The scanner is the real
+/// `runtime` executable with its scan argument, so the child process of a scan is the one the
+/// application uses.
+pub fn test_plugin_host(root: &Path, writes_state: bool) -> Plugins {
+    let folder = root.join("plugins");
+    test_clap_plugin::install_into(&folder);
+    let scanner = ScanCommand::new(
+        env!("CARGO_BIN_EXE_runtime"),
+        [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
+    );
+    if writes_state {
+        Plugins::new(vec![folder], scanner)
+    } else {
+        Plugins::read_only(vec![folder], scanner)
+    }
+}
+
+/// The record of a plugin instrument that names the repository's test plugin.
+pub fn test_plugin(state_asset: &str) -> String {
+    format!(
+        r#"{{"tool": "plugin", "state": {{"format": "clap", "plugin_id": "{}", "state_asset": "{state_asset}"}}}}"#,
+        test_clap_plugin::PLUGIN_ID
+    )
 }
 
 pub fn write(root: &Path, relative: &str, contents: &str) -> PathBuf {

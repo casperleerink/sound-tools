@@ -11,26 +11,25 @@
 //! every edit. A name is never used twice, and the file is created and never opened again, so
 //! nothing this program does can write over a performance.
 
-use std::io;
-use std::path::{Path, PathBuf};
-
 use serde::{Deserialize, Serialize};
-use sound_core::Ticks;
+use sound_core::{AssetError, AssetName, Assets, InvalidAssetName, Ticks};
 use sound_notes::{Clip, Length, Note, Pedal, PedalChange, Pitch};
 
 use crate::keys::Played;
 
-/// Where raw takes live in the project folder.
+/// Where raw takes live under `assets/`.
 pub const TAKES_FOLDER: &str = "assets/takes";
 
-/// Names are `take-1`, `take-2` and so on. The runtime never removes one, so the next free
-/// number is always past every take this project ever made, also past the ones an undo took
-/// the clip of.
+/// Names are `take-1`, `take-2` and so on, counted by the asset facility of the core. It never
+/// writes over a file that is there, so the next free number is always past every take this
+/// project ever made, also past the ones an undo took the clip of.
+const FOLDER: &str = "takes";
 const NAME: &str = "take";
+const EXTENSION: &str = "json";
 
-/// The file of the raw take called `name`.
-pub fn take_path(root: &Path, name: &str) -> PathBuf {
-    root.join(TAKES_FOLDER).join(format!("{name}.json"))
+/// The asset of the raw take called `name`, for example `take-1`.
+pub fn take_asset(name: &str) -> Result<AssetName, InvalidAssetName> {
+    AssetName::new(FOLDER, name, EXTENSION)
 }
 
 /// One message of a take: what arrived and when, plus where the engine sounded it.
@@ -173,31 +172,13 @@ impl Take {
 
     /// Writes the raw take under a name of its own and gives that name, for the clip to keep.
     ///
-    /// The file is created, never opened: a name that is taken is never written to, so no
+    /// [`Assets::create`] creates the file and never opens one that is there, so no
     /// performance this program has written can be lost, whatever happened to its clip. The
     /// runtime never writes it again and never removes it, not even on undo.
-    pub fn write(&self, root: &Path) -> io::Result<String> {
-        let folder = root.join(TAKES_FOLDER);
-        std::fs::create_dir_all(&folder)?;
-        let json = self.json();
-        let mut number = 1_u32;
-        loop {
-            let name = format!("{NAME}-{number}");
-            let file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(folder.join(format!("{name}.json")));
-            match file {
-                Ok(mut file) => {
-                    use std::io::Write as _;
-                    file.write_all(json.as_bytes())?;
-                    return Ok(name);
-                }
-                // Taken, by a take of this session or of an earlier one. Never written to.
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => number += 1,
-                Err(error) => return Err(error),
-            }
-        }
+    pub fn write(&self, assets: &Assets) -> Result<String, AssetError> {
+        let name = AssetName::new(FOLDER, NAME, EXTENSION)?;
+        let written = assets.create(&name, self.json().as_bytes())?;
+        Ok(written.name().to_string())
     }
 
     /// The take as it is written: one message per line, like a note of a clip, so a minute of

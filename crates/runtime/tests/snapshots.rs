@@ -58,7 +58,7 @@ impl Opened {
         // The folder name is the project name in the window.
         let folder = tempfile::tempdir()?;
         let (control, engine) = Engine::new(OFFLINE);
-        let mut project = open_or_create(&folder.path().join("Night Study"), control)?;
+        let (mut project, _plugins) = open_or_create(&folder.path().join("Night Study"), control)?;
         fill(&mut project)?;
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
         let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {

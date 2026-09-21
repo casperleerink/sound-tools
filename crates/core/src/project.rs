@@ -6,6 +6,7 @@
 //! ARCHITECTURE.md "Project storage" and "Editing and system services". `README.md` in this
 //! crate is the guide for extension authors.
 
+mod assets;
 mod binding;
 mod editing;
 mod file;
@@ -19,6 +20,7 @@ mod watcher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
 pub use editing::{Changes, Edit, OUTSIDE_UNDO_WINDOW};
 pub use file::{FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination};
@@ -131,6 +133,7 @@ pub(crate) enum Source {
 pub struct Project {
     registry: Registry,
     storage: Storage,
+    assets: Assets,
     read_only: bool,
     engine: EngineControl,
     instances: BTreeMap<InstanceId, Record>,
@@ -185,6 +188,7 @@ impl Project {
         let extensions = registry.extensions().into_iter().map(String::from);
         let mut project = Self {
             project_file: ProjectFile::new(extensions.collect()),
+            assets: Assets::new(storage.root()),
             registry,
             storage,
             read_only,
@@ -230,6 +234,12 @@ impl Project {
     /// The project folder, canonical.
     pub fn root(&self) -> &Path {
         self.storage.root()
+    }
+
+    /// The `assets/` folder: opaque files an extension owns, such as a raw take or the state
+    /// of a hosted plugin. The core never reads inside one. See [`Assets`].
+    pub fn assets(&self) -> &Assets {
+        &self.assets
     }
 
     /// The engine, for the transport and for `poll`. Change the tempo map through an edit, so
@@ -367,7 +377,35 @@ impl Project {
                 path: storage::PROJECT_FILE.to_string(),
                 message: message.clone(),
             });
-        files.chain(connections).collect()
+        // What a behaviour said about its own instance while it ran. The record is live and
+        // untouched; part of what it asks for is not.
+        let instances = self
+            .bindings
+            .instance_problems()
+            .filter_map(|(id, message)| {
+                let record = self.instances.get(id)?;
+                let path = self.storage.record_path(id, Form::of(record));
+                Some(Problem {
+                    path: self.storage.display_path(&path),
+                    message: message.clone(),
+                })
+            });
+        files.chain(connections).chain(instances).collect()
+    }
+
+    /// What every behaviour reported about its own instance, on the path of its record.
+    fn instance_problems(&self) -> Vec<Problem> {
+        let problems = self.bindings.instance_problems();
+        problems
+            .filter_map(|(id, message)| {
+                let record = self.instances.get(id)?;
+                let path = self.storage.record_path(id, Form::of(record));
+                Some(Problem {
+                    path: self.storage.display_path(&path),
+                    message: message.clone(),
+                })
+            })
+            .collect()
     }
 
     /// The one state application. Interface edits, file changes, loading, undo, redo and
@@ -383,6 +421,9 @@ impl Project {
         }
         let project_file_before = self.project_file.clone();
         let problems_before = self.bindings.connection_problems().to_vec();
+        // What behaviours said last time, so that `problems.txt` and the views follow a
+        // behaviour that starts or stops reporting. Empty in a project with nothing to report.
+        let instance_problems_before = self.instance_problems();
         let mut records = Vec::new();
         let result = self
             .stage(changes, source, &mut records)
@@ -418,7 +459,9 @@ impl Project {
         if project_file.is_some() {
             self.push_event(ProjectEvent::ProjectFileChanged);
         }
-        if problems_before != self.bindings.connection_problems() {
+        if problems_before != self.bindings.connection_problems()
+            || instance_problems_before != self.instance_problems()
+        {
             self.push_event(ProjectEvent::ProblemsChanged);
         }
         Ok(Applied {
@@ -566,7 +609,9 @@ impl Project {
             dirty,
             connections: &self.project_file.connections,
         };
-        Ok(self.bindings.apply(&mut self.engine, change)?)
+        Ok(self
+            .bindings
+            .apply(&mut self.engine, &self.assets, change)?)
     }
 
     /// Makes the files of these instances match the live state: parents before children, then

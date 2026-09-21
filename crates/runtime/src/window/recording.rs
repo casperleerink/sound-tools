@@ -73,5 +73,5 @@ pub fn add_take_clip(
 /// only copy of what the composer played. The name is never one that was used before, and the
 /// file is created and never opened again, so no take can be written over.
 pub fn write_take(project: &Project, take: &Take) -> Result<String> {
-    Ok(take.write(project.root())?)
+    Ok(take.write(project.assets())?)
 }

@@ -20,6 +20,7 @@ use crate::transport::{TransportCommand, TransportState};
 pub(crate) trait ErasedProcessor: Send {
     fn update(&mut self, update: &mut dyn Any);
     fn process(&mut self, context: &mut ProcessContext<'_>);
+    fn leaving(&mut self);
 }
 
 impl<P: Processor> ErasedProcessor for P {
@@ -31,6 +32,10 @@ impl<P: Processor> ErasedProcessor for P {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         Processor::process(self, context);
+    }
+
+    fn leaving(&mut self) {
+        Processor::leaving(self);
     }
 }
 
@@ -187,6 +192,11 @@ impl Engine {
                     Command::SetSlot { slot, processor } => {
                         if let Some(current) = self.slots.get_mut(*slot) {
                             std::mem::swap(current, processor);
+                            // The one that came out gets its last call here, on this thread,
+                            // before it rides back with the batch.
+                            if let Some(leaving) = processor {
+                                leaving.leaving();
+                            }
                         }
                     }
                     Command::Update { slot, update } => {

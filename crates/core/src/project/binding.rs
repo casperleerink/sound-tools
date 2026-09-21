@@ -7,6 +7,7 @@
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::assets::Assets;
 use super::file::{PortReference, SavedConnection, SavedDestination};
 use super::instance::{InstanceId, Record, State};
 use super::registry::Registry;
@@ -83,6 +84,8 @@ struct Binding {
     connections: BTreeSet<Connection>,
     outputs: BTreeMap<String, OutputEndpoint>,
     inputs: BTreeMap<String, InputEndpoint>,
+    /// What the behaviour said is not live about its instance, see [`BehaviourContext::problem`].
+    problems: Vec<String>,
 }
 
 /// The non-generic part of [`Edit`]. A trait object hides the lifetime of the edit, so
@@ -135,6 +138,7 @@ impl EngineEdit for Edit<'_> {
 pub struct BehaviourContext<'a> {
     id: &'a InstanceId,
     edit: &'a mut (dyn EngineEdit + 'a),
+    assets: &'a Assets,
     instances: &'a BTreeMap<InstanceId, Record>,
     bindings: &'a BTreeMap<InstanceId, Binding>,
     previous: Option<&'a Binding>,
@@ -153,6 +157,29 @@ impl BehaviourContext<'_> {
     /// connects itself to these.
     pub fn device_channels(&self) -> usize {
         self.device_channels
+    }
+
+    /// What every processor of this instance is prepared with, for a behaviour that builds
+    /// something outside a processor that needs the same configuration, such as a plugin.
+    pub fn prepare_config(&self) -> PrepareConfig {
+        self.edit.prepare_config()
+    }
+
+    /// The `assets/` folder of the project, for a tool whose state names an opaque file, such
+    /// as a hosted plugin. A behaviour runs on the control thread and may read and write.
+    pub fn assets(&self) -> &Assets {
+        self.assets
+    }
+
+    /// Says that part of this state is not live, without failing the edit.
+    ///
+    /// The record stays as it is and the rest of the group applies. The message is listed in
+    /// [`Project::problems`](super::Project::problems) on the record's path, so `problems.txt`
+    /// shows it to an agent, until the behaviour runs again and does not report it. Use it for
+    /// a state you can play only partly, such as a plugin this machine does not have. Return a
+    /// [`BehaviourError`] only for a real fault, which rejects the whole edit group.
+    pub fn problem(&mut self, message: impl Into<String>) {
+        self.next.problems.push(message.into());
     }
 
     /// The processor this instance keeps under `name`. `create` runs only when it does not
@@ -372,6 +399,12 @@ impl Bindings {
         &self.connection_problems
     }
 
+    /// What every behaviour reported about its own instance the last time it ran.
+    pub fn instance_problems(&self) -> impl Iterator<Item = (&InstanceId, &String)> {
+        let bindings = self.by_instance.iter();
+        bindings.flat_map(|(id, binding)| binding.problems.iter().map(move |message| (id, message)))
+    }
+
     /// The processor that the behaviour of `instance` declared under `name`, when it is a `P`.
     pub fn node<P: Processor>(&self, instance: &InstanceId, name: &str) -> Option<Node<P>> {
         let (node, processor_type) = self.by_instance.get(instance)?.nodes.get(name)?;
@@ -392,6 +425,7 @@ impl Bindings {
     pub fn apply(
         &mut self,
         control: &mut EngineControl,
+        assets: &Assets,
         change: EngineChange<'_>,
     ) -> Result<(), BindError> {
         let device_channels = control.config().channels;
@@ -404,7 +438,7 @@ impl Bindings {
             };
             let mut edit = control.edit();
             let result = self
-                .run(&mut edit, &change, &mut run)
+                .run(&mut edit, assets, &change, &mut run)
                 .and_then(|()| Ok(edit.commit()?));
             let error = match result {
                 Ok(()) => {
@@ -454,6 +488,7 @@ impl Bindings {
     fn run(
         &mut self,
         edit: &mut Edit<'_>,
+        assets: &Assets,
         change: &EngineChange<'_>,
         run: &mut Run,
     ) -> Result<(), BindError> {
@@ -495,6 +530,7 @@ impl Bindings {
             let mut context = BehaviourContext {
                 id,
                 edit: &mut *edit,
+                assets,
                 instances: change.instances,
                 bindings: &self.by_instance,
                 previous,
