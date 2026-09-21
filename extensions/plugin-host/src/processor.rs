@@ -88,6 +88,13 @@ pub fn not_ours<T>(call: impl FnOnce() -> T) -> T {
     call()
 }
 
+/// What a slot plays when no plugin plays it: what it was given, unchanged. Nothing here
+/// allocates.
+fn pass_through(input: [&[f32]; CHANNELS], left: &mut [f32], right: &mut [f32], frames: usize) {
+    left[..frames].copy_from_slice(&input[0][..frames]);
+    right[..frames].copy_from_slice(&input[1][..frames]);
+}
+
 /// Copies our one stereo port into the channels of a plugin's first audio input port.
 ///
 /// A plugin that takes one channel gets the left one, which is where a processor that makes
@@ -188,11 +195,11 @@ impl Processor for HostedPlugin {
         let frames = context.frames;
         let plugin = self.plugin.as_deref_mut().filter(|_| !self.failed);
         let Some(plugin) = plugin else {
-            // No plugin, or one that failed: the slot passes what it is given through. For an
-            // instrument that is the silence of an input nothing reaches, and for an effect it
-            // is the track playing on through a slot whose plugin is missing.
-            left[..frames].copy_from_slice(&input[0][..frames]);
-            right[..frames].copy_from_slice(&input[1][..frames]);
+            // No plugin, or one that failed in an earlier block: the slot passes what it is
+            // given through. For an instrument that is the silence of an input nothing
+            // reaches, and for an effect it is the track playing on through a slot whose
+            // plugin is missing.
+            pass_through(input, left, right, frames);
             return;
         };
         // More events in one block than the plugin's buffer holds. Counted, never allocated.
@@ -200,7 +207,12 @@ impl Processor for HostedPlugin {
             context.event_outputs.count_dropped();
         }
         if !plugin.run(frames, input, &mut left[..frames], &mut right[..frames]) {
+            // The block a plugin fails on is the first one it does not play, so the slot
+            // passes it through here and not from the next block. A backend writes nothing
+            // into the output when it fails, so whatever it left there is the silence the
+            // engine gave it, which would be a gap of one block in the chain.
             self.failed = true;
+            pass_through(input, left, right, frames);
         }
     }
 }

@@ -108,6 +108,8 @@ pub struct TestTone {
 struct Audio {
     tone: support::Tone,
     processed: u64,
+    /// The block from which this plugin gives up and writes nothing, when it was told to.
+    fails_from: Option<u64>,
     /// How many parameter changes to send out of every process call.
     reports_out: u32,
     /// Whether to say the output is silent and write nothing into it, from the second block on.
@@ -133,6 +135,7 @@ impl TestTone {
             audio: RefCell::new(Audio {
                 tone: support::Tone::new(48_000.0),
                 processed: 0,
+                fails_from: support::fails_from(),
                 reports_out: support::events_out(),
                 goes_silent: support::told_to(support::SILENT_VARIABLE),
                 controller_state: support::told_to(support::CONTROLLER_STATE_VARIABLE),
@@ -204,11 +207,13 @@ impl IComponentTrait for TestTone {
     }
 
     /// One audio bus each way and one event input. The audio input is what the effect half is
-    /// played; an instrument gets the silence its host puts there.
+    /// played; an instrument gets the silence its host puts there. Told to be audio only, this
+    /// plugin has no event bus at all, which is what an ordinary effect looks like.
     unsafe fn getBusCount(&self, media: int32, direction: int32) -> int32 {
         let audio = media == MediaTypes_::kAudio as int32;
-        let event_in =
-            media == MediaTypes_::kEvent as int32 && direction == BusDirections_::kInput as int32;
+        let event_in = media == MediaTypes_::kEvent as int32
+            && direction == BusDirections_::kInput as int32
+            && !support::is_audio_only();
         int32::from(audio || event_in)
     }
 
@@ -423,6 +428,15 @@ impl IAudioProcessorTrait for TestTone {
                 );
             }
             let frames = data.numSamples.max(0) as usize;
+            // A plugin that gives up: it writes nothing into its output and says so, which is
+            // what a host must not turn into a gap in the chain.
+            if audio
+                .fails_from
+                .is_some_and(|block| audio.processed >= block)
+            {
+                audio.processed += 1;
+                return kInternalError;
+            }
             if data.numOutputs < 1 || data.outputs.is_null() {
                 return kResultOk;
             }
@@ -998,7 +1012,13 @@ impl IMidiMappingTrait for TestTone {
         controller: i16,
         id: *mut ParamID,
     ) -> tresult {
-        if bus != 0 || controller != ControllerNumbers_::kCtrlSustainOnOff as i16 || id.is_null() {
+        // Told to take no pedal, this plugin maps no parameter to any controller, which is
+        // what a VST 3 plugin that cannot be sent the pedal looks like.
+        if bus != 0
+            || controller != ControllerNumbers_::kCtrlSustainOnOff as i16
+            || id.is_null()
+            || support::takes_no_pedal()
+        {
             return kResultFalse;
         }
         // SAFETY: the caller gave a place to write one parameter id.
@@ -1095,8 +1115,13 @@ impl IPluginFactory2Trait for Factory {
             write_ascii("Audio Module Class", &mut info.category);
             write_ascii(PLUGIN_NAME, &mut info.name);
             // Both, because this one plugin is both: a picker offers it for an instrument slot
-            // and for an effect slot. `Fx` is what VST 3 calls an effect.
-            write_ascii("Instrument|Fx|Synth", &mut info.subCategories);
+            // and for an effect slot. `Fx` is what VST 3 calls an effect. Told to be audio
+            // only, it says what an ordinary effect says.
+            let categories = match support::is_audio_only() {
+                true => "Fx",
+                false => "Instrument|Fx|Synth",
+            };
+            write_ascii(categories, &mut info.subCategories);
             write_ascii("Sound Tools", &mut info.vendor);
             write_ascii("0.1.0", &mut info.version);
             write_ascii("VST 3.7.0", &mut info.sdkVersion);

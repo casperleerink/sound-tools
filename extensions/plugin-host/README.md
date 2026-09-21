@@ -35,7 +35,9 @@ by what it plays.
 An instrument's audio input is connected to nothing and is silent, which is what every audio
 input of a plugin got before effects existed. A slot whose plugin is missing, or whose plugin
 failed, copies its input to its output: that is what keeps one missing effect from silencing a
-track, and for an instrument it is the silence it always was.
+track, and for an instrument it is the silence it always was. The block a plugin fails on is
+already such a slot: a backend writes nothing into its output when it fails, so a host that
+passed through only from the next block would leave one block of silence in the chain.
 
 `state_asset` is a name, not a path: the file is `assets/plugin-state/<name>.bin`, through the
 core's `AssetName`, so a record can never point outside the project folder.
@@ -123,8 +125,10 @@ the bound of 512 events a block. A backend only says how one event is written do
   `IMidiMapping`: the plugin's controller says which parameter MIDI controller 64 is mapped to,
   and the host sends that parameter as a value from 0 to 1 in the block's parameter changes, at
   the frame the pedal moved.
-- A plugin that offers neither gets the notes and not the pedal, and the record is listed in
-  `problems.txt` saying so.
+- A plugin that takes notes and offers neither gets the notes and not the pedal, and the
+  record is listed in `problems.txt` saying so. A plugin with no note port at all, which is
+  what an ordinary effect is, has no pedal to miss and is not listed: this host cannot ask what
+  a record is for, so it goes by what the plugin has.
 - `NoteEvent::AllOff` becomes a note off for every key this wrapper started, plus the pedal up.
   Both formats have a note off that matches every key, and not every plugin handles one, so the
   exact keys go out. The wrapper keeps that list as 128 bits.
@@ -396,7 +400,11 @@ that plugin may still exist; every host this was written against keeps them load
 ## What a composer picks
 
 `Plugins::instruments` is every instrument of this machine and `Plugins::effects` every effect,
-of every format, from the scan, for the two pickers of a rack. A plugin decides which list it
+of every format, from the scan, for the two pickers of a rack. `Plugins::scan_generation` goes
+up whenever the scan learns something and once more when it ends: a picker filled while a scan
+ran holds a part of the list and the line that says so, and this is what tells it to fill
+again. The window's poll asks for a frame when it changes, and `Devices::offers_generation`
+carries it to whoever draws a menu. A plugin decides which list it
 is in: CLAP's `instrument` and `audio-effect` features, VST 3's `Instrument` and `Fx`
 subcategories. A plugin that says both is in both. `new_state_asset(assets, wanted)` gives a `state_asset` whose file no plugin has ever
 written into: it is `Assets::create` and its numbering, the rule a raw take follows, so the file

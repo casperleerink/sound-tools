@@ -216,6 +216,70 @@ fn the_control_of_the_second_effect_takes_that_one_off_and_not_the_first(cx: &mu
     );
 }
 
+/// The scan of this Mac runs on a thread of its own, so a panel opened at the start of a
+/// session holds a part of the list and the quiet line that says so. Both menus are filled
+/// again when the scan ends, without the panel being closed, and a panel that then shows
+/// another track offers the same.
+#[gpui::test]
+fn a_panel_opened_while_the_scan_runs_offers_the_effects_when_it_ends(cx: &mut TestAppContext) {
+    // Every bundle takes a quarter of a second, as a real one does, so the panel opens while
+    // the scan runs whatever this machine is doing.
+    let mut opened = support::open_with_plugin_host(
+        cx,
+        |root| support::slow_test_plugin_host(root, 250),
+        |project| {
+            let arrangement = runtime::main_arrangement(project).unwrap();
+            runtime::add_track(project, &arrangement).unwrap();
+        },
+    );
+    let plugins = opened.plugins.upgrade().unwrap();
+    plugins.start_scanning();
+    let header = opened.track_header(0);
+    opened.click(header);
+
+    // While it runs: no offers, and the quiet line that says why.
+    assert!(plugins.scan_is_running());
+    let trigger = opened.control(ADD_EFFECT);
+    opened.click(trigger);
+    assert_eq!(opened.find(&plugin_item()), None);
+    assert!(
+        opened.find("menu-note-1").is_some(),
+        "no line about the scan"
+    );
+    opened.keys("escape");
+
+    // The scan ends, the panel is not closed and nothing else happens: one poll later the
+    // menu holds what this Mac has.
+    plugins.wait_for_scan();
+    opened.settle();
+    let trigger = opened.control(ADD_EFFECT);
+    opened.click(trigger);
+    assert!(
+        opened.find(&plugin_item()).is_some(),
+        "the menu stayed empty"
+    );
+    opened.keys("escape");
+
+    // And the picker of the instrument card, which was filled at the same moment.
+    let trigger = opened.control("instrument-picker");
+    opened.click(trigger);
+    assert!(
+        opened.find(&plugin_item()).is_some(),
+        "the picker stayed empty"
+    );
+    opened.keys("escape");
+
+    // The panel shows another track: the same offers, from the same registry.
+    let header = opened.track_header(1);
+    opened.click(header);
+    let trigger = opened.control(ADD_EFFECT);
+    opened.click(trigger);
+    assert!(
+        opened.find(&plugin_item()).is_some(),
+        "another track has none"
+    );
+}
+
 /// A file edit is the way to reorder, and the window follows it.
 #[gpui::test]
 fn a_reorder_written_from_outside_shows_in_the_rack(cx: &mut TestAppContext) {

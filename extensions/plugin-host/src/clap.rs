@@ -245,11 +245,13 @@ pub fn load(
     let audio = instance
         .activate(|_, _| (), configuration)
         .map_err(|error| fail(error.to_string()))?;
-    let notes = match ports.takes_midi {
-        true => Vec::new(),
-        // Audio inputs say nothing about a plugin: Six Sines is an instrument with a stereo
-        // input for audio-rate modulation. They are fed with silence and it plays its notes.
-        false => vec![PluginProblem::NoPedal {
+    // The pedal is only missing from a plugin that has somewhere to take notes. A plugin with
+    // no note port at all, which is what an ordinary effect is, has no pedal to miss, and this
+    // host cannot ask what a record is for. Audio inputs say nothing either way: Six Sines is
+    // an instrument with a stereo input for audio-rate modulation.
+    let notes = match ports.takes_notes && !ports.takes_midi {
+        false => Vec::new(),
+        true => vec![PluginProblem::NoPedal {
             plugin_id: plugin_id.clone(),
         }],
     };
@@ -600,9 +602,12 @@ impl Started for ClapStarted {
     }
 }
 
-/// What the plugin's ports say: how to send it notes, and how many channels to give it.
+/// What the plugin's ports say: whether and how to send it notes, and how many channels to
+/// give it.
 struct PortLayout {
     dialect: Dialect,
+    /// Whether the plugin has a note input port at all. An ordinary effect has none.
+    takes_notes: bool,
     takes_midi: bool,
     input_channels: usize,
     output_channels: usize,
@@ -617,12 +622,14 @@ fn read_ports(instance: &mut PluginInstance<SoundToolsHost>) -> PortLayout {
     // in as CLAP events, and one stereo port out.
     let mut layout = PortLayout {
         dialect: Dialect::Clap,
+        takes_notes: true,
         takes_midi: false,
         input_channels: 0,
         output_channels: 2,
     };
     if let Some(notes) = notes {
         let mut buffer = NotePortInfoBuffer::new();
+        layout.takes_notes = notes.count(&plugin, true) > 0;
         if let Some(port) = notes.get(&plugin, 0, true, &mut buffer) {
             layout.takes_midi = port.supported_dialects.supports(NoteDialect::Midi);
             let clap = port.supported_dialects.supports(NoteDialect::Clap);

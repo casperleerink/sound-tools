@@ -51,6 +51,11 @@ const CHATTER_LINES: usize = 4000;
 /// never does.
 pub const HANG_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_HANG";
 
+/// Takes this many milliseconds to be listed, as a real bundle does: a quarter of a second
+/// each on the machine this was written on. A window opens while a scan of them runs, so a
+/// test can see what a picker holds before the scan has found anything.
+pub const SLOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SLOW";
+
 /// How many things to send out of every process call: CLAP events, VST 3 parameter changes. A
 /// host must have somewhere to put them that neither grows nor allocates on the audio thread.
 pub const EVENTS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_EVENTS";
@@ -131,6 +136,36 @@ pub const WINDOW_HEIGHT: u32 = 240;
 /// buffers would then play the block before over and over. VST 3 only: CLAP has no such flag.
 pub const SILENT_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SILENT";
 
+/// Makes the plugin's `process` fail from this block on, and write nothing into its output,
+/// which is what a plugin that gives up does. A host must not leave a gap in the chain there.
+/// The value is how many blocks it plays first.
+pub const FAIL_FROM_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_FAIL_FROM";
+
+/// How many blocks the plugin plays before it fails, if it was told to fail at all.
+pub fn fails_from() -> Option<u64> {
+    std::env::var(FAIL_FROM_VARIABLE).ok()?.parse().ok()
+}
+
+/// Makes the plugin an audio-only effect: no event input port at all, and it says it is an
+/// effect and not an instrument. A host must not report that the sustain pedal cannot reach a
+/// plugin that has nowhere to take notes.
+pub const AUDIO_ONLY_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_AUDIO_ONLY";
+
+/// Whether this plugin is the audio-only effect of [`AUDIO_ONLY_VARIABLE`].
+pub fn is_audio_only() -> bool {
+    told_to(AUDIO_ONLY_VARIABLE)
+}
+
+/// Makes the plugin take notes and offer the host no way to send the sustain pedal: the CLAP
+/// one takes no MIDI on its note port, and the VST 3 one maps no parameter to controller 64.
+/// A host has to say so, which is the line an audio-only effect must not get.
+pub const NO_PEDAL_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_NO_PEDAL";
+
+/// Whether this plugin takes notes and no pedal.
+pub fn takes_no_pedal() -> bool {
+    told_to(NO_PEDAL_VARIABLE)
+}
+
 /// Makes the VST 3 plugin's edit controller keep a state of its own: how loud it plays. One
 /// object that is both halves does not promise that its two states are the same bytes, and a
 /// host that only asks a controller that is a second object loses this one. VST 3 only.
@@ -209,6 +244,12 @@ pub fn while_listed(format: &str) {
     if hang == "1" || hang == format {
         // Long past any deadline a host could give it. Whoever waits must stop waiting.
         std::thread::sleep(std::time::Duration::from_secs(600));
+    }
+    // A bundle that takes as long as a real one, and finishes.
+    if let Ok(milliseconds) = std::env::var(SLOW_VARIABLE)
+        && let Ok(milliseconds) = milliseconds.parse()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(milliseconds));
     }
 }
 

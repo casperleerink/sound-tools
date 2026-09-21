@@ -138,6 +138,16 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             notes
         }
     });
+    // The scan runs on a thread of its own, so what the plugin host offers grows while a
+    // window is open. This is what tells a picker that its list is not the list any more.
+    devices.offers_change({
+        let plugins = plugins.clone();
+        move || {
+            plugins
+                .upgrade()
+                .map_or(0, |plugins| plugins.scan_generation())
+        }
+    });
     // One record serves both slots, so one function makes both lists. What a plugin says it is
     // decides which list it is in; a record written by hand may name any plugin in any slot.
     devices.instruments({

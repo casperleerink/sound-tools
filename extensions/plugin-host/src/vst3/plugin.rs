@@ -203,11 +203,18 @@ pub fn load(
             edits,
             mode,
         );
-        let notes = match pedal_parameter {
-            Some(_) => Vec::new(),
-            None => vec![PluginProblem::NoPedal {
+        // The pedal is only missing from a plugin that has somewhere to take notes. A plugin
+        // with no event input bus, which is what an ordinary effect is, has no pedal to miss,
+        // and this host cannot ask what a record is for.
+        let takes_notes = component.getBusCount(
+            MediaTypes_::kEvent as int32,
+            BusDirections_::kInput as int32,
+        ) > 0;
+        let notes = match (takes_notes, pedal_parameter) {
+            (true, None) => vec![PluginProblem::NoPedal {
                 plugin_id: plugin_id.clone(),
             }],
+            _ => Vec::new(),
         };
         Opening {
             started: Box::new(started),

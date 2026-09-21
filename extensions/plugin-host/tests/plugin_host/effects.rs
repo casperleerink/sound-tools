@@ -117,3 +117,112 @@ fn a_block_through_an_effect_allocates_nothing() {
         assert_eq!(allocations, 0, "{format:?}");
     }
 }
+
+/// A plugin that gives up in the middle of a render. The block it fails on is the first one
+/// the slot passes through: a backend writes nothing into its output when it fails, so a host
+/// that only passed through from the next block would leave one block of silence in the chain.
+#[test]
+fn the_block_a_plugin_fails_on_is_passed_through_and_is_no_gap() {
+    for format in FORMATS {
+        // The instrument is a steady level and not a plugin, so only the effect gives up.
+        tell_the_plugin_to_fail_from(Some(FAILS_FROM));
+        let mut harness = Harness::new();
+        harness.write_offset(format, "trim", 25);
+        harness.add_level_track(DRY, record(format, "trim"));
+        assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
+
+        let render = harness.play(BLOCK * 8);
+        tell_the_plugin_to_fail_from(None);
+        let left = render.left();
+        // Until it fails: the dry signal through the effect, `input * 0.5 + offset`.
+        let wet = DRY * 0.5 + 0.25;
+        let played = BLOCK * FAILS_FROM as usize;
+        assert!(
+            left[..played].iter().all(|sample| *sample == wet),
+            "{format:?}: {:?}",
+            &left[..4]
+        );
+        // From the block it fails on: the dry signal, with no gap at the join.
+        assert!(
+            left[played..].iter().all(|sample| *sample == DRY),
+            "{format:?}: {:?}",
+            &left[played..played + 4]
+        );
+    }
+}
+
+/// The level the instrument of that test plays, and how many blocks the effect plays first.
+/// The engine block is `sound_core::MAX_BLOCK`, so the failure lands on a frame a test can
+/// name.
+const DRY: f32 = 0.4;
+const FAILS_FROM: u64 = 4;
+const BLOCK: usize = sound_core::MAX_BLOCK;
+
+/// Makes the test plugins of this process fail their `process` from a block on. The plugin
+/// runs in this process, and nextest gives every test a process of its own.
+fn tell_the_plugin_to_fail_from(block: Option<u64>) {
+    // SAFETY: nextest runs one test per process and the audio of this test is driven from the
+    // test thread, so no other thread reads the environment.
+    unsafe {
+        match block {
+            Some(block) => {
+                std::env::set_var(test_plugin_support::FAIL_FROM_VARIABLE, block.to_string())
+            }
+            None => std::env::remove_var(test_plugin_support::FAIL_FROM_VARIABLE),
+        }
+    }
+}
+
+/// An ordinary effect has nowhere to take notes, so nothing about the sustain pedal is missing
+/// from it. The line is for a plugin that takes notes and offers the pedal no way in.
+#[test]
+fn an_audio_only_effect_reports_nothing_about_the_pedal() {
+    for format in FORMATS {
+        tell_the_plugin_to_be_audio_only(true);
+        let mut harness = Harness::new();
+        harness.add_level_track(DRY, record(format, "trim"));
+        assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
+        // And it is in the chain: what comes out is what the effect makes of the dry signal.
+        let render = harness.play(BLOCK * 4);
+        assert!(
+            render.left().iter().all(|sample| *sample == DRY * 0.5),
+            "{format:?}"
+        );
+        tell_the_plugin_to_be_audio_only(false);
+    }
+}
+
+/// The other side of that rule: a plugin that takes notes and offers the pedal no way in is
+/// still reported, because for that one the pedal really is missing.
+#[test]
+fn a_plugin_that_takes_notes_and_no_pedal_is_still_reported() {
+    for format in FORMATS {
+        tell_the_plugin_to_take_no_pedal(true);
+        let mut harness = Harness::new();
+        harness.add_level_track(DRY, record(format, "trim"));
+        let problems = harness.problems();
+        assert_eq!(problems.len(), 1, "{format:?}: {problems:?}");
+        assert!(problems[0].contains("sustain pedal"), "{problems:?}");
+        tell_the_plugin_to_take_no_pedal(false);
+    }
+}
+
+fn tell_the_plugin_to_take_no_pedal(without: bool) {
+    // SAFETY: as `tell_the_plugin_to_fail_from`.
+    unsafe {
+        match without {
+            true => std::env::set_var(test_plugin_support::NO_PEDAL_VARIABLE, "1"),
+            false => std::env::remove_var(test_plugin_support::NO_PEDAL_VARIABLE),
+        }
+    }
+}
+
+fn tell_the_plugin_to_be_audio_only(audio_only: bool) {
+    // SAFETY: as `tell_the_plugin_to_fail_from`.
+    unsafe {
+        match audio_only {
+            true => std::env::set_var(test_plugin_support::AUDIO_ONLY_VARIABLE, "1"),
+            false => std::env::remove_var(test_plugin_support::AUDIO_ONLY_VARIABLE),
+        }
+    }
+}

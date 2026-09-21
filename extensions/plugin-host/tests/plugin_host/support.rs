@@ -167,6 +167,58 @@ fn apply_keys(state: &Keys, context: &mut BehaviourContext<'_>) -> Result<(), Be
 /// The port the keys sender exposes, which the rack wires to the instrument.
 const PLAYED_OUTPUT: &str = "played";
 
+/// A steady level in both channels, as the instrument of a rack. It makes the dry signal of an
+/// effect a number a test can read in any frame, and it is not a plugin, so a test that tells
+/// the plugin of this process to misbehave only tells the effect.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Level {
+    pub value: f32,
+}
+
+impl State for Level {
+    const TOOL: &'static str = "test.level";
+}
+
+pub struct LevelProcessor {
+    value: f32,
+}
+
+impl LevelProcessor {
+    const OUTPUT: sound_core::AudioOutput = sound_core::AudioOutput::new(0);
+}
+
+impl Processor for LevelProcessor {
+    type Update = f32;
+
+    fn ports(&self) -> Ports {
+        Ports::new().audio_output(Self::OUTPUT)
+    }
+
+    fn prepare(&mut self, _config: &PrepareConfig) {}
+
+    fn update(&mut self, value: &mut f32) {
+        self.value = *value;
+    }
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let frames = context.frames;
+        for channel in context.audio_outputs.get(Self::OUTPUT) {
+            channel[..frames].fill(self.value);
+        }
+    }
+}
+
+fn apply_level(state: &Level, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    let level = context.processor("level", || LevelProcessor { value: state.value })?;
+    context.update(level, state.value)?;
+    context.output(
+        sound_notes::AUDIO_OUTPUT,
+        OutputEndpoint::new(level, LevelProcessor::OUTPUT),
+    );
+    Ok(())
+}
+
 /// A tiny stand-in for a track: it owns the `instrument` child and plays into it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -558,6 +610,10 @@ impl Harness {
             .tool::<Picky>("test")
             .expect("the picky tool registers")
             .behaviour(apply_picky);
+        registry
+            .tool::<Level>("test")
+            .expect("the level tool registers")
+            .behaviour(apply_level);
         let (control, engine) = Engine::new(config);
         let project = Project::open(folder.path(), registry, control).expect("an open project");
         Self {
@@ -574,6 +630,18 @@ impl Harness {
         changes.create(id("track"), Rack {});
         changes.create(id("track/keys"), Keys { played });
         changes.create(id("track/instrument"), record);
+        self.project
+            .commit("Add track", changes)
+            .expect("the track is added");
+    }
+
+    /// A rack `track` whose instrument is a steady level, with the plugin of `record` as its
+    /// effect. The dry signal is then a number a test can read in any frame.
+    pub fn add_level_track(&mut self, value: f32, record: PluginRecord) {
+        let mut changes = Changes::new();
+        changes.create(id("track"), Rack {});
+        changes.create(id("track/instrument"), Level { value });
+        changes.create(id(&format!("track/{EFFECT}")), record);
         self.project
             .commit("Add track", changes)
             .expect("the track is added");

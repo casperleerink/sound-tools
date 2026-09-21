@@ -66,8 +66,16 @@ impl DefaultPluginFactory for TestTone {
                 "A test instrument and effect. One cosine per key, the pedal on the right, and what it is played times a half plus its offset.",
             )
             // Both, because this one plugin is both. A picker offers it for an instrument slot
-            // and for an effect slot, and a record names it in either.
-            .with_features([c"instrument", c"audio-effect", c"synthesizer", c"stereo"])
+            // and for an effect slot, and a record names it in either. Told to be audio only,
+            // it says what an ordinary effect says.
+            .with_features(
+                match support::is_audio_only() {
+                    true => [c"audio-effect", c"stereo"].as_slice(),
+                    false => [c"instrument", c"audio-effect", c"synthesizer", c"stereo"].as_slice(),
+                }
+                .iter()
+                .copied(),
+            )
     }
 
     fn new_shared(_host: HostSharedHandle<'_>) -> Result<TestToneShared, PluginError> {
@@ -291,19 +299,30 @@ impl PluginAudioPortsImpl for TestToneMainThread<'_> {
     }
 }
 
+/// One note input, unless this plugin is the audio-only effect: that one has nowhere to take
+/// notes at all, which is what an ordinary effect looks like.
 impl PluginNotePortsImpl for TestToneMainThread<'_> {
     fn count(&self, is_input: bool) -> u32 {
-        u32::from(is_input)
+        match support::is_audio_only() {
+            true => 0,
+            false => u32::from(is_input),
+        }
     }
 
     fn get(&self, index: u32, is_input: bool, writer: &mut NotePortInfoWriter) {
-        if !is_input || index != 0 {
+        if !is_input || index != 0 || support::is_audio_only() {
             return;
         }
+        // Told to take no pedal, the port takes no MIDI, which is the only way a CLAP plugin
+        // can be sent the sustain pedal: CLAP note events have none.
+        let supported_dialects = match support::takes_no_pedal() {
+            true => NoteDialects::CLAP,
+            false => NoteDialects::CLAP | NoteDialects::MIDI,
+        };
         writer.set(&NotePortInfo {
             id: ClapId::new(0),
             name: b"notes",
-            supported_dialects: NoteDialects::CLAP | NoteDialects::MIDI,
+            supported_dialects,
             preferred_dialect: Some(NoteDialect::Clap),
         });
     }
@@ -323,6 +342,8 @@ pub struct TestToneAudio<'a> {
     processed: u64,
     /// How many events to send out of every process call.
     events_out: u32,
+    /// The block from which this plugin gives up and writes nothing, when it was told to.
+    fails_from: Option<u64>,
 }
 
 impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for TestToneAudio<'a> {
@@ -346,6 +367,7 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
             plugin,
             processed: 0,
             events_out: support::events_out(),
+            fails_from: support::fails_from(),
         })
     }
 
@@ -368,6 +390,12 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
         mut audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
+        // A plugin that gives up: it writes nothing into its output and says so, which is
+        // what a host must not turn into a gap in the chain.
+        if self.fails_from.is_some_and(|block| self.processed >= block) {
+            self.processed += 1;
+            return Err(PluginError::Message("this plugin was told to fail"));
+        }
         // The first one names the thread that processes, which is what the rest of a log is
         // read against.
         if self.processed == 0 {

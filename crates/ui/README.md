@@ -126,6 +126,13 @@ one of them: the picker on the instrument card asks for instruments and the cont
 one at the end of the rack asks for effects. Which list a plugin is in is what it says it is,
 and nothing more; a record written by hand may name any plugin in either place.
 
+A source may learn more while a view is open: the plugin host looks for the plugins of this Mac
+on a thread of its own. So a view keeps `Devices::offers_generation`, a number that changes when
+the offers do, and fills its menus again when it changes. Reading it costs a counter per source,
+so a poll may ask on every frame; reading the offers themselves may cost a look at the machine,
+which is why they are read only then. `devices.offers_change(|| ..)` is how a source provides
+its number.
+
 `DeviceOffer::write` stages a whole record, so choosing replaces what was in the slot and undo
 brings it back. `extensions/arrangement/src/view/track_panel.rs` is the one caller and
 `crates/runtime/src/lib.rs`, `views`, is where the registry is filled.

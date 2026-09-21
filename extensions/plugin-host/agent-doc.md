@@ -133,7 +133,8 @@ record may name any plugin in either place.
   `state_asset` for different plugins. Give each its own name.
 - `... offers the host no way to send the sustain pedal`: the notes play, the pedal does not.
   There is nothing to fix in the file. A CLAP plugin whose note port takes no MIDI, or a VST 3
-  plugin that maps no parameter to MIDI controller 64, says this.
+  plugin that maps no parameter to MIDI controller 64, says this. An effect with no note port
+  at all never says it: it has no pedal to miss.
 - `... asked to be started again`: the plugin wants the app to reload it, which this build does
   not do. Nothing in the file is wrong. Tell the composer to take the plugin off the track and
   put it back if it stopped sounding.

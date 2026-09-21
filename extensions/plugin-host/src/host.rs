@@ -323,6 +323,18 @@ impl Plugins {
         }
     }
 
+    /// A number that goes up whenever the scan learns something, and once more when it ends.
+    ///
+    /// Whoever draws a picker keeps it and fills the menu again when it changes, because a
+    /// picker built while a scan ran holds a part of the list and a line that says so. It
+    /// copies nothing, so a poll may ask on every frame.
+    pub fn scan_generation(&self) -> u64 {
+        match self.0.scanned.lock() {
+            Ok(scanned) => scanned.generation,
+            Err(poisoned) => poisoned.into_inner().generation,
+        }
+    }
+
     /// Whether a scan is still running. The picker says so quietly while it is, and whoever
     /// polls asks on every poll, so this copies nothing.
     pub fn scan_is_running(&self) -> bool {

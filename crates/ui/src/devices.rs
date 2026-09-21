@@ -82,6 +82,7 @@ impl DeviceOffer {
 
 type ListOffers = Rc<dyn Fn() -> Vec<DeviceOffer>>;
 type ListNotes = Rc<dyn Fn() -> Vec<SharedString>>;
+type Generation = Rc<dyn Fn() -> u64>;
 type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>;
 
 /// What a rack says about the instance in a slot: what to call it, and which offer it is.
@@ -106,6 +107,7 @@ pub struct Devices {
     instruments: Vec<ListOffers>,
     effects: Vec<ListOffers>,
     notes: Vec<ListNotes>,
+    generations: Vec<Generation>,
     describe: BTreeMap<&'static str, DescribeInstance>,
 }
 
@@ -140,6 +142,12 @@ impl Devices {
         self.notes.push(Rc::new(list));
     }
 
+    /// Adds a source of the number behind [`Self::offers_generation`]: a count that goes up
+    /// whenever what this source offers, or what it has to say under its offers, changes.
+    pub fn offers_change(&mut self, generation: impl Fn() -> u64 + 'static) {
+        self.generations.push(Rc::new(generation));
+    }
+
     /// Registers what a rack says about an instance of the tool with state `S`.
     pub fn describe<S: State>(&mut self, describe: impl Fn(&S) -> DeviceLabel + 'static) {
         self.describe.insert(
@@ -161,6 +169,20 @@ impl Devices {
             Slot::Effect => &devices.effects,
         };
         sources.iter().flat_map(|list| list()).collect()
+    }
+
+    /// A number that changes when the offers do. A view builds its menus once, because a
+    /// source may have to look at the machine, and builds them again when this changes; the
+    /// plugin host looks for the plugins of this Mac on a thread of its own, so a menu built
+    /// while that runs holds a part of the list and the line that says so.
+    ///
+    /// It reads a counter per source and nothing else, so a poll may ask on every frame.
+    pub fn offers_generation(cx: &App) -> u64 {
+        let Some(devices) = cx.try_global::<Self>() else {
+            return 0;
+        };
+        let sources = devices.generations.iter();
+        sources.fold(0, |total, generation| total.wrapping_add(generation()))
     }
 
     /// Every quiet line under the offers, from the installed registry.

@@ -253,6 +253,11 @@ pub struct TrackPanel {
     /// The control at the end of the rack that adds an effect. It is made once, with what the
     /// registry offers when the panel opens, like the picker of a card.
     add_effect: Entity<DropdownMenu>,
+    /// What the sources of offers had said when the menus of this panel were filled. A source
+    /// may learn more while the panel is open: the plugin host looks for the plugins of this
+    /// Mac on a thread of its own, so a panel opened at the start of a session holds a part of
+    /// the list and the quiet line that says so. Every menu is filled again when this changes.
+    offers: u64,
     /// Whether a drag of a mixer knob has the gesture of the session open.
     dragging: bool,
     /// Not a tab stop. It tells whether the focus is inside the panel.
@@ -331,6 +336,10 @@ impl TrackPanel {
             }
         })
         .detach();
+        // A source of offers may learn more while this panel is open, and every menu of it is
+        // filled again when it does. The session notifies on the poll that sees the change.
+        cx.observe(&session, |panel, _, cx| panel.refill_menus(cx))
+            .detach();
         let add_effect = cx.new(|cx| {
             let offers = Devices::offered(Slot::Effect, cx);
             let entries = offer_entries(&offers, Slot::Effect, false, &session, cx);
@@ -343,11 +352,13 @@ impl TrackPanel {
             panel.add_effect(&picked.0, cx);
         })
         .detach();
+        let offers = Devices::offers_generation(cx);
         let mut panel = Self {
             session,
             track: track.clone(),
             devices: Vec::new(),
             add_effect,
+            offers,
             dragging: false,
             focus_handle: cx.focus_handle(),
             close_focus: cx.focus_handle().tab_stop(true),
@@ -397,6 +408,32 @@ impl TrackPanel {
         self.devices.clear();
         self.set_slots(window, cx);
         cx.notify();
+    }
+
+    /// Fills every menu of the panel again when a source of offers has learned something: the
+    /// picker of each card and the control that adds an effect, through one path.
+    ///
+    /// The offers themselves are read here and not while a frame draws, because a source may
+    /// have to look at the machine. Nothing is read at all while the number is the one the
+    /// menus were filled with, which is every poll but the few that change it.
+    fn refill_menus(&mut self, cx: &mut Context<Self>) {
+        let offers = Devices::offers_generation(cx);
+        if offers == self.offers {
+            return;
+        }
+        self.offers = offers;
+        let session = self.session.clone();
+        for device in &mut self.devices {
+            device.offers = Devices::offered(device.kind, cx);
+            let entries = offer_entries(&device.offers, device.kind, true, &session, cx);
+            device
+                .picker
+                .update(cx, |picker, cx| picker.set_entries(entries, cx));
+        }
+        let effects = Devices::offered(Slot::Effect, cx);
+        let entries = offer_entries(&effects, Slot::Effect, false, &session, cx);
+        self.add_effect
+            .update(cx, |add, cx| add.set_entries(entries, cx));
     }
 
     /// Reads the slots of the track again and makes the list of cards match them.
