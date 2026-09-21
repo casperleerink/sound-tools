@@ -64,6 +64,10 @@ After a fit, bars and beats mean what the composer played. A clip you write at b
 
 It is a deterministic algorithm, not a model, and it is right about the beat within about 30 ms on ordinary playing. Three things it cannot know from the timing alone, which are the three fields above: whether a beat is a beat or half of one, where a bar begins, and how many beats a bar has. It is also weaker right at a sudden change of tempo, where one beat may land a fifth of a beat out, and it needs at least eight chords or notes to find anything at all.
 
+## One message you may see
+
+`4 of 91 beats are too far apart or too close together for a tempo between 10 and 1000 bpm` means the take begins the moment recording started, with no silence in front of it, so the bar before the first downbeat has no time to fit in. The grid still follows the playing everywhere else. Move `first_downbeat_us` to a later beat to give it room, or leave it: only the bars before the music are affected.
+
 ## Check your work
 
 `problems.txt` in the project folder lists everything that is not live, including what a fit could not do: a take file that is missing, a take with too little in it, and a clip that no longer names the take. A missing file means no runtime is watching and nothing has checked your edit.

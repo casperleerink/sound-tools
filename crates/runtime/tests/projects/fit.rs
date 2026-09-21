@@ -574,3 +574,215 @@ fn measure_a_part_against_the_take() {
         worst
     );
 }
+
+/// The whole path once on this machine: a take played into a real virtual MIDI port, on a
+/// track with a plugin piano, recorded through the real device, fitted, the steadiness moved,
+/// then closed and opened again with a render on each side.
+///
+/// It needs hardware and a plugin, so it never runs in CI. `FIT_REAL_DIR` is the project
+/// folder, `FIT_REAL_PLUGIN` the class id of a VST 3 instrument this Mac has, and
+/// `FIT_REAL_SECONDS` how long to record.
+///
+/// ```sh
+/// FIT_REAL_DIR=/private/tmp/free-take FIT_REAL_PLUGIN=<class id> \
+///   cargo nextest run -p runtime --run-ignored only -E 'test(the_whole_path)' --no-capture
+/// ```
+#[test]
+#[ignore = "needs a real device, a virtual MIDI port and a plugin of this machine"]
+fn the_whole_path_on_this_machine() {
+    use sound_core::{Engine, EngineConfig, OutputDevice};
+    use std::time::{Duration, Instant};
+
+    let folder = std::env::var("FIT_REAL_DIR").expect("FIT_REAL_DIR");
+    let plugin = std::env::var("FIT_REAL_PLUGIN").expect("FIT_REAL_PLUGIN");
+    let seconds: f64 = std::env::var("FIT_REAL_SECONDS")
+        .ok()
+        .and_then(|it| it.parse().ok())
+        .unwrap_or(60.0);
+    let folder = std::path::PathBuf::from(folder);
+    let _ = std::fs::remove_dir_all(&folder);
+    write_real_project(&folder, &plugin);
+
+    let device = OutputDevice::default_output().expect("a device");
+    println!(
+        "device: {}, {} Hz",
+        device.name().unwrap(),
+        device.sample_rate()
+    );
+    let config = EngineConfig::new(device.sample_rate(), device.channels());
+    let (control, engine) = Engine::new(config);
+    let plugins = runtime::plugins(false).expect("the plugin host");
+    let mut project =
+        runtime::open_or_create_with(&folder, control, plugins.clone()).expect("the project");
+    let stream = device.start(engine).expect("the stream");
+    let mut keyboard = midi::Keyboard::attach(project.engine()).expect("the keyboard");
+    let mut ports = midi::Ports::new(keyboard.input());
+    let track = runtime::window::recording::target_track(&project, None).expect("a track");
+
+    // The plugin has to load before anything is played into it.
+    let mut pump = |project: &mut sound_core::Project, keyboard: &mut midi::Keyboard| {
+        ports.refresh().expect("the ports");
+        plugins.poll(project);
+        keyboard
+            .poll(project.engine(), Some(stream.timing()))
+            .expect("the reports");
+        let notes = runtime::window::recording::notes_input(project, &track);
+        keyboard
+            .play_into(project.engine(), notes)
+            .expect("the port");
+        project.poll().expect("the watcher");
+        project.drain_events();
+        std::thread::sleep(Duration::from_millis(16));
+    };
+    let until = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < until {
+        pump(&mut project, &mut keyboard);
+    }
+    assert_eq!(project.problems(), [], "the plugin did not load");
+
+    println!("recording for {seconds} s, play into the port called \"Free Take\"");
+    keyboard.start_recording(Ticks(0));
+    project.engine().play();
+    let until = Instant::now() + Duration::from_secs_f64(seconds);
+    while Instant::now() < until {
+        pump(&mut project, &mut keyboard);
+    }
+    let at = project.engine().poll().expect("the engine").playhead_tick;
+    project.engine().pause();
+    pump(&mut project, &mut keyboard);
+    let take = keyboard.finish_recording(at).expect("a take");
+    assert!(!take.is_empty(), "nothing was played into the port");
+    let name = runtime::window::recording::write_take(&project, &take).expect("the take");
+    runtime::window::recording::add_take_clip(&mut project, &track, &take, Some(name))
+        .expect("the clip");
+    let clip = clip_of_track(&project, &track);
+    println!(
+        "{} messages, clip {} with {} notes",
+        take.events.len(),
+        clip.0,
+        clip.1.notes.len()
+    );
+
+    // The fit, then the steadiness, both through the one editing path.
+    let mut changes = sound_core::Changes::new();
+    fit_tempo::fit_take(&project, &mut changes, &clip.1).expect("the fit");
+    project
+        .commit(fit_tempo::FIT_LABEL, changes)
+        .expect("the fit");
+    for problem in project.problems() {
+        println!(
+            "problem after the fit: {}: {}",
+            problem.path, problem.message
+        );
+    }
+    let fitted = std::fs::read_to_string(folder.join("project.json")).unwrap();
+    let beats = project.project_file().tempo_map.tempo_changes().len();
+    let mut changes = sound_core::Changes::new();
+    fit_tempo::set_steadiness(&project, &mut changes, 0.5);
+    project
+        .commit(fit_tempo::STEADINESS_LABEL, changes)
+        .expect("the steadiness");
+    let mut changes = sound_core::Changes::new();
+    fit_tempo::set_steadiness(&project, &mut changes, 0.0);
+    project
+        .commit(fit_tempo::STEADINESS_LABEL, changes)
+        .expect("the steadiness");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("project.json")).unwrap(),
+        fitted,
+        "the fitted map did not come back"
+    );
+    for _ in 0..60 {
+        pump(&mut project, &mut keyboard);
+    }
+
+    // A render next to the running project, then the close, then a render of what was reopened.
+    let before = render_of(&folder);
+    let status = stream.status();
+    println!(
+        "{beats} beats. xruns {}, late callbacks {}, slowest callback {:?}, output latency {:?}",
+        status.xruns, status.late_callbacks, status.slowest_callback, status.output_latency
+    );
+    let latency = keyboard.latency();
+    println!(
+        "key to sound over {} messages: mean {:?}, longest {:?}",
+        latency.count(),
+        latency.mean(),
+        latency.longest()
+    );
+    drop(keyboard);
+    drop(project);
+    drop(stream);
+    let after = render_of(&folder);
+    let again = render_of(&folder);
+    let peak = |render: &[f32]| render.iter().fold(0.0_f32, |peak, it| peak.max(it.abs()));
+    println!(
+        "{} frames rendered. peak before the close {:.6}, after {:.6}, again {:.6}",
+        after.len() / 2,
+        peak(&before),
+        peak(&after),
+        peak(&again)
+    );
+    if let Some((first, last)) = crate::support::difference(&before, &after) {
+        println!("the render before the close differs from frames {first} to {last}");
+    }
+    assert!(peak(&after) > 0.0, "the render is silent");
+    // The project is the same project: the files that decide the sound are byte for byte what
+    // they were. Whether the samples are too is the plugin's business and not ours. Crow Hill
+    // Origins renders a little differently every time it is loaded, also twice in a row with
+    // nothing of the project changed in between, which is what the two renders after the close
+    // show. So the check here is on the files and on there being sound at all.
+    assert_eq!(
+        std::fs::read_to_string(folder.join("project.json")).unwrap(),
+        fitted,
+        "project.json changed over the close"
+    );
+    assert_eq!(before.len(), after.len());
+    assert_eq!(after.len(), again.len());
+}
+
+/// The project of the run by hand: one track with a plugin instrument and nothing else.
+fn write_real_project(folder: &std::path::Path, plugin_id: &str) {
+    let write = |relative: &str, contents: String| {
+        let path = folder.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    };
+    write(
+        "project.json",
+        r#"{"format": 1, "extensions": ["arrangement", "fit-tempo", "instrument", "plugin-host", "tone"], "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}, "connections": []}"#.to_string(),
+    );
+    write(
+        "state/arrangement/instance.json",
+        r#"{"tool": "arrangement", "state": {}}"#.to_string(),
+    );
+    write(
+        "state/arrangement/piano/instance.json",
+        r#"{"tool": "arrangement.track", "state": {"name": "Piano", "order": 0}}"#.to_string(),
+    );
+    write(
+        "state/arrangement/piano/instrument.json",
+        format!(
+            r#"{{"tool": "plugin", "state": {{"format": "vst3", "plugin_id": "{plugin_id}", "state_asset": "piano"}}}}"#
+        ),
+    );
+}
+
+fn clip_of_track(
+    project: &sound_core::Project,
+    track: &sound_core::Instance<arrangement::TrackState>,
+) -> (InstanceId, Clip) {
+    let (clip, state) = arrangement::clips(project, track.id())
+        .into_iter()
+        .next()
+        .expect("a clip");
+    (clip.id().clone(), state.clone())
+}
+
+/// A render of the project, read-only, so it works next to a runtime that has it open.
+fn render_of(folder: &std::path::Path) -> Vec<f32> {
+    let (mut project, mut engine, plugins) = runtime::open_read_only(folder).expect("read only");
+    // A render plays the project, as `runtime --render` does: the position only moves then.
+    project.engine().play();
+    runtime::render(&mut project, &mut engine, &plugins, 48_000 * 70).expect("a render")
+}

@@ -118,7 +118,7 @@ pub fn fit(
         .map(|time| time.saturating_add(take.start_us))
         .collect();
 
-    let lead = lead_beats(downbeat, time_signature, beats_us[0]);
+    let lead = lead_beats(downbeat, time_signature, &beats_us);
     let targets_us = targets(&beats_us, lead);
     let (map, problems) = tempo_map(time_signature, &targets_us);
     let clock = Clock::new(map.clone(), FIT_SAMPLE_RATE);
@@ -211,14 +211,29 @@ fn at_rate(heard: &[u64], first_downbeat_us: u64, rate: BeatRate) -> (Vec<u64>, 
 /// How many beats of the grid come before the first beat of the take.
 ///
 /// The first downbeat lands on a bar line, so the beats before it fill whole bars: the pickup
-/// the composer played, plus at least one beat of the silence in front of the take. A take that
+/// the composer played, plus at least one bar for the silence in front of the take. A take that
 /// begins at the very start of the piece with its downbeat first needs no bar in front of it.
-fn lead_beats(downbeat: usize, time_signature: TimeSignature, first_beat_us: u64) -> usize {
+///
+/// How many bars that silence gets is decided by how long it is: as many bars as fit in it at
+/// the tempo the take begins with, and never fewer than the pickup needs. A composer who
+/// presses record and then waits half a minute would otherwise get one bar stretched over
+/// that half minute, which is a tempo no clock can hold.
+fn lead_beats(downbeat: usize, time_signature: TimeSignature, beats_us: &[u64]) -> usize {
     let per_bar = time_signature.numerator() as usize;
+    let first_beat_us = beats_us.first().copied().unwrap_or(0);
     if downbeat == 0 && first_beat_us == 0 {
         return 0;
     }
-    (downbeat / per_bar + 1) * per_bar - downbeat
+    let least = downbeat / per_bar + 1;
+    let beat_us = beats_us
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .next()
+        .unwrap_or(1)
+        .max(1);
+    let bar_us = beat_us * per_bar as u64;
+    let bars = least.max((first_beat_us as f64 / bar_us as f64).round() as usize);
+    bars * per_bar - downbeat
 }
 
 /// Every beat of the grid on the project timeline, index 0 at tick 0.
