@@ -14,6 +14,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -168,6 +169,11 @@ impl ScanCommand {
         let mut child = command
             .spawn()
             .map_err(|error| format!("the scanner did not start: {error}"))?;
+        // Both pipes are read while the child runs and not after it ends. A plugin that prints
+        // more than a pipe holds while it loads, which real ones do, would otherwise block on
+        // its own write and be killed at the deadline as if it had hung.
+        let output = drain(child.stdout.take());
+        let errors = drain(child.stderr.take());
         let deadline = Instant::now() + self.timeout;
         loop {
             match child.try_wait() {
@@ -186,21 +192,21 @@ impl ScanCommand {
             }
             std::thread::sleep(POLL_INTERVAL);
         }
-        let output = child
-            .wait_with_output()
+        let status = child
+            .wait()
             .map_err(|error| format!("the scanner could not be read: {error}"))?;
-        if !output.status.success() {
-            let message = String::from_utf8_lossy(&output.stderr);
-            let message = message.trim();
+        let text = read(output);
+        if !status.success() {
+            let errors = read(errors);
+            let message = errors.trim();
             let reason = if message.is_empty() {
                 // A crash gives no message. The exit status says how it ended.
-                format!("the scanner ended with {}", output.status)
+                format!("the scanner ended with {status}")
             } else {
                 message.to_string()
             };
             return Err(reason);
         }
-        let text = String::from_utf8_lossy(&output.stdout);
         let mut plugins = Vec::new();
         // Anything the plugin itself printed is between these lines. It is not ours to read.
         for line in text.lines().filter_map(|line| line.strip_prefix(MARK)) {
@@ -210,6 +216,29 @@ impl ScanCommand {
         }
         Ok(plugins)
     }
+}
+
+/// Reads a pipe of the child on a thread of its own, so the child never blocks on a full one.
+fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Option<JoinHandle<Vec<u8>>> {
+    let mut pipe = pipe?;
+    std::thread::Builder::new()
+        .name("plugin-scan-output".to_string())
+        .spawn(move || {
+            let mut bytes = Vec::new();
+            // A pipe that cannot be read gives what was read before the error.
+            let _read = pipe.read_to_end(&mut bytes);
+            bytes
+        })
+        .ok()
+}
+
+/// What such a thread read. A thread that panicked gives nothing, which reads as a child that
+/// printed nothing.
+fn read(reader: Option<JoinHandle<Vec<u8>>>) -> String {
+    let bytes = reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// How deep to look inside a search folder. Plugins usually sit one folder per vendor deep.

@@ -15,7 +15,8 @@ use plugin_host::PluginFormat;
 use sound_core::Changes;
 
 use crate::support::{
-    FORMATS, Harness, LoggedCall, Played, id, lifecycle, plugin_folder_of, record, tell_the_plugin,
+    FORMATS, Harness, LoggedCall, Played, id, lifecycle, plugin_folder_of, record, state_asset,
+    tell_the_plugin,
 };
 
 /// The calls both formats write down, which is what this file is about.
@@ -312,5 +313,44 @@ fn closing_stops_before_deactivating(format: PluginFormat) {
         life.of("deactivate", plugin).processed,
         life.of("stop_processing", plugin).processed,
         "the plugin processed after it was stopped: {names:?}"
+    );
+}
+
+/// A load that fails after the plugin has been initialized must undo that. VST 3 asks a host to
+/// terminate a plugin it is done with, and a plugin that is only released holds the host
+/// objects it was given and may reach for them as it goes.
+#[test]
+fn a_load_that_fails_after_the_plugin_started_still_terminates_it() {
+    let folder = tempfile::tempdir().expect("a temporary folder");
+    let log_folder = tempfile::tempdir().expect("a temporary folder");
+    let log = log_folder.path().join("lifecycle.log");
+    tell_the_plugin(Some(&log), None);
+    let search = vec![plugin_folder_of(folder.path(), PluginFormat::Vst3)];
+    let mut harness = Harness::open_with_paths(folder, search, true);
+
+    // A state file the plugin refuses, so the load fails after `initialize` and before the
+    // plugin is activated. This is what a stale or wrong state asset does.
+    let asset = harness.project.assets().path(&state_asset("piano"));
+    std::fs::create_dir_all(asset.parent().expect("the folder")).expect("the folder");
+    let vst3_state = b"SVT3\x08\x00\x00\x00not-mine\x00\x00\x00\x00";
+    std::fs::write(&asset, vst3_state).expect("the state file");
+    harness.add_track(record(PluginFormat::Vst3, "piano"), played());
+
+    let problems = harness.problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("could not be read"), "{problems:?}");
+
+    drop(harness);
+    tell_the_plugin(None, None);
+    let life = Life {
+        calls: lifecycle(&log),
+    };
+    // The plugin was never activated, and `setActive(0)` on one that is not active is
+    // nothing. What matters is that it is terminated and not only released.
+    let names: Vec<String> = life.calls.iter().map(|call| call.call.clone()).collect();
+    assert_eq!(
+        names,
+        ["initialize", "deactivate", "terminate"],
+        "{names:?}"
     );
 }

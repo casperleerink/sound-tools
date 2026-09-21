@@ -159,7 +159,10 @@ impl Started for Vst3Processor {
             }
             self.processing = true;
         }
-        self.input_buses.silence(frames);
+        self.input_buses.clear(frames);
+        // A plugin may say its output is silent (`silenceFlags`) and leave the buffer as it
+        // is, so what was in it must not be what a block before wrote.
+        self.output_buses.clear(frames);
         let mut data = ProcessData {
             processMode: ProcessModes_::kRealtime as int32,
             symbolicSampleSize: SymbolicSampleSizes_::kSample32 as int32,
@@ -295,8 +298,9 @@ impl Buses {
         self.buses.as_mut_ptr()
     }
 
-    /// Every audio input of a plugin is fed with silence: this host has no audio to give one.
-    fn silence(&mut self, frames: usize) {
+    /// Silence, before every block. An audio input of a plugin gets it because this host has
+    /// no audio to give one; an output gets it so that a plugin that writes nothing is silent.
+    fn clear(&mut self, frames: usize) {
         for channel in &mut self.channels {
             channel[..frames].fill(0.0);
         }

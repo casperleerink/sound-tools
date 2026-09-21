@@ -6,9 +6,9 @@
 //! `IHostApplication::createInstance`, so a host that answers `kNotImplemented` there breaks
 //! every plugin whose halves talk. These are the smallest objects that answer.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_void};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use vst3::Steinberg::Vst::{
@@ -93,8 +93,13 @@ enum Attribute {
 
 /// A message the two halves of a plugin pass each other. Nothing here is read by the host: it
 /// only has to hold what was put in it and give it back.
+///
+/// The two halves of a plugin are wired to each other, so `notify` arrives on whatever thread
+/// the half that sent it was on, and a message may be kept and read on another. Hence a lock
+/// and not a cell: nothing of this is on the audio thread, and a cell that was borrowed twice
+/// would end the process from inside a call of the plugin's.
 pub struct HostMessage {
-    identifier: RefCell<Option<CString>>,
+    identifier: Mutex<Option<CString>>,
     attributes: ComWrapper<HostAttributes>,
 }
 
@@ -105,16 +110,16 @@ impl Class for HostMessage {
 impl Default for HostMessage {
     fn default() -> Self {
         Self {
-            identifier: RefCell::new(None),
+            identifier: Mutex::new(None),
             attributes: ComWrapper::new(HostAttributes::default()),
         }
     }
 }
 
-/// The values of one message, by name.
+/// The values of one message, by name. Locked, for the reason [`HostMessage`] gives.
 #[derive(Default)]
 pub struct HostAttributes {
-    values: RefCell<BTreeMap<CString, Attribute>>,
+    values: Mutex<BTreeMap<CString, Attribute>>,
 }
 
 impl Class for HostAttributes {
@@ -125,16 +130,21 @@ impl IMessageTrait for HostMessage {
     unsafe fn getMessageID(&self) -> *const std::ffi::c_char {
         // The plugin reads this until it sets another id or the message goes, and the message
         // owns the string, so the pointer stays valid for exactly as long as it may be read.
-        match &*self.identifier.borrow() {
-            Some(identifier) => identifier.as_ptr(),
-            None => std::ptr::null(),
+        match self.identifier.lock() {
+            Ok(held) => match &*held {
+                Some(identifier) => identifier.as_ptr(),
+                None => std::ptr::null(),
+            },
+            Err(_) => std::ptr::null(),
         }
     }
 
     unsafe fn setMessageID(&self, id: *const std::ffi::c_char) {
         // SAFETY: the caller gives a C string or nothing.
         let identifier = (!id.is_null()).then(|| unsafe { CStr::from_ptr(id) }.to_owned());
-        *self.identifier.borrow_mut() = identifier;
+        if let Ok(mut held) = self.identifier.lock() {
+            *held = identifier;
+        }
     }
 
     unsafe fn getAttributes(&self) -> *mut IAttributeList {
@@ -152,6 +162,11 @@ impl HostAttributes {
         // SAFETY: the caller gives a C string.
         (!id.is_null()).then(|| unsafe { CStr::from_ptr(id) }.to_owned())
     }
+
+    /// The values, whatever happened to whoever held the lock before.
+    fn values(&self) -> std::sync::MutexGuard<'_, BTreeMap<CString, Attribute>> {
+        self.values.lock().unwrap_or_else(|held| held.into_inner())
+    }
 }
 
 impl IAttributeListTrait for HostAttributes {
@@ -159,7 +174,7 @@ impl IAttributeListTrait for HostAttributes {
         let Some(key) = Self::key(id) else {
             return kInvalidArgument;
         };
-        self.values.borrow_mut().insert(key, Attribute::Int(value));
+        self.values().insert(key, Attribute::Int(value));
         kResultOk
     }
 
@@ -167,7 +182,7 @@ impl IAttributeListTrait for HostAttributes {
         let (Some(key), false) = (Self::key(id), value.is_null()) else {
             return kInvalidArgument;
         };
-        match self.values.borrow().get(&key) {
+        match self.values().get(&key) {
             // SAFETY: the caller gave a place to write.
             Some(Attribute::Int(found)) => unsafe {
                 *value = *found;
@@ -181,9 +196,7 @@ impl IAttributeListTrait for HostAttributes {
         let Some(key) = Self::key(id) else {
             return kInvalidArgument;
         };
-        self.values
-            .borrow_mut()
-            .insert(key, Attribute::Float(value));
+        self.values().insert(key, Attribute::Float(value));
         kResultOk
     }
 
@@ -191,7 +204,7 @@ impl IAttributeListTrait for HostAttributes {
         let (Some(key), false) = (Self::key(id), value.is_null()) else {
             return kInvalidArgument;
         };
-        match self.values.borrow().get(&key) {
+        match self.values().get(&key) {
             // SAFETY: the caller gave a place to write.
             Some(Attribute::Float(found)) => unsafe {
                 *value = *found;
@@ -207,7 +220,7 @@ impl IAttributeListTrait for HostAttributes {
         };
         // SAFETY: the caller gives a zero-terminated UTF-16 string.
         let text = unsafe { read_utf16(string) };
-        self.values.borrow_mut().insert(key, Attribute::Text(text));
+        self.values().insert(key, Attribute::Text(text));
         kResultOk
     }
 
@@ -220,7 +233,7 @@ impl IAttributeListTrait for HostAttributes {
         let (Some(key), false) = (Self::key(id), string.is_null()) else {
             return kInvalidArgument;
         };
-        let values = self.values.borrow();
+        let values = self.values();
         let Some(Attribute::Text(text)) = values.get(&key) else {
             return kNotImplemented;
         };
@@ -250,9 +263,7 @@ impl IAttributeListTrait for HostAttributes {
         // SAFETY: the caller says `data` holds `size_in_bytes` bytes.
         let bytes =
             unsafe { std::slice::from_raw_parts(data.cast::<u8>(), size_in_bytes as usize) };
-        self.values
-            .borrow_mut()
-            .insert(key, Attribute::Bytes(bytes.to_vec()));
+        self.values().insert(key, Attribute::Bytes(bytes.to_vec()));
         kResultOk
     }
 
@@ -266,7 +277,7 @@ impl IAttributeListTrait for HostAttributes {
         else {
             return kInvalidArgument;
         };
-        let values = self.values.borrow();
+        let values = self.values();
         let Some(Attribute::Bytes(bytes)) = values.get(&key) else {
             return kNotImplemented;
         };

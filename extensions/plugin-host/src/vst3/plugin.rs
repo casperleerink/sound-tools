@@ -14,6 +14,7 @@
 //! the block's output parameter changes. Both mark the state to be saved, and the second is
 //! also given to the controller, which is how the two halves stay in step.
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use vst3::Steinberg::Vst::{
@@ -78,7 +79,8 @@ pub fn load(
             controller: None,
             connection: None,
             handler: ComWrapper::new(Handler::default()),
-            kept: false,
+            // `initialize` has been answered, so from here there is something to undo.
+            kept: true,
         };
 
         // The controller: a second class the component names, or the component itself.
@@ -129,7 +131,11 @@ pub fn load(
         if processor.canProcessSampleSize(SymbolicSampleSizes_::kSample32 as int32) != kResultOk {
             return Err(fail("the plugin does not take 32-bit samples".to_string()));
         }
-        let outputs = arrange(&processor, &component, &inputs, &outputs);
+        // A plugin may change its buses while it answers the arrangement, in either
+        // direction, so what it has is read again and the buffers are made from that.
+        arrange(&processor, &inputs, &outputs);
+        let inputs = bus_channels(&component, BusDirections_::kInput as int32);
+        let outputs = bus_channels(&component, BusDirections_::kOutput as int32);
 
         // The first event input is the one that gets the notes, and there is no more than one.
         component.activateBus(
@@ -162,7 +168,6 @@ pub fn load(
 
         let pedal_parameter = pedal_parameter(controller.as_ref());
         let live = Arc::new(());
-        joined.kept = true;
         let (reports, changed) = rtrb::RingBuffer::new(REPORT_CAPACITY);
         let started = Vst3Processor::new(
             processor,
@@ -181,6 +186,7 @@ pub fn load(
         Opening {
             started: Box::new(started),
             plugin: Box::new(Vst3Plugin {
+                _module: module,
                 joined,
                 _context: context,
                 changed,
@@ -208,8 +214,9 @@ struct Joined {
     /// What the plugin's controller reports to. The plugin holds a pointer to it until the
     /// handler is taken back below, so it must outlive that call.
     handler: ComWrapper<Handler>,
-    /// Whether a plugin was made of this. A [`Vst3Plugin`] lets go of it itself, when the
-    /// engine has given the audio side back.
+    /// Whether there is still something to undo. It is set once `initialize` has been
+    /// answered and taken by [`Self::let_go`], and a [`Vst3Plugin`] whose audio side the
+    /// engine still holds clears it instead, because then nothing may be terminated at all.
     kept: bool,
 }
 
@@ -252,6 +259,9 @@ impl Drop for Joined {
 
 /// One loaded VST 3 plugin, from the control thread.
 pub struct Vst3Plugin {
+    /// The bundle this plugin came out of. Nothing unloads one, but a plugin owning its module
+    /// says so rather than leaving it to a table somewhere else.
+    _module: Rc<Module>,
     joined: Joined,
     /// The plugin holds this for as long as it lives, so it must outlive the plugin.
     _context: ComWrapper<HostContext>,
@@ -384,18 +394,14 @@ unsafe fn bus_channels(component: &ComPtr<IComponent>, direction: int32) -> Vec<
     }
 }
 
-/// Tells the plugin what this host gives each bus, and reads back what it settled on. The first
-/// output is asked for in stereo, which is what the engine carries.
+/// Tells the plugin what this host gives each bus. The first output is asked for in stereo,
+/// which is what the engine carries. Whatever the plugin answers, what it really has is what
+/// its buses say afterwards, which the caller reads again.
 ///
 /// # Safety
 ///
-/// Both objects must be alive.
-unsafe fn arrange(
-    processor: &ComPtr<IAudioProcessor>,
-    component: &ComPtr<IComponent>,
-    inputs: &[usize],
-    outputs: &[usize],
-) -> Vec<usize> {
+/// The processor must be alive.
+unsafe fn arrange(processor: &ComPtr<IAudioProcessor>, inputs: &[usize], outputs: &[usize]) {
     let mut wanted_in: Vec<SpeakerArrangement> =
         inputs.iter().map(|count| speakers(*count)).collect();
     let mut wanted_out: Vec<SpeakerArrangement> =
@@ -413,9 +419,6 @@ unsafe fn arrange(
                 wanted_out.len() as int32,
             )
         });
-        // Whatever the plugin answered, what it really has is what its buses now say. A plugin
-        // that refuses stereo out keeps the channel count it had.
-        bus_channels(component, BusDirections_::kOutput as int32)
     }
 }
 

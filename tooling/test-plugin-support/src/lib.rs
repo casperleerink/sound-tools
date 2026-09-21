@@ -25,8 +25,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub const CRASH_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_CRASH";
 
 /// Prints to standard output while the bundle is listed, as real plugins do. A scan must read
-/// its own lines and leave the plugin's alone.
+/// its own lines and leave the plugin's alone. It prints more than a pipe holds, so a scan
+/// that only reads when the child has ended would leave the child blocked on its own write.
 pub const CHATTER_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_CHATTER";
+
+/// How much a chatty plugin prints. A pipe on macOS holds 64 kB, and this is more.
+const CHATTER_LINES: usize = 4000;
 
 /// Never returns while the bundle is listed, as a licensed plugin that cannot reach its server
 /// does. A scan must give up on it and live. `1` makes every test plugin hang; the name of one
@@ -48,6 +52,11 @@ pub const LOG_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_LOG";
 /// no window before step 5b.
 pub const CLOSE_GUI_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_CLOSE_GUI";
 
+/// Makes the plugin say its output is silent and write nothing into it, from its second block
+/// on. VST 3 allows that (`silenceFlags`), and a host that does not clear its own output
+/// buffers would then play the block before over and over. VST 3 only: CLAP has no such flag.
+pub const SILENT_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SILENT";
+
 /// The first four bytes of the saved state, so a wrong file is refused instead of read.
 const STATE_MAGIC: [u8; 4] = *b"STT1";
 
@@ -65,7 +74,9 @@ pub fn while_listed(format: &str) {
         std::process::abort();
     }
     if told_to(CHATTER_VARIABLE) {
-        println!("test-{format}-plugin: initializing, version 0.1.0");
+        for line in 0..CHATTER_LINES {
+            println!("test-{format}-plugin: initializing, version 0.1.0, line {line} of noise");
+        }
     }
     let hang = std::env::var(HANG_VARIABLE).unwrap_or_default();
     if hang == "1" || hang == format {

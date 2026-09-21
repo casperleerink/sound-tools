@@ -76,6 +76,8 @@ struct Audio {
     processed: u64,
     /// How many parameter changes to send out of every process call.
     reports_out: u32,
+    /// Whether to say the output is silent and write nothing into it, from the second block on.
+    goes_silent: bool,
 }
 
 // SAFETY: the component is reached from the main thread and the audio thread, never at once:
@@ -96,6 +98,7 @@ impl TestTone {
                 tone: support::Tone::new(48_000.0),
                 processed: 0,
                 reports_out: support::events_out(),
+                goes_silent: support::told_to(support::SILENT_VARIABLE),
             }),
             handler: RefCell::new(None),
             semitones: AtomicI32::new(0),
@@ -314,10 +317,18 @@ impl IAudioProcessorTrait for TestTone {
             if data.numOutputs < 1 || data.outputs.is_null() {
                 return kResultOk;
             }
-            let bus = &*data.outputs;
+            let bus = &mut *data.outputs;
             if bus.numChannels < 2 || bus.__field0.channelBuffers32.is_null() {
                 return kResultOk;
             }
+            // What VST 3 lets a plugin do instead of writing zeros. The host must not play what
+            // was in its buffer before.
+            if audio.goes_silent && audio.processed > 0 {
+                bus.silenceFlags = 0b11;
+                audio.processed += 1;
+                return kResultOk;
+            }
+            bus.silenceFlags = 0;
             let left = std::slice::from_raw_parts_mut(*bus.__field0.channelBuffers32, frames);
             let right =
                 std::slice::from_raw_parts_mut(*bus.__field0.channelBuffers32.add(1), frames);

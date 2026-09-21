@@ -2,8 +2,11 @@
 //! pedal reaches the plugin with its value.
 
 use plugin_host::PluginFormat;
+use sound_core::MAX_BLOCK;
 
-use crate::support::{FORMATS, Harness, Played, record, tell_the_plugin};
+use crate::support::{
+    FORMATS, Harness, Played, record, tell_the_plugin, tell_the_plugin_to_go_silent,
+};
 
 #[test]
 fn the_notes_reach_the_plugin_on_the_frames_they_were_sent_on() {
@@ -182,4 +185,30 @@ fn sends_more_than_any_buffer_holds(format: PluginFormat) {
     tell_the_plugin(None, None);
     assert_eq!(allocations, 0, "the audio thread allocated, {format:?}");
     assert!(render.first_sound().is_some(), "{format:?}");
+}
+
+/// VST 3 lets a plugin say its output is silent and leave the buffer as it is. A host that
+/// does not clear its own output buffers would then play the block before over and over.
+#[test]
+fn a_plugin_that_says_its_output_is_silent_is_heard_as_silence() {
+    tell_the_plugin_to_go_silent();
+    let mut harness = Harness::new();
+    harness.add_track(
+        record(PluginFormat::Vst3, "piano"),
+        vec![Played::On {
+            frame: 0,
+            pitch: 60,
+            velocity: 100,
+        }],
+    );
+    let render = harness.play(4096);
+    let left = render.left();
+    // The first block sounds, and from the second the plugin writes nothing at all.
+    assert_ne!(left[0], 0.0);
+    let after = &left[MAX_BLOCK..];
+    assert!(
+        after.iter().all(|sample| *sample == 0.0),
+        "the block before was played again: {:?}",
+        &after[..8]
+    );
 }

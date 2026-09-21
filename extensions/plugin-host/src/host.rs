@@ -287,6 +287,9 @@ impl Plugins {
         std::thread::Builder::new()
             .name("plugin-scan".to_string())
             .spawn(move || {
+                // Whatever ends this thread, the scan is over: it was stopped, or it panicked
+                // inside a bundle. Nothing may wait for a scan that is not running.
+                let _over = Over(scanned.clone());
                 scan_folders(&paths, &scanner, &cache, &stop, |scan| {
                     publish(&scanned, scan);
                 });
@@ -317,9 +320,14 @@ impl Plugins {
         }
     }
 
-    /// Whether a scan is still running. The picker says so quietly while it is.
+    /// Whether a scan is still running. The picker says so quietly while it is, and whoever
+    /// polls asks on every poll, so this copies nothing.
     pub fn scan_is_running(&self) -> bool {
-        self.0.started.get() && !self.known().finished
+        let finished = match self.0.scanned.lock() {
+            Ok(scanned) => scanned.scan.finished,
+            Err(poisoned) => poisoned.into_inner().scan.finished,
+        };
+        self.0.started.get() && !finished
     }
 
     /// Scans if this session has not, and waits for it. Does nothing once a scan has been
@@ -827,13 +835,30 @@ impl Plugins {
     }
 }
 
+/// Says the scan is over, however its thread ended.
+struct Over(Arc<Mutex<Scanning>>);
+
+impl Drop for Over {
+    fn drop(&mut self) {
+        let held = match self.0.lock() {
+            Ok(held) => Some(held),
+            Err(poisoned) => Some(poisoned.into_inner()),
+        };
+        if let Some(mut held) = held {
+            held.scan.finished = true;
+            held.generation += 1;
+        }
+    }
+}
+
 /// Puts what the scan has found where the host can read it, and counts the change so that a
 /// record that is waiting for a plugin is tried again.
 fn publish(scanned: &Arc<Mutex<Scanning>>, scan: &Scan) {
     let Ok(mut held) = scanned.lock() else {
         return;
     };
-    for failure in &scan.failures[held.scan.failures.len()..] {
+    let said = held.scan.failures.len().min(scan.failures.len());
+    for failure in &scan.failures[said..] {
         held.notices.push(format!(
             "{} could not be scanned: {}",
             failure.path.display(),
@@ -870,17 +895,25 @@ fn save(hosted: &mut Hosted, assets: &Assets) -> Result<(), PluginProblem> {
         message,
     };
     let bytes = hosted.plugin.save_state().map_err(fail)?;
-    hosted.pending_save = false;
-    if bytes.is_empty() {
-        return Ok(());
+    // Cleared only once the bytes are where they belong, so a write that failed is tried again
+    // at a later poll instead of being forgotten.
+    let written = || {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let there = assets
+            .read(&hosted.asset)
+            .map_err(|error| fail(error.to_string()))?;
+        if there.as_deref() == Some(bytes.as_slice()) {
+            return Ok(());
+        }
+        assets
+            .write(&hosted.asset, &bytes)
+            .map_err(|error| fail(error.to_string()))
+    };
+    let result = written();
+    if result.is_ok() {
+        hosted.pending_save = false;
     }
-    let there = assets
-        .read(&hosted.asset)
-        .map_err(|error| fail(error.to_string()))?;
-    if there.as_deref() == Some(bytes.as_slice()) {
-        return Ok(());
-    }
-    assets
-        .write(&hosted.asset, &bytes)
-        .map_err(|error| fail(error.to_string()))
+    result
 }

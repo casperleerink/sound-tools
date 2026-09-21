@@ -376,14 +376,19 @@ impl Project {
         // Not the one state application: that one drops a change whose record is the one that
         // is already there, which is exactly this. The behaviour is run directly instead, as
         // it would be for a record that really changed, owners included.
-        let problems_before = self.instance_problems();
+        let instance_problems_before = self.instance_problems();
+        let connection_problems_before = self.bindings.connection_problems().to_vec();
         self.bind(&[RecordChange {
             id: id.clone(),
             before: Some(record.clone()),
             after: Some(record),
         }])?;
         self.push_event(ProjectEvent::Changed(id.clone()));
-        if problems_before != self.instance_problems() {
+        // Both sets, as the one state application does: a behaviour that now declares the port
+        // a saved connection names takes that connection's problem away too.
+        if instance_problems_before != self.instance_problems()
+            || connection_problems_before != self.bindings.connection_problems()
+        {
             self.push_event(ProjectEvent::ProblemsChanged);
         }
         Ok(true)

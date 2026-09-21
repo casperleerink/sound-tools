@@ -328,9 +328,6 @@ pub fn run(folder: &Path) -> Result<()> {
     plugins.start_scanning();
     let mut project = open_or_create_with(folder, control, plugins.clone())?;
     project.watch()?;
-    for notice in plugins.take_notices() {
-        println!("plugin scan: {notice}");
-    }
     // From here only the project holds the plugins, so that dropping the project ends them and
     // saves the state of every one. A handle kept here would outlive the project: this
     // function returns after the application has quit.
@@ -388,6 +385,13 @@ pub fn run(folder: &Path) -> Result<()> {
                             session.read_with(cx, |session, _| plugins.poll(session.project()));
                         for problem in problems {
                             session.update(cx, |session, cx| session.report(problem, cx));
+                        }
+                        // A bundle the scan could not read. It arrives while the scan runs, on
+                        // its own thread, so it is taken here and not once before the window.
+                        for notice in plugins.take_notices() {
+                            let notice = format!("plugin scan: {notice}");
+                            println!("{notice}");
+                            session.update(cx, |session, cx| session.report(notice, cx));
                         }
                         // Records that were waiting for a plugin the scan had not reached.
                         // Running their behaviour again is what makes them play and takes

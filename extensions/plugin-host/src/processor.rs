@@ -179,22 +179,25 @@ fn translate(
     for timed in events {
         let time = timed.offset as u32;
         match timed.event {
+            // A key is noted as down only when its event really reached the plugin. A note on
+            // that did not fit must not be ended by a later `AllOff`, and a note off that did
+            // not fit leaves its key down so that a later `AllOff` does end it.
             NoteEvent::On { pitch, velocity } => {
                 let key = pitch.number();
-                keys_down[usize::from(key)] = true;
                 let event = PluginEvent::On {
                     key,
                     velocity: velocity.value(),
                 };
-                if !plugin.push(time, event) {
-                    dropped += 1;
+                match plugin.push(time, event) {
+                    true => keys_down[usize::from(key)] = true,
+                    false => dropped += 1,
                 }
             }
             NoteEvent::Off { pitch } => {
                 let key = pitch.number();
-                keys_down[usize::from(key)] = false;
-                if !plugin.push(time, PluginEvent::Off { key }) {
-                    dropped += 1;
+                match plugin.push(time, PluginEvent::Off { key }) {
+                    true => keys_down[usize::from(key)] = false,
+                    false => dropped += 1,
                 }
             }
             NoteEvent::Pedal(pedal) => {
@@ -209,9 +212,9 @@ fn translate(
                     if !keys_down[usize::from(key)] {
                         continue;
                     }
-                    keys_down[usize::from(key)] = false;
-                    if !plugin.push(time, PluginEvent::Off { key }) {
-                        dropped += 1;
+                    match plugin.push(time, PluginEvent::Off { key }) {
+                        true => keys_down[usize::from(key)] = false,
+                        false => dropped += 1,
                     }
                 }
                 if plugin.takes_pedal() && !plugin.push(time, PluginEvent::Pedal(Pedal::UP)) {
@@ -221,4 +224,108 @@ fn translate(
         }
     }
     dropped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sound_notes::{Pitch, Velocity};
+
+    /// A plugin that takes `room` events and refuses the rest, so a test can say what the
+    /// wrapper does with an event that did not fit.
+    struct Full {
+        room: usize,
+        taken: Vec<(u32, PluginEvent)>,
+    }
+
+    impl Started for Full {
+        fn takes_pedal(&self) -> bool {
+            true
+        }
+
+        fn begin_block(&mut self) {
+            self.taken.clear();
+        }
+
+        fn push(&mut self, offset: u32, event: PluginEvent) -> bool {
+            if self.taken.len() == self.room {
+                return false;
+            }
+            self.taken.push((offset, event));
+            true
+        }
+
+        fn run(&mut self, _frames: usize, _left: &mut [f32], _right: &mut [f32]) -> bool {
+            true
+        }
+
+        fn stop(&mut self) {}
+    }
+
+    fn on(key: u8) -> Timed<NoteEvent> {
+        Timed {
+            offset: 0,
+            event: NoteEvent::On {
+                pitch: Pitch::new(key).expect("a pitch"),
+                velocity: Velocity::new(100).expect("a velocity"),
+            },
+        }
+    }
+
+    fn off(key: u8) -> Timed<NoteEvent> {
+        Timed {
+            offset: 0,
+            event: NoteEvent::Off {
+                pitch: Pitch::new(key).expect("a pitch"),
+            },
+        }
+    }
+
+    fn all_off() -> Timed<NoteEvent> {
+        Timed {
+            offset: 0,
+            event: NoteEvent::AllOff,
+        }
+    }
+
+    /// A note off that did not fit leaves its key down, so the `AllOff` of a stop still ends
+    /// it. Forgetting the key here is a note that sounds for ever.
+    #[test]
+    fn a_note_off_that_did_not_fit_is_still_ended_by_all_off() {
+        let mut plugin = Full {
+            room: 1,
+            taken: Vec::new(),
+        };
+        let mut keys_down = [false; 128];
+        assert_eq!(translate(&mut plugin, &[on(60)], &mut keys_down), 0);
+        assert_eq!(translate(&mut plugin, &[off(60)], &mut keys_down), 0);
+        // Now with no room: the note off is counted and the key stays down.
+        assert_eq!(translate(&mut plugin, &[on(60)], &mut keys_down), 0);
+        plugin.room = 0;
+        assert_eq!(translate(&mut plugin, &[off(60)], &mut keys_down), 1);
+        plugin.room = 8;
+        assert_eq!(translate(&mut plugin, &[all_off()], &mut keys_down), 0);
+        assert_eq!(
+            plugin.taken,
+            [
+                (0, PluginEvent::Off { key: 60 }),
+                (0, PluginEvent::Pedal(Pedal::UP)),
+            ]
+        );
+    }
+
+    /// A note on that did not fit never reached the plugin, so an `AllOff` must not send a
+    /// note off for a note the plugin never started.
+    #[test]
+    fn a_note_on_that_did_not_fit_is_not_ended_by_all_off() {
+        let mut plugin = Full {
+            room: 0,
+            taken: Vec::new(),
+        };
+        let mut keys_down = [false; 128];
+        assert_eq!(translate(&mut plugin, &[on(60)], &mut keys_down), 1);
+        plugin.room = 8;
+        assert_eq!(translate(&mut plugin, &[all_off()], &mut keys_down), 0);
+        assert_eq!(plugin.taken, [(0, PluginEvent::Pedal(Pedal::UP))]);
+    }
 }
