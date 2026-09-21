@@ -128,11 +128,21 @@ pub fn test_plugin_host(root: &Path) -> plugin_host::Plugins {
     plugin_host::Plugins::new(vec![folder], scanner, plugin_host::ScanCache::none())
 }
 
+/// The id of the repository's test plugin in `format`. The two are the same instrument in the
+/// two formats, so a test reads either the same way.
+pub fn test_plugin_id(format: plugin_host::PluginFormat) -> &'static str {
+    match format {
+        plugin_host::PluginFormat::Clap => test_clap_plugin::PLUGIN_ID,
+        plugin_host::PluginFormat::Vst3 => test_vst3_plugin::PLUGIN_ID,
+    }
+}
+
 /// The record of a plugin instrument that names the repository's test plugin.
-pub fn test_plugin_record(state_asset: &str) -> String {
+pub fn test_plugin_record(format: plugin_host::PluginFormat, state_asset: &str) -> String {
     format!(
-        r#"{{"tool": "plugin", "state": {{"format": "clap", "plugin_id": "{}", "state_asset": "{state_asset}"}}}}"#,
-        test_clap_plugin::PLUGIN_ID
+        r#"{{"tool": "plugin", "state": {{"format": "{}", "plugin_id": "{}", "state_asset": "{state_asset}"}}}}"#,
+        format.as_str(),
+        test_plugin_id(format)
     )
 }
 
