@@ -126,6 +126,7 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [ARCHITECTURE.md](ARCHITECTURE.md): the decisions, both milestones with their checks, and the known gaps after each.
 - [ENGINEERING.md](ENGINEERING.md): how to build: dependencies, the audio engine, testing, rules for agents.
 - [docs/milestone-2.md](docs/milestone-2.md): the plan of the second milestone, done September 21, 2026. [docs/agent-brief.md](docs/agent-brief.md) is the shared brief for the agents that built it.
+- [docs/milestone-3.md](docs/milestone-3.md): the plan of the third milestone: mixer, built-in effects, reliable plugins and a better window. Not started.
 - [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
 - [SDK_SKETCH.md](SDK_SKETCH.md): an early sketch of the extension SDK.
 - Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md), [fit-tempo](extensions/fit-tempo/README.md).
