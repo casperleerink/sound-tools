@@ -81,7 +81,7 @@ impl Encoding {
 }
 
 /// The container of a file.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Container {
     Wav,
     Aiff,
@@ -107,7 +107,7 @@ impl fmt::Display for Container {
 }
 
 /// What a file is, without its samples: enough to know how long it plays.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Info {
     pub frames: u64,
     pub channels: u16,

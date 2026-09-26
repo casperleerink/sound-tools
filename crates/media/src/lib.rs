@@ -10,10 +10,12 @@
 //! - [`load`] gives the file in memory, [`Audio`], shared by everything that plays it, and
 //!   [`info`] what it is, how long and at what rate.
 //! - [`Resampler`] plays it at another sample rate than the engine's.
+//! - [`Overview`] is what a waveform of it draws, made from the file and never saved.
 //!
 //! `README.md` in this crate is the guide.
 
 mod file;
+mod overview;
 mod resample;
 
 use std::collections::HashMap;
@@ -29,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use sound_core::{ASSETS_FOLDER, AssetName, Assets, InvalidAssetName};
 
 pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES};
+pub use overview::{FINEST_FRAMES, Overview};
 pub use resample::{Resampler, SCRATCH_FRAMES};
 
 /// The folder of audio files, under `assets/`.

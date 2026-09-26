@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 gpui.workspace = true
 sound-core.workspace = true
+sound-media.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

@@ -1,5 +1,6 @@
 //! Shared components. Each file is one component; the gallery shows every variant.
 
+pub mod audio_clip;
 pub mod button;
 pub mod card;
 pub mod empty_state;
@@ -20,6 +21,7 @@ pub mod segmented_control;
 pub mod text_input;
 pub mod toggle;
 pub mod volume;
+pub mod waveform_display;
 
 pub mod dropdown_menu;
 pub mod popover;

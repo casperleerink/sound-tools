@@ -44,6 +44,18 @@ pub enum ValueChange<V = f32> {
     Set(V),
 }
 
+impl<V> ValueChange<V> {
+    /// The same change of another value, such as one axis of a handle.
+    pub fn map<W>(self, f: impl FnOnce(V) -> W) -> ValueChange<W> {
+        match self {
+            Self::Drag(value) => ValueChange::Drag(f(value)),
+            Self::DragEnd => ValueChange::DragEnd,
+            Self::DragCancel => ValueChange::DragCancel,
+            Self::Set(value) => ValueChange::Set(f(value)),
+        }
+    }
+}
+
 /// One axis of a drag, as a place on the travel of the control from 0 to 1.
 ///
 /// `pointer` is in points and grows in the direction that raises the value: the negative `y` for

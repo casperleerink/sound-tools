@@ -5644,6 +5644,7 @@ dependencies = [
  "gpui",
  "serde",
  "sound-core",
+ "sound-media",
  "tempfile",
 ]
 

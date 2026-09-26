@@ -16,6 +16,10 @@
 //!
 //! The display knows no device. The owner gives the curve as points on the display and the
 //! handles with their values, and hears what a handle moves.
+//!
+//! A display can also show a waveform under its curve, with the part outside two lines shaded
+//! and a green line where the sound plays: that is the waveform display of the Clip card and
+//! the Sampler, see [`waveform_display`](super::waveform_display).
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -45,6 +49,8 @@ const NUMBERED_HANDLE: f32 = 16.;
 const HANDLE_RING: f32 = 1.5;
 /// The target of a handle is larger than its dot: a trackpad is not a mouse.
 const HANDLE_TARGET: f32 = 18.;
+/// A full-scale waveform stops this far from the top and the bottom of the display.
+const WAVEFORM_MARGIN: f32 = 6.;
 
 /// One value a handle moves: where it is on a range, and what a double click sets.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -163,6 +169,7 @@ pub struct Display {
     marks: Vec<Point<f32>>,
     /// A second line, dashed and not filled, from left to right.
     dashed: Vec<Point<f32>>,
+    waveform: Waveform,
     handles: Vec<Handle>,
     caption: Option<SharedString>,
     children: Vec<AnyElement>,
@@ -179,6 +186,7 @@ impl Display {
             zero: None,
             marks: Vec::new(),
             dashed: Vec::new(),
+            waveform: Waveform::default(),
             handles: Vec::new(),
             caption: None,
             children: Vec::new(),
@@ -223,6 +231,26 @@ impl Display {
         self
     }
 
+    /// A waveform under the curve: the peak of each column across the display, 0 to 1, drawn
+    /// mirrored about the middle.
+    pub fn waveform(mut self, peaks: Vec<f32>) -> Self {
+        self.waveform.peaks = peaks;
+        self
+    }
+
+    /// The part of the display from `from` to `to` across, 0 to 1, between two lines, with what
+    /// is outside it shaded: the part of a file that plays.
+    pub fn kept(mut self, from: f32, to: f32) -> Self {
+        self.waveform.kept = Some((from, to));
+        self
+    }
+
+    /// A green line at a place across, where the sound plays now. Level and signal are green.
+    pub fn signal_line(mut self, at: Option<f32>) -> Self {
+        self.waveform.signal = at;
+        self
+    }
+
     /// The line under the display: its numbers, `A 5 ms · D 350 ms`, or its scale.
     pub fn caption(mut self, caption: impl Into<SharedString>) -> Self {
         self.caption = Some(caption.into());
@@ -245,6 +273,20 @@ struct Ink {
     grid: Hsla,
     zero: Hsla,
     thin: Hsla,
+    waveform: Hsla,
+    shade: Hsla,
+    signal: Hsla,
+}
+
+/// What a waveform display draws under the curve.
+#[derive(Clone, Default)]
+struct Waveform {
+    /// The peak of each column across, 0 to 1.
+    peaks: Vec<f32>,
+    /// The part that plays, between two lines, with the rest shaded.
+    kept: Option<(f32, f32)>,
+    /// The green line of where the sound is.
+    signal: Option<f32>,
 }
 
 /// What the display draws, in places from 0 to 1.
@@ -254,6 +296,7 @@ struct Drawing {
     zero: Option<f32>,
     marks: Vec<Point<f32>>,
     dashed: Vec<Point<f32>>,
+    waveform: Waveform,
 }
 
 /// A line through `points`, `width` wide, dashed or not.
@@ -289,6 +332,7 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
         zero,
         marks,
         dashed,
+        waveform,
     } = drawing;
     let mask = ContentMask { bounds };
     window.with_content_mask(Some(mask), |window| {
@@ -296,6 +340,7 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
             let size = size((to.x - from.x).max(px(1.)), (to.y - from.y).max(px(1.)));
             window.paint_quad(fill(Bounds::new(from, size), color));
         };
+        paint_waveform(bounds, waveform, ink, window);
         for x in across {
             let top = at(bounds, point(*x, 1.));
             line(window, top, at(bounds, point(*x, 0.)), ink.grid);
@@ -338,6 +383,50 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
             window.paint_path(stroke, ink.curve);
         }
     });
+}
+
+/// The waveform, the shade outside the part that plays with its two lines, and the green line
+/// of where the sound is. Under the grid and the curve.
+fn paint_waveform(bounds: Bounds<Pixels>, waveform: &Waveform, ink: Ink, window: &mut Window) {
+    let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    let middle = height / 2.;
+    let count = waveform.peaks.len();
+    if count > 0 {
+        let column = width / count as f32;
+        for (index, peak) in waveform.peaks.iter().enumerate() {
+            // At least a hairline, so silence still shows where the file is.
+            let half = (peak.clamp(0., 1.) * (middle - WAVEFORM_MARGIN)).max(0.5);
+            let origin = bounds.origin + point(px(index as f32 * column), px(middle - half));
+            let area = Bounds::new(origin, size(px(column.max(1.)), px(half * 2.)));
+            window.paint_quad(fill(area, ink.waveform));
+        }
+    }
+    if let Some((from, to)) = waveform.kept {
+        let (left, right) = (from.clamp(0., 1.) * width, to.clamp(0., 1.) * width);
+        let shade = |window: &mut Window, x: f32, shaded: f32| {
+            let area = Bounds::new(
+                bounds.origin + point(px(x), px(0.)),
+                size(px(shaded), bounds.size.height),
+            );
+            window.paint_quad(fill(area, ink.shade));
+        };
+        shade(window, 0., left);
+        shade(window, right, width - right);
+        for x in [left, right] {
+            let area = Bounds::new(
+                bounds.origin + point(px(x.round() - 0.5), px(0.)),
+                size(px(1.), bounds.size.height),
+            );
+            window.paint_quad(fill(area, ink.curve));
+        }
+    }
+    if let Some(at) = waveform.signal {
+        let area = Bounds::new(
+            bounds.origin + point(px((at.clamp(0., 1.) * width).round() - 0.5), px(0.)),
+            size(px(1.), bounds.size.height),
+        );
+        window.paint_quad(fill(area, ink.signal));
+    }
 }
 
 /// The value of one axis of a handle for the pointer now.
@@ -478,6 +567,9 @@ impl RenderOnce for Display {
             grid: theme.alpha_at(0.04),
             zero: theme.alpha_at(0.08),
             thin: theme.gray_950.opacity(0.5),
+            waveform: theme.alpha_at(0.30),
+            shade: theme.gray_50.opacity(0.72),
+            signal: theme.green,
         };
         let handle_colors = (theme.gray_950, theme.gray_50);
         let caption_color = theme.gray_800;
@@ -487,6 +579,7 @@ impl RenderOnce for Display {
             zero: self.zero,
             marks: self.marks,
             dashed: self.dashed,
+            waveform: self.waveform,
         };
         let drawing = canvas(
             |_, _, _| {},
