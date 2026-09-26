@@ -38,6 +38,11 @@ use crate::{PluginFormat, PluginRecord};
 /// writes whatever is left, so nothing is lost by waiting.
 const SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
+/// How often the host looks at the plugin folders again while a record names a plugin this
+/// machine does not have, so that installing it is all the composer has to do. A look at
+/// folders that did not change costs a few milliseconds on a thread of its own.
+const LOOK_INTERVAL: Duration = Duration::from_secs(2);
+
 /// What the host tells a plugin about itself.
 pub(crate) const HOST_NAME: &str = "Sound Tools";
 pub(crate) const HOST_VENDOR: &str = "Sound Tools";
@@ -183,6 +188,8 @@ struct Inner {
     /// Whether this host scans in the background, which is the window's. Only such a host looks
     /// again while it runs: the others run once and end.
     in_background: Cell<bool>,
+    /// When the host last started to look again, for [`LOOK_INTERVAL`].
+    last_look: Cell<Option<Instant>>,
     /// Ends the scan thread between bundles when the host goes.
     stop: Arc<AtomicBool>,
     /// The generation the last poll acted on.
@@ -305,6 +312,7 @@ impl Plugins {
             scanned: Arc::new(Mutex::new(Scanning::default())),
             started: Cell::new(false),
             in_background: Cell::new(false),
+            last_look: Cell::new(None),
             stop: Arc::new(AtomicBool::new(false)),
             seen: Cell::new(0),
             waiting: RefCell::new(BTreeSet::new()),
@@ -402,9 +410,10 @@ impl Plugins {
     /// only when the plugins or the failures do. A record waiting for its plugin is tried again
     /// when they move.
     ///
-    /// It runs when a picker asks what there is ([`Self::instruments`], [`Self::effects`]) and
-    /// when a record names a plugin this machine did not have, and only in a host that scans in
-    /// the background, once its first scan is over, and one at a time.
+    /// It runs when a picker asks what there is ([`Self::instruments`], [`Self::effects`]), and
+    /// at a poll every [`LOOK_INTERVAL`] while a record names a plugin this machine did not
+    /// have. Only in a host that scans in the background, once its first scan is over, and one
+    /// at a time.
     fn look_again(&self) {
         if !self.0.in_background.get() {
             return;
@@ -418,6 +427,7 @@ impl Plugins {
             }
             scanned.looking_again = true;
         }
+        self.0.last_look.set(Some(Instant::now()));
         let scanned = self.0.scanned.clone();
         let stop = self.0.stop.clone();
         let (paths, scanner, cache) = (
@@ -540,17 +550,13 @@ impl Plugins {
             Ok(opened) => Ok(opened),
             Err(problem) => {
                 // A plugin the scan has not reached yet is worth trying again when it has, and
-                // one this machine does not have when a look again finds it: it may have been
-                // installed a moment ago, which is what an agent that writes its record does.
-                match problem {
-                    PluginProblem::StillScanning { .. } => {
-                        self.0.waiting.borrow_mut().insert(id.clone());
-                    }
-                    PluginProblem::NotInstalled { .. } => {
-                        self.0.waiting.borrow_mut().insert(id.clone());
-                        self.look_again();
-                    }
-                    _ => {}
+                // one this machine does not have when a look again finds it: the composer may
+                // install it while the app runs. The poll looks again while one waits.
+                if matches!(
+                    problem,
+                    PluginProblem::StillScanning { .. } | PluginProblem::NotInstalled { .. }
+                ) {
+                    self.0.waiting.borrow_mut().insert(id.clone());
                 }
                 Err(problem)
             }
@@ -958,6 +964,14 @@ impl Plugins {
     fn serve(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
         self.note_what_the_scan_found(project);
+        // A record waits for a plugin this machine did not have. Once the first scan is over,
+        // that is a plugin the composer may be installing right now.
+        let looked = self.0.last_look.get();
+        if !self.0.waiting.borrow().is_empty()
+            && looked.is_none_or(|looked| now.saturating_duration_since(looked) >= LOOK_INTERVAL)
+        {
+            self.look_again();
+        }
         let mut table = self.0.table.borrow_mut();
         let Table {
             loaded,

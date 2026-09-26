@@ -197,14 +197,45 @@ fn filetime_now(path: &std::path::Path) {
     file.write_all(&[0]).expect("the binary is touched");
 }
 
-/// A plugin installed while the app runs is found without a restart. The window's host looks
-/// at the plugin folders again whenever a picker asks what there is, and when a record names a
-/// plugin this machine did not have. A record that was waiting for the plugin then plays.
+/// A plugin installed while the app runs is found without a restart, when a picker asks what
+/// there is: the window's host looks at the plugin folders again then. A look that finds
+/// nothing new changes nothing, so the picker it fills again does not make it look for ever.
 ///
-/// The loop below is what the window's poll does. It asks until the plugin turns up, so the
-/// test does not depend on when the thread that looks again runs.
+/// The loops below ask until the plugin turns up, so the test does not depend on when the
+/// thread that looks again runs.
 #[test]
-fn a_plugin_installed_while_the_app_runs_is_found_and_its_record_plays() {
+fn a_plugin_installed_while_the_app_runs_is_in_the_next_picker() {
+    let folder = tempfile::tempdir().unwrap();
+    let search = vec![plugin_folder_of(folder.path(), PluginFormat::Clap)];
+    let plugins = Plugins::new(search, scanner(), no_cache());
+    plugins.start_scanning();
+    plugins.wait_for_scan();
+    assert_eq!(plugins.instruments().len(), 1);
+
+    test_vst3_plugin::install_into(&folder.path().join("plugins"));
+    let started = Instant::now();
+    while plugins.instruments().len() < 2 {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the plugin was not found"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let generation = plugins.scan_generation();
+    for _ in 0..20 {
+        plugins.instruments();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(plugins.scan_generation(), generation);
+    assert_eq!(plugins.instruments().len(), 2);
+}
+
+/// A record that names a plugin this machine does not have plays once the composer installs
+/// it, with no picker open and no restart: the host looks again while a record waits. The loop
+/// is what the window's poll does.
+#[test]
+fn a_record_whose_plugin_is_installed_while_the_app_runs_plays() {
     let folder = tempfile::tempdir().unwrap();
     let search = vec![plugin_folder_of(folder.path(), PluginFormat::Clap)];
     let plugins = Plugins::new(search, scanner(), no_cache());
@@ -218,44 +249,24 @@ fn a_plugin_installed_while_the_app_runs_is_found_and_its_record_plays() {
             velocity: 100,
         })
         .collect();
-    // An agent writes the record of a plugin this machine does not have yet.
     harness.add_track(record(PluginFormat::Vst3, "piano"), played);
     let problems = harness.problems();
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert!(problems[0].contains("this machine has no"), "{problems:?}");
 
-    // The composer installs it.
     test_vst3_plugin::install_into(&harness.folder.path().join("plugins"));
-    let vst3 = PluginFormat::Vst3;
     let started = Instant::now();
-    while harness
-        .plugins
-        .installed_name(vst3, plugin_id(vst3))
-        .is_none()
-        || !harness.problems().is_empty()
-    {
+    while !harness.problems().is_empty() {
         assert!(
             started.elapsed() < Duration::from_secs(30),
-            "the plugin was not found: {:?}",
+            "the record still waits: {:?}",
             harness.problems()
         );
         std::thread::sleep(Duration::from_millis(20));
-        // A picker being filled, and the poll of the window.
-        harness.plugins.instruments();
         harness.plugins.poll(&harness.project);
         for instance in harness.plugins.take_retries() {
             harness.project.rebind(&instance).unwrap();
         }
     }
-    assert_eq!(harness.plugins.instruments().len(), 2);
     assert!(harness.play(2048).first_sound().is_some());
-
-    // Looking again when nothing changed changes nothing, so a picker that is filled again
-    // because the host learned something does not make it learn something again.
-    let generation = harness.plugins.scan_generation();
-    for _ in 0..20 {
-        harness.plugins.instruments();
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(harness.plugins.scan_generation(), generation);
 }
