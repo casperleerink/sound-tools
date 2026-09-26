@@ -80,6 +80,10 @@ pub(crate) enum PathTarget {
     /// A folder: the instance with this id, when it is one, and everything inside it.
     /// `None` is the `state/` folder itself.
     Folder(Option<InstanceId>),
+    /// A file or folder under `assets/<folder>/`, or that folder itself: the name of the
+    /// folder. Not project state, but a tool may wait for a file there, see
+    /// [`ToolRegistration::rebinds_on_assets`](super::ToolRegistration::rebinds_on_assets).
+    Asset(String),
     /// Not part of the project state, such as a temporary file of an editor.
     Ignored,
 }
@@ -268,6 +272,15 @@ impl Storage {
         };
         if relative == Path::new(PROJECT_FILE) {
             return PathTarget::ProjectFile;
+        }
+        if let Ok(inside_assets) = relative.strip_prefix(super::assets::ASSETS_FOLDER) {
+            let folder = inside_assets.components().next();
+            let folder = folder.and_then(|folder| folder.as_os_str().to_str());
+            return match folder {
+                Some(folder) => PathTarget::Asset(folder.to_string()),
+                // `assets/` itself, made or copied whole: every folder in it may be new.
+                None => PathTarget::Asset(String::new()),
+            };
         }
         let Ok(inside_state) = relative.strip_prefix(STATE_FOLDER) else {
             return PathTarget::Ignored;

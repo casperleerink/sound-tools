@@ -53,6 +53,7 @@ impl Project {
         // Ids to look at, with the one form a folder scan saw for it, if any.
         let mut queue = BTreeMap::new();
         let mut project_file_changed = false;
+        let mut asset_folders = BTreeSet::new();
         for path in paths {
             match self.storage.target_of(path) {
                 PathTarget::ProjectFile => project_file_changed = true,
@@ -65,8 +66,15 @@ impl Project {
                         queue.entry(id).or_insert(None);
                     }
                 }
+                PathTarget::Asset(folder) => {
+                    asset_folders.insert(folder);
+                }
                 PathTarget::Ignored => {}
             }
+        }
+        if queue.is_empty() && !project_file_changed {
+            self.rebind_waiting_for(&asset_folders)?;
+            return Ok(0);
         }
 
         let mut changes = Vec::new();
@@ -239,7 +247,41 @@ impl Project {
             self.history.push_outside(OUTSIDE_LABEL, applied, at);
             self.write(derived.iter(), write_project_file)?;
         }
+        self.rebind_waiting_for(&asset_folders)?;
         Ok(count)
+    }
+
+    /// Runs the behaviour again of every instance with a problem whose tool waits for files in
+    /// one of these folders under `assets/`. An empty name is `assets/` itself, which stands
+    /// for every folder in it.
+    fn rebind_waiting_for(&mut self, folders: &BTreeSet<String>) -> Result<(), ProjectError> {
+        if folders.is_empty() {
+            return Ok(());
+        }
+        let waits = |tool: &str| {
+            let definition = self.registry.definition(tool);
+            let asset_folders = definition.map(|definition| &definition.asset_folders);
+            asset_folders.is_some_and(|asset_folders| {
+                asset_folders
+                    .iter()
+                    .any(|folder| folders.contains(*folder) || folders.contains(""))
+            })
+        };
+        let waiting: BTreeSet<InstanceId> = self
+            .bindings
+            .instance_problems()
+            .map(|(id, _)| id)
+            .filter(|id| {
+                self.instances
+                    .get(*id)
+                    .is_some_and(|record| waits(record.tool))
+            })
+            .cloned()
+            .collect();
+        for id in waiting {
+            self.rebind(&id)?;
+        }
+        Ok(())
     }
 
     /// Applies the group. While loading, an instance whose behaviour fails is left out with

@@ -88,6 +88,9 @@ pub(crate) struct ToolDefinition {
     pub summary: Option<ErasedSummary>,
     pub end: Option<ErasedEnd>,
     pub owns_children: bool,
+    /// Folders under `assets/` whose changes run the behaviour of an instance with a problem
+    /// again. See [`ToolRegistration::rebinds_on_assets`].
+    pub asset_folders: Vec<&'static str>,
 }
 
 /// Every tool the compiled extensions offer. Registering makes a type available. It creates
@@ -134,6 +137,7 @@ impl Registry {
             summary: None,
             end: None,
             owns_children: S::OWNS_CHILDREN,
+            asset_folders: Vec::new(),
         });
         Ok(ToolRegistration {
             definition,
@@ -288,6 +292,18 @@ impl<S: State> ToolRegistration<'_, S> {
                 None => String::new(),
             }
         }));
+        self
+    }
+
+    /// When a file under `assets/<folder>/` is added, changed or removed, every instance of
+    /// this tool that has a problem runs its behaviour again, with the record it has.
+    ///
+    /// For a tool whose record names an asset that may arrive after the record, such as an
+    /// audio clip whose file an agent copies in afterwards. Only instances with a problem run,
+    /// so what plays is never touched, and only for the folders a tool names, so the assets
+    /// the runtime writes itself, such as the state of a plugin, wake nothing else.
+    pub fn rebinds_on_assets(self, folder: &'static str) -> Self {
+        self.definition.asset_folders.push(folder);
         self
     }
 

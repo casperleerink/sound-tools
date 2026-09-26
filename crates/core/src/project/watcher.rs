@@ -16,21 +16,27 @@ pub const GROUPING_WINDOW: Duration = Duration::from_millis(100);
 
 pub(crate) struct Watcher {
     /// Dropping it stops the watcher thread.
-    _watcher: RecommendedWatcher,
+    watcher: RecommendedWatcher,
+    /// Whether `assets/` is watched. It is watched from when it exists, which may be after the
+    /// project opened: a tool may wait for a file there, see
+    /// [`ToolRegistration::rebinds_on_assets`](super::ToolRegistration::rebinds_on_assets).
+    assets_watched: bool,
     events: Receiver<notify::Result<notify::Event>>,
     pending: BTreeSet<PathBuf>,
     last_event: Instant,
 }
 
 impl Project {
-    /// Starts watching `project.json` and `state/`. Events wait in a channel until `poll`.
+    /// Starts watching `project.json`, `state/` and `assets/`. Events wait in a channel until
+    /// `poll`.
     pub fn watch(&mut self) -> Result<(), ProjectError> {
         let (sender, events) = channel();
         let mut watcher = notify::recommended_watcher(sender)?;
         watcher.watch(self.storage.root(), RecursiveMode::NonRecursive)?;
         watcher.watch(&self.storage.state_folder(), RecursiveMode::Recursive)?;
         self.watcher = Some(Watcher {
-            _watcher: watcher,
+            watcher,
+            assets_watched: false,
             events,
             pending: BTreeSet::new(),
             last_event: Instant::now(),
@@ -51,9 +57,19 @@ impl Project {
     }
 
     fn poll_watcher(&mut self) -> Result<usize, ProjectError> {
+        let assets = self.assets().path_of_folder();
         let Some(watcher) = &mut self.watcher else {
             return Ok(0);
         };
+        // `assets/` from the moment it exists. What is in it by then counts as changed, since
+        // no event said so.
+        if !watcher.assets_watched && assets.is_dir() {
+            // Tried once: a watch that fails is reported and not tried on every poll.
+            watcher.assets_watched = true;
+            watcher.watcher.watch(&assets, RecursiveMode::Recursive)?;
+            watcher.pending.insert(assets);
+            watcher.last_event = Instant::now();
+        }
         loop {
             match watcher.events.try_recv() {
                 Ok(Ok(event)) => {

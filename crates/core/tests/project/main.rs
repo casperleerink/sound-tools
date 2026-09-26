@@ -14,4 +14,5 @@ mod properties;
 mod scale;
 mod tools;
 mod undo_grouping;
+mod waiting;
 mod watching;
