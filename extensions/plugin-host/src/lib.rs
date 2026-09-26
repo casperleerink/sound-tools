@@ -20,6 +20,7 @@
 mod backend;
 mod clap;
 mod host;
+mod placements;
 mod processor;
 pub mod scan;
 pub mod view;

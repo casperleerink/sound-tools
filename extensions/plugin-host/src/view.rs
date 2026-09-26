@@ -19,7 +19,7 @@ use sound_ui::components::cell::ROW_HEIGHT;
 use sound_ui::components::device_card::{BODY_VALUE_LINE, CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::{ActiveTheme, DeviceLabel, Devices, Session, Views};
 
-use crate::{PluginRecord, Plugins, WeakPlugins};
+use crate::{PluginRecord, WeakPlugins};
 
 /// Registers the card of the `plugin` tool and what a rack calls one.
 ///
@@ -81,33 +81,23 @@ impl PluginView {
     }
 
     /// Opens the plugin's own window, or closes the one that is open. Not an edit: nothing of
-    /// the project changes and there is no undo step.
+    /// the project changes and there is no undo step. The host remembers it for the next time
+    /// the project opens, on this Mac.
     fn toggle_window(&mut self, cx: &mut Context<Self>) {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
-        let (id, title) = (self.plugin.id().clone(), self.window_title(&plugins, cx));
+        let id = self.plugin.id().clone();
         if plugins.window_is_open(&id) {
             plugins.close_window(&id, cx);
             cx.notify();
             return;
         }
-        if let Err(problem) = plugins.open_window(&id, &title, cx) {
+        if let Err(problem) = plugins.open_window(&id, cx) {
             self.session
                 .update(cx, |session, cx| session.report(problem, cx));
         }
         cx.notify();
-    }
-
-    /// What the host suggests the plugin call its window: the plugin and the piece it plays in.
-    fn window_title(&self, plugins: &Plugins, cx: &Context<Self>) -> String {
-        let project = self.session.read(cx).project();
-        let name = project
-            .state(&self.plugin)
-            .and_then(|record| plugins.installed_name(record.format, &record.plugin_id))
-            .unwrap_or_default();
-        let folder = project.root().file_name().unwrap_or_default();
-        format!("{name} — {}", folder.to_string_lossy())
     }
 }
 

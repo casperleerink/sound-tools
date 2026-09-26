@@ -9,6 +9,7 @@
 //! arrived, in what order and on which thread. Like the real plugins this was written against,
 //! it offers an embedded window and not a floating one.
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 use test_plugin_support as support;
@@ -96,7 +97,11 @@ impl DefaultPluginFactory for TestTone {
         host: HostMainThreadHandle<'a>,
         shared: &'a TestToneShared,
     ) -> Result<TestToneMainThread<'a>, PluginError> {
-        Ok(TestToneMainThread { host, shared })
+        Ok(TestToneMainThread {
+            host,
+            shared,
+            size: Cell::new((support::WINDOW_WIDTH, support::WINDOW_HEIGHT)),
+        })
     }
 }
 
@@ -143,6 +148,9 @@ impl PluginLatencyImpl for TestToneMainThread<'_> {
 pub struct TestToneMainThread<'a> {
     host: HostMainThreadHandle<'a>,
     shared: &'a TestToneShared,
+    /// How big its window is. It changes only when the host sets another size, which only a
+    /// resizable one takes.
+    size: Cell<(u32, u32)>,
 }
 
 impl<'a> PluginMainThread<'a, TestToneShared> for TestToneMainThread<'a> {
@@ -201,14 +209,35 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
     }
 
     fn get_size(&self) -> Option<GuiSize> {
-        Some(GuiSize {
-            width: support::WINDOW_WIDTH,
-            height: support::WINDOW_HEIGHT,
-        })
+        let (width, height) = self.size.get();
+        Some(GuiSize { width, height })
     }
 
-    fn set_size(&self, _size: GuiSize) -> Result<(), PluginError> {
-        Err(PluginError::Message("this window is not resizable"))
+    /// Whether the composer may resize the window by dragging its edge. Only when a test says
+    /// so, because most real instruments keep one size.
+    fn can_resize(&self) -> bool {
+        log("gui_can_resize", 0, 0);
+        support::told_to(support::RESIZABLE_VARIABLE)
+    }
+
+    fn adjust_size(&self, size: GuiSize) -> Option<GuiSize> {
+        log("gui_adjust_size", 0, 0);
+        if !support::told_to(support::RESIZABLE_VARIABLE)
+            || support::told_to(support::NO_ADJUST_VARIABLE)
+        {
+            return None;
+        }
+        let (width, height) = support::constrained_size(size.width, size.height);
+        Some(GuiSize { width, height })
+    }
+
+    fn set_size(&self, size: GuiSize) -> Result<(), PluginError> {
+        log("gui_on_size", 0, 0);
+        if !support::told_to(support::RESIZABLE_VARIABLE) {
+            return Err(PluginError::Message("this window is not resizable"));
+        }
+        self.size.set((size.width, size.height));
+        Ok(())
     }
 
     fn set_parent(&self, _window: GuiWindow) -> Result<(), PluginError> {
