@@ -24,7 +24,7 @@ mod slot;
 mod summary;
 pub mod view;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -544,45 +544,62 @@ pub fn add_clip(
 }
 
 /// Adds clips to tracks in one group of changes, for a paste or a duplicate: one undo step. Each
-/// id comes from the name of its clip on its track, as for [`add_clip`], and no two clips of
-/// the group get the same one. A number at the end of a name counts on: a copy of `verse-2` is
-/// `verse-3` when that is free, not `verse-2-2`.
+/// id comes from the name of its clip on its track without a number at its end, then the next
+/// free one: a copy of `verse-2` is `verse` when that is free, else `verse-2`, `verse-3` and so
+/// on. No two clips of the group get the same id.
 pub fn add_clips<'a>(
     project: &Project,
     changes: &mut Changes,
     clips: impl IntoIterator<Item = (&'a Instance<TrackState>, &'a str, Clip)>,
 ) -> Result<Vec<Instance<Clip>>, ProjectError> {
-    let mut taken = BTreeSet::new();
+    let mut free = FreeIds::default();
     let mut added = Vec::new();
     for (track, name, clip) in clips {
         let name = id_name(name, "clip");
-        let unnumbered = match name.rsplit_once('-') {
-            Some((base, number)) if number.parse::<u32>().is_ok() => base,
-            _ => &name,
-        };
-        let wanted = track.id().child(unnumbered)?;
-        let id = free_id_besides(project, &wanted, &taken)?;
-        taken.insert(id.clone());
+        let id = free.take(project, &track.id().child(unnumbered(&name))?)?;
         added.push(changes.create(id, clip));
     }
     Ok(added)
 }
 
-/// [`Project::free_id`], and also none of `taken`: the ids a group that is being built has
-/// given out already, which the project cannot see yet.
-pub(crate) fn free_id_besides(
-    project: &Project,
-    wanted: &InstanceId,
-    taken: &BTreeSet<InstanceId>,
-) -> Result<InstanceId, ProjectError> {
-    let mut candidate = wanted.clone();
-    for number in 2.. {
-        if !taken.contains(&candidate) && project.free_id(&candidate)? == candidate {
-            break;
-        }
-        candidate = InstanceId::new(&format!("{}-{number}", wanted.as_str()))?;
+/// A name without the `-2` that [`Project::free_id`] puts at the end of a taken one.
+pub(crate) fn unnumbered(name: &str) -> &str {
+    match name.rsplit_once('-') {
+        Some((base, number)) if !base.is_empty() && number.parse::<u32>().is_ok() => base,
+        _ => name,
     }
-    Ok(candidate)
+}
+
+/// Free ids for the clips of one group of changes. [`Project::free_id`] sees the project and the
+/// disk, not the group that is being built, so this remembers what it gave out. It also goes on
+/// from the last number it tried for a name, so many clips of one name read the disk once each,
+/// not once for every number taken before them.
+#[derive(Default)]
+pub(crate) struct FreeIds {
+    given: BTreeSet<InstanceId>,
+    next: BTreeMap<InstanceId, u32>,
+}
+
+impl FreeIds {
+    pub(crate) fn take(
+        &mut self,
+        project: &Project,
+        wanted: &InstanceId,
+    ) -> Result<InstanceId, ProjectError> {
+        let mut number = self.next.get(wanted).copied().unwrap_or(1);
+        loop {
+            let candidate = match number {
+                1 => wanted.clone(),
+                _ => InstanceId::new(&format!("{}-{number}", wanted.as_str()))?,
+            };
+            number += 1;
+            if !self.given.contains(&candidate) && project.free_id(&candidate)? == candidate {
+                self.next.insert(wanted.clone(), number);
+                self.given.insert(candidate.clone());
+                return Ok(candidate);
+            }
+        }
+    }
 }
 
 /// Moves a clip to another track: a delete and a create in one group, like moving the file.

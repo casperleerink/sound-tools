@@ -48,13 +48,9 @@ impl CopiedClips {
         end.unwrap_or_default()
     }
 
-    /// How many clips there are.
-    pub fn len(&self) -> usize {
+    /// How many clips there are, for the undo label. Never none: `new` gives `None` then.
+    pub(crate) fn len(&self) -> usize {
         self.clips.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.clips.is_empty()
     }
 
     /// Where each clip lands for a paste at `at` with the top row on `top`, in an arrangement of

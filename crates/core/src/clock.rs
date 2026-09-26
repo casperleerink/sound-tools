@@ -348,7 +348,12 @@ impl TempoMap {
             .tempo_changes
             .partition_point(|change| change.tick <= tick)
             .saturating_sub(1);
-        self.tempo_changes[index]
+        // A map always has a change at tick 0, so the fallback is never used.
+        let start = TempoChange {
+            tick: Ticks(0),
+            bpm: Tempo::default(),
+        };
+        self.tempo_changes.get(index).copied().unwrap_or(start)
     }
 
     /// The same map with a new tempo change at `tick` that plays the tempo in effect there, so

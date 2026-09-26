@@ -334,10 +334,10 @@ fn duplicate_puts_a_copy_right_after_the_selection(cx: &mut TestAppContext) {
     );
 }
 
-/// A clip that an agent writes can be selected with the others at once, and one that it deletes
-/// leaves the selection.
+/// A clip that an agent writes is on screen where its file says and cmd-a selects it with the
+/// others, and a selected clip that it deletes leaves the selection, so delete does not name it.
 #[gpui::test]
-fn clips_written_from_outside_are_part_of_the_selection_at_once(cx: &mut TestAppContext) {
+fn clips_written_or_deleted_from_outside_join_or_leave_the_selection(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     write_outside(
         &mut opened,
@@ -576,5 +576,185 @@ fn the_snap_setting_is_the_grid_of_every_drag_and_cmd_bypasses_it(cx: &mut TestA
             && note.start.0 == 2 * 960
             && note.length.ticks() == Ticks(480)),
         "a drawn note is an eighth on the grid of eighths: {drawn:?}"
+    );
+}
+
+/// Two tracks with a clip named `clip` each, as double clicks leave them, and a third track.
+fn open_with_clips_of_one_name(cx: &mut TestAppContext) -> Opened<'_> {
+    support::open_with(cx, |project| {
+        let arrangement = runtime::main_arrangement(project).unwrap();
+        runtime::add_track(project, &arrangement).unwrap();
+        runtime::add_track(project, &arrangement).unwrap();
+        let mut changes = Changes::new();
+        changes.create(id("arrangement/track-1/clip"), part());
+        changes.create(id("arrangement/track-2/clip"), hook());
+        project.commit("Add clips", changes).unwrap();
+        project.clear_history();
+    })
+}
+
+/// Cmd held from the press: a drag without the snap that keeps the selection, not a click that
+/// takes the clip out of it.
+#[gpui::test]
+fn a_drag_with_cmd_held_from_the_press_bypasses_the_snap_and_keeps_the_selection(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open(cx);
+    let on_part = opened.at(BAR + 960, 0);
+    opened.click(on_part);
+    let before = mark(&mut opened);
+    let to = opened.at(BAR + 960 + 700, 0);
+    opened.drag_with(on_part, to, cmd());
+    let start = opened.clip(PART).unwrap().start.0;
+    assert!(
+        !start.is_multiple_of(STEP) && start.abs_diff(BAR + 700) < 50,
+        "a cmd drag lands off the grid, where the pointer is: {start}"
+    );
+    assert_eq!(opened.selected_clips(), ids(&[PART]));
+    one_undo_step(&mut opened, "Move clip", &before);
+    // A cmd drag of a clip that is not selected moves it with the selection.
+    let on_hook = opened.at(4 * BAR + 960, 1);
+    let to = opened.at(4 * BAR + 960 + 300, 1);
+    opened.drag_with(on_hook, to, cmd());
+    assert_eq!(opened.selected_clips(), ids(&[PART, HOOK]));
+    assert!(opened.clip(PART).unwrap().start.0.abs_diff(start + 300) < 50);
+    // A cmd-click without a move still takes a clip out.
+    opened.click_with(on_hook, cmd());
+    assert_eq!(opened.selected_clips(), ids(&[PART]));
+}
+
+/// Down and up again gives the clip its id back, also where the other track has a clip of its
+/// name: no `clip-2` is left behind.
+#[gpui::test]
+fn a_clip_nudged_away_and_back_keeps_its_id(cx: &mut TestAppContext) {
+    let mut opened = open_with_clips_of_one_name(cx);
+    let on_clip = opened.at(BAR + 960, 0);
+    opened.click(on_clip);
+    opened.keys("down");
+    assert_eq!(
+        opened.selected_clips(),
+        ids(&["arrangement/track-2/clip-2"])
+    );
+    opened.keys("up");
+    assert_eq!(opened.selected_clips(), ids(&["arrangement/track-1/clip"]));
+    assert_eq!(opened.clip("arrangement/track-1/clip"), Some(part()));
+    assert_eq!(opened.clip_file("arrangement/track-2/clip-2"), None);
+}
+
+/// Undo of a move of two clips of one name selects both again, each where undo put it back.
+#[gpui::test]
+fn undo_of_a_move_selects_the_clips_again_where_they_were(cx: &mut TestAppContext) {
+    let mut opened = open_with_clips_of_one_name(cx);
+    let (first, second) = (opened.at(BAR + 960, 0), opened.at(4 * BAR + 960, 1));
+    opened.click(first);
+    opened.click_with(second, shift());
+    let down = opened.at(BAR + 960, 1);
+    opened.drag(first, down);
+    let moved = ["arrangement/track-2/clip-2", "arrangement/track-3/clip"];
+    assert_eq!(opened.selected_clips(), ids(&moved));
+    opened.keys("cmd-z");
+    let back = ["arrangement/track-1/clip", "arrangement/track-2/clip"];
+    assert_eq!(opened.selected_clips(), ids(&back));
+    opened.keys("shift-cmd-z");
+    assert_eq!(opened.selected_clips(), ids(&moved));
+}
+
+/// A selected clip deleted from outside during a drag of several leaves the drag, and the rest
+/// go on moving.
+#[gpui::test]
+fn a_clip_deleted_during_a_drag_of_several_leaves_the_drag(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let (on_part, on_hook) = (opened.at(BAR + 960, 0), opened.at(4 * BAR + 960, 1));
+    opened.click(on_part);
+    opened.click_with(on_hook, shift());
+    opened.press(on_part);
+    let half = opened.at(2 * BAR + 960, 0);
+    opened.drag_to(half);
+    assert_eq!(opened.clip(HOOK).unwrap().start, Ticks(5 * BAR));
+    let path = opened.path("state/arrangement/track-2/hook.json");
+    std::fs::remove_file(&path).unwrap();
+    opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
+    assert!(opened.gesture_open(), "the drag went on");
+    let to = opened.at(3 * BAR + 960, 0);
+    opened.drag_to(to);
+    opened.release(to);
+    assert_eq!(opened.clip(PART).unwrap().start, Ticks(3 * BAR));
+    assert_eq!(opened.clip(HOOK), None);
+    assert_eq!(opened.selected_clips(), ids(&[PART]));
+}
+
+#[gpui::test]
+fn escape_puts_back_the_selection_of_before_a_rectangle(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let on_hook = opened.at(4 * BAR + 960, 1);
+    opened.click(on_hook);
+    let (from, to) = (opened.at(BAR / 2, 0), opened.at(3 * BAR, 0));
+    opened.press(from);
+    opened.drag_to(to);
+    assert_eq!(opened.selected_clips(), ids(&[PART]));
+    opened.keys("escape");
+    assert_eq!(opened.selected_clips(), ids(&[HOOK]));
+    opened.release(to);
+    assert_eq!(opened.selected_clips(), ids(&[HOOK]));
+}
+
+#[gpui::test]
+fn escape_lets_go_of_a_tempo_change_before_it_closes_the_panel(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let header = opened.track_header(0);
+    opened.click(header);
+    assert!(opened.track_panel().is_some());
+    let bar_five = opened.ruler(4 * BAR);
+    opened.double_click(bar_five);
+    assert_eq!(selected_tempo(&mut opened), Some(Ticks(4 * BAR)));
+    opened.keys("escape");
+    assert_eq!(selected_tempo(&mut opened), None);
+    assert!(opened.track_panel().is_some());
+    opened.keys("escape");
+    assert!(opened.track_panel().is_none());
+}
+
+#[gpui::test]
+fn t_while_playing_puts_the_tempo_change_on_the_grid(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let empty = opened.at(12 * BAR, 0);
+    opened.click(empty);
+    opened.keys("space");
+    opened.settle();
+    // A second of playing and a bit, so the playhead is well past tick 0.
+    opened.render(48_000 + 1_000);
+    opened.settle();
+    let tick = opened.playhead().tick.0;
+    assert!(
+        !tick.is_multiple_of(STEP),
+        "the playhead is between two steps: {tick}"
+    );
+    opened.keys("t");
+    let (added, _) = opened.tempo_changes()[1];
+    assert!(added.is_multiple_of(STEP));
+    assert!(added.abs_diff(tick) <= STEP / 2);
+}
+
+/// Cmd pressed during a draw frees the end of the note and never its start.
+#[gpui::test]
+fn cmd_during_a_draw_keeps_the_start_of_the_note_on_the_grid(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let on_hook = opened.at(4 * BAR + 100, 1);
+    opened.double_click(on_hook);
+    let press = opened.in_editor(4 * BAR + 960 + 100, 67);
+    opened.press(press);
+    let to = opened.in_editor(4 * BAR + 2 * 960 + 130, 67);
+    opened.drag_to_with(to, cmd());
+    opened.release(to);
+    let drawn = opened.clip(HOOK).unwrap().notes;
+    let note = drawn.iter().find(|note| note.pitch.number() == 67).unwrap();
+    assert_eq!(
+        note.start.0, 960,
+        "the start stays in the cell of the press"
+    );
+    assert!(
+        !note.end().0.is_multiple_of(STEP),
+        "the end is free: {:?}",
+        note.end()
     );
 }

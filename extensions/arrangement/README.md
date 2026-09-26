@@ -133,7 +133,7 @@ All take the `Project` and a `Changes` group, so an interface puts several in on
 - `tracks(project, arrangement)`, `clips(project, track)`: in display order.
 - `add_track(project, changes, arrangement, name, colour, instrument)`: a track after the last one with its instrument child. The instrument state is a parameter, because this crate knows no instrument: pass `SynthState::default()`. The id comes from the name (`"Warm Pad"` gives `warm-pad`, then `warm-pad-2`).
 - `add_clip(project, changes, track, name, clip)`.
-- `add_clips(project, changes, clips)`: several clips of `(track, name, clip)` in one group, for a paste or a duplicate. No two get the same id, and a number at the end of a name counts on: a copy of `verse-2` is `verse-3`.
+- `add_clips(project, changes, clips)`: several clips of `(track, name, clip)` in one group, for a paste or a duplicate. No two get the same id. A name loses a number at its end, then takes the next free one: a copy of `verse-2` is `verse` when that is free, else `verse-2`, `verse-3` and so on. The disk is read once per clip, not once per number taken.
 - `move_clip(project, changes, clip, to_track)`: a delete and a create in one group, like moving the file.
 - `create_default_project(project, instrument)`: the default template. 120 bpm, 4/4, one arrangement `arrangement` with one track and its instrument, no clips.
 
@@ -209,8 +209,8 @@ Every change goes through the session. A drag is one gesture: `begin_gesture` wi
 
 ### Several clips, copy and paste
 
-- A click selects one clip. Shift-click and cmd-click add a clip or take it out, as in the Finder. A press on empty track space drags a rectangle that selects every clip it touches, and with shift or cmd it adds them. Cmd-a selects every clip. A plain click on one of several selected clips, without a move, selects it alone. Selection is interface state: nothing is written.
-- A drag of a selected clip moves every selected clip by the same distance in time and in track rows. The earliest stops at tick 0 and the outer ones at the first and the last track, and the others keep their distance. It is one gesture and one undo step, "Move clips". Each clip follows the rules of a single one: another track is a delete and a create, and back on its first track it takes its first id again. A resize is of the clip under the pointer only.
+- A click selects one clip. Shift-click and cmd-click add a clip or take it out, as in the Finder; a cmd press that moves is a drag without the snap instead, of the selection and the pressed clip, and leaves the selection as it is. A press on empty track space drags a rectangle that selects every clip it touches, and with shift or cmd it adds them. Escape during it puts back what was selected before. Cmd-a selects every clip. A plain click on one of several selected clips, without a move, selects it alone. Selection is interface state: nothing is written.
+- A drag of a selected clip moves every selected clip by the same distance in time and in track rows. The earliest stops at tick 0 and the outer ones at the first and the last track, and the others keep their distance. It is one gesture and one undo step, "Move clips". Each clip follows the rules of a single one: another track is a delete and a create, and back on its first track it takes its first id again. On another track a clip takes its name without a number at its end where that is free, so `clip` moved down onto a track that has a `clip` is `clip-2` there, and `clip` again when an arrow brings it back. A selected clip deleted from outside during the drag leaves it; the drag ends only when that is the clip under the pointer. A resize is of the clip under the pointer only.
 - Delete and backspace delete every selected clip, the arrows move every one, and each is one undo step: "Delete clips", "Nudge clips". An arrow that would take one of them past the first or the last track moves none.
 - Cmd-c copies the selected clips into the clipboard of the window. It is in the app only, never on the system clipboard, and it goes with the session. Cmd-x copies and deletes, "Cut clips". Cmd-v pastes at the playhead, the top row of what was copied onto the track of the first selected clip, else onto the selected track, else onto the first track, "Paste clips". The clips keep their distances in time and in rows. A row that would fall below the last track lands on the last track, so nothing that was copied is lost; clips may overlap. Cmd-d puts a copy right after the selected clips on the same tracks and keeps the clipboard, "Duplicate clips". The copies are selected. Each of these is one undo step, and one clip has the name without the `s`.
 - Tracks are not copied. A track owns an instrument and effects of any tool, and a plugin with a state file, and the core creates a record only of a type the caller knows. A track is added with "Add track" and its devices picked in its panel.
@@ -224,8 +224,8 @@ A double click on a track header, or enter while a track and no clip is selected
 
 Every tempo change after tick 0 has a mark in the ruler: a line at its tick and a label, `96 bpm`, which starts after the bar number when it is on a bar line and covers the bar numbers under it otherwise. The change at tick 0 is the tempo of the transport and has no mark.
 
-- A double click in the ruler adds a tempo change on the grid there, and `t` adds one at the playhead. It plays the tempo that played there already, so nothing sounds different until it is edited. One undo step, "Add tempo change". Where there is one already, it is selected.
-- A click on a mark selects the tempo change and moves the playhead onto it, so the tempo of the transport is its tempo: a drag of that number or its arrows edit it, the shared drag number of the transport and one undo step "Change tempo", as before. Delete or backspace removes the selected one, "Remove tempo change". A click on the ruler elsewhere moves the playhead to the grid and selects no tempo change.
+- A double click in the ruler adds a tempo change on the grid there, and `t` adds one at the playhead, on the nearest step of the grid while the project plays. It plays the tempo that played there already, so nothing sounds different until it is edited. One undo step, "Add tempo change". Where there is one already, it is selected.
+- A click on a mark selects the tempo change and moves the playhead onto it, so the tempo of the transport is its tempo: a drag of that number or its arrows edit it, the shared drag number of the transport and one undo step "Change tempo", as before. Delete or backspace removes the selected one, "Remove tempo change". A click on the ruler elsewhere moves the playhead to the grid and selects no tempo change, and so does escape.
 - A tempo change written or removed from outside shows or goes at once, and a removed one is no longer selected.
 - Not built: dragging a mark in time, tempo ramps and time signature changes.
 
@@ -246,7 +246,7 @@ Every tempo change after tick 0 has a mark in the ruler: a line at its tick and 
 | double click on a track header | Edit its name |
 | double click in the ruler, or `t` | Add a tempo change there, or at the playhead |
 | click a tempo mark | Select it and move the playhead onto it |
-| escape | Cancel a drag, else close the panel below |
+| escape | Cancel a drag or a rectangle, else let go of a tempo change, else close the panel below |
 
 ## Summary
 

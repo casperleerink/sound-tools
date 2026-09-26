@@ -321,9 +321,9 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Ruler | click | Move the playhead there, on the grid |
 | Ruler | double click, or `t` in the arrangement | Add a tempo change there, or at the playhead. It keeps the tempo that played there until it is edited |
 | Ruler | click a tempo mark (`96 bpm`) | Select it and move the playhead onto it: the tempo of the transport is then its tempo, and a drag there edits it |
-| Arrangement | delete or backspace, with a tempo mark selected | Remove that tempo change |
+| Arrangement | delete or backspace, with a tempo mark selected | Remove that tempo change. Escape lets go of it |
 | Arrangement | Snap, in the corner above the track headers | Off, Bar, Beat, 1/8, 1/16 or 1/32 for every drag, new clip, new note and arrow key. Not saved |
-| Arrangement or note editor | cmd while dragging | Bypass the snap |
+| Arrangement or note editor | cmd while dragging | Bypass the snap. A cmd press on a clip that moves is a drag of the selection with it; one that does not move is a cmd-click |
 | Transport | drag the tempo up or down | Change the tempo at the playhead. Whole bpm from where it began, half a bpm per pixel. With shift tenths, at a tenth of the speed. Escape during the drag puts it back |
 | Transport | up or right, down or left on the focused tempo | One bpm. With shift a tenth |
 | Transport | drag the steadiness up or down | How steady the fitted tempo is, 0 as played to 100 one tempo. One percent per pixel, with shift tenths. Escape during the drag puts it back. It shows only when the project has a fit |
@@ -338,7 +338,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Arrangement | drag on empty track space | Select the clips the rectangle touches. With shift or cmd add them |
 | Arrangement | cmd-a | Select every clip |
 | Arrangement | cmd-c, cmd-x | Copy, cut the selected clips. The clipboard is in the app only |
-| Arrangement | cmd-v | Paste at the playhead, the top row on the selected track. Rows below the last track land on the last track |
+| Arrangement | cmd-v | Paste at the playhead. The top row goes on the track of the first selected clip, else on the selected track, else on the first track. Rows below the last track land on the last track |
 | Arrangement | cmd-d | A copy of the selected clips right after them |
 | Arrangement | drag a clip | Move it, and every other selected clip, in time and to another track |
 | Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note |

@@ -43,7 +43,7 @@ pub enum EditorEvent {
 
 /// What a drag in the note area does.
 enum NoteDragKind {
-    /// Draws a new note from the tick where the mouse went down.
+    /// Draws a new note from where it started at mouse down, on the grid.
     Draw { down: Ticks },
     /// Moves a note in time and pitch. The tick and the pitch under the pointer at mouse down.
     Move { grab: Ticks, grab_pitch: Pitch },
@@ -306,6 +306,9 @@ impl NoteEditor {
             self.select(None, cx);
             return;
         };
+        // The start the grid gave at the press, as a project tick. Every move draws from it,
+        // so cmd pressed during the draw frees the end and never moves the start.
+        let start = clip.start + note.start;
         let instance = self.clip.clone();
         let drawn = self.session.update(cx, |session, cx| {
             session.begin_gesture("Draw note", cx);
@@ -319,7 +322,7 @@ impl NoteEditor {
             return;
         }
         self.drag = Some(NoteDrag {
-            kind: NoteDragKind::Draw { down: pointer },
+            kind: NoteDragKind::Draw { down: start },
             origin: note,
             written: note,
             begun: true,

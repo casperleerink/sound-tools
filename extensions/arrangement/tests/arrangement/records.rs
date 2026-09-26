@@ -1,6 +1,6 @@
 //! Records that do not load, and the typed helpers for interfaces.
 
-use arrangement::{Colour, TrackState, add_clip, add_track, clips, move_clip, tracks};
+use arrangement::{Colour, TrackState, add_clip, add_clips, add_track, clips, move_clip, tracks};
 use sound_core::Changes;
 use sound_notes::Clip;
 
@@ -255,4 +255,48 @@ fn a_clip_outside_a_track_and_a_track_outside_an_arrangement_are_reported() {
         harness.write_and_apply("state/arrangement/piano/part.json", &part),
         1
     );
+}
+
+/// A paste of several clips of one name onto one track is one group: `free_id` cannot see what
+/// the group gave out already, and `add_clips` must never give one id twice. A number at the end
+/// of a name is left out first and counts on from what is there.
+#[test]
+fn add_clips_gives_every_clip_of_a_group_its_own_id_and_counts_numbers_on() {
+    let mut harness = Harness::new();
+    harness.add_track("piano", 1.0);
+    let track = harness
+        .project
+        .resolve::<TrackState>(&id("arrangement/piano"))
+        .unwrap();
+    let one = clip(0, 3840, vec![note(0, 480, 60)]);
+    let add = |harness: &mut Harness, names: &[&str]| -> Vec<String> {
+        let mut changes = Changes::new();
+        let clips = names.iter().map(|name| (&track, *name, one.clone()));
+        let added = add_clips(&harness.project, &mut changes, clips).unwrap();
+        harness.project.commit("Paste clips", changes).unwrap();
+        added
+            .iter()
+            .map(|clip| clip.id().name().to_string())
+            .collect()
+    };
+    // Two of one name in one group, and a copy of the second, which drops its number first.
+    assert_eq!(
+        add(&mut harness, &["verse", "verse", "verse-2"]),
+        ["verse", "verse-2", "verse-3"]
+    );
+    // A copy of `verse-3` goes on from what the track has. A name that is only a number is a
+    // name, and `verse-a` has no number at its end.
+    assert_eq!(
+        add(&mut harness, &["verse-3", "7", "verse-a"]),
+        ["verse-4", "7", "verse-a"]
+    );
+    // With `verse` gone, a copy of `verse-4` takes the free name without a number.
+    let mut changes = Changes::new();
+    changes.delete(&id("arrangement/piano/verse"));
+    harness.project.commit("Delete clip", changes).unwrap();
+    assert_eq!(add(&mut harness, &["verse-4"]), ["verse"]);
+    for name in ["verse", "verse-2", "verse-3", "verse-4", "7", "verse-a"] {
+        let path = format!("state/arrangement/piano/{name}.json");
+        assert!(harness.path(&path).exists(), "{path}");
+    }
 }
