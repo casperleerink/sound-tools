@@ -7,7 +7,7 @@
 //! Provisional and small, like the view registry. There are two kinds of slot, the instrument
 //! of a track and an effect after it, and an offer is made for one of them.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui::{App, Entity, Global, SharedString};
@@ -108,8 +108,6 @@ pub struct Devices {
     notes: Vec<ListNotes>,
     generations: Vec<Generation>,
     describe: BTreeMap<&'static str, DescribeInstance>,
-    /// The tools whose view hides controls behind the expand icon of its card.
-    expands: BTreeSet<&'static str>,
 }
 
 impl Global for Devices {}
@@ -158,21 +156,6 @@ impl Devices {
                 Some(describe(project.state(&instance)?))
             }),
         );
-    }
-
-    /// Says that the view of the tool with state `S` hides controls, so its card gets the
-    /// expand icon. The view reads [`Session::is_expanded`] and shows them when it is set.
-    pub fn expands<S: State>(&mut self) {
-        self.expands.insert(S::TOOL);
-    }
-
-    /// Whether the card of what is in `id` has controls behind its expand icon.
-    pub fn has_hidden(session: &Entity<Session>, id: &InstanceId, cx: &App) -> bool {
-        let project = session.read(cx).project();
-        let (Some(tool), Some(devices)) = (project.tool_of(id), cx.try_global::<Self>()) else {
-            return false;
-        };
-        devices.expands.contains(tool)
     }
 
     /// Everything on offer for one kind of slot, from the installed registry.

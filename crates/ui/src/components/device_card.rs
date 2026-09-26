@@ -222,35 +222,15 @@ fn header_icon(
         .child(Icon::new(glyph).size(ICON_GLYPH).color(color))
 }
 
-/// What a card holds under its header: the display, 8 pt of air, the columns, and the hidden
-/// columns after a hairline when there are any. [`DeviceCard`] draws it, and so does the view
-/// of a device whose host draws the card around it: the track panel puts the picker of the slot
-/// in the header, and the view of what is in the slot gives the body.
-pub fn body(
-    display: Option<impl IntoElement>,
-    columns: impl IntoIterator<Item = Column>,
-    hidden: impl IntoIterator<Item = Column>,
-    cx: &App,
-) -> Div {
-    let hairline = cx.theme().alpha_at(0.06);
-    let mut hidden = hidden.into_iter().peekable();
-    let hidden = hidden.peek().is_some().then(|| {
-        div()
-            .flex()
-            .child(div().mx(px(HIDDEN_GAP)).w(px(1.)).h_full().bg(hairline))
-            .children(hidden)
-    });
-    div()
-        .flex()
-        .children(display.map(|display| div().flex_none().mr(px(DISPLAY_GAP)).child(display)))
-        .children(columns)
-        .children(hidden)
-}
-
 impl RenderOnce for DeviceCard {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (background, border, text) = (theme.gray_200, theme.alpha_at(0.06), theme.gray_950);
+        let (background, border, text, hairline) = (
+            theme.gray_200,
+            theme.alpha_at(0.06),
+            theme.gray_950,
+            theme.alpha_at(0.06),
+        );
         // Off is `gray-700`, the nearest grey with 3 : 1 on a card for an icon.
         let (glyph, glyph_off) = (theme.gray_950, theme.gray_700);
         let on = self.power.as_ref().is_none_or(|(on, _)| *on);
@@ -296,15 +276,24 @@ impl RenderOnce for DeviceCard {
             )
             .children(icons);
 
-        let hidden = match expanded {
-            true => self.hidden,
-            false => Vec::new(),
-        };
-        let body = body(self.display, self.columns, hidden, cx)
+        let hidden = (expanded && !self.hidden.is_empty()).then(|| {
+            div()
+                .flex()
+                .child(div().mx(px(HIDDEN_GAP)).w(px(1.)).h_full().bg(hairline))
+                .children(self.hidden)
+        });
+        let body = div()
             .flex_none()
             .h(px(ROW_HEIGHT * 2.))
+            .flex()
             .px(px(INSIDE))
             .when(!on, |body| body.opacity(0.4))
+            .children(
+                self.display
+                    .map(|display| div().flex_none().mr(px(DISPLAY_GAP)).child(display)),
+            )
+            .children(self.columns)
+            .children(hidden)
             .children(self.children);
 
         // The id scopes what the controls in the card keep, so two cards with controls of one
