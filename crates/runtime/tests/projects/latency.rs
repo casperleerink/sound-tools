@@ -65,6 +65,8 @@ fn write_state(harness: &Harness, format: PluginFormat, asset: &str, latency: i3
 /// A project with these tracks next to the silent track of the default project.
 fn project(format: PluginFormat, tracks: &[Track<'_>]) -> Harness {
     let (mut harness, _plugins) = Harness::with_test_plugin(tempfile::tempdir().unwrap());
+    // Two tracks at full level sum over full scale, and the numbers below are that sum.
+    harness.bypass_limiter();
     for (order, track) in tracks.iter().enumerate() {
         let folder = format!("state/arrangement/{}", track.name);
         let effects = match track.effect_latency {

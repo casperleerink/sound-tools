@@ -1,6 +1,6 @@
 # Arrangement: tracks, clips and notes
 
-The piece is one arrangement that owns tracks. A track owns its clips and one instrument, and it plays to the main output by itself. Adding music never needs a `project.json` edit.
+The piece is one arrangement that owns tracks. A track owns its clips and one instrument, and it plays into the master of the arrangement by itself, which plays to the main output through a limiter. Adding music never needs a `project.json` edit.
 
 ```text
 state/arrangement/instance.json              the arrangement
@@ -89,15 +89,16 @@ A clip the composer recorded from a keyboard has a `pedal` list as well. Leave i
 - `name`: what the composer sees. Not empty. The folder name is the id and stays as it is when the name changes.
 - `colour`: `blue`, `sapphire`, `sky`, `teal`, `green`, `yellow`, `peach`, `red`, `maroon`, `mauve`, `pink`, `lavender`, `rosewater` or `flamingo`. `blue` when left out.
 - `order`: tracks show from the lowest to the highest. Tracks with the same order show by id. 0 when left out.
-- `gain_db`: how much louder or quieter the track plays, in decibels, -60 to 6. 0 when left out, which is the sound as the instrument makes it. -6 halves the samples, 6 doubles them, and -60 is as quiet as it goes; for silence use `mute`. Change the sound itself in `instrument.json`; change the balance between tracks here.
+- `gain_db`: how much louder or quieter the track plays, in decibels: a number up to 6, or `"-inf"` for silence. 0 when left out, which is the sound as the instrument makes it. -6 halves the samples, 6 doubles them. Change the sound itself in `instrument.json`; change the balance between tracks here.
 - `pan`: where the track sits between the two channels, -1 to 1. -1 is hard left, 0 the middle, 1 hard right. 0 when left out. A track keeps its loudness wherever it is panned.
 - `mute`: `true` silences the track and changes nothing else. `false` when left out.
-- `effects`: the effects of the track, by file name without `.json`, in the order the sound goes through them. Left out when the track has none, and a track that leaves it out is written back without it.
+- `solo`: while any track has `"solo": true`, only the soloed tracks play, and every other one sounds exactly as if it were muted. A track that is muted stays silent when it is soloed. Left out when off.
+- `effects`: the effects of the track, by file name without `.json`, in the order the sound goes through them. An effect that is bypassed is written `{"name": "space", "bypass": true}`: the sound goes past it untouched, and its record stays. Left out when the track has none, and a track that leaves it out is written back without it.
 - The track plays through the file `instrument.json` in its folder. Its record is in the doc of the instrument, `agent-docs/instrument.md`. A track without it is silent.
 
 ## The effects of a track
 
-The sound of a track goes through its instrument, then through each effect in `effects` in that order, then through `gain_db`, `pan` and `mute`. Two lines make one effect: the record in the track folder, and its name in the list.
+The sound of a track goes through its instrument, then through each effect in `effects` in that order, then through `gain_db`, `pan`, `mute` and `solo`, into the master. Two lines make one effect: the record in the track folder, and its name in the list.
 
 ```json state/arrangement/piano/warmth.json
 {
@@ -113,7 +114,24 @@ How to:
 - **Add an effect**: write its record into the track folder, then put its file name at the end of `effects` in `instance.json`. Write the record first: a name in the list with no record behind it is reported until the file is there.
 - **Reorder**: write `effects` in the order you want. Nothing else moves, and the sound changes at once. `["warmth", "space"]` is the instrument, then warmth, then space.
 - **Remove**: take the name out of `effects` and delete the file. Taking it out of the list alone leaves a record that is reported; deleting the file alone leaves a name that is reported.
-- **Turn one off for a while**: take its name out of `effects` and leave the file where it is. The record and the plugin's own settings stay, and putting the name back brings it back.
+- **Turn one off for a while**: write its slot as `{"name": "warmth", "bypass": true}`, and as `"warmth"` again to turn it on. The record and the plugin's own settings stay. The sound of a bypassed effect goes past it untouched, without its latency.
+
+The same piano with its warmth bypassed, and silenced with the bottom of its volume:
+
+```json state/arrangement/piano/instance.json
+{
+  "tool": "arrangement.track",
+  "state": {
+    "name": "Piano",
+    "colour": "blue",
+    "order": 0,
+    "gain_db": "-inf",
+    "pan": 0.0,
+    "mute": false,
+    "effects": [{"name": "warmth", "bypass": true}]
+  }
+}
+```
 
 What `problems.txt` says about this, and what to do:
 
@@ -121,16 +139,29 @@ What `problems.txt` says about this, and what to do:
 - `` the child "space" takes audio in and makes audio out ``, and the list does not name it: the record is there and nothing goes through it. Add its name to `effects` where you want it, or delete the file.
 - `effects[1] is "warmth", which the list already has`, or a name with a capital letter, or `instrument`: the record itself does not load, so the whole track keeps what it had. Correct the list.
 
-## The arrangement: `arrangement`
+## The arrangement and its master: `arrangement`
 
 ```json state/arrangement/instance.json
 {
   "tool": "arrangement",
-  "state": {}
+  "state": {
+    "master": {
+      "gain_db": 0.0,
+      "limiter": {"bypass": false, "gain_db": 0.0, "ceiling_db": 0.0, "release_ms": 100.0, "lookahead_ms": 0.0}
+    }
+  }
 }
 ```
 
-It has no settings. Leave it as it is.
+The arrangement is the master: every track plays into it, and it plays to the main output. `{"state": {}}` is the same as the example: every field has that default when left out.
+
+- `master.gain_db`: the volume of the master, a number up to 6, or `"-inf"` for silence. It comes before the limiter, so it cannot push the output over the ceiling.
+- `master.limiter`: on by default, so the output never goes over its ceiling. Under the ceiling it leaves every sample as it was.
+- `bypass`: `true` lets the sound through untouched, and it may then clip.
+- `gain_db`: how much louder the sound goes into the limiter, 0 to 24.
+- `ceiling_db`: the highest the output reaches, in dBFS, -24 to 0. 0 is full scale.
+- `release_ms`: how fast the gain comes back after a peak, 10 to 1000.
+- `lookahead_ms`: 0 to 10. Above 0 the limiter lowers the gain before a peak arrives, which keeps the shape of the wave, and delays everything by that much, including a keyboard played live. 0 adds no delay.
 
 ## How to
 
@@ -140,4 +171,5 @@ It has no settings. Leave it as it is.
 - Move a clip in time: change its `start`. Move it to another track: move the file into the folder of that track.
 - Delete a clip: remove its file. Delete a track: remove its folder.
 - Change the sound of a track: edit its `instrument.json`. Put an effect after it, or take one off, with `effects` in `instance.json` and the record next to it.
-- Balance the tracks: set `gain_db` in `instance.json` of each. Put a track to one side with `pan`, and silence one with `"mute": true`. All three apply while the project plays.
+- Balance the tracks: set `gain_db` in `instance.json` of each. Put a track to one side with `pan`, silence one with `"mute": true`, and hear one alone with `"solo": true`. All of them apply while the project plays.
+- Make the whole piece louder or quieter: `master.gain_db` in `state/arrangement/instance.json`. The limiter keeps it under its ceiling.

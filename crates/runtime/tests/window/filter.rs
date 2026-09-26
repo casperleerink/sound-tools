@@ -168,3 +168,74 @@ fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
     opened.click(notch);
     assert_eq!(opened.undo_label(), label);
 }
+
+/// How much of what the track plays is high, from its left channel: the mean step from sample
+/// to sample over the mean level. A synth starts every note at another phase, so two renders
+/// of one sound are not the same samples, and this is what a filter changes.
+fn brightness(opened: &mut Opened<'_>) -> f32 {
+    opened.settle();
+    opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, _| session.engine().play());
+    });
+    opened.settle();
+    opened.render(12_000);
+    let render = opened.render(12_000);
+    let left: Vec<f32> = render.iter().step_by(2).copied().collect();
+    let steps: f32 = left.windows(2).map(|pair| (pair[1] - pair[0]).abs()).sum();
+    let level: f32 = left.iter().map(|sample| sample.abs()).sum();
+    steps / level
+}
+
+/// The filter gets the power icon of every effect: it bypasses the slot, the record of the
+/// filter stays, and the track sounds as it does without it. One undo step each way.
+#[gpui::test]
+fn the_power_icon_bypasses_the_filter_as_one_undo_step(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let mut changes = sound_core::Changes::new();
+        let note = support::note(0, 4 * support::BAR, 64);
+        let part = support::clip(0, 4 * support::BAR, vec![note]);
+        changes.create(id("arrangement/track-1/part"), part);
+        project.commit("Add clip", changes).unwrap();
+        project.clear_history();
+    });
+    let header = opened.track_header(0);
+    opened.click(header);
+    let plain = brightness(&mut opened);
+    let trigger = opened.control("add-effect");
+    opened.click(trigger);
+    let row = opened.control("menu-filter");
+    opened.click(row);
+    // Low enough to hear: the default synth is bright.
+    let cutoff = opened.control("knob-cutoff_hz");
+    opened.drag(cutoff, cutoff + point(px(0.), px(150.)));
+    let filtered = brightness(&mut opened);
+    assert!(filtered < plain * 0.7, "{plain} then {filtered}");
+
+    let power = opened.control("card-filter-power");
+    opened.click(power);
+    assert_eq!(opened.undo_label().as_deref(), Some("Turn off Filter"));
+    let track = std::fs::read_to_string(opened.path("state/arrangement/track-1/instance.json"));
+    assert!(
+        track
+            .unwrap()
+            .contains(r#"{"name": "filter", "bypass": true}"#)
+    );
+    assert!(opened.path(FILTER_FILE).exists());
+    let bypassed = brightness(&mut opened);
+    assert!(
+        (bypassed - plain).abs() < plain * 0.05,
+        "{plain} then {bypassed}"
+    );
+
+    opened.keys("cmd-z");
+    let back = brightness(&mut opened);
+    assert!(
+        (back - filtered).abs() < filtered * 0.05,
+        "{filtered} then {back}"
+    );
+    let power = opened.control("card-filter-power");
+    opened.click(power);
+    opened.click(power);
+    assert_eq!(opened.undo_label().as_deref(), Some("Turn on Filter"));
+}

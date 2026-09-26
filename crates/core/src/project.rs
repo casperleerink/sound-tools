@@ -40,6 +40,7 @@ use watcher::Watcher;
 use crate::clock::{Clock, Ticks, TimeSignature};
 use crate::control::EngineControl;
 use crate::graph::GraphError;
+use crate::peaks::Peaks;
 use crate::processor::Processor;
 
 #[derive(Debug, thiserror::Error)]
@@ -283,6 +284,14 @@ impl Project {
     /// built again. Read it again after every change instead of keeping it.
     pub fn input_port(&self, instance: &InstanceId, port: &str) -> Option<InputEndpoint> {
         self.bindings.input(instance, port)
+    }
+
+    /// The peaks that the behaviour of `instance` keeps under `name`, for a meter: take from
+    /// them once per frame. `None` while the instance keeps none of that name. They stay the
+    /// same while the behaviour declares them, so a view may keep them, and asks again when
+    /// the instance is created again.
+    pub fn peaks(&self, instance: &InstanceId, name: &str) -> Option<Peaks> {
+        self.bindings.peaks(instance, name).cloned()
     }
 
     /// The clock the engine plays by, for conversions while reading, such as ticks to seconds.

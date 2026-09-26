@@ -8,8 +8,8 @@ Enable it in `project.json` under `extensions` as `"arrangement"`.
 
 | Tool | State | Form | Behaviour |
 | --- | --- | --- | --- |
-| `arrangement` | `ArrangementState`, no fields yet | `<name>/instance.json` | none. It owns the tracks and gives the summary. |
-| `arrangement.track` | `TrackState`: `name`, `colour`, `order`, `gain_db`, `pan`, `mute`, `effects` | `<name>/instance.json` | one `Sequencer` and one `Mixer`: sequencer, child `instrument`, the effects in order, mixer, main output |
+| `arrangement` | `ArrangementState`: `master` (`MasterState`: `gain_db`, `limiter`) | `<name>/instance.json` | one `Mixer` per track and one `Master`: every track, its mixer, the master, main output. It owns the tracks and gives the summary. |
+| `arrangement.track` | `TrackState`: `name`, `colour`, `order`, `gain_db`, `pan`, `mute`, `solo`, `effects` | `<name>/instance.json` | one `Sequencer`: sequencer, child `instrument`, the effects in order that are not bypassed, and out as its `audio` output |
 | `arrangement.clip` | `sound_notes::Clip`: `start`, `length`, `notes` | `<name>.json` | none, plain data for its track |
 
 `Clip` lives in the contract crate `crates/notes`, because its saved form is what other extensions read. This crate does not depend on any instrument and on no effect. A track finds its instrument by the child name `instrument` (`INSTRUMENT`) and the port names `NOTES_INPUT` and `AUDIO_OUTPUT`, and each of its effects by the name the record lists and the port names `AUDIO_INPUT` and `AUDIO_OUTPUT`, so any tool with those ports fits either place. A track without an instrument loads and is silent.
@@ -18,7 +18,9 @@ Each tool says where it lives (`State::PLACE`): the arrangement at the top of `s
 
 `Colour` is an enum of the accent names of DESIGN.md, saved in lowercase. It is not a hex string, so a record cannot hold a colour the design has no token for. Map it to a token in the interface with `Colour::name()`.
 
-`gain_db` (-60 to 6, `TrackState::GAIN_DB`), `pan` (-1 to 1, `TrackState::PAN`) and `mute` are the mixer of the track. A record that leaves them out plays as it did before they existed: no change of level, in the middle, not muted. A value outside its range does not load and the problem names the field, like any other record value. The ranges are written once, in `TrackState`, and `validate`, the controls of the track panel and the docs read them there.
+`gain_db` (a number up to 6, `TrackState::MAX_GAIN_DB`, or `"-inf"`), `pan` (-1 to 1, `TrackState::PAN`), `mute` and `solo` are the mixer of the track. A record that leaves them out plays as it did before they existed: no change of level, in the middle, not muted, not soloed. A value outside its range does not load and the problem names the field, like any other record value. The ranges are written once, in `TrackState`, and `validate`, the controls of the track panel and the docs read them there.
+
+A gain in decibels is saved as a number, or as the string `"-inf"` for silence, which JSON has no number for (`decibels`). So the bottom of a volume is truly silent, and a record of before this reads and writes as it did. The master volume follows the same rule.
 
 ## Rules
 
@@ -92,13 +94,37 @@ its input through and what the plugin held is gone.
 
 ## The mixer
 
-One `Mixer` processor per track, after the instrument and every effect, and before the main
-output. Audio is stereo everywhere (`sound_core::CHANNELS`), so the mixer is two gains, one per channel.
+One `Mixer` processor per track, after the instrument and every effect, and before the master.
+The arrangement owns them and not the tracks, because solo is about every track at once. Audio is
+stereo everywhere (`sound_core::CHANNELS`), so the mixer is two gains, one per channel.
 
-- `channel_gains(track)` turns the record into those two gains on the control thread. The audio thread works out no pan law. The behaviour sends them on every run, which costs no compile.
+- `channel_gains(track)` turns the record into those two gains on the control thread. The audio thread works out no pan law. The behaviour of the arrangement sends them on every run, which costs no compile.
+- Solo: while any track is soloed, the arrangement sends every other track the gains of a muted one, `[0, 0]`. So soloing a track sounds sample for sample as muting every other one. A muted track stays silent when it is soloed.
 - The pan law is equal power, scaled so that the middle is exactly 1 in both channels. A centred track at 0 dB is untouched, sample for sample, so a project from before the mixer sounds the same. Hard left or right, the channel that plays it is √2, 3 dB above the middle, and the other is exactly 0. The power of a track is the same wherever it is panned.
-- The processor ramps to a new pair over `RAMP_SECONDS` (20 ms), so no change of gain, pan or mute clicks. The largest step it can take in one frame is the distance divided by the ramp. A muted track that has finished its fade returns before it touches its output.
-- A change of the mixer keeps everything else: a note goes on sounding through it, because the behaviour keeps both processors and only sends an update.
+- The processor ramps to a new pair over `RAMP_SECONDS` (20 ms), so no change of gain, pan, mute or solo clicks. The largest step it can take in one frame is the distance divided by the ramp. A muted track that has finished its fade returns before it touches its output.
+- A change of the mixer keeps everything else: a note goes on sounding through it, because the behaviours keep every processor and only send an update.
+- The mixer keeps the peaks of what it sends on, which is the meter of the track: `track_peaks(project, track)`. They are after the volume, the pan, mute and solo.
+
+A track sends the end of its chain up as its `audio` output, and the arrangement connects that to
+the mixer of the track. A bypassed effect is left out of the chain: the sound goes past it
+untouched, and its latency goes with it, see "The effects of a track".
+
+## The master
+
+The arrangement record holds the master: `master.gain_db`, its volume, and `master.limiter`. A record
+that leaves them out, which is every record of before this, gets 0 dB and the limiter on at its
+defaults. One `Master` processor plays it: the sum of every mixer, the volume, then the limiter,
+then the main output.
+
+- The volume is before the limiter, so no volume can push the output over the ceiling. It ramps like the mixer of a track.
+- The limiter: `gain_db` (0 to 24) into it, `ceiling_db` (-24 to 0, default 0, full scale), `release_ms` (10 to 1000, default 100) and `lookahead_ms` (0 to 10, default 0). The ranges are written once in `LimiterState`.
+- The gain of the limiter goes down at once to what a peak needs and comes back along the release, a time constant. So no sample goes over the ceiling, and a last clamp at the ceiling catches rounding. Under the ceiling the gain is exactly 1: the output is the input, sample for sample.
+- With a lookahead the limiter holds the sound back by that time and lowers the gain along a straight line over it, so the gain is down when the peak arrives and the top of the wave keeps its shape. It says the lookahead as its latency (`Processor::latency`), so every track is led by it and reaches the device in time. The default is no lookahead, because a lookahead delays a keyboard played live and a preview note as much.
+- `bypass` lets the sound through untouched and keeps the latency as a pure delay, so switching the limiter off and on never moves the tracks in time. The gain goes on working while it is bypassed, so switching it on again needs no clip.
+- With no lookahead the rising edge of the first peak over the ceiling is flattened at the ceiling: a hard clip of that edge, and the release then turns the next peaks down whole. With a lookahead, for up to one lookahead after the ceiling is lowered during playback, the last clamp flattens what was planned for the old ceiling.
+- After a peak the gain comes back to exactly 1: it works in f64 and goes the rest of the way within 0.001 dB. Samples that are not a number or infinite come out as 0.
+- The master keeps the peaks of what it sends out, `master_peaks(project, arrangement)`, and of how much the limiter took, `reduction_peaks`, as the factor by which the sound was above the output.
+- Only what the arrangement plays goes through the master. A `project.json` connection to the device and the click of the metronome go around it.
 
 ## Helpers for interfaces
 
@@ -120,7 +146,7 @@ Edit notes with `project.update(&mut edit, &clip, |clip| ...)` on the `Clip` its
 
 `view::register(views)` registers `ArrangementView` for the `arrangement` tool. The guide for views in general is the [sound-ui README](../../crates/ui/README.md). `view.rs` and the files under `view/` are the only modules that use GPUI, and of those `layout`, `gesture` and `roll` are pure math with unit tests.
 
-- `ArrangementView` stacks the timeline over one detail panel. The panel shows one thing at a time (`Detail`): the note editor of a clip or the track panel of a track. Opening one takes the place of the other, and both have one height, so a swap does not move the timeline. Each view is cached, and the timeline and the editor have a playhead line beside them, so that playback repaints the lines only. It opens the editor on `TimelineEvent::OpenEditor` and the track panel on `TimelineEvent::OpenTrack`, gives what is open the clip or the track that gets selected, and closes it on `EditorEvent::Close`, on `TrackPanelEvent::Close`, on escape, and when its clip or its track is deleted, from inside or outside. A drag to another track deletes the clip at its old id. The timeline has selected the new id by then, so the editor follows it.
+- `ArrangementView` stacks the timeline over one detail panel. The panel shows one thing at a time (`Detail`): the note editor of a clip, the track panel of a track, or the master panel. Opening one takes the place of the other. The note editor is 352 pt and the two panels 216 pt, so a swap between the editor and a panel moves the lower edge of the timeline. Under the timeline, above the panel, is the master row. Each view is cached, and the timeline and the editor have a playhead line beside them, so that playback repaints the lines only. It opens the editor on `TimelineEvent::OpenEditor` and the track panel on `TimelineEvent::OpenTrack`, gives what is open the clip or the track that gets selected, and closes it on `EditorEvent::Close`, on `TrackPanelEvent::Close`, on escape, and when its clip or its track is deleted, from inside or outside. A drag to another track deletes the clip at its old id. The timeline has selected the new id by then, so the editor follows it.
 - The timeline listens to the arrangement, its tracks and their clips only. Another child of a track, such as the instrument, shows nowhere in it, so a knob drag in the track panel reads no clips again and paints no timeline.
 - `Timeline` holds the interface state: `Viewport` (zoom and scroll), the selected clip, the selected track, the open drag and a focus handle. A click on a track header selects the track, clears the clip selection and asks for the track panel. The keys go to the selected clip first. With no clip selected, up and down select the track above or below and enter opens its panel. Selecting a clip leaves the track selected, so the header keeps its quiet fill while a clip of the track is edited. Each paint builds a `Scene` from the project: the visible rows, bars and `ClipShape`s, each with its `Instance<Clip>` and its rect. The mouse listeners of that frame get the same scene, and `Scene::zone_at(x, y)` is the hit test: the clip on top with its body or an edge. It keeps the track order and the end of the last clip of each track between project events. An event that names a clip reads only the track of that clip again, so a mouse move of a drag does not walk every clip of the project.
 - `NoteEditor` shows one clip as a piano roll on the project timeline, with the same `Viewport` math across and pitch rows of `roll` up. It keeps no scene: it reads the clip when it paints and when a mouse event arrives, with the viewport that was painted. One note is selected, by its value and not by its index: the clip changes under the editor, by an agent, an undo or a clip resize, and an index would then name another note. The note is looked up when a key uses it, and the selection clears when the clip no longer has it.
@@ -147,11 +173,16 @@ A track is not a synth. It owns clips and one child named `instrument`, and any 
   the start of a session holds a part of the list and the quiet line that says so.
 - At the end of the rack, on the line of the card titles, is a control that adds an effect: the same picker pattern, with what declares itself an effect in it. Picking one is one undo step named after it (`Add Warmth`), and the close icon of an effect card takes it off the track, also one step (`Remove Warmth`). Reordering in the window is not built: an agent or a file edit reorders.
 - The panel is 216 pt tall (`track_panel::PANEL_HEIGHT`): 12 above the cards, a card of 192, 12 below. The note editor keeps 352 pt, so a swap between the two moves the lower edge of the timeline. The rack starts 16 pt right of the header column, the cards are 12 pt apart, it scrolls sideways with two fingers, and a 48 pt fade to the window colour at its right edge says that cards go past it.
-- The mixer strip of the track is in the header column, on the rows of the cards: the volume, a fader on the meter, at the left from the top of the first row to the value line of the second, the pan knob right of it and mute on the knob line of the second row. It is the one thing the panel edits itself, because those values are in the track record. A drag is one gesture and one undo step ("Change volume", "Change pan"), and mute is one commit ("Mute track", "Unmute track"). The record keeps -60 to 6 dB, so the bottom of the volume, `-inf` on the control, is -60 dB until step 2 of the third milestone decides how a record keeps silence. The meter is at rest until then too. The panel ends an open drag when it shows another track, when its track is deleted and when it is released, as the note editor does.
+- The mixer strip of the track is in the header column, on the rows of the cards: the volume, a fader on the meter, at the left from the top of the first row to the value line of the second, the pan knob right of it, and mute and solo on the knob line of the second row. The panel edits it itself, because those values are in the track record. A drag is one gesture and one undo step ("Change volume", "Change pan"), and mute and solo are one commit each ("Mute track", "Unmute track", "Solo track", "Unsolo track"). The bottom of the volume is `-inf`, which the record saves as `"-inf"`. The meter shows what the track sends to the master (`track_peaks`), read once per poll. The panel ends an open drag when it shows another track, when its track is deleted and when it is released, as the note editor does.
+- The power icon of an effect card bypasses its slot: one flag in the track record, one undo step, "Turn off <name>" and "Turn on <name>". The card reads whether the slot is on when it draws.
 - Apart from that strip the panel edits nothing and keeps no state of the project. The other edits are those of the device views, through the session. A knob drag that is open when the panel closes is finished by the device view when it is released.
 - The header column: accent dot and track name on the line of the card titles, the close control at its right, the mixer strip under them. The panel has a focus handle that is no tab stop. It only tells `ArrangementView` whether the focus is inside when the panel closes, so that the focus goes back to the timeline. Tab reaches the close control, the volume, the pan and mute, then the picker and the header icons of the first card and the controls of its device, column by column, and so on.
 
-Not in the rack: sends, buses, reordering with the mouse, bypass, and a wet and dry amount.
+Not in the rack: sends, buses, reordering with the mouse, and a wet and dry amount.
+
+### The master row and panel
+
+The master row is 40 pt, pinned under the tracks of the timeline (`MASTER_ROW_HEIGHT`), with a ring where a track has its dot. It is drawn by `ArrangementView` and not by the timeline, so it scrolls with nothing. A click, or enter when tab has reached it, opens `MasterPanel` in the place of the track panel or the note editor: the master volume on its meter in the header column, and the Limiter card. The card has expand, which shows the lookahead, and power, which bypasses the limiter, and no close: the limiter is part of the master. Its display shows the last four seconds in 50 columns of 80 ms, the loudest output in green under the ceiling line and the largest reduction hanging from the top, and the handle at the right end of the ceiling line drags the ceiling. Every control is one undo step on the record of the arrangement: "Change master volume", "Change limiter gain", "Change ceiling", "Change release", "Change lookahead", "Turn off Limiter", "Turn on Limiter".
 
 ### Editing rules
 

@@ -18,8 +18,12 @@
 //! - `fit-recording.png`: the same while it records: tempo, steadiness and record together.
 //! - `editor.png`: the note editor open on the selected clip, one note selected.
 //! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
-//! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default.
+//! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default,
+//!   playing, so the meter under the volume shows its level.
+//! - `track-panel-solo.png`: the same with S on.
 //! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
+//! - `master-panel.png`: the master row clicked, and its panel: the volume on its meter and the
+//!   Limiter pushed 18 dB, with four seconds of output under the ceiling and the reduction.
 //! - `track-panel-synth-effects.png`: the synth with five effects after it, which is wider
 //!   than the rack has room for on this screen, so its right edge fades. The test checks
 //!   the fade in the pixels.
@@ -32,6 +36,7 @@
 //! - `track-panel-missing.png`: the panel of a track whose plugin this machine does not have.
 //! - `track-panel-effects.png`: the rack with an instrument and two effects, and the control
 //!   that adds one at the end of it.
+//! - `track-panel-bypass.png`: the same with the second effect bypassed from its power icon.
 //! - `track-panel-effect-picker.png`: the same with that control open.
 //! - `track-panel-effect-missing.png`: an effect whose plugin this machine does not have.
 //! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the
@@ -188,6 +193,34 @@ impl Opened {
         cx.update(|cx| self.session.update(cx, |session, cx| session.poll(cx)));
         cx.run_until_parked();
         started.elapsed()
+    }
+
+    /// Plays on for `seconds` in polls of 16 ms, and reads every meter after each, as the
+    /// timers of the views do in the real window.
+    fn listen(&mut self, seconds: f32, cx: &mut HeadlessAppContext) -> Result<()> {
+        let poll = OFFLINE.sample_rate as f32 * sound_ui::POLL_INTERVAL.as_secs_f32();
+        for _ in 0..(seconds * 1000. / 16.) as usize {
+            self.advance(poll as usize, cx);
+            let view = self.arrangement_view(cx)?;
+            cx.update(|cx| {
+                let shell = self.window.read(cx)?;
+                let transport = shell.transport().clone();
+                transport.update(cx, |pill, cx| pill.read_meter(cx));
+                let (track, master) = {
+                    let view = view.read(cx);
+                    (view.track_panel().cloned(), view.master_panel().cloned())
+                };
+                if let Some(panel) = track {
+                    panel.update(cx, |panel, cx| panel.read_meter(cx));
+                }
+                if let Some(panel) = master {
+                    panel.update(cx, |panel, cx| panel.read_meters(cx));
+                }
+                anyhow::Ok(())
+            })?;
+            cx.run_until_parked();
+        }
+        Ok(())
     }
 
     /// Seeks and plays. Making a large project leaves many edits waiting for the engine, and
@@ -562,6 +595,8 @@ fn main() -> Result<()> {
     let mut opened = Opened::new(&mut cx, piece)?;
     let timeline = opened.timeline_view(&mut cx)?;
     opened.play_from(Ticks(5 * BAR + 1440), &mut cx)?;
+    // Long enough for the master meter at the right end of the transport to show the level.
+    opened.listen(0.3, &mut cx)?;
     let selected = InstanceId::new("arrangement/bass/clip-001")?;
     cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.select_clip(Some(selected), cx)));
     cx.run_until_parked();
@@ -729,7 +764,7 @@ fn main() -> Result<()> {
     drop(opened);
 
     // The note editor on the melody, one note selected, stopped at the start of the clip.
-    let opened = Opened::new(&mut cx, piece)?;
+    let mut opened = Opened::new(&mut cx, piece)?;
     let melody =
         InstanceId::new("arrangement/a-melody-with-a-name-too-long-for-its-header/clip-000")?;
     let editor = opened.open_editor(&melody, &mut cx)?;
@@ -770,13 +805,62 @@ fn main() -> Result<()> {
         })
     })?;
     opened.click_track_header(1., &mut cx)?;
+    // Playing, so the meter under the volume shows what the bass sends to the master.
+    opened.play_from(Ticks(4 * BAR), &mut cx)?;
+    opened.listen(0.5, &mut cx)?;
     save(&mut cx, &opened, "track-panel")?;
-    // From the timeline, tab goes to the close control, the volume, the pan and mute, then the
-    // picker and the expand icon of the card, the waveform and the cutoff.
-    for _ in 0..8 {
+    // Solo on the bass: S lights yellow and the other tracks go quiet.
+    let bass = InstanceId::new("arrangement/bass")?;
+    cx.update(|cx| {
+        opened.session.update(cx, |session, cx| {
+            let track = session.project().resolve::<TrackState>(&bass);
+            let track = track.context("the bass is not there")?;
+            let mut state = session
+                .project()
+                .state(&track)
+                .cloned()
+                .context("a record")?;
+            state.solo = true;
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.set(&track, state);
+                project.commit("Solo track", changes)
+            });
+            anyhow::Ok(())
+        })
+    })?;
+    opened.listen(0.2, &mut cx)?;
+    save(&mut cx, &opened, "track-panel-solo")?;
+    // From the timeline, tab goes past the master row to the close control, the volume, the
+    // pan, mute and solo, then the picker and the expand icon of the card, the waveform and
+    // the cutoff.
+    for _ in 0..10 {
         opened.key("tab", &mut cx)?;
     }
     save(&mut cx, &opened, "track-panel-focus")?;
+    drop(opened);
+
+    // The master: its row under the tracks, clicked, and its panel with the volume on its
+    // meter and the limiter. The limiter is pushed 18 dB, so four seconds of the piece show
+    // under the ceiling and the reduction hangs from the top.
+    let mut opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        let arrangement = main_arrangement(project).context("no arrangement")?;
+        let mut state = project.state(&arrangement).cloned().context("a record")?;
+        state.master.limiter.gain_db = 18.0;
+        let mut changes = Changes::new();
+        changes.set(&arrangement, state);
+        project.commit("Push the limiter", changes)?;
+        Ok(())
+    })?;
+    opened.play_from(Ticks(0), &mut cx)?;
+    let row = point(px(HEADER_WIDTH / 2.), px(WINDOW_HEIGHT - 20.));
+    opened.drag(row, point(px(0.), px(0.)), 0, &mut cx)?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let open = cx.update(|cx| view.read(cx).master_panel().is_some());
+    anyhow::ensure!(open, "the master panel did not open");
+    opened.listen(4.2, &mut cx)?;
+    save(&mut cx, &opened, "master-panel")?;
     drop(opened);
 
     // The synth with five effects: more than the rack has room for on the screen of the
@@ -928,6 +1012,30 @@ fn main() -> Result<()> {
     })?;
     opened.click_track_header(0., &mut cx)?;
     save(&mut cx, &opened, "track-panel-effects")?;
+    // Space bypassed: its power icon, title and body go quiet, and the sound goes past it.
+    // The click on the icon is in the window tests.
+    let track = InstanceId::new("arrangement/track-1")?;
+    cx.update(|cx| {
+        opened.session.update(cx, |session, cx| {
+            let track = session.project().resolve::<TrackState>(&track);
+            let track = track.context("the track is not there")?;
+            let mut state = session
+                .project()
+                .state(&track)
+                .cloned()
+                .context("a record")?;
+            let space = state.effects.iter_mut().find(|slot| slot.name == "space");
+            space.context("no space")?.bypass = true;
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.set(&track, state);
+                project.commit("Turn off Space", changes)
+            });
+            anyhow::Ok(())
+        })
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-bypass")?;
     let view = opened.arrangement_view(&mut cx)?;
     let add = cx.update(|cx| {
         let panel = view.read(cx).track_panel().cloned();
