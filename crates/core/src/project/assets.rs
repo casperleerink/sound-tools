@@ -107,6 +107,11 @@ impl Assets {
         }
     }
 
+    /// The `assets/` folder itself.
+    pub(crate) fn path_of_folder(&self) -> PathBuf {
+        self.folder.clone()
+    }
+
     pub fn path(&self, name: &AssetName) -> PathBuf {
         self.folder
             .join(&name.folder)
@@ -138,13 +143,31 @@ impl Assets {
     /// not by two runtimes at once. Use this for an asset that must never be written over, such
     /// as a recorded performance.
     pub fn create(&self, name: &AssetName, bytes: &[u8]) -> Result<AssetName, AssetError> {
+        self.create_first_free(name, (1..).map(|number| name.numbered(number)), bytes)
+    }
+
+    /// Takes the first free name of `<name>`, `<name>-2`, `<name>-3` and so on with an empty
+    /// file, and gives it. The caller then renames its own file over it, which is atomic: so
+    /// a copy that takes its time never writes over an asset, and a half-written one never has
+    /// the name. Use this to bring a file in under a name of its own, such as an audio file.
+    pub fn reserve(&self, name: &AssetName) -> Result<AssetName, AssetError> {
+        let names = std::iter::once(name.clone()).chain((2..).map(|number| name.numbered(number)));
+        self.create_first_free(name, names, &[])
+    }
+
+    /// The one numbering of `create` and `reserve`: the first of `names` that is free, taken
+    /// with `create_new`, so a file that is there is never opened.
+    fn create_first_free(
+        &self,
+        name: &AssetName,
+        names: impl Iterator<Item = AssetName>,
+        bytes: &[u8],
+    ) -> Result<AssetName, AssetError> {
         let folder = self.folder.join(&name.folder);
         if let Err(source) = fs::create_dir_all(&folder) {
             return Err(self.io_error(name, source));
         }
-        let mut number = 1_u32;
-        loop {
-            let candidate = name.numbered(number);
+        for candidate in names {
             let file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -158,10 +181,12 @@ impl Assets {
                     };
                 }
                 // Taken, by this session or an earlier one. It is never written to.
-                Err(source) if source.kind() == io::ErrorKind::AlreadyExists => number += 1,
+                Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(source) => return Err(self.io_error(&candidate, source)),
             }
         }
+        // The numbers of a `u32` ran out, which no folder reaches.
+        Err(self.io_error(name, io::Error::from(io::ErrorKind::AlreadyExists)))
     }
 
     fn io_error(&self, name: &AssetName, source: io::Error) -> AssetError {
@@ -220,6 +245,27 @@ mod tests {
                 .join("assets/plugin-state/piano.clap.tmp")
                 .exists()
         );
+    }
+
+    #[test]
+    fn reserving_takes_the_plain_name_first_then_numbers_and_never_writes_over_one() {
+        let (_folder, assets) = assets();
+        let voice = AssetName::new("audio", "voice", "wav").expect("a valid name");
+        assets.write(&voice, b"a take").expect("a write");
+        let first = assets.reserve(&voice).expect("a name");
+        let second = assets.reserve(&voice).expect("a name");
+        assert_eq!(first.as_str(), "audio/voice-2.wav");
+        assert_eq!(second.as_str(), "audio/voice-3.wav");
+        assert_eq!(
+            assets.read(&first).expect("a read").as_deref(),
+            Some(&b""[..])
+        );
+        assert_eq!(
+            assets.read(&voice).expect("a read").as_deref(),
+            Some(&b"a take"[..])
+        );
+        let fresh = AssetName::new("audio", "guitar", "aiff").expect("a valid name");
+        assert_eq!(assets.reserve(&fresh).expect("a name"), fresh);
     }
 
     #[test]

@@ -131,9 +131,10 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [ENGINEERING.md](ENGINEERING.md): how to build: dependencies, the audio engine, testing, rules for agents.
 - [docs/milestone-2.md](docs/milestone-2.md): the plan of the second milestone, done September 21, 2026. [docs/agent-brief.md](docs/agent-brief.md) is the shared brief for the agents that built it.
 - [docs/milestone-3.md](docs/milestone-3.md): the plan of the third milestone: mixer, built-in effects, reliable plugins and a better window. Done September 26, 2026.
+- [docs/milestone-4.md](docs/milestone-4.md): the plan of the fourth milestone: audio tracks, recording, a sampler and drums. In progress: audio tracks play audio clips from files since step 1a, which an agent adds by file (`agent-docs/audio.md`); the window does not draw them yet.
 - [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
 - [SDK_SKETCH.md](SDK_SKETCH.md): an early sketch of the extension SDK.
-- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [filter](extensions/filter/README.md), [compressor](extensions/compressor/README.md), [eq](extensions/eq/README.md), [reverb](extensions/reverb/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md), [fit-tempo](extensions/fit-tempo/README.md).
+- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [media](crates/media/README.md) for audio files, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [filter](extensions/filter/README.md), [compressor](extensions/compressor/README.md), [eq](extensions/eq/README.md), [reverb](extensions/reverb/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md), [fit-tempo](extensions/fit-tempo/README.md).
 
 ## License
 

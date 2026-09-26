@@ -210,12 +210,15 @@ name = "arrangement"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "hound",
  "serde",
  "serde_json",
  "sound-core",
+ "sound-media",
  "sound-notes",
  "sound-ui",
  "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -5112,6 +5115,7 @@ dependencies = [
  "reverb",
  "serde_json",
  "sound-core",
+ "sound-media",
  "sound-notes",
  "sound-ui",
  "tempfile",
@@ -5609,6 +5613,18 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "triple_buffer",
+]
+
+[[package]]
+name = "sound-media"
+version = "0.1.0"
+dependencies = [
+ "hound",
+ "serde",
+ "serde_json",
+ "sound-core",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -5,6 +5,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod agent_doc;
+mod audio;
 mod compressor;
 mod effects;
 mod eq;

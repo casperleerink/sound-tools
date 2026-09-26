@@ -310,13 +310,16 @@ let name = AssetName::new("plugin-state", "piano", "bin")?;   // assets/plugin-s
 let bytes: Option<Vec<u8>> = assets.read(&name)?;
 assets.write(&name, &bytes)?;                                  // replaces, atomically
 let taken: AssetName = assets.create(&name, &bytes)?;          // takes/take-1, take-2, ...
+let free: AssetName = assets.reserve(&name)?;                  // an empty file at name, name-2, ...
 ```
 
 - Every part of an `AssetName` is lowercase letters, digits, `-` and `_`, checked when it is built. So a name that comes out of a record can never reach outside the project folder. Save the plain name in your state and build the `AssetName` from it, as the plugin host does.
 - `write` renames a temporary file into place: a failed write leaves the old file complete, as a record write does.
 - `create` never opens a file that exists. Use it for something that must never be lost, such as a recorded performance.
+- `reserve` takes the first free of `<name>`, `<name>-2`, `<name>-3` with an empty file, with the numbering of `create`, never opening a file that exists. Rename your own file over it: that brings a file in under a name of its own without ever writing over one, on any file system. `sound-media` imports audio files this way.
 - There is no delete and no listing. The runtime never removes an asset, so an asset whose record is gone stays.
-- An asset is not project state: it is not in the undo history, and the watcher ignores everything outside `state/` and `project.json`.
+- An asset is not project state: it is not in the undo history, and no change of an asset is an edit.
+- A tool whose record names an asset that may arrive later calls `.rebinds_on_assets("folder")` when it registers: when a file under `assets/<folder>/` is added, changed or removed, its instances that have a problem run their behaviour again with the record they have. The watcher watches `assets/` from the moment it exists. The arrangement does this for `audio`, so an audio clip whose file is copied in after it plays.
 
 ### Read and edit from an interface
 

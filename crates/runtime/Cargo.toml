@@ -32,6 +32,7 @@ gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support"] }
 midi.workspace = true
 serde_json.workspace = true
+sound-media.workspace = true
 tempfile.workspace = true
 test-clap-plugin.workspace = true
 test-plugin-support.workspace = true

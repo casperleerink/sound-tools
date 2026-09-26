@@ -413,3 +413,31 @@ pub fn level_changes(samples: &[f32]) -> Vec<(usize, f32)> {
     }
     changes
 }
+
+/// A 32-bit float WAV file of these frames at `rate`, under `assets/audio/` of the project,
+/// written with `hound`, which is not the code under test. Gives the name a record uses.
+pub fn write_wav(harness: &Harness, name: &str, rate: u32, frames: &[[f32; 2]]) -> String {
+    let path = harness.path(&format!("assets/audio/{name}"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+    for frame in frames {
+        writer.write_sample(frame[0]).unwrap();
+        writer.write_sample(frame[1]).unwrap();
+    }
+    writer.finalize().unwrap();
+    name.to_string()
+}
+
+/// The frames of a stereo render, left and right.
+pub fn stereo(samples: &[f32]) -> Vec<[f32; 2]> {
+    samples
+        .chunks_exact(2)
+        .map(|frame| [frame[0], frame[1]])
+        .collect()
+}
