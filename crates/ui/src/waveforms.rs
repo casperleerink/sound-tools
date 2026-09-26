@@ -99,3 +99,74 @@ impl Waveforms {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+
+    use super::*;
+
+    /// `seconds` of mono 16-bit samples at 48 kHz, all at `level`, as a WAV file.
+    fn wav(seconds: u32, level: i16) -> Vec<u8> {
+        let data = seconds * 48_000 * 2;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&48_000_u32.to_le_bytes());
+        bytes.extend_from_slice(&96_000_u32.to_le_bytes());
+        bytes.extend_from_slice(&2_u16.to_le_bytes());
+        bytes.extend_from_slice(&16_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data.to_le_bytes());
+        for _ in 0..seconds * 48_000 {
+            bytes.extend_from_slice(&level.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// The thread that asks gets `None` at once and goes on drawing: the file is read and the
+    /// overview made by a task of the background executor, which a GPUI test runs only when the
+    /// test lets it. So nothing of it ran on the asking thread.
+    #[gpui::test]
+    fn an_overview_is_made_away_from_the_thread_that_asks_for_it(cx: &mut TestAppContext) {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("assets/audio/tone.wav");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, wav(10, 16_384)).unwrap();
+        let assets = Assets::new(folder.path());
+        let asset = AudioAsset::new("tone.wav").unwrap();
+
+        let asked = cx.update(|cx| Waveforms::overview(&assets, &asset, cx));
+        assert!(asked.is_none());
+        // Asked again while it is made: still nothing, and no second one starts.
+        let again = cx.update(|cx| Waveforms::overview(&assets, &asset, cx));
+        assert!(again.is_none());
+        let counts = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                let waveforms = Waveforms::entity(cx);
+                let waveforms = waveforms.read(cx);
+                (waveforms.making(), waveforms.made())
+            })
+        };
+        assert_eq!(counts(cx), (1, 0));
+
+        cx.run_until_parked();
+        assert_eq!(counts(cx), (0, 1));
+        let overview = cx
+            .update(|cx| Waveforms::overview(&assets, &asset, cx))
+            .unwrap();
+        assert_eq!(overview.frames(), 480_000);
+        assert_eq!(overview.peak(0, 480_000), 0.5);
+        // A file that is not there has none, and asks for nothing.
+        let missing = AudioAsset::new("gone.wav").unwrap();
+        assert!(
+            cx.update(|cx| Waveforms::overview(&assets, &missing, cx))
+                .is_none()
+        );
+        assert_eq!(counts(cx), (0, 1));
+    }
+}

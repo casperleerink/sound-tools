@@ -192,7 +192,7 @@ fn click(
 }
 
 /// One component: a title and its samples.
-fn block(
+pub(crate) fn block(
     title: &'static str,
     cx: &App,
     samples: impl IntoIterator<Item = AnyElement>,
@@ -221,7 +221,7 @@ fn block(
 }
 
 /// A sample with the name of its state under it.
-fn sample(state: &'static str, cx: &App, element: impl IntoElement) -> AnyElement {
+pub(crate) fn sample(state: &'static str, cx: &App, element: impl IntoElement) -> AnyElement {
     let muted = cx.theme().gray_700;
     div()
         .flex()

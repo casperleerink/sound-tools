@@ -2103,6 +2103,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "image",
+ "sound-media",
  "sound-ui",
 ]
 

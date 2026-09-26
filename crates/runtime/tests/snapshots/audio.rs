@@ -74,7 +74,7 @@ fn voice(time: f64) -> f64 {
 /// Something like a guitar: a strum on every eighth at 120 bpm, each dying away.
 fn strum(time: f64) -> f64 {
     let since = time % 0.25;
-    let accent = if (time / 0.25) as u64 % 2 == 0 {
+    let accent = if ((time / 0.25) as u64).is_multiple_of(2) {
         1.
     } else {
         0.7
@@ -266,39 +266,39 @@ pub fn snapshots(
     drop(opened);
 
     // One clip under the pointer, and dragged three ways, the button still down.
-    let states = [
-        ("audio-hover", None),
-        ("audio-trim", Some((0., 0.5 * BAR as f64))),
-        ("audio-fade", Some((7., 0.42 * BAR as f64))),
-        ("audio-gain", Some((-1., 0.))),
+    // Where the pointer is on the last clip of the voice, and where a drag takes it: the body,
+    // the left edge in by half a bar, the fade in handle out by 0.42 of a bar, and the gain
+    // handle down by six decibels, 72 dB over 200 points.
+    let (row, start) = (3., 8.5 * BAR as f64);
+    let bar = 96.;
+    let poses = [
+        ("audio-hover", at(start + BAR as f64, row), None),
+        (
+            "audio-trim",
+            at(start + 20., row),
+            Some(point(px(bar / 2.), px(0.))),
+        ),
+        (
+            "audio-fade",
+            in_clip(start + 60., row, 7.),
+            Some(point(px(bar * 0.42), px(0.))),
+        ),
+        (
+            "audio-gain",
+            in_clip(start + 1.625 * BAR as f64, row, 7.),
+            Some(point(px(0.), px(200. / 72. * 6.))),
+        ),
     ];
-    for (name, drag) in states {
+    for (name, pointer, drag) in poses {
         let opened = Opened::new(cx, audio_piece)?;
-        let (row, start) = (3., 8.5 * BAR as f64);
-        let pointer = match drag {
-            // The left edge, a fade handle, and the gain handle in the middle of the clip.
-            Some((down, _)) if down == 0. => at(start + 20., row),
-            Some((down, _)) if down > 0. => in_clip(start + 60., row, down),
-            Some(_) => in_clip(start + 1.625 * BAR as f64, row, 7.),
-            None => at(start + BAR as f64, row),
-        };
         let hover = gpui::MouseMoveEvent {
             position: pointer,
             pressed_button: None,
             modifiers: gpui::Modifiers::default(),
         };
         opened.mouse(PlatformInput::MouseMove(hover), cx)?;
-        match drag {
-            Some((down, ticks)) if down >= 0. => {
-                let to = pointer + point(px((ticks / BAR as f64 * 96.) as f32), px(0.));
-                opened.press_and_move(pointer, to, cx)?;
-            }
-            Some(_) => {
-                // Six decibels down: 72 dB over 200 points.
-                let to = pointer + point(px(0.), px(200. / 72. * 6.));
-                opened.press_and_move(pointer, to, cx)?;
-            }
-            None => {}
+        if let Some(by) = drag {
+            opened.press_and_move(pointer, pointer + by, cx)?;
         }
         wait_for_waveforms(cx, &opened)?;
         save(cx, &opened, name)?;
@@ -336,7 +336,12 @@ pub fn snapshots(
     })?;
     let strum_2 = folder.path().join("strum-2.wav");
     write_wav(&strum_2, 3., |time| strum(time + 1.))?;
-    drag_files(&opened, &[shaker.clone()], at(4.25 * BAR as f64, 5.), cx)?;
+    drag_files(
+        &opened,
+        std::slice::from_ref(&shaker),
+        at(4.25 * BAR as f64, 5.),
+        cx,
+    )?;
     save(cx, &opened, "audio-drop-new-track")?;
     opened.mouse(PlatformInput::FileDrop(FileDropEvent::Exited), cx)?;
     drag_files(&opened, &[strum_2, shaker], at(9. * BAR as f64, 4.), cx)?;

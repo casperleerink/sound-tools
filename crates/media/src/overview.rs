@@ -190,4 +190,60 @@ mod tests {
         assert!(overview.peak(100, 101) > 0.99);
         assert_eq!(overview.peak(10, 11), 0.0);
     }
+
+    /// How long a waveform of a 10-minute file takes to be ready: reading the file and making
+    /// its overview, on the background thread that does it in the window. Run by hand:
+    /// `cargo nextest run -p sound-media --run-ignored only ten_minute --no-capture`.
+    #[test]
+    #[ignore]
+    fn the_overview_of_a_ten_minute_file_is_ready_in_a_stated_time() {
+        use std::time::Instant;
+
+        // Stereo, 24-bit, 48 kHz: 173 MB, the kind of file a recording gives.
+        let frames: u32 = 10 * 60 * 48_000;
+        let data = frames * 6;
+        let mut bytes = Vec::with_capacity(44 + data as usize);
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&2_u16.to_le_bytes());
+        bytes.extend_from_slice(&48_000_u32.to_le_bytes());
+        bytes.extend_from_slice(&(48_000_u32 * 6).to_le_bytes());
+        bytes.extend_from_slice(&6_u16.to_le_bytes());
+        bytes.extend_from_slice(&24_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data.to_le_bytes());
+        for frame in 0..frames {
+            let sample = ((frame as f32 * 0.01).sin() * 4_000_000.) as i32;
+            let [a, b, c, _] = sample.to_le_bytes();
+            bytes.extend_from_slice(&[a, b, c, a, b, c]);
+        }
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("assets/audio/ten-minutes.wav");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        let assets = sound_core::Assets::new(folder.path());
+        let asset = crate::AudioAsset::new("ten-minutes.wav").unwrap();
+
+        let started = Instant::now();
+        let audio = crate::load(&assets, &asset).unwrap();
+        let loaded = started.elapsed();
+        let overview = Overview::of(&audio);
+        let total = started.elapsed();
+        println!(
+            "10 minutes, stereo 24-bit 48 kHz: read {loaded:?}, overview {:?}, ready after {total:?}",
+            total - loaded
+        );
+        assert_eq!(overview.frames(), u64::from(frames));
+        // Once in memory, as it is in a project that plays it, only the overview is left to do.
+        let started = Instant::now();
+        let again = Overview::of(&audio);
+        println!(
+            "the overview alone, the file in memory: {:?}",
+            started.elapsed()
+        );
+        assert_eq!(again, overview);
+    }
 }
