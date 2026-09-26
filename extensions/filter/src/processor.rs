@@ -92,6 +92,7 @@ fn slope_weight(slope: Slope) -> f32 {
 
 /// The cutoff the filter really uses: inside what the sample rate allows.
 fn usable_hz(hz: f32, sample_rate: f32) -> f32 {
+    // Not `clamp`: it panics when the bounds cross, and nothing may panic on the audio thread.
     hz.max(LOWEST_HZ).min(HIGHEST_PART * sample_rate)
 }
 
@@ -210,7 +211,7 @@ fn held(sample: f32) -> f32 {
     if sample.is_nan() {
         return 0.0;
     }
-    sample.max(-INPUT_LIMIT).min(INPUT_LIMIT)
+    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
 pub struct Filter {

@@ -272,7 +272,7 @@ impl FilterView {
                     state.cutoff_hz = at.x;
                     // The travel reaches past both ends of the range, so that the handle can
                     // sit on the curve.
-                    state.resonance = at.y.max(RESONANCE.min).min(RESONANCE.max);
+                    state.resonance = at.y.clamp(RESONANCE.min, RESONANCE.max);
                 };
                 view.change("Change cutoff and resonance", change, set, cx);
             },

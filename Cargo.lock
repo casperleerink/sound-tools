@@ -1770,11 +1770,9 @@ dependencies = [
  "gpui",
  "proptest 1.11.0",
  "serde",
- "serde_json",
  "sound-core",
  "sound-notes",
  "sound-ui",
- "tempfile",
 ]
 
 [[package]]
