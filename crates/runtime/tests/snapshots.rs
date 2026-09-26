@@ -29,6 +29,10 @@
 //!   the fade in the pixels.
 //! - `track-panel-filter.png`: the synth and the built-in filter after it.
 //! - `track-panel-filter-expanded.png`: the same with the filter expanded: slope and LFO.
+//! - `track-panel-compressor.png`: the synth, the filter and the built-in compressor, as in the
+//!   mockup, with the level of a playing chord on its curve and its gain reduction.
+//! - `track-panel-compressor-expanded.png`: the same with the compressor expanded: knee,
+//!   makeup, mix and lookahead.
 //! - `track-panel-eq.png`: the synth and the built-in EQ after it, band 3 selected.
 //! - `track-panel-eq-expanded.png`: the same with the EQ expanded: the bands on and off, and
 //!   the output.
@@ -70,6 +74,8 @@ use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT, Viewpo
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor};
 use arrangement::{Colour, TrackState};
+use compressor::CompressorState;
+use compressor::view::CompressorView;
 use eq::view::EqView;
 use eq::{Band, EqState, Shape};
 use filter::FilterState;
@@ -500,6 +506,19 @@ fn add_reverb(project: &mut Project, track: &str) -> Result<()> {
     };
     changes.create(slot, sound);
     project.commit("Add Reverb", changes)?;
+    Ok(())
+}
+
+/// Puts a compressor after the effects of a track, as `Add effect` does.
+fn add_compressor(project: &mut Project, track: &str, sound: CompressorState) -> Result<()> {
+    let id = InstanceId::new(&format!("arrangement/{track}"))?;
+    let track = project
+        .resolve::<TrackState>(&id)
+        .context("the track is not there")?;
+    let mut changes = Changes::new();
+    let slot = arrangement::add_effect(project, &mut changes, &track, "Compressor")?;
+    changes.create(slot, sound);
+    project.commit("Add Compressor", changes)?;
     Ok(())
 }
 
@@ -1084,6 +1103,44 @@ fn main() -> Result<()> {
     cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "track-panel-reverb-expanded")?;
+    drop(opened);
+
+    // The compressor after the filter, with the values of the mockup but a threshold under the
+    // bass, which peaks at -22 dB, then expanded with knee, makeup, mix and lookahead.
+    let opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        add_filter(project, "bass")?;
+        let sound = CompressorState {
+            threshold_db: -30.0,
+            ratio: 4.0,
+            attack_ms: 10.0,
+            release_ms: 120.0,
+            ..CompressorState::default()
+        };
+        add_compressor(project, "bass", sound)
+    })?;
+    let mut opened = opened;
+    opened.click_track_header(1., &mut cx)?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let card = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        let card = panel.read(cx).device_views().nth(2).flatten().cloned();
+        let card = card.context("the compressor has no card")?;
+        card.downcast::<CompressorView>()
+            .map_err(|_| anyhow::anyhow!("the third card is not the compressor"))
+    })?;
+    // Half a second of the bass, and one look at what the compressor heard and did.
+    opened.play_from(Ticks(0), &mut cx)?;
+    for _ in 0..25 {
+        opened.advance(960, &mut cx);
+    }
+    cx.update(|cx| card.update(cx, |card, cx| card.read_meters(cx)));
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-compressor")?;
+    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-compressor-expanded")?;
     drop(opened);
 
     // A track whose instrument is a tool that has no view: the tone.
