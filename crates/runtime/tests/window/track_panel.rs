@@ -194,11 +194,11 @@ fn a_knob_drag_is_one_undo_step_and_the_sound_follows_every_move(cx: &mut TestAp
     opened.press(knob);
     assert!(!opened.gesture_open());
     // Half of the travel down: three octaves and a bit, from 2 kHz to 63.2 Hz.
-    opened.drag_to(knob + point(px(0.), px(40.)));
+    opened.drag_to(knob + point(px(0.), px(50.)));
     assert!(opened.gesture_open());
     let half_way = cutoff(&mut opened);
     assert!(half_way < 2_000.0 && half_way > 63.2);
-    opened.drag_to(knob + point(px(30.), px(80.)));
+    opened.drag_to(knob + point(px(30.), px(100.)));
     assert_eq!(cutoff(&mut opened), 63.2);
     // The file waits for the end of the drag. The sound does not.
     assert!(
@@ -215,7 +215,7 @@ fn a_knob_drag_is_one_undo_step_and_the_sound_follows_every_move(cx: &mut TestAp
     );
     assert_eq!(opened.undo_label(), None);
 
-    opened.release(knob + point(px(30.), px(80.)));
+    opened.release(knob + point(px(30.), px(100.)));
     assert!(!opened.gesture_open());
     assert!(
         synth_file(&mut opened)
@@ -413,7 +413,7 @@ fn an_outside_edit_of_the_instrument_shows_in_the_knob(cx: &mut TestAppContext) 
     // During a drag the last write wins: the file first, then the next mouse move, which
     // works from the value at the press.
     opened.press(knob);
-    opened.drag_to(knob + point(px(0.), px(-16.)));
+    opened.drag_to(knob + point(px(0.), px(-20.)));
     assert_eq!(cutoff(&mut opened), 459.0);
     write_outside(
         &mut opened,
@@ -421,9 +421,9 @@ fn an_outside_edit_of_the_instrument_shows_in_the_knob(cx: &mut TestAppContext) 
     );
     assert_eq!(cutoff(&mut opened), 5_000.0);
     assert!(opened.gesture_open());
-    opened.drag_to(knob + point(px(0.), px(-32.)));
+    opened.drag_to(knob + point(px(0.), px(-40.)));
     assert_eq!(cutoff(&mut opened), 916.0);
-    opened.release(knob + point(px(0.), px(-32.)));
+    opened.release(knob + point(px(0.), px(-40.)));
     // What else the file changed is kept.
     assert_eq!(synth(&mut opened).unwrap().gain, 0.3);
     assert!(
@@ -603,7 +603,7 @@ fn a_press_with_a_sideways_move_or_a_drag_there_and_back_keeps_a_value_written_b
 
     // Up, where the knob gives three digits, and back to the height of the press.
     opened.press(knob);
-    opened.drag_to(knob + point(px(0.), px(-20.)));
+    opened.drag_to(knob + point(px(0.), px(-25.)));
     assert_eq!(cutoff(&mut opened), 2930.0);
     opened.drag_to(knob + point(px(-2.), px(0.)));
     assert_eq!(cutoff(&mut opened), 1234.5);
@@ -619,7 +619,7 @@ fn mouse_moves_between_two_frames_end_where_the_pointer_is(cx: &mut TestAppConte
     let knob = opened.control(CUTOFF);
     opened.press(knob);
     // Away and back before the next frame: the knob of that frame still has the old value.
-    opened.drag_through(&[knob + point(px(0.), px(-30.)), knob]);
+    opened.drag_through(&[knob + point(px(0.), px(-37.5)), knob]);
     assert_eq!(cutoff(&mut opened), 2_000.0);
     opened.release(knob);
     assert!(!opened.gesture_open());
@@ -628,7 +628,7 @@ fn mouse_moves_between_two_frames_end_where_the_pointer_is(cx: &mut TestAppConte
 
     // And away, back and away again: the last one counts.
     opened.press(knob);
-    let away = knob + point(px(0.), px(-30.));
+    let away = knob + point(px(0.), px(-37.5));
     opened.drag_through(&[away, knob, away]);
     assert_eq!(cutoff(&mut opened), 7_300.0);
     opened.release(away);
@@ -640,7 +640,7 @@ fn a_press_elsewhere_ends_a_knob_drag_whose_mouse_up_was_lost(cx: &mut TestAppCo
     let mut opened = open_panel(cx);
     let (knob, other) = (opened.control(CUTOFF), opened.control("knob-gain"));
     opened.press(knob);
-    opened.drag_to(knob + point(px(0.), px(-30.)));
+    opened.drag_to(knob + point(px(0.), px(-37.5)));
     assert_eq!(cutoff(&mut opened), 7_300.0);
     assert!(opened.gesture_open());
 
@@ -648,11 +648,11 @@ fn a_press_elsewhere_ends_a_knob_drag_whose_mouse_up_was_lost(cx: &mut TestAppCo
     opened.mouse_down(other);
     assert!(!opened.gesture_open());
     assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
-    opened.drag_to(other + point(px(0.), px(-40.)));
+    opened.drag_to(other + point(px(0.), px(-50.)));
     // Only the knob under the new press moves.
     assert_eq!(cutoff(&mut opened), 7_300.0);
     assert_eq!(synth(&mut opened).unwrap().gain, 0.4);
-    opened.release(other + point(px(0.), px(-40.)));
+    opened.release(other + point(px(0.), px(-50.)));
     assert_eq!(opened.undo_label().as_deref(), Some("Change gain"));
     assert!(!opened.gesture_open());
     opened.keys("cmd-z");
@@ -725,7 +725,7 @@ fn the_rack_scrolls_so_that_the_last_knob_is_reachable_in_a_narrow_window(cx: &m
 /// button, which edit the record of the track itself.
 const GAIN_KNOB: &str = "knob-gain_db";
 const PAN_KNOB: &str = "knob-pan";
-const MUTE: &str = "mute-track";
+const MUTE: &str = "toggle-mute";
 const TRACK_FILE: &str = "state/arrangement/track-1/instance.json";
 
 fn track(opened: &mut Opened<'_>) -> Option<TrackState> {
@@ -764,7 +764,7 @@ fn a_drag_of_the_gain_knob_is_one_undo_step_and_the_level_follows_every_move(
     let knob = opened.control(GAIN_KNOB);
     opened.press(knob);
     // A quarter of the travel down, on a range of 66 dB.
-    opened.drag_to(knob + point(px(0.), px(40.)));
+    opened.drag_to(knob + point(px(0.), px(50.)));
     assert!(opened.gesture_open());
     let gain = track(&mut opened).unwrap().gain_db;
     assert!((-17.0..-16.0).contains(&gain), "{gain}");
@@ -776,7 +776,7 @@ fn a_drag_of_the_gain_knob_is_one_undo_step_and_the_level_follows_every_move(
     assert!(quieter < loud * 0.3, "{loud} then {quieter}");
     assert_eq!(opened.undo_label(), None);
 
-    opened.release(knob + point(px(0.), px(40.)));
+    opened.release(knob + point(px(0.), px(50.)));
     assert!(!opened.gesture_open());
     assert_eq!(opened.undo_label().as_deref(), Some("Change gain"));
     assert!(track_file(&mut opened).contains(&format!("\"gain_db\": {gain:?}")));

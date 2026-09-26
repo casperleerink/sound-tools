@@ -295,7 +295,7 @@ fn a_plugin_this_machine_does_not_have_shows_its_id_and_the_rest_of_the_panel_wo
     assert_eq!(slot_file(&mut opened).as_deref(), Some(missing));
 
     // The rest of the panel works: the mixer of the track edits the track record.
-    let mute = opened.control("mute-track");
+    let mute = opened.control("toggle-mute");
     opened.click(mute);
     assert_eq!(opened.undo_label().as_deref(), Some("Mute track"));
     // And the picker is the way out: pick something this machine has.

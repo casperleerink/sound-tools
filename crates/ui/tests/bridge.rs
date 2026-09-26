@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use sound_core::{
     Changes, Engine, EngineConfig, Instance, InstanceId, Project, ProjectEvent, Registry, State,
 };
-use sound_ui::{POLL_INTERVAL, Session, Views};
+use sound_ui::components::gesture::ValueChange;
+use sound_ui::{ControlEdit, POLL_INTERVAL, Session, Views};
 use tempfile::TempDir;
 
 /// A tool of plain data. The bridge knows nothing about what a tool means.
@@ -260,6 +261,49 @@ fn undo_and_redo_wait_for_the_open_gesture(cx: &mut TestAppContext) {
         assert_eq!(session.project().undo_label(), Some("First"));
         session.cancel_gesture(cx);
     });
+}
+
+#[gpui::test]
+fn a_control_edit_begins_again_when_its_gesture_was_closed_under_it(cx: &mut TestAppContext) {
+    let opened = open(cx);
+    let marker = create_marker(&opened.session, cx);
+    let session = opened.session.clone();
+    let value = |cx: &mut TestAppContext| {
+        session.read_with(cx, |session, _| {
+            session.project().state(&marker).unwrap().value
+        })
+    };
+    let set = |state: &mut Marker, value: u32| state.value = value;
+    let mut edit = ControlEdit::default();
+
+    cx.update(|cx| edit.apply(&session, &marker, "Drag", ValueChange::Drag(10), set, cx));
+    assert!(session.read_with(cx, |session, _| session.gesture_open()));
+    // The control goes away during its drag and sends no end. The session finishes the
+    // gesture, as it does when another one begins or its view is closed.
+    session.update(cx, |session, cx| session.finish_gesture(cx));
+
+    // The next drag of this view is a gesture of its own, and its moves are heard.
+    cx.update(|cx| edit.apply(&session, &marker, "Again", ValueChange::Drag(20), set, cx));
+    assert!(session.read_with(cx, |session, _| session.gesture_open()));
+    assert_eq!(value(cx), 20);
+    cx.update(|cx| {
+        edit.apply(
+            &session,
+            &marker,
+            "Again",
+            ValueChange::<u32>::DragEnd,
+            set,
+            cx,
+        )
+    });
+    assert!(!session.read_with(cx, |session, _| session.gesture_open()));
+    assert_eq!(
+        session.read_with(cx, |session, _| session
+            .project()
+            .undo_label()
+            .map(String::from)),
+        Some("Again".to_string())
+    );
 }
 
 /// Reads the session when it renders, as every view does.

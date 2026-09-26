@@ -1,6 +1,6 @@
-//! One file per gallery section. Each exposes `fn section(cx) -> impl IntoElement`.
+//! One file per gallery section. Each exposes `fn section(window, cx) -> impl IntoElement`.
 
 pub mod composed;
 pub mod foundation;
-pub mod inputs;
 pub mod overlays;
+pub mod rack;

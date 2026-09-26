@@ -1,4 +1,4 @@
-//! Composed examples: agent sidebar, transport pill, project menu, mixer strip.
+//! Composed examples: agent sidebar, transport pill, project menu.
 //!
 //! `GALLERY_STATE=idle|working|done|failed` preselects the sidebar state,
 //! `GALLERY_OPEN=project|model` opens a menu at startup.
@@ -9,9 +9,8 @@ use gpui::{
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::components::switch::Switch;
+use sound_ui::components::toggle::Toggle;
 
-use crate::composed::mixer_strip::MixerStrip;
 use crate::composed::project_menu::ProjectMenu;
 use crate::composed::sidebar::{AgentSidebar, AgentState};
 use crate::composed::transport::Transport;
@@ -20,7 +19,6 @@ struct ComposedState {
     sidebar: Entity<AgentSidebar>,
     transport: Entity<Transport>,
     project: Entity<ProjectMenu>,
-    mixer: Entity<MixerStrip>,
     _subs: [Subscription; 2],
 }
 
@@ -32,7 +30,6 @@ impl ComposedState {
         let sidebar = cx.new(|cx| AgentSidebar::new(state, cx));
         let transport = cx.new(|_| Transport::default());
         let project = cx.new(ProjectMenu::new);
-        let mixer = cx.new(MixerStrip::new);
 
         match std::env::var("GALLERY_OPEN").unwrap_or_default().as_str() {
             "project" => project.update(cx, |this, cx| this.open(window, cx)),
@@ -51,7 +48,6 @@ impl ComposedState {
             sidebar,
             transport,
             project,
-            mixer,
             _subs: subs,
         }
     }
@@ -89,11 +85,10 @@ fn block(
 pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let state = window.use_keyed_state("composed-state", cx, ComposedState::new);
     let state = state.read(cx);
-    let (sidebar, transport, project, mixer) = (
+    let (sidebar, transport, project) = (
         state.sidebar.clone(),
         state.transport.clone(),
         state.project.clone(),
-        state.mixer.clone(),
     );
     let state_control = SegmentedControl::new("sidebar-state", sidebar.read(cx).state().value())
         .options([
@@ -112,12 +107,16 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         })
         .into_any_element();
 
-    let reload_control = Switch::new("reload-pending", transport.read(cx).reload_pending())
-        .on_change({
-            let transport = transport.clone();
-            move |on, _, cx| transport.update(cx, |this, cx| this.set_reload_pending(on, cx))
-        })
-        .into_any_element();
+    let reload_control = Toggle::new(
+        "reload-pending",
+        "Reload",
+        transport.read(cx).reload_pending(),
+    )
+    .on_change({
+        let transport = transport.clone();
+        move |on, _, cx| transport.update(cx, |this, cx| this.set_reload_pending(on, cx))
+    })
+    .into_any_element();
 
     div()
         .flex()
@@ -126,5 +125,4 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .child(block("Agent sidebar", cx, Some(state_control), sidebar))
         .child(block("Transport", cx, Some(reload_control), transport))
         .child(block("Project menu", cx, None, project))
-        .child(block("Mixer strip", cx, None, mixer))
 }
