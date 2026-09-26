@@ -992,14 +992,30 @@ impl Plugins {
         for handle in finished {
             crate::window::remove(handle, cx);
         }
-        // A window that comes back by itself leaves the keyboard where it is. One that cannot
-        // come back is forgotten as open, so it is not tried again at every poll.
+        // A window that comes back by itself leaves the keyboard where it is. The application
+        // is waited for while it is becoming active, which it is at the first polls: AppKit
+        // gives the keyboard to the front window once it is, and a plugin's window, which
+        // floats, would be that window. One that cannot come back is forgotten as open, so it
+        // is not tried again at every poll.
+        let active = cx.active_window();
+        if reopen.is_empty() || (active.is_none() && !cx.windows().is_empty()) {
+            return;
+        }
         for id in reopen {
             if let Err(problem) = self.show_window(&id, false, cx) {
                 let mut table = self.0.table.borrow_mut();
                 table.keep_open(&id, false);
                 table.window_problems.push(problem);
             }
+        }
+        // A plugin may take the keyboard as it is shown, which Six Sines does. It goes back to
+        // the window that had it.
+        if let Some(active) = active
+            && cx.active_window() != Some(active)
+        {
+            active
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
         }
     }
 

@@ -339,8 +339,25 @@ window and `true` for an embedded one. So this host makes the window.
 
 - One GPUI window per open plugin, beside the main one, with a root view that draws nothing.
   The plugin gets that window's `NSView` and fills it.
-- The window is as big as the plugin says and is not resizable by dragging. A plugin that asks
-  for another size gets it at the next poll, which is how Six Sines sizes itself as it opens.
+- The window is GPUI's `Floating` kind, an `NSPanel` at the floating level: it stays above the
+  main window, and AppKit hides it while another application is in front (`hidesOnDeactivate`,
+  on by default for a panel), so it is never above another application's windows.
+- The window is as big as the plugin says. A plugin that asks for another size gets it at the
+  next poll, which is how Six Sines sizes itself as it opens. The composer can drag its edge
+  only when the plugin allows it (CLAP's `can_resize`, VST 3's `canResize`, asked once the view
+  is made). A drag is given to the plugin as it arrives: it makes a size it takes of it
+  (`adjust_size`, `checkSizeConstraint`) and takes it (`set_size`, `onSize`), and the window
+  ends on the size the plugin then reports, at the next poll. A size the host gave the window
+  itself is not told to the plugin again.
+- A key the window gets goes to the plugin: VST 3's `IPlugView::onKeyDown` and `onKeyUp`, with
+  the character, the virtual key code of `keycodes.h` and the modifiers. A key the plugin uses
+  goes nowhere else. The window only gets a key while the plugin's own view does not have the
+  keyboard; a view that has it gets its keys from AppKit directly, which is how a text field of
+  a plugin works, in both formats. CLAP has no call for a key, so a CLAP plugin only ever takes
+  them in its own view. The main window's keys are bound in the main window and work there
+  whatever plugin window is open.
+- Where each window was and whether it was open is kept in `workspace.json`, see "Where the
+  windows were" below.
 - Opening a window that is open brings it forward. Closing one frees the plugin's view and
   takes the window down, and touches nothing of the plugin's sound or state.
 - A window goes whenever its plugin does: another plugin in the record, the record deleted
@@ -403,6 +420,41 @@ backend itself with a parent the test plugin never touches, and cover attaching,
 refuses its parent, and a resize asked for from inside `attached`. What is left for a real
 plugin is a view that really draws, which is checked by hand.
 
+### Where the windows were
+
+`workspace.json`, at the root of the project, holds under `plugin_windows` where each plugin
+window was, by the id of its record, and whether it was open:
+
+```json
+{"plugin_windows": {"arrangement/piano/instrument": {"open": true, "x": 120, "y": 80, "display": 1}}}
+```
+
+- It is read at the first poll of the project and written when it changed, at most once a
+  second while a window is dragged, and when the project closes. It is no record: the watcher
+  does not read it, writing it is never an edit and never an undo step, and nothing is written
+  when nothing changed or by a read-only project. This host owns that one key and leaves every
+  other key of the file alone. A file that is not a JSON object is reported and never written.
+- The position is the corner of the window, title bar included, on its display, and the id of
+  that display. A window whose display is gone, or which would be out of reach on it, opens in
+  the middle of the main display. The size is not kept: a plugin keeps its own size in its own
+  state, and a second size could only disagree with it.
+- `open` is what the composer last decided: opening a window, closing it from its card or its
+  title bar, or a CLAP plugin closing its own. A window the host takes down because the
+  project closes or the application quits stays open in the file. So does one whose plugin
+  loads again in the same record, which is a VST 3 reload (`kReloadComponent`) or a record
+  that names another state file: the new plugin's window opens where the old one was, at the
+  next `settle_windows`. Another plugin in the record, or the record going, closes it for good,
+  so an undo that brings a record back does not bring its window.
+- `settle_windows` opens every window the file has as open whose plugin is loaded, so a plugin
+  that the scan finds late opens late. It waits while the application is becoming active,
+  which it is at the first polls, and gives the keyboard back to the window that had it: Six
+  Sines takes the keyboard as it is shown, and a floating window is the one AppKit would make
+  key otherwise. The title is the host's own, the plugin's name and the project's folder.
+
+`tests/plugin_host/remembered.rs` opens, closes, reopens and reloads with the file, and
+`tests/plugin_host/resizing_and_keys.rs` drags an edge and types, both on GPUI's platform for
+tests.
+
 `tests/plugin_host/editing.rs` is the other way round: what the composer changes in the
 plugin's window reaching the processor, the last value of a burst winning, and the state saved
 afterwards holding it.
@@ -451,12 +503,9 @@ agreement to host or to write plugins.
 AU, a plugin sandbox, parameter automation, a parameter view,
 presets and program lists, MIDI out of a plugin, more than the first event input and the first
 stereo output, the transport a plugin can read (`ProcessContext` is null, so a plugin that syncs
-to the tempo runs free), a plugin window that follows a drag of its edge (VST 3 says how, with
-`canResize` and `checkSizeConstraint`, and CLAP does too; neither is wired to a GPUI resize),
-key events passed to a view (`IPlugView::onKeyDown`; a plugin's own `NSView` is in the responder
-chain of our window, so typing in it works through AppKit), remembering where a window sat or
-whether it was open, a floating window for a plugin that only floats, and keeping a plugin's
-window above the main one.
+to the tempo runs free), a floating window for a plugin that only floats, CLAP's resize hints
+(`get_resize_hints`; `adjust_size` after every drag does the same job), and a key that a plugin
+does not use going on to the main window, so space in a plugin window does not play.
 
 Two records may name one `state_asset` and then share it. Nothing refuses either: the project
 runs only the behaviour of the record that was edited, so a complaint about another record

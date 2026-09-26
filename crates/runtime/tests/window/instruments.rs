@@ -326,6 +326,16 @@ fn the_window_opens_from_its_card(format: PluginFormat, cx: &mut TestAppContext)
     let button = opened.control("plugin-window");
     opened.click(button);
     assert!(window_is_open(&mut opened));
+    // The keys of the main window still work there with a plugin's window open: the plugin's
+    // window floats above it and takes none of them.
+    assert!(!opened.playhead().playing);
+    opened.keys("space");
+    opened.settle();
+    assert!(opened.playhead().playing);
+    opened.keys("space");
+    opened.settle();
+    assert!(!opened.playhead().playing);
+    assert!(window_is_open(&mut opened));
     // The same control closes it, and neither is an undo step.
     let button = opened.control("plugin-window");
     opened.click(button);

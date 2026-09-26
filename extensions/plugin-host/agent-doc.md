@@ -89,6 +89,10 @@ A file that is already there is never taken up by a plugin the composer picks in
 gets a name of its own, numbered like a take (`six-sines-1`, `six-sines-2`). Reusing a name is
 for you, when you mean two records to share one sound.
 
+`workspace.json` at the root of the project is where the app keeps the plugin windows: where
+each was on the screen and whether it was open. It is not part of the piece and not part of the
+undo history. Leave it alone; the app writes it while the composer moves windows.
+
 ## Which plugins this machine has
 
 The ids this project already uses are in its own records: every `plugin_id` under `state/` is a
