@@ -346,3 +346,58 @@ fn a_take_whose_track_goes_away_is_still_written(cx: &mut gpui::TestAppContext) 
     assert!(text.contains(r#""pitch":60"#), "{text}");
     assert_eq!(take_clip(&mut opened), None);
 }
+
+/// A project where another track has latency: pressing record plays, the playhead waits for
+/// that latency first, and the take must go on and be written. A play from rest is no seek, so
+/// the transport does not end the take as it would on a jump.
+#[gpui::test]
+fn a_recording_goes_on_in_a_project_with_latency(cx: &mut gpui::TestAppContext) {
+    let mut opened = crate::support::open_with_test_plugin(cx, |_| {});
+    let state = test_plugin_support::save_state(test_plugin_support::SavedState {
+        latency: 700,
+        ..Default::default()
+    });
+    let asset = opened.path("assets/plugin-state/late.bin");
+    std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
+    std::fs::write(&asset, state).unwrap();
+    let folder = opened.path("state/arrangement/late");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("instance.json"),
+        r#"{"tool": "arrangement.track", "state": {"name": "Late", "order": 1}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        folder.join("instrument.json"),
+        crate::support::test_plugin_record(plugin_host::PluginFormat::Clap, "late"),
+    )
+    .unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[folder]));
+    opened.project(|project| assert_eq!(project.problems(), []));
+    opened.settle();
+
+    let record = opened.control("record");
+    opened.click(record);
+    opened.settle();
+    assert!(opened.is_recording());
+    opened.render(2_048);
+    opened.settle();
+    let latency = opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, _| session.engine().poll().unwrap().latency)
+    });
+    assert_eq!(latency, 700);
+    opened.play_midi(on(60, 88));
+    opened.render(24_000);
+    opened.settle();
+    opened.play_midi(off(60));
+    opened.render(2_048);
+    opened.settle();
+    assert!(opened.is_recording(), "the take ended by itself");
+
+    opened.click(record);
+    opened.settle();
+    let clip = take_clip(&mut opened).expect("the take became a clip");
+    assert_eq!(clip.notes.len(), 1);
+    assert!(opened.path("assets/takes/take-1.json").exists());
+}

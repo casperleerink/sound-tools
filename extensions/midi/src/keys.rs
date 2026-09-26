@@ -96,7 +96,9 @@ pub struct Sounded {
     pub arrived: Arrived,
     /// The engine frame this block began on. The sound of the message starts there.
     pub frame: u64,
-    /// The first project tick of that block: where a recording writes the message.
+    /// The tick the device played at the start of that block: where a recording writes the
+    /// message. That is where the player heard the project, whatever latency the track the
+    /// message plays into has.
     pub tick: Ticks,
     pub playing: bool,
 }
@@ -333,7 +335,7 @@ impl Processor for Keys {
             let sounded = Sounded {
                 arrived,
                 frame: *start_frame,
-                tick: transport.tick_range.start,
+                tick: transport.heard_tick,
                 playing: transport.playing,
             };
             if self.reports.push(sounded).is_err() {

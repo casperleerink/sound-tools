@@ -426,7 +426,7 @@ agreement to host or to write plugins.
 
 ## What is not built
 
-AU, a plugin sandbox, latency compensation, parameter automation, a parameter view,
+AU, a plugin sandbox, parameter automation, a parameter view,
 presets and program lists, MIDI out of a plugin, more than the first event input and the first
 stereo output, the transport a plugin can read (`ProcessContext` is null, so a plugin that syncs
 to the tempo runs free), answering `kParamValuesChanged` by reading every parameter of the
@@ -442,13 +442,15 @@ runs only the behaviour of the record that was edited, so a complaint about anot
 could never be taken back when that other record went. Two records for *different* plugins
 report themselves anyway, because the second cannot read the first one's state.
 
-A plugin that asks to be started again, which it may do after changing its own port layout, is
-told to the composer instead of being restarted. Measured over the five VST 3 instruments of
-this machine, none asks for `kReloadComponent` or `kIoChanged`, the two that would need it.
-LABS, Numa Player and Origins send `kParamValuesChanged` once when their state is read back;
-Splice INSTRUMENT also sends `kParamTitlesChanged`, `kParamIDMappingChanged` and
-`restartComponent(0)`. This build calls the last three a restart although none of them is one,
-which is a wrong line for a composer to read and is listed for later.
+A plugin whose latency changes is started again: CLAP's `request_restart` and VST 3's
+`kLatencyChanged`. The host asks the engine for the plugin's audio side back, deactivates and
+activates the same plugin on the main thread, reads its latency (`clap_plugin_latency.get`,
+`getLatencySamples`) and hands the audio side back. The plugin keeps its state and its window;
+in between its slot is empty, so an instrument is silent and an effect lets the sound through,
+for about two buffers. The engine compensates the latency the plugin reports, see
+ARCHITECTURE.md, "Latency compensation". The other VST 3 flags that ask for a restart,
+`kReloadComponent`, `kIoChanged` and `kPrefetchableSupportChanged`, are told to the composer
+and not done. ARCHITECTURE.md has the table of every flag.
 
 A plugin is an instrument when it says so: the CLAP feature `instrument`, or the VST 3
 subcategory `Instrument`, and an effect by `audio-effect` or `Fx`. Nothing checks whether

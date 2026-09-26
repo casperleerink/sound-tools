@@ -441,6 +441,24 @@ impl Graph {
             .device_sources
             .iter_mut()
             .for_each(|sources| sources.sort_unstable());
+
+        // Which step writes each buffer, so the audio thread can walk from a step back to the
+        // steps that feed it when it works out the leads, see `Engine::find_leads`.
+        schedule.audio_producers = vec![0; schedule.audio_outputs.len()];
+        schedule.event_producers = vec![0; schedule.event_outputs.len()];
+        for (index, step) in schedule.steps.iter().enumerate() {
+            for buffer in step.audio_outputs.clone() {
+                if let Some(producer) = schedule.audio_producers.get_mut(buffer) {
+                    *producer = index;
+                }
+            }
+            for buffer in step.event_outputs.clone() {
+                if let Some(producer) = schedule.event_producers.get_mut(buffer) {
+                    *producer = index;
+                }
+            }
+        }
+        schedule.needed = vec![0; schedule.steps.len()];
         Ok(schedule)
     }
 }
@@ -469,6 +487,12 @@ pub(crate) struct Schedule {
     pub event_inputs: Vec<Box<dyn ErasedEventBuffer>>,
     /// Per device channel: the output buffers summed into it.
     pub device_sources: Vec<Vec<usize>>,
+    /// Per audio output buffer and per event output buffer: the step that writes it.
+    pub audio_producers: Vec<usize>,
+    pub event_producers: Vec<usize>,
+    /// Per step, room for the lead its output needs while the leads are worked out, so that
+    /// needs no allocation on the audio thread.
+    pub needed: Vec<u64>,
 }
 
 #[cfg(test)]

@@ -19,6 +19,7 @@ use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiError, GuiSize, HostGui, HostGuiImpl, PluginGui as ClapGui,
 };
+use clack_extensions::latency::{HostLatency, HostLatencyImpl, PluginLatency};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::render::{PluginRender, RenderMode};
 use clack_extensions::state::{HostState, HostStateImpl, PluginState};
@@ -45,7 +46,10 @@ impl HostHandlers for SoundToolsHost {
     type AudioProcessor<'a> = ();
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &SharedCallbacks) {
-        builder.register::<HostState>().register::<HostGui>();
+        builder
+            .register::<HostState>()
+            .register::<HostGui>()
+            .register::<HostLatency>();
     }
 }
 
@@ -126,6 +130,12 @@ impl HostStateImpl for MainThreadCallbacks<'_> {
     fn mark_dirty(&self) {
         self.state_is_dirty.set(true);
     }
+}
+
+/// A plugin may only change its latency while it is being activated, and says so here. The
+/// host reads the latency after every activation anyway, so there is nothing to note.
+impl HostLatencyImpl for MainThreadCallbacks<'_> {
+    fn changed(&self) {}
 }
 
 /// The child side of a scan: loads one bundle and says what is in it. Everything that can go
@@ -236,15 +246,7 @@ pub fn load(
         }
     }
 
-    let ports = read_ports(&mut instance);
-    let configuration = PluginAudioConfiguration {
-        sample_rate: f64::from(config.sample_rate),
-        min_frames_count: 1,
-        max_frames_count: MAX_BLOCK as u32,
-    };
-    let audio = instance
-        .activate(|_, _| (), configuration)
-        .map_err(|error| fail(error.to_string()))?;
+    let (started, ports) = activate(&mut instance, config).map_err(fail)?;
     // The pedal is only missing from a plugin that has somewhere to take notes. A plugin with
     // no note port at all, which is what an ordinary effect is, has no pedal to miss, and this
     // host cannot ask what a record is for. Audio inputs say nothing either way: Six Sines is
@@ -255,13 +257,6 @@ pub fn load(
             plugin_id: plugin_id.clone(),
         }],
     };
-    let started = ClapStarted::new(
-        audio.into(),
-        ports.dialect,
-        ports.takes_midi,
-        ports.input_channels,
-        ports.output_channels,
-    );
     Ok(Opening {
         started: Box::new(started),
         plugin: Box::new(ClapPlugin {
@@ -271,6 +266,40 @@ pub fn load(
         }),
         notes,
     })
+}
+
+/// Activates a plugin that is not active, and gives its audio side with what its ports say.
+/// Its latency is read here, after the activation, which is the one moment CLAP lets it change.
+fn activate(
+    instance: &mut PluginInstance<SoundToolsHost>,
+    config: PrepareConfig,
+) -> Result<(ClapStarted, PortLayout), String> {
+    let ports = read_ports(instance);
+    let configuration = PluginAudioConfiguration {
+        sample_rate: f64::from(config.sample_rate),
+        min_frames_count: 1,
+        max_frames_count: MAX_BLOCK as u32,
+    };
+    let audio = instance
+        .activate(|_, _| (), configuration)
+        .map_err(|error| error.to_string())?;
+    let latency = match instance
+        .plugin_shared_handle()
+        .get_extension::<PluginLatency>()
+    {
+        Some(latency) => latency.get(&instance.plugin_handle()),
+        // A plugin with no latency extension has none.
+        None => 0,
+    };
+    let started = ClapStarted::new(
+        audio.into(),
+        ports.dialect,
+        ports.takes_midi,
+        ports.input_channels,
+        ports.output_channels,
+        latency,
+    );
+    Ok((started, ports))
 }
 
 /// One loaded CLAP plugin, from the control thread.
@@ -301,6 +330,8 @@ impl LoadedPlugin for ClapPlugin {
         let (restart, window_closed, size) = self.instance.access_shared_handler(shared);
         Requests {
             restart,
+            // CLAP asks for a restart with no reason given, and every restart is done.
+            restart_not_done: false,
             // The flag is cleared here and the host keeps what it was told until the bytes are
             // written, so a change that the once-a-second rule made wait is not forgotten.
             state_is_dirty: self
@@ -339,7 +370,24 @@ impl LoadedPlugin for ClapPlugin {
     }
 
     fn released(&mut self) -> bool {
-        self.instance.try_deactivate().is_ok()
+        // A plugin whose restart failed is not active, and has nothing left to give back.
+        !self.instance.is_active() || self.instance.try_deactivate().is_ok()
+    }
+
+    fn restart(
+        &mut self,
+        config: PrepareConfig,
+    ) -> Option<Result<Box<dyn Started>, PluginProblem>> {
+        // Deactivating needs the audio side back: clack refuses while it is still held.
+        if self.instance.is_active() && self.instance.try_deactivate().is_err() {
+            return None;
+        }
+        let started =
+            activate(&mut self.instance, config).map_err(|message| PluginProblem::DidNotRestart {
+                plugin_id: self.plugin_id.clone(),
+                message,
+            });
+        Some(started.map(|(started, _)| Box::new(started) as Box<dyn Started>))
     }
 }
 
@@ -450,6 +498,8 @@ struct ClapStarted {
     input_events: EventBuffer,
     /// How many events are in the buffer, so a block never grows it.
     room: usize,
+    /// What the plugin said its latency was when it was activated.
+    latency: u32,
 }
 
 /// Which events the plugin's note port takes.
@@ -467,6 +517,7 @@ impl ClapStarted {
         takes_midi: bool,
         input_channel_count: usize,
         output_channel_count: usize,
+        latency: u32,
     ) -> Self {
         let buffers = |count: usize| (0..count).map(|_| vec![0.0; MAX_BLOCK]).collect();
         Self {
@@ -479,6 +530,7 @@ impl ClapStarted {
             output_channels: buffers(output_channel_count),
             input_events: EventBuffer::with_capacity(EVENT_CAPACITY),
             room: EVENT_CAPACITY,
+            latency,
         }
     }
 }
@@ -494,6 +546,10 @@ impl Drop for ClapStarted {
 impl Started for ClapStarted {
     fn takes_pedal(&self) -> bool {
         self.takes_midi
+    }
+
+    fn latency(&self) -> u32 {
+        self.latency
     }
 
     fn begin_block(&mut self) {

@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::clock::{Clock, TempoMap, Ticks};
-use crate::engine::{Batch, Command, Engine, EngineStatus, ErasedProcessor};
+use crate::engine::{Batch, Command, Engine, EngineStatus, ErasedProcessor, Slot};
 use crate::graph::{Connection, Graph, GraphError, NodeId};
 use crate::processor::{Ports, PrepareConfig, Processor};
 use crate::transport::TransportCommand;
@@ -286,7 +286,9 @@ impl Edit<'_> {
         self.control.next_node += 1;
         let (slot, grown) = self.graph_mut().add_node(id, name, ports)?;
         if let Some(slot_count) = grown {
-            let table = std::iter::repeat_with(|| None).take(slot_count).collect();
+            let table = std::iter::repeat_with(Slot::default)
+                .take(slot_count)
+                .collect();
             self.commands.push(Command::GrowSlots(table));
         }
         self.commands.push(Command::SetSlot {

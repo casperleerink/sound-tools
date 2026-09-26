@@ -138,6 +138,9 @@ record may name any plugin in either place.
 - `... asked to be started again`: the plugin wants the app to reload it, which this build does
   not do. Nothing in the file is wrong. Tell the composer to take the plugin off the track and
   put it back if it stopped sounding.
+- `... asked to be started again, to change its latency, and did not start`: the app restarts a
+  plugin whose latency changes, and this one failed to start. Nothing in the file is wrong. The
+  slot is silent, or lets the sound through for an effect, until the record changes.
 
 ## VST
 
