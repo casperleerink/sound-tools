@@ -1037,7 +1037,10 @@ impl Plugins {
             if requests.reload
                 && let Some(id) = id
             {
-                self.0.retries.borrow_mut().push(id.clone());
+                let mut retries = self.0.retries.borrow_mut();
+                if !retries.contains(id) {
+                    retries.push(id.clone());
+                }
             }
             // The plugin now maps its sustain pedal to nothing, so the pedal stops reaching
             // it. The same line a plugin gets that never mapped one.
@@ -1073,6 +1076,12 @@ impl Plugins {
         if self.0.waiting.borrow().is_empty() {
             return;
         }
+        // A record that is gone, or no longer a plugin, waits for nothing, and the host does
+        // not look again for it.
+        self.0
+            .waiting
+            .borrow_mut()
+            .retain(|id| project.resolve::<PluginRecord>(id).is_some());
         let generation = match self.0.scanned.lock() {
             Ok(scanned) => scanned.generation,
             Err(poisoned) => poisoned.into_inner().generation,
@@ -1093,7 +1102,9 @@ impl Plugins {
             };
             let found = known.find(record.format, &record.plugin_id).is_some();
             if found || known.finished {
-                retries.push(id.clone());
+                if !retries.contains(id) {
+                    retries.push(id.clone());
+                }
                 return false;
             }
             true
