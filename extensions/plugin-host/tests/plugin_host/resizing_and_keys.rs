@@ -9,9 +9,14 @@ use std::path::Path;
 
 use gpui::{AnyWindowHandle, KeyUpEvent, Keystroke, PlatformInput, TestAppContext, px, size};
 use plugin_host::PluginFormat;
-use test_plugin_support::{RESIZABLE_VARIABLE, SMALLEST_WINDOW, WINDOW_HEIGHT, WINDOW_WIDTH};
+use test_plugin_support::{
+    NO_ADJUST_VARIABLE, RESIZABLE_VARIABLE, SMALLEST_WINDOW, WINDOW_HEIGHT, WINDOW_WIDTH,
+};
 
-use crate::support::{FORMATS, Harness, id, lifecycle, record, tell_the_plugin};
+use crate::support::{
+    FORMATS, Harness, id, lifecycle, record, tell_the_plugin,
+    tell_the_plugin_to_ask_again_from_inside_the_answer,
+};
 
 const SLOT: &str = "track/instrument";
 
@@ -100,6 +105,67 @@ fn resizing_within_limits(format: PluginFormat, cx: &mut TestAppContext) {
     assert_eq!(window_calls(&log), told);
 
     cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
+}
+
+/// Makes a resizable test plugin one that does not adjust a size. Same rules as
+/// [`tell_the_plugin`].
+fn tell_the_plugin_not_to_adjust(not: bool) {
+    // SAFETY: as `tell_the_plugin_it_may_be_resized`.
+    unsafe {
+        match not {
+            true => std::env::set_var(NO_ADJUST_VARIABLE, "1"),
+            false => std::env::remove_var(NO_ADJUST_VARIABLE),
+        }
+    }
+}
+
+/// A resizable plugin that does not adjust a size takes it as it was offered, in both formats:
+/// CLAP's `adjust_size` says nothing and VST 3's `checkSizeConstraint` leaves the rectangle.
+#[gpui::test]
+fn a_plugin_that_does_not_adjust_a_size_takes_it_as_it_was_dragged(cx: &mut TestAppContext) {
+    tell_the_plugin_it_may_be_resized(true);
+    tell_the_plugin_not_to_adjust(true);
+    for format in FORMATS {
+        let folder = tempfile::tempdir().unwrap();
+        let log = folder.path().join("calls.txt");
+        let (harness, handle) = open(format, &log, cx);
+        let before = window_calls(&log).len();
+        cx.simulate_window_resize(handle, size(px(100.), px(90.)));
+        let calls = window_calls(&log).split_off(before);
+        assert_eq!(calls, ["gui_adjust_size", "gui_on_size"], "{format:?}");
+        cx.update(|cx| harness.plugins.settle_windows(cx));
+        assert_eq!(content_size(handle, cx), (100, 90), "{format:?}");
+        cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
+    }
+    tell_the_plugin_not_to_adjust(false);
+    tell_the_plugin_it_may_be_resized(false);
+}
+
+/// A VST 3 view that asks for another size from inside the `onSize` of a drag is refused, as
+/// a request from inside the answer to one of its own is: `onSize` is never called inside
+/// `onSize`. The window ends on the size the view then says it has.
+#[gpui::test]
+fn a_view_that_asks_for_a_size_inside_the_answer_to_a_drag_is_not_answered_inside_it(
+    cx: &mut TestAppContext,
+) {
+    tell_the_plugin_it_may_be_resized(true);
+    tell_the_plugin_to_ask_again_from_inside_the_answer(500, 400);
+    let folder = tempfile::tempdir().unwrap();
+    let log = folder.path().join("calls.txt");
+    let (harness, handle) = open(PluginFormat::Vst3, &log, cx);
+    let before = window_calls(&log).len();
+    cx.simulate_window_resize(handle, size(px(640.), px(480.)));
+    let calls = window_calls(&log).split_off(before);
+    assert_eq!(
+        calls,
+        ["gui_adjust_size", "gui_on_size", "gui_request_resize"],
+        "{calls:?}"
+    );
+    cx.update(|cx| harness.plugins.settle_windows(cx));
+    assert_eq!(content_size(handle, cx), (500, 400));
+    cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
+    tell_the_plugin_to_ask_again_from_inside_the_answer(0, 0);
+    tell_the_plugin_it_may_be_resized(false);
 }
 
 /// A window the plugin does not allow to be resized cannot be dragged, and nothing is ever

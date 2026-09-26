@@ -20,12 +20,12 @@
 mod backend;
 mod clap;
 mod host;
+mod placements;
 mod processor;
 pub mod scan;
 pub mod view;
 mod vst3;
 mod window;
-mod workspace;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{

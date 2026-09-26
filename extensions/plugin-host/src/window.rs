@@ -4,7 +4,7 @@
 //! the plugin asked for. The plugin's view is a child of that window's view and draws over it.
 //! It floats: it stays above the main window, and it hides while another application is in
 //! front, as a panel of this application. Where it sat and whether it was open are kept in
-//! `workspace.json`, see `workspace.rs`; neither is part of the piece.
+//! this machine's store, see `placements.rs`; neither is part of the piece.
 //!
 //! Nothing here knows a plugin format. What a plugin has to do for a window is
 //! [`crate::backend::PluginGui`], which both backends fill in: `clap.rs` with the GUI
@@ -47,7 +47,7 @@ const DEFAULT_SIZE: WindowSize = WindowSize {
     height: 400,
 };
 
-/// Where a plugin's window was and whether it was open, as `workspace.json` keeps it.
+/// Where a plugin's window was and whether it was open, as this machine keeps it.
 ///
 /// `x` and `y` are the top left corner of the window, title bar included, in logical pixels
 /// from the top left of the display it was on; `display` is that display's id, when it had one.
@@ -107,11 +107,13 @@ impl PluginFrame {
     }
 
     /// Gives a key to the plugin. `true` says it used it, and then nothing else gets it.
-    fn key(&self, keystroke: &Keystroke, direction: KeyDirection) -> bool {
+    fn key(&self, window: &Window, keystroke: &Keystroke, direction: KeyDirection) -> bool {
         let Some(plugins) = self.owner.plugins.upgrade() else {
             return false;
         };
-        plugins.key(&self.owner.instance, keystroke, direction)
+        // GPUI's own handle, not the one `HasWindowHandle` gives.
+        let id = Window::window_handle(window).window_id();
+        plugins.key(&self.owner.instance, id, keystroke, direction)
     }
 }
 
@@ -120,13 +122,13 @@ impl Render for PluginFrame {
         div()
             .size_full()
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(|frame, event: &KeyDownEvent, _, cx| {
-                if frame.key(&event.keystroke, KeyDirection::Down) {
+            .on_key_down(cx.listener(|frame, event: &KeyDownEvent, window, cx| {
+                if frame.key(window, &event.keystroke, KeyDirection::Down) {
                     cx.stop_propagation();
                 }
             }))
-            .on_key_up(cx.listener(|frame, event: &KeyUpEvent, _, cx| {
-                if frame.key(&event.keystroke, KeyDirection::Up) {
+            .on_key_up(cx.listener(|frame, event: &KeyUpEvent, window, cx| {
+                if frame.key(window, &event.keystroke, KeyDirection::Up) {
                     cx.stop_propagation();
                 }
             }))
@@ -441,7 +443,7 @@ mod tests {
     }
 
     #[test]
-    fn a_placement_reads_as_workspace_json_writes_it() {
+    fn a_placement_reads_as_it_is_written() {
         let placement = Placement {
             open: true,
             x: 120,

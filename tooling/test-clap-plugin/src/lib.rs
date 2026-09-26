@@ -222,7 +222,9 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
 
     fn adjust_size(&self, size: GuiSize) -> Option<GuiSize> {
         log("gui_adjust_size", 0, 0);
-        if !support::told_to(support::RESIZABLE_VARIABLE) {
+        if !support::told_to(support::RESIZABLE_VARIABLE)
+            || support::told_to(support::NO_ADJUST_VARIABLE)
+        {
             return None;
         }
         let (width, height) = support::constrained_size(size.width, size.height);

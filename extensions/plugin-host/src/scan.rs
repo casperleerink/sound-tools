@@ -395,6 +395,8 @@ pub struct ScanCache {
     reuse: bool,
     /// The last scan, when there is no file to keep it in.
     kept: Arc<Mutex<Vec<CachedBundle>>>,
+    /// The plugin windows of every project, when there is no file to keep them in.
+    kept_placements: crate::placements::Kept,
 }
 
 /// Where the cache of this machine is kept, unless the environment says otherwise. The variable
@@ -427,6 +429,7 @@ impl ScanCache {
             path,
             reuse: true,
             kept: Arc::new(Mutex::new(Vec::new())),
+            kept_placements: crate::placements::Kept::default(),
         }
     }
 
@@ -481,38 +484,56 @@ impl ScanCache {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
-            return Ok(());
-        };
-        let Ok(entries) = std::fs::read_dir(folder) else {
-            // No folder yet, so nothing was left in it.
-            return Ok(());
-        };
-        let prefix = format!("{}.", name.to_string_lossy());
-        let mut errors = Vec::new();
-        for entry in entries.flatten() {
-            let file = entry.file_name().to_string_lossy().into_owned();
-            if !file.starts_with(&prefix) || !file.ends_with(".tmp") {
-                continue;
-            }
-            let age = entry
-                .metadata()
-                .and_then(|metadata| metadata.modified())
-                .ok()
-                .and_then(|modified| modified.elapsed().ok());
-            if age.is_some_and(|age| age >= STALE_AFTER)
-                && let Err(error) = std::fs::remove_file(entry.path())
-            {
-                errors.push(format!("{}: {error}", entry.path().display()));
-            }
+        remove_stale_writes(path).map_err(|errors| {
+            format!("what an earlier write of the plugin cache left could not be removed: {errors}")
+        })
+    }
+
+    /// Where this machine keeps the plugin windows of every project: the same folder as the
+    /// cache, see `placements.rs`. A cache with no file keeps them in memory, for as long as a
+    /// clone of it lives.
+    pub(crate) fn placement_store(&self) -> crate::placements::PlacementStore {
+        crate::placements::PlacementStore::new(
+            self.path
+                .as_ref()
+                .map(|path| path.with_file_name(crate::placements::FILE)),
+            self.kept_placements.clone(),
+        )
+    }
+}
+
+/// Removes what a writer of `path` left behind when it ended between writing its own file and
+/// renaming it, which only a crash does. A file younger than [`STALE_AFTER`] may be the one
+/// another runtime is writing right now, so it stays. What could not be removed is the error.
+pub(crate) fn remove_stale_writes(path: &Path) -> Result<(), String> {
+    let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+        return Ok(());
+    };
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        // No folder yet, so nothing was left in it.
+        return Ok(());
+    };
+    let prefix = format!("{}.", name.to_string_lossy());
+    let mut errors = Vec::new();
+    for entry in entries.flatten() {
+        let file = entry.file_name().to_string_lossy().into_owned();
+        if !file.starts_with(&prefix) || !file.ends_with(".tmp") {
+            continue;
         }
-        match errors.is_empty() {
-            true => Ok(()),
-            false => Err(format!(
-                "what an earlier write of the plugin cache left could not be removed: {}",
-                errors.join(", ")
-            )),
+        let age = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok());
+        if age.is_some_and(|age| age >= STALE_AFTER)
+            && let Err(error) = std::fs::remove_file(entry.path())
+        {
+            errors.push(format!("{}: {error}", entry.path().display()));
         }
+    }
+    match errors.is_empty() {
+        true => Ok(()),
+        false => Err(errors.join(", ")),
     }
 }
 

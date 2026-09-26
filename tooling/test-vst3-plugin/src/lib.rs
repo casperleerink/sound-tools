@@ -1269,7 +1269,10 @@ impl IPlugViewTrait for TestView {
     /// Makes a size the host offers one this view takes, see `support::constrained_size`.
     unsafe fn checkSizeConstraint(&self, rect: *mut ViewRect) -> tresult {
         support::log("gui_adjust_size", 0, 0);
-        if rect.is_null() || !support::told_to(support::RESIZABLE_VARIABLE) {
+        if rect.is_null()
+            || !support::told_to(support::RESIZABLE_VARIABLE)
+            || support::told_to(support::NO_ADJUST_VARIABLE)
+        {
             return kResultFalse;
         }
         // SAFETY: the host gives one rectangle that lives for this call.

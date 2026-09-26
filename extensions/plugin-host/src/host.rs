@@ -28,11 +28,11 @@ use sound_core::{AssetName, Assets, InstanceId, PrepareConfig, Project};
 use crate::processor::{HostedPlugin, HostedUpdate};
 
 use crate::backend::{KeyDirection, LoadedPlugin};
+use crate::placements::{PlacementStore, Placements};
 use crate::scan::{Scan, ScanCache, ScanCommand, ScannedPlugin, scan_folders};
 use crate::window::{
     Placement, PluginFrame, PluginWindow, Prepared, WindowOwner, WindowRequest, WindowSize,
 };
-use crate::workspace::{self, Placements};
 use crate::{PluginFormat, PluginRecord};
 
 /// How often a plugin that keeps saying its state changed is written. A plugin marks itself
@@ -86,8 +86,8 @@ pub enum PluginProblem {
     NoWindow { plugin_id: String },
     #[error("the window of the plugin {plugin_id:?} did not open: {message}")]
     WindowDidNotOpen { plugin_id: String, message: String },
-    #[error("where the plugin windows were is not kept: {message}")]
-    Workspace { message: String },
+    #[error("where the plugin windows are is not kept on this Mac: {message}")]
+    WindowPlaces { message: String },
 }
 
 /// What [`Plugins::open`] gives back. The behaviour hands the engine whatever is here every
@@ -166,10 +166,12 @@ struct Table {
     /// Windows whose plugin has gone. Their views are already freed; taking a window down
     /// needs the application, which the moments that find them do not have.
     finished_windows: Vec<WindowHandle<PluginFrame>>,
-    /// Where each plugin's window was and whether it was open, read from `workspace.json` when
-    /// the project is first polled, and written back there. See [`Plugins::settle_windows`].
+    /// Where each plugin's window was and whether it was open, read from this machine's
+    /// store when the project is first polled, and written back there. See `placements.rs`
+    /// and [`Plugins::settle_windows`].
     placements: Placements,
-    /// A placement changed since it was last written.
+    /// A placement changed since it was last written, or since a write of it failed: a write
+    /// that fails is not tried again until a window changes again, so it is said once.
     placements_changed: bool,
     /// When they were last written, for the once-a-second rule a plugin's state has too: a
     /// window that is dragged moves many times a second.
@@ -244,9 +246,11 @@ struct Inner {
     /// The `assets/` folder of the project, from the first plugin that loaded. Kept so that
     /// dropping the host can still save, see [`Drop`].
     assets: RefCell<Option<Assets>>,
-    /// The folder of the project, from the first poll. It names the windows and holds
-    /// `workspace.json`.
+    /// The folder of the project, from the first poll. It names the windows, and this machine
+    /// keeps their places by it.
     root: RefCell<Option<std::path::PathBuf>>,
+    /// Where this machine keeps the plugin windows of every project, next to the scan cache.
+    placement_store: PlacementStore,
     table: RefCell<Table>,
 }
 
@@ -278,7 +282,7 @@ impl Drop for Inner {
         }
         if self.writes_state
             && let Some(root) = self.root.get_mut()
-            && let Err(problem) = write_placements(table, root, None)
+            && let Err(problem) = write_placements(table, &self.placement_store, root, None)
         {
             eprintln!("error: {problem}");
         }
@@ -353,6 +357,7 @@ impl Plugins {
         writes_state: bool,
         loads: bool,
     ) -> Self {
+        let placement_store = cache.placement_store();
         Self(Rc::new(Inner {
             search_paths,
             scanner,
@@ -369,6 +374,7 @@ impl Plugins {
             loads,
             assets: RefCell::new(None),
             root: RefCell::new(None),
+            placement_store,
             table: RefCell::new(Table::default()),
         }))
     }
@@ -885,10 +891,12 @@ impl Plugins {
     }
 
     /// A key the window of `id` got while the plugin's own view did not have the keyboard.
-    /// `true` says the plugin used it. See `backend::PluginGui::key`.
+    /// `true` says the plugin used it. See `backend::PluginGui::key`. The window is checked, as
+    /// for a move: a window that is going may still hand on a key.
     pub(crate) fn key(
         &self,
         id: &InstanceId,
+        window: WindowId,
         keystroke: &Keystroke,
         direction: KeyDirection,
     ) -> bool {
@@ -898,6 +906,9 @@ impl Plugins {
         let Some(hosted) = table.loaded.get_mut(id) else {
             return false;
         };
+        if !hosted.window.is(window) {
+            return false;
+        }
         hosted
             .plugin
             .gui()
@@ -1059,7 +1070,8 @@ impl Plugins {
         let mut table = self.0.table.borrow_mut();
         if self.0.writes_state
             && let Some(root) = self.0.root.borrow().as_deref()
-            && let Err(problem) = write_placements(&mut table, root, Some(project))
+            && let Err(problem) =
+                write_placements(&mut table, &self.0.placement_store, root, Some(project))
         {
             problems.push(problem);
         }
@@ -1186,20 +1198,12 @@ impl Plugins {
             retired,
             window_changed,
             finished_windows,
-            placements,
-            placements_changed,
             ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
-        // What the composer decides about a window, see `Table::keep_open`.
-        let mut closed_for_good = |id: &InstanceId| {
-            if let Some(placement) = placements.get_mut(id)
-                && placement.open
-            {
-                placement.open = false;
-                *placements_changed = true;
-            }
-        };
+        // Windows that close for good, see `Table::keep_open`. Noted after the loop, which
+        // has the table in pieces.
+        let mut closed_for_good = Vec::new();
 
         // Everything the records no longer say. A record that is gone, that is no longer a
         // plugin, or that names another plugin or another state file than the entry holds:
@@ -1218,7 +1222,7 @@ impl Plugins {
                     finished_windows.push(handle);
                     *window_changed = true;
                 }
-                closed_for_good(&id);
+                closed_for_good.push(id.clone());
                 // Saved on the way out, so undo of a delete brings the plugin back as it
                 // sounded and not as it was last written.
                 if let Some(assets) = assets
@@ -1246,7 +1250,7 @@ impl Plugins {
                 finished_windows.push(handle);
                 *window_changed = true;
                 if let Some(id) = id {
-                    closed_for_good(id);
+                    closed_for_good.push(id.clone());
                 }
             }
             // A plugin that asks to be deactivated and activated again, which is how its
@@ -1292,6 +1296,9 @@ impl Plugins {
         // A plugin may only go once the engine has given its audio side back. Until then
         // letting it go would leave the two ends of one plugin in different hands.
         retired.retain_mut(|hosted| !hosted.plugin.released());
+        for id in closed_for_good {
+            table.keep_open(&id, false);
+        }
 
         // Where the windows are, at most once a second while one is dragged. The project
         // closing writes whatever is left.
@@ -1304,7 +1311,8 @@ impl Plugins {
             && let Some(root) = self.0.root.borrow().as_deref()
         {
             table.placements_written = Some(now);
-            if let Err(problem) = write_placements(&mut table, root, Some(project)) {
+            let store = &self.0.placement_store;
+            if let Err(problem) = write_placements(&mut table, store, root, Some(project)) {
                 problems.push(problem);
             }
         }
@@ -1318,9 +1326,9 @@ impl Plugins {
             return;
         }
         let root = project.root().to_path_buf();
-        match workspace::read(&root) {
+        match self.0.placement_store.read(&root) {
             Ok(placements) => self.0.table.borrow_mut().placements = placements,
-            Err(message) => problems.push(PluginProblem::Workspace { message }),
+            Err(message) => problems.push(PluginProblem::WindowPlaces { message }),
         }
         *self.0.root.borrow_mut() = Some(root);
     }
@@ -1440,14 +1448,16 @@ fn publish(scanned: &Arc<Mutex<Scanning>>, scan: &Scan) {
     held.generation += 1;
 }
 
-/// Writes where the plugin windows are into `workspace.json`, when they changed since the last
-/// write. A window whose record is gone is forgotten on the way, when the project is at hand.
+/// Keeps where the plugin windows are in this machine's store, when they changed since the
+/// last write. A window whose record is gone is forgotten on the way, when the project is at
+/// hand. A write that fails is said once and not tried again until a window changes again.
 fn write_placements(
     table: &mut Table,
+    store: &PlacementStore,
     root: &std::path::Path,
     project: Option<&Project>,
 ) -> Result<(), PluginProblem> {
-    if !table.placements_changed {
+    if !std::mem::take(&mut table.placements_changed) {
         return Ok(());
     }
     if let Some(project) = project {
@@ -1455,10 +1465,9 @@ fn write_placements(
             .placements
             .retain(|id, _| project.resolve::<PluginRecord>(id).is_some());
     }
-    workspace::write(root, &table.placements)
-        .map_err(|message| PluginProblem::Workspace { message })?;
-    table.placements_changed = false;
-    Ok(())
+    store
+        .write(root, &table.placements)
+        .map_err(|message| PluginProblem::WindowPlaces { message })
 }
 
 /// Saves a plugin that is going, when the project is one that writes, and puts its handle

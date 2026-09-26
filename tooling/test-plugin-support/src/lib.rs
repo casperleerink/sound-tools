@@ -155,6 +155,11 @@ pub const WINDOW_HEIGHT: u32 = 240;
 /// instruments do.
 pub const RESIZABLE_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_RESIZABLE";
 
+/// Makes a resizable plugin one that does not adjust a size it is offered: CLAP's
+/// `adjust_size` says nothing and VST 3's `checkSizeConstraint` leaves the rectangle as it is.
+/// It then takes whatever size the host sets.
+pub const NO_ADJUST_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_NO_ADJUST";
+
 /// The smallest and the largest window a resizable test plugin takes.
 pub const SMALLEST_WINDOW: (u32, u32) = (200, 150);
 pub const LARGEST_WINDOW: (u32, u32) = (1200, 900);

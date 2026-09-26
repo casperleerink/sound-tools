@@ -481,8 +481,9 @@ impl PluginGui for ClapPlugin {
     }
 
     /// The plugin's own answer to the size first (`adjust_size`), and then that size. A plugin
-    /// that cannot adjust, or refuses the size, keeps the one it has, and the window goes back
-    /// to it.
+    /// that does not adjust takes the size as it was offered, as a VST 3 view that does not
+    /// constrain does. One that refuses the size keeps the one it has, which the window goes
+    /// back to; that is said on the terminal, because a drag has nobody else to tell.
     fn resize(&mut self, wanted: WindowSize) -> Option<WindowSize> {
         let gui = self.gui_extension()?;
         let plugin = self.instance.plugin_handle();
@@ -490,9 +491,12 @@ impl PluginGui for ClapPlugin {
             width: wanted.width,
             height: wanted.height,
         };
-        if let Some(adjusted) = gui.adjust_size(&plugin, offered) {
-            // Refused: the size it has stays, and that is read below.
-            gui.set_size(&plugin, adjusted).ok();
+        let adjusted = gui.adjust_size(&plugin, offered).unwrap_or(offered);
+        if let Err(error) = gui.set_size(&plugin, adjusted) {
+            eprintln!(
+                "the plugin {:?} refused the window size {}x{}: {error}",
+                self.plugin_id, adjusted.width, adjusted.height
+            );
         }
         let size = gui.get_size(&plugin)?;
         Some(WindowSize {

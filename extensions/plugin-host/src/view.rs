@@ -81,7 +81,7 @@ impl PluginView {
 
     /// Opens the plugin's own window, or closes the one that is open. Not an edit: nothing of
     /// the project changes and there is no undo step. The host remembers it for the next time
-    /// the project opens, in `workspace.json`.
+    /// the project opens, on this Mac.
     fn toggle_window(&mut self, cx: &mut Context<Self>) {
         let Some(plugins) = self.plugins.upgrade() else {
             return;

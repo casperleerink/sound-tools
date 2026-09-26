@@ -209,14 +209,23 @@ impl PluginGui for Vst3Gui {
         // view that does not constrain leaves the rectangle as it was, which is then the size.
         unsafe { not_ours(|| view.checkSizeConstraint(&mut rect)) };
         let offered = window_size(&rect)?;
+        // The frame counts this as a request being answered, so a plugin that asks for another
+        // size from inside this `onSize` is refused, as a request from inside the answer to one
+        // of its own is: a nested `onSize` is what `editorhost.cpp` guards against. The view's
+        // own size afterwards is what the window ends on either way.
+        if self.frame.answering.swap(true, Ordering::AcqRel) {
+            return None;
+        }
         // SAFETY: as above.
-        unsafe {
+        let size = unsafe {
             let view = view.as_com_ref();
             if PlugFrame::size_of(view) != Some(offered) {
                 not_ours(|| view.onSize(&mut rect));
             }
             PlugFrame::size_of(view)
-        }
+        };
+        self.frame.answering.store(false, Ordering::Release);
+        size
     }
 
     fn key(&mut self, keystroke: &Keystroke, direction: KeyDirection) -> bool {

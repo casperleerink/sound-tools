@@ -348,15 +348,19 @@ window and `true` for an embedded one. So this host makes the window.
   is made). A drag is given to the plugin as it arrives: it makes a size it takes of it
   (`adjust_size`, `checkSizeConstraint`) and takes it (`set_size`, `onSize`), and the window
   ends on the size the plugin then reports, at the next poll. A size the host gave the window
-  itself is not told to the plugin again.
+  itself is not told to the plugin again. A plugin that does not adjust (CLAP's `adjust_size`
+  says nothing, VST 3's `checkSizeConstraint` leaves the rectangle) is given the size as it
+  was dragged; a CLAP plugin that refuses it is said on the terminal and the window goes back.
+  A VST 3 view that asks for another size from inside the `onSize` of a drag is refused, as a
+  request from inside the answer to one of its own is, so `onSize` never nests.
 - A key the window gets goes to the plugin: VST 3's `IPlugView::onKeyDown` and `onKeyUp`, with
   the character, the virtual key code of `keycodes.h` and the modifiers. A key the plugin uses
-  goes nowhere else. The window only gets a key while the plugin's own view does not have the
+  goes nowhere else, and a key a window that is going hands on is dropped. The window only gets a key while the plugin's own view does not have the
   keyboard; a view that has it gets its keys from AppKit directly, which is how a text field of
   a plugin works, in both formats. CLAP has no call for a key, so a CLAP plugin only ever takes
   them in its own view. The main window's keys are bound in the main window and work there
   whatever plugin window is open.
-- Where each window was and whether it was open is kept in `workspace.json`, see "Where the
+- Where each window was and whether it was open is kept by this machine, see "Where the
   windows were" below.
 - Opening a window that is open brings it forward. Closing one frees the plugin's view and
   takes the window down, and touches nothing of the plugin's sound or state.
@@ -422,30 +426,34 @@ plugin is a view that really draws, which is checked by hand.
 
 ### Where the windows were
 
-`workspace.json`, at the root of the project, holds under `plugin_windows` where each plugin
-window was, by the id of its record, and whether it was open:
+A window's place is this machine's and not the piece's, so it is kept next to the scan cache
+and never in the project folder: `~/Library/Caches/sound-tools/plugin-windows.json`
+(`placements.rs`), one file for every project, by the canonical path of the project folder and
+then by the id of the record:
 
 ```json
-{"plugin_windows": {"arrangement/piano/instrument": {"open": true, "x": 120, "y": 80, "display": 1}}}
+{"/Users/me/pieces/night": {"arrangement/piano/instrument": {"open": true, "x": 120, "y": 80, "display": 1}}}
 ```
 
 - It is read at the first poll of the project and written when it changed, at most once a
-  second while a window is dragged, and when the project closes. It is no record: the watcher
-  does not read it, writing it is never an edit and never an undo step, and nothing is written
-  when nothing changed or by a read-only project. This host owns that one key and leaves every
-  other key of the file alone. A file that is not a JSON object is reported and never written.
+  second while a window is dragged, and when the project closes. A write reads the file again
+  and sets only its own project, through the scan cache's file of its own and rename. A write
+  a crash left behind is taken away by the next read, and a file that does not read is written
+  over, as for the cache. Nothing of it is an edit or an undo step, and a read-only project
+  writes nothing. A write that fails is said once and not tried again until a window changes
+  again. A `ScanCache::none()` keeps the places in memory, which is what most tests have.
 - The position is the corner of the window, title bar included, on its display, and the id of
   that display. A window whose display is gone, or which would be out of reach on it, opens in
   the middle of the main display. The size is not kept: a plugin keeps its own size in its own
   state, and a second size could only disagree with it.
 - `open` is what the composer last decided: opening a window, closing it from its card or its
   title bar, or a CLAP plugin closing its own. A window the host takes down because the
-  project closes or the application quits stays open in the file. So does one whose plugin
+  project closes or the application quits stays open in the store. So does one whose plugin
   loads again in the same record, which is a VST 3 reload (`kReloadComponent`) or a record
   that names another state file: the new plugin's window opens where the old one was, at the
   next `settle_windows`. Another plugin in the record, or the record going, closes it for good,
   so an undo that brings a record back does not bring its window.
-- `settle_windows` opens every window the file has as open whose plugin is loaded, so a plugin
+- `settle_windows` opens every window the store has as open whose plugin is loaded, so a plugin
   that the scan finds late opens late. It waits while the application is becoming active,
   which it is at the first polls, and gives the keyboard back to the window that had it: Six
   Sines takes the keyboard as it is shown, and a floating window is the one AppKit would make
