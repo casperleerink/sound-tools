@@ -114,7 +114,24 @@ How to:
 - **Add an effect**: write its record into the track folder, then put its file name at the end of `effects` in `instance.json`. Write the record first: a name in the list with no record behind it is reported until the file is there.
 - **Reorder**: write `effects` in the order you want. Nothing else moves, and the sound changes at once. `["warmth", "space"]` is the instrument, then warmth, then space.
 - **Remove**: take the name out of `effects` and delete the file. Taking it out of the list alone leaves a record that is reported; deleting the file alone leaves a name that is reported.
-- **Turn one off for a while**: write its slot as `{"name": "space", "bypass": true}`, and as `"space"` again to turn it on. The record and the plugin's own settings stay. The sound of a bypassed effect goes past it untouched, without its latency.
+- **Turn one off for a while**: write its slot as `{"name": "warmth", "bypass": true}`, and as `"warmth"` again to turn it on. The record and the plugin's own settings stay. The sound of a bypassed effect goes past it untouched, without its latency.
+
+The same piano with its warmth bypassed, and silenced with the bottom of its volume:
+
+```json state/arrangement/piano/instance.json
+{
+  "tool": "arrangement.track",
+  "state": {
+    "name": "Piano",
+    "colour": "blue",
+    "order": 0,
+    "gain_db": "-inf",
+    "pan": 0.0,
+    "mute": false,
+    "effects": [{"name": "warmth", "bypass": true}]
+  }
+}
+```
 
 What `problems.txt` says about this, and what to do:
 

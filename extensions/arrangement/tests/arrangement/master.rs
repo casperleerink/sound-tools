@@ -191,3 +191,148 @@ fn a_master_value_out_of_range_names_the_field() {
         ]
     );
 }
+
+/// A stereo project at `sample_rate` with this master: a loud track whose one note ends at
+/// tick 960, and a quiet track that holds a note all the time.
+fn burst_then_quiet(sample_rate: u32, arrangement: ArrangementState) -> Harness {
+    let mut harness = Harness::with_config(EngineConfig::new(sample_rate, 2));
+    let mut changes = Changes::new();
+    let master = harness
+        .project
+        .resolve::<ArrangementState>(&id("arrangement"));
+    changes.set(&master.unwrap(), arrangement);
+    harness.project.commit("Set the master", changes).unwrap();
+    harness.add_track("loud", 1.0);
+    harness.add_track("quiet", 0.001);
+    let mut changes = Changes::new();
+    changes.create(
+        id("arrangement/loud/hit"),
+        clip(0, BAR, vec![note(0, 960, 60)]),
+    );
+    let long = clip(0, 64 * BAR, vec![note(0, 64 * BAR, 60)]);
+    changes.create(id("arrangement/quiet/long"), long);
+    harness.project.commit("Add clips", changes).unwrap();
+    harness
+}
+
+/// After a peak the gain comes back to exactly 1: the quiet track then comes out bit for bit
+/// as it went in, and the limiter reports no reduction. An f32 envelope stopped just under 1
+/// for good, which scaled every sample for the rest of the session.
+#[test]
+fn after_a_peak_the_gain_comes_back_to_exactly_one() {
+    let quiet = 0.001_f32 * 60.0;
+    for sample_rate in [44_100, 48_000, 96_000] {
+        for release_ms in [10.0, 100.0, 1000.0] {
+            for lookahead_ms in [0.0, 5.0] {
+                let arrangement = with_limiter(|limiter| {
+                    limiter.release_ms = release_ms;
+                    limiter.lookahead_ms = lookahead_ms;
+                });
+                let mut harness = burst_then_quiet(sample_rate, arrangement);
+                let case =
+                    format!("{sample_rate} Hz, {release_ms} ms, lookahead {lookahead_ms} ms");
+                // The hit, half a second, and ten times the release after it.
+                let rate = sample_rate as f32;
+                let frames = (rate * (0.5 + 0.1 + 10.0 * release_ms / 1000.0)) as usize;
+                let hit = left(&harness.play(2 * frames));
+                assert!(
+                    peak(&hit) > 0.9,
+                    "{case}: the hit was not limited: {}",
+                    peak(&hit)
+                );
+                let reduction =
+                    arrangement::reduction_peaks(&harness.project, &id("arrangement")).unwrap();
+                assert!(reduction.take()[0] > 1.0, "{case}: no reduction at the hit");
+                let after = left(&harness.render(2 * 4_800));
+                assert!(
+                    after.iter().all(|sample| *sample == quiet),
+                    "{case}: {:?}",
+                    after.iter().find(|sample| **sample != quiet)
+                );
+                assert_eq!(reduction.take(), [0.0, 0.0], "{case}");
+            }
+        }
+    }
+}
+
+/// Not a number and infinity are no sound: they come out as silence, never as full scale, and
+/// the limiter plays on as before once they are gone.
+#[test]
+fn not_a_number_and_infinity_come_out_as_silence() {
+    let mut harness = burst_then_quiet(SAMPLE_RATE, ArrangementState::default());
+    let quiet = 0.001_f32 * 60.0;
+    // An effect that makes the quiet track infinite, and then not a number: the largest gain
+    // plus the largest offset overflows, and the tail of infinity times 0 is not a number.
+    let mut changes = Changes::new();
+    let track = harness
+        .project
+        .resolve::<arrangement::TrackState>(&id("arrangement/quiet"))
+        .unwrap();
+    let slot = arrangement::add_effect(&harness.project, &mut changes, &track, "poison").unwrap();
+    changes.create(slot, crate::support::Trim::new(f32::MAX, f32::MAX));
+    harness.project.commit("Add poison", changes).unwrap();
+    let render = left(&harness.play(2 * 48_000));
+    let late = &render[30_000..];
+    assert!(
+        late.iter().all(|sample| *sample == 0.0),
+        "{:?}",
+        late.iter().find(|s| **s != 0.0)
+    );
+    // Gone: the quiet track bit for bit.
+    let record = r#"{"tool": "arrangement.track", "state": {"name": "quiet", "order": 1}}"#;
+    harness.write_and_apply("state/arrangement/quiet/instance.json", record);
+    let render = left(&harness.render(2 * 4_800));
+    assert!(render[1_000..].iter().all(|sample| *sample == quiet));
+}
+
+/// The ceiling holds while the ceiling, the bypass and the lookahead change during playback,
+/// at two sample rates and three lookaheads.
+#[test]
+fn the_ceiling_holds_through_edits_while_the_project_plays() {
+    for sample_rate in [44_100, 96_000] {
+        for lookahead_ms in [0.0, 5.0, 10.0] {
+            let case = format!("{sample_rate} Hz, lookahead {lookahead_ms} ms");
+            let ahead = with_limiter(|limiter| limiter.lookahead_ms = lookahead_ms);
+            let mut harness = Harness::with_config(EngineConfig::new(sample_rate, 2));
+            let mut changes = Changes::new();
+            let master = harness
+                .project
+                .resolve::<ArrangementState>(&id("arrangement"));
+            changes.set(&master.unwrap(), ahead.clone());
+            harness.project.commit("Set the master", changes).unwrap();
+            harness.add_track("piano", 0.02);
+            // A level that jumps every eighth: 1.2, 2.5, 1.2, ...
+            let notes = (0..32)
+                .map(|step| note(step * 480, 480, if step % 2 == 0 { 60 } else { 125 }))
+                .collect();
+            let mut changes = Changes::new();
+            changes.create(id("arrangement/piano/steps"), clip(0, 8 * BAR, notes));
+            harness.project.commit("Add clip", changes).unwrap();
+            let chunk = 2 * sample_rate as usize / 5;
+            let first = harness.play(chunk);
+            assert!(peak(&first) <= 1.0, "{case}: {}", peak(&first));
+
+            let edit = |harness: &mut Harness, change: &dyn Fn(&mut LimiterState)| {
+                let mut arrangement = ahead.clone();
+                change(&mut arrangement.master.limiter);
+                let state = serde_json::to_string(&arrangement).unwrap();
+                let record = format!(r#"{{"tool": "arrangement", "state": {state}}}"#);
+                harness.write_and_apply(ARRANGEMENT_FILE, &record);
+                harness.render(chunk)
+            };
+            let lower = edit(&mut harness, &|limiter| limiter.ceiling_db = -6.0);
+            let six_down = decibels::amplitude(-6.0);
+            assert!(peak(&lower) <= six_down, "{case}: {}", peak(&lower));
+            let off = edit(&mut harness, &|limiter| {
+                limiter.ceiling_db = -6.0;
+                limiter.bypass = true;
+            });
+            assert!(peak(&off) > 2.0, "{case}: bypassed, the level passes");
+            let on = edit(&mut harness, &|limiter| limiter.ceiling_db = -6.0);
+            assert!(peak(&on) <= six_down, "{case}: {}", peak(&on));
+            let raised = edit(&mut harness, &|limiter| limiter.ceiling_db = -1.0);
+            assert!(peak(&raised) <= decibels::amplitude(-1.0), "{case}");
+            assert_eq!(harness.problems(), Vec::<String>::new(), "{case}");
+        }
+    }
+}

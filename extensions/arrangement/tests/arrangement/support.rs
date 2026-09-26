@@ -275,8 +275,6 @@ pub fn tempo(bpm: f64) -> TempoMap {
     TempoMap::constant(TimeSignature::default(), Tempo::from_bpm(bpm).unwrap())
 }
 
-/// An open project on a temporary folder with an offline mono engine and the arrangement
-/// `arrangement`.
 /// An arrangement whose limiter is off. The probe makes levels such as 60 that are numbers and
 /// not sound, and the limiter would take them down to its ceiling. The tests of the limiter
 /// turn it on.
@@ -286,6 +284,8 @@ pub fn probe_arrangement() -> ArrangementState {
     arrangement
 }
 
+/// An open project on a temporary folder with an offline mono engine and the arrangement
+/// `arrangement`.
 pub struct Harness {
     pub project: Project,
     pub engine: Engine,

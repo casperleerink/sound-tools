@@ -163,8 +163,13 @@ pub struct Master {
     position: usize,
     /// Frames seen, to age the queue.
     frame: u64,
-    envelope: f32,
-    release_factor: f32,
+    /// Frames in a row whose gain after the release was exactly 1. Once there are a lookahead of
+    /// them, the mean is exactly 1 and the sum is set to what it is, so no drift of it can stay.
+    unity_run: usize,
+    /// In f64: near 1 a release step of an f32 would be less than half of its last bit, and the
+    /// gain would stop just under 1 for good.
+    envelope: f64,
+    release_factor: f64,
     peaks: Peaks,
     /// The largest reduction of each block, as the factor the input was above the output.
     reduction: Peaks,
@@ -191,6 +196,7 @@ impl Master {
             smoothing_sum: 0.0,
             position: 0,
             frame: 0,
+            unity_run: 0,
             envelope: 1.0,
             release_factor: 1.0,
             peaks,
@@ -221,6 +227,7 @@ impl Master {
         self.smoothing_sum = lookahead as f64;
         self.lowest_start = 0;
         self.lowest_len = 0;
+        self.unity_run = lookahead;
         self.envelope = 1.0;
     }
 
@@ -265,6 +272,44 @@ impl Master {
     }
 }
 
+impl Master {
+    /// One frame of the gain computer: the gain that the frame one lookahead back gets, for a
+    /// frame whose loudest channel is `peak` now.
+    fn gain_for(&mut self, peak: f32, ceiling: f32) -> f32 {
+        let wanted = if peak > ceiling { ceiling / peak } else { 1.0 };
+        let lowest = f64::from(self.lowest_with(self.frame, wanted));
+        // The release: down at once, back up along the time constant.
+        self.envelope = match lowest < self.envelope {
+            true => lowest,
+            false => {
+                let next = self.envelope + (lowest - self.envelope) * self.release_factor;
+                match lowest - next < CLOSE_ENOUGH || next <= self.envelope {
+                    true => lowest,
+                    false => next,
+                }
+            }
+        };
+        let envelope = self.envelope as f32;
+        let lookahead = self.lookahead;
+        if lookahead == 0 {
+            return envelope;
+        }
+        if let Some(oldest) = self.smoothing.get_mut(self.position) {
+            self.smoothing_sum += f64::from(envelope) - f64::from(*oldest);
+            *oldest = envelope;
+        }
+        self.unity_run = match envelope == 1.0 {
+            true => self.unity_run.saturating_add(1),
+            false => 0,
+        };
+        if self.unity_run >= lookahead {
+            self.smoothing_sum = lookahead as f64;
+            return 1.0;
+        }
+        ((self.smoothing_sum / lookahead as f64) as f32).min(1.0)
+    }
+}
+
 impl Processor for Master {
     type Update = MasterSettings;
 
@@ -299,9 +344,9 @@ impl Processor for Master {
             self.lookahead = lookahead;
             self.position = 0;
             self.reset();
-        } else if settings.bypass != self.settings.bypass {
-            self.reset_gain();
         }
+        // A bypass keeps the gain it worked out while it was off, so the frames already in the
+        // delay come out with the gain they need when it is switched on again.
         self.settings = settings;
     }
 
@@ -326,13 +371,26 @@ impl Processor for Master {
         let outputs = output_left.iter_mut().zip(output_right.iter_mut());
         for (index, ((left, right), (out_left, out_right))) in samples.zip(outputs).enumerate() {
             let step = (index + 1) as f32;
-            let mut gain = volume_before + volume_step * step;
-            if !bypass {
-                gain *= gain_before + gain_step * step;
-            }
-            let sound = [left * gain, right * gain];
+            let volume = volume_before + volume_step * step;
+            let gain = gain_before + gain_step * step;
+            // Not a number and infinity are no sound. They would come out as full scale after
+            // the clamp, since a comparison drops a not-a-number.
+            let finite = |sample: f32| {
+                if sample.is_finite() {
+                    sample * volume
+                } else {
+                    0.0
+                }
+            };
+            let (left, right) = (finite(*left), finite(*right));
+            let limited = [left * gain, right * gain];
+            // The gain works on the whole time, also while the limiter is bypassed.
+            let applied = self.gain_for(limited[0].abs().max(limited[1].abs()), ceiling);
             let position = self.position;
-            let mut delayed = sound;
+            let mut delayed = match bypass {
+                true => [left, right],
+                false => limited,
+            };
             if lookahead > 0 {
                 for (channel, sample) in self.delay.iter_mut().zip(&mut delayed) {
                     if let Some(slot) = channel.get_mut(position) {
@@ -343,30 +401,6 @@ impl Processor for Master {
             let (left, right) = match bypass {
                 true => (delayed[0], delayed[1]),
                 false => {
-                    let peak = sound[0].abs().max(sound[1].abs());
-                    let wanted = if peak > ceiling { ceiling / peak } else { 1.0 };
-                    let lowest = self.lowest_with(self.frame, wanted);
-                    // The release: down at once, back up along the time constant.
-                    self.envelope = match lowest < self.envelope {
-                        true => lowest,
-                        false => {
-                            let next =
-                                self.envelope + (lowest - self.envelope) * self.release_factor;
-                            // Close enough is there, so the gain ends exactly on 1 again.
-                            if lowest - next < 1e-6 { lowest } else { next }
-                        }
-                    };
-                    let applied = match lookahead {
-                        0 => self.envelope,
-                        _ => {
-                            if let Some(oldest) = self.smoothing.get_mut(position) {
-                                let (new, old) = (f64::from(self.envelope), f64::from(*oldest));
-                                self.smoothing_sum += new - old;
-                                *oldest = self.envelope;
-                            }
-                            ((self.smoothing_sum / lookahead as f64) as f32).min(1.0)
-                        }
-                    };
                     most_reduced = most_reduced.min(applied);
                     let limit = |sample: f32| (sample * applied).max(-ceiling).min(ceiling);
                     (limit(delayed[0]), limit(delayed[1]))
@@ -385,9 +419,14 @@ impl Processor for Master {
 }
 
 /// How much of the way back the gain goes per frame, for a time constant of `seconds`.
-fn release_factor(seconds: f32, sample_rate: f32) -> f32 {
-    if seconds <= 0.0 || sample_rate <= 0.0 {
+fn release_factor(seconds: f32, sample_rate: f32) -> f64 {
+    let frames = f64::from(seconds) * f64::from(sample_rate);
+    if frames <= 0.0 {
         return 1.0;
     }
-    1.0 - (-1.0 / (seconds * sample_rate)).exp()
+    1.0 - (-1.0 / frames).exp()
 }
+
+/// Within this of its target the gain goes the rest of the way at once: 0.001 dB, far under
+/// what anyone hears, and it makes the gain exactly 1 again after a peak.
+const CLOSE_ENOUGH: f64 = 1e-4;
