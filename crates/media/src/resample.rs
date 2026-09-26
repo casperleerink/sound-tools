@@ -8,23 +8,25 @@
 //! the playhead is.
 //!
 //! The filter is a windowed sinc (Kaiser window), from a table of phases worked out once on
-//! the control side, with a straight line between two phases.
+//! the control side, with a straight line between two phases. It is flat up to 20 kHz, or to
+//! 95 % of the lower Nyquist frequency of the two rates when that is lower, and it stops from
+//! that Nyquist frequency on, so nothing above it folds back.
 
 use crate::file::Audio;
 
-/// Taps each side of a position at the rate of the file, when the file is not above the
-/// engine's rate. Going down in rate widens the filter by the ratio, to keep out aliasing.
-const HALF_TAPS: usize = 16;
-/// The pass band, as a part of the lower of the two Nyquist frequencies.
-const CUTOFF: f64 = 0.95;
-/// Kaiser window shape: about 80 dB of stop band.
-const BETA: f64 = 8.0;
-/// Rows of the table between two samples.
-const PHASES: usize = 256;
+/// Where the pass band ends at most: 20 kHz and a little room, so 20 kHz itself is flat.
+const PASS_HZ: f64 = 20_500.0;
+/// The pass band as a part of the lower Nyquist frequency, for rates too low for `PASS_HZ`.
+const PASS_PART: f64 = 0.95;
+/// How far the stop band is down.
+const STOP_DB: f64 = 100.0;
+/// Rows of the table between two samples when the file is not above the engine's rate. Going
+/// down in rate stretches the filter, which then needs fewer.
+const PHASES: usize = 1024;
 
 /// The file frames one call of [`Resampler::render`] may read at once. Enough for a block of
-/// the widest filter this makes, from 384 kHz down to 8 kHz: a filter of about 1600 taps.
-pub const SCRATCH_FRAMES: usize = 4096;
+/// the widest filter this makes, from 384 kHz down to 8 kHz.
+pub const SCRATCH_FRAMES: usize = 16_384;
 
 /// The filter for one pair of rates.
 #[derive(Debug)]
@@ -33,69 +35,76 @@ pub struct Resampler {
     step: (u64, u64),
     /// Taps each side of a position.
     half: usize,
-    /// `PHASES + 1` rows of `2 * half` taps, each row summing to 1.
+    phases: usize,
+    /// `phases + 1` rows of `2 * half` taps, each row summing to 1.
     table: Box<[f32]>,
 }
 
 impl Resampler {
     /// The filter that plays a file at `file_rate` in an engine at `engine_rate`.
     pub fn new(file_rate: u32, engine_rate: u32) -> Self {
-        let (file_rate, engine_rate) = (u64::from(file_rate.max(1)), u64::from(engine_rate.max(1)));
-        let divisor = greatest_common_divisor(file_rate, engine_rate);
-        let step = (file_rate / divisor, engine_rate / divisor);
-        // Relative to the Nyquist frequency of the file.
-        let cutoff = CUTOFF * (engine_rate as f64 / file_rate as f64).min(1.0);
-        let half = (HALF_TAPS as f64 * CUTOFF / cutoff).ceil() as usize;
-        let taps = 2 * half;
-        let mut table = vec![0.0_f32; (PHASES + 1) * taps];
-        let normal = bessel_i0(BETA);
-        for (phase, row) in table.chunks_exact_mut(taps).enumerate() {
-            let fraction = phase as f64 / PHASES as f64;
-            let mut values = vec![0.0_f64; taps];
+        let (file, engine) = (u64::from(file_rate.max(1)), u64::from(engine_rate.max(1)));
+        let divisor = greatest_common_divisor(file, engine);
+        let step = (file / divisor, engine / divisor);
+        if step.0 == step.1 {
+            return Self {
+                step,
+                half: 0,
+                phases: 0,
+                table: Box::default(),
+            };
+        }
+        // Kaiser's design, at the lower of the two rates.
+        let lower = file.min(engine) as f64;
+        let nyquist = lower / 2.0;
+        let pass = PASS_HZ.min(PASS_PART * nyquist);
+        let transition = (nyquist - pass) / lower;
+        let taps = (STOP_DB - 7.95) / (2.285 * std::f64::consts::TAU * transition);
+        // In frames of the file: going down in rate, the filter is as many times wider.
+        let stretch = file as f64 / lower;
+        let half = (taps / 2.0 * stretch).ceil() as usize;
+        let phases = ((PHASES as f64 / stretch).ceil() as usize).max(16);
+        // The middle of the transition, relative to the Nyquist frequency of the file.
+        let cutoff = (pass + nyquist) / 2.0 / (file as f64 / 2.0);
+        let beta = 0.1102 * (STOP_DB - 8.7);
+        let normal = bessel_i0(beta);
+
+        let width = 2 * half;
+        let mut table = vec![0.0_f32; (phases + 1) * width];
+        let mut values = vec![0.0_f64; width];
+        for (phase, row) in table.chunks_exact_mut(width).enumerate() {
+            let fraction = phase as f64 / phases as f64;
             for (tap, value) in values.iter_mut().enumerate() {
                 // The distance of this tap's sample from the position, in file frames.
                 let distance = (tap as f64 - half as f64 + 1.0) - fraction;
                 let edge = distance / half as f64;
                 let window = match edge.abs() < 1.0 {
-                    true => bessel_i0(BETA * (1.0 - edge * edge).sqrt()) / normal,
+                    true => bessel_i0(beta * (1.0 - edge * edge).sqrt()) / normal,
                     false => 0.0,
                 };
                 *value = cutoff * sinc(cutoff * distance) * window;
             }
             // A steady level comes out at exactly that level.
             let sum: f64 = values.iter().sum();
-            for (cell, value) in row.iter_mut().zip(values) {
+            for (cell, value) in row.iter_mut().zip(&values) {
                 *cell = (value / sum) as f32;
             }
         }
         Self {
             step,
             half,
+            phases,
             table: table.into_boxed_slice(),
         }
     }
 
-    /// Whether the two rates are the same, so a file frame is an engine frame.
-    pub fn is_identity(&self) -> bool {
+    fn is_identity(&self) -> bool {
         self.step.0 == self.step.1
-    }
-
-    /// File frames per engine frame, as a fraction in lowest terms.
-    pub fn step(&self) -> (u64, u64) {
-        self.step
-    }
-
-    /// How many engine frames a stretch of `file_frames` plays: the frames whose position is
-    /// still inside it.
-    pub fn engine_frames(&self, file_frames: u64) -> u64 {
-        let (file, engine) = self.step;
-        let frames = u128::from(file_frames) * u128::from(engine);
-        u64::try_from(frames.div_ceil(u128::from(file))).unwrap_or(u64::MAX)
     }
 
     /// Where engine frame `frame` of a stream from `origin` is in the file: the file frame
     /// before it, and how far past that frame, from 0 to 1.
-    pub fn position(&self, origin: u64, frame: u64) -> (u64, f64) {
+    fn position(&self, origin: u64, frame: u64) -> (u64, f64) {
         let (file, engine) = self.step;
         let travelled = u128::from(frame) * u128::from(file);
         let whole = u64::try_from(travelled / u128::from(engine)).unwrap_or(u64::MAX);
@@ -116,15 +125,15 @@ impl Resampler {
         out: &mut [[f32; 2]],
         scratch: &mut [[f32; 2]],
     ) {
-        let (file, engine) = self.step;
-        if file == engine {
+        if self.is_identity() {
             let start = origin.saturating_add(first);
             audio.read(i64::try_from(start).unwrap_or(i64::MAX), out);
             return;
         }
-        let taps = 2 * self.half;
+        let (file, engine) = self.step;
+        let width = 2 * self.half;
         // Output frames per round, so their input fits the scratch.
-        let room = scratch.len().saturating_sub(taps + 1) as u128;
+        let room = scratch.len().saturating_sub(width + 1) as u128;
         let per_round = (room * u128::from(engine) / u128::from(file)).max(1);
         let per_round = usize::try_from(per_round).unwrap_or(usize::MAX);
         let mut done = 0_u64;
@@ -142,13 +151,13 @@ impl Resampler {
             let input = &*input;
             for (index, frame) in chunk.iter_mut().enumerate() {
                 let (sample, fraction) = self.position(origin, start + index as u64);
-                let phase = fraction * PHASES as f64;
-                let row = (phase as usize).min(PHASES - 1);
+                let phase = fraction * self.phases as f64;
+                let row = (phase as usize).min(self.phases - 1);
                 let between = (phase - row as f64) as f32;
                 let first_tap = (sample as i64 - self.half as i64 + 1 - window) as usize;
-                let lower = self.table.get(row * taps..(row + 1) * taps);
-                let upper = self.table.get((row + 1) * taps..(row + 2) * taps);
-                let samples = input.get(first_tap..first_tap + taps);
+                let lower = self.table.get(row * width..(row + 1) * width);
+                let upper = self.table.get((row + 1) * width..(row + 2) * width);
+                let samples = input.get(first_tap..first_tap + width);
                 let (Some(lower), Some(upper), Some(samples)) = (lower, upper, samples) else {
                     *frame = [0.0; 2];
                     continue;
@@ -179,7 +188,7 @@ fn bessel_i0(x: f64) -> f64 {
     let quarter = x * x / 4.0;
     let mut term = 1.0;
     let mut sum = 1.0;
-    for k in 1..64 {
+    for k in 1..100 {
         term *= quarter / (k * k) as f64;
         sum += term;
         if term < sum * 1e-17 {
@@ -201,25 +210,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_same_rate_is_the_identity_and_lengths_follow_the_ratio() {
+    fn the_same_rate_is_the_identity_and_positions_are_exact() {
         assert!(Resampler::new(48_000, 48_000).is_identity());
         let up = Resampler::new(44_100, 48_000);
-        assert_eq!(up.step(), (147, 160));
-        assert_eq!(up.engine_frames(44_100), 48_000);
-        assert_eq!(up.engine_frames(1), 2);
-        let down = Resampler::new(96_000, 48_000);
-        assert_eq!(down.engine_frames(96_000), 48_000);
-        assert_eq!(down.engine_frames(3), 2);
+        assert_eq!(up.step, (147, 160));
         assert_eq!(up.position(10, 160), (157, 0.0));
+        assert_eq!(up.position(0, 1), (0, 147.0 / 160.0));
     }
 
     #[test]
-    fn every_row_of_the_filter_passes_a_steady_level_unchanged() {
-        for (file, engine) in [(44_100, 48_000), (96_000, 48_000), (384_000, 8_000)] {
+    fn every_row_of_the_filter_passes_a_steady_level_unchanged_and_fits_the_scratch() {
+        for (file, engine) in [
+            (44_100, 48_000),
+            (48_000, 44_100),
+            (96_000, 48_000),
+            (384_000, 8_000),
+        ] {
             let resampler = Resampler::new(file, engine);
-            let taps = 2 * resampler.half;
-            assert!(taps + 1 < SCRATCH_FRAMES, "{file} to {engine}: {taps} taps");
-            for row in resampler.table.chunks_exact(taps) {
+            let width = 2 * resampler.half;
+            let block = sound_core::MAX_BLOCK * (file / engine + 1) as usize;
+            assert!(
+                width + block < SCRATCH_FRAMES,
+                "{file} to {engine}: {width} taps"
+            );
+            println!(
+                "{file} Hz to {engine} Hz: {width} taps, {} phases",
+                resampler.phases
+            );
+            for row in resampler.table.chunks_exact(width) {
                 let sum: f32 = row.iter().sum();
                 assert!((sum - 1.0).abs() < 1e-5, "{sum}");
             }

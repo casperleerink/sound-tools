@@ -213,56 +213,94 @@ fn frames_outside_the_file_are_silence() {
     assert_eq!(out, [[0.0; 2]; 9]);
 }
 
-/// The worst difference from a sine of `hz` at the engine rate, over `frames` from `from`.
-fn worst_error_from_a_sine(out: &[[f32; 2]], hz: f64, rate: f64, from: usize) -> f64 {
-    out.iter()
-        .enumerate()
-        .skip(from)
-        .map(|(frame, sample)| {
+/// One second of a sine of `hz` at half of full scale in a float WAV at `file_rate`, played
+/// at `engine_rate` in blocks of 64 frames from its start.
+fn played(folder: &Path, file_rate: u32, engine_rate: u32, hz: f64) -> Vec<[f32; 2]> {
+    let sine: Vec<[f64; 2]> = (0..file_rate as usize)
+        .map(|frame| [0.5 * (TAU * hz * frame as f64 / f64::from(file_rate)).sin(); 2])
+        .collect();
+    let path = folder.join(format!("sine-{file_rate}-{hz}.wav"));
+    wav(&path, file_rate, 2, (32, hound::SampleFormat::Float), &sine);
+    let audio = Audio::parse(std::fs::read(&path).unwrap()).unwrap();
+    // One second of the file is one second of the engine.
+    let frames = sound_media::engine_frames(audio.frames(), file_rate, engine_rate);
+    assert_eq!(frames, u64::from(engine_rate));
+    let resampler = Resampler::new(file_rate, engine_rate);
+    let mut out = vec![[0.0_f32; 2]; frames as usize];
+    let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
+    for (index, block) in out.chunks_mut(64).enumerate() {
+        resampler.render(&audio, 0, index as u64 * 64, block, &mut scratch);
+    }
+    out
+}
+
+/// Away from the two ends, where the filter reaches past the file: the level of the sine of
+/// `hz` in the output against the half of full scale that went in, and the worst difference
+/// from that sine at the engine rate in the right phase, both in dB.
+fn measure(out: &[[f32; 2]], engine_rate: u32, hz: f64) -> (f64, f64) {
+    let rate = f64::from(engine_rate);
+    let middle = (engine_rate / 10) as usize..(engine_rate - engine_rate / 10) as usize;
+    let (mut sine, mut cosine) = (0.0, 0.0);
+    for frame in middle.clone() {
+        let angle = TAU * hz * frame as f64 / rate;
+        sine += f64::from(out[frame][0]) * angle.sin();
+        cosine += f64::from(out[frame][0]) * angle.cos();
+    }
+    let count = middle.len() as f64;
+    let level = 2.0 * (sine * sine + cosine * cosine).sqrt() / count;
+    let worst = middle
+        .map(|frame| {
             let expected = 0.5 * (TAU * hz * frame as f64 / rate).sin();
-            (f64::from(sample[0]) - expected).abs()
+            (f64::from(out[frame][0]) - expected).abs()
         })
-        .fold(0.0, f64::max)
+        .fold(0.0, f64::max);
+    (20.0 * (level / 0.5).log10(), 20.0 * (worst / 0.5).log10())
 }
 
 #[test]
-fn a_file_at_another_rate_plays_at_its_pitch_and_length() {
+fn a_file_at_another_rate_plays_at_its_pitch_and_length_and_flat_to_twenty_kilohertz() {
     let folder = tempfile::tempdir().unwrap();
-    for (file_rate, hz) in [
-        (44_100_u32, 1_000.0),
-        (96_000, 1_000.0),
-        (44_100, 10_000.0),
-        (22_050, 440.0),
-    ] {
-        let seconds = 1.0;
-        let count = (f64::from(file_rate) * seconds) as usize;
-        let sine: Vec<[f64; 2]> = (0..count)
-            .map(|frame| {
-                let value = 0.5 * (TAU * hz * frame as f64 / f64::from(file_rate)).sin();
-                [value, value]
-            })
-            .collect();
-        let path = folder.path().join(format!("sine-{file_rate}.wav"));
-        wav(&path, file_rate, 2, (32, hound::SampleFormat::Float), &sine);
-        let audio = Audio::parse(std::fs::read(&path).unwrap()).unwrap();
-        let resampler = Resampler::new(file_rate, 48_000);
-        // One second of the file is one second of the engine.
-        assert_eq!(resampler.engine_frames(audio.frames()), 48_000);
-        let mut out = vec![[0.0_f32; 2]; 48_000];
-        let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
-        // In blocks of 64, as the engine asks, from frame 0 of the file.
-        for (index, block) in out.chunks_mut(64).enumerate() {
-            resampler.render(&audio, 0, index as u64 * 64, block, &mut scratch);
+    for (file_rate, engine_rate) in [(44_100, 48_000), (48_000, 44_100), (96_000, 48_000)] {
+        for hz in [
+            100.0, 1_000.0, 5_000.0, 10_000.0, 15_000.0, 19_000.0, 20_000.0,
+        ] {
+            let out = played(folder.path(), file_rate, engine_rate, hz);
+            let (level, worst) = measure(&out, engine_rate, hz);
+            println!(
+                "{file_rate} Hz file at {engine_rate} Hz, {hz} Hz: level {level:+.4} dB, worst error {worst:.1} dB under the sine"
+            );
+            assert!(
+                level.abs() < 0.01,
+                "{file_rate} to {engine_rate}, {hz} Hz: {level} dB"
+            );
+            assert!(
+                worst < -80.0,
+                "{file_rate} to {engine_rate}, {hz} Hz: {worst} dB"
+            );
         }
-        // Away from the two ends, where the filter reaches past the file, it is the sine at
-        // the engine rate: the right pitch and the right phase.
-        let worst = worst_error_from_a_sine(&out[..47_900], hz, 48_000.0, 100);
-        let decibels = 20.0 * (worst / 0.5).log10();
-        println!("{file_rate} Hz file, {hz} Hz: worst error {decibels:.1} dB under the sine");
-        assert!(
-            decibels < -70.0,
-            "{file_rate} Hz, {hz} Hz: {decibels:.1} dB"
-        );
+    }
+    // Below 43 kHz the pass band ends at 95 % of the Nyquist frequency.
+    let out = played(folder.path(), 22_050, 48_000, 9_000.0);
+    let (level, worst) = measure(&out, 48_000, 9_000.0);
+    println!("22050 Hz file at 48000 Hz, 9000 Hz: level {level:+.4} dB, worst error {worst:.1} dB");
+    assert!(level.abs() < 0.01 && worst < -80.0, "{level} {worst}");
+}
+
+#[test]
+fn nothing_above_the_nyquist_frequency_of_the_engine_folds_back() {
+    let folder = tempfile::tempdir().unwrap();
+    // Tones a 48 kHz file can hold and a 44.1 kHz engine cannot: they must go, not fold down.
+    for hz in [22_100.0, 22_500.0, 23_000.0, 23_500.0] {
+        let out = played(folder.path(), 48_000, 44_100, hz);
+        let middle = &out[4_410..39_690];
+        let power: f64 = middle
+            .iter()
+            .map(|frame| f64::from(frame[0]).powi(2))
+            .sum::<f64>();
+        let rms = (power / middle.len() as f64).sqrt();
+        let decibels = 20.0 * (rms / (0.5 / 2.0_f64.sqrt())).log10();
+        println!("{hz} Hz in a 48 kHz file at 44.1 kHz: what is left is {decibels:.1} dB");
+        assert!(decibels < -90.0, "{hz} Hz: {decibels} dB");
     }
 }
 
@@ -356,4 +394,142 @@ fn a_loaded_file_is_shared_and_a_missing_one_says_where_it_should_be() {
     );
     let replaced = sound_media::load(&assets, &asset).unwrap();
     assert_eq!(replaced.frames(), 2);
+}
+
+/// Takes every permission off a file or folder, or gives them back, so a test can tell
+/// whether it is read again: a file that cannot be read must not be what an answer came from.
+fn lock(path: &Path, locked: bool) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mode = match (locked, path.is_dir()) {
+        (true, true) => 0o555,
+        (true, false) => 0o000,
+        (false, _) => 0o755,
+    };
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[test]
+fn a_file_that_does_not_play_is_read_once_until_it_changes() {
+    let project = tempfile::tempdir().unwrap();
+    let assets = Assets::new(project.path());
+    let path = project.path().join("assets/audio/notes.wav");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "not audio").unwrap();
+    let asset = AudioAsset::new("notes.wav").unwrap();
+    assert!(matches!(
+        sound_media::load(&assets, &asset),
+        Err(MediaError::Format { .. })
+    ));
+    // Unreadable now, and asked again: the answer is the one kept, not a failed read.
+    lock(&path, true);
+    let again = sound_media::load(&assets, &asset);
+    let info = sound_media::info(&assets, &asset);
+    lock(&path, false);
+    assert!(matches!(again, Err(MediaError::Format { .. })), "{again:?}");
+    assert!(matches!(info, Err(MediaError::Format { .. })), "{info:?}");
+    // Changed, it is read again.
+    wav(&path, 48_000, 2, (16, hound::SampleFormat::Int), &frames());
+    assert_eq!(sound_media::load(&assets, &asset).unwrap().frames(), 5);
+}
+
+#[test]
+fn what_a_file_is_stays_known_when_nothing_holds_it() {
+    let project = tempfile::tempdir().unwrap();
+    let assets = Assets::new(project.path());
+    let path = project.path().join("assets/audio/voice.wav");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    wav(&path, 44_100, 2, (16, hound::SampleFormat::Int), &frames());
+    let asset = AudioAsset::new("voice.wav").unwrap();
+    drop(sound_media::load(&assets, &asset).unwrap());
+    lock(&path, true);
+    let info = sound_media::info(&assets, &asset);
+    lock(&path, false);
+    let info = info.unwrap();
+    assert_eq!(
+        (info.frames, info.sample_rate, info.channels),
+        (5, 44_100, 2)
+    );
+}
+
+#[test]
+fn an_imported_file_is_read_once() {
+    let project = tempfile::tempdir().unwrap();
+    let assets = Assets::new(project.path());
+    let outside = tempfile::tempdir().unwrap();
+    let source = outside.path().join("riff.wav");
+    wav(
+        &source,
+        48_000,
+        2,
+        (24, hound::SampleFormat::Int),
+        &frames(),
+    );
+    let asset = sound_media::import(&assets, &source).unwrap();
+    let copied = project.path().join("assets/audio/riff.wav");
+    lock(&copied, true);
+    let loaded = sound_media::load(&assets, &asset);
+    lock(&copied, false);
+    assert_eq!(loaded.unwrap().frames(), 5);
+}
+
+#[test]
+fn a_failed_import_leaves_nothing_in_the_project() {
+    let project = tempfile::tempdir().unwrap();
+    let assets = Assets::new(project.path());
+    let folder = project.path().join("assets/audio");
+    std::fs::create_dir_all(&folder).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let source = outside.path().join("riff.wav");
+    wav(
+        &source,
+        48_000,
+        2,
+        (16, hound::SampleFormat::Int),
+        &frames(),
+    );
+    // A folder that takes no file, as a full disk takes none.
+    lock(&folder, true);
+    let imported = sound_media::import(&assets, &source);
+    lock(&folder, false);
+    assert!(
+        matches!(imported, Err(MediaError::Io { .. })),
+        "{imported:?}"
+    );
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
+}
+
+/// A 16-bit stereo WAV at 48 kHz whose `data` chunk says it is empty, then `after`.
+fn empty_data_then(after: &[u8]) -> Vec<u8> {
+    let mut body = b"WAVE".to_vec();
+    body.extend(b"fmt ");
+    body.extend(16_u32.to_le_bytes());
+    body.extend(1_u16.to_le_bytes());
+    body.extend(2_u16.to_le_bytes());
+    body.extend(48_000_u32.to_le_bytes());
+    body.extend((48_000_u32 * 4).to_le_bytes());
+    body.extend(4_u16.to_le_bytes());
+    body.extend(16_u16.to_le_bytes());
+    body.extend(b"data");
+    body.extend(0_u32.to_le_bytes());
+    body.extend(after);
+    let mut file = b"RIFF".to_vec();
+    file.extend((body.len() as u32).to_le_bytes());
+    file.extend(body);
+    file
+}
+
+#[test]
+fn a_data_chunk_of_no_length_is_empty_when_a_chunk_follows_and_streamed_when_none_does() {
+    let mut list = b"LIST".to_vec();
+    list.extend(8_u32.to_le_bytes());
+    list.extend(b"INFOabcd");
+    let audio = Audio::parse(empty_data_then(&list)).unwrap();
+    assert_eq!(audio.frames(), 0);
+    // A writer that streams leaves 0 and writes the samples after it.
+    let samples: Vec<u8> = [1000_i16, -1000, 2000, -2000]
+        .iter()
+        .flat_map(|sample| sample.to_le_bytes())
+        .collect();
+    let audio = Audio::parse(empty_data_then(&samples)).unwrap();
+    assert_eq!(audio.frames(), 2);
 }

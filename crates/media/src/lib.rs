@@ -7,7 +7,8 @@
 //! - [`AudioAsset`] is how a record names a file: `"voice.wav"`, which is
 //!   `assets/audio/voice.wav`. Never a path outside the project.
 //! - [`import`] copies a file into `assets/audio/` under a free name.
-//! - [`load`] gives the file in memory, [`Audio`], shared by everything that plays it.
+//! - [`load`] gives the file in memory, [`Audio`], shared by everything that plays it, and
+//!   [`info`] what it is, how long and at what rate.
 //! - [`Resampler`] plays it at another sample rate than the engine's.
 //!
 //! `README.md` in this crate is the guide.
@@ -18,7 +19,7 @@ mod resample;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
-use std::io::{self, Write as _};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError, Weak};
@@ -27,7 +28,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 use sound_core::{ASSETS_FOLDER, AssetName, Assets, InvalidAssetName};
 
-pub use file::{Audio, Container, Encoding, FormatError, SAMPLE_RATES};
+pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES};
 pub use resample::{Resampler, SCRATCH_FRAMES};
 
 /// The folder of audio files, under `assets/`.
@@ -98,62 +99,137 @@ pub enum MediaError {
     Format { path: String, source: FormatError },
 }
 
-/// Files that are in memory, by path. Each is read once and shared by everything that plays
-/// it, and let go of when the last of them lets go: the cache holds no file alive.
+/// What is known of a file, by path, while its size and modification time stay the same. One
+/// small entry per file a project ever named, for as long as the process runs.
 ///
-/// A file whose size or modification time changed is read again, so a file replaced under
-/// the same name plays at the next change of a record that names it.
-struct Loaded {
-    audio: Weak<Audio>,
+/// A file that plays is shared by everything that plays it and let go of when the last of
+/// them lets go: the cache holds no file alive, but it keeps what the file is, its [`Info`],
+/// so asking how long it is costs one look at its size and time. A file that does not play
+/// is kept as its error, so asking again reads nothing. A file whose size or modification time
+/// changed is read again.
+struct Known {
     length: u64,
     modified: Option<SystemTime>,
+    outcome: Outcome,
 }
 
-static LOADED: LazyLock<Mutex<HashMap<PathBuf, Loaded>>> = LazyLock::new(Mutex::default);
+enum Outcome {
+    Plays {
+        info: Info,
+        audio: Weak<Audio>,
+        /// A file [`import`] just read, held until the first [`load`] takes it, so that load
+        /// reads it no second time.
+        imported: Option<Arc<Audio>>,
+    },
+    DoesNotPlay(FormatError),
+}
+
+static KNOWN: LazyLock<Mutex<HashMap<PathBuf, Known>>> = LazyLock::new(Mutex::default);
+
+/// The size and modification time of a file, or why there are none.
+fn stat(path: &Path, shown: &str) -> Result<(u64, Option<SystemTime>), MediaError> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok((metadata.len(), metadata.modified().ok())),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Err(MediaError::Missing {
+            path: shown.to_string(),
+        }),
+        Err(source) => Err(MediaError::Io {
+            path: shown.to_string(),
+            source,
+        }),
+    }
+}
+
+/// Reads and parses a file, and keeps what came of it.
+fn read(
+    known: &mut HashMap<PathBuf, Known>,
+    path: &Path,
+    shown: &str,
+    (length, modified): (u64, Option<SystemTime>),
+) -> Result<Arc<Audio>, MediaError> {
+    // A file that cannot be read is not kept: that may pass, as a file that is still copied.
+    let bytes = fs::read(path).map_err(|source| MediaError::Io {
+        path: shown.to_string(),
+        source,
+    })?;
+    let (outcome, result) = match Audio::parse(bytes) {
+        Ok(audio) => {
+            let audio = Arc::new(audio);
+            let outcome = Outcome::Plays {
+                info: audio.info(),
+                audio: Arc::downgrade(&audio),
+                imported: None,
+            };
+            (outcome, Ok(audio))
+        }
+        Err(error) => {
+            let result = Err(MediaError::Format {
+                path: shown.to_string(),
+                source: error.clone(),
+            });
+            (Outcome::DoesNotPlay(error), result)
+        }
+    };
+    let entry = Known {
+        length,
+        modified,
+        outcome,
+    };
+    known.insert(path.to_path_buf(), entry);
+    result
+}
 
 /// The file a record names, in memory. Read from disk the first time, then shared.
 ///
-/// For the control side only: it reads a file. What it gives is safe to hand to the audio
+/// For the control side only: it may read a file. What it gives is safe to hand to the audio
 /// thread inside a snapshot.
 pub fn load(assets: &Assets, asset: &AudioAsset) -> Result<Arc<Audio>, MediaError> {
     let path = assets.path(asset.asset_name());
-    let error_path = asset.project_path();
-    let metadata = match fs::metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => {
-            return Err(MediaError::Missing { path: error_path });
-        }
-        Err(source) => {
-            return Err(MediaError::Io {
-                path: error_path,
-                source,
-            });
-        }
-    };
-    let (length, modified) = (metadata.len(), metadata.modified().ok());
-    let mut loaded = LOADED.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(entry) = loaded.get(&path)
-        && (entry.length, entry.modified) == (length, modified)
-        && let Some(audio) = entry.audio.upgrade()
+    let shown = asset.project_path();
+    let stamp = stat(&path, &shown)?;
+    let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(entry) = known.get_mut(&path)
+        && (entry.length, entry.modified) == stamp
     {
-        return Ok(audio);
+        match &mut entry.outcome {
+            Outcome::Plays {
+                audio, imported, ..
+            } => {
+                if let Some(audio) = imported.take().or_else(|| audio.upgrade()) {
+                    return Ok(audio);
+                }
+            }
+            Outcome::DoesNotPlay(error) => {
+                let source = error.clone();
+                return Err(MediaError::Format {
+                    path: shown,
+                    source,
+                });
+            }
+        }
     }
-    let bytes = fs::read(&path).map_err(|source| MediaError::Io {
-        path: error_path.clone(),
-        source,
-    })?;
-    let audio = Arc::new(Audio::parse(bytes).map_err(|source| MediaError::Format {
-        path: error_path,
-        source,
-    })?);
-    loaded.retain(|_, entry| entry.audio.strong_count() > 0);
-    let entry = Loaded {
-        audio: Arc::downgrade(&audio),
-        length,
-        modified,
-    };
-    loaded.insert(path, entry);
-    Ok(audio)
+    read(&mut known, &path, &shown, stamp)
+}
+
+/// What the file a record names is: how many frames at what rate. After the first time it
+/// costs one look at the size and time of the file, whether anything holds the file or not.
+pub fn info(assets: &Assets, asset: &AudioAsset) -> Result<Info, MediaError> {
+    let path = assets.path(asset.asset_name());
+    let shown = asset.project_path();
+    let stamp = stat(&path, &shown)?;
+    let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(entry) = known.get(&path)
+        && (entry.length, entry.modified) == stamp
+    {
+        return match &entry.outcome {
+            Outcome::Plays { info, .. } => Ok(*info),
+            Outcome::DoesNotPlay(error) => Err(MediaError::Format {
+                path: shown,
+                source: error.clone(),
+            }),
+        };
+    }
+    read(&mut known, &path, &shown, stamp).map(|audio| audio.info())
 }
 
 /// How many engine frames `file_frames` of a file play, at the file's own speed: every frame
@@ -183,9 +259,13 @@ pub fn resampler(file_rate: u32, engine_rate: u32) -> Arc<Resampler> {
 ///
 /// The file is read and checked first, so what lands in the project always plays. Its name
 /// comes from the file name, in the letters an asset name allows: `My Take (2).WAV` becomes
-/// `my-take-2.wav`. When that name is taken it becomes `my-take-2-2.wav`, then `-3`, and a
-/// file that is already there is never written over. The copy is written under a temporary
-/// name first and linked into place, so a half-written file never has the name.
+/// `my-take-2.wav`. When that name is taken it becomes `my-take-2-2.wav`, then `-3`
+/// ([`Assets::reserve`]), and a file that is already there is never written over. The copy is
+/// written under a temporary name and renamed over the name it reserved, so a half-written
+/// file never has the name, and it works on every file system, FAT and network shares too.
+/// Nothing is left behind when it fails.
+///
+/// The file it read is kept for the first [`load`] of it, which then reads nothing.
 pub fn import(assets: &Assets, source: &Path) -> Result<AudioAsset, MediaError> {
     let shown = source.display().to_string();
     let bytes = fs::read(source).map_err(|source| match source.kind() {
@@ -210,55 +290,66 @@ pub fn import(assets: &Assets, source: &Path) -> Result<AudioAsset, MediaError> 
         extension.as_deref().unwrap_or_default(),
         audio.container().extension(),
     );
-
-    let folder = audio_folder(assets)?;
+    let wanted = AssetName::new(AUDIO_FOLDER, &stem, &extension).map_err(invalid)?;
     let io_error = |path: &str, source| MediaError::Io {
         path: path.to_string(),
         source,
     };
+
+    // The temporary file, next to where the copy goes, so the rename stays on one disk. It
+    // starts with a dot, which no asset name can, so it is never taken for one.
+    let folder = audio_folder(assets)?;
     fs::create_dir_all(&folder).map_err(|source| io_error(AUDIO_FOLDER, source))?;
-    // The temporary file starts with a dot, which no asset name can, so it is never one.
     static IMPORTS: AtomicU64 = AtomicU64::new(0);
     let count = IMPORTS.fetch_add(1, Ordering::Relaxed);
     let temporary = folder.join(format!(".import-{}-{count}.tmp", std::process::id()));
-    let mut file = fs::File::create(&temporary).map_err(|source| io_error(&shown, source))?;
-    file.write_all(audio.file_bytes())
-        .map_err(|source| io_error(&shown, source))?;
-    drop(file);
-
-    let linked = link_under_a_free_name(assets, &temporary, &stem, &extension);
-    match fs::remove_file(&temporary) {
-        Ok(()) => {}
-        // Left behind, it harms nothing: a name that starts with a dot is never an asset, and
-        // the copy under its own name is complete either way.
-        Err(_) => {}
+    let written = fs::write(&temporary, audio.file_bytes());
+    let reserved = written
+        .map_err(|source| io_error(&shown, source))
+        .and_then(|()| {
+            assets
+                .reserve(&wanted)
+                .map_err(|error| io_error(AUDIO_FOLDER, io::Error::other(error)))
+        });
+    let asset = match reserved {
+        Ok(reserved) => AudioAsset(reserved),
+        Err(error) => {
+            remove_quietly(&temporary);
+            return Err(error);
+        }
+    };
+    let target = assets.path(asset.asset_name());
+    if let Err(source) = fs::rename(&temporary, &target) {
+        remove_quietly(&temporary);
+        // The empty file that held the name is ours.
+        remove_quietly(&target);
+        return Err(io_error(&asset.project_path(), source));
     }
-    linked
+
+    if let Ok(stamp) = stat(&target, &asset.project_path()) {
+        let audio = Arc::new(audio);
+        let entry = Known {
+            length: stamp.0,
+            modified: stamp.1,
+            outcome: Outcome::Plays {
+                info: audio.info(),
+                audio: Arc::downgrade(&audio),
+                imported: Some(audio),
+            },
+        };
+        let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
+        known.insert(target, entry);
+    }
+    Ok(asset)
 }
 
-/// Links `temporary` into `assets/audio/` as `<stem>.<extension>`, or `<stem>-2`, `-3` and on
-/// when that is taken. A hard link fails when the name is taken, so nothing is written over.
-fn link_under_a_free_name(
-    assets: &Assets,
-    temporary: &Path,
-    stem: &str,
-    extension: &str,
-) -> Result<AudioAsset, MediaError> {
-    let mut number = 1_u32;
-    loop {
-        let name = match number {
-            1 => stem.to_string(),
-            _ => format!("{stem}-{number}"),
-        };
-        let asset = AudioAsset(AssetName::new(AUDIO_FOLDER, &name, extension).map_err(invalid)?);
-        match fs::hard_link(temporary, assets.path(asset.asset_name())) {
-            Ok(()) => return Ok(asset),
-            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => number += 1,
-            Err(source) => {
-                let path = asset.project_path();
-                return Err(MediaError::Io { path, source });
-            }
-        }
+/// Removes a file this module made, on the way out of a failure that is already reported.
+fn remove_quietly(path: &Path) {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        // The failure that brought us here is the one to report. A file left behind starts
+        // with a dot or is empty, and is no asset a record can name by accident.
+        Err(_) => {}
     }
 }
 

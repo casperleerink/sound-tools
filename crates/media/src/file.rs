@@ -106,6 +106,22 @@ impl fmt::Display for Container {
     }
 }
 
+/// What a file is, without its samples: enough to know how long it plays.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Info {
+    pub frames: u64,
+    pub channels: u16,
+    pub sample_rate: u32,
+    pub container: Container,
+}
+
+impl Info {
+    /// How long the file plays at its own rate.
+    pub fn seconds(&self) -> f64 {
+        self.frames as f64 / f64::from(self.sample_rate)
+    }
+}
+
 /// One audio file in memory: its bytes as they are on disk, and where its samples are.
 ///
 /// Immutable. The control side shares it with the audio thread through an `Arc`, inside a
@@ -166,6 +182,15 @@ impl Audio {
             encoding: layout.encoding,
             container: layout.container,
         })
+    }
+
+    pub fn info(&self) -> Info {
+        Info {
+            frames: self.frames,
+            channels: self.channels,
+            sample_rate: self.sample_rate,
+            container: self.container,
+        }
     }
 
     pub fn frames(&self) -> u64 {
@@ -319,6 +344,20 @@ fn chunks(bytes: &[u8], little_endian: bool) -> impl Iterator<Item = ([u8; 4], u
     })
 }
 
+/// Whether a whole chunk of a RIFF file starts at `at`: an id of four letters, digits or
+/// spaces, and a body that fits in the file.
+fn chunk_at(bytes: &[u8], at: usize) -> bool {
+    let Some(header) = bytes.get(at..at.saturating_add(8)) else {
+        return false;
+    };
+    let id = header.get(..4).unwrap_or_default();
+    let named = id
+        .iter()
+        .all(|byte| byte.is_ascii_alphanumeric() || *byte == b' ');
+    let size = u32_at(bytes, at + 4, true).unwrap_or(u32::MAX) as usize;
+    named && at.saturating_add(8).saturating_add(size) <= bytes.len()
+}
+
 fn u16_at(bytes: &[u8], at: usize, little_endian: bool) -> Option<u16> {
     let bytes = *bytes.get(at..)?.first_chunk::<2>()?;
     Some(if little_endian {
@@ -388,8 +427,10 @@ fn wav(bytes: &[u8]) -> Result<Layout, FormatError> {
     let encoding = encoding.ok_or_else(|| {
         FormatError::Unsupported(format!("WAV of {bits}-bit samples in {size} bytes"))
     })?;
-    // Writers that stream leave the length at its largest or at zero.
-    let length = (length != 0 && length != u32::MAX as usize).then_some(length);
+    // Writers that stream leave the length at its largest, or at zero with nothing after it.
+    // A zero followed by another chunk is a file with no samples.
+    let streamed = length == u32::MAX as usize || (length == 0 && !chunk_at(bytes, data));
+    let length = (!streamed).then_some(length);
     Ok(Layout {
         data,
         length,
