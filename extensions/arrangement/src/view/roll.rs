@@ -441,7 +441,10 @@ mod tests {
     fn a_resized_note_keeps_a_snap_step_and_ends_with_the_clip_at_the_latest() {
         let origin = note(960, 480, 60);
         assert_eq!(resized_note(length(BAR), origin, 0, GRID.unit), origin);
-        assert_eq!(resized_note(length(BAR), origin, 480, GRID.unit), note(960, 960, 60));
+        assert_eq!(
+            resized_note(length(BAR), origin, 480, GRID.unit),
+            note(960, 960, 60)
+        );
         assert_eq!(
             resized_note(length(BAR), origin, -10_000, GRID.unit),
             note(960, 240, 60)

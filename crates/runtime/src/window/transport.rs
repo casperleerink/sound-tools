@@ -473,11 +473,7 @@ impl TransportPill {
             .drag(tempo::DRAG_PER_POINT, tempo::DRAG_STEP)
             .keys(tempo::KEY_STEP, tempo::FINE_KEY_STEP)
             .on_change(weak_callback(cx, Self::on_tempo))
-            .child(
-                div()
-                    .font(typography::tabular())
-                    .child(tempo.to_string()),
-            )
+            .child(div().font(typography::tabular()).child(tempo.to_string()))
             .child(div().text_size(px(12.)).text_color(muted).child("bpm"));
         // The press picks the tempo change the drag edits, before the first move. A press that
         // moved nothing leaves nothing behind when it comes up, and the second press of a double

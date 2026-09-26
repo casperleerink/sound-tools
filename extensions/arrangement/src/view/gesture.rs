@@ -168,7 +168,10 @@ mod tests {
     fn the_right_edge_changes_the_length_and_going_back_restores_the_notes() {
         let origin = clip(BAR, BAR, &[(0, 480), (2880, 480)]);
         assert_eq!(resized_right(&origin, 0, UNIT), origin);
-        assert_eq!(resized_right(&origin, 960, UNIT).length.ticks(), Ticks(BAR + 960));
+        assert_eq!(
+            resized_right(&origin, 960, UNIT).length.ticks(),
+            Ticks(BAR + 960)
+        );
 
         // In past the second note, then out again: every move starts from the origin.
         let shorter = resized_right(&origin, -1920, UNIT);

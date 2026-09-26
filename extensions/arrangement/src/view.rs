@@ -45,8 +45,7 @@ use gpui::{
     Window, canvas, div, fill, point, prelude::*, px, quad, size,
 };
 use sound_core::{
-    Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks,
-    TimeSignature,
+    Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks, TimeSignature,
 };
 use sound_notes::Clip;
 use sound_ui::components::dropdown_menu::{
@@ -66,9 +65,9 @@ use layout::{
 pub use master_panel::MasterPanel;
 use master_panel::{MASTER_NAME, MasterPanelEvent};
 use paint::{PlayheadLine, accent, paint_focus_ring, paint_ruler, paint_track_label, placed};
+use roll::EDITOR_HEIGHT;
 use selection::Selection;
 use snap::{Grid, SharedSnap, Snap, snap, snapped_delta};
-use roll::EDITOR_HEIGHT;
 pub use track_panel::TrackPanel;
 use track_panel::TrackPanelEvent;
 
@@ -127,9 +126,8 @@ impl ArrangementView {
     ) -> Self {
         let playhead = session.read(cx).playhead().clone();
         let snap = SharedSnap::default();
-        let timeline = cx.new(|cx| {
-            Timeline::new(session.clone(), arrangement.clone(), snap.clone(), cx)
-        });
+        let timeline =
+            cx.new(|cx| Timeline::new(session.clone(), arrangement.clone(), snap.clone(), cx));
         let painted = timeline.read(cx).painted.clone();
         let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, painted, cx));
 
@@ -672,6 +670,8 @@ struct Marquee {
 struct Rename {
     track: Instance<TrackState>,
     input: Entity<TextInput>,
+    /// Kept apart from the field, because the field is being updated when it submits.
+    focus: FocusHandle,
     /// A click anywhere else finishes the edit, as in the Finder.
     _blur: Subscription,
 }
@@ -850,7 +850,11 @@ impl Timeline {
                     if timeline.selected_track.as_ref() == Some(id) {
                         timeline.select_track(None, cx);
                     }
-                    if timeline.rename.as_ref().is_some_and(|rename| rename.track.id() == id) {
+                    if timeline
+                        .rename
+                        .as_ref()
+                        .is_some_and(|rename| rename.track.id() == id)
+                    {
                         timeline.rename = None;
                     }
                     let first = timeline.clips.primary() == Some(id);
@@ -899,7 +903,9 @@ impl Timeline {
         .detach();
         let snap_menu = cx.new(|cx| {
             let items = Snap::ALL.map(|snap| MenuItem::new(snap.label(), snap.label()));
-            let entries = vec![MenuEntry::Group(MenuGroup::new().label("Snap").items(items))];
+            let entries = vec![MenuEntry::Group(
+                MenuGroup::new().label("Snap").items(items),
+            )];
             DropdownMenu::new("Snap", entries, cx)
                 .debug_name("snap")
                 .trigger(Trigger::Select)
@@ -1091,7 +1097,10 @@ impl Timeline {
         if found.is_empty() {
             return;
         }
-        let first = found.iter().find(|(_, first)| *first).map(|(id, _)| id.clone());
+        let first = found
+            .iter()
+            .find(|(_, first)| *first)
+            .map(|(id, _)| id.clone());
         let mut selected: Vec<_> = self.clips.iter().cloned().collect();
         selected.extend(found.into_iter().map(|(id, _)| id));
         let primary = first.or_else(|| self.clips.primary().cloned());
@@ -1210,9 +1219,10 @@ impl Timeline {
         }
     }
 
-    /// The name of the track being edited, while it is.
-    pub fn renaming(&self) -> Option<&Instance<TrackState>> {
-        self.rename.as_ref().map(|rename| &rename.track)
+    /// The track whose name is being edited and the field that edits it, while it is.
+    pub fn name_field(&self) -> Option<(&Instance<TrackState>, &Entity<TextInput>)> {
+        let rename = self.rename.as_ref()?;
+        Some((&rename.track, &rename.input))
     }
 
     fn time_signature(&self, cx: &App) -> TimeSignature {
@@ -1404,7 +1414,11 @@ impl Timeline {
 
     /// A press on the body of a clip: a move of it, or of every selected clip when it is one of
     /// them. `None` when the project has none of them any more.
-    fn start_move(&mut self, pressed: &Instance<Clip>, cx: &mut Context<Self>) -> Option<ClipDragKind> {
+    fn start_move(
+        &mut self,
+        pressed: &Instance<Clip>,
+        cx: &mut Context<Self>,
+    ) -> Option<ClipDragKind> {
         self.refresh_order(cx);
         if self.clips.contains(pressed.id()) {
             let selected: Vec<_> = self.clips.iter().cloned().collect();
@@ -1426,7 +1440,9 @@ impl Timeline {
                 written: start,
             });
         }
-        let grabbed = clips.iter().position(|moved| moved.clip.id() == pressed.id())?;
+        let grabbed = clips
+            .iter()
+            .position(|moved| moved.clip.id() == pressed.id())?;
         let grab_row = clips.get(grabbed)?.row;
         Some(ClipDragKind::Move {
             clips,
@@ -1499,7 +1515,11 @@ impl Timeline {
             return;
         };
         let grid = self.grid(cx);
-        let clip = new_clip(scene.viewport.tick_at(x), self.time_signature(cx), grid.step);
+        let clip = new_clip(
+            scene.viewport.tick_at(x),
+            self.time_signature(cx),
+            grid.step,
+        );
         let added = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
@@ -1805,7 +1825,12 @@ impl Timeline {
     }
 
     /// The keys of the focused timeline. Whether the key was one of them.
-    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    fn on_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         // Keys that bubble up from a control inside, such as the name field of a track or the
         // snap setting, are that control's.
         if !self.focus_handle.is_focused(window) {
@@ -1924,7 +1949,12 @@ impl Timeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(name) = self.session.read(cx).project().state(&track).map(|state| state.name.clone())
+        let Some(name) = self
+            .session
+            .read(cx)
+            .project()
+            .state(&track)
+            .map(|state| state.name.clone())
         else {
             return;
         };
@@ -1953,13 +1983,17 @@ impl Timeline {
         });
         let focus = input.focus_handle(cx);
         let blur = cx.on_blur(&focus, window, |timeline, window, cx| {
-            let text = timeline.rename.as_ref().map(|rename| rename.input.read(cx).text().to_string());
+            let text = timeline
+                .rename
+                .as_ref()
+                .map(|rename| rename.input.read(cx).text().to_string());
             timeline.finish_rename(text, window, cx);
         });
         window.focus(&focus, cx);
         self.rename = Some(Rename {
             track,
             input,
+            focus,
             _blur: blur,
         });
         cx.notify();
@@ -1971,7 +2005,7 @@ impl Timeline {
         let Some(rename) = self.rename.take() else {
             return;
         };
-        if rename.input.focus_handle(cx).is_focused(window) {
+        if rename.focus.is_focused(window) {
             window.focus(&self.focus_handle, cx);
         }
         let project = self.session.read(cx).project();
@@ -2011,10 +2045,13 @@ impl Timeline {
     /// What the selected clips are for the clipboard: each with its row and its name.
     fn copied(&mut self, cx: &mut Context<Self>) -> Option<CopiedClips> {
         self.refresh_order(cx);
-        let clips = self.selected_states(cx).into_iter().filter_map(|(clip, state)| {
-            let row = self.row_of(&clip.id().parent()?)?;
-            Some((row, clip.id().name().to_string(), state))
-        });
+        let clips = self
+            .selected_states(cx)
+            .into_iter()
+            .filter_map(|(clip, state)| {
+                let row = self.row_of(&clip.id().parent()?)?;
+                Some((row, clip.id().name().to_string(), state))
+            });
         CopiedClips::new(clips.collect::<Vec<_>>())
     }
 
@@ -2069,9 +2106,9 @@ impl Timeline {
         let added = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
-                let clips = placed.into_iter().filter_map(|(row, name, clip)| {
-                    Some((order.get(row)?, name, clip))
-                });
+                let clips = placed
+                    .into_iter()
+                    .filter_map(|(row, name, clip)| Some((order.get(row)?, name, clip)));
                 let added = add_clips(project, &mut changes, clips)?;
                 project.commit(label, changes)?;
                 Ok(added)
@@ -2144,7 +2181,9 @@ impl Timeline {
         }
         let label = plural(moves.len(), "Nudge clip", "Nudge clips");
         let primary = self.clips.primary().cloned();
-        let index = moves.iter().position(|step| Some(step.clip.id()) == primary.as_ref());
+        let index = moves
+            .iter()
+            .position(|step| Some(step.clip.id()) == primary.as_ref());
         let moved = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
@@ -2299,6 +2338,9 @@ fn listen(
                     timeline.keyboard_focus.pressed(cx);
                     timeline.on_mouse_down(event, position, &scene, window, cx)
                 });
+                // The timeline gave the focus itself, maybe on to the name field of a track.
+                // Its root must not take it back.
+                window.prevent_default();
             }
         }
     });
@@ -2446,7 +2488,14 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
         if let Some(marquee) = scene.marquee {
             let area = placed(marquee, timeline.origin);
             let solid = BorderStyle::Solid;
-            window.paint_quad(quad(area, px(2.), marquee_fill, px(1.), marquee_border, solid));
+            window.paint_quad(quad(
+                area,
+                px(2.),
+                marquee_fill,
+                px(1.),
+                marquee_border,
+                solid,
+            ));
         }
     });
 }
@@ -2487,12 +2536,16 @@ fn paint_tempo_marks(
         for mark in marks {
             let x = mark.x.round();
             // A bar number at the same place stays readable: the label goes after it.
-            let bar = bars.iter().find(|(_, bar_x)| (bar_x.round() - x).abs() < 1.);
+            let bar = bars
+                .iter()
+                .find(|(_, bar_x)| (bar_x.round() - x).abs() < 1.);
             let after = match bar {
                 Some((number, _)) => {
                     let text: SharedString = number.to_string().into();
                     let runs = [run(text.len(), unit)];
-                    let shaped = window.text_system().shape_line(text, font_size, &runs, None);
+                    let shaped = window
+                        .text_system()
+                        .shape_line(text, font_size, &runs, None);
                     8. + f32::from(shaped.width) + 4.
                 }
                 None => 4.,
@@ -2502,7 +2555,9 @@ fn paint_tempo_marks(
                 run(mark.text.len(), value),
                 run(text.len() - mark.text.len(), unit),
             ];
-            let shaped = window.text_system().shape_line(text, font_size, &runs, None);
+            let shaped = window
+                .text_system()
+                .shape_line(text, font_size, &runs, None);
             let (left, width) = (x + after, f32::from(shaped.width) + 12.);
             let tick_line = Bounds::new(
                 ruler.origin + point(px(x), px(0.)),

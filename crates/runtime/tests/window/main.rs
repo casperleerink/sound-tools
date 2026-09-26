@@ -16,6 +16,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod clips;
+mod editing;
 mod effects;
 mod filter;
 mod fit;

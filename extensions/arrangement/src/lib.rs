@@ -545,7 +545,8 @@ pub fn add_clip(
 
 /// Adds clips to tracks in one group of changes, for a paste or a duplicate: one undo step. Each
 /// id comes from the name of its clip on its track, as for [`add_clip`], and no two clips of
-/// the group get the same one.
+/// the group get the same one. A number at the end of a name counts on: a copy of `verse-2` is
+/// `verse-3` when that is free, not `verse-2-2`.
 pub fn add_clips<'a>(
     project: &Project,
     changes: &mut Changes,
@@ -554,7 +555,12 @@ pub fn add_clips<'a>(
     let mut taken = BTreeSet::new();
     let mut added = Vec::new();
     for (track, name, clip) in clips {
-        let wanted = track.id().child(&id_name(name, "clip"))?;
+        let name = id_name(name, "clip");
+        let unnumbered = match name.rsplit_once('-') {
+            Some((base, number)) if number.parse::<u32>().is_ok() => base,
+            _ => &name,
+        };
+        let wanted = track.id().child(unnumbered)?;
         let id = free_id_besides(project, &wanted, &taken)?;
         taken.insert(id.clone());
         added.push(changes.create(id, clip));

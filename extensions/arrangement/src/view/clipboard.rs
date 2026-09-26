@@ -67,7 +67,14 @@ impl CopiedClips {
         let placed = self.clips.iter().map(|(row, name, clip)| {
             let start = at + clip.start;
             let row = (top + row).min(last);
-            (row, name.as_str(), Clip { start, ..clip.clone() })
+            (
+                row,
+                name.as_str(),
+                Clip {
+                    start,
+                    ..clip.clone()
+                },
+            )
         });
         placed.collect()
     }
@@ -82,7 +89,11 @@ mod tests {
     const BAR: u64 = 3840;
 
     fn clip(start: u64, length: u64) -> Clip {
-        Clip::new(Ticks(start), Length::new(Ticks(length)).unwrap(), Vec::new())
+        Clip::new(
+            Ticks(start),
+            Length::new(Ticks(length)).unwrap(),
+            Vec::new(),
+        )
     }
 
     #[test]
