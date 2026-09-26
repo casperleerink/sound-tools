@@ -59,6 +59,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "AGENTS.md",
             "agent-docs/project-json.md",
             "agent-docs/arrangement.md",
+            "agent-docs/filter.md",
             "agent-docs/fit-tempo.md",
             "agent-docs/instrument.md",
             "agent-docs/plugins.md",
@@ -93,7 +94,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             );
         }
     }
-    let inspect = &files[7].1;
+    let inspect = &files[8].1;
     assert!(inspect.contains("```sh\nruntime . --inspect\n```"));
     assert_eq!(
         std::fs::read_to_string(harness.path("CLAUDE.md")).unwrap(),
@@ -149,7 +150,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .iter()
             .flat_map(|(_, text)| json_examples(text))
             .collect();
-        assert_eq!(all.len(), 14, "{time_signature}");
+        assert_eq!(all.len(), 16, "{time_signature}");
 
         // The raw take of a recording is not a record: it is an asset the runtime writes once
         // and never reads back. Its example is checked as the file it is.
@@ -208,6 +209,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             instances,
             [
                 "arrangement",
+                "arrangement/bass",
+                "arrangement/bass/dark",
                 "arrangement/piano",
                 "arrangement/piano/chords-bars-5-8",
                 "arrangement/piano/instrument",
