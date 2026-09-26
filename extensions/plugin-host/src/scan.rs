@@ -538,7 +538,7 @@ fn stamp(bundle: &Path) -> Option<Stamp> {
     let mut latest = match std::fs::read_dir(&binaries) {
         Ok(entries) => {
             let mut files: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
-            files.push(binaries.clone());
+            files.push(binaries);
             files.push(bundle.join("Contents/Info.plist"));
             files.iter().filter_map(|file| changed(file)).max()
         }
