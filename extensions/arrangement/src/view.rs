@@ -21,6 +21,7 @@
 //! what is on screen. Every change goes through the session: a drag is one gesture and one
 //! undo step.
 
+pub mod clip_card;
 pub mod clipboard;
 pub mod clips;
 pub mod editor;
@@ -365,8 +366,14 @@ impl ArrangementView {
                 true
             }
             Some(Detail::Track(_)) => {
-                let selected = timeline.selected_track();
-                let Some(track) = selected.and_then(|track| project.resolve(track)) else {
+                // An audio clip shows in the Clip card of its track, so the panel goes to the
+                // track of the selected audio clip, and else to the selected track.
+                let audio = timeline.selected_audio_clip(cx);
+                let selected = match audio.as_ref().and_then(|clip| clip.id().parent()) {
+                    Some(track) => Some(track),
+                    None => timeline.selected_track().cloned(),
+                };
+                let Some(track) = selected.and_then(|track| project.resolve(&track)) else {
                     return false;
                 };
                 self.open_track_panel(track, window, cx);

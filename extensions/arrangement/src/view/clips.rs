@@ -167,6 +167,36 @@ pub fn trimmed_right(
     }
 }
 
+/// The shortest part of a file the Start and End of the Clip card leave a clip, in seconds.
+pub const SHORTEST_SECONDS: f64 = 0.01;
+
+/// The clip playing its file from `seconds` on, as the start line of the Clip card and its
+/// Start knob set it. As the left edge on the timeline, it keeps the sound where it is in time:
+/// the clip starts that much later or earlier. It stops at tick 0 and short of the end.
+pub fn with_file_start(clip: &AudioClip, file: &Info, clock: &Clock, seconds: f64) -> AudioClip {
+    let end = clip.file_end_seconds.unwrap_or_else(|| file.seconds());
+    // The earliest the file can start and still begin at tick 0 or after.
+    let earliest = (clip.file_start_seconds - clock.seconds_of(clip.start)).max(0.0);
+    let seconds = seconds.clamp(earliest, (end - SHORTEST_SECONDS).max(earliest));
+    let start = clock.seconds_of(clip.start) + (seconds - clip.file_start_seconds);
+    AudioClip {
+        start: clock.tick_at_seconds(start),
+        file_start_seconds: seconds,
+        ..clip.clone()
+    }
+}
+
+/// The clip playing its file up to `seconds`, as the end line and the End knob set it. The end
+/// of the file is written as the end of the file.
+pub fn with_file_end(clip: &AudioClip, file: &Info, seconds: f64) -> AudioClip {
+    let seconds = seconds.max(clip.file_start_seconds + SHORTEST_SECONDS);
+    let file_end_seconds = (seconds < file.seconds()).then_some(seconds);
+    AudioClip {
+        file_end_seconds,
+        ..clip.clone()
+    }
+}
+
 /// How long a clip plays, in milliseconds.
 pub fn played_ms(clip: &AudioClip, file: &Info) -> f32 {
     let end = clip.file_end_seconds.unwrap_or_else(|| file.seconds());
@@ -310,6 +340,34 @@ mod tests {
         // Never shorter than a unit.
         let short = trimmed_right(&origin, &file, &clock, -100_000, UNIT);
         assert_eq!(short.end(Some(&file), &clock), Ticks(240));
+    }
+
+    #[test]
+    fn the_start_and_end_of_the_card_trim_as_the_edges_do() {
+        let (clock, file) = (clock(), file());
+        // At 2 s, playing the file from 1 s.
+        let origin = clip(3840, 1.0, None);
+        let later = with_file_start(&origin, &file, &clock, 1.5);
+        assert_eq!((later.start, later.file_start_seconds), (Ticks(4800), 1.5));
+        // Not before the start of the file, and not so early the clip would start before 0.
+        let earliest = with_file_start(&origin, &file, &clock, -1.0);
+        assert_eq!(
+            (earliest.start, earliest.file_start_seconds),
+            (Ticks(1920), 0.0)
+        );
+        let near_zero = clip(480, 2.0, None);
+        let most = with_file_start(&near_zero, &file, &clock, 0.0);
+        assert_eq!((most.start, most.file_start_seconds), (Ticks(0), 1.75));
+        // The end: short of the start, and the end of the file is no end at all.
+        assert_eq!(
+            with_file_end(&origin, &file, 3.0).file_end_seconds,
+            Some(3.0)
+        );
+        assert_eq!(with_file_end(&origin, &file, 4.0).file_end_seconds, None);
+        assert_eq!(
+            with_file_end(&origin, &file, 0.5).file_end_seconds,
+            Some(1.01)
+        );
     }
 
     #[test]

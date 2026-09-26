@@ -1,4 +1,5 @@
-//! The project menu: the project name top-left as a quiet menu. Add track, undo and redo with
+//! The project menu: the project name top-left as a quiet menu. Add an instrument track or an
+//! audio track, undo and redo with
 //! what they would do, the output device by name, and the project folder in the Finder or in
 //! a terminal. The terminal is where the composer starts a coding agent on the project.
 
@@ -13,9 +14,10 @@ use sound_ui::components::dropdown_menu::{
 };
 use sound_ui::{Session, extension_is_enabled};
 
-use crate::{add_track, main_arrangement};
+use crate::{add_audio_track, add_track, main_arrangement};
 
 const ADD_TRACK: &str = "add-track";
+const ADD_AUDIO_TRACK: &str = "add-audio-track";
 const FIT_TEMPO: &str = "fit-tempo";
 const UNDO: &str = "undo";
 const REDO: &str = "redo";
@@ -121,6 +123,11 @@ impl ProjectMenu {
                         session.edit(cx, |project| add_track(project, &arrangement));
                     }
                 }
+                ADD_AUDIO_TRACK => {
+                    if let Some(arrangement) = main_arrangement(session.project()) {
+                        session.edit(cx, |project| add_audio_track(project, &arrangement));
+                    }
+                }
                 FIT_TEMPO => fit_tempo_to_take(session, cx),
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
@@ -191,9 +198,14 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
             .disabled(label.is_none())
     };
     vec![
+        // A track is an instrument track or an audio track, chosen when it is made.
+        MenuEntry::Group(MenuGroup::new().label("Add track").items([
+            command(ADD_TRACK, "Instrument track".to_string()).disabled(!shown.can_add_track),
+            command(ADD_AUDIO_TRACK, "Audio track".to_string()).disabled(!shown.can_add_track),
+        ])),
+        MenuEntry::Separator,
         MenuEntry::Group(
             MenuGroup::new().items([
-                command(ADD_TRACK, "Add track".to_string()).disabled(!shown.can_add_track),
                 // The fit belongs to the whole project: it rewrites the tempo map every other
                 // part follows. So it sits here and not on the clip, and it is offered only for a
                 // clip that came from a recording.
