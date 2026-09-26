@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use sound_core::Ticks;
 
-use crate::support::{BAR, Harness, difference};
+use crate::support::{BAR, Harness, clip, difference};
 
 const PIANO: &str = "state/arrangement/piano/instance.json";
 
@@ -102,4 +102,51 @@ fn gain_pan_and_mute_from_a_file_apply_live_through_the_synth() {
     let (left, right) = from_the_start(&mut harness);
     assert_eq!(left[BAR / 2..], right[BAR / 2..]);
     assert!(peak(&left[BAR / 2..]) > 0.05);
+}
+
+/// The piece with both synths at full gain: its chords sum far over full scale.
+fn loud_piece() -> Harness {
+    let mut harness = Harness::new();
+    let chords = [
+        (0, 15360, 48),
+        (0, 15360, 55),
+        (0, 15360, 64),
+        (0, 15360, 67),
+    ];
+    harness.write_track("piano", 1, 1.0, &[("chords", clip(0, 15360, &chords))]);
+    harness.write_track(
+        "pad",
+        2,
+        1.0,
+        &[("long", clip(0, 15360, &[(0, 15360, 72)]))],
+    );
+    assert_eq!(harness.project.problems(), []);
+    harness
+}
+
+#[test]
+fn a_project_that_clipped_renders_under_the_ceiling_and_the_meter_says_so() {
+    let mut clipping = loud_piece();
+    clipping.bypass_limiter();
+    let before = clipping.play(2 * BAR);
+    let mut limited = loud_piece();
+    let after = limited.play(2 * BAR);
+    println!(
+        "sample peak without the limiter {:.4} ({:+.2} dBFS), with it {:.6} ({:+.4} dBFS)",
+        peak(&before),
+        20.0 * peak(&before).log10(),
+        peak(&after),
+        20.0 * peak(&after).log10()
+    );
+    assert!(peak(&before) > 1.5, "{}", peak(&before));
+    assert!(peak(&after) <= 1.0, "{}", peak(&after));
+    // The master meter took exactly the peak of the render.
+    let arrangement = sound_core::InstanceId::new("arrangement").unwrap();
+    let master = arrangement::master_peaks(&limited.project, &arrangement).unwrap();
+    let (left, right) = split(&after);
+    assert_eq!(master.take(), [peak(&left), peak(&right)]);
+    // And the device output, which the transport shows, is the same here: the master is all
+    // this project plays.
+    let output = limited.project.engine().output_peaks().take();
+    assert_eq!(output, [peak(&left), peak(&right)]);
 }

@@ -27,7 +27,11 @@ impl Metering {
     /// One reading, one poll after the last: the peaks since then, or silence when there are
     /// none, as for an instance that is gone. Whether what the meter shows changed.
     pub fn read(&mut self, peaks: Option<&Peaks>) -> bool {
-        let amplitudes = peaks.map_or([0.0; 2], Peaks::take);
+        self.read_amplitudes(peaks.map_or([0.0; 2], Peaks::take))
+    }
+
+    /// The same, for peaks that were taken already because something else shows them too.
+    pub fn read_amplitudes(&mut self, amplitudes: [f32; 2]) -> bool {
         let seconds = POLL_INTERVAL.as_secs_f32();
         let level = self.ballistics.read(amplitudes.map(decibels), seconds);
         let changed = level != self.level;

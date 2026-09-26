@@ -184,9 +184,10 @@ fn the_keys_select_a_track_open_its_panel_and_close_it(cx: &mut TestAppContext) 
     opened.keys("up");
     assert_eq!(opened.panel_track(), Some(id(TRACK)));
 
-    // Tab goes into the panel: the close control, the volume, the pan, mute and solo of the
-    // track, the picker and the expand icon of the card, the waveform, then the first knob.
-    for _ in 0..8 {
+    // Tab goes past the master row into the panel: the close control, the volume, the pan,
+    // mute and solo of the track, the picker and the expand icon of the card, the waveform,
+    // then the first knob.
+    for _ in 0..9 {
         opened.keys("tab");
     }
     opened.keys("right");
@@ -1025,3 +1026,127 @@ fn a_handle_of_the_envelope_edits_what_its_knob_edits_as_one_undo_step(cx: &mut 
 
 /// The default attack of a synth.
 const ATTACK_DEFAULT: f32 = 0.005;
+
+const SOLO: &str = "toggle-solo";
+
+/// The panel of the second track, which has no clip: soloing it silences the first.
+#[gpui::test]
+fn the_solo_button_is_one_undo_step_and_silences_every_other_track(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let loud = support::peak(&playing(&mut opened));
+    assert!(loud > 0.0);
+    let header = opened.track_header(1);
+    opened.click(header);
+    assert_eq!(opened.panel_track(), Some(id("arrangement/track-2")));
+
+    let solo = opened.control(SOLO);
+    opened.click(solo);
+    assert_eq!(opened.undo_label().as_deref(), Some("Solo track"));
+    let file = std::fs::read_to_string(opened.path("state/arrangement/track-2/instance.json"));
+    assert!(file.unwrap().contains(r#""solo": true"#));
+    opened.settle();
+    opened.render(24_000);
+    assert_eq!(support::peak(&opened.render(12_000)), 0.0);
+
+    opened.keys("cmd-z");
+    assert_eq!(opened.undo_label(), None);
+    opened.settle();
+    opened.render(24_000);
+    let again = support::peak(&opened.render(12_000));
+    assert!((again - loud).abs() < loud * 0.01, "{loud} then {again}");
+
+    // A file edit shows on the button: solo written into the first track from outside.
+    let path = opened.path(TRACK_FILE);
+    let record = r#"{"tool": "arrangement.track", "state": {"name": "Track 1", "solo": true}}"#;
+    std::fs::write(&path, record).unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[path]));
+    assert!(track(&mut opened).unwrap().solo);
+    let header = opened.track_header(0);
+    opened.click(header);
+    let solo = opened.control(SOLO);
+    opened.click(solo);
+    assert!(!track(&mut opened).unwrap().solo);
+    assert_eq!(opened.undo_label().as_deref(), Some("Unsolo track"));
+}
+
+/// The master row opens the panel of the master: its volume and the limiter, each control one
+/// undo step on the record of the arrangement.
+#[gpui::test]
+fn the_master_panel_edits_the_volume_and_the_limiter_as_one_undo_step_each(
+    cx: &mut TestAppContext,
+) {
+    use arrangement::ArrangementState;
+    let mut opened = open(cx);
+    let row = opened.control("master-row");
+    opened.click(row);
+    assert!(opened.master_panel().is_some());
+    assert!(opened.track_panel().is_none());
+    let master = |opened: &mut Opened<'_>| {
+        opened.project(|project| {
+            let arrangement = project.resolve::<ArrangementState>(&id("arrangement"))?;
+            project
+                .state(&arrangement)
+                .map(|state| state.master.clone())
+        })
+    };
+    const FILE: &str = "state/arrangement/instance.json";
+
+    // The ceiling from its knob: one key, one step, written.
+    let ceiling = opened.control("knob-limiter-ceiling_db");
+    opened.click(ceiling);
+    opened.keys("down");
+    let lowered = master(&mut opened).unwrap().limiter.ceiling_db;
+    assert!(lowered < 0.0, "{lowered}");
+    assert_eq!(opened.undo_label().as_deref(), Some("Change ceiling"));
+    let file = std::fs::read_to_string(opened.path(FILE)).unwrap();
+    assert!(
+        file.contains(&format!(r#""ceiling_db": {lowered:?}"#)),
+        "{file}"
+    );
+
+    // The ceiling handle of the display: one drag, one step.
+    let handle = opened.control("handle-ceiling");
+    opened.drag(handle, handle + point(px(0.), px(30.)));
+    let dragged = master(&mut opened).unwrap().limiter.ceiling_db;
+    assert!(dragged < lowered - 3.0, "{dragged}");
+    assert_eq!(opened.undo_label().as_deref(), Some("Change ceiling"));
+    opened.keys("cmd-z");
+    assert_eq!(master(&mut opened).unwrap().limiter.ceiling_db, lowered);
+
+    // The power icon: off and on, one step each.
+    let power = opened.control("card-limiter-power");
+    opened.click(power);
+    assert!(master(&mut opened).unwrap().limiter.bypass);
+    assert_eq!(opened.undo_label().as_deref(), Some("Turn off Limiter"));
+
+    // The volume of the master down to its bottom, which is silence and saved as such.
+    let volume = opened.control("volume-master-gain_db");
+    opened.drag(volume, volume + point(px(0.), px(400.)));
+    assert_eq!(master(&mut opened).unwrap().gain_db, f32::NEG_INFINITY);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change master volume"));
+    let file = std::fs::read_to_string(opened.path(FILE)).unwrap();
+    assert!(file.contains(r#""gain_db": "-inf""#), "{file}");
+
+    // Four steps back to where the project began, and the file with it.
+    for _ in 0..3 {
+        opened.keys("cmd-z");
+    }
+    assert_eq!(master(&mut opened), Some(Default::default()));
+    assert_eq!(opened.undo_label(), None);
+
+    // A file edit shows in the panel, which reads the record on every frame.
+    let path = opened.path(FILE);
+    let record =
+        r#"{"tool": "arrangement", "state": {"master": {"limiter": {"ceiling_db": -6.0}}}}"#;
+    std::fs::write(&path, record).unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[path]));
+    assert_eq!(master(&mut opened).unwrap().limiter.ceiling_db, -6.0);
+    let ceiling = opened.control("knob-limiter-ceiling_db");
+    opened.click(ceiling);
+    opened.keys("up");
+    assert!(master(&mut opened).unwrap().limiter.ceiling_db > -6.0);
+
+    // Escape closes it, and a track header opens a track panel in its place.
+    opened.keys("escape");
+    assert!(opened.master_panel().is_none());
+}

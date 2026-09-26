@@ -332,3 +332,52 @@ fn a_reorder_written_from_outside_shows_in_the_rack(cx: &mut TestAppContext) {
         ]
     );
 }
+
+#[gpui::test]
+fn the_power_icon_bypasses_an_effect_as_one_undo_step(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let plain = settled(&mut opened);
+    add_effect(&mut opened);
+    let through = settled(&mut opened);
+    assert_ne!(through, plain);
+
+    // The power icon of the effect: the slot says it is bypassed, the record of the effect
+    // stays, and the track sounds as it did without it.
+    let power = opened.control("card-sound-tools-test-tone-power");
+    opened.click(power);
+    assert_eq!(
+        opened.undo_label().as_deref(),
+        Some("Turn off Sound Tools Test Tone")
+    );
+    let record = track_file(&mut opened);
+    assert!(
+        record.contains(r#"{"name": "sound-tools-test-tone", "bypass": true}"#),
+        "{record}"
+    );
+    assert_eq!(card_names(&mut opened), [PLUGIN_NAME, PLUGIN_NAME]);
+    assert_eq!(settled(&mut opened), plain);
+
+    // Again: on, as another step, and one undo is the one step back.
+    let power = opened.control("card-sound-tools-test-tone-power");
+    opened.click(power);
+    assert_eq!(
+        opened.undo_label().as_deref(),
+        Some("Turn on Sound Tools Test Tone")
+    );
+    assert_ne!(settled(&mut opened), plain);
+    opened.keys("cmd-z");
+    assert_eq!(settled(&mut opened), plain);
+    opened.keys("cmd-z");
+    assert!(track_file(&mut opened).contains(r#""effects": ["sound-tools-test-tone"]"#));
+
+    // A file edit of the slot shows at once, and is its own step.
+    let path = opened.path(TRACK_FILE);
+    let record = track_file(&mut opened).replace(
+        r#""effects": ["sound-tools-test-tone"]"#,
+        r#""effects": [{"name": "sound-tools-test-tone", "bypass": true}]"#,
+    );
+    std::fs::write(&path, record).unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[path]));
+    assert_eq!(settled(&mut opened), plain);
+    assert_eq!(opened.undo_label().as_deref(), Some("File change"));
+}

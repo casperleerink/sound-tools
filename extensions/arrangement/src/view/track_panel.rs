@@ -44,7 +44,7 @@ use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::components::volume::Volume;
 use sound_ui::{
     ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, Metering, Session, Slot, Views,
-    every_poll, weak_callback,
+    every_poll, weak_action, weak_callback,
 };
 
 use super::layout::HEADER_WIDTH;
@@ -400,13 +400,7 @@ impl TrackPanel {
             close_focus: cx.focus_handle().tab_stop(true),
             rack_scroll: ScrollHandle::new(),
             metering: Metering::default(),
-            _metering: every_poll(cx, |panel: &mut Self, cx| {
-                let project = panel.session.read(cx).project();
-                let peaks = crate::track_peaks(project, panel.track.id());
-                if panel.metering.read(peaks.as_ref()) {
-                    cx.notify();
-                }
-            }),
+            _metering: every_poll(cx, Self::read_meter),
         };
         panel.set_track(track, window, cx);
         panel
@@ -414,6 +408,16 @@ impl TrackPanel {
 
     pub fn track(&self) -> &Instance<TrackState> {
         &self.track
+    }
+
+    /// One poll of the meter of the volume. Its timer calls it; a snapshot calls it to skip
+    /// the wait.
+    pub fn read_meter(&mut self, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project();
+        let peaks = crate::track_peaks(project, self.track.id());
+        if self.metering.read(peaks.as_ref()) {
+            cx.notify();
+        }
     }
 
     /// The view in each card of the rack, left to right. `None` for a card without one.
@@ -639,16 +643,10 @@ impl TrackPanel {
         let (peach, yellow) = (cx.theme().peach, cx.theme().yellow);
         let volume = Volume::new("gain_db", track.gain_db)
             .level(self.metering.level())
-            .on_clear_clip({
-                let panel = cx.weak_entity();
-                move |_, cx| {
-                    let clear = |panel: &mut Self, cx: &mut Context<Self>| {
-                        panel.metering.clear_clip();
-                        cx.notify();
-                    };
-                    panel.update(cx, clear).ok();
-                }
-            })
+            .on_clear_clip(weak_action(cx, |panel: &mut Self, cx| {
+                panel.metering.clear_clip();
+                cx.notify();
+            }))
             .on_change(weak_callback(cx, |panel, change: ValueChange, cx| {
                 let (session, track) = (&panel.session, &panel.track);
                 let set = |track: &mut TrackState, db: f32| track.gain_db = volume_db(db);

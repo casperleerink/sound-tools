@@ -11,6 +11,8 @@
 //!   notified, so playback does not run this code.
 //! - [`NoteEditor`] does the same for the notes of one clip.
 //! - [`TrackPanel`] shows the devices of one track, each in the view of its own tool.
+//! - [`MasterPanel`] shows the master: its volume and its limiter. The master row under the
+//!   tracks opens it.
 //! - A `PlayheadLine` on top of each draws one line, every frame while the project plays.
 //!
 //! All positions come from [`layout`], and what a drag does to a clip from [`gesture`]. The
@@ -21,6 +23,7 @@
 pub mod editor;
 pub mod gesture;
 pub mod layout;
+pub mod master_panel;
 mod paint;
 pub mod roll;
 pub mod track_panel;
@@ -31,10 +34,10 @@ use std::rc::Rc;
 
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Entity,
-    EventEmitter, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollWheelEvent,
-    SharedString, StyleRefinement, Subscription, Window, canvas, div, fill, point, prelude::*, px,
-    quad, size,
+    EventEmitter, FocusHandle, Focusable, FontWeight, Hitbox, HitboxBehavior, Hsla, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
+    ScrollWheelEvent, SharedString, StyleRefinement, Subscription, Window, canvas, div, fill,
+    point, prelude::*, px, quad, size,
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent, State, Ticks, TimeSignature};
 use sound_notes::Clip;
@@ -48,6 +51,8 @@ use layout::{
     Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, SNAP, TRACK_HEIGHT, Viewport, shifted, snap,
     snapped_delta,
 };
+pub use master_panel::MasterPanel;
+use master_panel::{MASTER_NAME, MasterPanelEvent};
 use paint::{PlayheadLine, accent, paint_focus_ring, paint_ruler, paint_track_label, placed};
 use roll::EDITOR_HEIGHT;
 pub use track_panel::TrackPanel;
@@ -70,18 +75,30 @@ struct OpenTrackPanel {
     _events: Subscription,
 }
 
-/// What the panel below the timeline shows. One thing at a time: opening the other takes its
+struct OpenMasterPanel {
+    panel: Entity<MasterPanel>,
+    _events: Subscription,
+}
+
+/// What the panel below the timeline shows. One thing at a time: opening another takes its
 /// place.
 enum Detail {
     Editor(OpenEditor),
     Track(OpenTrackPanel),
+    Master(OpenMasterPanel),
 }
+
+/// The height of the master row, pinned under the tracks.
+pub const MASTER_ROW_HEIGHT: f32 = 40.;
 
 pub struct ArrangementView {
     session: Entity<Session>,
+    arrangement: Instance<ArrangementState>,
     timeline: Entity<Timeline>,
     playhead_line: Entity<PlayheadLine>,
     detail: Option<Detail>,
+    /// The master row is a tab stop after the timeline, and enter opens its panel.
+    master_focus: FocusHandle,
 }
 
 impl ArrangementView {
@@ -92,7 +109,7 @@ impl ArrangementView {
         cx: &mut Context<Self>,
     ) -> Self {
         let playhead = session.read(cx).playhead().clone();
-        let timeline = cx.new(|cx| Timeline::new(session.clone(), arrangement, cx));
+        let timeline = cx.new(|cx| Timeline::new(session.clone(), arrangement.clone(), cx));
         let painted = timeline.read(cx).painted.clone();
         let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, painted, cx));
 
@@ -104,6 +121,14 @@ impl ArrangementView {
                 TimelineEvent::OpenTrack(track) => view.open_track_panel(track.clone(), window, cx),
             },
         )
+        .detach();
+        // The timeline is a cached view and works out its focus ring while it paints. The
+        // master row next to it takes the focus without painting it, so the timeline is told
+        // to paint again, or it would still think it had the focus when tab brings it back.
+        let focus = timeline.read(cx).focus_handle.clone();
+        cx.on_focus_out(&focus, window, |view, _, _, cx| {
+            view.timeline.update(cx, |_, cx| cx.notify());
+        })
         .detach();
         // What is open follows the selection to another clip or another track.
         cx.observe_in(&timeline, window, |view, _, window, cx| {
@@ -146,9 +171,11 @@ impl ArrangementView {
         .detach();
         let view = Self {
             session,
+            arrangement,
             timeline,
             playhead_line,
             detail: None,
+            master_focus: cx.focus_handle().tab_stop(true),
         };
         view.publish_notice_room(cx);
         view
@@ -159,7 +186,7 @@ impl ArrangementView {
     fn publish_notice_room(&self, cx: &mut Context<Self>) {
         let bottom = match &self.detail {
             Some(Detail::Editor(_)) => EDITOR_HEIGHT,
-            Some(Detail::Track(_)) => track_panel::PANEL_HEIGHT,
+            Some(Detail::Track(_) | Detail::Master(_)) => track_panel::PANEL_HEIGHT,
             None => 0.,
         };
         let room = NoticeRoom {
@@ -178,7 +205,7 @@ impl ArrangementView {
     pub fn editor(&self) -> Option<&Entity<NoteEditor>> {
         match &self.detail {
             Some(Detail::Editor(open)) => Some(&open.editor),
-            Some(Detail::Track(_)) | None => None,
+            _ => None,
         }
     }
 
@@ -186,8 +213,36 @@ impl ArrangementView {
     pub fn track_panel(&self) -> Option<&Entity<TrackPanel>> {
         match &self.detail {
             Some(Detail::Track(open)) => Some(&open.panel),
-            Some(Detail::Editor(_)) | None => None,
+            _ => None,
         }
+    }
+
+    /// The master panel, while it is open.
+    pub fn master_panel(&self) -> Option<&Entity<MasterPanel>> {
+        match &self.detail {
+            Some(Detail::Master(open)) => Some(&open.panel),
+            _ => None,
+        }
+    }
+
+    /// Opens the panel of the master. It takes the place of what the panel below showed.
+    pub fn open_master_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.master_panel().is_some() {
+            return;
+        }
+        self.close_detail(window, cx);
+        let (session, arrangement) = (self.session.clone(), self.arrangement.clone());
+        let panel = cx.new(|cx| MasterPanel::new(session, arrangement, cx));
+        let events = cx.subscribe_in(&panel, window, |view, _, event, window, cx| {
+            let MasterPanelEvent::Close = event;
+            view.close_detail(window, cx);
+        });
+        self.detail = Some(Detail::Master(OpenMasterPanel {
+            panel,
+            _events: events,
+        }));
+        self.publish_notice_room(cx);
+        cx.notify();
     }
 
     fn editor_clip(&self, cx: &App) -> Option<InstanceId> {
@@ -271,6 +326,7 @@ impl ArrangementView {
             }
             // A knob drag of a device ends when its view is released with the panel.
             Some(Detail::Track(open)) => open.panel.focus_handle(cx),
+            Some(Detail::Master(open)) => open.panel.focus_handle(cx),
             None => return,
         };
         if focus_handle.contains_focused(window, cx) {
@@ -304,8 +360,76 @@ impl ArrangementView {
                 self.open_track_panel(track, window, cx);
                 true
             }
-            None => false,
+            Some(Detail::Master(_)) | None => false,
         }
+    }
+
+    /// The master row: pinned under the tracks, with a ring where a track has its dot. A click,
+    /// or enter when it has the focus, opens the panel of the master.
+    fn master_row(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = cx.theme();
+        let (hairline, ring, text, selected, focus) = (
+            theme.alpha_at(0.05),
+            theme.gray_800,
+            theme.gray_900,
+            theme.alpha_at(0.05),
+            theme.lavender,
+        );
+        let open = self.master_panel().is_some();
+        let header = div()
+            .id("master-row")
+            .debug_selector(|| "master-row".to_string())
+            .track_focus(&self.master_focus)
+            .relative()
+            .flex_none()
+            .w(px(HEADER_WIDTH))
+            .h_full()
+            .border_r_1()
+            .border_color(hairline)
+            .cursor_pointer()
+            .on_click(cx.listener(|view, _, window, cx| view.open_master_panel(window, cx)))
+            .child(
+                // The fill of a selected track header, in the same place.
+                div()
+                    .absolute()
+                    .left(px(8.))
+                    .top(px(4.))
+                    .w(px(HEADER_WIDTH - 16.))
+                    .h(px(MASTER_ROW_HEIGHT - 8.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .when(open, |fill| fill.bg(selected))
+                    .focus_visible(move |style| style.border_color(focus)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(24.))
+                    .top(px(MASTER_ROW_HEIGHT / 2. - 4.))
+                    .size(px(8.))
+                    .rounded_full()
+                    .border(px(1.5))
+                    .border_color(ring),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(44.))
+                    .top(px(MASTER_ROW_HEIGHT / 2. - 10.))
+                    .line_height(px(20.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(text)
+                    .child(MASTER_NAME),
+            );
+        div()
+            .flex_none()
+            .h(px(MASTER_ROW_HEIGHT))
+            .flex()
+            .border_t_1()
+            .border_color(hairline)
+            .child(header)
+            .into_any_element()
     }
 }
 
@@ -333,8 +457,13 @@ impl Render for ArrangementView {
                     let height = track_panel::PANEL_HEIGHT;
                     panel("track-panel", height).child(open.panel.clone().cached(fill_parent()))
                 }
+                Detail::Master(open) => {
+                    let height = track_panel::PANEL_HEIGHT;
+                    panel("master-panel", height).child(open.panel.clone().cached(fill_parent()))
+                }
             }
         });
+        let master_row = self.master_row(cx);
         div()
             .size_full()
             .flex()
@@ -359,6 +488,7 @@ impl Render for ArrangementView {
                     .child(timeline.cached(fill_parent()))
                     .child(self.playhead_line.clone()),
             )
+            .child(master_row)
             .children(detail)
     }
 }
