@@ -654,7 +654,9 @@ pub fn add_audio_clip(
 
 /// Adds audio clips to tracks in one group of changes, for a drop of several files, a paste or
 /// a duplicate: one undo step. Each goes over every clip its track has, and a later one over an
-/// earlier one of the same track, so the newest covers. Ids as for [`add_clips`].
+/// earlier one of the same track, so the newest covers. Each id is its name, or the next free
+/// one after it: `strum-2`, then `strum-2-2`. A paste gives names without their number, as
+/// [`add_clips`] makes them.
 pub fn add_audio_clips<'a>(
     project: &Project,
     changes: &mut Changes,
@@ -670,7 +672,7 @@ pub fn add_audio_clips<'a>(
         clip.layer = *layer;
         *layer = layer.saturating_add(1);
         let name = id_name(name, "clip");
-        let id = free.take(project, &track.id().child(unnumbered(&name))?)?;
+        let id = free.take(project, &track.id().child(&name)?)?;
         added.push(changes.create(id, clip));
     }
     Ok(added)

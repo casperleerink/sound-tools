@@ -68,6 +68,7 @@
 //!   playhead and the transport on it.
 //! - `arrangement-snap.png`: the snap setting open in the corner above the track headers.
 //! - `arrangement-rename.png`: the name field open in the header of the bass.
+//! - `audio-*.png`: audio tracks and clips, see `snapshots/audio.rs`.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -107,6 +108,8 @@ use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{Assets, Session};
 use tempfile::TempDir;
 
+#[path = "snapshots/audio.rs"]
+mod audio;
 #[path = "projects/generated_take.rs"]
 mod generated_take;
 
@@ -875,6 +878,12 @@ fn main() -> Result<()> {
 
     let opened = Opened::new(&mut cx, |_| Ok(()))?;
     save(&mut cx, &opened, "default")?;
+
+    // Audio tracks and clips first, so a run that only looks at them does not wait for the rest.
+    audio::snapshots(&mut cx, &save)?;
+    if std::env::var("WINDOW_SNAPSHOT_ONLY").is_ok_and(|only| only == "audio") {
+        return Ok(());
+    }
 
     let mut opened = Opened::new(&mut cx, piece)?;
     let timeline = opened.timeline_view(&mut cx)?;

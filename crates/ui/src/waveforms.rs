@@ -54,6 +54,14 @@ impl Waveforms {
         self.made
     }
 
+    /// How many overviews are being made now.
+    pub fn making(&self) -> usize {
+        let making = self.known.values();
+        making
+            .filter(|known| matches!(known, Known::Making))
+            .count()
+    }
+
     /// The overview of a file of a project, when it is made. The first time it is asked for it
     /// is made on a background thread, and this returns `None` until then, as it does for a
     /// file that is not there or does not play. It costs one look at the size and time of the

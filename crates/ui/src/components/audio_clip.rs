@@ -15,7 +15,7 @@
 
 use gpui::{
     App, BorderStyle, Bounds, Hsla, PathBuilder, Pixels, Point, SharedString, TextAlign, TextRun,
-    Window, fill, point, px, quad, size,
+    TruncateFrom, Window, fill, point, px, quad, size,
 };
 
 use crate::components::paint;
@@ -211,7 +211,8 @@ pub fn paint_audio_clip(look: &AudioClipLook, window: &mut Window, cx: &mut App)
 
     if let Some(missing) = &look.missing {
         let origin = point(bounds.left() + px(12.), middle - px(8.));
-        paint_text(missing.clone(), origin, text_color, window, cx);
+        let width = f32::from(bounds.size.width) - 24.;
+        paint_text(missing.clone(), origin, width, text_color, window, cx);
         return;
     }
     let color = look.accent.opacity(WAVEFORM_OPACITY * dim);
@@ -316,22 +317,32 @@ pub fn paint_audio_clip(look: &AudioClipLook, window: &mut Window, cx: &mut App)
     }
 }
 
+/// A line of 12 pt text that ends in an ellipsis at `width`, so it stays inside its clip.
 fn paint_text(
     text: SharedString,
     origin: Point<Pixels>,
+    width: f32,
     color: Hsla,
     window: &mut Window,
     cx: &mut App,
 ) {
+    if width <= 0. {
+        return;
+    }
+    let font = typography::tabular();
     let run = TextRun {
         len: text.len(),
-        font: typography::tabular(),
+        font: font.clone(),
         color,
         background_color: None,
         underline: None,
         strikethrough: None,
     };
-    let shaped = window.text_system().shape_line(text, px(12.), &[run], None);
+    let mut wrapper = window.text_system().line_wrapper(font, px(12.));
+    let runs = [run];
+    let (text, runs) = wrapper.truncate_line(text, px(width), "…", &runs, TruncateFrom::End);
+    let runs = runs.into_owned();
+    let shaped = window.text_system().shape_line(text, px(12.), &runs, None);
     if let Err(error) = shaped.paint(origin, px(16.), TextAlign::Left, None, window, cx) {
         eprintln!("audio clip: {error}");
     }

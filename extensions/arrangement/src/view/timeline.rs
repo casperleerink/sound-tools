@@ -2474,7 +2474,8 @@ impl Timeline {
                     };
                     match clip {
                         AnyClip::Notes(clip) => notes.push((track, name, clip)),
-                        AnyClip::Audio(clip) => audio.push((track, name, clip)),
+                        // A copy of `take-2` is `take` when that is free, as for notes.
+                        AnyClip::Audio(clip) => audio.push((track, unnumbered(name), clip)),
                     }
                 }
                 let mut added: Vec<InstanceId> = add_clips(project, &mut changes, notes)?
@@ -2992,7 +2993,9 @@ fn listen(
                 }
                 let dragging = timeline.drag.is_some() || timeline.marquee.is_some();
                 if !dragging {
-                    match hitbox.is_hovered(window) {
+                    // Something from elsewhere is dragged over, such as files from the
+                    // Finder before the timeline knows them: no clip is under the pointer.
+                    match hitbox.is_hovered(window) && !cx.has_active_drag() {
                         true => timeline.hover(x, y, &scene, cx),
                         false => timeline.unhover(cx),
                     }
@@ -3055,11 +3058,12 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
     );
     let (selection, selected_header) = (theme.gray_950, theme.alpha_at(0.05));
     let (marquee_fill, marquee_border) = (theme.alpha_at(0.05), theme.alpha_at(0.20));
-    let (drop_ring, ghost_text, muted_ring, muted_text) = (
+    let (drop_ring, ghost_text, muted_ring, muted_text, window_fill) = (
         theme.lavender,
         theme.gray_950,
         theme.gray_800,
         theme.gray_700,
+        theme.gray_100,
     );
     let headers = Bounds::new(
         bounds.origin + point(px(0.), px(RULER_HEIGHT)),
@@ -3185,6 +3189,9 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
             for (rect, name) in &ghosts.clips {
                 let area = placed(*rect, timeline.origin);
                 let solid = BorderStyle::Solid;
+                // Opaque: the clip it makes covers what it lies over, the newest on top.
+                let clear = Hsla::transparent_black();
+                window.paint_quad(quad(area, px(6.), window_fill, px(0.), clear, solid));
                 window.paint_quad(quad(area, px(6.), clip_fill, px(2.), drop_ring, solid));
                 let origin = area.origin + point(px(12.), px(8.));
                 let fit = Fit::Truncate((f32::from(area.size.width) - 24.).max(0.));

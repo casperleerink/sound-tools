@@ -54,7 +54,7 @@ use paint::PlayheadLine;
 use roll::EDITOR_HEIGHT;
 use snap::SharedSnap;
 use timeline::scrolled_or_zoomed;
-pub use timeline::{ClipShape, Scene, Timeline, TimelineEvent};
+pub use timeline::{ClipShape, DropTarget, Scene, Timeline, TimelineEvent};
 pub use track_panel::TrackPanel;
 use track_panel::TrackPanelEvent;
 
