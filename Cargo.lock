@@ -1637,6 +1637,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "eq"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "proptest 1.11.0",
+ "serde",
+ "serde_json",
+ "sound-core",
+ "sound-notes",
+ "sound-ui",
+]
+
+[[package]]
 name = "equator"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5073,6 +5086,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrangement",
+ "eq",
  "filter",
  "fit-tempo",
  "gpui",
