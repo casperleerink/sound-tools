@@ -196,3 +196,100 @@ fn filetime_now(path: &std::path::Path) {
     let mut file = file;
     file.write_all(&[0]).expect("the binary is touched");
 }
+
+/// A plugin installed while the app runs is found without a restart, when a picker asks what
+/// there is: the window's host looks at the plugin folders again then. A look that finds
+/// nothing new changes nothing, so the picker it fills again does not make it look for ever.
+///
+/// The loops below ask until the plugin turns up, so the test does not depend on when the
+/// thread that looks again runs.
+#[test]
+fn a_plugin_installed_while_the_app_runs_is_in_the_next_picker() {
+    let folder = tempfile::tempdir().unwrap();
+    let search = vec![plugin_folder_of(folder.path(), PluginFormat::Clap)];
+    let plugins = Plugins::new(search, scanner(), no_cache());
+    plugins.start_scanning();
+    plugins.wait_for_scan();
+    assert_eq!(plugins.instruments().len(), 1);
+
+    test_vst3_plugin::install_into(&folder.path().join("plugins"));
+    let started = Instant::now();
+    while plugins.instruments().len() < 2 {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the plugin was not found"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let generation = plugins.scan_generation();
+    for _ in 0..20 {
+        plugins.instruments();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(plugins.scan_generation(), generation);
+    assert_eq!(plugins.instruments().len(), 2);
+}
+
+/// A record that names a plugin this machine does not have plays once the composer installs
+/// it, with no picker open and no restart: the host looks again while a record waits. The loop
+/// is what the window's poll does.
+#[test]
+fn a_record_whose_plugin_is_installed_while_the_app_runs_plays() {
+    let folder = tempfile::tempdir().unwrap();
+    let search = vec![plugin_folder_of(folder.path(), PluginFormat::Clap)];
+    let plugins = Plugins::new(search, scanner(), no_cache());
+    plugins.start_scanning();
+    plugins.wait_for_scan();
+    let mut harness = Harness::with_plugins(folder, plugins);
+    let played = (0..40)
+        .map(|index| Played::On {
+            frame: index * 512,
+            pitch: 60,
+            velocity: 100,
+        })
+        .collect();
+    harness.add_track(record(PluginFormat::Vst3, "piano"), played);
+    let problems = harness.problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("this machine has no"), "{problems:?}");
+
+    test_vst3_plugin::install_into(&harness.folder.path().join("plugins"));
+    let started = Instant::now();
+    while !harness.problems().is_empty() {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the record still waits: {:?}",
+            harness.problems()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        harness.plugins.poll(&harness.project);
+        for instance in harness.plugins.take_retries() {
+            harness.project.rebind(&instance).unwrap();
+        }
+    }
+    assert!(harness.play(2048).first_sound().is_some());
+}
+
+/// A cache that cannot be written costs the next start a scan and nothing else, and the
+/// composer is told, as every other error of work in the background is.
+#[test]
+fn a_cache_that_cannot_be_written_is_told() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let folder = tempfile::tempdir().unwrap();
+    let search = vec![plugin_folder_of(folder.path(), PluginFormat::Clap)];
+    let locked = folder.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let cache = ScanCache::at(locked.join("plugins.json"));
+
+    let plugins = Plugins::new(search, scanner(), cache);
+    assert_eq!(plugins.scan().plugins.len(), 1);
+    let notices = plugins.take_notices();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(
+        notices[0].contains("the plugin cache") && notices[0].contains("was not written"),
+        "{notices:?}"
+    );
+}

@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use vst3::Steinberg::Vst::{
     IAttributeList, IAttributeList_iid, IAttributeListTrait, IComponentHandler,
     IComponentHandlerTrait, IHostApplication, IHostApplicationTrait, IMessage, IMessage_iid,
-    IMessageTrait, ParamID, ParamValue, RestartFlags_, String128, TChar,
+    IMessageTrait, ParamID, ParamValue, RestartFlags, RestartFlags_, String128, TChar,
 };
 use vst3::Steinberg::{
     FUnknown, TUID, int32, int64, kInvalidArgument, kNoInterface, kNotImplemented, kResultOk,
@@ -293,7 +293,7 @@ impl IAttributeListTrait for HostAttributes {
 }
 
 /// What the plugin's controller tells the host: a parameter the composer changed in the
-/// plugin's own window, and a plugin that wants to be started again.
+/// plugin's own window, and what `restartComponent` asks for.
 ///
 /// `ivsteditcontroller.h` says what this interface is for: "Allow transfer of parameter editing
 /// to component (processor) via host and support automation." So an edit is two things here. It
@@ -309,12 +309,17 @@ impl IAttributeListTrait for HostAttributes {
 #[derive(Default)]
 pub struct Handler {
     state_is_dirty: AtomicBool,
-    restart_requested: AtomicBool,
-    /// The plugin's latency changed, so the host deactivates it, activates it again and reads
-    /// the new latency, which is what `kLatencyChanged` asks.
-    latency_changed: AtomicBool,
+    /// The plugin asked to be deactivated and activated again: its latency or its buses changed.
+    restart_wanted: AtomicBool,
+    /// The plugin asked to be unloaded and loaded again.
+    reload_wanted: AtomicBool,
+    /// The plugin changed the values of its parameters as a whole, as a preset it loaded itself
+    /// does, so the processor may no longer hold what the controller shows.
+    values_changed: AtomicBool,
     /// The plugin moved its MIDI controller mapping, which is where the sustain pedal goes.
     midi_mapping_changed: AtomicBool,
+    /// The plugin changed which parameters it has, so the host lists them again.
+    ids_changed: AtomicBool,
     /// How many edits are open (`beginEdit` without `endEdit`). Only for the log of the test
     /// plugin and to keep the pair balanced; nothing of the host depends on it.
     open_edits: AtomicI32,
@@ -341,18 +346,38 @@ impl Handler {
         self.state_is_dirty.store(true, Ordering::Release);
     }
 
-    pub fn take_restart_requested(&self) -> bool {
-        self.restart_requested.swap(false, Ordering::AcqRel)
+    /// Whether the plugin asked to be deactivated and activated again since the last call.
+    pub fn take_restart_wanted(&self) -> bool {
+        self.restart_wanted.swap(false, Ordering::AcqRel)
     }
 
-    /// Whether the plugin said its latency changed since the last call.
-    pub fn take_latency_changed(&self) -> bool {
-        self.latency_changed.swap(false, Ordering::AcqRel)
+    /// Whether the plugin asked to be unloaded and loaded again since the last call.
+    pub fn take_reload_wanted(&self) -> bool {
+        self.reload_wanted.swap(false, Ordering::AcqRel)
+    }
+
+    /// Whether the plugin said its parameter values changed as a whole since the last call.
+    pub fn take_values_changed(&self) -> bool {
+        self.values_changed.swap(false, Ordering::AcqRel)
     }
 
     /// Whether the plugin has moved its MIDI controller mapping since the last call.
     pub fn take_midi_mapping_changed(&self) -> bool {
         self.midi_mapping_changed.swap(false, Ordering::AcqRel)
+    }
+
+    /// Whether the plugin has changed which parameters it has since the last call.
+    pub fn take_ids_changed(&self) -> bool {
+        self.ids_changed.swap(false, Ordering::AcqRel)
+    }
+
+    /// Forgets a restart or a reload the plugin asked for so far. The host calls it once it has
+    /// just loaded or started the plugin: whatever the plugin asked while that went on, its
+    /// latency and buses are read after it, and a plugin that asks every time it is set up
+    /// would otherwise be started again for ever.
+    pub fn forget_restarts(&self) {
+        self.restart_wanted.store(false, Ordering::Release);
+        self.reload_wanted.store(false, Ordering::Release);
     }
 
     /// Every parameter edit that is waiting for the processor, newest value each, and nothing
@@ -365,9 +390,9 @@ impl Handler {
             .collect()
     }
 
-    /// Puts an edit back because the processor had no room for it. A newer edit of the same
-    /// parameter, which the plugin may have made in between, is left as it is: it is the one
-    /// the composer means.
+    /// Puts an edit back because the processor had no room for it, or never played it. A
+    /// newer edit of the same parameter, which the plugin may have made in between, is left as
+    /// it is: it is the one the composer means.
     pub fn keep_edit(&self, change: ParameterChange) {
         let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
         held.entry(change.id).or_insert(change.value);
@@ -375,24 +400,14 @@ impl Handler {
 }
 
 /// The `restartComponent` flags whose text in `ivsteditcontroller.h` asks the host to
-/// deactivate the plugin and activate it again. This build does not do that, so it says so,
-/// and the composer can take the plugin off the track and put it back.
+/// deactivate the plugin, read what changed and activate it again. The host does exactly
+/// that, and makes the audio side again from what the plugin says afterwards.
 ///
-/// - `kReloadComponent`: "The host has to unload completely the plug-in ... and reload it."
+/// - `kLatencyChanged`: "The host has to deactivate and reactivate the plug-in, then
+///   afterwards the host could ask for the current latency".
 /// - `kIoChanged`: "The host has to deactivate the plug-in, asks the plug-in for its wanted
 ///   new bus configurations, adapts its processing graph and reactivate the plug-in."
-/// - `kPrefetchableSupportChanged`: "The host has to deactivate the plug-in, calls
-///   `IPrefetchableSupport::getPrefetchableSupport` and reactivate the plug-in."
-///
-/// `kLatencyChanged` asks the same, "The host has to deactivate and reactivate the plug-in,
-/// then afterwards the host could ask for the current latency", and this build does it: it is
-/// how a plugin's latency changes, and the engine compensates latency.
-///
-/// Every other flag is in [`Handler::restartComponent`]. ARCHITECTURE.md holds the whole list
-/// with what this build does about each.
-const NEEDS_RESTART: int32 = RestartFlags_::kReloadComponent as int32
-    | RestartFlags_::kIoChanged as int32
-    | RestartFlags_::kPrefetchableSupportChanged as int32;
+const RESTART: RestartFlags = RestartFlags_::kLatencyChanged | RestartFlags_::kIoChanged;
 
 impl IComponentHandlerTrait for Handler {
     unsafe fn beginEdit(&self, _id: ParamID) -> tresult {
@@ -416,35 +431,44 @@ impl IComponentHandlerTrait for Handler {
         kResultOk
     }
 
-    /// Every flag of `ivsteditcontroller.h` falls into one of three classes, and this build
-    /// treats each class the same way. ARCHITECTURE.md holds the table.
+    /// Every flag of `ivsteditcontroller.h` is noted here and acted on at the next poll, on
+    /// the host's thread. ARCHITECTURE.md holds the table of what each one gets.
     ///
-    /// - **Needs a restart this build does not do**, [`NEEDS_RESTART`]: the composer is told.
-    /// - **Handled**: `kLatencyChanged` means the plugin is to be deactivated and activated
-    ///   again, and its latency read again, which the host does; `kParamValuesChanged` means the
-    ///   values the host holds are stale, so the state is written again;
-    ///   `kMidiCCAssignmentChanged` means the pedal may now reach another parameter than the one
-    ///   this host found when the plugin loaded.
-    /// - **Nothing to say**: `kParamTitlesChanged`, `kNoteExpressionChanged`,
-    ///   `kIoTitlesChanged`, `kRoutingInfoChanged`, `kKeyswitchChanged` and
-    ///   `kParamIDMappingChanged` are each about a cache a host with a parameter view, a note
-    ///   expression display, bus titles, a routing view, a key switch display or parameter
-    ///   automation would drop. This build keeps none of those. Splice INSTRUMENT sends
-    ///   `kParamTitlesChanged` and `kParamIDMappingChanged` while a composer opens its window,
-    ///   and calling that a restart was a false alarm on a plugin that was working.
+    /// - [`RESTART`]: deactivate, read the latency and the buses again, activate.
+    /// - `kReloadComponent`, "The host has to unload completely the plug-in (controller/
+    ///   processor) and reload it": the plugin is saved and its record is loaded again.
+    /// - `kParamValuesChanged`, "The host invalidates all caches of parameter values and asks
+    ///   the edit controller for the current values": the values the host last gave the
+    ///   processor are compared with the controller's, and what differs is sent. The state is
+    ///   saved as well, because it changed.
+    /// - `kMidiCCAssignmentChanged`, "The host has to rebuild the MIDI-CC => parameter
+    ///   mapping": the sustain pedal's parameter is looked up again.
+    /// - `kParamIDMappingChanged`: the host lists the parameters again, so the values it
+    ///   compares for `kParamValuesChanged` are the plugin's parameters as they are now.
+    /// - Nothing for the rest. `kPrefetchableSupportChanged` asks for a deactivate so that the
+    ///   host can read `getPrefetchableSupport`, and this host never processes in prefetch mode.
+    ///   `kParamTitlesChanged`, `kNoteExpressionChanged`, `kIoTitlesChanged`,
+    ///   `kRoutingInfoChanged` and `kKeyswitchChanged` are each about
+    ///   a cache a host with a parameter view, a note expression display, bus titles, a routing
+    ///   view or a key switch display would drop. This host keeps none of those. Splice
+    ///   INSTRUMENT sends `kParamTitlesChanged` while a composer opens its window.
     unsafe fn restartComponent(&self, flags: int32) -> tresult {
-        // Values changing is not a restart: it means the state the host holds is stale.
-        if flags & RestartFlags_::kParamValuesChanged as int32 != 0 {
+        let asks = |flag: RestartFlags| flags & flag != 0;
+        if asks(RestartFlags_::kParamValuesChanged) {
+            self.values_changed.store(true, Ordering::Release);
             self.state_is_dirty.store(true, Ordering::Release);
         }
-        if flags & RestartFlags_::kMidiCCAssignmentChanged as int32 != 0 {
+        if asks(RestartFlags_::kMidiCCAssignmentChanged) {
             self.midi_mapping_changed.store(true, Ordering::Release);
         }
-        if flags & RestartFlags_::kLatencyChanged as int32 != 0 {
-            self.latency_changed.store(true, Ordering::Release);
+        if asks(RestartFlags_::kParamIDMappingChanged) {
+            self.ids_changed.store(true, Ordering::Release);
         }
-        if flags & NEEDS_RESTART != 0 {
-            self.restart_requested.store(true, Ordering::Release);
+        if flags & RESTART != 0 {
+            self.restart_wanted.store(true, Ordering::Release);
+        }
+        if asks(RestartFlags_::kReloadComponent) {
+            self.reload_wanted.store(true, Ordering::Release);
         }
         kResultOk
     }
@@ -492,8 +516,6 @@ unsafe fn read_utf16(string: *const TChar) -> Vec<TChar> {
 
 #[cfg(test)]
 mod tests {
-    use vst3::Steinberg::Vst::RestartFlags;
-
     use super::*;
 
     /// A knob drag is hundreds of edits of one parameter and only the last of them is the
@@ -543,117 +565,103 @@ mod tests {
         assert!((waiting[0].value - 0.25).abs() < f64::EPSILON);
     }
 
-    /// What Splice INSTRUMENT really sends: the state the host holds is stale, and nothing
-    /// else. It must be saved again and the composer must not be told anything.
-    #[test]
-    fn the_flags_splice_instrument_sends_only_mark_the_state_to_be_saved() {
-        let handler = Handler::default();
-        let flags = RestartFlags_::kParamTitlesChanged as int32;
-        let and_then = RestartFlags_::kParamIDMappingChanged as int32
-            | RestartFlags_::kParamValuesChanged as int32;
-        // SAFETY: as above.
-        unsafe {
-            handler.restartComponent(flags);
-            handler.restartComponent(and_then);
-            // `restartComponent(0)`, which asks for nothing at all.
-            handler.restartComponent(0);
-        }
-        assert!(!handler.take_restart_requested());
-        assert!(handler.take_state_is_dirty());
+    /// What the handler noted for one call of `restartComponent`, taken the way a poll takes
+    /// it: restart, reload, values changed, state to be saved, pedal mapping moved, parameters
+    /// listed again.
+    fn taken(handler: &Handler) -> [bool; 6] {
+        [
+            handler.take_restart_wanted(),
+            handler.take_reload_wanted(),
+            handler.take_values_changed(),
+            handler.take_state_is_dirty(),
+            handler.take_midi_mapping_changed(),
+            handler.take_ids_changed(),
+        ]
     }
 
-    /// Every flag of the format, each in the class ARCHITECTURE.md puts it in. Nothing is left
-    /// out: the twelve below are the whole `RestartFlags` enum of `ivsteditcontroller.h`.
+    /// What Splice INSTRUMENT really sends: the values changed, the titles and the id mapping,
+    /// and a `restartComponent(0)` that asks for nothing. The values and the list are acted on.
     #[test]
-    fn every_restart_flag_falls_in_the_class_the_header_gives_it() {
-        // The flag, whether it needs a restart this build does not do, whether it marks the
-        // state to be saved, whether it moves the sustain pedal's mapping, and whether it is a
-        // latency change, which the host restarts the plugin for.
-        let flags: [(RestartFlags, bool, bool, bool, bool); 12] = [
-            // Needs a deactivate and an activate again, which this build does not do.
-            (RestartFlags_::kReloadComponent, true, false, false, false),
-            (RestartFlags_::kIoChanged, true, false, false, false),
+    fn the_flags_splice_instrument_sends_ask_for_the_values_and_the_list_again() {
+        let handler = Handler::default();
+        // SAFETY: a plain call of a method that touches nothing but this handler.
+        unsafe {
+            handler.restartComponent(RestartFlags_::kParamTitlesChanged);
+            handler.restartComponent(
+                RestartFlags_::kParamIDMappingChanged | RestartFlags_::kParamValuesChanged,
+            );
+            handler.restartComponent(0);
+        }
+        assert_eq!(taken(&handler), [false, false, true, true, false, true]);
+    }
+
+    /// Every flag of the format, each with what ARCHITECTURE.md says this host does about it.
+    /// Nothing is left out: the twelve below are the whole `RestartFlags` enum of
+    /// `ivsteditcontroller.h`.
+    #[test]
+    fn every_restart_flag_is_noted_as_the_table_says() {
+        // Restart, reload, values changed, state to be saved, pedal mapping moved, listed again.
+        let nothing = [false; 6];
+        let flags: [(RestartFlags, [bool; 6]); 12] = [
             (
-                RestartFlags_::kPrefetchableSupportChanged,
-                true,
-                false,
-                false,
-                false,
+                RestartFlags_::kReloadComponent,
+                [false, true, false, false, false, false],
             ),
-            // Handled.
-            (RestartFlags_::kLatencyChanged, false, false, false, true),
+            (
+                RestartFlags_::kIoChanged,
+                [true, false, false, false, false, false],
+            ),
+            (
+                RestartFlags_::kLatencyChanged,
+                [true, false, false, false, false, false],
+            ),
             (
                 RestartFlags_::kParamValuesChanged,
-                false,
-                true,
-                false,
-                false,
+                [false, false, true, true, false, false],
             ),
             (
                 RestartFlags_::kMidiCCAssignmentChanged,
-                false,
-                false,
-                true,
-                false,
+                [false, false, false, false, true, false],
             ),
-            // Nothing for a host without those caches to do or to say.
-            (
-                RestartFlags_::kParamTitlesChanged,
-                false,
-                false,
-                false,
-                false,
-            ),
-            (
-                RestartFlags_::kNoteExpressionChanged,
-                false,
-                false,
-                false,
-                false,
-            ),
-            (RestartFlags_::kIoTitlesChanged, false, false, false, false),
-            (
-                RestartFlags_::kRoutingInfoChanged,
-                false,
-                false,
-                false,
-                false,
-            ),
-            (RestartFlags_::kKeyswitchChanged, false, false, false, false),
+            (RestartFlags_::kPrefetchableSupportChanged, nothing),
+            (RestartFlags_::kParamTitlesChanged, nothing),
+            (RestartFlags_::kNoteExpressionChanged, nothing),
+            (RestartFlags_::kIoTitlesChanged, nothing),
+            (RestartFlags_::kRoutingInfoChanged, nothing),
+            (RestartFlags_::kKeyswitchChanged, nothing),
             (
                 RestartFlags_::kParamIDMappingChanged,
-                false,
-                false,
-                false,
-                false,
+                [false, false, false, false, false, true],
             ),
         ];
         let mut seen = 0_i32;
-        for (flag, restart, dirty, mapping, latency) in flags {
+        for (flag, noted) in flags {
             assert_eq!(seen & flag, 0, "flag {flag} is in the list twice");
             seen |= flag;
             let handler = Handler::default();
-            // SAFETY: a plain call of a method that touches nothing but this handler.
+            // SAFETY: as above.
             unsafe { handler.restartComponent(flag) };
-            assert_eq!(
-                handler.take_restart_requested(),
-                restart,
-                "flag {flag}, restart"
-            );
-            assert_eq!(handler.take_state_is_dirty(), dirty, "flag {flag}, state");
-            assert_eq!(
-                handler.take_midi_mapping_changed(),
-                mapping,
-                "flag {flag}, midi mapping"
-            );
-            assert_eq!(
-                handler.take_latency_changed(),
-                latency,
-                "flag {flag}, latency"
-            );
+            assert_eq!(taken(&handler), noted, "flag {flag}");
         }
         // The whole enum, 1 to 1 << 11, and nothing else is in it.
         assert_eq!(seen, (1 << 12) - 1);
+    }
+
+    /// What a plugin asks for while it is being set up is forgotten once it is: the host reads
+    /// what changed after that anyway.
+    #[test]
+    fn a_restart_asked_for_during_the_set_up_is_forgotten() {
+        let handler = Handler::default();
+        // SAFETY: as above.
+        unsafe {
+            handler.restartComponent(
+                RestartFlags_::kReloadComponent
+                    | RestartFlags_::kIoChanged
+                    | RestartFlags_::kParamValuesChanged,
+            );
+        }
+        handler.forget_restarts();
+        assert_eq!(taken(&handler), [false, false, true, true, false, false]);
     }
 
     /// One flag of a combination is enough, whichever it is.
@@ -662,14 +670,11 @@ mod tests {
         let handler = Handler::default();
         let flags = RestartFlags_::kParamTitlesChanged
             | RestartFlags_::kIoChanged
-            | RestartFlags_::kLatencyChanged
+            | RestartFlags_::kReloadComponent
             | RestartFlags_::kParamValuesChanged;
         // SAFETY: as above.
         unsafe { handler.restartComponent(flags) };
-        assert!(handler.take_restart_requested());
-        assert!(handler.take_latency_changed());
-        assert!(handler.take_state_is_dirty());
-        assert!(!handler.take_midi_mapping_changed());
+        assert_eq!(taken(&handler), [true, true, true, true, false, false]);
     }
 
     #[test]

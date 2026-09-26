@@ -38,6 +38,11 @@ use crate::{PluginFormat, PluginRecord};
 /// writes whatever is left, so nothing is lost by waiting.
 const SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
+/// How often the host looks at the plugin folders again while a record names a plugin this
+/// machine does not have, so that installing it is all the composer has to do. A look at
+/// folders that did not change costs a few milliseconds on a thread of its own.
+const LOOK_INTERVAL: Duration = Duration::from_secs(2);
+
 /// What the host tells a plugin about itself.
 pub(crate) const HOST_NAME: &str = "Sound Tools";
 pub(crate) const HOST_VENDOR: &str = "Sound Tools";
@@ -63,7 +68,7 @@ pub enum PluginProblem {
     #[error("the plugin {plugin_id:?} did not load: {message}")]
     DidNotLoad { plugin_id: String, message: String },
     #[error(
-        "the plugin {plugin_id:?} asked to be started again, to change its latency, and did not start: {message}. Nothing plays through it until its record changes"
+        "the plugin {plugin_id:?} asked to be started again, because its latency or its buses changed, and did not start: {message}. Nothing plays through it until its record changes"
     )]
     DidNotRestart { plugin_id: String, message: String },
     #[error("the state of the plugin {plugin_id:?} could not be read: {message}")]
@@ -71,17 +76,9 @@ pub enum PluginProblem {
     #[error("the state of the plugin {plugin_id:?} could not be saved: {message}")]
     StateNotWritten { plugin_id: String, message: String },
     #[error(
-        "the plugin {plugin_id:?} asked to be started again, which this build does not do. Take it off the track and put it back if it stopped sounding"
-    )]
-    AskedForRestart { plugin_id: String },
-    #[error(
         "the plugin {plugin_id:?} offers the host no way to send the sustain pedal, so the pedal does not reach it. Its notes play"
     )]
     NoPedal { plugin_id: String },
-    #[error(
-        "the plugin {plugin_id:?} moved the parameter its sustain pedal is mapped to. The pedal still reaches the parameter it was mapped to when the plugin loaded, which may now be another control. Open the project again to pick the new mapping up"
-    )]
-    PedalMappingMoved { plugin_id: String },
     #[error("the plugin {plugin_id:?} has no window of its own")]
     NoWindow { plugin_id: String },
     #[error("the window of the plugin {plugin_id:?} did not open: {message}")]
@@ -176,6 +173,8 @@ struct Scanning {
     /// Goes up whenever the scan learns something, so a poll can tell that a record that was
     /// waiting for a plugin is worth trying again.
     generation: u64,
+    /// Whether the host is looking again, see [`Plugins::look_again`].
+    looking_again: bool,
 }
 
 struct Inner {
@@ -186,6 +185,11 @@ struct Inner {
     /// Whether a scan has run or is running. A host that scans in the background sets it as it
     /// starts, so nothing blocks on the first plugin a project names.
     started: Cell<bool>,
+    /// Whether this host scans in the background, which is the window's. Only such a host looks
+    /// again while it runs: the others run once and end.
+    in_background: Cell<bool>,
+    /// When the host last started to look again, for [`LOOK_INTERVAL`].
+    last_look: Cell<Option<Instant>>,
     /// Ends the scan thread between bundles when the host goes.
     stop: Arc<AtomicBool>,
     /// The generation the last poll acted on.
@@ -307,6 +311,8 @@ impl Plugins {
             cache,
             scanned: Arc::new(Mutex::new(Scanning::default())),
             started: Cell::new(false),
+            in_background: Cell::new(false),
+            last_look: Cell::new(None),
             stop: Arc::new(AtomicBool::new(false)),
             seen: Cell::new(0),
             waiting: RefCell::new(BTreeSet::new()),
@@ -326,6 +332,7 @@ impl Plugins {
     /// `--render`, `--inspect` and `--headless` do not call it and wait for the scan the first
     /// time a record needs one.
     pub fn start_scanning(&self) {
+        self.0.in_background.set(true);
         if self.0.started.replace(true) {
             return;
         }
@@ -396,6 +403,57 @@ impl Plugins {
         self.0.started.get() && !finished
     }
 
+    /// Looks at the plugin folders of this machine again, on a thread of its own, for a plugin
+    /// that was installed, updated or removed while the app runs. A bundle whose stamp is the
+    /// one the cache has costs no child process, so this is cheap when nothing changed, and
+    /// then it changes nothing either: what the host knows, and [`Self::scan_generation`], move
+    /// only when the plugins or the failures do. A record waiting for its plugin is tried again
+    /// when they move.
+    ///
+    /// It runs when a picker asks what there is ([`Self::instruments`], [`Self::effects`]), and
+    /// at a poll every [`LOOK_INTERVAL`] while a record names a plugin this machine did not
+    /// have. Only in a host that scans in the background, once its first scan is over, and one
+    /// at a time.
+    fn look_again(&self) {
+        if !self.0.in_background.get() {
+            return;
+        }
+        {
+            let Ok(mut scanned) = self.0.scanned.lock() else {
+                return;
+            };
+            if !scanned.scan.finished || scanned.looking_again {
+                return;
+            }
+            scanned.looking_again = true;
+        }
+        self.0.last_look.set(Some(Instant::now()));
+        let scanned = self.0.scanned.clone();
+        let stop = self.0.stop.clone();
+        let (paths, scanner, cache) = (
+            self.0.search_paths.clone(),
+            self.0.scanner.clone(),
+            self.0.cache.clone(),
+        );
+        let spawned = std::thread::Builder::new()
+            .name("plugin-rescan".to_string())
+            .spawn(move || {
+                // Whatever ends this thread, it is not looking any more.
+                let _done = DoneLooking(scanned.clone());
+                let scan = scan_folders(&paths, &scanner, &cache, &stop, |_| {});
+                // A scan the host stopped as it went is half a list, not what this machine has.
+                if scan.finished {
+                    publish_again(&scanned, scan);
+                }
+            });
+        if let Err(error) = spawned {
+            eprintln!("error: looking for plugins again needs a thread: {error}");
+            if let Ok(mut scanned) = self.0.scanned.lock() {
+                scanned.looking_again = false;
+            }
+        }
+    }
+
     /// Scans if this session has not, and waits for it. Does nothing once a scan has been
     /// started in the background.
     fn ensure_scan(&self) {
@@ -431,17 +489,23 @@ impl Plugins {
 
     /// Every instrument this machine has, of every format, in one line each, for a picker. It
     /// scans on the first call of the session, as loading a plugin does.
+    ///
+    /// A picker asks when it is filled, which is when a track panel opens, so this is also
+    /// where the host looks again for a plugin installed while the app runs. What that finds
+    /// fills the picker again through [`Self::scan_generation`].
     pub fn instruments(&self) -> Vec<ScannedPlugin> {
         let mut instruments = self.scan().plugins;
+        self.look_again();
         instruments.retain(ScannedPlugin::is_instrument);
         instruments
     }
 
     /// Every effect this machine has, for the picker that adds one to a rack. A plugin decides
     /// which list it is in by what it declares; nothing checks that it is true, and a record
-    /// written by hand may name any plugin in any slot.
+    /// written by hand may name any plugin in any slot. Looks again, as [`Self::instruments`].
     pub fn effects(&self) -> Vec<ScannedPlugin> {
         let mut effects = self.scan().plugins;
+        self.look_again();
         effects.retain(ScannedPlugin::is_effect);
         effects
     }
@@ -485,8 +549,13 @@ impl Plugins {
         match self.load(id, record, &asset, assets, config) {
             Ok(opened) => Ok(opened),
             Err(problem) => {
-                // A plugin the scan has not reached yet is worth trying again when it has.
-                if matches!(problem, PluginProblem::StillScanning { .. }) {
+                // A plugin the scan has not reached yet is worth trying again when it has, and
+                // one this machine does not have when a look again finds it: the composer may
+                // install it while the app runs. The poll looks again while one waits.
+                if matches!(
+                    problem,
+                    PluginProblem::StillScanning { .. } | PluginProblem::NotInstalled { .. }
+                ) {
                     self.0.waiting.borrow_mut().insert(id.clone());
                 }
                 Err(problem)
@@ -574,9 +643,10 @@ impl Plugins {
         })
     }
 
-    /// Records whose plugin was not there when their behaviour ran and may be now, because the
-    /// scan has learned something since. Whoever polls runs their behaviour again, which is
-    /// what makes a plugin play and takes its problem away.
+    /// Records whose behaviour is worth running again: their plugin was not there when it ran
+    /// and may be now, because the scan has learned something since, or their plugin asked to
+    /// be unloaded and loaded again. Whoever polls runs their behaviour again, which is what
+    /// makes a plugin play and takes its problem away, and what loads a plugin afresh.
     pub fn take_retries(&self) -> Vec<InstanceId> {
         std::mem::take(&mut self.0.retries.borrow_mut())
     }
@@ -894,6 +964,14 @@ impl Plugins {
     fn serve(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
         self.note_what_the_scan_found(project);
+        // A record waits for a plugin this machine did not have. Once the first scan is over,
+        // that is a plugin the composer may be installing right now.
+        let looked = self.0.last_look.get();
+        if !self.0.waiting.borrow().is_empty()
+            && looked.is_none_or(|looked| now.saturating_duration_since(looked) >= LOOK_INTERVAL)
+        {
+            self.look_again();
+        }
         let mut table = self.0.table.borrow_mut();
         let Table {
             loaded,
@@ -932,7 +1010,8 @@ impl Plugins {
 
         // Retired plugins are served too: one that is still playing, because the engine has
         // not given its audio side back yet, must not miss a callback or lose a change.
-        for hosted in loaded.values_mut().chain(&mut *retired) {
+        let serving = loaded.iter_mut().map(|(id, hosted)| (Some(id), hosted));
+        for (id, hosted) in serving.chain(retired.iter_mut().map(|hosted| (None, hosted))) {
             let requests = hosted.plugin.poll();
             if let Some(wanted) = requests.window_size {
                 hosted.window.wants_size(wanted);
@@ -951,18 +1030,22 @@ impl Plugins {
             if requests.restart && hosted.restart == Restart::Idle {
                 hosted.restart = Restart::Asked;
             }
-            // A VST 3 restart this build does not do, so the composer is told instead of being
-            // left with a plugin that stopped.
-            if requests.restart_not_done {
-                problems.push(PluginProblem::AskedForRestart {
-                    plugin_id: hosted.plugin_id.clone(),
-                });
+            // A plugin that asks to be unloaded and loaded again gets exactly what a record
+            // that changed gets: whoever polls runs its behaviour again, which saves this one
+            // on its way out and loads its record from that state. A retired plugin is going
+            // anyway.
+            if requests.reload
+                && let Some(id) = id
+            {
+                let mut retries = self.0.retries.borrow_mut();
+                if !retries.contains(id) {
+                    retries.push(id.clone());
+                }
             }
-            // The plugin moved the parameter the sustain pedal reaches. The host looked that
-            // mapping up while the plugin loaded and keeps it, so the pedal goes on reaching
-            // the parameter it reached before, which is now the wrong one.
-            if requests.midi_mapping_changed {
-                problems.push(PluginProblem::PedalMappingMoved {
+            // The plugin now maps its sustain pedal to nothing, so the pedal stops reaching
+            // it. The same line a plugin gets that never mapped one.
+            if requests.pedal_unmapped {
+                problems.push(PluginProblem::NoPedal {
                     plugin_id: hosted.plugin_id.clone(),
                 });
             }
@@ -993,6 +1076,12 @@ impl Plugins {
         if self.0.waiting.borrow().is_empty() {
             return;
         }
+        // A record that is gone, or no longer a plugin, waits for nothing, and the host does
+        // not look again for it.
+        self.0
+            .waiting
+            .borrow_mut()
+            .retain(|id| project.resolve::<PluginRecord>(id).is_some());
         let generation = match self.0.scanned.lock() {
             Ok(scanned) => scanned.generation,
             Err(poisoned) => poisoned.into_inner().generation,
@@ -1013,7 +1102,9 @@ impl Plugins {
             };
             let found = known.find(record.format, &record.plugin_id).is_some();
             if found || known.finished {
-                retries.push(id.clone());
+                if !retries.contains(id) {
+                    retries.push(id.clone());
+                }
                 return false;
             }
             true
@@ -1037,6 +1128,43 @@ impl Drop for Over {
     }
 }
 
+/// Ends a look again, however its thread ended.
+struct DoneLooking(Arc<Mutex<Scanning>>);
+
+impl Drop for DoneLooking {
+    fn drop(&mut self) {
+        let mut held = match self.0.lock() {
+            Ok(held) => held,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        held.looking_again = false;
+    }
+}
+
+/// Puts what a look again found where the host can read it, when it is not what the host
+/// already knew. Only then is the change counted, so a look that found nothing new fills no
+/// picker again and tries no waiting record again, and nothing looks again because of it.
+fn publish_again(scanned: &Arc<Mutex<Scanning>>, scan: Scan) {
+    let Ok(mut held) = scanned.lock() else {
+        return;
+    };
+    if held.scan.plugins == scan.plugins && held.scan.failures == scan.failures {
+        return;
+    }
+    for failure in &scan.failures {
+        if !held.scan.failures.contains(failure) {
+            held.notices.push(format!(
+                "{} could not be scanned: {}",
+                failure.path.display(),
+                failure.message
+            ));
+        }
+    }
+    held.notices.extend(scan.cache_error.clone());
+    held.scan = scan;
+    held.generation += 1;
+}
+
 /// Puts what the scan has found where the host can read it, and counts the change so that a
 /// record that is waiting for a plugin is tried again.
 fn publish(scanned: &Arc<Mutex<Scanning>>, scan: &Scan) {
@@ -1051,6 +1179,8 @@ fn publish(scanned: &Arc<Mutex<Scanning>>, scan: &Scan) {
             failure.message
         ));
     }
+    // Said once, when the scan is over: only the last call carries it.
+    held.notices.extend(scan.cache_error.clone());
     held.scan = scan.clone();
     held.generation += 1;
 }

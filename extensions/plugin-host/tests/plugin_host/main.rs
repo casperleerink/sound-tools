@@ -18,6 +18,7 @@ mod listing;
 mod playing;
 mod records;
 mod rendering;
+mod restarts;
 mod scanning;
 mod state;
 mod support;

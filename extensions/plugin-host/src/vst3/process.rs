@@ -10,6 +10,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use vst3::Steinberg::Vst::{
     AudioBusBuffers, AudioBusBuffers__type0, Event, Event_::EventTypes_, Event__type0,
@@ -20,6 +21,7 @@ use vst3::Steinberg::Vst::{
 use vst3::Steinberg::{int32, kInvalidArgument, kResultFalse, kResultOk, kResultTrue, tresult};
 use vst3::{Class, ComPtr, ComWrapper};
 
+use super::context::Handler;
 use crate::processor::{EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours};
 
 /// How many parameters one block may carry, in each direction. The pedal is the only one this
@@ -48,6 +50,37 @@ pub struct ParameterChange {
     pub value: ParamValue,
 }
 
+/// The parameter the sustain pedal goes to, shared by the two sides of a plugin. The control
+/// side looks it up again when the plugin moves it (`kMidiCCAssignmentChanged`), and the audio
+/// side reads it for every pedal move. An atomic, so neither side ever waits for the other.
+pub struct PedalTarget(AtomicU64);
+
+/// What [`PedalTarget`] holds while the plugin maps the pedal to nothing. A parameter id is 32
+/// bits, so no id is this.
+const NO_PEDAL: u64 = u64::MAX;
+
+impl PedalTarget {
+    pub fn new(id: Option<ParamID>) -> Self {
+        Self(AtomicU64::new(id.map_or(NO_PEDAL, u64::from)))
+    }
+
+    pub fn get(&self) -> Option<ParamID> {
+        ParamID::try_from(self.0.load(Ordering::Acquire)).ok()
+    }
+
+    pub fn set(&self, id: Option<ParamID>) {
+        self.0
+            .store(id.map_or(NO_PEDAL, u64::from), Ordering::Release);
+    }
+}
+
+/// The control side's ends of the two rings of an audio side: what the plugin changed by
+/// itself, coming back, and what the composer changed in its window, going there.
+pub struct ControlEnds {
+    pub changed: rtrb::Consumer<ParameterChange>,
+    pub edited: rtrb::Producer<ParameterChange>,
+}
+
 /// What a block says it is: a run on a device, or a render. It is the mode of the
 /// `setupProcessing` the block belongs to, which is what VST 3 asks of a host.
 pub fn process_mode(offline: bool) -> int32 {
@@ -73,12 +106,16 @@ pub struct Vst3Processor {
     output_buses: Buses,
     /// The parameter the plugin maps the sustain pedal to, when it maps one. VST 3 has no MIDI
     /// controller event: `IMidiMapping` is the way the format intends, see `plugin.rs`.
-    pedal_parameter: Option<ParamID>,
+    pedal: Arc<PedalTarget>,
     /// What the plugin changed by itself, on its way to the control thread.
     reports: rtrb::Producer<ParameterChange>,
     /// What the composer changed in the plugin's own window, on its way here. The host's thread
     /// fills it at every poll; this side empties it at the start of every block.
     edits: rtrb::Consumer<ParameterChange>,
+    /// Where an edit this side never played goes back to when this side goes, so that a
+    /// parameter the composer moves while the plugin is started again is not lost. Only
+    /// touched as this side is dropped, which is on the control thread.
+    handler: ComWrapper<Handler>,
     /// Whether the plugin has been told to start processing. It is told here because this is
     /// the thread VST 3 wants that call on.
     processing: bool,
@@ -95,17 +132,20 @@ pub struct Vst3Processor {
 unsafe impl Send for Vst3Processor {}
 
 impl Vst3Processor {
+    /// A new audio side, and the control side's ends of its rings. Everything a block needs is
+    /// made here, so nothing allocates once a block runs.
     pub fn new(
         processor: ComPtr<IAudioProcessor>,
         live: Arc<()>,
         input_channels: &[usize],
         output_channels: &[usize],
-        pedal_parameter: Option<ParamID>,
-        reports: rtrb::Producer<ParameterChange>,
-        edits: rtrb::Consumer<ParameterChange>,
+        pedal: Arc<PedalTarget>,
+        handler: ComWrapper<Handler>,
         mode: int32,
         latency: u32,
-    ) -> Self {
+    ) -> (Self, ControlEnds) {
+        let (reports, changed) = rtrb::RingBuffer::new(REPORT_CAPACITY);
+        let (edited, edits) = rtrb::RingBuffer::new(EDIT_CAPACITY);
         let events = ComWrapper::new(HostEventList::new());
         let input_changes = ComWrapper::new(HostParameterChanges::new());
         let output_changes = ComWrapper::new(HostParameterChanges::new());
@@ -119,7 +159,7 @@ impl Vst3Processor {
             Some(list) => list.as_ptr(),
             None => std::ptr::null_mut(),
         };
-        Self {
+        let audio = Self {
             processor,
             _live: live,
             events_pointer: pointer(&events),
@@ -130,27 +170,36 @@ impl Vst3Processor {
             output_changes,
             input_buses: Buses::new(input_channels),
             output_buses: Buses::new(output_channels),
-            pedal_parameter,
+            pedal,
             reports,
             edits,
+            handler,
             processing: false,
             mode,
             latency,
-        }
+        };
+        (audio, ControlEnds { changed, edited })
     }
 }
 
 impl Drop for Vst3Processor {
+    /// Always on the control thread: the engine hands a processor back before it goes.
     fn drop(&mut self) {
-        // Reached only when the engine itself is gone, which ends the audio thread before this
-        // runs. Every other way out of the engine stops the plugin there first.
+        // Stopped already on every way out of the engine but the engine itself going, which
+        // ends the audio thread before this runs.
         self.stop();
+        // An edit that reached this side and was never played goes back to the host's side,
+        // which gives it to the next audio side: the plugin being started again, when its
+        // latency or its buses change. A newer edit of the same parameter stays.
+        while let Ok(edit) = self.edits.pop() {
+            self.handler.keep_edit(edit);
+        }
     }
 }
 
 impl Started for Vst3Processor {
     fn takes_pedal(&self) -> bool {
-        self.pedal_parameter.is_some()
+        self.pedal.get().is_some()
     }
 
     fn latency(&self) -> u32 {
@@ -166,10 +215,15 @@ impl Started for Vst3Processor {
         // the only place a block is built. At the start of the block, because the value was
         // already true before this block began. Popping a ring allocates nothing and locks
         // nothing, and the host's side keeps whatever did not fit.
-        while let Ok(edit) = self.edits.pop() {
+        while let Ok(edit) = self.edits.peek().copied() {
             if !self.input_changes.add(edit.id, 0, edit.value) {
                 // Every queue of this block is taken, which is a plugin with more parameters
-                // at once than this host keeps room for. The rest waits for the next block.
+                // at once than this host keeps room for. This one and the rest wait for the
+                // next block: only an edit that went into a block leaves the ring.
+                break;
+            }
+            // Peeked a moment ago, so this is that edit, and the ring cannot be empty.
+            if self.edits.pop().is_err() {
                 break;
             }
         }
@@ -181,7 +235,7 @@ impl Started for Vst3Processor {
             PluginEvent::Off { key } => self.events.push(note_off(offset, key)),
             // A VST 3 plugin has no MIDI controller event. The pedal goes as the parameter the
             // plugin's own MIDI mapping names, with its value as a number from 0 to 1.
-            PluginEvent::Pedal(pedal) => match self.pedal_parameter {
+            PluginEvent::Pedal(pedal) => match self.pedal.get() {
                 Some(id) => self.input_changes.add(
                     id,
                     offset as int32,
