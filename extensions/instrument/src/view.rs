@@ -1,19 +1,24 @@
-//! The view of the synth: one control for each saved parameter. Whatever hosts it gives it the
-//! surface and the name: the track panel of the arrangement puts it into a device card whose
-//! own first row says "Synth" and is where another instrument is picked.
+//! The card of the synth in a rack: the envelope as a display whose handles drag, the waveform
+//! at the top of it, the main knobs next to it and the envelope knobs behind expand. The rack
+//! gives the frame of the card, whose title says "Synth" and is where another instrument is
+//! picked.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every
-//! change goes through the session, by [`ControlEdit`]: a knob drag is one gesture and one undo
-//! step, a key step, a reset or a waveform switch is one commit. The ranges and the defaults come from the
-//! [`Parameter`]s of the crate. What is only about the interface is here: the label, the
-//! unit, the travel of the knob and the name of the undo step.
+//! change goes through the session, by [`ControlEdit`]: a knob or a handle drag is one gesture
+//! and one undo step, a key step, a reset or a waveform switch is one commit. A handle edits the
+//! same field as its knob, under the same name in the history, and the knob is the way to that
+//! value from the keys. The ranges and the defaults come from the [`Parameter`]s of the crate.
+//! What is only about the interface is here: the label, the unit, the travel of the knob, the
+//! name of the undo step and whether the card is expanded.
 
-use gpui::{App, Context, Entity, SharedString, Window, div, prelude::*, px};
+use gpui::{App, Context, Entity, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
+use sound_ui::components::device_card::{CardFrame, Column};
+use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, KnobScale, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ActiveTheme, ControlEdit, DeviceLabel, Devices, Session, Views};
+use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views};
 
 use crate::{
     ATTACK, CUTOFF, DECAY, GAIN, Parameter, RELEASE, RESONANCE, SUSTAIN, SynthState, Waveform,
@@ -22,9 +27,9 @@ use crate::{
 /// The name the rack puts on the card of a synth.
 pub const NAME: &str = "Synth";
 
-/// Registers the view of the `instrument.synth` tool and what a rack calls one.
+/// Registers the card of the `instrument.synth` tool and what a rack calls one.
 pub fn register(views: &mut Views, devices: &mut Devices) {
-    views.register(SynthView::new);
+    views.register_card(SynthView::new);
     devices.describe::<SynthState>(|_| DeviceLabel {
         key: SynthState::TOOL.into(),
         name: NAME.into(),
@@ -76,21 +81,32 @@ impl Control {
             scale: self.scale,
         }
     }
+
+    /// A value as the parameter takes it: a handle may ask for one past its ends.
+    fn clamp(&self, value: f32) -> f32 {
+        value.clamp(self.parameter.min, self.parameter.max)
+    }
 }
 
-/// The groups after the oscillator, left to right: filter, envelope, output. Air parts them.
-const GROUPS: [&[Control]; 3] = [
-    &[
-        Control::new(&CUTOFF, "Cutoff", "Change cutoff", Unit::Hertz),
-        Control::new(&RESONANCE, "Resonance", "Change resonance", Unit::Part),
-    ],
-    &[
-        Control::new(&ATTACK, "Attack", "Change attack", Unit::Seconds),
-        Control::new(&DECAY, "Decay", "Change decay", Unit::Seconds),
-        Control::new(&SUSTAIN, "Sustain", "Change sustain", Unit::Part),
-        Control::new(&RELEASE, "Release", "Change release", Unit::Seconds),
-    ],
-    &[Control::new(&GAIN, "Gain", "Change gain", Unit::Part)],
+const CUTOFF_KNOB: Control = Control::new(&CUTOFF, "Cutoff", "Change cutoff", Unit::Hertz);
+const RESONANCE_KNOB: Control =
+    Control::new(&RESONANCE, "Resonance", "Change resonance", Unit::Part);
+const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", Unit::Part);
+const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", Unit::Seconds);
+const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", Unit::Seconds);
+const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain", Unit::Part);
+const RELEASE_KNOB: Control = Control::new(&RELEASE, "Release", "Change release", Unit::Seconds);
+
+/// Every knob, for the test of their ranges.
+#[cfg(test)]
+const KNOBS: [&Control; 7] = [
+    &CUTOFF_KNOB,
+    &RESONANCE_KNOB,
+    &GAIN_KNOB,
+    &ATTACK_KNOB,
+    &DECAY_KNOB,
+    &SUSTAIN_KNOB,
+    &RELEASE_KNOB,
 ];
 
 /// The value of the segmented control and the label of each waveform.
@@ -110,20 +126,68 @@ fn readout(unit: Unit, value: f32) -> String {
     }
 }
 
-/// The height of a knob, where the waveform switch sits too.
-const KNOB_SIZE: f32 = 36.;
+/// The width of the display: the synth card is 352 pt, with two columns of cells.
+const DISPLAY_WIDTH: f32 = 200.;
+
+/// Where the envelope sits in its display, as places from 0 to 1, `y` up.
+///
+/// Each time has a zone of its own across, on the travel of its knob: any time from 1 ms to
+/// 10 s shows, and its handle moves as its knob turns. A stage starts where the one before it
+/// ends, so the axis of its handle is the knob's range moved along by that place.
+mod envelope {
+    use sound_ui::components::knob::KnobRange;
+
+    /// Where the attack starts.
+    pub const LEFT: f32 = 0.04;
+    /// The zone of one time.
+    pub const ZONE: f32 = 0.28;
+    /// How long a held note is drawn at the sustain level.
+    pub const HOLD: f32 = 0.1;
+    /// Full level and silence, clear of the edges so a handle there can be taken.
+    pub const TOP: f32 = 0.88;
+    pub const BOTTOM: f32 = 0.08;
+
+    /// The range of a time whose zone starts at `start`: `time.position(value)` of the knob,
+    /// squeezed into the zone and moved to its start. A logarithmic range stays one when it is
+    /// stretched and moved, with other ends.
+    pub fn time_axis(time: KnobRange, start: f32) -> KnobRange {
+        let ratio = time.max / time.min;
+        let min = time.min * ratio.powf(-start / ZONE);
+        KnobRange::logarithmic(min, min * ratio.powf(1. / ZONE))
+    }
+
+    /// The range of the sustain level, from silence at `BOTTOM` to full level at `TOP`.
+    pub fn level_axis() -> KnobRange {
+        let min = -BOTTOM / (TOP - BOTTOM);
+        KnobRange::linear(min, min + 1. / (TOP - BOTTOM))
+    }
+
+    /// The places of the stages: the peak after the attack, the end of the decay, the end of
+    /// the hold and the end of the release.
+    pub fn stages(time: KnobRange, attack: f32, decay: f32, release: f32) -> [f32; 4] {
+        let peak = LEFT + ZONE * time.position(attack);
+        let decayed = peak + ZONE * time.position(decay);
+        let held = decayed + HOLD;
+        [peak, decayed, held, held + ZONE * time.position(release)]
+    }
+}
 
 pub struct SynthView {
     session: Entity<Session>,
     synth: Instance<SynthState>,
-    /// The gesture of a knob drag.
+    /// The title and the close icon the rack gives the card.
+    frame: CardFrame,
+    /// The gesture of a knob or handle drag.
     edit: ControlEdit,
+    /// Whether the card shows the envelope knobs. Interface state: nothing saves it.
+    expanded: bool,
 }
 
 impl SynthView {
     pub fn new(
         session: Entity<Session>,
         synth: Instance<SynthState>,
+        frame: CardFrame,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -144,7 +208,9 @@ impl SynthView {
         Self {
             session,
             synth,
+            frame,
             edit: ControlEdit::default(),
+            expanded: false,
         }
     }
 
@@ -184,22 +250,91 @@ impl SynthView {
                 view.on_knob(control, change, cx)
             }))
     }
-}
 
-impl Render for SynthView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self.session.read(cx).project().state(&self.synth).copied() else {
-            return div();
-        };
-        let theme = cx.theme();
-        let muted = theme.gray_700;
+    /// A handle that moves one time sideways, at a fixed height. It edits what its knob edits.
+    fn time_handle(
+        &self,
+        control: &'static Control,
+        (start, height): (f32, f32),
+        state: &SynthState,
+        cx: &mut Context<Self>,
+    ) -> Handle {
+        let parameter = control.parameter;
+        let x = Axis::new(
+            envelope::time_axis(control.range(), start),
+            (parameter.get)(state),
+            parameter.default,
+        );
+        let id = control.label.to_lowercase();
+        Handle::new(SharedString::from(id), x, Axis::fixed(height)).on_change(Self::callback(
+            cx,
+            move |view, change: ValueChange<Point<f32>>, cx| {
+                let (session, synth) = (&view.session, &view.synth);
+                let set = |state: &mut SynthState, place: Point<f32>| {
+                    (parameter.set)(state, control.clamp(place.x))
+                };
+                view.edit
+                    .apply(session, synth, control.undo_label, change, set, cx);
+            },
+        ))
+    }
 
+    /// The envelope, with a handle at the end of each stage, and the waveform at its top.
+    fn display(&self, state: &SynthState, cx: &mut Context<Self>) -> Display {
+        use envelope::{BOTTOM, LEFT, TOP};
+        let time = ATTACK_KNOB.range();
+        let (attack, decay) = (state.attack_seconds, state.decay_seconds);
+        let (sustain, release) = (state.sustain, state.release_seconds);
+        let [peak, decayed, held, released] = envelope::stages(time, attack, decay, release);
+        let level = BOTTOM + sustain.clamp(0., 1.) * (TOP - BOTTOM);
+        let curve = [
+            point(LEFT, BOTTOM),
+            point(peak, TOP),
+            point(decayed, level),
+            point(held, level),
+            point(released, BOTTOM),
+        ];
+        // The corner after the decay moves two values: its time sideways, the sustain level up
+        // and down. One drag of it is one undo step.
+        let corner = Handle::new(
+            "decay",
+            Axis::new(envelope::time_axis(time, peak), decay, DECAY.default),
+            Axis::new(envelope::level_axis(), sustain, SUSTAIN.default),
+        )
+        .on_change(Self::callback(
+            cx,
+            |view, change: ValueChange<Point<f32>>, cx| {
+                let (session, synth) = (&view.session, &view.synth);
+                let set = |state: &mut SynthState, place: Point<f32>| {
+                    state.decay_seconds = DECAY_KNOB.clamp(place.x);
+                    state.sustain = SUSTAIN_KNOB.clamp(place.y);
+                };
+                let label = "Change decay and sustain";
+                view.edit.apply(session, synth, label, change, set, cx);
+            },
+        ));
+        let caption = format!(
+            "A {} · D {} · S {} · R {}",
+            readout(Unit::Seconds, attack),
+            readout(Unit::Seconds, decay),
+            readout(Unit::Part, sustain),
+            readout(Unit::Seconds, release),
+        );
+        Display::new("envelope", DISPLAY_WIDTH)
+            .curve(curve)
+            .handle(self.time_handle(&ATTACK_KNOB, (LEFT, TOP), state, cx))
+            .handle(corner)
+            .handle(self.time_handle(&RELEASE_KNOB, (held, BOTTOM), state, cx))
+            .caption(caption)
+            .child(div().ml_auto().child(self.waveform(state, cx)))
+    }
+
+    fn waveform(&self, state: &SynthState, cx: &mut Context<Self>) -> SegmentedControl {
         let selected = WAVEFORMS
             .iter()
             .find(|(waveform, ..)| *waveform == state.waveform);
         let selected = selected.map_or("", |(_, value, _)| value);
-        let waveform = SegmentedControl::new("waveform", selected)
+        SegmentedControl::new("waveform", selected)
             .options(WAVEFORMS.map(|(_, value, label)| (value, label)))
             .on_change(Self::callback(cx, |view, value: SharedString, cx| {
                 let picked = WAVEFORMS
@@ -212,34 +347,47 @@ impl Render for SynthView {
                     view.edit
                         .apply(session, synth, "Change waveform", change, set, cx);
                 }
-            }));
-        // The switch sits where the knobs are, and its label where theirs are.
-        let oscillator = div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .child(div().h(px(KNOB_SIZE)).flex().items_center().child(waveform))
-            .child(
-                div()
-                    .mt(px(8.))
-                    .text_size(px(12.))
-                    .line_height(px(16.))
-                    .text_color(muted)
-                    .child("Waveform"),
-            );
-        let groups = GROUPS.iter().map(|group| {
-            let knobs = group.iter().map(|control| self.knob(control, &state, cx));
-            div().flex().gap(px(8.)).children(knobs.collect::<Vec<_>>())
-        });
+            }))
+    }
+}
 
-        // No title: the card of a rack says what the device is, because that is also where a
-        // composer picks another one.
-        div()
-            .flex()
-            .items_start()
-            .gap(px(32.))
-            .child(oscillator)
-            .children(groups.collect::<Vec<_>>())
+impl Render for SynthView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // `None` once the record is deleted. Whatever hosts the view takes it away then.
+        let Some(state) = self.session.read(cx).project().state(&self.synth).copied() else {
+            return div().into_any_element();
+        };
+        let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
+        let columns = [
+            Column::new()
+                .top(knob(&CUTOFF_KNOB, cx))
+                .bottom(knob(&GAIN_KNOB, cx)),
+            Column::new().top(knob(&RESONANCE_KNOB, cx)),
+        ];
+        // Behind expand: the times and the level the handles of the display move, so the keys
+        // reach every one of them. Read across as A, D, then S, R.
+        let hidden = [
+            Column::new()
+                .top(knob(&ATTACK_KNOB, cx))
+                .bottom(knob(&SUSTAIN_KNOB, cx)),
+            Column::new()
+                .top(knob(&DECAY_KNOB, cx))
+                .bottom(knob(&RELEASE_KNOB, cx)),
+        ];
+        let expand = cx.listener(|view, _, _, cx| {
+            view.expanded = !view.expanded;
+            cx.notify();
+        });
+        let card = self
+            .frame
+            .card()
+            .expand(self.expanded, expand)
+            .display(self.display(&state, cx));
+        let card = columns.into_iter().fold(card, |card, column| card.column(column));
+        let card = hidden
+            .into_iter()
+            .fold(card, |card, column| card.hidden_column(column));
+        card.into_any_element()
     }
 }
 
@@ -277,7 +425,7 @@ mod tests {
     /// The defaults and both ends of every range, through the travel of its knob and back.
     #[test]
     fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
-        for control in GROUPS.iter().flat_map(|group| group.iter()) {
+        for control in KNOBS {
             let (range, parameter) = (control.range(), control.parameter);
             assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
             assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
@@ -286,5 +434,36 @@ mod tests {
                 assert_eq!(back, value, "{}", parameter.field);
             }
         }
+    }
+
+    /// A handle at the place of a time gives that time back, with the digits its knob gives.
+    #[test]
+    fn a_time_handle_is_where_its_knob_says_and_gives_its_value_back() {
+        let time = ATTACK_KNOB.range();
+        for start in [envelope::LEFT, 0.3, 0.62] {
+            let axis = envelope::time_axis(time, start);
+            for value in [0.001, 0.005, 0.2, 1.5, 10.0] {
+                let place = axis.position(value);
+                let expected = start + envelope::ZONE * time.position(value);
+                assert!((place - expected).abs() < 1e-4, "{start} {value}: {place}");
+                assert!((axis.value(place) - value).abs() <= value * 1e-3, "{value}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_sustain_handle_runs_from_silence_to_full_level() {
+        let level = envelope::level_axis();
+        assert!((level.position(0.) - envelope::BOTTOM).abs() < 1e-6);
+        assert!((level.position(1.) - envelope::TOP).abs() < 1e-6);
+        assert_eq!(level.value(level.position(0.25)), 0.25);
+    }
+
+    /// The longest envelope still fits the display.
+    #[test]
+    fn every_envelope_fits_its_display() {
+        let time = ATTACK_KNOB.range();
+        let [_, _, _, end] = envelope::stages(time, 10., 10., 10.);
+        assert!(end <= 1., "{end}");
     }
 }

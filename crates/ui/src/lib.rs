@@ -14,7 +14,7 @@ pub mod views;
 pub use assets::Assets;
 pub use control_edit::ControlEdit;
 pub use devices::{
-    DeviceLabel, DeviceOffer, Devices, Slot, enable_extension, extension_is_enabled,
+    DeviceLabel, DeviceOffer, Devices, Needs, Slot, extension_is_enabled,
 };
 pub use focus::KeyboardFocus;
 pub use session::{POLL_INTERVAL, Playhead, Session};

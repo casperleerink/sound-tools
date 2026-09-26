@@ -70,6 +70,14 @@ pub struct ScannedPlugin {
 }
 
 impl ScannedPlugin {
+    /// The quiet line under its name, in a picker and on its card: `CLAP · <maker>`.
+    pub fn detail(&self) -> String {
+        match self.vendor.is_empty() {
+            true => self.format.name().to_string(),
+            false => format!("{} · {}", self.format.name(), self.vendor),
+        }
+    }
+
     /// Whether the plugin plays notes. Only these fit the `instrument` child of a track.
     /// A plugin that says nothing about itself is not offered as one.
     ///
