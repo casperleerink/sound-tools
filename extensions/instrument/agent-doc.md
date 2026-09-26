@@ -29,7 +29,7 @@ These are the defaults. A field you leave out takes its default, so `"state": {}
 | `decay_seconds` | From full level down to the sustain level. | 0.001 to 10 |
 | `sustain` | The level a held note settles at. 0 makes every note a pluck. | 0 to 1 |
 | `release_seconds` | From note off to silence. | 0.001 to 10 |
-| `gain` | Linear output gain. Tracks add up and there is no mixer yet, so keep it near 0.15, and lower for thick chords. | 0 to 1 |
+| `gain` | Linear output gain. Tracks add up into the master, whose limiter keeps the output from clipping but squashes it when pushed, so keep it near 0.15, and lower for thick chords. Set the level of a track with its `gain_db`. | 0 to 1 |
 
 Starting points: a bass is `cutoff_hz` 300 to 800 with `resonance` near 0.4. A pluck is `sustain` 0 with `decay_seconds` 0.15 to 0.4. A pad is `attack_seconds` 0.5 or more and `release_seconds` 1 or more.
 
