@@ -78,7 +78,9 @@ impl Default for LimiterState {
         Self {
             bypass: false,
             gain_db: 0.0,
-            ceiling_db: -0.3,
+            // Full scale: the output never clips, and a project that never went over full
+            // scale renders as it did, sample for sample.
+            ceiling_db: 0.0,
             release_ms: 100.0,
             // None: a keyboard played into a track and a preview note wait for nothing, and a
             // project renders on the frames it always did.

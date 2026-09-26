@@ -4,6 +4,7 @@
 //! so it is offered in both pickers. In an effect slot it gets no notes: what comes out of it
 //! is what it is played times a half, plus the offset it has learned and saved.
 
+use arrangement::ArrangementState;
 use arrangement::view::track_panel::remove_control;
 use gpui::TestAppContext;
 use plugin_host::{PluginFormat, PluginRecord};
@@ -26,12 +27,19 @@ fn plugin_item() -> String {
 
 /// One track whose instrument is the test plugin, with a clip of one note at full velocity,
 /// and its panel open. Full velocity so that an effect hears 1.0 and learns an offset of its
-/// own, which is how a test makes an effect change its own state.
+/// own, which is how a test makes an effect change its own state. That goes over full scale,
+/// so the limiter of the master is off: what these tests read is the sum.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
     let mut opened = support::open_with_test_plugin(cx, |project| {
         let mut changes = sound_core::Changes::new();
         let note = note(0, 4 * BAR, 60);
         changes.create(id(PART), clip(0, 4 * BAR, vec![note]));
+        let master = project
+            .resolve::<ArrangementState>(&id("arrangement"))
+            .unwrap();
+        let mut arrangement = project.state(&master).unwrap().clone();
+        arrangement.master.limiter.bypass = true;
+        changes.set(&master, arrangement);
         project.commit("Add clip", changes).unwrap();
         project.clear_history();
     });

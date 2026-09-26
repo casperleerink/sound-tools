@@ -14,7 +14,7 @@ const TICK: usize = 25;
 
 const ARRANGEMENT_FILE: &str = "state/arrangement/instance.json";
 
-/// The ceiling of a limiter at its defaults, -0.3 dBFS.
+/// The ceiling of a limiter at its defaults, full scale.
 fn ceiling() -> f32 {
     decibels::amplitude(LimiterState::default().ceiling_db)
 }
@@ -133,7 +133,8 @@ fn a_lookahead_lowers_the_gain_before_the_peak_and_says_it_as_latency() {
     assert_eq!(plain.project.engine().poll().unwrap().latency, 0);
     let step = BAR as usize * TICK;
     assert_eq!(render[step - 1], QUIET);
-    assert_eq!(render[step], ceiling());
+    // At the ceiling, to the last bit of rounding under it.
+    assert!(ceiling() - render[step] < 1e-6, "{}", render[step]);
 }
 
 #[test]

@@ -117,7 +117,7 @@ defaults. One `Master` processor plays it: the sum of every mixer, the volume, t
 then the main output.
 
 - The volume is before the limiter, so no volume can push the output over the ceiling. It ramps like the mixer of a track.
-- The limiter: `gain_db` (0 to 24) into it, `ceiling_db` (-24 to 0, default -0.3), `release_ms` (10 to 1000, default 100) and `lookahead_ms` (0 to 10, default 0). The ranges are written once in `LimiterState`.
+- The limiter: `gain_db` (0 to 24) into it, `ceiling_db` (-24 to 0, default 0, full scale), `release_ms` (10 to 1000, default 100) and `lookahead_ms` (0 to 10, default 0). The ranges are written once in `LimiterState`.
 - The gain of the limiter goes down at once to what a peak needs and comes back along the release, a time constant. So no sample goes over the ceiling, and a last clamp at the ceiling catches rounding. Under the ceiling the gain is exactly 1: the output is the input, sample for sample.
 - With a lookahead the limiter holds the sound back by that time and lowers the gain along a straight line over it, so the gain is down when the peak arrives and the top of the wave keeps its shape. It says the lookahead as its latency (`Processor::latency`), so every track is led by it and reaches the device in time. The default is no lookahead, because a lookahead delays a keyboard played live and a preview note as much.
 - `bypass` lets the sound through untouched and keeps the latency as a pure delay, so switching the limiter off and on never moves the tracks in time.

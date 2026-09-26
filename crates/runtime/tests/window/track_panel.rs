@@ -184,9 +184,9 @@ fn the_keys_select_a_track_open_its_panel_and_close_it(cx: &mut TestAppContext) 
     opened.keys("up");
     assert_eq!(opened.panel_track(), Some(id(TRACK)));
 
-    // Tab goes into the panel: the close control, the volume, the pan and mute of the track,
-    // the picker and the expand icon of the card, the waveform, then the first knob.
-    for _ in 0..7 {
+    // Tab goes into the panel: the close control, the volume, the pan, mute and solo of the
+    // track, the picker and the expand icon of the card, the waveform, then the first knob.
+    for _ in 0..8 {
         opened.keys("tab");
     }
     opened.keys("right");
@@ -920,11 +920,16 @@ fn an_outside_edit_of_the_mixer_shows_in_the_panel_and_undo_takes_it_back(cx: &m
 }
 
 #[gpui::test]
-fn the_bottom_of_the_volume_is_the_lowest_gain_a_track_keeps(cx: &mut TestAppContext) {
+fn the_bottom_of_the_volume_is_silence_and_the_file_says_minus_inf(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     let volume = opened.control(VOLUME);
     opened.drag(volume, volume + point(px(0.), px(400.)));
-    assert_eq!(track(&mut opened).unwrap().gain_db, TrackState::GAIN_DB.0);
+    assert_eq!(track(&mut opened).unwrap().gain_db, f32::NEG_INFINITY);
+    assert!(
+        track_file(&mut opened).contains(r#""gain_db": "-inf""#),
+        "{}",
+        track_file(&mut opened)
+    );
     // One step.
     assert_eq!(opened.undo_label().as_deref(), Some("Change volume"));
     opened.keys("cmd-z");
@@ -937,7 +942,7 @@ fn the_bottom_of_the_volume_is_the_lowest_gain_a_track_keeps(cx: &mut TestAppCon
     let volume = opened.control(VOLUME);
     opened.drag(volume, volume);
     opened.drag(volume, volume + point(px(0.), px(200.)));
-    assert_eq!(track(&mut opened).unwrap().gain_db, TrackState::GAIN_DB.0);
+    assert_eq!(track(&mut opened).unwrap().gain_db, f32::NEG_INFINITY);
     assert!(!opened.gesture_open());
     opened.keys("cmd-z");
     assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);

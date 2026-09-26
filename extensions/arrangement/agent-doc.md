@@ -81,8 +81,7 @@ A clip the composer recorded from a keyboard has a `pedal` list as well. Leave i
     "gain_db": 0.0,
     "pan": 0.0,
     "mute": false,
-    "solo": true,
-    "effects": ["warmth", {"name": "space", "bypass": true}]
+    "effects": ["warmth"]
   }
 }
 ```
@@ -131,7 +130,7 @@ What `problems.txt` says about this, and what to do:
   "state": {
     "master": {
       "gain_db": 0.0,
-      "limiter": {"bypass": false, "gain_db": 0.0, "ceiling_db": -0.3, "release_ms": 100.0, "lookahead_ms": 0.0}
+      "limiter": {"bypass": false, "gain_db": 0.0, "ceiling_db": 0.0, "release_ms": 100.0, "lookahead_ms": 0.0}
     }
   }
 }
@@ -143,7 +142,7 @@ The arrangement is the master: every track plays into it, and it plays to the ma
 - `master.limiter`: on by default, so the output never goes over its ceiling. Under the ceiling it leaves every sample as it was.
 - `bypass`: `true` lets the sound through untouched, and it may then clip.
 - `gain_db`: how much louder the sound goes into the limiter, 0 to 24.
-- `ceiling_db`: the highest the output reaches, in dBFS, -24 to 0.
+- `ceiling_db`: the highest the output reaches, in dBFS, -24 to 0. 0 is full scale.
 - `release_ms`: how fast the gain comes back after a peak, 10 to 1000.
 - `lookahead_ms`: 0 to 10. Above 0 the limiter lowers the gain before a peak arrives, which keeps the shape of the wave, and delays everything by that much, including a keyboard played live. 0 adds no delay.
 
