@@ -8,8 +8,8 @@ Enable it in `project.json` under `extensions` as `"arrangement"`.
 
 | Tool | State | Form | Behaviour |
 | --- | --- | --- | --- |
-| `arrangement` | `ArrangementState`, no fields yet | `<name>/instance.json` | none. It owns the tracks and gives the summary. |
-| `arrangement.track` | `TrackState`: `name`, `colour`, `order`, `gain_db`, `pan`, `mute`, `effects` | `<name>/instance.json` | one `Sequencer` and one `Mixer`: sequencer, child `instrument`, the effects in order, mixer, main output |
+| `arrangement` | `ArrangementState`: `master` (`MasterState`: `gain_db`, `limiter`) | `<name>/instance.json` | one `Mixer` per track and one `Master`: every track, its mixer, the master, main output. It owns the tracks and gives the summary. |
+| `arrangement.track` | `TrackState`: `name`, `colour`, `order`, `gain_db`, `pan`, `mute`, `solo`, `effects` | `<name>/instance.json` | one `Sequencer`: sequencer, child `instrument`, the effects in order that are not bypassed, and out as its `audio` output |
 | `arrangement.clip` | `sound_notes::Clip`: `start`, `length`, `notes` | `<name>.json` | none, plain data for its track |
 
 `Clip` lives in the contract crate `crates/notes`, because its saved form is what other extensions read. This crate does not depend on any instrument and on no effect. A track finds its instrument by the child name `instrument` (`INSTRUMENT`) and the port names `NOTES_INPUT` and `AUDIO_OUTPUT`, and each of its effects by the name the record lists and the port names `AUDIO_INPUT` and `AUDIO_OUTPUT`, so any tool with those ports fits either place. A track without an instrument loads and is silent.
@@ -18,7 +18,9 @@ Each tool says where it lives (`State::PLACE`): the arrangement at the top of `s
 
 `Colour` is an enum of the accent names of DESIGN.md, saved in lowercase. It is not a hex string, so a record cannot hold a colour the design has no token for. Map it to a token in the interface with `Colour::name()`.
 
-`gain_db` (-60 to 6, `TrackState::GAIN_DB`), `pan` (-1 to 1, `TrackState::PAN`) and `mute` are the mixer of the track. A record that leaves them out plays as it did before they existed: no change of level, in the middle, not muted. A value outside its range does not load and the problem names the field, like any other record value. The ranges are written once, in `TrackState`, and `validate`, the controls of the track panel and the docs read them there.
+`gain_db` (a number up to 6, `TrackState::MAX_GAIN_DB`, or `"-inf"`), `pan` (-1 to 1, `TrackState::PAN`), `mute` and `solo` are the mixer of the track. A record that leaves them out plays as it did before they existed: no change of level, in the middle, not muted, not soloed. A value outside its range does not load and the problem names the field, like any other record value. The ranges are written once, in `TrackState`, and `validate`, the controls of the track panel and the docs read them there.
+
+A gain in decibels is saved as a number, or as the string `"-inf"` for silence, which JSON has no number for (`decibels`). So the bottom of a volume is truly silent, and a record of before this reads and writes as it did. The master volume follows the same rule.
 
 ## Rules
 
@@ -92,13 +94,35 @@ its input through and what the plugin held is gone.
 
 ## The mixer
 
-One `Mixer` processor per track, after the instrument and every effect, and before the main
-output. Audio is stereo everywhere (`sound_core::CHANNELS`), so the mixer is two gains, one per channel.
+One `Mixer` processor per track, after the instrument and every effect, and before the master.
+The arrangement owns them and not the tracks, because solo is about every track at once. Audio is
+stereo everywhere (`sound_core::CHANNELS`), so the mixer is two gains, one per channel.
 
-- `channel_gains(track)` turns the record into those two gains on the control thread. The audio thread works out no pan law. The behaviour sends them on every run, which costs no compile.
+- `channel_gains(track)` turns the record into those two gains on the control thread. The audio thread works out no pan law. The behaviour of the arrangement sends them on every run, which costs no compile.
+- Solo: while any track is soloed, the arrangement sends every other track the gains of a muted one, `[0, 0]`. So soloing a track sounds sample for sample as muting every other one. A muted track stays silent when it is soloed.
 - The pan law is equal power, scaled so that the middle is exactly 1 in both channels. A centred track at 0 dB is untouched, sample for sample, so a project from before the mixer sounds the same. Hard left or right, the channel that plays it is √2, 3 dB above the middle, and the other is exactly 0. The power of a track is the same wherever it is panned.
-- The processor ramps to a new pair over `RAMP_SECONDS` (20 ms), so no change of gain, pan or mute clicks. The largest step it can take in one frame is the distance divided by the ramp. A muted track that has finished its fade returns before it touches its output.
-- A change of the mixer keeps everything else: a note goes on sounding through it, because the behaviour keeps both processors and only sends an update.
+- The processor ramps to a new pair over `RAMP_SECONDS` (20 ms), so no change of gain, pan, mute or solo clicks. The largest step it can take in one frame is the distance divided by the ramp. A muted track that has finished its fade returns before it touches its output.
+- A change of the mixer keeps everything else: a note goes on sounding through it, because the behaviours keep every processor and only send an update.
+- The mixer keeps the peaks of what it sends on, which is the meter of the track: `track_peaks(project, track)`. They are after the volume, the pan, mute and solo.
+
+A track sends the end of its chain up as its `audio` output, and the arrangement connects that to
+the mixer of the track. A bypassed effect is left out of the chain: the sound goes past it
+untouched, and its latency goes with it, see "The effects of a track".
+
+## The master
+
+The arrangement record holds the master: `master.gain_db`, its volume, and `master.limiter`. A record
+that leaves them out, which is every record of before this, gets 0 dB and the limiter on at its
+defaults. One `Master` processor plays it: the sum of every mixer, the volume, then the limiter,
+then the main output.
+
+- The volume is before the limiter, so no volume can push the output over the ceiling. It ramps like the mixer of a track.
+- The limiter: `gain_db` (0 to 24) into it, `ceiling_db` (-24 to 0, default -0.3), `release_ms` (10 to 1000, default 100) and `lookahead_ms` (0 to 10, default 0). The ranges are written once in `LimiterState`.
+- The gain of the limiter goes down at once to what a peak needs and comes back along the release, a time constant. So no sample goes over the ceiling, and a last clamp at the ceiling catches rounding. Under the ceiling the gain is exactly 1: the output is the input, sample for sample.
+- With a lookahead the limiter holds the sound back by that time and lowers the gain along a straight line over it, so the gain is down when the peak arrives and the top of the wave keeps its shape. It says the lookahead as its latency (`Processor::latency`), so every track is led by it and reaches the device in time. The default is no lookahead, because a lookahead delays a keyboard played live and a preview note as much.
+- `bypass` lets the sound through untouched and keeps the latency as a pure delay, so switching the limiter off and on never moves the tracks in time.
+- The master keeps the peaks of what it sends out, `master_peaks(project, arrangement)`, and of how much the limiter took, `reduction_peaks`, as the factor by which the sound was above the output.
+- Only what the arrangement plays goes through the master. A `project.json` connection to the device and the click of the metronome go around it.
 
 ## Helpers for interfaces
 

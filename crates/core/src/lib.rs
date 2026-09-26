@@ -9,6 +9,7 @@ mod control;
 mod device;
 mod engine;
 mod graph;
+mod peaks;
 mod processor;
 mod project;
 mod transport;
@@ -23,6 +24,7 @@ pub use device::{
 };
 pub use engine::{Engine, EngineStatus};
 pub use graph::{Connection, Destination, GraphError, NodeId};
+pub use peaks::Peaks;
 pub use processor::{
     AudioInput, AudioInputs, AudioOutput, AudioOutputs, CHANNELS, Event, EventInput, EventInputs,
     EventOutput, EventOutputs, InputPort, MAX_BLOCK, OutputPort, Ports, PrepareConfig,

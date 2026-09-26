@@ -277,6 +277,15 @@ pub fn tempo(bpm: f64) -> TempoMap {
 
 /// An open project on a temporary folder with an offline mono engine and the arrangement
 /// `arrangement`.
+/// An arrangement whose limiter is off. The probe makes levels such as 60 that are numbers and
+/// not sound, and the limiter would take them down to its ceiling. The tests of the limiter
+/// turn it on.
+pub fn probe_arrangement() -> ArrangementState {
+    let mut arrangement = ArrangementState::default();
+    arrangement.master.limiter.bypass = true;
+    arrangement
+}
+
 pub struct Harness {
     pub project: Project,
     pub engine: Engine,
@@ -298,7 +307,7 @@ impl Harness {
         let (control, engine) = Engine::new(config);
         let mut project = Project::open(folder.path(), registry(), control).unwrap();
         let mut changes = Changes::new();
-        changes.create(id("arrangement"), ArrangementState {});
+        changes.create(id("arrangement"), probe_arrangement());
         project.commit("Add arrangement", changes).unwrap();
         Self {
             project,

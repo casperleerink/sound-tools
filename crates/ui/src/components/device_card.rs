@@ -14,7 +14,8 @@
 //!
 //! In a rack the view of the device draws the whole card, because it owns what the body shows,
 //! and the rack gives it a [`CardFrame`]: the title, which is the picker of the slot, and the
-//! close icon of an effect.
+//! power and close icons of an effect. Whether an effect is on is saved on its slot, which is
+//! the rack's, so the frame reads it when the card draws.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -49,6 +50,8 @@ const INSIDE: f32 = CARD_PADDING - 1.;
 const HIDDEN_GAP: f32 = 8.;
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+/// Whether a device is on, read when the card draws.
+type IsOn = Rc<dyn Fn(&App) -> bool>;
 
 /// What a rack gives the view of the device in one of its slots, so that the view can draw the
 /// whole card with [`CardFrame::card`] and add its display and cells.
@@ -59,6 +62,7 @@ pub struct CardFrame {
     id: SharedString,
     /// The picker of the slot: a ghost trigger, which brings 8 pt of padding of its own.
     title: AnyView,
+    power: Option<(IsOn, Rc<dyn Fn(&mut Window, &mut App)>)>,
     close: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
 }
 
@@ -67,8 +71,20 @@ impl CardFrame {
         Self {
             id: id.into(),
             title: title.into(),
+            power: None,
             close: None,
         }
+    }
+
+    /// The power icon, which bypasses the device. `is_on` is read every time the card draws,
+    /// because the rack keeps whether a slot is on and the view of the device does not.
+    pub fn power(
+        mut self,
+        is_on: impl Fn(&App) -> bool + 'static,
+        on_toggle: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.power = Some((Rc::new(is_on), Rc::new(on_toggle)));
+        self
     }
 
     /// The close icon, which takes the device out of the rack.
@@ -77,12 +93,16 @@ impl CardFrame {
         self
     }
 
-    /// A card with the id, the title and the close icon of this frame. The view adds the rest.
+    /// A card with the id, the title, and the power and close icons of this frame. The view
+    /// adds the rest.
     pub fn card(&self) -> DeviceCard {
         // The trigger brings its own padding, so it moves left by that much and its text lands
         // where a card title is.
         let title = div().flex().min_w_0().ml(px(-8.)).child(self.title.clone());
-        let card = DeviceCard::new(ElementId::Name(self.id.clone()), title);
+        let mut card = DeviceCard::new(ElementId::Name(self.id.clone()), title);
+        if let Some((is_on, toggle)) = self.power.clone() {
+            card.power = Some((is_on, Box::new(move |_, window, cx| toggle(window, cx))));
+        }
         match self.close.clone() {
             Some(close) => card.close(move |_, window, cx| close(window, cx)),
             None => card,
@@ -138,7 +158,7 @@ pub struct DeviceCard {
     id: ElementId,
     title: AnyElement,
     expand: Option<(bool, ClickHandler)>,
-    power: Option<(bool, ClickHandler)>,
+    power: Option<(IsOn, ClickHandler)>,
     close: Option<ClickHandler>,
     display: Option<AnyElement>,
     columns: Vec<Column>,
@@ -180,7 +200,7 @@ impl DeviceCard {
         on: bool,
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.power = Some((on, Box::new(on_click)));
+        self.power = Some((Rc::new(move |_| on), Box::new(on_click)));
         self
     }
 
@@ -283,7 +303,7 @@ impl RenderOnce for DeviceCard {
         );
         // Off is `gray-700`, the nearest grey with 3 : 1 on a card for an icon.
         let (glyph, glyph_off) = (theme.gray_950, theme.gray_700);
-        let on = self.power.as_ref().is_none_or(|(on, _)| *on);
+        let on = self.power.as_ref().is_none_or(|(is_on, _)| is_on(cx));
         let expanded = self.expand.as_ref().is_some_and(|(expanded, _)| *expanded);
 
         let mut icons = Vec::new();
@@ -296,7 +316,7 @@ impl RenderOnce for DeviceCard {
             let icon = header_icon(&self.id, "expand", chevron, glyph, on_click, window, cx);
             icons.push(icon.into_any_element());
         }
-        if let Some((on, on_click)) = self.power {
+        if let Some((_, on_click)) = self.power {
             let color = if on { glyph } else { glyph_off };
             let icon = header_icon(&self.id, "power", "power", color, on_click, window, cx);
             icons.push(icon.into_any_element());

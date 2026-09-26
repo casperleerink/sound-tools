@@ -1,8 +1,10 @@
 //! Arrangement: tracks, clips and notes on the project timeline.
 //!
-//! Three tools. An `arrangement` owns tracks. An `arrangement.track` owns clips and one
-//! instrument, the child named `instrument`, and plays the clips through it to the main
-//! output. An `arrangement.clip` is plain data: the [`Clip`] of the note contract crate.
+//! Three tools. An `arrangement` owns tracks and is the master: it mixes every track, solo
+//! included, and plays the sum through its volume and limiter to the main output. An
+//! `arrangement.track` owns clips, one instrument, the child named `instrument`, and its
+//! effects, and plays the clips through them to its arrangement. An `arrangement.clip` is plain
+//! data: the [`Clip`] of the note contract crate.
 //!
 //! ```text
 //! state/arrangement/instance.json            the arrangement
@@ -14,8 +16,11 @@
 //! `agent-doc.md` in this crate has the record formats. `README.md` is for extension and
 //! interface authors. The interface is in [`view`]. Nothing else here uses GPUI.
 
+pub mod decibels;
+mod master;
 mod mixer;
 mod sequencer;
+mod slot;
 mod summary;
 pub mod view;
 
@@ -24,12 +29,14 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, Changes, InputEndpoint, Instance, InstanceId,
-    OutputEndpoint, Place, Project, ProjectError, Registry, RegistryError, State, Ticks,
+    OutputEndpoint, Peaks, Place, Project, ProjectError, Registry, RegistryError, State, Ticks,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOOL, Velocity};
 
+pub use master::{LimiterState, Master, MasterSettings, MasterState};
 pub use mixer::{ChannelGains, Mixer, RAMP_SECONDS, channel_gains};
 pub use sequencer::{HELD_CAPACITY, PREVIEW_SECONDS, Sequencer, SequencerUpdate, TrackSnapshot};
+pub use slot::EffectSlot;
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "arrangement";
@@ -37,22 +44,40 @@ pub const EXTENSION: &str = "arrangement";
 /// The name of the child of a track that plays its notes.
 pub const INSTRUMENT: &str = "instrument";
 
-/// The names of the two processors of a track: what plays its clips, and its mixer.
+/// The name of the processor of a track that plays its clips.
 const SEQUENCER: &str = "sequencer";
-const MIXER: &str = "mixer";
+/// The processors of an arrangement: the mixer of each track, by the name of the track after
+/// this, and the master.
+const MIXER: &str = "mixer/";
+const MASTER: &str = "master";
+/// The peaks an arrangement keeps: of each track, by its name after this, of the master, and
+/// the reduction of the limiter. No child name has a `/`, so no track takes the name of the
+/// master.
+const TRACK_PEAKS: &str = "track/";
+const MASTER_PEAKS: &str = "master";
+const REDUCTION_PEAKS: &str = "reduction";
 
 /// The id of the arrangement in the default project.
 pub const DEFAULT_ARRANGEMENT: &str = "arrangement";
 
-/// The root of a piece. It has no settings yet: it is the owner of the tracks.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The root of a piece: the owner of the tracks, and their master.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ArrangementState {}
+pub struct ArrangementState {
+    /// The volume and the limiter of the sum of every track. A record that leaves it out, as
+    /// every record of before it did, gets 0 dB and the limiter on.
+    #[serde(default)]
+    pub master: MasterState,
+}
 
 impl State for ArrangementState {
     const TOOL: &'static str = "arrangement";
     const OWNS_CHILDREN: bool = true;
     const PLACE: Place = Place::Root;
+
+    fn validate(&self) -> Result<(), String> {
+        self.master.validate()
+    }
 }
 
 /// One list gives each colour its variant and its name, so the name in records, the name in
@@ -115,8 +140,9 @@ pub struct TrackState {
     #[serde(default)]
     pub order: u32,
     /// How much louder or quieter the track plays, in decibels. 0 is the sound of its
-    /// instrument, and a record that leaves it out gets that.
-    #[serde(default)]
+    /// instrument, and a record that leaves it out gets that. `-inf`, saved as `"-inf"`, is
+    /// silence.
+    #[serde(default, with = "decibels")]
     pub gain_db: f32,
     /// Where the track sits between the two channels: -1 hard left, 0 the middle, 1 hard right.
     #[serde(default)]
@@ -124,20 +150,26 @@ pub struct TrackState {
     /// A muted track is silent and keeps everything else as it is.
     #[serde(default)]
     pub mute: bool,
+    /// While any track of the arrangement is soloed, only the soloed ones play: every other
+    /// one sounds as if it were muted. Left out when off, so a track of before it gives the
+    /// same bytes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub solo: bool,
     /// The effects of the track, by the name of the child that holds each one, in the order
-    /// the sound goes through them: instrument, then these, then the gain, pan and mute.
+    /// the sound goes through them: instrument, then these, then the gain, pan and mute. Each
+    /// slot may be bypassed.
     ///
     /// One place decides the order, so a reorder is one record and one undo step. A record
     /// that leaves the field out has no effects and is written back without it, so a track of
     /// before effects existed loads unchanged and gives the same bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<String>,
+    pub effects: Vec<EffectSlot>,
 }
 
 impl TrackState {
-    /// The lowest and the highest gain in decibels. Written here and nowhere else: `validate`,
-    /// the knob of the track panel and the docs read them.
-    pub const GAIN_DB: (f32, f32) = (-60.0, 6.0);
+    /// The highest gain in decibels. Anything under it is a gain too, down to `-inf`. Written
+    /// here and nowhere else: `validate`, the volume of the track panel and the docs read it.
+    pub const MAX_GAIN_DB: f32 = 6.0;
     /// Hard left to hard right.
     pub const PAN: (f32, f32) = (-1.0, 1.0);
 
@@ -150,8 +182,16 @@ impl TrackState {
             gain_db: 0.0,
             pan: 0.0,
             mute: false,
+            solo: false,
             effects: Vec::new(),
         }
+    }
+
+    /// Whether the effect in the child `name` is bypassed. `None` when the list does not
+    /// name it.
+    pub fn bypassed(&self, name: &str) -> Option<bool> {
+        let slot = self.effects.iter().find(|slot| slot.name == name)?;
+        Some(slot.bypass)
     }
 }
 
@@ -173,14 +213,14 @@ impl State for TrackState {
         if self.name.trim().is_empty() {
             return Err("name must not be empty".to_string());
         }
-        in_range("gain_db", self.gain_db, Self::GAIN_DB)?;
+        decibels::check("gain_db", self.gain_db, Self::MAX_GAIN_DB)?;
         in_range("pan", self.pan, Self::PAN)?;
         // A name in the list is the name of a file in the track folder, and the list decides an
         // order. A name that is not a child name, a name twice and the name of the instrument
         // are all lists with no order to read, so they are refused here and the agent is told
         // where the mistake is. A name with no record is not: that file may still arrive, and
         // the behaviour reports it.
-        for (index, name) in self.effects.iter().enumerate() {
+        for (index, EffectSlot { name, .. }) in self.effects.iter().enumerate() {
             if !is_child_name(name) {
                 return Err(format!(
                     "effects[{index}] must be the name of a file in the track folder without `.json`: lowercase letters, digits, `-` and `_`, not {name:?}"
@@ -191,7 +231,7 @@ impl State for TrackState {
                     "effects[{index}] must not be {INSTRUMENT:?}: the instrument of a track is its own slot and plays before every effect"
                 ));
             }
-            if self.effects[..index].contains(name) {
+            if self.effects[..index].iter().any(|slot| slot.name == *name) {
                 return Err(format!(
                     "effects[{index}] is {name:?}, which the list already has. One effect is one child record: copy the file under another name to use it twice"
                 ));
@@ -222,6 +262,7 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ArrangementState>(EXTENSION)?
+        .behaviour(apply_arrangement)
         .summary(summary::of_arrangement)
         .end(|project, arrangement| end(project, arrangement.id()));
     registry
@@ -233,13 +274,12 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 }
 
 /// Runs when the track record or anything the track owns changes: one snapshot of all its
-/// clips goes to its one sequencer, which keeps its held notes, and the gain, pan and mute of
-/// the record go to its mixer as one gain per channel. The instrument and the effects are
-/// found by the port names of the note contract, so any tool with those ports fits.
+/// clips goes to its one sequencer, which keeps its held notes. The instrument and the effects
+/// are found by the port names of the note contract, so any tool with those ports fits.
 ///
-/// The path of a track is sequencer, instrument, the effects in the order of the record,
-/// mixer, main output. Every processor keeps what it holds: a note goes on sounding through a
-/// pan edit, and a gain ramp through a clip edit.
+/// The path of a track is sequencer, instrument, the effects in the order of the record that
+/// are not bypassed, and out through its `audio` output, which its arrangement mixes. Every
+/// processor keeps what it holds: a note goes on sounding through an edit of a clip.
 fn apply_track(
     track: &TrackState,
     context: &mut BehaviourContext<'_>,
@@ -251,14 +291,11 @@ fn apply_track(
         context.connect(OutputEndpoint::new(sequencer, Sequencer::NOTES).to(notes))?;
     }
 
-    let gains = channel_gains(track);
-    let mixer = context.processor(MIXER, || Mixer::new(gains))?;
-    context.update(mixer, gains)?;
-
-    // The chain, from the instrument through the effects to the mixer. A slot that is not
-    // there is reported and left out, so the sound goes on through the rest of the chain.
+    // The chain, from the instrument through the effects. A slot that is not there is
+    // reported and left out, so the sound goes on through the rest of the chain. A bypassed
+    // slot is left out too: the sound goes past it untouched, and its latency with it.
     let mut sound = context.child_output(INSTRUMENT, AUDIO_OUTPUT);
-    for name in &track.effects {
+    for EffectSlot { name, bypass } in &track.effects {
         let ports = context
             .child_input(name, AUDIO_INPUT)
             .zip(context.child_output(name, AUDIO_OUTPUT));
@@ -267,25 +304,84 @@ fn apply_track(
             context.problem(message);
             continue;
         };
+        if *bypass {
+            continue;
+        }
         if let Some(sound) = sound {
             context.connect(sound.to(input))?;
         }
         sound = Some(output);
     }
     if let Some(sound) = sound {
-        context.connect(sound.to(InputEndpoint::new(mixer, Mixer::INPUT)))?;
+        context.output(AUDIO_OUTPUT, sound);
     }
     for name in unlisted_effects(track, context) {
         context.problem(format!(
             "the child {name:?} takes audio in and makes audio out, and the `effects` list of this track does not name it, so nothing goes through it. Add {name:?} to `effects` where you want it in the chain, or delete the file"
         ));
     }
+    Ok(())
+}
 
-    // The main output, for now: the stereo mixer on the first two device channels.
+/// Runs when the arrangement record or anything below it changes: the mixer of every track,
+/// with solo worked out across the tracks, into the master, and the master to the main output.
+///
+/// Solo is decided here and not in a track, because it is about all of them. While any track is
+/// soloed, every track that is not gets the gains of a muted one, so soloing a track sounds
+/// exactly as muting every other one does.
+fn apply_arrangement(
+    arrangement: &ArrangementState,
+    context: &mut BehaviourContext<'_>,
+) -> Result<(), BehaviourError> {
+    let tracks: Vec<(String, TrackState)> = context
+        .children::<TrackState>()
+        .map(|(name, track)| (name.to_string(), track.clone()))
+        .collect();
+    let soloing = tracks.iter().any(|(_, track)| track.solo);
+
+    let settings = arrangement.master.settings();
+    let (peaks, reduction) = (context.peaks(MASTER_PEAKS), context.peaks(REDUCTION_PEAKS));
+    let master = context.processor(MASTER, || Master::new(settings, peaks, reduction))?;
+    context.update(master, settings)?;
+
+    for (name, track) in &tracks {
+        let gains = match soloing && !track.solo {
+            true => [0.0; sound_core::CHANNELS],
+            false => channel_gains(track),
+        };
+        let peaks = context.peaks(&format!("{TRACK_PEAKS}{name}"));
+        let mixer = context.processor(&format!("{MIXER}{name}"), || Mixer::new(gains, peaks))?;
+        context.update(mixer, gains)?;
+        if let Some(sound) = context.child_output(name, AUDIO_OUTPUT) {
+            context.connect(sound.to(InputEndpoint::new(mixer, Mixer::INPUT)))?;
+        }
+        let into_master = InputEndpoint::new(master, Master::INPUT);
+        context.connect(OutputEndpoint::new(mixer, Mixer::OUTPUT).to(into_master))?;
+    }
+
+    // The main output, for now: the stereo master on the first two device channels.
     if context.device_channels() > 0 {
-        context.connect(OutputEndpoint::new(mixer, Mixer::OUTPUT).to_device(0))?;
+        context.connect(OutputEndpoint::new(master, Master::OUTPUT).to_device(0))?;
     }
     Ok(())
+}
+
+/// The peaks of what a track sends to the master, after its volume, pan, mute and solo: its
+/// meter. `None` before its arrangement has run.
+pub fn track_peaks(project: &Project, track: &InstanceId) -> Option<Peaks> {
+    let arrangement = track.parent()?;
+    project.peaks(&arrangement, &format!("{TRACK_PEAKS}{}", track.name()))
+}
+
+/// The peaks of what the master sends out, after its limiter: the meter of the master.
+pub fn master_peaks(project: &Project, arrangement: &InstanceId) -> Option<Peaks> {
+    project.peaks(arrangement, MASTER_PEAKS)
+}
+
+/// The largest reduction of the limiter since the last take, in its first channel, as the
+/// factor by which the sound was above what came out: 2 is 6 dB of reduction.
+pub fn reduction_peaks(project: &Project, arrangement: &InstanceId) -> Option<Peaks> {
+    project.peaks(arrangement, REDUCTION_PEAKS)
 }
 
 /// Why a name in `effects` has no effect behind it: no record at all, or one whose tool has
@@ -307,7 +403,7 @@ fn unlisted_effects(track: &TrackState, context: &BehaviourContext<'_>) -> Vec<S
     let children = context.child_names();
     let unlisted = children.filter(|name| {
         *name != INSTRUMENT
-            && !track.effects.iter().any(|listed| listed == name)
+            && track.bypassed(name).is_none()
             && context.child_input(name, AUDIO_INPUT).is_some()
             && context.child_output(name, AUDIO_OUTPUT).is_some()
     });
@@ -379,8 +475,8 @@ pub fn device_slots(
     let Some(state) = project.state(track) else {
         return Ok(slots);
     };
-    for name in &state.effects {
-        slots.push(track.id().child(name)?);
+    for slot in &state.effects {
+        slots.push(track.id().child(&slot.name)?);
     }
     Ok(slots)
 }
@@ -402,11 +498,11 @@ pub fn add_effect(
     // A free id: no record of this track, no file on disk, and no name the list already has.
     // The last of those is what `free_id` cannot see, because a listed name may have no record.
     let mut slot = project.free_id(&track.id().child(&id_name(name, "effect"))?)?;
-    while state.effects.iter().any(|name| name == slot.name()) {
+    while state.bypassed(slot.name()).is_some() {
         let next = format!("{}-2", slot.name());
         slot = project.free_id(&track.id().child(&next)?)?;
     }
-    state.effects.push(slot.name().to_string());
+    state.effects.push(EffectSlot::new(slot.name()));
     changes.set(track, state);
     Ok(slot)
 }
@@ -421,7 +517,7 @@ pub fn remove_effect(
 ) -> Result<(), ProjectError> {
     let missing = || ProjectError::MissingInstance(track.id().clone());
     let mut state = project.state(track).ok_or_else(missing)?.clone();
-    state.effects.retain(|name| name.as_str() != slot.name());
+    state.effects.retain(|effect| effect.name != slot.name());
     changes.set(track, state);
     changes.delete(slot);
     Ok(())
@@ -476,7 +572,7 @@ pub fn create_default_project<I: State>(
 ) -> Result<(), ProjectError> {
     let mut changes = Changes::new();
     let arrangement = InstanceId::new(DEFAULT_ARRANGEMENT)?;
-    changes.create(arrangement.clone(), ArrangementState {});
+    changes.create(arrangement.clone(), ArrangementState::default());
     add_track(
         project,
         &mut changes,
@@ -509,22 +605,30 @@ fn id_name(display: &str, fallback: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{TrackState, id_name};
+    use super::{LimiterState, TrackState, id_name};
 
-    /// The ranges are written once, in `TrackState`. The docs tell people and agents the same
-    /// numbers, so they cannot drift from it.
+    /// The ranges are written once, in the states. The docs tell people and agents the same
+    /// numbers, so they cannot drift from them.
     #[test]
-    fn the_docs_give_the_range_of_the_gain_and_the_pan() {
+    fn the_docs_give_the_ranges_of_the_mixer_and_the_limiter() {
         let docs = [
             ("agent-doc.md", include_str!("../agent-doc.md")),
             ("README.md", include_str!("../README.md")),
         ];
-        let ranges = [TrackState::GAIN_DB, TrackState::PAN];
+        let ranges = [
+            TrackState::PAN,
+            LimiterState::GAIN_DB,
+            LimiterState::CEILING_DB,
+            LimiterState::RELEASE_MS,
+            LimiterState::LOOKAHEAD_MS,
+        ];
         for (name, doc) in docs {
             for (min, max) in ranges {
                 let range = format!("{min} to {max}");
                 assert!(doc.contains(&range), "{name} does not say {range}");
             }
+            let most = format!("up to {}", TrackState::MAX_GAIN_DB);
+            assert!(doc.contains(&most), "{name} does not say {most}");
         }
     }
 
