@@ -305,7 +305,7 @@ fn header_icon(
         .justify_center()
         .size(px(ICON_TARGET))
         .rounded(px(6.))
-        .border_1()
+        .border(px(BORDER))
         .border_color(match ring_shows {
             true => ring,
             false => Hsla::transparent_black(),
@@ -415,7 +415,7 @@ impl RenderOnce for DeviceCard {
             .h(px(CARD_HEIGHT))
             .rounded(px(10.))
             .bg(background)
-            .border_1()
+            .border(px(BORDER))
             .border_color(border)
             .text_color(text)
             .child(header)

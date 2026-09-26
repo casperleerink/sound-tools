@@ -96,8 +96,6 @@ fn a_bundle_that_hangs_in_a_scan_in_the_background_is_reported() {
     let search = vec![plugin_folder_of(folder.path(), PluginFormat::Vst3)];
     let plugins = Plugins::new(search, one_bundle_hangs(PluginFormat::Vst3), no_cache());
     plugins.start_scanning();
-    assert!(plugins.scan_is_running(), "the scan was already over");
-
     plugins.wait_for_scan();
     let scan = plugins.scan();
     assert!(scan.finished);

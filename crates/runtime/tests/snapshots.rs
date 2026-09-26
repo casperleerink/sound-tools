@@ -599,6 +599,8 @@ fn add_compressor(project: &mut Project, track: &str, sound: CompressorState) ->
 struct PanelLines {
     /// The top and the height of every card wholly in view, left to right.
     cards: Vec<(f32, f32)>,
+    /// The left edge of each of those cards.
+    lefts: Vec<f32>,
     /// The value line of the first row of the last column of each of those cards.
     row_1: Vec<f32>,
     /// The value line of the second row of each: the lowest line of text in the card.
@@ -663,6 +665,7 @@ fn panel_lines(pixel: impl Fn(u32, u32) -> [u8; 3]) -> Result<PanelLines> {
 
     let mut lines = PanelLines {
         cards: Vec::new(),
+        lefts: Vec::new(),
         row_1: Vec::new(),
         row_2: Vec::new(),
         strip_row_1: None,
@@ -678,6 +681,7 @@ fn panel_lines(pixel: impl Fn(u32, u32) -> [u8; 3]) -> Result<PanelLines> {
         lines
             .cards
             .push((top as f32 / SCALE, (last + 1 - top) as f32 / SCALE));
+        lines.lefts.push(left as f32 / SCALE);
         // The rows of cells start under the header, inside the border of one point.
         let row_1 = top + at(1. + HEADER_HEIGHT);
         let row_2 = row_1 + at(ROW_HEIGHT);
@@ -1415,9 +1419,18 @@ fn main() -> Result<()> {
     println!("alignment at the end of the rack: {end:?}");
     println!("alignment of the master panel: {master:?}");
     let panels = [&start, &end, &master];
-    let cards = panels.iter().map(|panel| panel.cards.len()).sum::<usize>();
-    // Synth, filter and compressor at the start, EQ and reverb at the end, the limiter.
-    anyhow::ensure!(cards >= 6, "only {cards} cards wholly in view");
+    // Synth, filter and compressor at the start; compressor, EQ and reverb at the end; the
+    // limiter. The rack really moved, so the cards at the end are other cards.
+    let counts = panels.map(|panel| panel.cards.len());
+    anyhow::ensure!(
+        counts == [3, 3, 1],
+        "{counts:?} cards wholly in view, where 3, 3 and 1 were meant"
+    );
+    anyhow::ensure!(
+        start.lefts != end.lefts,
+        "the rack did not scroll: {:?}",
+        start.lefts
+    );
     let expected_top = WINDOW_HEIGHT - arrangement::view::track_panel::PANEL_HEIGHT + 12.;
     let card_height = sound_ui::components::device_card::CARD_HEIGHT;
     for panel in panels {
@@ -1443,7 +1456,9 @@ fn main() -> Result<()> {
         .iter()
         .flat_map(|panel| panel.row_1.iter().copied())
         .collect::<Vec<_>>();
-    row_1.extend(start.strip_row_1);
+    for panel in [&start, &end] {
+        row_1.push(panel.strip_row_1.context("no value line under Pan")?);
+    }
     anyhow::ensure!(
         same_line(&row_1),
         "the value lines of row 1 are not one line: {row_1:?}"
