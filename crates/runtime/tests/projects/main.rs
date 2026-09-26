@@ -8,6 +8,7 @@ mod agent_doc;
 mod effects;
 mod fit;
 mod generated_take;
+mod latency;
 mod live;
 mod metronome;
 mod mixer;
