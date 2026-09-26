@@ -42,7 +42,7 @@ Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 It opens and plays as it did, and nothing is rewritten. Some things need one edit of `project.json` before the new parts of the app are within reach. Add them to `extensions` and open the project again:
 
 ```json
-"extensions": ["arrangement", "filter", "fit-tempo", "instrument", "plugin-host", "tone"]
+"extensions": ["arrangement", "compressor", "filter", "fit-tempo", "instrument", "plugin-host", "tone"]
 ```
 
 - `plugin-host` for CLAP and VST 3 plugins. Without it the picker shows every plugin greyed out with that line under it.

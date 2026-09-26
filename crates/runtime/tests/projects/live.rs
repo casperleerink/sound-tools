@@ -29,6 +29,7 @@ fn the_default_project_is_a_small_musical_template() {
         project_file.extensions,
         [
             "arrangement",
+            "compressor",
             "filter",
             "fit-tempo",
             "instrument",

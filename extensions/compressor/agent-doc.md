@@ -9,8 +9,8 @@ Like every effect it is two lines: the record in the track folder, and its file 
   "tool": "arrangement.track",
   "state": {
     "name": "Drums",
-    "colour": "peach",
-    "order": 1,
+    "colour": "sky",
+    "order": 2,
     "gain_db": 0.0,
     "pan": 0.0,
     "mute": false,

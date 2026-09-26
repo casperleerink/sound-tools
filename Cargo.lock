@@ -5073,6 +5073,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrangement",
+ "compressor",
  "filter",
  "fit-tempo",
  "gpui",
