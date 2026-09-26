@@ -22,7 +22,7 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 
 use super::gesture::Zone;
-use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, SNAP, Viewport, snap, snapped_delta};
+use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, Viewport};
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
 };
@@ -32,6 +32,7 @@ use super::roll::{
     visible_pitches, y_of,
 };
 use super::scrolled_or_zoomed;
+use super::snap::{Grid, SharedSnap, snap, snapped_delta};
 use crate::{TrackState, preview_note};
 
 /// What the editor asks of the view that holds it.
@@ -76,6 +77,8 @@ pub struct NoteEditor {
     session: Entity<Session>,
     clip: Instance<Clip>,
     viewport: Viewport,
+    /// The snap of the window, shared with the timeline.
+    snap: SharedSnap,
     /// The viewport of the last paint, for the playhead line and the mouse.
     painted: Rc<Cell<Viewport>>,
     /// The width of the note area at the last paint. Before the first paint it is the width
@@ -102,6 +105,7 @@ impl NoteEditor {
         session: Entity<Session>,
         clip: Instance<Clip>,
         width: f32,
+        snap: SharedSnap,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle().tab_stop(true);
@@ -133,6 +137,7 @@ impl NoteEditor {
             session,
             clip: clip.clone(),
             viewport: Viewport::default(),
+            snap,
             painted: Rc::default(),
             painted_width: Rc::new(Cell::new(width)),
             selected_note: None,
@@ -224,6 +229,13 @@ impl NoteEditor {
         clamped(&viewport, clip, time_signature, width, note_area_height())
     }
 
+    /// The grid of the snap setting in the time signature of the project.
+    fn grid(&self, cx: &App) -> Grid {
+        let project = self.session.read(cx).project();
+        let time_signature = project.project_file().tempo_map.time_signature();
+        self.snap.get().grid(time_signature)
+    }
+
     /// The position of a mouse event in the coordinates of [`super::roll`].
     fn note_area_position(bounds: Bounds<Pixels>, position: Point<Pixels>) -> (f32, f32) {
         (
@@ -244,9 +256,10 @@ impl NoteEditor {
 
     fn on_mouse_down(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
         let viewport = self.painted.get();
+        let grid = self.grid(cx);
         if y < 0.0 {
             if x >= 0.0 {
-                let tick = snap(viewport.tick_at(x));
+                let tick = snap(viewport.tick_at(x), grid.step);
                 self.session
                     .update(cx, |session, _| session.engine().seek(tick));
             }
@@ -288,7 +301,7 @@ impl NoteEditor {
             return;
         }
 
-        let Some(note) = drawn_note(clip, pointer, pointer, pitch) else {
+        let Some(note) = drawn_note(clip, pointer, pointer, pitch, grid) else {
             // Outside the clip there is nothing to draw into.
             self.select(None, cx);
             return;
@@ -316,9 +329,13 @@ impl NoteEditor {
     }
 
     /// One mouse move of a drag: the note becomes what the pointer says, through the gesture
-    /// of the session.
-    fn drag_to(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
+    /// of the session. `free` is cmd held: the drag does not snap.
+    fn drag_to(&mut self, x: f32, y: f32, free: bool, cx: &mut Context<Self>) {
         let viewport = self.painted.get();
+        let grid = match free {
+            true => self.grid(cx).free(),
+            false => self.grid(cx),
+        };
         let Some(drag) = &self.drag else {
             return;
         };
@@ -334,16 +351,17 @@ impl NoteEditor {
         let pointer = viewport.tick_at(x);
         let next = match &drag.kind {
             NoteDragKind::Draw { down } => {
-                drawn_note(clip, *down, pointer, drag.origin.pitch).unwrap_or(drag.origin)
+                drawn_note(clip, *down, pointer, drag.origin.pitch, grid).unwrap_or(drag.origin)
             }
             NoteDragKind::Move { grab, grab_pitch } => {
                 let semitones = i32::from(nearest_pitch(&viewport, y).number())
                     - i32::from(grab_pitch.number());
-                let delta = snapped_delta(*grab, pointer);
+                let delta = snapped_delta(*grab, pointer, grid.step);
                 moved_note(clip.length, drag.origin, delta, semitones)
             }
             NoteDragKind::Resize { grab } => {
-                resized_note(clip.length, drag.origin, snapped_delta(*grab, pointer))
+                let delta = snapped_delta(*grab, pointer, grid.step);
+                resized_note(clip.length, drag.origin, delta, grid.unit)
             }
         };
         if next == drag.written {
@@ -463,7 +481,7 @@ impl NoteEditor {
         let Some((index, note, clip_length)) = self.selected(cx) else {
             return false;
         };
-        let step = SNAP.0 as i64;
+        let step = self.grid(cx).unit.0 as i64;
         let next = match (key, modifiers.shift) {
             ("backspace" | "delete", false) => None,
             ("left", false) => Some(moved_note(clip_length, note, -step, 0)),
@@ -808,7 +826,7 @@ fn listen(editor: Entity<NoteEditor>, bounds: Bounds<Pixels>, hitbox: Hitbox, wi
                         editor.hover(x, y, cx);
                     }
                 } else if event.dragging() {
-                    editor.drag_to(x, y, cx);
+                    editor.drag_to(x, y, event.modifiers.platform, cx);
                 } else {
                     // The button came up somewhere that did not tell this window.
                     editor.end_drag(cx);

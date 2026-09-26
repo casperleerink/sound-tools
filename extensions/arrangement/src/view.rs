@@ -1,7 +1,8 @@
 //! The arrangement view: track headers, a bar ruler, clips with a miniature of their notes,
 //! the playhead, and one detail panel below: the note editor of a clip or the track panel of a
-//! track, one at a time. Clips are added, moved, resized and deleted here with the mouse and
-//! the keys.
+//! track, one at a time. Clips are added, selected, moved, resized, copied, pasted and deleted
+//! here with the mouse and the keys, tracks are renamed, and tempo changes are added and
+//! removed in the ruler.
 //!
 //! The views, split so that a moving playhead repaints almost nothing:
 //! - [`ArrangementView`] is what the window shows. It stacks the timeline over the detail
@@ -20,40 +21,53 @@
 //! what is on screen. Every change goes through the session: a drag is one gesture and one
 //! undo step.
 
+pub mod clipboard;
 pub mod editor;
 pub mod gesture;
 pub mod layout;
 pub mod master_panel;
 mod paint;
 pub mod roll;
+pub mod selection;
+pub mod snap;
 pub mod track_panel;
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Entity,
     EventEmitter, FocusHandle, Focusable, FontWeight, Hitbox, HitboxBehavior, Hsla, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
-    ScrollWheelEvent, SharedString, StyleRefinement, Subscription, Window, canvas, div, fill,
-    point, prelude::*, px, quad, size,
+    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels,
+    Point, ScrollWheelEvent, SharedString, StyleRefinement, Subscription, TextAlign, TextRun,
+    Window, canvas, div, fill, point, prelude::*, px, quad, size,
 };
-use sound_core::{Changes, Instance, InstanceId, ProjectEvent, State, Ticks, TimeSignature};
+use sound_core::{
+    Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks,
+    TimeSignature,
+};
 use sound_notes::Clip;
-use sound_ui::{ActiveTheme, KeyboardFocus, NoticeRoom, Playhead, Session, Views};
+use sound_ui::components::dropdown_menu::{
+    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
+};
+use sound_ui::components::text_input::{InputSize, TextInput};
+use sound_ui::{ActiveTheme, KeyboardFocus, NoticeRoom, Playhead, Session, Views, typography};
 
-use crate::{ArrangementState, TrackState, add_clip, move_clip, tracks};
+use crate::{ArrangementState, TrackState, add_clip, add_clips, free_id_besides, tracks};
+use clipboard::CopiedClips;
 use editor::EditorEvent;
 pub use editor::NoteEditor;
 use gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
 use layout::{
-    Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, SNAP, TRACK_HEIGHT, Viewport, shifted, snap,
-    snapped_delta,
+    Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, TRACK_HEIGHT, Viewport, rows_between, shifted,
 };
 pub use master_panel::MasterPanel;
 use master_panel::{MASTER_NAME, MasterPanelEvent};
 use paint::{PlayheadLine, accent, paint_focus_ring, paint_ruler, paint_track_label, placed};
+use selection::Selection;
+use snap::{Grid, SharedSnap, Snap, snap, snapped_delta};
 use roll::EDITOR_HEIGHT;
 pub use track_panel::TrackPanel;
 use track_panel::TrackPanelEvent;
@@ -97,6 +111,8 @@ pub struct ArrangementView {
     timeline: Entity<Timeline>,
     playhead_line: Entity<PlayheadLine>,
     detail: Option<Detail>,
+    /// The snap setting of the window, shared by the timeline and the note editor.
+    snap: SharedSnap,
     /// The master row is a tab stop after the timeline, and enter opens its panel.
     master_focus: FocusHandle,
     master_keyboard: KeyboardFocus,
@@ -110,7 +126,10 @@ impl ArrangementView {
         cx: &mut Context<Self>,
     ) -> Self {
         let playhead = session.read(cx).playhead().clone();
-        let timeline = cx.new(|cx| Timeline::new(session.clone(), arrangement.clone(), cx));
+        let snap = SharedSnap::default();
+        let timeline = cx.new(|cx| {
+            Timeline::new(session.clone(), arrangement.clone(), snap.clone(), cx)
+        });
         let painted = timeline.read(cx).painted.clone();
         let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, painted, cx));
 
@@ -176,6 +195,7 @@ impl ArrangementView {
             timeline,
             playhead_line,
             detail: None,
+            snap,
             master_focus: cx.focus_handle().tab_stop(true),
             master_keyboard: KeyboardFocus::default(),
         };
@@ -265,8 +285,8 @@ impl ArrangementView {
         } else {
             self.close_detail(window, cx);
             let (width, _) = self.timeline.read(cx).painted_size.get();
-            let session = self.session.clone();
-            let editor = cx.new(|cx| NoteEditor::new(session, clip, width, cx));
+            let (session, snap) = (self.session.clone(), self.snap.clone());
+            let editor = cx.new(|cx| NoteEditor::new(session, clip, width, snap, cx));
             let playhead = self.session.read(cx).playhead().clone();
             let painted = editor.read(cx).painted();
             let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &editor, painted, cx));
@@ -507,6 +527,8 @@ struct TrackRow {
     name: SharedString,
     accent: Hsla,
     selected: bool,
+    /// The name is being edited: the field of the timeline shows it, not the paint.
+    renaming: bool,
 }
 
 /// A clip as it is on screen, in the coordinates of [`layout`].
@@ -519,12 +541,26 @@ pub struct ClipShape {
     selected: bool,
 }
 
+/// A tempo change after tick 0, in the ruler. The one at tick 0 shows in the transport.
+struct TempoMark {
+    tick: Ticks,
+    x: f32,
+    text: SharedString,
+    selected: bool,
+}
+
 /// What one paint shows: only the visible rows, clips and bars. Later clips are on top.
 pub struct Scene {
     pub viewport: Viewport,
     pub clips: Vec<ClipShape>,
     rows: Vec<TrackRow>,
     bars: Vec<(u64, f32)>,
+    tempo: Vec<TempoMark>,
+    /// Where each tempo change is in the ruler, across: filled by the paint, which measures
+    /// the labels, and hit by a press.
+    tempo_zones: Vec<(Ticks, Range<f32>)>,
+    /// The rectangle of a drag on empty space.
+    marquee: Option<Rect>,
 }
 
 impl Scene {
@@ -541,20 +577,44 @@ impl Scene {
         let shape = self.clip_at(x, y)?;
         Some((shape, zone_at(shape.rect, x)))
     }
+
+    /// The tempo change whose mark is at `x` in the ruler.
+    fn tempo_at(&self, x: f32) -> Option<Ticks> {
+        let mut zones = self.tempo_zones.iter().rev();
+        zones
+            .find(|(_, across)| across.contains(&x))
+            .map(|(tick, _)| *tick)
+    }
 }
 
-/// What a drag of a clip does, with what it starts every move from and what it wrote last.
-/// When the live clip is not what the drag wrote, something else changed it: an undo between
-/// mouse down and the first move, or an agent. A resize then goes on from the live clip, so it
-/// never writes an old copy with old notes over a newer clip. A move writes only the start.
+/// One selected clip during a move: where it is now, the id it had at mouse down, the row of
+/// its track then, and its start. When the live clip is not what the drag wrote, something else
+/// changed it: an undo between mouse down and the first move, or an agent.
+struct MovedClip {
+    /// The clip now. Its id changes when the drag takes it to another track.
+    clip: Instance<Clip>,
+    /// A drag that comes back to the first track takes this id again, so a drag there and back
+    /// leaves the file where it was.
+    home: InstanceId,
+    row: usize,
+    start: Ticks,
+    written: Ticks,
+}
+
+/// What a drag of clips does.
 enum ClipDragKind {
+    /// Every selected clip, by the same distance in time and in rows. A move writes only the
+    /// start and the track, so it keeps what else changed.
     Move {
-        start: Ticks,
-        written: Ticks,
+        clips: Vec<MovedClip>,
+        /// The row of the clip under the pointer at mouse down, and its place in `clips`.
+        grab_row: usize,
+        grabbed: usize,
     },
     /// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:
-    /// every move starts from `origin` again, so going in and out loses nothing.
+    /// every move starts from `origin` again, so going in and out loses nothing. One clip.
     Resize {
+        clip: Instance<Clip>,
         edge: Edge,
         origin: Clip,
         written: Clip,
@@ -569,44 +629,106 @@ enum Edge {
     Right,
 }
 
-impl ClipDragKind {
-    fn label(&self) -> &'static str {
-        match self {
-            Self::Move { .. } => "Move clip",
-            Self::Resize { .. } => "Resize clip",
-        }
-    }
-}
-
-/// A drag of a clip, from mouse down to mouse up.
+/// A drag of clips, from mouse down to mouse up.
 struct ClipDrag {
-    /// The clip now. Its id changes when the drag takes it to another track.
-    clip: Instance<Clip>,
-    /// The id at mouse down. A drag that comes back to its first track takes this id again, so
-    /// a drag there and back leaves the file where it was.
-    home: InstanceId,
     kind: ClipDragKind,
     /// The tick under the pointer at mouse down.
     grab: Ticks,
     /// Whether the gesture of the session is open. It opens with the first move that changes
     /// something, so a plain click is no undo step.
     begun: bool,
+    /// A press on one clip of several selected ones. When it comes up without a move, that clip
+    /// is selected alone, as in the Finder.
+    select_on_release: Option<InstanceId>,
 }
 
-/// What one mouse move of a drag asks for.
-enum DragStep {
-    /// The clip is gone: deleted from outside.
-    Gone,
-    Unchanged,
-    Publish {
-        next: Clip,
-        /// Another track than the clip is on now.
-        to_track: Option<Instance<TrackState>>,
-    },
+impl ClipDrag {
+    fn label(&self) -> &'static str {
+        match &self.kind {
+            ClipDragKind::Move { clips, .. } => plural(clips.len(), "Move clip", "Move clips"),
+            ClipDragKind::Resize { .. } => "Resize clip",
+        }
+    }
+
+    /// The clips the drag holds now.
+    fn holds(&self, id: &InstanceId) -> bool {
+        match &self.kind {
+            ClipDragKind::Move { clips, .. } => clips.iter().any(|moved| moved.clip.id() == id),
+            ClipDragKind::Resize { clip, .. } => clip.id() == id,
+        }
+    }
 }
 
-/// What of the kept track order and clip ends has to be read again. A drag changes one clip
-/// per mouse move, so only its track is walked then, not every clip of the project.
+/// A drag on empty space: the clips it touches are selected. Its corners are a tick and a
+/// height from the top of the first track, so a scroll during it keeps its start in place.
+struct Marquee {
+    from: (Ticks, f64),
+    to: (Ticks, f64),
+    /// What was selected before, which a drag with shift or cmd adds to.
+    before: Vec<InstanceId>,
+}
+
+/// The name of a track while it is being edited in its header.
+struct Rename {
+    track: Instance<TrackState>,
+    input: Entity<TextInput>,
+    /// A click anywhere else finishes the edit, as in the Finder.
+    _blur: Subscription,
+}
+
+/// One clip of a move to another place: the clip now, the id it had when the move began,
+/// the track it goes to and what it becomes there.
+struct ClipMove {
+    clip: Instance<Clip>,
+    home: InstanceId,
+    to: Instance<TrackState>,
+    next: Clip,
+}
+
+/// Moves clips in one group of changes. A clip that stays on its track gets its new record. One
+/// that goes to another track is a delete and a create, like moving a file: back on the track of
+/// its `home` it takes that id again, elsewhere its name, or the next free one. Gives the clips
+/// at their ids after the move, in the order of `moves`.
+fn move_clips(
+    project: &Project,
+    changes: &mut Changes,
+    moves: Vec<ClipMove>,
+) -> Result<Vec<Instance<Clip>>, ProjectError> {
+    let mut taken = BTreeSet::new();
+    let mut moved = Vec::new();
+    for ClipMove {
+        clip,
+        home,
+        to,
+        next,
+    } in moves
+    {
+        if clip.id().parent().as_ref() == Some(to.id()) {
+            changes.set(&clip, next);
+            moved.push(clip);
+            continue;
+        }
+        changes.delete(clip.id());
+        let id = match home.parent().as_ref() == Some(to.id()) {
+            true => home,
+            false => free_id_besides(project, &to.id().child(home.name())?, &taken)?,
+        };
+        taken.insert(id.clone());
+        moved.push(changes.create(id, next));
+    }
+    Ok(moved)
+}
+
+/// The undo label for one thing or several.
+fn plural(count: usize, one: &'static str, several: &'static str) -> &'static str {
+    match count {
+        1 => one,
+        _ => several,
+    }
+}
+
+/// What of the kept track order and clip ends has to be read again. A drag changes a few clips
+/// per mouse move, so only their tracks are walked then, not every clip of the project.
 #[derive(Default)]
 enum Stale {
     #[default]
@@ -637,7 +759,7 @@ impl Stale {
 pub enum TimelineEvent {
     /// A double click on a clip, or enter: show its notes.
     OpenEditor(Instance<Clip>),
-    /// A click on a track header, or enter on the selected track: show its panel.
+    /// A click on a track header, or cmd-down on the selected track: show its panel.
     OpenTrack(Instance<TrackState>),
 }
 
@@ -666,16 +788,26 @@ pub struct Timeline {
     ends: BTreeMap<InstanceId, Ticks>,
     /// What the events since the last render may have changed.
     stale: Stale,
-    selected_clip: Option<InstanceId>,
+    /// The selected clips. The first one is what the note editor shows.
+    clips: Selection<InstanceId>,
     /// The track whose header was clicked last. The track panel shows it. The keys go to the
-    /// selected clip first, and to this track when no clip is selected.
+    /// selected clips first, and to this track when no clip is selected.
     selected_track: Option<InstanceId>,
-    /// The selected clip was deleted in the event group that is arriving, and what the same
-    /// group created. See [`Self::reselect`].
-    lost_selection: Option<InstanceId>,
+    /// The selected tempo change, by its tick. Selecting one selects no clip.
+    selected_tempo: Option<Ticks>,
+    /// Selected clips that were deleted in the event group that is arriving, each with whether
+    /// it came first, and what the same group created. See [`Self::reselect`].
+    lost_selection: Vec<(InstanceId, bool)>,
     created_in_group: Vec<InstanceId>,
     forgets_group_later: bool,
     drag: Option<ClipDrag>,
+    marquee: Option<Marquee>,
+    /// What cmd-c and cmd-x kept, for cmd-v. In the app only.
+    clipboard: Option<CopiedClips>,
+    rename: Option<Rename>,
+    snap: SharedSnap,
+    /// The snap setting, in the corner above the track headers.
+    snap_menu: Entity<DropdownMenu>,
     /// The pointer is over an edge of a clip, so the cursor says that a drag resizes.
     over_edge: bool,
     focus_handle: FocusHandle,
@@ -689,6 +821,7 @@ impl Timeline {
     fn new(
         session: Entity<Session>,
         arrangement: Instance<ArrangementState>,
+        snap: SharedSnap,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle().tab_stop(true);
@@ -717,22 +850,28 @@ impl Timeline {
                     if timeline.selected_track.as_ref() == Some(id) {
                         timeline.select_track(None, cx);
                     }
-                    if timeline.selected_clip.as_ref() == Some(id) {
-                        timeline.select_clip(None, cx);
-                        timeline.lost_selection = Some(id.clone());
+                    if timeline.rename.as_ref().is_some_and(|rename| rename.track.id() == id) {
+                        timeline.rename = None;
+                    }
+                    let first = timeline.clips.primary() == Some(id);
+                    if timeline.clips.remove(id) {
+                        timeline.publish_selection(cx);
+                        timeline.lost_selection.push((id.clone(), first));
                         timeline.reselect(cx);
                         timeline.forget_group_later(cx);
                     }
                     // Deleted under the drag, from outside. A drag to another track is not
-                    // this: it names its new clip before this event arrives.
-                    let dragged = timeline.drag.as_ref().map(|drag| drag.clip.id());
-                    if dragged == Some(id) {
+                    // this: it names its new clips before this event arrives.
+                    if timeline.drag.as_ref().is_some_and(|drag| drag.holds(id)) {
                         timeline.end_drag(cx);
                     }
                     changed
                 }
-                // The time signature places the bars.
-                ProjectEvent::ProjectFileChanged => true,
+                // The time signature places the bars, and the tempo map the tempo marks.
+                ProjectEvent::ProjectFileChanged => {
+                    timeline.forget_lost_tempo(cx);
+                    true
+                }
                 ProjectEvent::ProblemsChanged => false,
             };
             if changed {
@@ -758,6 +897,21 @@ impl Timeline {
             }
         })
         .detach();
+        let snap_menu = cx.new(|cx| {
+            let items = Snap::ALL.map(|snap| MenuItem::new(snap.label(), snap.label()));
+            let entries = vec![MenuEntry::Group(MenuGroup::new().label("Snap").items(items))];
+            DropdownMenu::new("Snap", entries, cx)
+                .debug_name("snap")
+                .trigger(Trigger::Select)
+                .width(160.)
+                .selected(snap.get().label())
+        });
+        cx.subscribe(&snap_menu, |timeline, _, picked: &MenuPicked, _| {
+            if let Some(picked) = Snap::from_label(&picked.0) {
+                timeline.snap.set(picked);
+            }
+        })
+        .detach();
         Self {
             session,
             playhead,
@@ -770,12 +924,18 @@ impl Timeline {
             order: Vec::new(),
             ends: BTreeMap::new(),
             stale: Stale::Everything,
-            selected_clip: None,
+            clips: Selection::default(),
             selected_track: None,
-            lost_selection: None,
+            selected_tempo: None,
+            lost_selection: Vec::new(),
             created_in_group: Vec::new(),
             forgets_group_later: false,
             drag: None,
+            marquee: None,
+            clipboard: None,
+            rename: None,
+            snap,
+            snap_menu,
             over_edge: false,
             focus_handle,
             keyboard_focus: KeyboardFocus::default(),
@@ -785,6 +945,11 @@ impl Timeline {
 
     pub fn viewport(&self) -> Viewport {
         self.viewport
+    }
+
+    /// The snap setting of the window.
+    pub fn snap(&self) -> Snap {
+        self.snap.get()
     }
 
     /// Sets zoom and scroll, kept inside the content for the size that was last painted. The
@@ -862,6 +1027,11 @@ impl Timeline {
         inside.find(|ancestor| ancestor.parent().as_ref() == Some(arrangement))
     }
 
+    /// The row of a track in the order that was read last.
+    fn row_of(&self, track: &InstanceId) -> Option<usize> {
+        self.order.iter().position(|row| row.id() == track)
+    }
+
     fn refresh_order(&mut self, cx: &App) {
         let project = self.session.read(cx).project();
         let end_of = |track: &InstanceId| {
@@ -895,23 +1065,37 @@ impl Timeline {
     }
 
     /// A move to another track is a delete and a create in one group, and so is its undo and
-    /// its redo. The selection goes with the clip: when the selected clip is deleted and the
+    /// its redo. The selection goes with the clips: when a selected clip is deleted and the
     /// same group creates a clip of the same name, that one is selected.
     fn reselect(&mut self, cx: &mut Context<Self>) {
-        let Some(lost) = &self.lost_selection else {
+        if self.lost_selection.is_empty() {
             return;
-        };
-        let project = self.session.read(cx).project();
-        let mut created = self.created_in_group.iter();
-        let found =
-            created.find(|id| id.name() == lost.name() && project.resolve::<Clip>(id).is_some());
-        let found = found.cloned();
-        if let Some(found) = found {
-            // Through the one path, so the session hears it too: what the timeline shows as
-            // selected and what the rest of the window offers for it are one thing.
-            self.select_clip(Some(found), cx);
-            self.lost_selection = None;
         }
+        let project = self.session.read(cx).project();
+        let mut found = Vec::new();
+        self.lost_selection.retain(|(lost, first)| {
+            let mut created = self.created_in_group.iter();
+            let same = created.find(|id| {
+                id.name() == lost.name()
+                    && project.resolve::<Clip>(id).is_some()
+                    && !found.iter().any(|(found, _)| found == *id)
+            });
+            match same {
+                Some(same) => {
+                    found.push((same.clone(), *first));
+                    false
+                }
+                None => true,
+            }
+        });
+        if found.is_empty() {
+            return;
+        }
+        let first = found.iter().find(|(_, first)| *first).map(|(id, _)| id.clone());
+        let mut selected: Vec<_> = self.clips.iter().cloned().collect();
+        selected.extend(found.into_iter().map(|(id, _)| id));
+        let primary = first.or_else(|| self.clips.primary().cloned());
+        self.set_clips(selected, primary, cx);
     }
 
     /// Forgets what `reselect` keeps, once per group. Deferred work runs after the events
@@ -924,7 +1108,7 @@ impl Timeline {
         cx.defer(move |cx| {
             if let Some(this) = this.upgrade() {
                 this.update(cx, |timeline, _| {
-                    timeline.lost_selection = None;
+                    timeline.lost_selection.clear();
                     timeline.created_in_group.clear();
                     timeline.forgets_group_later = false;
                 });
@@ -932,19 +1116,48 @@ impl Timeline {
         });
     }
 
+    /// The first selected clip: the one the note editor shows.
     pub fn selected_clip(&self) -> Option<&InstanceId> {
-        self.selected_clip.as_ref()
+        self.clips.primary()
     }
 
-    /// Selects a clip. It goes to the session too, as the selected track does: the window
+    /// Every selected clip, by id.
+    pub fn selected_clips(&self) -> impl Iterator<Item = &InstanceId> {
+        self.clips.iter()
+    }
+
+    /// Selects one clip, or none.
+    pub fn select_clip(&mut self, clip: Option<InstanceId>, cx: &mut Context<Self>) {
+        self.set_clips(clip.clone(), clip, cx);
+    }
+
+    /// Selects exactly these clips, `primary` first.
+    pub fn set_clips(
+        &mut self,
+        clips: impl IntoIterator<Item = InstanceId>,
+        primary: Option<InstanceId>,
+        cx: &mut Context<Self>,
+    ) {
+        let before = self.clips.clone();
+        self.clips.set(clips, primary);
+        if self.clips != before {
+            if !self.clips.is_empty() {
+                self.selected_tempo = None;
+            }
+            self.publish_selection(cx);
+            cx.notify();
+        }
+    }
+
+    /// The first selected clip goes to the session too, as the selected track does: the window
     /// offers to fit the project tempo to the take of the selected clip, and the arrangement
     /// knows nothing of takes or of fitting.
-    pub fn select_clip(&mut self, clip: Option<InstanceId>, cx: &mut Context<Self>) {
-        if self.selected_clip != clip {
-            self.selected_clip = clip.clone();
+    fn publish_selection(&self, cx: &mut Context<Self>) {
+        let primary = self.clips.primary().cloned();
+        let published = self.session.read(cx).selected_clip().cloned();
+        if primary != published {
             self.session
-                .update(cx, |session, cx| session.select_clip(clip, cx));
-            cx.notify();
+                .update(cx, |session, cx| session.select_clip(primary, cx));
         }
     }
 
@@ -960,6 +1173,7 @@ impl Timeline {
     pub fn select_track(&mut self, track: Option<InstanceId>, cx: &mut Context<Self>) {
         if track.is_some() {
             self.select_clip(None, cx);
+            self.select_tempo(None, cx);
         }
         if self.selected_track != track {
             self.selected_track = track.clone();
@@ -969,25 +1183,92 @@ impl Timeline {
         }
     }
 
+    /// The selected tempo change, by its tick.
+    pub fn selected_tempo(&self) -> Option<Ticks> {
+        self.selected_tempo
+    }
+
+    /// Selects a tempo change and no clip, so delete removes it.
+    pub fn select_tempo(&mut self, tick: Option<Ticks>, cx: &mut Context<Self>) {
+        if tick.is_some() {
+            self.select_clip(None, cx);
+        }
+        if self.selected_tempo != tick {
+            self.selected_tempo = tick;
+            cx.notify();
+        }
+    }
+
+    /// A tempo change removed from outside is not selected any more.
+    fn forget_lost_tempo(&mut self, cx: &App) {
+        let Some(tick) = self.selected_tempo else {
+            return;
+        };
+        let project = self.session.read(cx).project();
+        if project.project_file().tempo_map.change_at(tick).tick != tick {
+            self.selected_tempo = None;
+        }
+    }
+
+    /// The name of the track being edited, while it is.
+    pub fn renaming(&self) -> Option<&Instance<TrackState>> {
+        self.rename.as_ref().map(|rename| &rename.track)
+    }
+
     fn time_signature(&self, cx: &App) -> TimeSignature {
         let project = self.session.read(cx).project();
         project.project_file().tempo_map.time_signature()
+    }
+
+    /// The grid of the snap setting in the time signature of the project.
+    fn grid(&self, cx: &App) -> Grid {
+        self.snap.get().grid(self.time_signature(cx))
     }
 
     /// Everything to paint into a timeline area of this size, read from the project now.
     fn scene(&self, width: f32, height: f32, cx: &App) -> Scene {
         let project = self.session.read(cx).project();
         let theme = cx.theme();
-        let time_signature = self.time_signature(cx);
+        let tempo_map = &project.project_file().tempo_map;
+        let time_signature = tempo_map.time_signature();
         // Clamped again for this size: the window may have grown since the last scroll.
         let viewport = self.clamped(self.viewport, width, height, cx);
         let visible_ticks = viewport.visible_ticks(width);
+        let renaming = self.rename.as_ref().map(|rename| rename.track.id());
+
+        let changes = tempo_map.tempo_changes().iter();
+        let tempo = changes
+            .filter(|change| change.tick > Ticks(0))
+            .map(|change| TempoMark {
+                tick: change.tick,
+                x: viewport.x_of(change.tick),
+                text: change.bpm.to_string().into(),
+                selected: self.selected_tempo == Some(change.tick),
+            })
+            // A label reaches right of its tick, so one that starts just left of the area
+            // still shows its end.
+            .filter(|mark| (-TEMPO_LABEL_ROOM..width).contains(&mark.x))
+            .collect();
+        let marquee = self.marquee.as_ref().map(|marquee| {
+            let (left, right) = ordered(marquee.from.0, marquee.to.0);
+            let (top, bottom) = ordered(marquee.from.1, marquee.to.1);
+            let x = viewport.x_of(left);
+            Rect {
+                x,
+                y: (top - viewport.scroll_y) as f32,
+                width: viewport.x_of(right) - x,
+                height: (bottom - top) as f32,
+            }
+        });
 
         let mut scene = Scene {
             viewport,
             clips: Vec::new(),
             rows: Vec::new(),
             bars: viewport.ruler_bars(time_signature, width).collect(),
+            tempo,
+            tempo_zones: Vec::new(),
+            marquee,
         };
         for index in viewport.visible_tracks(height, self.order.len()) {
             let Some(track) = self.order.get(index) else {
@@ -1003,6 +1284,7 @@ impl Timeline {
                 name: state.name.clone().into(),
                 accent,
                 selected: self.selected_track.as_ref() == Some(track.id()),
+                renaming: renaming == Some(track.id()),
             });
             let first = scene.clips.len();
             for (clip, state) in project.children::<Clip>(track.id()) {
@@ -1012,7 +1294,7 @@ impl Timeline {
                 let rect = viewport.clip_rect(index, state);
                 scene.clips.push(ClipShape {
                     notes: viewport.miniature(state, rect).collect(),
-                    selected: self.selected_clip.as_ref() == Some(clip.id()),
+                    selected: self.clips.contains(clip.id()),
                     start: state.start,
                     clip,
                     rect,
@@ -1038,64 +1320,176 @@ impl Timeline {
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
-        x: f32,
-        y: f32,
+        (x, y): (f32, f32),
         scene: &Scene,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let double = event.click_count == 2;
+        // Shift and cmd add to the selection or take out of it, as in the Finder.
+        let adds = event.modifiers.shift || event.modifiers.platform;
         if x < 0.0 {
-            // A track header.
+            // The corner above the headers holds the snap setting, which takes its own clicks.
+            if y < 0.0 {
+                return;
+            }
+            // A track header. A double click edits its name.
             let row = scene.viewport.track_at(y, self.order.len());
             if let Some(track) = row.and_then(|row| self.order.get(row)).cloned() {
                 self.select_track(Some(track.id().clone()), cx);
-                cx.emit(TimelineEvent::OpenTrack(track));
+                cx.emit(TimelineEvent::OpenTrack(track.clone()));
+                if double {
+                    self.start_rename(track, window, cx);
+                }
             }
             return;
         }
         if y < 0.0 {
-            let tick = snap(scene.viewport.tick_at(x));
-            self.session
-                .update(cx, |session, _| session.engine().seek(tick));
+            self.on_ruler(x, double, scene, cx);
             return;
         }
-        let double = event.click_count == 2;
         let Some((shape, zone)) = scene.zone_at(x, y) else {
-            self.select_clip(None, cx);
             if double {
                 self.add_clip_at(x, y, scene, cx);
+            } else {
+                self.start_marquee(x, y, adds, cx);
             }
             return;
         };
         let clip = shape.clip.clone();
-        self.select_clip(Some(clip.id().clone()), cx);
+        if adds {
+            let mut clips = self.clips.clone();
+            clips.toggle(clip.id().clone());
+            let primary = clips.primary().cloned();
+            self.set_clips(clips.iter().cloned().collect::<Vec<_>>(), primary, cx);
+            return;
+        }
         if double {
+            self.select_clip(Some(clip.id().clone()), cx);
             cx.emit(TimelineEvent::OpenEditor(clip));
             return;
         }
-        let Some(state) = self.session.read(cx).project().state(&clip) else {
+        let grab = self.painted.get().tick_at(x);
+        let kind = match zone {
+            Zone::Body => self.start_move(&clip, cx),
+            Zone::LeftEdge | Zone::RightEdge => {
+                self.select_clip(Some(clip.id().clone()), cx);
+                let Some(state) = self.session.read(cx).project().state(&clip).cloned() else {
+                    return;
+                };
+                let edge = match zone {
+                    Zone::LeftEdge => Edge::Left,
+                    _ => Edge::Right,
+                };
+                Some(ClipDragKind::Resize {
+                    clip,
+                    edge,
+                    origin: state.clone(),
+                    written: state,
+                    delta: 0,
+                })
+            }
+        };
+        let Some(kind) = kind else {
             return;
         };
-        let resize = |edge| ClipDragKind::Resize {
-            edge,
-            origin: state.clone(),
-            written: state.clone(),
-            delta: 0,
-        };
-        let kind = match zone {
-            Zone::Body => ClipDragKind::Move {
-                start: state.start,
-                written: state.start,
-            },
-            Zone::LeftEdge => resize(Edge::Left),
-            Zone::RightEdge => resize(Edge::Right),
-        };
+        let several = matches!(&kind, ClipDragKind::Move { clips, .. } if clips.len() > 1);
         self.drag = Some(ClipDrag {
-            home: clip.id().clone(),
-            clip,
             kind,
-            grab: self.painted.get().tick_at(x),
+            grab,
             begun: false,
+            select_on_release: several.then(|| shape.clip.id().clone()),
         });
+    }
+
+    /// A press on the body of a clip: a move of it, or of every selected clip when it is one of
+    /// them. `None` when the project has none of them any more.
+    fn start_move(&mut self, pressed: &Instance<Clip>, cx: &mut Context<Self>) -> Option<ClipDragKind> {
+        self.refresh_order(cx);
+        if self.clips.contains(pressed.id()) {
+            let selected: Vec<_> = self.clips.iter().cloned().collect();
+            self.set_clips(selected, Some(pressed.id().clone()), cx);
+        } else {
+            self.select_clip(Some(pressed.id().clone()), cx);
+        }
+        let project = self.session.read(cx).project();
+        let mut clips = Vec::new();
+        for id in self.clips.iter() {
+            let clip = project.resolve::<Clip>(id)?;
+            let start = project.state(&clip)?.start;
+            let row = self.row_of(&id.parent()?)?;
+            clips.push(MovedClip {
+                home: id.clone(),
+                clip,
+                row,
+                start,
+                written: start,
+            });
+        }
+        let grabbed = clips.iter().position(|moved| moved.clip.id() == pressed.id())?;
+        let grab_row = clips.get(grabbed)?.row;
+        Some(ClipDragKind::Move {
+            clips,
+            grab_row,
+            grabbed,
+        })
+    }
+
+    /// A press in the ruler: on a tempo mark it selects the tempo change and moves the playhead
+    /// onto it, so the tempo of the transport is its tempo and a drag there edits it. Anywhere
+    /// else it moves the playhead to the grid, and a double click adds a tempo change there.
+    fn on_ruler(&mut self, x: f32, double: bool, scene: &Scene, cx: &mut Context<Self>) {
+        if let Some(tick) = scene.tempo_at(x) {
+            self.select_tempo(Some(tick), cx);
+            self.seek(tick, cx);
+            return;
+        }
+        let tick = snap(scene.viewport.tick_at(x), self.grid(cx).step);
+        if double {
+            self.add_tempo_change(tick, cx);
+        } else {
+            self.select_tempo(None, cx);
+        }
+        self.seek(tick, cx);
+    }
+
+    fn seek(&mut self, tick: Ticks, cx: &mut Context<Self>) {
+        self.session
+            .update(cx, |session, _| session.engine().seek(tick));
+    }
+
+    /// Adds a tempo change at `tick` with the tempo that plays there, and selects it. A change
+    /// that is there already is selected.
+    pub fn add_tempo_change(&mut self, tick: Ticks, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let Some(tempo_map) = project.project_file().tempo_map.with_change_at(tick) else {
+                    return Ok(());
+                };
+                let mut changes = Changes::new();
+                changes.set_tempo_map(tempo_map);
+                project.commit("Add tempo change", changes)
+            })
+        });
+        let project = self.session.read(cx).project();
+        if project.project_file().tempo_map.change_at(tick).tick == tick && tick > Ticks(0) {
+            self.select_tempo(Some(tick), cx);
+        }
+    }
+
+    fn remove_tempo_change(&mut self, tick: Ticks, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let map = &project.project_file().tempo_map;
+                let Some(tempo_map) = map.without_change_at(tick) else {
+                    return Ok(());
+                };
+                let mut changes = Changes::new();
+                changes.set_tempo_map(tempo_map);
+                project.commit("Remove tempo change", changes)
+            })
+        });
+        self.select_tempo(None, cx);
     }
 
     /// A double click on empty track space: a clip of one bar in the cell under the pointer.
@@ -1104,7 +1498,8 @@ impl Timeline {
         let Some(track) = row.and_then(|row| self.order.get(row)).cloned() else {
             return;
         };
-        let clip = new_clip(scene.viewport.tick_at(x), self.time_signature(cx));
+        let grid = self.grid(cx);
+        let clip = new_clip(scene.viewport.tick_at(x), self.time_signature(cx), grid.step);
         let added = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
@@ -1118,156 +1513,258 @@ impl Timeline {
         }
     }
 
-    /// What the pointer asks of the dragged clip now. It goes on from the live clip when that
-    /// is not what the drag wrote last.
-    fn drag_step(&self, drag: &mut ClipDrag, x: f32, y: f32, cx: &App) -> DragStep {
-        let project = self.session.read(cx).project();
-        let Some(live) = project.state(&drag.clip) else {
-            return DragStep::Gone;
-        };
+    /// A press on empty track space begins a rectangle that selects what it touches. Without
+    /// shift or cmd it starts from nothing selected.
+    fn start_marquee(&mut self, x: f32, y: f32, adds: bool, cx: &mut Context<Self>) {
+        if !adds {
+            self.select_clip(None, cx);
+        }
+        self.select_tempo(None, cx);
         let viewport = self.painted.get();
-        let pointer = viewport.tick_at(x);
-        match &mut drag.kind {
-            ClipDragKind::Move { start, written } => {
-                // Once it moves, the drag owns the start: the clip stays under the pointer,
-                // and the rest of the clip is the live one. Before that, an undo under the
-                // press may have moved the clip.
-                if !drag.begun && live.start != *written {
-                    (*start, *written) = (live.start, live.start);
-                }
-                let row = viewport.nearest_track(y, self.order.len());
-                let under_pointer = row.and_then(|row| self.order.get(row));
-                let on_now = drag.clip.id().parent();
-                let to_track = under_pointer
-                    .filter(|track| Some(track.id()) != on_now.as_ref())
-                    .cloned();
-                let next_start = shifted(*start, snapped_delta(drag.grab, pointer));
-                if to_track.is_none() && next_start == live.start {
-                    return DragStep::Unchanged;
-                }
-                let next = Clip {
-                    start: next_start,
-                    ..live.clone()
-                };
-                DragStep::Publish { next, to_track }
-            }
-            ClipDragKind::Resize {
-                edge,
-                origin,
-                written,
-                delta,
-            } => {
-                // Something else wrote the clip. The drag goes on from that clip, and the grab
-                // moves by what the drag had done to its edge, so the pointer still means the
-                // same distance.
-                let rebased = live != written;
-                if rebased {
-                    let ticks = |ticks: Ticks| ticks.0 as i64;
-                    let done = match edge {
-                        Edge::Left => ticks(written.start) - ticks(origin.start),
-                        Edge::Right => ticks(written.length.ticks()) - ticks(origin.length.ticks()),
-                    };
-                    drag.grab = shifted(drag.grab, done);
-                    (*origin, *written) = (live.clone(), live.clone());
-                }
-                let next_delta = snapped_delta(drag.grab, pointer);
-                if !rebased && next_delta == *delta {
-                    return DragStep::Unchanged;
-                }
-                *delta = next_delta;
-                let next = match edge {
-                    Edge::Left => resized_left(origin, next_delta),
-                    Edge::Right => resized_right(origin, next_delta),
-                };
-                if next == *written {
-                    return DragStep::Unchanged;
-                }
-                DragStep::Publish {
-                    next,
-                    to_track: None,
-                }
-            }
+        let corner = (viewport.tick_at(x), f64::from(y) + viewport.scroll_y);
+        self.marquee = Some(Marquee {
+            from: corner,
+            to: corner,
+            before: self.clips.iter().cloned().collect(),
+        });
+    }
+
+    /// One mouse move of the rectangle: the clips it touches and what was selected before.
+    fn marquee_to(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
+        self.refresh_order(cx);
+        let viewport = self.painted.get();
+        let Some(marquee) = &mut self.marquee else {
+            return;
+        };
+        marquee.to = (viewport.tick_at(x), f64::from(y) + viewport.scroll_y);
+        let (left, right) = ordered(marquee.from.0, marquee.to.0);
+        let rows = rows_between(marquee.from.1, marquee.to.1, self.order.len());
+        let project = self.session.read(cx).project();
+        let mut selected = marquee.before.clone();
+        for track in self.order.get(rows).unwrap_or_default() {
+            let clips = project.children::<Clip>(track.id());
+            let touched = clips.filter(|(_, clip)| clip.start <= right && clip.end() > left);
+            selected.extend(touched.map(|(clip, _)| clip.id().clone()));
+        }
+        let primary = self.clips.primary().cloned();
+        self.set_clips(selected, primary, cx);
+        cx.notify();
+    }
+
+    /// One mouse move of a drag: the clips become what the pointer says, through the gesture
+    /// of the session, so sound and every other view follow. `free` is cmd held: no snap.
+    fn drag_to(&mut self, x: f32, y: f32, free: bool, cx: &mut Context<Self>) {
+        self.refresh_order(cx);
+        let grid = match free {
+            true => self.grid(cx).free(),
+            false => self.grid(cx),
+        };
+        match self.drag.as_ref().map(|drag| &drag.kind) {
+            Some(ClipDragKind::Move { .. }) => self.drag_move(x, y, grid, cx),
+            Some(ClipDragKind::Resize { .. }) => self.drag_resize(x, grid, cx),
+            None => {}
         }
     }
 
-    /// One mouse move of a drag: the clip becomes what the pointer says, through the gesture
-    /// of the session, so sound and every other view follow.
-    fn drag_to(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
-        self.refresh_order(cx);
+    /// A move of the selected clips: all by the same distance in time and in track rows. The
+    /// earliest stops at tick 0 and the outer ones at the first and the last track, and the
+    /// others keep their distance to them.
+    fn drag_move(&mut self, x: f32, y: f32, grid: Grid, cx: &mut Context<Self>) {
         let Some(mut drag) = self.drag.take() else {
             return;
         };
-        let step = self.drag_step(&mut drag, x, y, cx);
-        let DragStep::Publish { next, to_track } = step else {
+        let label = drag.label();
+        let ClipDragKind::Move {
+            clips,
+            grab_row,
+            grabbed,
+        } = &mut drag.kind
+        else {
             self.drag = Some(drag);
-            if matches!(step, DragStep::Gone) {
-                self.end_drag(cx);
-            }
             return;
         };
-        let (clip, home, label) = (drag.clip.clone(), drag.home.clone(), drag.kind.label());
-        let begun = std::mem::replace(&mut drag.begun, true);
-        let wrote = match &drag.kind {
-            ClipDragKind::Move { .. } => None,
-            ClipDragKind::Resize { .. } => Some(next.clone()),
+        let project = self.session.read(cx).project();
+        let lives: Option<Vec<Clip>> = clips
+            .iter()
+            .map(|moved| project.state(&moved.clip).cloned())
+            .collect();
+        let Some(lives) = lives else {
+            // A clip is gone: deleted from outside.
+            self.drag = Some(drag);
+            return self.end_drag(cx);
         };
-        let wrote_start = next.start;
+        // Once it moves, the drag owns the starts. Before that, an undo under the press may
+        // have moved a clip.
+        if !drag.begun {
+            for (moved, live) in clips.iter_mut().zip(&lives) {
+                if live.start != moved.written {
+                    (moved.start, moved.written) = (live.start, live.start);
+                }
+            }
+        }
+        let viewport = self.painted.get();
+        let earliest = clips.iter().map(|moved| moved.start.0).min().unwrap_or(0);
+        let delta = snapped_delta(drag.grab, viewport.tick_at(x), grid.step);
+        let delta = delta.max(-(earliest as i64));
+        let rows = self.order.len();
+        let (top, bottom) = (
+            clips.iter().map(|moved| moved.row).min().unwrap_or(0),
+            clips.iter().map(|moved| moved.row).max().unwrap_or(0),
+        );
+        let under_pointer = viewport.nearest_track(y, rows).unwrap_or(*grab_row);
+        let row_delta = (under_pointer as i64 - *grab_row as i64)
+            .clamp(-(top as i64), rows.saturating_sub(1 + bottom) as i64);
+        let mut moves = Vec::new();
+        for (moved, live) in clips.iter().zip(lives) {
+            let row = moved.row.saturating_add_signed(row_delta as isize);
+            let Some(to) = self.order.get(row).cloned() else {
+                self.drag = Some(drag);
+                return;
+            };
+            let next = Clip {
+                start: shifted(moved.start, delta),
+                ..live
+            };
+            moves.push(ClipMove {
+                clip: moved.clip.clone(),
+                home: moved.home.clone(),
+                to,
+                next,
+            });
+        }
+        let project = self.session.read(cx).project();
+        let unchanged = moves.iter().all(|step| {
+            step.clip.id().parent().as_ref() == Some(step.to.id())
+                && project.state(&step.clip).map(|live| live.start) == Some(step.next.start)
+        });
+        if unchanged {
+            self.drag = Some(drag);
+            return;
+        }
+        let starts: Vec<Ticks> = moves.iter().map(|step| step.next.start).collect();
+        let begun = std::mem::replace(&mut drag.begun, true);
         let moved = self.session.update(cx, |session, cx| {
             if !begun {
                 session.begin_gesture(label, cx);
             }
             session.gesture(cx, |project, edit| {
                 let mut changes = Changes::new();
-                let clip = match &to_track {
-                    Some(track) if home.parent().as_ref() == Some(track.id()) => {
-                        changes.delete(clip.id());
-                        changes.create(home.clone(), next)
-                    }
-                    Some(track) => {
-                        let moved = move_clip(project, &mut changes, &clip, track)?;
-                        changes.set(&moved, next);
-                        moved
-                    }
-                    None => {
-                        changes.set(&clip, next);
-                        clip.clone()
-                    }
-                };
+                let moved = move_clips(project, &mut changes, moves)?;
                 project.publish(edit, changes)?;
-                Ok(clip)
+                Ok(moved)
             })
         });
         if let Some(moved) = moved {
-            drag.clip = moved;
-            match (&mut drag.kind, wrote) {
-                (ClipDragKind::Move { written, .. }, _) => *written = wrote_start,
-                (ClipDragKind::Resize { written, .. }, Some(wrote)) => *written = wrote,
-                (ClipDragKind::Resize { .. }, None) => {}
+            for ((clip, now), start) in clips.iter_mut().zip(moved).zip(starts) {
+                (clip.clip, clip.written) = (now, start);
             }
         }
-        let dragged = drag.clip.id().clone();
+        let selected: Vec<_> = clips.iter().map(|moved| moved.clip.id().clone()).collect();
+        let primary = selected.get(*grabbed).cloned();
         self.drag = Some(drag);
-        self.select_clip(Some(dragged), cx);
+        self.set_clips(selected, primary, cx);
     }
 
-    /// Mouse up, or the clip went away under the drag: the gesture becomes one undo step.
+    /// A move of an edge of one clip. It goes on from the live clip when that is not what the
+    /// drag wrote last.
+    fn drag_resize(&mut self, x: f32, grid: Grid, cx: &mut Context<Self>) {
+        let Some(mut drag) = self.drag.take() else {
+            return;
+        };
+        let label = drag.label();
+        let ClipDragKind::Resize {
+            clip,
+            edge,
+            origin,
+            written,
+            delta,
+        } = &mut drag.kind
+        else {
+            self.drag = Some(drag);
+            return;
+        };
+        let project = self.session.read(cx).project();
+        let Some(live) = project.state(clip).cloned() else {
+            self.drag = Some(drag);
+            return self.end_drag(cx);
+        };
+        let pointer = self.painted.get().tick_at(x);
+        // Something else wrote the clip. The drag goes on from that clip, and the grab moves
+        // by what the drag had done to its edge, so the pointer still means the same distance.
+        let rebased = live != *written;
+        if rebased {
+            let ticks = |ticks: Ticks| ticks.0 as i64;
+            let done = match edge {
+                Edge::Left => ticks(written.start) - ticks(origin.start),
+                Edge::Right => ticks(written.length.ticks()) - ticks(origin.length.ticks()),
+            };
+            drag.grab = shifted(drag.grab, done);
+            (*origin, *written) = (live.clone(), live);
+        }
+        let next_delta = snapped_delta(drag.grab, pointer, grid.step);
+        if !rebased && next_delta == *delta {
+            self.drag = Some(drag);
+            return;
+        }
+        *delta = next_delta;
+        let next = match edge {
+            Edge::Left => resized_left(origin, next_delta, grid.unit),
+            Edge::Right => resized_right(origin, next_delta, grid.unit),
+        };
+        if next == *written {
+            self.drag = Some(drag);
+            return;
+        }
+        let begun = std::mem::replace(&mut drag.begun, true);
+        let (instance, wrote) = (clip.clone(), next.clone());
+        let published = self.session.update(cx, |session, cx| {
+            if !begun {
+                session.begin_gesture(label, cx);
+            }
+            session.gesture(cx, |project, edit| {
+                let mut changes = Changes::new();
+                changes.set(&instance, next);
+                project.publish(edit, changes)
+            })
+        });
+        if published.is_some() {
+            *written = wrote;
+        }
+        self.drag = Some(drag);
+    }
+
+    /// Mouse up, or a clip went away under the drag: the gesture becomes one undo step. A press
+    /// on one of several selected clips that did not move selects that clip alone.
     fn end_drag(&mut self, cx: &mut Context<Self>) {
-        if self.drag.take().is_some_and(|drag| drag.begun) {
-            self.session
-                .update(cx, |session, cx| session.finish_gesture(cx));
+        self.marquee = None;
+        if let Some(drag) = self.drag.take() {
+            if drag.begun {
+                self.session
+                    .update(cx, |session, cx| session.finish_gesture(cx));
+            } else if let Some(pressed) = drag.select_on_release {
+                self.select_clip(Some(pressed), cx);
+            }
         }
         cx.notify();
     }
 
-    /// Escape: the clip goes back to where it was at mouse down. Whether there was a drag.
+    /// Escape: the clips go back to where they were at mouse down. Whether there was a drag.
     fn cancel_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.marquee.take().is_some() {
+            cx.notify();
+            return true;
+        }
         let Some(drag) = self.drag.take() else {
             return false;
         };
         if drag.begun {
             self.session
                 .update(cx, |session, cx| session.cancel_gesture(cx));
-            self.select_clip(Some(drag.home), cx);
+            if let ClipDragKind::Move { clips, grabbed, .. } = drag.kind {
+                let homes: Vec<_> = clips.into_iter().map(|moved| moved.home).collect();
+                let primary = homes.get(grabbed).cloned();
+                self.set_clips(homes, primary, cx);
+            }
         }
         cx.notify();
         true
@@ -1293,46 +1790,114 @@ impl Timeline {
 
     fn selected_instance(&self, cx: &App) -> Option<Instance<Clip>> {
         let project = self.session.read(cx).project();
-        project.resolve(self.selected_clip.as_ref()?)
+        project.resolve(self.clips.primary()?)
+    }
+
+    /// The selected clips that the project still has, with their state.
+    fn selected_states(&self, cx: &App) -> Vec<(Instance<Clip>, Clip)> {
+        let project = self.session.read(cx).project();
+        let clips = self.clips.iter().filter_map(|id| {
+            let clip = project.resolve::<Clip>(id)?;
+            let state = project.state(&clip)?.clone();
+            Some((clip, state))
+        });
+        clips.collect()
     }
 
     /// The keys of the focused timeline. Whether the key was one of them.
-    fn on_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
-        let modifiers = event.keystroke.modifiers;
-        if modifiers.control || modifiers.alt || modifiers.platform || modifiers.shift {
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // Keys that bubble up from a control inside, such as the name field of a track or the
+        // snap setting, are that control's.
+        if !self.focus_handle.is_focused(window) {
+            return false;
+        }
+        let Modifiers {
+            control,
+            alt,
+            shift,
+            platform,
+            ..
+        } = event.keystroke.modifiers;
+        if control || alt || shift {
             return false;
         }
         let key = event.keystroke.key.as_str();
-        if key == "escape" {
+        if key == "escape" && !platform {
             return self.cancel_drag(cx);
         }
-        // The mouse has the clip: a key would fight the next mouse move.
-        if self.drag.is_some() {
+        // The mouse has the clips: a key would fight the next mouse move.
+        if self.drag.is_some() || self.marquee.is_some() {
             return false;
         }
+        if platform {
+            return self.on_command(key, cx);
+        }
+        if key == "t" {
+            let tick = self.playhead.read(cx).tick;
+            self.add_tempo_change(tick, cx);
+            return true;
+        }
+        if let Some(tick) = self.selected_tempo
+            && matches!(key, "backspace" | "delete")
+        {
+            self.remove_tempo_change(tick, cx);
+            return true;
+        }
         let Some(clip) = self.selected_instance(cx) else {
-            return self.on_track_key(key, cx);
+            return self.on_track_key(key, window, cx);
         };
-        let step = SNAP.0 as i64;
+        let unit = self.grid(cx).unit.0 as i64;
         match key {
             "enter" => cx.emit(TimelineEvent::OpenEditor(clip)),
-            "backspace" | "delete" => self.delete_clip(&clip, cx),
-            "left" => self.nudge_in_time(&clip, -step, cx),
-            "right" => self.nudge_in_time(&clip, step, cx),
-            "up" => self.nudge_to_track(&clip, -1, cx),
-            "down" => self.nudge_to_track(&clip, 1, cx),
+            "backspace" | "delete" => self.delete_clips("Delete clip", "Delete clips", cx),
+            "left" => self.nudge_in_time(-unit, cx),
+            "right" => self.nudge_in_time(unit, cx),
+            "up" => self.nudge_to_track(-1, cx),
+            "down" => self.nudge_to_track(1, cx),
+            _ => return false,
+        }
+        true
+    }
+
+    /// The keys with cmd: select all, copy, cut, paste, duplicate, and cmd-down, which opens
+    /// what is selected as enter does in the Finder.
+    fn on_command(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        match key {
+            "a" => self.select_all(cx),
+            "c" => {
+                self.copy(cx);
+            }
+            "x" => {
+                if self.copy(cx) {
+                    self.delete_clips("Cut clip", "Cut clips", cx);
+                }
+            }
+            "v" => self.paste(cx),
+            "d" => self.duplicate(cx),
+            "down" => {
+                if let Some(clip) = self.selected_instance(cx) {
+                    cx.emit(TimelineEvent::OpenEditor(clip));
+                } else {
+                    let project = self.session.read(cx).project();
+                    let selected = self.selected_track.as_ref();
+                    let track = selected.and_then(|track| project.resolve::<TrackState>(track));
+                    let Some(track) = track else {
+                        return false;
+                    };
+                    cx.emit(TimelineEvent::OpenTrack(track));
+                }
+            }
             _ => return false,
         }
         true
     }
 
     /// The keys of the selected track, which it gets while no clip is selected: up and down
-    /// select the track above or below, and enter opens its panel.
-    fn on_track_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+    /// select the track above or below, and enter edits its name.
+    fn on_track_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.refresh_order(cx);
-        let mut rows = self.order.iter();
         let selected = self.selected_track.as_ref();
-        let Some(current) = selected.and_then(|id| rows.position(|track| track.id() == id)) else {
+        let Some(current) = selected.and_then(|id| self.row_of(id)) else {
             return false;
         };
         let next = match key {
@@ -1344,62 +1909,254 @@ impl Timeline {
         let Some(track) = self.order.get(next).cloned() else {
             return false;
         };
-        self.select_track(Some(track.id().clone()), cx);
         if key == "enter" {
-            cx.emit(TimelineEvent::OpenTrack(track));
+            self.start_rename(track, window, cx);
+        } else {
+            self.select_track(Some(track.id().clone()), cx);
         }
         true
     }
 
-    fn delete_clip(&mut self, clip: &Instance<Clip>, cx: &mut Context<Self>) {
+    /// Opens the name field of a track in its header, with the name selected.
+    pub fn start_rename(
+        &mut self,
+        track: Instance<TrackState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(name) = self.session.read(cx).project().state(&track).map(|state| state.name.clone())
+        else {
+            return;
+        };
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new(cx).size(InputSize::Sm);
+            input.set_text(name, cx);
+            input.select_all_text(cx);
+            input
+        });
+        let this = cx.weak_entity();
+        input.update(cx, |input, _| {
+            let submit = this.clone();
+            input.set_on_submit(move |text, window, cx| {
+                if let Some(timeline) = submit.upgrade() {
+                    let text = text.to_string();
+                    timeline.update(cx, |timeline, cx| {
+                        timeline.finish_rename(Some(text), window, cx)
+                    });
+                }
+            });
+            input.set_on_cancel(move |_, window, cx| {
+                if let Some(timeline) = this.upgrade() {
+                    timeline.update(cx, |timeline, cx| timeline.finish_rename(None, window, cx));
+                }
+            });
+        });
+        let focus = input.focus_handle(cx);
+        let blur = cx.on_blur(&focus, window, |timeline, window, cx| {
+            let text = timeline.rename.as_ref().map(|rename| rename.input.read(cx).text().to_string());
+            timeline.finish_rename(text, window, cx);
+        });
+        window.focus(&focus, cx);
+        self.rename = Some(Rename {
+            track,
+            input,
+            _blur: blur,
+        });
+        cx.notify();
+    }
+
+    /// Enter or a click elsewhere gives the name, one undo step; escape gives nothing. A name of
+    /// only spaces is no name, and the track keeps the one it had.
+    fn finish_rename(&mut self, name: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(rename) = self.rename.take() else {
+            return;
+        };
+        if rename.input.focus_handle(cx).is_focused(window) {
+            window.focus(&self.focus_handle, cx);
+        }
+        let project = self.session.read(cx).project();
+        let state = project.state(&rename.track).cloned();
+        let name = name.map(|name| name.trim().to_string());
+        if let (Some(mut state), Some(name)) = (state, name)
+            && !name.is_empty()
+            && name != state.name
+        {
+            state.name = name;
+            let track = rename.track.clone();
+            self.session.update(cx, |session, cx| {
+                session.edit(cx, |project| {
+                    let mut changes = Changes::new();
+                    changes.set(&track, state);
+                    project.commit("Rename track", changes)
+                })
+            });
+        }
+        cx.notify();
+    }
+
+    /// Cmd-a: every clip of the arrangement.
+    fn select_all(&mut self, cx: &mut Context<Self>) {
+        self.refresh_order(cx);
+        let project = self.session.read(cx).project();
+        let clips = self
+            .order
+            .iter()
+            .flat_map(|track| project.children::<Clip>(track.id()))
+            .map(|(clip, _)| clip.id().clone());
+        let clips: Vec<_> = clips.collect();
+        let primary = self.clips.primary().cloned();
+        self.set_clips(clips, primary, cx);
+    }
+
+    /// What the selected clips are for the clipboard: each with its row and its name.
+    fn copied(&mut self, cx: &mut Context<Self>) -> Option<CopiedClips> {
+        self.refresh_order(cx);
+        let clips = self.selected_states(cx).into_iter().filter_map(|(clip, state)| {
+            let row = self.row_of(&clip.id().parent()?)?;
+            Some((row, clip.id().name().to_string(), state))
+        });
+        CopiedClips::new(clips.collect::<Vec<_>>())
+    }
+
+    /// Cmd-c. Whether there was something to copy.
+    fn copy(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(copied) = self.copied(cx) else {
+            return false;
+        };
+        self.clipboard = Some(copied);
+        true
+    }
+
+    /// Cmd-v: the copied clips at the playhead, the top one on the track of the first selected
+    /// clip, else on the selected track, else on the first track. One undo step.
+    fn paste(&mut self, cx: &mut Context<Self>) {
+        let Some(copied) = self.clipboard.clone() else {
+            return;
+        };
+        self.refresh_order(cx);
+        let track = match self.clips.primary() {
+            Some(clip) => clip.parent(),
+            None => self.selected_track.clone(),
+        };
+        let top = track.and_then(|track| self.row_of(&track)).unwrap_or(0);
+        let at = self.playhead.read(cx).tick;
+        let label = plural(copied.len(), "Paste clip", "Paste clips");
+        self.add_copies(&copied, at, top, label, cx);
+    }
+
+    /// Cmd-d: a copy of the selected clips right after them, on the same tracks. The clipboard
+    /// keeps what it had.
+    fn duplicate(&mut self, cx: &mut Context<Self>) {
+        let Some(copied) = self.copied(cx) else {
+            return;
+        };
+        let (start, top) = copied.origin();
+        let label = plural(copied.len(), "Duplicate clip", "Duplicate clips");
+        self.add_copies(&copied, start + copied.span(), top, label, cx);
+    }
+
+    /// Adds copies of clips as one undo step and selects them.
+    fn add_copies(
+        &mut self,
+        copied: &CopiedClips,
+        at: Ticks,
+        top: usize,
+        label: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let order = self.order.clone();
+        let placed = copied.placed(at, top, order.len());
+        let added = self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                let clips = placed.into_iter().filter_map(|(row, name, clip)| {
+                    Some((order.get(row)?, name, clip))
+                });
+                let added = add_clips(project, &mut changes, clips)?;
+                project.commit(label, changes)?;
+                Ok(added)
+            })
+        });
+        if let Some(added) = added {
+            let ids: Vec<_> = added.iter().map(|clip| clip.id().clone()).collect();
+            let primary = ids.first().cloned();
+            self.set_clips(ids, primary, cx);
+        }
+    }
+
+    fn delete_clips(&mut self, one: &'static str, several: &'static str, cx: &mut Context<Self>) {
+        let selected: Vec<_> = self.clips.iter().cloned().collect();
+        let label = plural(selected.len(), one, several);
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
-                changes.delete(clip.id());
-                project.commit("Delete clip", changes)
+                for clip in &selected {
+                    changes.delete(clip);
+                }
+                project.commit(label, changes)
             })
         });
     }
 
-    fn nudge_in_time(&mut self, clip: &Instance<Clip>, delta: i64, cx: &mut Context<Self>) {
-        let project = self.session.read(cx).project();
-        let Some(start) = project.state(clip).map(|state| state.start) else {
-            return;
-        };
-        let next = shifted(start, delta);
-        if next == start {
+    /// The arrows left and right: every selected clip by one unit of the grid, as one undo
+    /// step. The earliest stops at tick 0.
+    fn nudge_in_time(&mut self, delta: i64, cx: &mut Context<Self>) {
+        let selected = self.selected_states(cx);
+        let earliest = selected.iter().map(|(_, clip)| clip.start.0).min();
+        let delta = delta.max(-(earliest.unwrap_or(0) as i64));
+        if delta == 0 || selected.is_empty() {
             return;
         }
+        let label = plural(selected.len(), "Nudge clip", "Nudge clips");
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
-                let mut edit = project.begin("Nudge clip");
-                project.update(&mut edit, clip, |clip| clip.start = next)?;
-                project.finish(edit)
+                let mut changes = Changes::new();
+                for (clip, state) in selected {
+                    let start = shifted(state.start, delta);
+                    changes.set(&clip, Clip { start, ..state });
+                }
+                project.commit(label, changes)
             })
         });
     }
 
-    fn nudge_to_track(&mut self, clip: &Instance<Clip>, step: i64, cx: &mut Context<Self>) {
+    /// The arrows up and down: every selected clip to the track above or below, as one undo
+    /// step. Nothing moves when one of them is on the first or the last track already.
+    fn nudge_to_track(&mut self, step: i64, cx: &mut Context<Self>) {
         self.refresh_order(cx);
-        let on_now = clip.id().parent();
-        let mut rows = self.order.iter();
-        let Some(current) = rows.position(|track| Some(track.id()) == on_now.as_ref()) else {
+        let mut moves = Vec::new();
+        for (clip, next) in self.selected_states(cx) {
+            let row = clip.id().parent().and_then(|track| self.row_of(&track));
+            let row = row.and_then(|row| row.checked_add_signed(step as isize));
+            let Some(to) = row.and_then(|row| self.order.get(row)).cloned() else {
+                return;
+            };
+            let home = clip.id().clone();
+            moves.push(ClipMove {
+                clip,
+                home,
+                to,
+                next,
+            });
+        }
+        if moves.is_empty() {
             return;
-        };
-        let next = nudged_track(current, self.order.len(), step);
-        let Some(track) = self.order.get(next).filter(|_| next != current).cloned() else {
-            return;
-        };
+        }
+        let label = plural(moves.len(), "Nudge clip", "Nudge clips");
+        let primary = self.clips.primary().cloned();
+        let index = moves.iter().position(|step| Some(step.clip.id()) == primary.as_ref());
         let moved = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
-                let moved = move_clip(project, &mut changes, clip, &track)?;
-                project.commit("Nudge clip", changes)?;
+                let moved = move_clips(project, &mut changes, moves)?;
+                project.commit(label, changes)?;
                 Ok(moved)
             })
         });
         if let Some(moved) = moved {
-            self.select_clip(Some(moved.id().clone()), cx);
+            let ids: Vec<_> = moved.iter().map(|clip| clip.id().clone()).collect();
+            let primary = index.and_then(|index| ids.get(index).cloned());
+            self.set_clips(ids, primary, cx);
         }
     }
 
@@ -1410,6 +2167,59 @@ impl Timeline {
     fn on_pinch(&mut self, event: &PinchEvent, x: f32, cx: &mut Context<Self>) {
         let factor = f64::from(1.0 + event.delta);
         self.set_viewport(self.viewport.zoomed(factor, x.max(0.0)), cx);
+    }
+
+    /// The name field over the header of the track being renamed, where the name is painted.
+    fn rename_field(&self) -> Option<gpui::AnyElement> {
+        let rename = self.rename.as_ref()?;
+        let row = self.row_of(rename.track.id())?;
+        let top = RULER_HEIGHT + self.painted.get().y_of(row) + (TRACK_HEIGHT - RENAME_HEIGHT) / 2.;
+        Some(
+            div()
+                .debug_selector(|| "rename-track".to_string())
+                .absolute()
+                .top(px(top))
+                .left(px(RENAME_LEFT))
+                .w(px(HEADER_WIDTH - RENAME_LEFT - 12.))
+                .occlude()
+                .child(rename.input.clone())
+                .into_any_element(),
+        )
+    }
+
+    /// The snap setting in the corner above the track headers, on the line of the ruler.
+    fn snap_corner(&self, cx: &App) -> impl IntoElement {
+        let muted = cx.theme().gray_700;
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w(px(HEADER_WIDTH - 1.))
+            .h(px(RULER_HEIGHT - 1.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .pl(px(24.))
+            .pr(px(12.))
+            .occlude()
+            .child(div().text_size(px(12.)).text_color(muted).child("Snap"))
+            .child(self.snap_menu.clone())
+    }
+}
+
+/// How far right of its tick a tempo label may start to still be seen when its tick is off the
+/// left edge.
+const TEMPO_LABEL_ROOM: f32 = 80.;
+/// The name field of a renamed track: a small text input where the name is painted.
+const RENAME_HEIGHT: f32 = 28.;
+/// Its left edge, so that its text starts where the painted name does, 44 pt in.
+const RENAME_LEFT: f32 = 44. - 8.;
+
+/// Two values, the smaller first.
+fn ordered<T: PartialOrd>(a: T, b: T) -> (T, T) {
+    match a <= b {
+        true => (a, b),
+        false => (b, a),
     }
 }
 
@@ -1440,10 +2250,10 @@ impl Render for Timeline {
             move |bounds, hitbox, window, cx| {
                 let width = f32::from(bounds.size.width) - HEADER_WIDTH;
                 let height = f32::from(bounds.size.height) - RULER_HEIGHT;
-                let scene = Rc::new(timeline.read(cx).scene(width, height, cx));
+                let mut scene = timeline.read(cx).scene(width, height, cx);
                 timeline.read(cx).painted.set(scene.viewport);
                 timeline.read(cx).painted_size.set((width, height));
-                paint_scene(&scene, bounds, window, cx);
+                paint_scene(&mut scene, bounds, window, cx);
                 let keyboard_focus = &timeline.read(cx).keyboard_focus;
                 if keyboard_focus.shows_ring(&focus_handle, window) {
                     paint_focus_ring(bounds, window, cx);
@@ -1451,18 +2261,22 @@ impl Render for Timeline {
                 if timeline.read(cx).resize_cursor() {
                     window.set_cursor_style(CursorStyle::ResizeLeftRight, &hitbox);
                 }
-                listen(timeline, scene, bounds, hitbox, window);
+                listen(timeline, Rc::new(scene), bounds, hitbox, window);
             },
         );
         div()
             .size_full()
+            .relative()
+            .overflow_hidden()
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|timeline, event, _, cx| {
-                if timeline.on_key(event, cx) {
+            .on_key_down(cx.listener(|timeline, event, window, cx| {
+                if timeline.on_key(event, window, cx) {
                     cx.stop_propagation();
                 }
             }))
             .child(surface.size_full())
+            .child(self.snap_corner(cx))
+            .children(self.rename_field())
     }
 }
 
@@ -1479,11 +2293,11 @@ fn listen(
         move |event: &MouseDownEvent, phase, window, cx| {
             let hit = phase == DispatchPhase::Bubble && hitbox.is_hovered(window);
             if hit && event.button == MouseButton::Left {
-                let (x, y) = Timeline::timeline_position(bounds, event.position);
+                let position = Timeline::timeline_position(bounds, event.position);
                 timeline.update(cx, |timeline, cx| {
                     window.focus(&timeline.focus_handle, cx);
                     timeline.keyboard_focus.pressed(cx);
-                    timeline.on_mouse_down(event, x, y, &scene, cx)
+                    timeline.on_mouse_down(event, position, &scene, window, cx)
                 });
             }
         }
@@ -1497,15 +2311,18 @@ fn listen(
             }
             let (x, y) = Timeline::timeline_position(bounds, event.position);
             timeline.update(cx, |timeline, cx| {
-                if timeline.drag.is_none() {
+                let dragging = timeline.drag.is_some() || timeline.marquee.is_some();
+                if !dragging {
                     if hitbox.is_hovered(window) {
                         timeline.hover(x, y, &scene, cx);
                     }
-                } else if event.dragging() {
-                    timeline.drag_to(x, y, cx);
-                } else {
+                } else if !event.dragging() {
                     // The button came up somewhere that did not tell this window.
                     timeline.end_drag(cx);
+                } else if timeline.marquee.is_some() {
+                    timeline.marquee_to(x, y, cx);
+                } else {
+                    timeline.drag_to(x, y, event.modifiers.platform, cx);
                 }
             });
         }
@@ -1515,7 +2332,7 @@ fn listen(
         move |event: &MouseUpEvent, phase, _, cx| {
             if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
                 timeline.update(cx, |timeline, cx| {
-                    if timeline.drag.is_some() {
+                    if timeline.drag.is_some() || timeline.marquee.is_some() {
                         timeline.end_drag(cx);
                     }
                 });
@@ -1539,7 +2356,7 @@ fn listen(
     });
 }
 
-fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let theme = cx.theme();
     let (hairline, clip_fill, clip_border) = (
         theme.alpha_at(0.05),
@@ -1547,6 +2364,7 @@ fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &
         theme.alpha_at(0.10),
     );
     let (selection, selected_header) = (theme.gray_950, theme.alpha_at(0.05));
+    let (marquee_fill, marquee_border) = (theme.alpha_at(0.05), theme.alpha_at(0.20));
     let headers = Bounds::new(
         bounds.origin + point(px(0.), px(RULER_HEIGHT)),
         size(px(HEADER_WIDTH), bounds.size.height - px(RULER_HEIGHT)),
@@ -1560,8 +2378,9 @@ fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &
         size(ruler.size.width, headers.size.height),
     );
 
-    // The ruler: a short mark and a number per bar. No grid below it.
+    // The ruler: a short mark and a number per bar, and the tempo changes. No grid below it.
     paint_ruler(&scene.bars, ruler, window, cx);
+    scene.tempo_zones = paint_tempo_marks(&scene.tempo, &scene.bars, ruler, window, cx);
 
     window.with_content_mask(Some(ContentMask { bounds: headers }), |window| {
         for row in &scene.rows {
@@ -1582,7 +2401,11 @@ fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &
                 ));
             }
             let name_width = HEADER_WIDTH - 44. - 16.;
-            let name = row.name.clone();
+            // The field over the header shows the name that is being edited.
+            let name = match row.renaming {
+                true => SharedString::default(),
+                false => row.name.clone(),
+            };
             paint_track_label(name, row.accent, top, TRACK_HEIGHT, name_width, window, cx);
         }
     });
@@ -1620,5 +2443,89 @@ fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &
                 window.paint_quad(fill(placed(*note, timeline.origin), shape.accent));
             }
         }
+        if let Some(marquee) = scene.marquee {
+            let area = placed(marquee, timeline.origin);
+            let solid = BorderStyle::Solid;
+            window.paint_quad(quad(area, px(2.), marquee_fill, px(1.), marquee_border, solid));
+        }
     });
+}
+
+/// The tempo changes after tick 0 in the ruler: a line at the tick and a label, `140 bpm`, in
+/// a box of the window colour that covers the bar numbers under it. On a bar line it starts
+/// after the number of the bar. The selected one has a light border, as a selected clip. Gives
+/// where each label is across, for the hit test of a press.
+fn paint_tempo_marks(
+    marks: &[TempoMark],
+    bars: &[(u64, f32)],
+    ruler: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Vec<(Ticks, Range<f32>)> {
+    let theme = cx.theme();
+    let (line, background, border, selected_fill, selected_border, value, unit) = (
+        theme.gray_700,
+        theme.gray_100,
+        theme.alpha_at(0.10),
+        theme.alpha_at(0.10),
+        theme.gray_950,
+        theme.gray_950,
+        theme.gray_700,
+    );
+    let font = typography::tabular();
+    let font_size = px(12.);
+    let run = |len: usize, color: Hsla| TextRun {
+        len,
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let mut zones = Vec::new();
+    window.with_content_mask(Some(ContentMask { bounds: ruler }), |window| {
+        for mark in marks {
+            let x = mark.x.round();
+            // A bar number at the same place stays readable: the label goes after it.
+            let bar = bars.iter().find(|(_, bar_x)| (bar_x.round() - x).abs() < 1.);
+            let after = match bar {
+                Some((number, _)) => {
+                    let text: SharedString = number.to_string().into();
+                    let runs = [run(text.len(), unit)];
+                    let shaped = window.text_system().shape_line(text, font_size, &runs, None);
+                    8. + f32::from(shaped.width) + 4.
+                }
+                None => 4.,
+            };
+            let text: SharedString = format!("{} bpm", mark.text).into();
+            let runs = [
+                run(mark.text.len(), value),
+                run(text.len() - mark.text.len(), unit),
+            ];
+            let shaped = window.text_system().shape_line(text, font_size, &runs, None);
+            let (left, width) = (x + after, f32::from(shaped.width) + 12.);
+            let tick_line = Bounds::new(
+                ruler.origin + point(px(x), px(0.)),
+                size(px(1.), px(RULER_HEIGHT)),
+            );
+            window.paint_quad(fill(tick_line, line));
+            let label = Bounds::new(
+                ruler.origin + point(px(left), px(6.)),
+                size(px(width), px(20.)),
+            );
+            let solid = BorderStyle::Solid;
+            window.paint_quad(quad(label, px(6.), background, px(1.), border, solid));
+            if mark.selected {
+                let (fill, edge) = (selected_fill, selected_border);
+                window.paint_quad(quad(label, px(6.), fill, px(1.), edge, solid));
+            }
+            let origin = ruler.origin + point(px(left + 6.), px(8.));
+            // A glyph that cannot be painted leaves a gap in a label. Nothing else depends on it.
+            if let Err(error) = shaped.paint(origin, px(17.), TextAlign::Left, None, window, cx) {
+                eprintln!("arrangement view: {error}");
+            }
+            zones.push((mark.tick, x - 4.0..left + width));
+        }
+    });
+    zones
 }

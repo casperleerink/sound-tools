@@ -110,6 +110,15 @@ impl Default for Tempo {
     }
 }
 
+/// The tempo as a composer reads it: up to three decimals with no zeros at the end, so a value
+/// at rest is short. `120`, `93.5`, `120.125`.
+impl std::fmt::Display for Tempo {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = format!("{:.3}", self.bpm());
+        formatter.write_str(text.trim_end_matches('0').trim_end_matches('.'))
+    }
+}
+
 impl TryFrom<f64> for Tempo {
     type Error = ClockError;
 
@@ -326,6 +335,51 @@ impl TempoMap {
             .iter_mut()
             .find(|change| change.tick == tick)?;
         change.bpm = bpm;
+        Some(Self {
+            time_signature: self.time_signature,
+            tempo_changes,
+        })
+    }
+
+    /// The tempo change in effect at `tick`: the last one at or before it. A map always has one
+    /// at tick 0, so there always is one.
+    pub fn change_at(&self, tick: Ticks) -> TempoChange {
+        let index = self
+            .tempo_changes
+            .partition_point(|change| change.tick <= tick)
+            .saturating_sub(1);
+        self.tempo_changes[index]
+    }
+
+    /// The same map with a new tempo change at `tick` that plays the tempo in effect there, so
+    /// nothing sounds different until its tempo is edited. `None` when a change is at that tick
+    /// already. Valid by construction, like [`Self::with_tempo_at`].
+    pub fn with_change_at(&self, tick: Ticks) -> Option<Self> {
+        let change = self.change_at(tick);
+        if change.tick == tick {
+            return None;
+        }
+        let mut tempo_changes = self.tempo_changes.clone();
+        let index = tempo_changes.partition_point(|change| change.tick < tick);
+        tempo_changes.insert(index, TempoChange { tick, ..change });
+        Some(Self {
+            time_signature: self.time_signature,
+            tempo_changes,
+        })
+    }
+
+    /// The same map without the tempo change at `tick`. `None` at tick 0, which every map
+    /// keeps, and where the map has no change.
+    pub fn without_change_at(&self, tick: Ticks) -> Option<Self> {
+        if tick == Ticks(0) {
+            return None;
+        }
+        let index = self
+            .tempo_changes
+            .iter()
+            .position(|change| change.tick == tick)?;
+        let mut tempo_changes = self.tempo_changes.clone();
+        tempo_changes.remove(index);
         Some(Self {
             time_signature: self.time_signature,
             tempo_changes,

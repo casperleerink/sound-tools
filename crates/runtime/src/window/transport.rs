@@ -377,7 +377,7 @@ impl TransportPill {
     fn change_at_playhead(&self, cx: &App) -> TempoChange {
         let tick = self.playhead.read(cx).tick;
         let project = self.session.read(cx).project();
-        tempo::change_at(&project.project_file().tempo_map, tick)
+        project.project_file().tempo_map.change_at(tick)
     }
 
     /// A change of the tempo control: a drag through the gesture of the session, so playback
@@ -453,7 +453,7 @@ impl TransportPill {
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let live = &project.project_file().tempo_map;
-                let change = tempo::change_at(live, tick);
+                let change = live.change_at(tick);
                 let Some(tempo_map) = tempo::with_bpm(live, change.tick, bpm) else {
                     return Ok(());
                 };
@@ -476,7 +476,7 @@ impl TransportPill {
             .child(
                 div()
                     .font(typography::tabular())
-                    .child(tempo::tempo_text(tempo)),
+                    .child(tempo.to_string()),
             )
             .child(div().text_size(px(12.)).text_color(muted).child("bpm"));
         // The press picks the tempo change the drag edits, before the first move. A press that

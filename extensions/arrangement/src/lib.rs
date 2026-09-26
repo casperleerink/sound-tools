@@ -24,6 +24,7 @@ mod slot;
 mod summary;
 pub mod view;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -540,6 +541,42 @@ pub fn add_clip(
 ) -> Result<Instance<Clip>, ProjectError> {
     let id = project.free_id(&track.id().child(&id_name(name, "clip"))?)?;
     Ok(changes.create(id, clip))
+}
+
+/// Adds clips to tracks in one group of changes, for a paste or a duplicate: one undo step. Each
+/// id comes from the name of its clip on its track, as for [`add_clip`], and no two clips of
+/// the group get the same one.
+pub fn add_clips<'a>(
+    project: &Project,
+    changes: &mut Changes,
+    clips: impl IntoIterator<Item = (&'a Instance<TrackState>, &'a str, Clip)>,
+) -> Result<Vec<Instance<Clip>>, ProjectError> {
+    let mut taken = BTreeSet::new();
+    let mut added = Vec::new();
+    for (track, name, clip) in clips {
+        let wanted = track.id().child(&id_name(name, "clip"))?;
+        let id = free_id_besides(project, &wanted, &taken)?;
+        taken.insert(id.clone());
+        added.push(changes.create(id, clip));
+    }
+    Ok(added)
+}
+
+/// [`Project::free_id`], and also none of `taken`: the ids a group that is being built has
+/// given out already, which the project cannot see yet.
+pub(crate) fn free_id_besides(
+    project: &Project,
+    wanted: &InstanceId,
+    taken: &BTreeSet<InstanceId>,
+) -> Result<InstanceId, ProjectError> {
+    let mut candidate = wanted.clone();
+    for number in 2.. {
+        if !taken.contains(&candidate) && project.free_id(&candidate)? == candidate {
+            break;
+        }
+        candidate = InstanceId::new(&format!("{}-{number}", wanted.as_str()))?;
+    }
+    Ok(candidate)
 }
 
 /// Moves a clip to another track: a delete and a create in one group, like moving the file.
