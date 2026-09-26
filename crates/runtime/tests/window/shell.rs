@@ -57,8 +57,8 @@ fn space_plays_and_pauses(cx: &mut TestAppContext) {
 #[gpui::test]
 fn tab_reaches_the_menu_and_the_transport_and_enter_activates(cx: &mut TestAppContext) {
     let mut opened = open(cx);
-    // The project menu first, then the arrangement, then play, then stop.
-    opened.cx.simulate_keystrokes("tab tab tab");
+    // The title row in reading order: the project menu, then play, then stop.
+    opened.cx.simulate_keystrokes("tab tab");
     opened.press_enter();
     opened.settle();
     assert!(opened.playhead().playing);
@@ -289,7 +289,7 @@ fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
         .update(|_, cx| session.update(cx, |session, cx| session.report("the device is gone", cx)));
     opened.cx.run_until_parked();
 
-    // The menu, the arrangement, play, stop, record, the seek strip, the tempo, the click,
+    // The menu, play, stop, record, the seek strip, the tempo, the click, the arrangement,
     // then the notice.
     opened
         .cx
@@ -303,6 +303,67 @@ fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
     opened.cx.simulate_keystrokes("space");
     opened.settle();
     assert!(opened.playhead().playing);
+}
+
+#[gpui::test]
+fn a_long_error_fits_bottom_left_in_three_lines_at_most(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let session = opened.session.clone();
+    let long = "a problem that goes on and on, ".repeat(20);
+    opened
+        .cx
+        .update(|_, cx| session.update(cx, |session, cx| session.report(long, cx)));
+    let notice = opened.bounds("notice-error").unwrap();
+    let window = opened.cx.update(|window, _| window.viewport_size());
+    // 24 pt in from the track headers and the bottom, and 400 pt wide at most.
+    assert_eq!(notice.left(), px(HEADER_WIDTH + 24.));
+    assert_eq!(notice.bottom(), window.height - px(24.));
+    assert!(notice.size.width <= px(400.), "{notice:?}");
+    // As tall as the three lines of 20 pt it paints and its padding: the lines stay inside it,
+    // and so inside the window.
+    assert!(
+        (px(60.)..=px(74.)).contains(&notice.size.height),
+        "{notice:?}"
+    );
+
+    // Above the track panel, so it covers none of the mixer strip, and back down when the panel
+    // closes.
+    let header = opened.track_header(0);
+    opened.click(header);
+    let notice = opened.bounds("notice-error").unwrap();
+    let panel = opened.bounds("track-panel").unwrap();
+    assert_eq!(notice.bottom(), panel.top() - px(24.));
+    assert!(notice.left() >= panel.left() + px(HEADER_WIDTH));
+    opened.keys("escape");
+    let notice = opened.bounds("notice-error").unwrap();
+    assert_eq!(notice.bottom(), window.height - px(24.));
+
+    // A short one is as wide as its text.
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.dismiss_notice(cx);
+            session.report("short", cx);
+        })
+    });
+    let notice = opened.bounds("notice-error").unwrap();
+    assert!(notice.size.width < px(200.), "{notice:?}");
+    assert!(notice.size.height < px(40.), "{notice:?}");
+}
+
+/// The transport is in the middle of the room right of the project menu, and a narrow window
+/// takes the air around it first: it never covers the menu, and play stays on screen.
+#[gpui::test]
+fn in_a_narrow_window_the_transport_stays_beside_the_project_menu(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    for width in [1470., 900.] {
+        opened.cx.simulate_resize(gpui::size(px(width), px(800.)));
+        opened.cx.run_until_parked();
+        let menu = opened.bounds("project-menu").unwrap();
+        let pill = opened.bounds("transport").unwrap();
+        assert!(menu.right() < pill.left(), "{width}: {menu:?} and {pill:?}");
+        let play = opened.control("play");
+        assert!(play.x < px(width), "{width}: play is at {play:?}");
+    }
 }
 
 #[gpui::test]

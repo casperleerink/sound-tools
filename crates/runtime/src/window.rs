@@ -1,5 +1,6 @@
-//! The application window: the view of the project's main instance, the project menu top-left,
-//! the floating transport bottom centre, and a quiet line for errors and problems.
+//! The application window: the title row with the project menu at its left and the transport
+//! in its middle, the view of the project's main instance under it, and a quiet line for
+//! errors and problems bottom-left.
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
 //! view the installed [`Views`] has for the first instance at the top of the project.
@@ -50,6 +51,17 @@ actions!(
 /// Room for the traffic lights of a macOS window, left of the project menu.
 const TRAFFIC_LIGHTS_WIDTH: f32 = 80.;
 const TOP_ROW_HEIGHT: f32 = 48.;
+/// The notices sit this far in from the left and the bottom of the window.
+const NOTICE_INSET: f32 = 24.;
+/// The widest a notice gets. A longer message wraps, to three lines at most.
+const NOTICE_WIDTH: f32 = 400.;
+/// The window of the design: a 13 to 14 inch MacBook, less its menu bar.
+const WINDOW_WIDTH: f32 = 1470.;
+const WINDOW_HEIGHT: f32 = 920.;
+/// The smallest window: the project menu, the whole transport of a fitted project beside it,
+/// and a track panel with room for a card.
+const MIN_WINDOW_WIDTH: f32 = 1100.;
+const MIN_WINDOW_HEIGHT: f32 = 640.;
 
 /// The root view of the window.
 pub struct Shell {
@@ -153,16 +165,27 @@ impl Shell {
             count => Some(format!("{count} files are not live, see problems.txt")),
         };
         let error = session.notice().cloned();
+        // In the corner the main view leaves free: right of the track headers and above the
+        // panel below the timeline.
+        let room = session.notice_room();
+        // A definite width, so that a message wraps at the width it gets and the box is as tall
+        // as its lines: with only a largest width the text was measured on one line and then
+        // painted on three, past the bottom of the window. A notice is as wide as its text up
+        // to this width.
         div()
             .absolute()
-            .left(px(24.))
-            .bottom(px(24.))
-            .max_w(px(400.))
+            .left(px(room.left + NOTICE_INSET))
+            .bottom(px(room.bottom + NOTICE_INSET))
+            .w(px(NOTICE_WIDTH))
             .flex()
             .flex_col()
             .items_start()
             .gap(px(8.))
-            .children(files.map(|files| Notice::new("problems", files).tone(NoticeTone::Warning)))
+            .children(files.map(|files| {
+                Notice::new("problems", files)
+                    .tone(NoticeTone::Warning)
+                    .max_w_full()
+            }))
             .children(error.map(|error| {
                 Notice::new("error", error)
                     .max_w_full()
@@ -239,27 +262,22 @@ impl Render for Shell {
             .text_color(text)
             .font(typography::ui_font())
             .text_size(px(14.))
+            // The title row: the project menu, then the transport in the middle of the room
+            // right of it. The air on both sides of the pill moves the window. In a narrow
+            // window the air goes first, so the pill never covers the menu.
             .child(
                 div()
                     .flex()
                     .flex_none()
                     .items_center()
                     .h(px(TOP_ROW_HEIGHT))
-                    .child(Self::drag_region().w(px(TRAFFIC_LIGHTS_WIDTH)))
-                    .child(self.project_menu.clone())
+                    .child(Self::drag_region().flex_none().w(px(TRAFFIC_LIGHTS_WIDTH)))
+                    .child(div().flex_none().child(self.project_menu.clone()))
+                    .child(Self::drag_region().flex_1())
+                    .child(self.transport.clone())
                     .child(Self::drag_region().flex_1()),
             )
             .child(div().flex_1().min_h_0().child(main))
-            .child(
-                div()
-                    .absolute()
-                    .bottom(px(24.))
-                    .left_0()
-                    .w_full()
-                    .flex()
-                    .justify_center()
-                    .child(self.transport.clone()),
-            )
             .child(self.notices(cx))
     }
 }
@@ -451,9 +469,10 @@ pub fn run(folder: &Path) -> Result<()> {
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
-                    size(px(1440.), px(900.)),
+                    size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)),
                     cx,
                 ))),
+                window_min_size: Some(size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))),
                 titlebar: Some(TitlebarOptions {
                     title: Some(title.into()),
                     appears_transparent: true,

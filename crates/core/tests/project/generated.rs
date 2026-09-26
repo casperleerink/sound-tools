@@ -32,6 +32,32 @@ fn the_map_is_written_on_open_and_lists_the_docs_of_the_enabled_extensions() {
     assert!(project_json.contains(r#""extensions": ["test"],"#));
 }
 
+/// A project made before an extension existed does not list it. The doc of `project.json` is
+/// written into every project, so it is where the edit that enables the extension is: its
+/// example lists every extension of this runtime, and its text says to reopen.
+#[test]
+fn the_doc_of_project_json_holds_the_edit_that_enables_a_missing_extension() {
+    let folder = tempfile::tempdir().unwrap();
+    std::fs::write(
+        folder.path().join("project.json"),
+        r#"{"format": 1, "extensions": [],
+        "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+        "connections": []}"#,
+    )
+    .unwrap();
+    let harness = Harness::open(folder);
+    let doc = harness.read(&format!("{AGENT_DOCS_FOLDER}/project-json.md"));
+    assert!(
+        doc.contains("```json project.json\n{\n  \"format\": 1,\n  \"extensions\": [\"test\"],")
+    );
+    assert!(doc.contains("add the missing names to the list"), "{doc}");
+    assert!(doc.contains("open the project again"), "{doc}");
+    assert!(
+        !doc.contains("Leave `format` and `extensions` alone"),
+        "{doc}"
+    );
+}
+
 /// The runtime owns the markdown of the folder and nothing else in it.
 #[test]
 fn only_a_stale_doc_is_taken_out_of_the_docs_folder() {

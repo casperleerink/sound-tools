@@ -40,6 +40,12 @@ fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
     opened
 }
 
+/// Opens the envelope knobs of the synth card, behind its expand icon.
+fn expand_synth(opened: &mut Opened<'_>) {
+    let expand = opened.control("card-instrument-expand");
+    opened.click(expand);
+}
+
 fn synth(opened: &mut Opened<'_>) -> Option<SynthState> {
     opened.project(|project| {
         let instance = project.resolve::<SynthState>(&id(SYNTH))?;
@@ -139,6 +145,25 @@ fn opening_a_clip_swaps_the_panel_for_the_note_editor_and_a_header_click_swaps_b
     assert!(opened.track_panel().is_none());
 }
 
+/// Devices need less room than notes: the track panel is 216 pt and the note editor 352, and
+/// the timeline above takes the rest.
+#[gpui::test]
+fn the_track_panel_and_the_note_editor_have_heights_of_their_own(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let panel = opened.bounds("track-panel").unwrap();
+    assert_eq!(panel.size.height, px(216.));
+    let window = opened.cx.update(|window, _| window.viewport_size());
+    assert_eq!(panel.bottom(), window.height);
+
+    let on_clip = opened.at(BAR, 0);
+    opened.double_click(on_clip);
+    assert!(opened.editor().is_some());
+    let editor = opened.bounds("note-editor").unwrap();
+    assert_eq!(editor.size.height, px(352.));
+    assert_eq!(editor.bottom(), window.height);
+    assert_eq!(opened.bounds("track-panel"), None);
+}
+
 #[gpui::test]
 fn the_keys_select_a_track_open_its_panel_and_close_it(cx: &mut TestAppContext) {
     let mut opened = open(cx);
@@ -159,11 +184,11 @@ fn the_keys_select_a_track_open_its_panel_and_close_it(cx: &mut TestAppContext) 
     opened.keys("up");
     assert_eq!(opened.panel_track(), Some(id(TRACK)));
 
-    // Tab goes into the panel: the close control, the instrument picker of the card, the
-    // waveform, then the first knob.
-    opened.keys("tab");
-    opened.keys("tab");
-    opened.keys("tab");
+    // Tab goes into the panel: the close control, the volume, the pan and mute of the track,
+    // the picker and the expand icon of the card, the waveform, then the first knob.
+    for _ in 0..7 {
+        opened.keys("tab");
+    }
     opened.keys("right");
     assert_eq!(synth(&mut opened).unwrap().waveform, Waveform::Square);
     opened.keys("tab");
@@ -264,6 +289,7 @@ fn a_knob_stops_at_the_ends_of_its_range_and_a_drag_there_and_back_is_no_step(
 #[gpui::test]
 fn escape_during_a_knob_drag_puts_the_value_back_and_keeps_the_panel(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
+    expand_synth(&mut opened);
     let knob = opened.control("knob-sustain");
     opened.press(knob);
     opened.drag_to(knob + point(px(0.), px(60.)));
@@ -302,6 +328,7 @@ fn a_click_on_a_knob_without_a_move_is_no_undo_step(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_double_click_on_a_knob_sets_its_default_as_one_step(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
+    expand_synth(&mut opened);
     let knob = opened.control("knob-release_seconds");
     opened.drag(knob, knob + point(px(0.), px(-50.)));
     assert!(synth(&mut opened).unwrap().release_seconds > 0.3);
@@ -702,28 +729,28 @@ fn a_knob_drag_does_not_draw_the_timeline_and_a_timeline_click_does_not_draw_the
 #[gpui::test]
 fn the_rack_scrolls_so_that_the_last_knob_is_reachable_in_a_narrow_window(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    opened.cx.simulate_resize(size(px(760.), px(800.)));
+    opened.cx.simulate_resize(size(px(400.), px(800.)));
     opened.cx.run_until_parked();
-    let window_right = px(760.);
+    let window_right = px(400.);
     let gain = opened.control("knob-gain");
     assert!(gain.x > window_right, "the window is not narrow enough");
 
     // A wheel has no sideways scroll: its up and down moves a rack that only goes sideways.
-    let in_rack = opened.control(CUTOFF);
-    opened.scroll(in_rack, 0., -400.);
+    let in_rack = opened.control("instrument-picker");
+    opened.scroll(in_rack, 0., -100.);
     let gain = opened.control("knob-gain");
     assert!(gain.x + px(32.) < window_right, "gain is at {gain:?}");
     opened.click(gain);
     opened.keys("up");
     assert_eq!(synth(&mut opened).unwrap().gain, 0.17);
     // And back.
-    opened.scroll(gain, 400., 0.);
+    opened.scroll(gain, 100., 0.);
     assert!(opened.control("knob-gain").x > window_right);
 }
 
-/// The mixer section at the right end of the panel: the gain and pan knobs and the mute
-/// button, which edit the record of the track itself.
-const GAIN_KNOB: &str = "knob-gain_db";
+/// The mixer strip in the header column: the volume, the pan knob and the mute toggle, which
+/// edit the record of the track itself.
+const VOLUME: &str = "volume-gain_db";
 const PAN_KNOB: &str = "knob-pan";
 const MUTE: &str = "toggle-mute";
 const TRACK_FILE: &str = "state/arrangement/track-1/instance.json";
@@ -754,20 +781,19 @@ fn playing(opened: &mut Opened<'_>) -> Vec<f32> {
 }
 
 #[gpui::test]
-fn a_drag_of_the_gain_knob_is_one_undo_step_and_the_level_follows_every_move(
-    cx: &mut TestAppContext,
-) {
+fn a_drag_of_the_volume_is_one_undo_step_and_the_level_follows_every_move(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     let loud = support::peak(&playing(&mut opened));
     assert!(loud > 0.0);
 
-    let knob = opened.control(GAIN_KNOB);
+    let knob = opened.control(VOLUME);
     opened.press(knob);
-    // A quarter of the travel down, on a range of 66 dB.
+    // The thumb follows the pointer on the scale of the meter: 50 pt down from 0 dB, at 80 %
+    // of its 113 pt, is -21.7 dB.
     opened.drag_to(knob + point(px(0.), px(50.)));
     assert!(opened.gesture_open());
     let gain = track(&mut opened).unwrap().gain_db;
-    assert!((-17.0..-16.0).contains(&gain), "{gain}");
+    assert_eq!(gain, -21.7);
     // The file waits for the end of the drag. The sound does not.
     assert!(track_file(&mut opened).contains("\"gain_db\": 0.0"));
     opened.settle();
@@ -778,7 +804,7 @@ fn a_drag_of_the_gain_knob_is_one_undo_step_and_the_level_follows_every_move(
 
     opened.release(knob + point(px(0.), px(50.)));
     assert!(!opened.gesture_open());
-    assert_eq!(opened.undo_label().as_deref(), Some("Change gain"));
+    assert_eq!(opened.undo_label().as_deref(), Some("Change volume"));
     assert!(track_file(&mut opened).contains(&format!("\"gain_db\": {gain:?}")));
 
     // One step: one undo puts it back, in the project, in the file and in the sound.
@@ -852,8 +878,8 @@ fn the_mute_button_is_one_undo_step_and_silences_the_track(cx: &mut TestAppConte
     assert_eq!(opened.undo_label(), None);
     assert!(track_file(&mut opened).contains("\"mute\": false"));
 
-    // Tab reaches it after the two knobs, and enter is the click.
-    let gain = opened.control(GAIN_KNOB);
+    // Tab reaches it after the volume and the pan, and enter is the click.
+    let gain = opened.control(VOLUME);
     opened.click(gain);
     opened.keys("tab");
     opened.keys("tab");
@@ -875,11 +901,11 @@ fn an_outside_edit_of_the_mixer_shows_in_the_panel_and_undo_takes_it_back(cx: &m
         (-12.0, 1.0, true)
     );
 
-    // The knobs hold no value of their own: a key steps from what the file said.
-    let gain = opened.control(GAIN_KNOB);
+    // The controls hold no value of their own: a key steps from what the file said.
+    let gain = opened.control(VOLUME);
     opened.click(gain);
     opened.keys("up");
-    assert_eq!(track(&mut opened).unwrap().gain_db, -10.7);
+    assert_eq!(track(&mut opened).unwrap().gain_db, -11.5);
     let pan = opened.control(PAN_KNOB);
     opened.click(pan);
     opened.keys("down");
@@ -892,3 +918,105 @@ fn an_outside_edit_of_the_mixer_shows_in_the_panel_and_undo_takes_it_back(cx: &m
     assert_eq!(track_file(&mut opened), before);
     assert_eq!(opened.undo_label(), None);
 }
+
+#[gpui::test]
+fn the_bottom_of_the_volume_is_the_lowest_gain_a_track_keeps(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let volume = opened.control(VOLUME);
+    opened.drag(volume, volume + point(px(0.), px(400.)));
+    assert_eq!(track(&mut opened).unwrap().gain_db, TrackState::GAIN_DB.0);
+    // One step.
+    assert_eq!(opened.undo_label().as_deref(), Some("Change volume"));
+    opened.keys("cmd-z");
+    assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
+    assert_eq!(opened.undo_label(), None);
+    opened.keys("shift-cmd-z");
+
+    // From the bottom, a press that does not move and a drag further down change nothing and
+    // make no step.
+    let volume = opened.control(VOLUME);
+    opened.drag(volume, volume);
+    opened.drag(volume, volume + point(px(0.), px(200.)));
+    assert_eq!(track(&mut opened).unwrap().gain_db, TrackState::GAIN_DB.0);
+    assert!(!opened.gesture_open());
+    opened.keys("cmd-z");
+    assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
+    assert_eq!(opened.undo_label(), None);
+
+    // And a double click is 0 dB again, as its own step.
+    opened.keys("shift-cmd-z");
+    opened.double_click(volume);
+    assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change volume"));
+}
+
+/// Each handle of the envelope edits the field of its knob, under the name of its knob in the
+/// history, and one drag is one undo step. The knob is how the keys reach the same value.
+#[gpui::test]
+fn a_handle_of_the_envelope_edits_what_its_knob_edits_as_one_undo_step(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    expand_synth(&mut opened);
+    let file = synth_file(&mut opened);
+
+    // The attack peak, sideways.
+    let peak = opened.control("handle-attack");
+    opened.press(peak);
+    opened.drag_to(peak + point(px(10.), px(0.)));
+    opened.drag_to(peak + point(px(20.), px(0.)));
+    assert!(opened.gesture_open());
+    // The file waits for the end of the drag.
+    assert_eq!(synth_file(&mut opened), file);
+    opened.release(peak + point(px(20.), px(0.)));
+    let attack = synth(&mut opened).unwrap().attack_seconds;
+    assert!(attack > ATTACK_DEFAULT, "{attack}");
+    assert_eq!(
+        synth(&mut opened),
+        Some(SynthState {
+            attack_seconds: attack,
+            ..SynthState::default()
+        })
+    );
+    assert_eq!(opened.undo_label().as_deref(), Some("Change attack"));
+    // The handle and the knob show one value: the handle moved to where the knob points, and
+    // a key on the knob steps from what the handle set.
+    let moved = opened.control("handle-attack");
+    assert!((moved.x - (peak.x + px(20.))).abs() < px(1.), "{moved:?}");
+    let knob = opened.control("knob-attack_seconds");
+    opened.click(knob);
+    opened.keys("down");
+    let stepped = synth(&mut opened).unwrap().attack_seconds;
+    assert!(stepped < attack && stepped > ATTACK_DEFAULT, "{stepped}");
+    let back = opened.control("handle-attack");
+    assert!(back.x < moved.x, "the handle did not follow the knob");
+    // Two steps: the key and the drag.
+    opened.keys("cmd-z");
+    assert_eq!(synth(&mut opened).unwrap().attack_seconds, attack);
+    opened.keys("cmd-z");
+    assert_eq!(synth(&mut opened), Some(SynthState::default()));
+    assert_eq!(opened.undo_label(), None);
+    assert_eq!(synth_file(&mut opened), file);
+
+    // The corner after the decay moves two values, and its drag is still one step.
+    let corner = opened.control("handle-decay");
+    opened.drag(corner, corner + point(px(15.), px(-20.)));
+    let state = synth(&mut opened).unwrap();
+    assert!(state.decay_seconds > 0.2, "{state:?}");
+    assert!(state.sustain > 0.7, "{state:?}");
+    assert_eq!(
+        opened.undo_label().as_deref(),
+        Some("Change decay and sustain")
+    );
+    opened.keys("cmd-z");
+    assert_eq!(synth(&mut opened), Some(SynthState::default()));
+
+    // A double click resets what a handle moves.
+    let end = opened.control("handle-release");
+    opened.drag(end, end + point(px(-30.), px(0.)));
+    assert!(synth(&mut opened).unwrap().release_seconds < 0.3);
+    let end = opened.control("handle-release");
+    opened.double_click(end);
+    assert_eq!(synth(&mut opened), Some(SynthState::default()));
+}
+
+/// The default attack of a synth.
+const ATTACK_DEFAULT: f32 = 0.005;

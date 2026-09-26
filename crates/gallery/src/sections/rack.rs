@@ -1,6 +1,6 @@
 //! Rack section: every control of a device card and the mixer strip, in each of its states, as
 //! in `docs/reference/m3-step-0/mockups/components.png`: knob, volume, meter and gain
-//! reduction, toggle, segmented control and select, and device cards with their header and a
+//! reduction, toggle, segmented control, select and drag number, and device cards with their header and a
 //! display. The focus section beside it shows the focus ring of each, which one window can
 //! show only one at a time.
 //!
@@ -15,6 +15,7 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{Cell, ROW_HEIGHT};
 use sound_ui::components::device_card::{Column, DeviceCard};
 use sound_ui::components::display::{Axis, Display, Handle};
+use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem, Trigger};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
@@ -71,6 +72,7 @@ pub(crate) struct RackState {
     envelope: [Live<f32>; 4],
     reverb: [Live<f32>; 2],
     reverb_expanded: bool,
+    tempo: Live<f64>,
 }
 
 fn picker(name: &'static str, cx: &mut App) -> Entity<DropdownMenu> {
@@ -148,6 +150,7 @@ impl RackState {
             envelope: [0.005, 0.35, 0.25, 0.12].map(Live::new),
             reverb: [0.02, 2.4].map(Live::new),
             reverb_expanded: true,
+            tempo: Live::new(93.5),
         }
     }
 }
@@ -224,6 +227,12 @@ fn sample(state: &'static str, cx: &App, element: impl IntoElement) -> AnyElemen
         .child(element)
         .child(div().text_size(px(12.)).text_color(muted).child(state))
         .into_any_element()
+}
+
+/// A tempo to a tenth, with no zero at the end: `93.5`, `120`.
+fn tempo_text(bpm: f64) -> String {
+    let text = format!("{bpm:.1}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 fn hertz(value: f32) -> String {
@@ -401,6 +410,8 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
     let (peach, yellow) = (theme.peach, theme.yellow);
     let rack = state.read(cx);
     let (toggles, segment, select) = (rack.toggles, rack.segment.clone(), rack.select.clone());
+    let tempo = rack.tempo.value;
+    let muted = theme.gray_700;
     let toggle = |index: usize, label: &'static str| {
         Toggle::new(("toggle", index), label, toggles[index])
             .on_change(update(state, move |s, on| s.toggles[index] = on))
@@ -412,7 +423,7 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
         ("notch", "Notch"),
     ];
     block(
-        "Toggle, segmented control and select",
+        "Toggle, segmented control, select and drag number",
         cx,
         [
             sample("mute", cx, toggle(0, "M").color(peach)),
@@ -441,6 +452,15 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
                     .disabled(true),
             ),
             sample("select", cx, select),
+            sample(
+                "drag number",
+                cx,
+                DragNumber::new("tempo", tempo, 10., 1000.)
+                    .drag(0.5, 1.)
+                    .on_change(update(state, |s, change| s.tempo.follow(change)))
+                    .child(div().child(tempo_text(tempo)))
+                    .child(div().text_size(px(12.)).text_color(muted).child("bpm")),
+            ),
         ],
     )
 }

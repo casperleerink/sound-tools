@@ -40,8 +40,19 @@ enum NoticeSource {
     System,
 }
 
+/// Room that the main view keeps free of the notices, from the left and the bottom edge of the
+/// window: a header column, a panel below. The notices sit in the corner of what is left, so
+/// they never cover a control that stays on screen, such as the mixer strip of a track.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct NoticeRoom {
+    pub left: f32,
+    pub bottom: f32,
+}
+
 pub struct Session {
     project: Project,
+    /// See [`NoticeRoom`]. The main view publishes it.
+    notice_room: NoticeRoom,
     playhead: Entity<Playhead>,
     notice: Option<(NoticeSource, SharedString)>,
     /// The open gesture, see [`Self::begin_gesture`].
@@ -79,6 +90,7 @@ impl Session {
             notice: None,
             gesture: None,
             selected: None,
+            notice_room: NoticeRoom::default(),
             selected_clip: None,
             engine_stopped: false,
             _polling: polling,
@@ -101,6 +113,20 @@ impl Session {
     /// it. Live MIDI input plays into the instrument of the selected track, and the window
     /// wires that, so the extension that owns the tracks and the one that reads the keyboard
     /// need nothing of each other.
+    /// Where the notices go, see [`NoticeRoom`].
+    pub fn notice_room(&self) -> NoticeRoom {
+        self.notice_room
+    }
+
+    /// The main view says what room it keeps free of the notices. Interface state: nothing is
+    /// saved.
+    pub fn set_notice_room(&mut self, room: NoticeRoom, cx: &mut Context<Self>) {
+        if self.notice_room != room {
+            self.notice_room = room;
+            cx.notify();
+        }
+    }
+
     pub fn selected(&self) -> Option<&InstanceId> {
         self.selected.as_ref()
     }

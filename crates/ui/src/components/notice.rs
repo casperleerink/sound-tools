@@ -85,8 +85,11 @@ impl RenderOnce for Notice {
             theme.gray_900,
         );
 
+        // For tests, which find a notice by its id: `notice-<id>`. Nothing in a normal build.
+        let selector = self.id.clone();
         self.base
             .id(self.id)
+            .debug_selector(move || format!("notice-{selector}"))
             .flex()
             .items_start()
             .gap(px(8.))

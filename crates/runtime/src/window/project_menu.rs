@@ -11,7 +11,7 @@ use sound_notes::Clip;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::{Session, enable_extension, extension_is_enabled};
+use sound_ui::{Session, extension_is_enabled};
 
 use crate::{add_track, main_arrangement};
 
@@ -37,9 +37,10 @@ struct Shown {
     can_add_track: bool,
     /// The selected clip, when it was recorded and its take can be fitted to.
     fit_clip: Option<InstanceId>,
-    /// The one edit that would bring the fit within reach, when the project does not enable
-    /// the extension it needs. A project made before the fit existed is such a project.
-    fit_needs: Option<String>,
+    /// Why the fit is out of reach, when the project does not enable the extension it needs. A
+    /// project made before the fit existed is such a project. The file edit that enables it is
+    /// in the agent docs.
+    fit_needs: Option<&'static str>,
     undo: Option<String>,
     redo: Option<String>,
 }
@@ -51,7 +52,7 @@ impl Shown {
             can_add_track: main_arrangement(project).is_some(),
             fit_clip: recorded_clip(session).map(|(id, _)| id),
             fit_needs: (!extension_is_enabled(project, fit_tempo::EXTENSION))
-                .then(|| enable_extension(fit_tempo::EXTENSION)),
+                .then_some("This project does not include the tempo fit."),
             undo: project.undo_label().map(str::to_string),
             redo: project.redo_label().map(str::to_string),
         }
@@ -81,6 +82,7 @@ impl ProjectMenu {
         let items = entries(&shown, &device_name);
         let menu = cx.new(|cx| {
             DropdownMenu::new(name, items, cx)
+                .debug_name("project-menu")
                 .selected(DEVICE)
                 .trigger(Trigger::Ghost)
                 .width(280.)
@@ -196,12 +198,12 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
                 // part follows. So it sits here and not on the clip, and it is offered only for a
                 // clip that came from a recording.
                 match &shown.fit_needs {
-                    // The same line an instrument picker gives an offer a project cannot take:
-                    // enabling an extension while a project runs is refused, so it is a file edit
-                    // and a reopen. A project made before the fit existed is such a project.
-                    Some(needed) => command(FIT_TEMPO, "Fit tempo to take".to_string())
+                    // Why, in words, as an instrument picker says it of an offer a project
+                    // cannot take. Enabling an extension is a file edit and a reopen, which the
+                    // agent docs say.
+                    Some(reason) => command(FIT_TEMPO, "Fit tempo to take".to_string())
                         .disabled(true)
-                        .description(needed.clone()),
+                        .description(*reason),
                     None => command(FIT_TEMPO, "Fit tempo to take".to_string())
                         .disabled(shown.fit_clip.is_none()),
                 },
