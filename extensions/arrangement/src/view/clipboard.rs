@@ -1,4 +1,5 @@
-//! What cmd-c keeps: clips, with where they were to each other, or notes of a clip. Interface
+//! What cmd-c keeps: clips of either kind, with where they were to each other, or notes of a
+//! clip. Interface
 //! state in the app only, never on the system clipboard and never saved, so another
 //! application cannot paste a clip and a copy never outlives the session. Pure, no GPUI.
 //!
@@ -17,30 +18,47 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use sound_core::Ticks;
-use sound_notes::{Clip, Length, Note};
+use sound_notes::{Length, Note};
+
+use super::clips::AnyClip;
+
+/// One copied clip: its row from the top copied row, its name, the clip with its start from the
+/// earliest one, and how long it was on the timeline. An audio clip has no length of its own,
+/// so the one it had when it was copied is kept, for where a duplicate goes.
+#[derive(Clone, Debug, PartialEq)]
+struct CopiedClip {
+    row: usize,
+    name: String,
+    clip: AnyClip,
+    length: Ticks,
+}
 
 /// Clips copied in the window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CopiedClips {
-    /// Each clip with its row from the top copied row, its name and its start from `start`.
-    clips: Vec<(usize, String, Clip)>,
+    clips: Vec<CopiedClip>,
     /// Where the copied clips were: the earliest start and the top row.
     start: Ticks,
     top: usize,
 }
 
 impl CopiedClips {
-    /// The clips, each with the row of its track in the arrangement and its name. `None` when
-    /// there is nothing to copy.
-    pub fn new(clips: impl IntoIterator<Item = (usize, String, Clip)>) -> Option<Self> {
+    /// The clips, each with the row of its track in the arrangement, its name and how long it
+    /// is on the timeline. `None` when there is nothing to copy.
+    pub fn new(clips: impl IntoIterator<Item = (usize, String, AnyClip, Ticks)>) -> Option<Self> {
         let clips: Vec<_> = clips.into_iter().collect();
-        let start = clips.iter().map(|(_, _, clip)| clip.start).min()?;
-        let top = clips.iter().map(|(row, _, _)| *row).min()?;
+        let start = clips.iter().map(|(_, _, clip, _)| clip.start()).min()?;
+        let top = clips.iter().map(|(row, ..)| *row).min()?;
         let clips = clips
             .into_iter()
-            .map(|(row, name, clip)| {
-                let start = Ticks(clip.start.0 - start.0);
-                (row - top, name, Clip { start, ..clip })
+            .map(|(row, name, clip, length)| {
+                let at = Ticks(clip.start().0 - start.0);
+                CopiedClip {
+                    row: row - top,
+                    name,
+                    clip: clip.with_start(at),
+                    length,
+                }
             })
             .collect();
         Some(Self { clips, start, top })
@@ -53,7 +71,11 @@ impl CopiedClips {
 
     /// From the earliest start to the latest end: where a duplicate goes after the original.
     pub fn span(&self) -> Ticks {
-        let end = self.clips.iter().map(|(_, _, clip)| clip.end()).max();
+        let end = self
+            .clips
+            .iter()
+            .map(|copied| copied.clip.start() + copied.length)
+            .max();
         end.unwrap_or_default()
     }
 
@@ -65,20 +87,17 @@ impl CopiedClips {
     /// Where each clip lands for a paste at `at` with the top row on `top`, in an arrangement of
     /// `rows` tracks: its row, its name and the clip. A row below the last track is the last
     /// track. Nothing without tracks.
-    pub fn placed(&self, at: Ticks, top: usize, rows: usize) -> Vec<(usize, &str, Clip)> {
+    pub fn placed(&self, at: Ticks, top: usize, rows: usize) -> Vec<(usize, &str, AnyClip)> {
         let Some(last) = rows.checked_sub(1) else {
             return Vec::new();
         };
-        let placed = self.clips.iter().map(|(row, name, clip)| {
-            let start = at + clip.start;
-            let row = (top + row).min(last);
+        let placed = self.clips.iter().map(|copied| {
+            let start = at + copied.clip.start();
+            let row = (top + copied.row).min(last);
             (
                 row,
-                name.as_str(),
-                Clip {
-                    start,
-                    ..clip.clone()
-                },
+                copied.name.as_str(),
+                copied.clip.clone().with_start(start),
             )
         });
         placed.collect()
@@ -143,27 +162,29 @@ pub type SharedClipboard = Rc<RefCell<Option<Copied>>>;
 
 #[cfg(test)]
 mod tests {
-    use sound_notes::Length;
+    use sound_notes::{Clip, Length};
 
     use super::*;
 
     const BAR: u64 = 3840;
 
-    fn clip(start: u64, length: u64) -> Clip {
-        Clip::new(
+    fn clip(start: u64, length: u64) -> AnyClip {
+        AnyClip::Notes(Clip::new(
             Ticks(start),
             Length::new(Ticks(length)).unwrap(),
             Vec::new(),
-        )
+        ))
+    }
+
+    /// A copy of a note clip, whose length on the timeline is its own.
+    fn copied(row: usize, name: &str, start: u64, length: u64) -> (usize, String, AnyClip, Ticks) {
+        (row, name.to_string(), clip(start, length), Ticks(length))
     }
 
     #[test]
     fn a_paste_keeps_the_distances_in_time_and_rows() {
-        let copied = CopiedClips::new([
-            (2, "b".to_string(), clip(3 * BAR, BAR)),
-            (1, "a".to_string(), clip(2 * BAR, BAR)),
-        ])
-        .unwrap();
+        let copied =
+            CopiedClips::new([copied(2, "b", 3 * BAR, BAR), copied(1, "a", 2 * BAR, BAR)]).unwrap();
         assert_eq!(copied.origin(), (Ticks(2 * BAR), 1));
         assert_eq!(copied.span(), Ticks(2 * BAR));
         assert_eq!(copied.len(), 2);
@@ -177,11 +198,7 @@ mod tests {
 
     #[test]
     fn rows_past_the_last_track_land_on_the_last_track() {
-        let copied = CopiedClips::new([
-            (0, "a".to_string(), clip(0, BAR)),
-            (2, "b".to_string(), clip(0, BAR)),
-        ])
-        .unwrap();
+        let copied = CopiedClips::new([copied(0, "a", 0, BAR), copied(2, "b", 0, BAR)]).unwrap();
         let rows: Vec<_> = copied
             .placed(Ticks(0), 1, 2)
             .into_iter()

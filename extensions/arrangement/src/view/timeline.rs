@@ -1,59 +1,119 @@
 //! The timeline of the arrangement: track headers, the bar ruler with its tempo changes, and
-//! the clips, painted on one canvas. Clips are added, selected, moved, resized, copied, pasted
-//! and deleted here with the mouse and the keys, a track is renamed in its header, tempo
-//! changes are added and removed in the ruler, and the snap setting sits in the corner.
+//! the clips, painted on one canvas. Clips of notes and of audio are added, selected, moved,
+//! resized, copied, pasted and deleted here with the mouse and the keys, an audio clip is
+//! trimmed, faded and turned up or down from its handles, audio files are dropped in from the
+//! Finder, a track is renamed in its header, tempo changes are added and removed in the ruler,
+//! and the snap setting sits in the corner.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Entity,
-    EventEmitter, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
-    ScrollWheelEvent, SharedString, Subscription, TextAlign, TextRun, Window, canvas, div, fill,
-    point, prelude::*, px, quad, size,
+    EventEmitter, ExternalPaths, FileDropEvent, FocusHandle, Focusable, FontWeight, Hitbox,
+    HitboxBehavior, Hsla, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, Subscription,
+    TextAlign, TextRun, Window, canvas, div, fill, point, prelude::*, px, quad, size,
 };
 use sound_core::{
-    Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks, TimeSignature,
+    Assets, Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks,
+    TimeSignature,
 };
+use sound_media::{AudioAsset, Info};
 use sound_notes::Clip;
+use sound_ui::components::audio_clip::{
+    AudioClipLook, ClipHandle, ClipHandles, Columns, paint_audio_clip,
+};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::text_input::{InputSize, TextInput};
-use sound_ui::{ActiveTheme, KeyboardFocus, Playhead, Session, typography};
+use sound_ui::{ActiveTheme, KeyboardFocus, Playhead, Session, Waveforms, typography};
 
 use super::clipboard::{Copied, CopiedClips, SharedClipboard};
+use super::clips::{
+    AnyClip, GAIN_DB, GAIN_KEY_STEP_DB, GAIN_TRAVEL, fade_in, fade_out, gain_label, gain_moved,
+    shown_end, time_label, trimmed_left, trimmed_right,
+};
 use super::gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
 use super::layout::{
     Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, TRACK_HEIGHT, Viewport, rows_between, shifted,
 };
-use super::paint::{accent, paint_focus_ring, paint_ruler, paint_track_label, placed};
+use super::paint::{
+    Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
+};
 use super::selection::Selection;
-use super::snap::{Grid, SharedSnap, Snap, snap, snapped_delta};
+use super::snap::{Grid, SharedSnap, Snap, snap, snap_floor, snapped_delta};
 use crate::{
-    ArrangementState, FreeIds, TrackKind, TrackState, add_clip, add_clips, tracks, unnumbered,
+    ArrangementState, AudioClip, Colour, FreeIds, TrackKind, TrackState, add_audio_clips,
+    add_audio_track, add_clip, add_clips, top_layer, tracks, unnumbered,
 };
 
 struct TrackRow {
     y: f32,
     name: SharedString,
     accent: Hsla,
+    kind: TrackKind,
     selected: bool,
+    /// A muted track has its name, dot and clips at 40 %.
+    muted: bool,
     /// The name is being edited: the field of the timeline shows it, not the paint.
     renaming: bool,
 }
 
+/// What a clip shows: the notes of a note clip, or the waveform of an audio clip.
+enum Body {
+    Notes(Vec<Rect>),
+    Audio(Box<AudioShape>),
+}
+
+/// An audio clip as one paint shows it. The waveform needs the overview of its file, which is
+/// asked for while painting, so here are the times of the file each column of the clip covers.
+struct AudioShape {
+    asset: AudioAsset,
+    /// The first column on screen, and the time in the file at each column edge from there.
+    first: f32,
+    edges: Vec<f64>,
+    gain: f32,
+    fade_in: f32,
+    fade_out: f32,
+    /// The part of the file past the edge that is dragged: its first column and column edges.
+    hidden: Option<(f32, Vec<f64>)>,
+    /// The value of a fade or of the gain while it is dragged.
+    label: Option<(SharedString, ClipHandle)>,
+    missing: Option<SharedString>,
+    /// The pointer is on it or it is selected: its handles show and can be pressed.
+    handles: bool,
+}
+
 /// A clip as it is on screen, in the coordinates of [`layout`].
 pub struct ClipShape {
-    pub clip: Instance<Clip>,
+    pub id: InstanceId,
     pub rect: Rect,
-    start: Ticks,
-    notes: Vec<Rect>,
+    body: Body,
     accent: Hsla,
     selected: bool,
+    muted: bool,
+}
+
+impl ClipShape {
+    /// The handle of an audio clip at a place, when its handles show.
+    fn handle_at(&self, x: f32, y: f32) -> Option<ClipHandle> {
+        let Body::Audio(audio) = &self.body else {
+            return None;
+        };
+        let Rect {
+            x: left,
+            y: top,
+            width,
+            ..
+        } = self.rect;
+        let handles = ClipHandles::of(left, top, width, audio.fade_in, audio.fade_out)?;
+        handles.at(x, y)
+    }
 }
 
 /// A tempo change after tick 0, in the ruler. The one at tick 0 shows in the transport.
@@ -62,6 +122,13 @@ struct TempoMark {
     x: f32,
     text: SharedString,
     selected: bool,
+}
+
+/// Where a drop of files would go: the ghost of each clip it makes, and whether it makes a
+/// track under the last one.
+struct Ghosts {
+    clips: Vec<(Rect, SharedString)>,
+    new_track: Option<f32>,
 }
 
 /// What one paint shows: only the visible rows, clips and bars. Later clips are on top.
@@ -76,6 +143,17 @@ pub struct Scene {
     tempo_zones: Vec<(Ticks, Range<f32>)>,
     /// The rectangle of a drag on empty space.
     marquee: Option<Rect>,
+    /// Where dropped files would go.
+    ghosts: Option<Ghosts>,
+    /// The folder of the files the audio clips name, for their waveforms.
+    assets: Assets,
+}
+
+/// What a press on a clip took: its body, an edge, or one of the handles of an audio clip.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Grip {
+    Zone(Zone),
+    Handle(ClipHandle),
 }
 
 impl Scene {
@@ -87,10 +165,15 @@ impl Scene {
             .find(|shape| shape.rect.contains(x, y))
     }
 
-    /// The clip on top at a position, with the part of it that is there: its body or an edge.
-    pub fn zone_at(&self, x: f32, y: f32) -> Option<(&ClipShape, Zone)> {
+    /// The clip on top at a position, with the part of it that is there: a handle of an audio
+    /// clip, its body or an edge.
+    pub fn zone_at(&self, x: f32, y: f32) -> Option<(&ClipShape, Grip)> {
         let shape = self.clip_at(x, y)?;
-        Some((shape, zone_at(shape.rect, x)))
+        let grip = match shape.handle_at(x, y) {
+            Some(handle) => Grip::Handle(handle),
+            None => Grip::Zone(zone_at(shape.rect, x)),
+        };
+        Some((shape, grip))
     }
 
     /// The tempo change whose mark is at `x` in the ruler.
@@ -102,15 +185,18 @@ impl Scene {
     }
 }
 
+#[derive(Clone)]
 /// One selected clip during a move: where it is now, the id it had at mouse down, the row of
 /// its track then, and its start. When the live clip is not what the drag wrote, something else
 /// changed it: an undo between mouse down and the first move, or an agent.
 struct MovedClip {
     /// The clip now. Its id changes when the drag takes it to another track.
-    clip: Instance<Clip>,
+    clip: InstanceId,
     /// A drag that comes back to the first track takes this id again, so a drag there and back
     /// leaves the file where it was.
     home: InstanceId,
+    /// The kind of track it goes on, which is the kind it is.
+    kind: TrackKind,
     row: usize,
     start: Ticks,
     written: Ticks,
@@ -125,6 +211,9 @@ enum ClipDragKind {
         /// The row of the clip under the pointer at mouse down, and its place in `clips`.
         grab_row: usize,
         grabbed: usize,
+        /// The last distance in rows at which every clip was on a track of its kind. The move
+        /// keeps it while the pointer is over a track another clip cannot go on.
+        rows: i64,
     },
     /// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:
     /// every move starts from `origin` again, so going in and out loses nothing. One clip.
@@ -135,6 +224,29 @@ enum ClipDragKind {
         written: Clip,
         /// The delta of the last move, to skip a move inside the same snap step cheaply.
         delta: i64,
+    },
+    /// An edge of an audio clip: the part of its file that plays. Every move starts from
+    /// `origin`, and writes only what the edge moves onto the live clip.
+    Trim {
+        clip: Instance<AudioClip>,
+        edge: Edge,
+        origin: AudioClip,
+        file: Info,
+    },
+    /// A fade handle of an audio clip, sideways from where it was.
+    Fade {
+        clip: Instance<AudioClip>,
+        edge: Edge,
+        origin: AudioClip,
+        file: Info,
+    },
+    /// The gain handle of an audio clip, up and down from where it was. Shift pressed or let
+    /// go goes on from where the gain is then, at the other speed.
+    Gain {
+        clip: Instance<AudioClip>,
+        from_db: f32,
+        from_y: f32,
+        fine: bool,
     },
 }
 
@@ -170,20 +282,52 @@ impl ClipDrag {
         match &self.kind {
             ClipDragKind::Move { clips, .. } => plural(clips.len(), "Move clip", "Move clips"),
             ClipDragKind::Resize { .. } => "Resize clip",
+            ClipDragKind::Trim { .. } => "Trim clip",
+            ClipDragKind::Fade {
+                edge: Edge::Left, ..
+            } => FADE_IN_LABEL,
+            ClipDragKind::Fade {
+                edge: Edge::Right, ..
+            } => FADE_OUT_LABEL,
+            ClipDragKind::Gain { .. } => GAIN_LABEL,
+        }
+    }
+
+    /// The clip under the pointer.
+    fn grabbed(&self) -> Option<&InstanceId> {
+        match &self.kind {
+            ClipDragKind::Move { clips, grabbed, .. } => {
+                clips.get(*grabbed).map(|moved| &moved.clip)
+            }
+            ClipDragKind::Resize { clip, .. } => Some(clip.id()),
+            ClipDragKind::Trim { clip, .. }
+            | ClipDragKind::Fade { clip, .. }
+            | ClipDragKind::Gain { clip, .. } => Some(clip.id()),
         }
     }
 
     /// Whether the drag ends when `id` is deleted: it is the clip under the pointer. The other
     /// clips of a move are left out of the next mouse move when they are gone.
     fn ends_without(&self, id: &InstanceId) -> bool {
+        self.grabbed() == Some(id)
+    }
+
+    /// The cursor while it goes on.
+    fn cursor(&self) -> Option<CursorStyle> {
         match &self.kind {
-            ClipDragKind::Move { clips, grabbed, .. } => clips
-                .get(*grabbed)
-                .is_some_and(|moved| moved.clip.id() == id),
-            ClipDragKind::Resize { clip, .. } => clip.id() == id,
+            ClipDragKind::Move { .. } => None,
+            ClipDragKind::Resize { .. } | ClipDragKind::Trim { .. } | ClipDragKind::Fade { .. } => {
+                Some(CursorStyle::ResizeLeftRight)
+            }
+            ClipDragKind::Gain { .. } => Some(CursorStyle::ResizeUpDown),
         }
     }
 }
+
+/// The undo steps of the handles of an audio clip, and of their knobs in the Clip card.
+pub const FADE_IN_LABEL: &str = "Change fade in";
+pub const FADE_OUT_LABEL: &str = "Change fade out";
+pub const GAIN_LABEL: &str = "Change gain";
 
 /// A drag on empty space: the clips it touches are selected. Its corners are a tick and a
 /// height from the top of the first track, so a scroll during it keeps its start in place.
@@ -206,26 +350,51 @@ struct Rename {
     _blur: Subscription,
 }
 
+/// Where dropped audio files go.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DropTarget {
+    /// An audio track, the first file at this tick and the others after it.
+    Track(InstanceId, Ticks),
+    /// A new audio track under the last one, named after the first file.
+    NewTrack(Ticks),
+}
+
+/// Files from the Finder while they are dragged over the timeline.
+#[derive(Default)]
+struct Incoming {
+    /// The files, as the drag says them. Filled in while the drag is drawn over the timeline.
+    paths: Vec<PathBuf>,
+    /// What each file is, once it is read on a background thread: its length for the ghost.
+    /// `None` until then, and for a file that is no audio.
+    files: Vec<Option<Info>>,
+    /// Where they would go, from the last move of the pointer.
+    target: Option<DropTarget>,
+}
+
 /// One clip of a move to another place: the clip now, the id it had when the move began,
 /// the track it goes to and what it becomes there.
 struct ClipMove {
-    clip: Instance<Clip>,
+    clip: InstanceId,
     home: InstanceId,
     to: Instance<TrackState>,
-    next: Clip,
+    next: AnyClip,
 }
 
 /// Moves clips in one group of changes. A clip that stays on its track gets its new record. One
 /// that goes to another track is a delete and a create, like moving a file: back on the track of
 /// its `home` it takes that id again, elsewhere its name without a number at its end, or the
 /// next free one. So `clip` moved down onto a track that has a `clip` is `clip-2` there, and
-/// `clip` again when it comes back up. Gives the clips at their ids after the move, in the order
+/// `clip` again when it comes back up. Gives the ids of the clips after the move, in the order
 /// of `moves`.
+///
+/// A moved audio clip goes on top of the clips of its track, as a new one does, so where it
+/// overlaps them it is heard. Moved together, they keep their order among themselves.
 fn move_clips(
     project: &Project,
     changes: &mut Changes,
-    moves: Vec<ClipMove>,
-) -> Result<Vec<Instance<Clip>>, ProjectError> {
+    mut moves: Vec<ClipMove>,
+) -> Result<Vec<InstanceId>, ProjectError> {
+    put_on_top(project, &mut moves);
     let mut free = FreeIds::default();
     let mut moved = Vec::new();
     for ClipMove {
@@ -235,21 +404,71 @@ fn move_clips(
         next,
     } in moves
     {
-        if clip.id().parent().as_ref() == Some(to.id()) {
-            changes.set(&clip, next);
+        if clip.parent().as_ref() == Some(to.id()) {
+            next.write(changes, clip.clone());
             moved.push(clip);
             continue;
         }
-        changes.delete(clip.id());
+        changes.delete(&clip);
         // Back on the track of its home it takes its home again, else its name there without
         // a number, so down and up again gives the first id back.
         let id = match home.parent().as_ref() == Some(to.id()) {
             true => home,
             false => free.take(project, &to.id().child(unnumbered(home.name()))?)?,
         };
-        moved.push(changes.create(id, next));
+        next.write(changes, id.clone());
+        moved.push(id);
     }
     Ok(moved)
+}
+
+/// The layers of moved audio clips: one above every clip of the track they go to that does not
+/// move, in the order they had.
+fn put_on_top(project: &Project, moves: &mut [ClipMove]) {
+    let moving: Vec<InstanceId> = moves.iter().map(|step| step.clip.clone()).collect();
+    let mut order: Vec<usize> = (0..moves.len()).collect();
+    let layer = |step: &ClipMove| match &step.next {
+        AnyClip::Audio(clip) => clip.layer,
+        AnyClip::Notes(_) => 0,
+    };
+    order.sort_by_key(|index| moves.get(*index).map(layer));
+    let mut next: BTreeMap<InstanceId, u32> = BTreeMap::new();
+    for index in order {
+        let Some(step) = moves.get_mut(index) else {
+            continue;
+        };
+        let AnyClip::Audio(clip) = &mut step.next else {
+            continue;
+        };
+        let track = step.to.id().clone();
+        let layer = next.entry(track.clone()).or_insert_with(|| {
+            top_layer(project, &track, &moving).map_or(0, |top| top.saturating_add(1))
+        });
+        clip.layer = *layer;
+        *layer = layer.saturating_add(1);
+    }
+}
+
+/// Whether an id is a clip of either kind.
+fn is_clip_tool(project: &Project, id: &InstanceId) -> bool {
+    project
+        .tool_of(id)
+        .is_some_and(|tool| tool == Clip::TOOL || tool == AudioClip::TOOL)
+}
+
+/// Why a clip cannot go where a paste would put it.
+fn wrong_track(track: &InstanceId, name: &str, kind: TrackKind) -> ProjectError {
+    let message = match kind {
+        TrackKind::Instrument => {
+            "a note clip goes on an instrument track, and this is an audio track"
+        }
+        TrackKind::Audio => "an audio clip goes on an audio track, and this is an instrument track",
+    };
+    let id = track.child(name).unwrap_or_else(|_| track.clone());
+    ProjectError::WrongPlace {
+        id,
+        message: message.to_string(),
+    }
 }
 
 /// The undo label for one thing or several.
@@ -292,7 +511,8 @@ impl Stale {
 pub enum TimelineEvent {
     /// A double click on a clip, or enter: show its notes.
     OpenEditor(Instance<Clip>),
-    /// A click on a track header, or cmd-down on the selected track: show its panel.
+    /// A click on a track header, or cmd-down on the selected track: show its panel. Also a
+    /// double click on an audio clip, or enter: the Clip card of its track shows it.
     OpenTrack(Instance<TrackState>),
 }
 
@@ -345,8 +565,15 @@ pub struct Timeline {
     snap: SharedSnap,
     /// The snap setting, in the corner above the track headers.
     snap_menu: Entity<DropdownMenu>,
-    /// The pointer is over an edge of a clip, so the cursor says that a drag resizes.
-    over_edge: bool,
+    /// What the cursor says of a drag from where the pointer is: that it resizes, trims, fades
+    /// or changes the gain.
+    hover_cursor: Option<CursorStyle>,
+    /// The clip under the pointer, whose handles show when it is an audio clip.
+    hovered: Option<InstanceId>,
+    /// Files from the Finder while they are dragged over the timeline.
+    incoming: Option<Incoming>,
+    /// What a drag of files carries, as GPUI gives it while it draws the timeline under one.
+    dragged_paths: Rc<RefCell<Vec<PathBuf>>>,
     focus_handle: FocusHandle,
     keyboard_focus: KeyboardFocus,
     _project_events: Subscription,
@@ -369,6 +596,9 @@ impl Timeline {
         // is still not painted per frame.
         cx.observe(&playhead, |timeline, _, cx| timeline.follow_playhead(cx))
             .detach();
+        // A waveform whose overview was being made is drawn when it is ready.
+        let waveforms = Waveforms::entity(cx);
+        cx.observe(&waveforms, |_, _, cx| cx.notify()).detach();
         let project_events = cx.subscribe(&session, |timeline, _, event, cx| {
             let shown = |id: &InstanceId| timeline.shows(id, cx);
             let changed = match event {
@@ -482,7 +712,10 @@ impl Timeline {
             rename: None,
             snap,
             snap_menu,
-            over_edge: false,
+            hover_cursor: None,
+            hovered: None,
+            incoming: None,
+            dragged_paths: Rc::default(),
             focus_handle,
             keyboard_focus: KeyboardFocus::default(),
             _project_events: project_events,
@@ -573,7 +806,9 @@ impl Timeline {
         }
         let project = self.session.read(cx).project();
         parent.parent().as_ref() == Some(arrangement)
-            && project.tool_of(id).is_none_or(|tool| tool == Clip::TOOL)
+            && project
+                .tool_of(id)
+                .is_none_or(|tool| tool == Clip::TOOL || tool == AudioClip::TOOL)
     }
 
     /// The track that an id of this arrangement is, or is inside of.
@@ -591,8 +826,10 @@ impl Timeline {
     fn refresh_order(&mut self, cx: &App) {
         let project = self.session.read(cx).project();
         let end_of = |track: &InstanceId| {
-            let clips = project.children::<Clip>(track);
-            clips.map(|(_, clip)| clip.end()).max()
+            let notes = project.children::<Clip>(track).map(|(_, clip)| clip.end());
+            let audio = project.children::<AudioClip>(track);
+            let audio = audio.map(|(_, clip)| shown_end(project, clip));
+            notes.chain(audio).max()
         };
         match std::mem::take(&mut self.stale) {
             Stale::Nothing => {}
@@ -632,7 +869,7 @@ impl Timeline {
         let lost = std::mem::take(&mut self.lost_selection);
         let created = std::mem::take(&mut self.created_in_group);
         let project = self.session.read(cx).project();
-        let is_clip = |id: &InstanceId| project.resolve::<Clip>(id).is_some();
+        let is_clip = |id: &InstanceId| is_clip_tool(project, id);
         let back: Vec<InstanceId> = self
             .deleted
             .iter()
@@ -848,7 +1085,11 @@ impl Timeline {
             tempo,
             tempo_zones: Vec::new(),
             marquee,
+            ghosts: self.ghosts(&viewport, project),
+            assets: project.assets().clone(),
         };
+        let visible =
+            |start: Ticks, end: Ticks| start < visible_ticks.end && end > visible_ticks.start;
         for index in viewport.visible_tracks(height, self.order.len()) {
             let Some(track) = self.order.get(index) else {
                 break;
@@ -862,30 +1103,175 @@ impl Timeline {
                 y: viewport.y_of(index),
                 name: state.name.clone().into(),
                 accent,
+                kind: state.kind,
                 selected: self.selected_track.as_ref() == Some(track.id()),
+                muted: state.mute,
                 renaming: renaming == Some(track.id()),
             });
-            let first = scene.clips.len();
-            for (clip, state) in project.children::<Clip>(track.id()) {
-                if state.start >= visible_ticks.end || state.end() <= visible_ticks.start {
-                    continue;
-                }
-                let rect = viewport.clip_rect(index, state);
-                scene.clips.push(ClipShape {
-                    notes: viewport.miniature(state, rect).collect(),
-                    selected: self.clips.contains(clip.id()),
-                    start: state.start,
-                    clip,
-                    rect,
-                    accent,
-                });
-            }
+            let shape = |id: &InstanceId, rect: Rect, body: Body| ClipShape {
+                id: id.clone(),
+                rect,
+                body,
+                accent,
+                selected: self.clips.contains(id),
+                muted: state.mute,
+            };
             // The order of `clips()`, by start and then by id, for the few that are visible:
             // it decides which of two overlapping clips is on top.
-            scene.clips[first..]
-                .sort_by(|a, b| (a.start, a.clip.id()).cmp(&(b.start, b.clip.id())));
+            let mut notes: Vec<_> = project
+                .children::<Clip>(track.id())
+                .filter(|(_, clip)| visible(clip.start, clip.end()))
+                .collect();
+            notes.sort_by(|(a, a_clip), (b, b_clip)| {
+                (a_clip.start, a.id()).cmp(&(b_clip.start, b.id()))
+            });
+            for (clip, state) in notes {
+                let rect = viewport.clip_rect(index, state.start, state.end());
+                let body = Body::Notes(viewport.miniature(state, rect).collect());
+                scene.clips.push(shape(clip.id(), rect, body));
+            }
+            // Audio clips in the order they are heard: the one on top of an overlap is the one
+            // that plays, and the one a press takes.
+            let mut audio: Vec<_> = project
+                .children::<AudioClip>(track.id())
+                .map(|(clip, state)| (clip, state, shown_end(project, state)))
+                .filter(|(_, clip, end)| visible(clip.start, *end))
+                .collect();
+            audio.sort_by(|(a, a_clip, _), (b, b_clip, _)| {
+                (a_clip.layer, a_clip.start, a.id()).cmp(&(b_clip.layer, b_clip.start, b.id()))
+            });
+            for (clip, state, end) in audio {
+                let rect = viewport.clip_rect(index, state.start, end);
+                let body = self.audio_shape(clip.id(), state, rect, &viewport, width, project);
+                scene
+                    .clips
+                    .push(shape(clip.id(), rect, Body::Audio(Box::new(body))));
+            }
         }
         scene
+    }
+
+    /// What an audio clip shows: the times of its file under each column on screen, its fades
+    /// in points, its handles while the pointer is on it or it is selected, and while a drag
+    /// changes it, the value that drag shows or the part of the file past the edge it moves.
+    fn audio_shape(
+        &self,
+        id: &InstanceId,
+        clip: &AudioClip,
+        rect: Rect,
+        viewport: &Viewport,
+        width: f32,
+        project: &Project,
+    ) -> AudioShape {
+        let clock = project.clock();
+        let file = sound_media::info(project.assets(), &clip.asset);
+        let start = clock.seconds_of(clip.start);
+        // The time of the file at a place across: the clip plays at the speed of its file.
+        let file_time =
+            |x: f32| clock.seconds_of(viewport.tick_at(x)) - start + clip.file_start_seconds;
+        let edges = |from: f32, to: f32| -> (f32, Vec<f64>) {
+            let (from, to) = (from.max(0.).floor(), to.min(width).ceil());
+            let columns = (to - from).max(0.) as usize;
+            let edges = (0..=columns).map(|column| file_time(from + column as f32));
+            (from, edges.collect())
+        };
+        let (first, edges_inside) = edges(rect.x, rect.x + rect.width);
+        let x_at = |seconds: f64| viewport.x_of(clock.tick_at_seconds(seconds));
+        let fade_in = x_at(start + f64::from(clip.fade_in_ms) / 1000.) - rect.x;
+        let end = rect.x + rect.width;
+        let end_seconds = clock.seconds_of(viewport.tick_at(end));
+        let fade_out = end - x_at(end_seconds - f64::from(clip.fade_out_ms) / 1000.);
+
+        let dragged = self.drag.as_ref().filter(|drag| drag.grabbed() == Some(id));
+        let (mut hidden, mut label) = (None, None);
+        match dragged.map(|drag| &drag.kind) {
+            Some(ClipDragKind::Trim { edge, file, .. }) => {
+                // The whole file from where it starts on the timeline to where it ends.
+                let file_start = x_at(start - clip.file_start_seconds);
+                let file_end = x_at(start - clip.file_start_seconds + file.seconds());
+                hidden = Some(match edge {
+                    Edge::Left => edges(file_start, rect.x),
+                    Edge::Right => edges(end, file_end),
+                });
+            }
+            Some(ClipDragKind::Fade {
+                edge: Edge::Left, ..
+            }) => {
+                let text = format!("Fade in {}", time_label(clip.fade_in_ms));
+                label = Some((text.into(), ClipHandle::FadeIn));
+            }
+            Some(ClipDragKind::Fade {
+                edge: Edge::Right, ..
+            }) => {
+                let text = format!("Fade out {}", time_label(clip.fade_out_ms));
+                label = Some((text.into(), ClipHandle::FadeOut));
+            }
+            Some(ClipDragKind::Gain { .. }) => {
+                label = Some((gain_label(clip.gain_db).into(), ClipHandle::Gain));
+            }
+            Some(ClipDragKind::Move { .. } | ClipDragKind::Resize { .. }) | None => {}
+        }
+        let missing = match file {
+            Err(sound_media::MediaError::Missing { .. }) => {
+                Some(format!("{} is missing", clip.asset))
+            }
+            Err(_) => Some(format!("{} does not play", clip.asset)),
+            Ok(_) => None,
+        };
+        AudioShape {
+            asset: clip.asset.clone(),
+            first,
+            edges: edges_inside,
+            gain: crate::decibels::amplitude(clip.gain_db),
+            fade_in: fade_in.max(0.),
+            fade_out: fade_out.max(0.),
+            hidden,
+            label,
+            missing: missing.map(SharedString::from),
+            handles: self.hovered.as_ref() == Some(id) || self.clips.contains(id),
+        }
+    }
+
+    /// The ghosts of the clips a drop of files would make, while files are dragged over.
+    fn ghosts(&self, viewport: &Viewport, project: &Project) -> Option<Ghosts> {
+        let incoming = self.incoming.as_ref()?;
+        let (row, start) = match incoming.target.as_ref()? {
+            DropTarget::Track(track, start) => (self.row_of(track)?, *start),
+            DropTarget::NewTrack(start) => (self.order.len(), *start),
+        };
+        let clock = project.clock();
+        let bar = Ticks(
+            project
+                .project_file()
+                .tempo_map
+                .time_signature()
+                .ticks_per_bar(),
+        );
+        let mut at = start;
+        let mut clips = Vec::new();
+        for (index, path) in incoming.paths.iter().enumerate() {
+            // The length of the file once it is known, else a bar.
+            let end = match incoming.files.get(index).copied().flatten() {
+                Some(file) => {
+                    let frames = sound_media::engine_frames(
+                        file.frames,
+                        file.sample_rate,
+                        clock.sample_rate(),
+                    );
+                    clock.tick_at(sound_core::Frames(clock.frame_of(at).0 + frames))
+                }
+                None => at + bar,
+            };
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned());
+            let rect = viewport.clip_rect(row, at, end.max(at + Ticks(1)));
+            clips.push((rect, SharedString::from(name.unwrap_or_default())));
+            at = end;
+        }
+        let new_track =
+            matches!(incoming.target, Some(DropTarget::NewTrack(_))).then(|| viewport.y_of(row));
+        Some(Ghosts { clips, new_track })
     }
 
     /// The position of a mouse event in the coordinates of [`layout`].
@@ -928,7 +1314,7 @@ impl Timeline {
             self.on_ruler(x, double, scene, cx);
             return;
         }
-        let Some((shape, zone)) = scene.zone_at(x, y) else {
+        let Some((shape, grip)) = scene.zone_at(x, y) else {
             if double {
                 self.add_clip_at(x, y, scene, cx);
             } else {
@@ -936,48 +1322,35 @@ impl Timeline {
             }
             return;
         };
-        let clip = shape.clip.clone();
+        let id = shape.id.clone();
         if shift {
-            self.toggle_clip(clip.id().clone(), cx);
+            self.toggle_clip(id, cx);
             return;
         }
         if double {
-            self.select_clip(Some(clip.id().clone()), cx);
-            cx.emit(TimelineEvent::OpenEditor(clip));
+            self.select_clip(Some(id.clone()), cx);
+            self.open(&id, cx);
             return;
         }
         let grab = self.painted.get().tick_at(x);
-        let kind = match zone {
-            Zone::Body => self.start_move(&clip, cmd, cx),
-            Zone::LeftEdge | Zone::RightEdge => {
-                // A cmd press changes the selection when it comes up, or with the first move.
-                if !cmd {
-                    self.select_clip(Some(clip.id().clone()), cx);
-                }
-                let Some(state) = self.session.read(cx).project().state(&clip).cloned() else {
-                    return;
-                };
+        let kind = match grip {
+            Grip::Zone(Zone::Body) => self.start_move(&id, cmd, cx),
+            Grip::Zone(zone @ (Zone::LeftEdge | Zone::RightEdge)) => {
                 let edge = match zone {
                     Zone::LeftEdge => Edge::Left,
                     _ => Edge::Right,
                 };
-                Some(ClipDragKind::Resize {
-                    clip,
-                    edge,
-                    origin: state.clone(),
-                    written: state,
-                    delta: 0,
-                })
+                self.start_edge(&id, edge, cmd, cx)
             }
+            Grip::Handle(handle) => self.start_handle(&id, handle, y, cx),
         };
         let Some(kind) = kind else {
             return;
         };
         let several = matches!(&kind, ClipDragKind::Move { clips, .. } if clips.len() > 1);
-        let pressed = shape.clip.id().clone();
         let on_release = match (cmd, several) {
-            (true, _) => Some(OnRelease::Toggle(pressed)),
-            (false, true) => Some(OnRelease::SelectAlone(pressed)),
+            (true, _) => Some(OnRelease::Toggle(id)),
+            (false, true) => Some(OnRelease::SelectAlone(id)),
             (false, false) => None,
         };
         self.drag = Some(ClipDrag {
@@ -986,6 +1359,94 @@ impl Timeline {
             begun: false,
             on_release,
         });
+    }
+
+    /// Opens what a clip is edited in: the note editor of a note clip, the track panel of the
+    /// track of an audio clip, whose Clip card shows it.
+    fn open(&mut self, clip: &InstanceId, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project();
+        if let Some(notes) = project.resolve::<Clip>(clip) {
+            cx.emit(TimelineEvent::OpenEditor(notes));
+            return;
+        }
+        let track = clip
+            .parent()
+            .and_then(|track| project.resolve::<TrackState>(&track));
+        if let Some(track) = track {
+            cx.emit(TimelineEvent::OpenTrack(track));
+        }
+    }
+
+    /// A press on an edge: a resize of a note clip, a trim of an audio clip.
+    fn start_edge(
+        &mut self,
+        id: &InstanceId,
+        edge: Edge,
+        cmd: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<ClipDragKind> {
+        // A cmd press changes the selection when it comes up, or with the first move.
+        if !cmd {
+            self.select_clip(Some(id.clone()), cx);
+        }
+        let project = self.session.read(cx).project();
+        if let Some(clip) = project.resolve::<Clip>(id) {
+            let state = project.state(&clip)?.clone();
+            return Some(ClipDragKind::Resize {
+                clip,
+                edge,
+                origin: state.clone(),
+                written: state,
+                delta: 0,
+            });
+        }
+        let clip = project.resolve::<AudioClip>(id)?;
+        let origin = project.state(&clip)?.clone();
+        // A clip whose file is missing has nothing to trim.
+        let file = sound_media::info(project.assets(), &origin.asset).ok()?;
+        Some(ClipDragKind::Trim {
+            clip,
+            edge,
+            origin,
+            file,
+        })
+    }
+
+    /// A press on a handle of an audio clip: a fade or the gain, from where it is.
+    fn start_handle(
+        &mut self,
+        id: &InstanceId,
+        handle: ClipHandle,
+        y: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<ClipDragKind> {
+        if !self.clips.contains(id) {
+            self.select_clip(Some(id.clone()), cx);
+        }
+        let project = self.session.read(cx).project();
+        let clip = project.resolve::<AudioClip>(id)?;
+        let origin = project.state(&clip)?.clone();
+        let file = sound_media::info(project.assets(), &origin.asset).ok()?;
+        Some(match handle {
+            ClipHandle::FadeIn => ClipDragKind::Fade {
+                clip,
+                edge: Edge::Left,
+                origin,
+                file,
+            },
+            ClipHandle::FadeOut => ClipDragKind::Fade {
+                clip,
+                edge: Edge::Right,
+                origin,
+                file,
+            },
+            ClipHandle::Gain => ClipDragKind::Gain {
+                clip,
+                from_db: origin.gain_db,
+                from_y: y,
+                fine: false,
+            },
+        })
     }
 
     /// Shift-click and cmd-click: the clip in or out of the selection.
@@ -1002,50 +1463,47 @@ impl Timeline {
     /// when the pressed clip is gone.
     fn start_move(
         &mut self,
-        pressed: &Instance<Clip>,
+        pressed: &InstanceId,
         keeps: bool,
         cx: &mut Context<Self>,
     ) -> Option<ClipDragKind> {
         self.refresh_order(cx);
-        let selected = self.clips.contains(pressed.id());
+        let selected = self.clips.contains(pressed);
         let mut ids: Vec<InstanceId> = match (selected, keeps) {
-            (false, false) => vec![pressed.id().clone()],
+            (false, false) => vec![pressed.clone()],
             _ => self.clips.iter().cloned().collect(),
         };
         if !selected && keeps {
-            ids.push(pressed.id().clone());
+            ids.push(pressed.clone());
         }
         if !keeps {
-            self.set_clips(ids.clone(), Some(pressed.id().clone()), cx);
+            self.set_clips(ids.clone(), Some(pressed.clone()), cx);
         }
         let project = self.session.read(cx).project();
         let mut clips = Vec::new();
         for id in ids {
-            let Some(clip) = project.resolve::<Clip>(&id) else {
-                continue;
-            };
-            let Some(start) = project.state(&clip).map(|state| state.start) else {
+            let Some(clip) = AnyClip::read(project, &id) else {
                 continue;
             };
             let Some(row) = id.parent().and_then(|track| self.row_of(&track)) else {
                 continue;
             };
             clips.push(MovedClip {
+                clip: id.clone(),
                 home: id,
-                clip,
+                kind: clip.kind(),
                 row,
-                start,
-                written: start,
+                start: clip.start(),
+                written: clip.start(),
             });
         }
-        let grabbed = clips
-            .iter()
-            .position(|moved| moved.clip.id() == pressed.id())?;
+        let grabbed = clips.iter().position(|moved| moved.clip == *pressed)?;
         let grab_row = clips.get(grabbed)?.row;
         Some(ClipDragKind::Move {
             clips,
             grab_row,
             grabbed,
+            rows: 0,
         })
     }
 
@@ -1173,9 +1631,13 @@ impl Timeline {
         let project = self.session.read(cx).project();
         let mut selected = marquee.before.clone();
         for track in self.order.get(rows).unwrap_or_default() {
-            let clips = project.children::<Clip>(track.id());
-            let touched = clips.filter(|(_, clip)| clip.start <= right && clip.end() > left);
-            selected.extend(touched.map(|(clip, _)| clip.id().clone()));
+            let notes = project.children::<Clip>(track.id());
+            let notes = notes.filter(|(_, clip)| clip.start <= right && clip.end() > left);
+            selected.extend(notes.map(|(clip, _)| clip.id().clone()));
+            let audio = project.children::<AudioClip>(track.id());
+            let audio =
+                audio.filter(|(_, clip)| clip.start <= right && shown_end(project, clip) > left);
+            selected.extend(audio.map(|(clip, _)| clip.id().clone()));
         }
         let primary = self.clips.primary().cloned();
         self.set_clips(selected, primary, cx);
@@ -1184,7 +1646,8 @@ impl Timeline {
 
     /// One mouse move of a drag: the clips become what the pointer says, through the gesture
     /// of the session, so sound and every other view follow. `free` is cmd held: no snap.
-    fn drag_to(&mut self, x: f32, y: f32, free: bool, cx: &mut Context<Self>) {
+    /// `fine` is shift held: the gain moves ten times finer.
+    fn drag_to(&mut self, x: f32, y: f32, (free, fine): (bool, bool), cx: &mut Context<Self>) {
         self.refresh_order(cx);
         let grid = match free {
             true => self.grid(cx).free(),
@@ -1193,13 +1656,32 @@ impl Timeline {
         match self.drag.as_ref().map(|drag| &drag.kind) {
             Some(ClipDragKind::Move { .. }) => self.drag_move(x, y, grid, cx),
             Some(ClipDragKind::Resize { .. }) => self.drag_resize(x, grid, cx),
+            Some(ClipDragKind::Trim { .. }) => self.drag_trim(x, grid, cx),
+            Some(ClipDragKind::Fade { .. }) => self.drag_fade(x, cx),
+            Some(ClipDragKind::Gain { .. }) => self.drag_gain(y, fine, cx),
             None => {}
         }
     }
 
+    /// The kind of the track on a row.
+    fn kind_of_row(&self, row: usize, project: &Project) -> Option<TrackKind> {
+        let track = self.order.get(row)?;
+        project.state(track).map(|state| state.kind)
+    }
+
+    /// Whether every clip lands on a track of its own kind when moved by `rows`.
+    fn fits(&self, clips: &[MovedClip], rows: i64, project: &Project) -> bool {
+        clips.iter().all(|moved| {
+            let row = moved.row.checked_add_signed(rows as isize);
+            row.and_then(|row| self.kind_of_row(row, project)) == Some(moved.kind)
+        })
+    }
+
     /// A move of the selected clips: all by the same distance in time and in track rows. The
     /// earliest stops at tick 0 and the outer ones at the first and the last track, and the
-    /// others keep their distance to them.
+    /// others keep their distance to them. A note clip goes on instrument tracks only and an
+    /// audio clip on audio tracks only: over a track one of them cannot go on, they stay on
+    /// the rows where they last could.
     fn drag_move(&mut self, x: f32, y: f32, grid: Grid, cx: &mut Context<Self>) {
         let Some(mut drag) = self.drag.take() else {
             return;
@@ -1209,6 +1691,7 @@ impl Timeline {
             clips,
             grab_row,
             grabbed,
+            rows: last_rows,
         } = &mut drag.kind
         else {
             self.drag = Some(drag);
@@ -1217,29 +1700,31 @@ impl Timeline {
         let project = self.session.read(cx).project();
         // A clip deleted from outside is left out of the move. When it is the one under the
         // pointer, the drag ends: the delete was the last write.
-        let Some(grabbed_id) = clips.get(*grabbed).map(|moved| moved.clip.id().clone()) else {
+        let Some(grabbed_id) = clips.get(*grabbed).map(|moved| moved.clip.clone()) else {
             self.drag = Some(drag);
             return self.end_drag(cx);
         };
-        clips.retain(|moved| project.state(&moved.clip).is_some());
-        let Some(index) = clips
+        let lives: Vec<Option<AnyClip>> = clips
             .iter()
-            .position(|moved| *moved.clip.id() == grabbed_id)
-        else {
+            .map(|moved| AnyClip::read(project, &moved.clip))
+            .collect();
+        let mut lives = lives.into_iter();
+        clips.retain(|_| lives.next().flatten().is_some());
+        let Some(index) = clips.iter().position(|moved| moved.clip == grabbed_id) else {
             self.drag = Some(drag);
             return self.end_drag(cx);
         };
         *grabbed = index;
-        let lives: Vec<Clip> = clips
+        let lives: Vec<AnyClip> = clips
             .iter()
-            .filter_map(|moved| project.state(&moved.clip).cloned())
+            .filter_map(|moved| AnyClip::read(project, &moved.clip))
             .collect();
         // Once it moves, the drag owns the starts. Before that, an undo under the press may
         // have moved a clip.
         if !drag.begun {
             for (moved, live) in clips.iter_mut().zip(&lives) {
-                if live.start != moved.written {
-                    (moved.start, moved.written) = (live.start, live.start);
+                if live.start() != moved.written {
+                    (moved.start, moved.written) = (live.start(), live.start());
                 }
             }
         }
@@ -1255,6 +1740,10 @@ impl Timeline {
         let under_pointer = viewport.nearest_track(y, rows).unwrap_or(*grab_row);
         let row_delta = (under_pointer as i64 - *grab_row as i64)
             .clamp(-(top as i64), rows.saturating_sub(1 + bottom) as i64);
+        if self.fits(clips, row_delta, project) {
+            *last_rows = row_delta;
+        }
+        let row_delta = *last_rows;
         let mut moves = Vec::new();
         for (moved, live) in clips.iter().zip(lives) {
             let row = moved.row.saturating_add_signed(row_delta as isize);
@@ -1262,27 +1751,23 @@ impl Timeline {
                 self.drag = Some(drag);
                 return;
             };
-            let next = Clip {
-                start: shifted(moved.start, delta),
-                ..live
-            };
             moves.push(ClipMove {
                 clip: moved.clip.clone(),
                 home: moved.home.clone(),
                 to,
-                next,
+                next: live.with_start(shifted(moved.start, delta)),
             });
         }
-        let project = self.session.read(cx).project();
         let unchanged = moves.iter().all(|step| {
-            step.clip.id().parent().as_ref() == Some(step.to.id())
-                && project.state(&step.clip).map(|live| live.start) == Some(step.next.start)
+            step.clip.parent().as_ref() == Some(step.to.id())
+                && AnyClip::read(project, &step.clip).map(|live| live.start())
+                    == Some(step.next.start())
         });
         if unchanged {
             self.drag = Some(drag);
             return;
         }
-        let starts: Vec<Ticks> = moves.iter().map(|step| step.next.start).collect();
+        let starts: Vec<Ticks> = moves.iter().map(|step| step.next.start()).collect();
         let begun = std::mem::replace(&mut drag.begun, true);
         let moved = self.session.update(cx, |session, cx| {
             if !begun {
@@ -1300,10 +1785,159 @@ impl Timeline {
                 (clip.clip, clip.written) = (now, start);
             }
         }
-        let selected: Vec<_> = clips.iter().map(|moved| moved.clip.id().clone()).collect();
+        let selected: Vec<_> = clips.iter().map(|moved| moved.clip.clone()).collect();
         let primary = selected.get(*grabbed).cloned();
         self.drag = Some(drag);
         self.set_clips(selected, primary, cx);
+    }
+
+    /// Publishes one mouse move of a drag of one audio clip into the gesture of the session,
+    /// which opens with the first move that changes something.
+    fn publish_audio(
+        &mut self,
+        mut drag: ClipDrag,
+        clip: Instance<AudioClip>,
+        next: AudioClip,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.session.read(cx).project();
+        if project.state(&clip) == Some(&next) {
+            self.drag = Some(drag);
+            return;
+        }
+        let label = drag.label();
+        let begun = std::mem::replace(&mut drag.begun, true);
+        self.drag = Some(drag);
+        self.session.update(cx, |session, cx| {
+            if !begun {
+                session.begin_gesture(label, cx);
+            }
+            session.gesture(cx, |project, edit| {
+                let mut changes = Changes::new();
+                changes.set(&clip, next);
+                project.publish(edit, changes)
+            })
+        });
+        cx.notify();
+    }
+
+    /// A move of an edge of an audio clip: the part of its file that plays. The left edge keeps
+    /// the sound where it is in time.
+    fn drag_trim(&mut self, x: f32, grid: Grid, cx: &mut Context<Self>) {
+        let Some(drag) = self.drag.take() else {
+            return;
+        };
+        let ClipDragKind::Trim {
+            clip,
+            edge,
+            origin,
+            file,
+        } = &drag.kind
+        else {
+            self.drag = Some(drag);
+            return;
+        };
+        let project = self.session.read(cx).project();
+        let Some(live) = project.state(clip).cloned() else {
+            self.drag = Some(drag);
+            return self.end_drag(cx);
+        };
+        let delta = snapped_delta(drag.grab, self.painted.get().tick_at(x), grid.step);
+        let clock = project.clock();
+        let next = match edge {
+            Edge::Left => {
+                let trimmed = trimmed_left(origin, file, clock, delta, grid.unit);
+                AudioClip {
+                    start: trimmed.start,
+                    file_start_seconds: trimmed.file_start_seconds,
+                    ..live
+                }
+            }
+            Edge::Right => {
+                let trimmed = trimmed_right(origin, file, clock, delta, grid.unit);
+                AudioClip {
+                    file_end_seconds: trimmed.file_end_seconds,
+                    ..live
+                }
+            }
+        };
+        let clip = clip.clone();
+        self.publish_audio(drag, clip, next, cx);
+    }
+
+    /// A move of a fade handle: the fade grows by the time the pointer went, in the time of the
+    /// clip. No snap: a fade is a time and not a place on the grid.
+    fn drag_fade(&mut self, x: f32, cx: &mut Context<Self>) {
+        let Some(drag) = self.drag.take() else {
+            return;
+        };
+        let ClipDragKind::Fade {
+            clip,
+            edge,
+            origin,
+            file,
+        } = &drag.kind
+        else {
+            self.drag = Some(drag);
+            return;
+        };
+        let project = self.session.read(cx).project();
+        let Some(live) = project.state(clip).cloned() else {
+            self.drag = Some(drag);
+            return self.end_drag(cx);
+        };
+        let clock = project.clock();
+        let went = clock.seconds_of(self.painted.get().tick_at(x)) - clock.seconds_of(drag.grab);
+        let went = (went * 1000.) as f32;
+        let next = match edge {
+            Edge::Left => AudioClip {
+                fade_in_ms: fade_in(&live, file, origin.fade_in_ms + went),
+                ..live
+            },
+            Edge::Right => AudioClip {
+                fade_out_ms: fade_out(&live, file, origin.fade_out_ms - went),
+                ..live
+            },
+        };
+        let clip = clip.clone();
+        self.publish_audio(drag, clip, next, cx);
+    }
+
+    /// A move of the gain handle: up is louder, 200 pt for the whole range as on a knob, and
+    /// ten times finer with shift.
+    fn drag_gain(&mut self, y: f32, fine: bool, cx: &mut Context<Self>) {
+        let Some(mut drag) = self.drag.take() else {
+            return;
+        };
+        let ClipDragKind::Gain {
+            clip,
+            from_db,
+            from_y,
+            fine: was_fine,
+        } = &mut drag.kind
+        else {
+            self.drag = Some(drag);
+            return;
+        };
+        let project = self.session.read(cx).project();
+        let Some(live) = project.state(clip).cloned() else {
+            self.drag = Some(drag);
+            return self.end_drag(cx);
+        };
+        if fine != *was_fine {
+            (*from_db, *from_y, *was_fine) = (live.gain_db, y, fine);
+        }
+        let (bottom, top) = GAIN_DB;
+        let speed = if fine { 0.1 } else { 1. };
+        let db = (*from_y - y) * (top - bottom) / GAIN_TRAVEL * speed;
+        // No move up or down leaves the gain as it is, also a `-inf` under the range.
+        let gain_db = match db == 0. {
+            true => live.gain_db,
+            false => gain_moved(*from_db, db),
+        };
+        let next = AudioClip { gain_db, ..live };
+        let clip = clip.clone();
+        self.publish_audio(drag, clip, next, cx);
     }
 
     /// A move of an edge of one clip. It goes on from the live clip when that is not what the
@@ -1422,39 +2056,91 @@ impl Timeline {
         true
     }
 
-    /// The cursor says that a drag from here resizes.
+    /// The cursor says what a drag from here does, and the audio clip under the pointer shows
+    /// its handles.
     fn hover(&mut self, x: f32, y: f32, scene: &Scene, cx: &mut Context<Self>) {
         let inside = x >= 0.0 && y >= 0.0;
         let zone = scene.zone_at(x, y).filter(|_| inside);
-        let over_edge = zone.is_some_and(|(_, zone)| zone != Zone::Body);
-        if self.over_edge != over_edge {
-            self.over_edge = over_edge;
+        let cursor = zone.and_then(|(_, grip)| match grip {
+            Grip::Zone(Zone::Body) => None,
+            Grip::Zone(Zone::LeftEdge | Zone::RightEdge) => Some(CursorStyle::ResizeLeftRight),
+            Grip::Handle(ClipHandle::FadeIn | ClipHandle::FadeOut) => {
+                Some(CursorStyle::ResizeLeftRight)
+            }
+            Grip::Handle(ClipHandle::Gain) => Some(CursorStyle::ResizeUpDown),
+        });
+        let hovered = zone.map(|(shape, _)| shape.id.clone());
+        if self.hover_cursor != cursor || self.hovered != hovered {
+            (self.hover_cursor, self.hovered) = (cursor, hovered);
             cx.notify();
         }
     }
 
-    fn resize_cursor(&self) -> bool {
-        match &self.drag {
-            Some(drag) => matches!(drag.kind, ClipDragKind::Resize { .. }),
-            None => self.over_edge,
+    /// The pointer left the timeline: no clip shows its handles for it any more.
+    fn unhover(&mut self, cx: &mut Context<Self>) {
+        if self.hovered.take().is_some() || self.hover_cursor.take().is_some() {
+            cx.notify();
         }
     }
 
-    /// The first selected clip, while the project has it.
+    fn cursor(&self) -> Option<CursorStyle> {
+        match &self.drag {
+            Some(drag) => drag.cursor(),
+            None => self.hover_cursor,
+        }
+    }
+
+    /// The first selected clip, while the project has it and it is a clip of notes: the one
+    /// the note editor shows.
     pub(super) fn selected_instance(&self, cx: &App) -> Option<Instance<Clip>> {
         let project = self.session.read(cx).project();
         project.resolve(self.clips.primary()?)
     }
 
+    /// The first selected clip, while the project has it and it is an audio clip: the one the
+    /// Clip card of its track shows.
+    pub fn selected_audio_clip(&self, cx: &App) -> Option<Instance<AudioClip>> {
+        let project = self.session.read(cx).project();
+        project.resolve(self.clips.primary()?)
+    }
+
     /// The selected clips that the project still has, with their state.
-    fn selected_states(&self, cx: &App) -> Vec<(Instance<Clip>, Clip)> {
+    fn selected_states(&self, cx: &App) -> Vec<(InstanceId, AnyClip)> {
         let project = self.session.read(cx).project();
         let clips = self.clips.iter().filter_map(|id| {
-            let clip = project.resolve::<Clip>(id)?;
-            let state = project.state(&clip)?.clone();
-            Some((clip, state))
+            let clip = AnyClip::read(project, id)?;
+            Some((id.clone(), clip))
         });
         clips.collect()
+    }
+
+    /// Alt-up and alt-down: the gain of every selected audio clip by a decibel, as one undo
+    /// step. Note clips have none. Whether there was one to change.
+    fn step_gains(&mut self, step: f32, cx: &mut Context<Self>) -> bool {
+        let project = self.session.read(cx).project();
+        let clips: Vec<_> = self
+            .clips
+            .iter()
+            .filter_map(|id| {
+                let clip = project.resolve::<AudioClip>(id)?;
+                let state = project.state(&clip)?.clone();
+                Some((clip, state))
+            })
+            .collect();
+        if clips.is_empty() {
+            return false;
+        }
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                for (clip, state) in clips {
+                    let gain_db = gain_moved(state.gain_db, step);
+                    changes.set(&clip, AudioClip { gain_db, ..state });
+                }
+                project.commit(GAIN_LABEL, changes)
+            })
+        });
+        true
     }
 
     /// The keys of the focused timeline. Whether the key was one of them.
@@ -1476,10 +2162,18 @@ impl Timeline {
             platform,
             ..
         } = event.keystroke.modifiers;
+        let key = event.keystroke.key.as_str();
+        // Alt-up and alt-down: the gain of the selected audio clips.
+        if alt && !(control || shift || platform) && self.drag.is_none() {
+            return match key {
+                "up" => self.step_gains(GAIN_KEY_STEP_DB, cx),
+                "down" => self.step_gains(-GAIN_KEY_STEP_DB, cx),
+                _ => false,
+            };
+        }
         if control || alt || shift {
             return false;
         }
-        let key = event.keystroke.key.as_str();
         if key == "escape" && !platform {
             if self.cancel_drag(cx) {
                 return true;
@@ -1515,12 +2209,14 @@ impl Timeline {
             self.remove_tempo_change(tick, cx);
             return true;
         }
-        let Some(clip) = self.selected_instance(cx) else {
+        let project = self.session.read(cx).project();
+        let primary = self.clips.primary().cloned();
+        let Some(clip) = primary.filter(|clip| is_clip_tool(project, clip)) else {
             return self.on_track_key(key, window, cx);
         };
         let unit = self.grid(cx).unit.0 as i64;
         match key {
-            "enter" => cx.emit(TimelineEvent::OpenEditor(clip)),
+            "enter" => self.open(&clip, cx),
             "backspace" | "delete" => self.delete_clips("Delete clip", "Delete clips", cx),
             "left" => self.nudge_in_time(-unit, cx),
             "right" => self.nudge_in_time(unit, cx),
@@ -1547,8 +2243,10 @@ impl Timeline {
             "v" => self.paste(cx),
             "d" => self.duplicate(cx),
             "down" => {
-                if let Some(clip) = self.selected_instance(cx) {
-                    cx.emit(TimelineEvent::OpenEditor(clip));
+                let project = self.session.read(cx).project();
+                let primary = self.clips.primary().cloned();
+                if let Some(clip) = primary.filter(|clip| is_clip_tool(project, clip)) {
+                    self.open(&clip, cx);
                 } else {
                     let project = self.session.read(cx).project();
                     let selected = self.selected_track.as_ref();
@@ -1679,25 +2377,29 @@ impl Timeline {
     fn select_all(&mut self, cx: &mut Context<Self>) {
         self.refresh_order(cx);
         let project = self.session.read(cx).project();
-        let clips = self
-            .order
-            .iter()
-            .flat_map(|track| project.children::<Clip>(track.id()))
-            .map(|(clip, _)| clip.id().clone());
-        let clips: Vec<_> = clips.collect();
+        let mut clips = Vec::new();
+        for track in &self.order {
+            let notes = project.children::<Clip>(track.id());
+            clips.extend(notes.map(|(clip, _)| clip.id().clone()));
+            let audio = project.children::<AudioClip>(track.id());
+            clips.extend(audio.map(|(clip, _)| clip.id().clone()));
+        }
         let primary = self.clips.primary().cloned();
         self.set_clips(clips, primary, cx);
     }
 
-    /// What the selected clips are for the clipboard: each with its row and its name.
+    /// What the selected clips are for the clipboard: each with its row, its name and how long
+    /// it is on the timeline.
     fn copied(&mut self, cx: &mut Context<Self>) -> Option<CopiedClips> {
         self.refresh_order(cx);
+        let project = self.session.read(cx).project();
         let clips = self
             .selected_states(cx)
             .into_iter()
-            .filter_map(|(clip, state)| {
-                let row = self.row_of(&clip.id().parent()?)?;
-                Some((row, clip.id().name().to_string(), state))
+            .filter_map(|(id, clip)| {
+                let row = self.row_of(&id.parent()?)?;
+                let length = clip.end(project).saturating_sub(clip.start());
+                Some((row, id.name().to_string(), clip, length))
             });
         CopiedClips::new(clips.collect::<Vec<_>>())
     }
@@ -1740,7 +2442,9 @@ impl Timeline {
         self.add_copies(&copied, start + copied.span(), top, label, cx);
     }
 
-    /// Adds copies of clips as one undo step and selects them.
+    /// Adds copies of clips as one undo step and selects them. A note clip goes on an
+    /// instrument track only and an audio clip on an audio track only: a paste that would put
+    /// one on the other kind is refused as a whole, and the notice says why.
     fn add_copies(
         &mut self,
         copied: &CopiedClips,
@@ -1751,19 +2455,39 @@ impl Timeline {
     ) {
         let order = self.order.clone();
         let placed = copied.placed(at, top, order.len());
+        let project = self.session.read(cx).project();
+        let wrong = placed.iter().find_map(|(row, name, clip)| {
+            let track = order.get(*row)?;
+            let kind = project.state(track)?.kind;
+            (kind != clip.kind()).then(|| (track.id().clone(), name.to_string(), clip.kind()))
+        });
         let added = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
+                if let Some((track, name, kind)) = wrong {
+                    return Err(wrong_track(&track, &name, kind));
+                }
                 let mut changes = Changes::new();
-                let clips = placed
+                let (mut notes, mut audio) = (Vec::new(), Vec::new());
+                for (row, name, clip) in placed {
+                    let Some(track) = order.get(row) else {
+                        continue;
+                    };
+                    match clip {
+                        AnyClip::Notes(clip) => notes.push((track, name, clip)),
+                        AnyClip::Audio(clip) => audio.push((track, name, clip)),
+                    }
+                }
+                let mut added: Vec<InstanceId> = add_clips(project, &mut changes, notes)?
                     .into_iter()
-                    .filter_map(|(row, name, clip)| Some((order.get(row)?, name, clip)));
-                let added = add_clips(project, &mut changes, clips)?;
+                    .map(|clip| clip.id().clone())
+                    .collect();
+                let audio = add_audio_clips(project, &mut changes, audio)?;
+                added.extend(audio.into_iter().map(|clip| clip.id().clone()));
                 project.commit(label, changes)?;
                 Ok(added)
             })
         });
-        if let Some(added) = added {
-            let ids: Vec<_> = added.iter().map(|clip| clip.id().clone()).collect();
+        if let Some(ids) = added {
             let primary = ids.first().cloned();
             self.set_clips(ids, primary, cx);
         }
@@ -1790,42 +2514,77 @@ impl Timeline {
     }
 
     /// The arrows left and right: every selected clip by one unit of the grid, as one undo
-    /// step. The earliest stops at tick 0.
+    /// step. The earliest stops at tick 0. A moved audio clip goes on top of its track.
     fn nudge_in_time(&mut self, delta: i64, cx: &mut Context<Self>) {
+        self.refresh_order(cx);
         let selected = self.selected_states(cx);
-        let earliest = selected.iter().map(|(_, clip)| clip.start.0).min();
+        let earliest = selected.iter().map(|(_, clip)| clip.start().0).min();
         let delta = delta.max(-(earliest.unwrap_or(0) as i64));
         if delta == 0 || selected.is_empty() {
             return;
         }
-        let label = plural(selected.len(), "Nudge clip", "Nudge clips");
+        let project = self.session.read(cx).project();
+        let moves: Vec<ClipMove> = selected
+            .into_iter()
+            .filter_map(|(clip, state)| {
+                let track = project.resolve::<TrackState>(&clip.parent()?)?;
+                let start = shifted(state.start(), delta);
+                Some(ClipMove {
+                    home: clip.clone(),
+                    clip,
+                    to: track,
+                    next: state.with_start(start),
+                })
+            })
+            .collect();
+        let label = plural(moves.len(), "Nudge clip", "Nudge clips");
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
-                for (clip, state) in selected {
-                    let start = shifted(state.start, delta);
-                    changes.set(&clip, Clip { start, ..state });
-                }
+                move_clips(project, &mut changes, moves)?;
                 project.commit(label, changes)
             })
         });
     }
 
-    /// The arrows up and down: every selected clip to the track above or below, as one undo
-    /// step. Nothing moves when one of them is on the first or the last track already.
+    /// The arrows up and down: every selected clip to the nearest tracks above or below where
+    /// each lands on a track of its own kind, as one undo step. Nothing moves when there are
+    /// none before the first or the last track.
     fn nudge_to_track(&mut self, step: i64, cx: &mut Context<Self>) {
         self.refresh_order(cx);
-        let mut moves = Vec::new();
+        let project = self.session.read(cx).project();
+        let mut clips = Vec::new();
         for (clip, next) in self.selected_states(cx) {
-            let row = clip.id().parent().and_then(|track| self.row_of(&track));
-            let row = row.and_then(|row| row.checked_add_signed(step as isize));
-            let Some(to) = row.and_then(|row| self.order.get(row)).cloned() else {
+            let Some(row) = clip.parent().and_then(|track| self.row_of(&track)) else {
                 return;
             };
-            let home = clip.id().clone();
+            let moved = MovedClip {
+                home: clip.clone(),
+                clip: clip.clone(),
+                kind: next.kind(),
+                row,
+                start: next.start(),
+                written: next.start(),
+            };
+            clips.push((moved, next));
+        }
+        let moved: Vec<MovedClip> = clips.iter().map(|(moved, _)| moved.clone()).collect();
+        let tracks = self.order.len() as i64;
+        let rows = (1..tracks)
+            .map(|times| step * times)
+            .find(|rows| self.fits(&moved, *rows, project));
+        let Some(rows) = rows else {
+            return;
+        };
+        let mut moves = Vec::new();
+        for (moved, next) in clips {
+            let row = moved.row.saturating_add_signed(rows as isize);
+            let Some(to) = self.order.get(row).cloned() else {
+                return;
+            };
             moves.push(ClipMove {
-                clip,
-                home,
+                clip: moved.clip,
+                home: moved.home,
                 to,
                 next,
             });
@@ -1837,7 +2596,7 @@ impl Timeline {
         let primary = self.clips.primary().cloned();
         let index = moves
             .iter()
-            .position(|step| Some(step.clip.id()) == primary.as_ref());
+            .position(|step| Some(&step.clip) == primary.as_ref());
         let moved = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
@@ -1846,9 +2605,187 @@ impl Timeline {
                 Ok(moved)
             })
         });
-        if let Some(moved) = moved {
-            let ids: Vec<_> = moved.iter().map(|clip| clip.id().clone()).collect();
+        if let Some(ids) = moved {
             let primary = index.and_then(|index| ids.get(index).cloned());
+            self.set_clips(ids, primary, cx);
+        }
+    }
+
+    /// Where files dropped at a place of the timeline area would go: an audio track under the
+    /// pointer, or a new one under the last track, from the snap step under the pointer. Over an
+    /// instrument track, the ruler or the headers, nowhere.
+    pub fn drop_target_at(&mut self, x: f32, y: f32, cx: &mut Context<Self>) -> Option<DropTarget> {
+        self.refresh_order(cx);
+        if x < 0. || y < 0. {
+            return None;
+        }
+        let viewport = self.painted.get();
+        let tick = snap_floor(viewport.tick_at(x), self.grid(cx).step);
+        let rows = self.order.len();
+        let Some(row) = viewport.track_at(y, rows) else {
+            return (y >= viewport.y_of(rows)).then_some(DropTarget::NewTrack(tick));
+        };
+        let track = self.order.get(row)?;
+        let project = self.session.read(cx).project();
+        let audio = project.state(track)?.kind == TrackKind::Audio;
+        audio.then(|| DropTarget::Track(track.id().clone(), tick))
+    }
+
+    /// Files from the Finder are dragged over a place of the timeline area: the ghosts of the
+    /// clips they would make follow the pointer. What each file is, for how long its ghost is,
+    /// is read on a background thread the first time.
+    pub fn drag_files_over(&mut self, paths: Vec<PathBuf>, x: f32, y: f32, cx: &mut Context<Self>) {
+        let target = self.drop_target_at(x, y, cx);
+        let known = self
+            .incoming
+            .as_ref()
+            .is_some_and(|incoming| incoming.paths == paths);
+        if !known {
+            let count = paths.len();
+            self.incoming = Some(Incoming {
+                paths: paths.clone(),
+                files: vec![None; count],
+                target: None,
+            });
+            let reading = cx.background_spawn(async move {
+                let read = |path: &PathBuf| {
+                    let bytes = std::fs::read(path).ok()?;
+                    Some(sound_media::Audio::parse(bytes).ok()?.info())
+                };
+                paths.iter().map(read).collect::<Vec<_>>()
+            });
+            cx.spawn(async move |timeline, cx| {
+                let files = reading.await;
+                timeline
+                    .update(cx, |timeline, cx| {
+                        if let Some(incoming) = &mut timeline.incoming
+                            && incoming.files.len() == files.len()
+                        {
+                            incoming.files = files;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+            })
+            .detach();
+        }
+        if let Some(incoming) = &mut self.incoming
+            && incoming.target != target
+        {
+            incoming.target = target;
+            cx.notify();
+        }
+    }
+
+    /// The drag of files left the timeline, or ended.
+    pub fn forget_files(&mut self, cx: &mut Context<Self>) {
+        self.dragged_paths.borrow_mut().clear();
+        if self.incoming.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Where the files dragged over the timeline would go now.
+    pub fn incoming_target(&self) -> Option<&DropTarget> {
+        self.incoming.as_ref()?.target.as_ref()
+    }
+
+    /// Files dropped from the Finder: each is copied into `assets/audio/` on a background
+    /// thread, then all become clips one after another on one track, from the target on, as
+    /// one undo step. A file that is no audio this app plays is left out, and the notice says
+    /// why. Under the last track the drop makes a new audio track named after the first file.
+    pub fn drop_files(&mut self, paths: Vec<PathBuf>, target: DropTarget, cx: &mut Context<Self>) {
+        let assets = self.session.read(cx).project().assets().clone();
+        let importing = cx.background_spawn(async move {
+            paths
+                .iter()
+                .map(|path| {
+                    let name = path
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned());
+                    (name.unwrap_or_default(), sound_media::import(&assets, path))
+                })
+                .collect::<Vec<_>>()
+        });
+        cx.spawn(async move |timeline, cx| {
+            let imported = importing.await;
+            timeline
+                .update(cx, |timeline, cx| {
+                    timeline.add_dropped(imported, target, cx)
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// The clips of files that were copied in, as one undo step, selected.
+    fn add_dropped(
+        &mut self,
+        imported: Vec<(String, Result<AudioAsset, sound_media::MediaError>)>,
+        target: DropTarget,
+        cx: &mut Context<Self>,
+    ) {
+        let mut files = Vec::new();
+        for (name, result) in imported {
+            match result {
+                Ok(asset) => files.push((name, asset)),
+                Err(error) => {
+                    let session = self.session.clone();
+                    session.update(cx, |session, cx| session.report(error, cx));
+                }
+            }
+        }
+        let Some((first_name, _)) = files.first() else {
+            return;
+        };
+        let first_name = first_name.clone();
+        let arrangement = self.arrangement.clone();
+        let label = plural(files.len(), "Add audio clip", "Add audio clips");
+        let added = self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                let (track, start) = match target {
+                    DropTarget::Track(track, start) => {
+                        let missing = || ProjectError::MissingInstance(track.clone());
+                        (
+                            project.resolve::<TrackState>(&track).ok_or_else(missing)?,
+                            start,
+                        )
+                    }
+                    DropTarget::NewTrack(start) => {
+                        let count = tracks(project, arrangement.id()).len();
+                        let colour = Colour::ALL[count % Colour::ALL.len()];
+                        let track = add_audio_track(
+                            project,
+                            &mut changes,
+                            arrangement.id(),
+                            &first_name,
+                            colour,
+                        )?;
+                        (track, start)
+                    }
+                };
+                // One after another: each starts where the one before it ends.
+                let clock = project.clock();
+                let mut at = start;
+                let mut clips = Vec::new();
+                for (_, asset) in &files {
+                    let clip = AudioClip::new(asset.clone(), at);
+                    let file = sound_media::info(project.assets(), asset).ok();
+                    at = clip.end(file.as_ref(), clock);
+                    clips.push((asset.asset_name().name().to_string(), clip));
+                }
+                let clips = clips
+                    .iter()
+                    .map(|(name, clip)| (&track, name.as_str(), clip.clone()));
+                let added = add_audio_clips(project, &mut changes, clips)?;
+                project.commit(label, changes)?;
+                Ok(added)
+            })
+        });
+        if let Some(added) = added {
+            let ids: Vec<InstanceId> = added.iter().map(|clip| clip.id().clone()).collect();
+            let primary = ids.first().cloned();
             self.set_clips(ids, primary, cx);
         }
     }
@@ -1899,6 +2836,12 @@ impl Timeline {
             .child(self.snap_menu.clone())
     }
 }
+
+/// Where the arm toggle of an audio track starts in its header, which recording brings. The
+/// name of an audio track ends before it.
+const ARM_LEFT: f32 = 140.;
+/// What the header of the track a drop would make says.
+const NEW_AUDIO_TRACK: &str = "New audio track";
 
 /// How far right of its tick a tempo label may start to still be seen when its tick is off the
 /// left edge.
@@ -1951,17 +2894,35 @@ impl Render for Timeline {
                 if keyboard_focus.shows_ring(&focus_handle, window) {
                     paint_focus_ring(bounds, window, cx);
                 }
-                if timeline.read(cx).resize_cursor() {
-                    window.set_cursor_style(CursorStyle::ResizeLeftRight, &hitbox);
+                if let Some(cursor) = timeline.read(cx).cursor() {
+                    window.set_cursor_style(cursor, &hitbox);
                 }
                 listen(timeline, Rc::new(scene), bounds, hitbox, window);
             },
         );
+        let dragged_paths = self.dragged_paths.clone();
         div()
+            .id("timeline")
             .size_full()
             .relative()
             .overflow_hidden()
             .track_focus(&self.focus_handle)
+            // GPUI gives what a drag of files carries only here, while it draws the timeline
+            // under one. The mouse moves of the drag read it from there.
+            .drag_over::<ExternalPaths>(move |style, paths, _, _| {
+                let mut dragged = dragged_paths.borrow_mut();
+                if dragged.as_slice() != paths.paths() {
+                    *dragged = paths.paths().to_vec();
+                }
+                style
+            })
+            .on_drop(cx.listener(|timeline, paths: &ExternalPaths, _, cx| {
+                let target = timeline.incoming_target().cloned();
+                timeline.forget_files(cx);
+                if let Some(target) = target {
+                    timeline.drop_files(paths.paths().to_vec(), target, cx);
+                }
+            }))
             .on_key_down(cx.listener(|timeline, event, window, cx| {
                 if timeline.on_key(event, window, cx) {
                     cx.stop_propagation();
@@ -2006,11 +2967,34 @@ fn listen(
                 return;
             }
             let (x, y) = Timeline::timeline_position(bounds, event.position);
+            // Files from the Finder: the moves of their drag show where they would go.
+            let paths = timeline.read(cx).dragged_paths.borrow().clone();
+            if cx.has_active_drag() && !paths.is_empty() {
+                let over = hitbox.is_hovered(window);
+                let target = timeline.update(cx, |timeline, cx| {
+                    match over {
+                        true => timeline.drag_files_over(paths, x, y, cx),
+                        false => timeline.forget_files(cx),
+                    }
+                    timeline.incoming_target().is_some()
+                });
+                // Over an instrument track the cursor says no.
+                let cursor = match target {
+                    true => CursorStyle::DragCopy,
+                    false => CursorStyle::OperationNotAllowed,
+                };
+                cx.set_active_drag_cursor_style(cursor, window);
+                return;
+            }
             timeline.update(cx, |timeline, cx| {
+                if !paths.is_empty() {
+                    timeline.forget_files(cx);
+                }
                 let dragging = timeline.drag.is_some() || timeline.marquee.is_some();
                 if !dragging {
-                    if hitbox.is_hovered(window) {
-                        timeline.hover(x, y, &scene, cx);
+                    match hitbox.is_hovered(window) {
+                        true => timeline.hover(x, y, &scene, cx),
+                        false => timeline.unhover(cx),
                     }
                 } else if !event.dragging() {
                     // The button came up somewhere that did not tell this window.
@@ -2018,9 +3002,19 @@ fn listen(
                 } else if timeline.marquee.is_some() {
                     timeline.marquee_to(x, y, cx);
                 } else {
-                    timeline.drag_to(x, y, event.modifiers.platform, cx);
+                    let keys = (event.modifiers.platform, event.modifiers.shift);
+                    timeline.drag_to(x, y, keys, cx);
                 }
             });
+        }
+    });
+    // A drag of files that leaves the window, or ends somewhere else, takes its ghosts along.
+    window.on_mouse_event({
+        let timeline = timeline.clone();
+        move |event: &FileDropEvent, _, _, cx| {
+            if matches!(event, FileDropEvent::Exited | FileDropEvent::Ended) {
+                timeline.update(cx, |timeline, cx| timeline.forget_files(cx));
+            }
         }
     });
     window.on_mouse_event({
@@ -2061,6 +3055,12 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
     );
     let (selection, selected_header) = (theme.gray_950, theme.alpha_at(0.05));
     let (marquee_fill, marquee_border) = (theme.alpha_at(0.05), theme.alpha_at(0.20));
+    let (drop_ring, ghost_text, muted_ring, muted_text) = (
+        theme.lavender,
+        theme.gray_950,
+        theme.gray_800,
+        theme.gray_700,
+    );
     let headers = Bounds::new(
         bounds.origin + point(px(0.), px(RULER_HEIGHT)),
         size(px(HEADER_WIDTH), bounds.size.height - px(RULER_HEIGHT)),
@@ -2096,13 +3096,49 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
                     BorderStyle::Solid,
                 ));
             }
-            let name_width = HEADER_WIDTH - 44. - 16.;
+            // An audio track keeps the room of its arm toggle, from 140 pt, which recording
+            // brings: its name ends 8 pt before it.
+            let name_width = match row.kind {
+                TrackKind::Instrument => HEADER_WIDTH - 44. - 16.,
+                TrackKind::Audio => ARM_LEFT - 8. - 44.,
+            };
             // The field over the header shows the name that is being edited.
             let name = match row.renaming {
                 true => SharedString::default(),
                 false => row.name.clone(),
             };
-            paint_track_label(name, row.accent, top, TRACK_HEIGHT, name_width, window, cx);
+            let label_size = (TRACK_HEIGHT, name_width);
+            paint_track_label(name, row.accent, top, label_size, row.muted, window, cx);
+        }
+        // A drop under the last track makes a new audio track, whose header says so.
+        if let Some(y) = scene.ghosts.as_ref().and_then(|ghosts| ghosts.new_track) {
+            let top = headers.origin + point(px(0.), px(y.round()));
+            let ring = Bounds::new(
+                top + point(px(24.), px(TRACK_HEIGHT / 2. - 4.)),
+                size(px(8.), px(8.)),
+            );
+            let clear = Hsla::transparent_black();
+            window.paint_quad(quad(
+                ring,
+                px(4.),
+                clear,
+                px(1.5),
+                muted_ring,
+                BorderStyle::Solid,
+            ));
+            let origin = top + point(px(44.), px(TRACK_HEIGHT / 2. - 10.));
+            let fit = Fit::Truncate(HEADER_WIDTH - 44. - 16.);
+            let text = SharedString::from(NEW_AUDIO_TRACK);
+            paint_text(
+                text,
+                origin,
+                14.,
+                FontWeight::MEDIUM,
+                muted_text,
+                fit,
+                window,
+                cx,
+            );
         }
     });
 
@@ -2118,25 +3154,51 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
     window.paint_quad(fill(under_ruler, hairline));
     window.paint_quad(fill(beside_headers, hairline));
 
+    let assets = scene.assets.clone();
     window.with_content_mask(Some(ContentMask { bounds: timeline }), |window| {
         for shape in &scene.clips {
-            let border = if shape.selected {
-                selection
-            } else {
-                clip_border
-            };
             let body = placed(shape.rect, timeline.origin);
-            let radius = px(6.).min(body.size.width / 2.);
-            window.paint_quad(quad(
-                body,
-                radius,
-                clip_fill,
-                px(1.),
-                border,
-                BorderStyle::Solid,
-            ));
-            for note in &shape.notes {
-                window.paint_quad(fill(placed(*note, timeline.origin), shape.accent));
+            let dim = if shape.muted { 0.4 } else { 1. };
+            match &shape.body {
+                Body::Notes(notes) => {
+                    let border = if shape.selected {
+                        selection.opacity(dim)
+                    } else {
+                        clip_border.opacity(dim)
+                    };
+                    let radius = px(6.).min(body.size.width / 2.);
+                    let solid = BorderStyle::Solid;
+                    let clip_fill = clip_fill.opacity(dim);
+                    window.paint_quad(quad(body, radius, clip_fill, px(1.), border, solid));
+                    for note in notes {
+                        let note = placed(*note, timeline.origin);
+                        window.paint_quad(fill(note, shape.accent.opacity(dim)));
+                    }
+                }
+                Body::Audio(audio) => {
+                    let look = audio_look(shape, audio, body, timeline.origin, &assets, cx);
+                    paint_audio_clip(&look, window, cx);
+                }
+            }
+        }
+        if let Some(ghosts) = &scene.ghosts {
+            for (rect, name) in &ghosts.clips {
+                let area = placed(*rect, timeline.origin);
+                let solid = BorderStyle::Solid;
+                window.paint_quad(quad(area, px(6.), clip_fill, px(2.), drop_ring, solid));
+                let origin = area.origin + point(px(12.), px(8.));
+                let fit = Fit::Truncate((f32::from(area.size.width) - 24.).max(0.));
+                let weight = FontWeight::MEDIUM;
+                paint_text(
+                    name.clone(),
+                    origin,
+                    14.,
+                    weight,
+                    ghost_text,
+                    fit,
+                    window,
+                    cx,
+                );
             }
         }
         if let Some(marquee) = scene.marquee {
@@ -2152,6 +3214,49 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
             ));
         }
     });
+}
+
+/// What an audio clip shows, with the peaks of its columns from the overview of its file. The
+/// overview is asked for here, where there is an `App` to start one with, and is not there
+/// until it is made on a background thread: the clip draws without its waveform until then.
+fn audio_look(
+    shape: &ClipShape,
+    audio: &AudioShape,
+    body: Bounds<Pixels>,
+    origin: Point<Pixels>,
+    assets: &Assets,
+    cx: &mut App,
+) -> AudioClipLook {
+    let mut look = AudioClipLook::new(body, shape.accent);
+    look.selected = shape.selected;
+    look.muted = shape.muted;
+    look.missing = audio.missing.clone();
+    look.label = audio.label.clone();
+    look.handles = audio.handles;
+    look.gain = audio.gain;
+    look.fade_in = audio.fade_in;
+    look.fade_out = audio.fade_out;
+    if audio.missing.is_some() {
+        return look;
+    }
+    let Some(overview) = Waveforms::overview(assets, &audio.asset, cx) else {
+        return look;
+    };
+    let rate = f64::from(overview.sample_rate());
+    let frame = |seconds: f64| (seconds * rate).max(0.) as u64;
+    let columns = |first: f32, edges: &[f64]| Columns {
+        left: origin.x + px(first),
+        peaks: edges
+            .windows(2)
+            .map(|edge| overview.peak(frame(edge[0]), frame(edge[1]).max(frame(edge[0]) + 1)))
+            .collect(),
+    };
+    look.waveform = columns(audio.first, &audio.edges);
+    look.hidden = audio
+        .hidden
+        .as_ref()
+        .map(|(first, edges)| columns(*first, edges));
+    look
 }
 
 /// The tempo changes after tick 0 in the ruler: a line at the tick and a label, `140 bpm`, in

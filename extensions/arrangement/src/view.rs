@@ -22,6 +22,7 @@
 //! undo step.
 
 pub mod clipboard;
+pub mod clips;
 pub mod editor;
 pub mod gesture;
 pub mod layout;

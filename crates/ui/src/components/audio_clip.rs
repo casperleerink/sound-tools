@@ -41,6 +41,14 @@ const HIDDEN_OPACITY: f32 = 0.25;
 const MUTED_OPACITY: f32 = 0.4;
 const LABEL_HEIGHT: f32 = 20.;
 
+/// One of the three handles of an audio clip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClipHandle {
+    FadeIn,
+    FadeOut,
+    Gain,
+}
+
 /// Where the three handles of a clip are, in the coordinates the owner gives: the clip's left
 /// edge and top, its width, and how wide each fade is.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -65,6 +73,25 @@ impl ClipHandles {
             fade_out: (inside(left + width - fade_out), y),
             gain: (left + width / 2., y),
         })
+    }
+
+    /// The centre of one handle.
+    pub fn of_handle(&self, handle: ClipHandle) -> (f32, f32) {
+        match handle {
+            ClipHandle::FadeIn => self.fade_in,
+            ClipHandle::FadeOut => self.fade_out,
+            ClipHandle::Gain => self.gain,
+        }
+    }
+
+    /// The handle whose target is at a place, the gain first, since it sits between the others.
+    pub fn at(&self, x: f32, y: f32) -> Option<ClipHandle> {
+        let near = |(centre_x, centre_y): (f32, f32)| {
+            (x - centre_x).abs() <= HANDLE_TARGET / 2. && (y - centre_y).abs() <= HANDLE_TARGET / 2.
+        };
+        [ClipHandle::Gain, ClipHandle::FadeIn, ClipHandle::FadeOut]
+            .into_iter()
+            .find(|handle| near(self.of_handle(*handle)))
     }
 }
 
@@ -94,8 +121,8 @@ pub struct AudioClipLook {
     pub handles: bool,
     /// The part of the file the clip hides past the edge that is dragged.
     pub hidden: Option<Columns>,
-    /// The value of a fade or the gain while it is dragged, at the handle it belongs to.
-    pub label: Option<(SharedString, Point<Pixels>)>,
+    /// The value of a fade or the gain while it is dragged, next to the handle it belongs to.
+    pub label: Option<(SharedString, ClipHandle)>,
     /// The file is not there: the clip says so and shows no waveform.
     pub missing: Option<SharedString>,
     pub muted: bool,
@@ -197,7 +224,7 @@ pub fn paint_audio_clip(look: &AudioClipLook, window: &mut Window, cx: &mut App)
         look.fade_in,
         look.fade_out,
     );
-    if let Some(handles) = handles.filter(|_| look.handles) {
+    if let Some(handles) = handles.filter(|_| look.handles || look.label.is_some()) {
         let (left, right) = (bounds.left(), bounds.right());
         let (top, bottom) = (bounds.top(), bounds.bottom());
         let at = |(x, y): (f32, f32)| point(px(x), px(y));
@@ -249,7 +276,7 @@ pub fn paint_audio_clip(look: &AudioClipLook, window: &mut Window, cx: &mut App)
         }
     }
 
-    if let Some((text, at)) = &look.label {
+    if let Some((text, handle)) = &look.label {
         let font = typography::tabular();
         let run = TextRun {
             len: text.len(),
@@ -262,9 +289,26 @@ pub fn paint_audio_clip(look: &AudioClipLook, window: &mut Window, cx: &mut App)
         let shaped = window
             .text_system()
             .shape_line(text.clone(), px(12.), &[run], None);
-        let area = Bounds::new(*at, size(shaped.width + px(12.), px(LABEL_HEIGHT)));
+        let width = shaped.width + px(12.);
+        // Under the handle, into the clip: right of the fade in and the gain, left of the
+        // fade out.
+        let (x, y) = handles.map_or(
+            (
+                f32::from(bounds.left()) + 8.,
+                f32::from(bounds.top()) + HANDLE_DOWN,
+            ),
+            |handles| handles.of_handle(*handle),
+        );
+        let left = match handle {
+            ClipHandle::FadeOut => px(x - HANDLE_SIZE) - width,
+            ClipHandle::FadeIn | ClipHandle::Gain => px(x + HANDLE_SIZE),
+        };
+        let area = Bounds::new(
+            point(left, px(y + HANDLE_SIZE / 2.)),
+            size(width, px(LABEL_HEIGHT)),
+        );
         window.paint_quad(quad(area, px(6.), label_fill, px(1.), label_border, solid));
-        let origin = *at + point(px(6.), px(2.));
+        let origin = area.origin + point(px(6.), px(2.));
         // A glyph that cannot be painted leaves a gap in a label. Nothing else depends on it.
         if let Err(error) = shaped.paint(origin, px(16.), TextAlign::Left, None, window, cx) {
             eprintln!("audio clip: {error}");
