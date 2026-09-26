@@ -2,6 +2,81 @@
 
 Design decisions for the Sound Tools UI. Settled from the three web prototypes reviewed on September 10, 2026 (removed September 14; two screenshots remain in `docs/reference/`). The real UI SDK is built in GPUI in `crates/ui`; the gallery in `crates/gallery` shows every component and variant.
 
+## Direction for the fourth milestone
+
+**Decided by the owner on September 26, 2026:** this direction, an arm toggle on audio tracks, and the newest clip covering an older one where they overlap. Made the same day, with milestone 4 step 0. It stays inside the language of the third milestone below: palette B, the 56 x 72 grid, cards of 192 pt, a display with handles and the main knobs, the rest behind expand. No new colour; the new uses of existing colours are listed under "Colour". The mockups are in `docs/reference/m4-step-0/mockups/`, drawn outside the product for review only:
+
+- `window-audio.png`: the window with two audio tracks, a selected clip with fades and gain, and the track panel of an audio track.
+- `recording.png`: two armed tracks recording over clips, takes growing to the playhead.
+- `drop-file.png`: a file from the Finder over the space under the last track, and the Drum pad in the panel.
+- `audio-clip.png`: every state of an audio clip, the audio track header, the Clip card, and dropping on the arrangement.
+- `sampler.png` and `drum-pad.png`: the two instruments in every state.
+
+### Audio tracks and clips
+
+- `Add track` in the project menu offers `Instrument track` and `Audio track`. A new audio track is empty.
+- An audio clip is the clip shape of a note clip: 56 pt in a 64 pt row, `alpha/5` fill, `alpha/10` border, 6 pt corners, no name label. Its waveform is a mark in the track colour at 85 %, mirrored about the middle, at most 22 pt each way. It is drawn as it sounds: scaled by the clip gain and faded.
+- The pointer on a clip, or a selected clip, shows three handles at its top: a fade handle at each top corner, 7 pt down, and the gain handle, hollow, in the middle. A fade is a 1.5 pt `gray-950` line from the bottom corner to its handle, with `gray-50` at 50 % outside it. The gain handle drags up and down from where it is, and alt-up and alt-down change the gain of the selected clips by 1 dB. While a fade or the gain is dragged, its value shows on the label of a tempo mark: `Fade in 420 ms`, `-6 dB`.
+- Clip edges never click. Every clip start and end gets a short fixed ramp that is not drawn and is not a setting. A fade of 0 ms means only that ramp.
+- Trim is the clip edge of today, with its cursor. While an edge is dragged, the part of the file the clip hides shows past the edge at 25 %.
+- A take while it records has a red border, and its right edge is the playhead. A take lies over the clips under it and changes none of them. A clip whose file is missing keeps its place and says `voice-take-2.wav is missing`.
+- Header of an audio track in the arrangement: the dot, the name from 44 pt, and the arm toggle at 140 to 168, always there. It takes the place the third milestone planned for M and S; that plan is dropped, and M and S stay in the track panel. The toggle is what tells an audio track from an instrument track. Armed, it is red at 16 %, and the input level shows at 88 to 133 on the component of the master meter, 45 x 8. The name then has 44 to 80 and a long one ends in an ellipsis.
+- Track panel of an audio track: the mixer strip of any track, and the input select at 84 to 144, under M (84 to 112) and S (116 to 144), ending on the value line of row 2. Its list is the channels of the macOS default input, each alone, then pairs. The meter of an armed track shows its input.
+- The rack of an audio track starts with the **Clip card**, where an instrument track has its instrument. Decided: it comes in step 1. It shows the selected clip of the track. The title is the file name, plain. The display is the whole file in the waveform display: the start and end lines trim, the gain line has a fade at each end, and a green line is the playhead while it is inside the clip. The line under it says which part of the file plays: `2.1 s to 10.1 s of 14.6 s`. Shown: Gain, Fade in, Fade out. Hidden: Start and End, the keyboard path of the trim. It is 464 pt, 537 expanded. With no clip selected, it is the 200 pt card of an empty slot: `Select a clip of this track.`
+- A full-height 1 pt hairline (`alpha/6`, as in an expanded card) stands between the Clip card and the first effect, with 12 pt of air on each side. The Clip card acts on one clip and the effects on the whole track, so the rack reads as two groups. No label and no colour. The rack of an instrument track has no divider, because its instrument acts on the whole track.
+
+### Sampler, 464 pt
+
+| Display, what drags | Shown | Hidden |
+| --- | --- | --- |
+| The waveform display of the sample. Start and end lines drag sideways. The envelope drawn over it, in the time of the sample from the start: the attack peak drags sideways, the decay corner sideways and up for the sustain. A green line where the last note is. The line under it: the file name, A, D, S. | Root, Velocity, Release, Gain | Start, End, Attack, Decay, Sustain |
+
+The release comes after the key is let go, which is no place in the sample, so it has a knob and no handle. The root uses the note names of the app, where note 60 is C4, and starts on C4. Empty, the display says `Drop an audio file here` over a `Choose file` button, which opens the macOS file panel and is the keyboard path. Expanded, the card is 649 pt.
+
+### Drum pad, 452 pt
+
+- The display is the pad grid: 4 x 4 pads of 72 x 32, 4 pt apart, 300 x 140. So 16 pads fit the 192 pt card with no change: the grid runs from the top of the body to the bottom of the value line of row 2, the same height as a display and its line.
+- Pads are notes 36 to 51, from the bottom left, row by row. The default kit follows the General MIDI drum map, so a drum part from elsewhere plays the right sounds: Kick, Rim, Snare, Clap, Snare 2, Tom 1, Hat, Tom 2, Pedal hat, Tom 3, Open hat, Tom 4, Tom 5, Crash, Tom 6, Ride. Hat, Pedal hat and Open hat start in the choke group.
+- Shown: Volume, Pitch, Decay and Pan of the selected pad. Hidden: `Sound`, a select two cells wide, and `Choke`, a toggle. The list of `Sound` holds the synthesized sounds, the sample of the pad when it has one, and last `Choose file…`, the keyboard path to a sample pad. Expanded, the card is 581 pt.
+- A click selects a pad and plays it. Tab reaches the grid as one stop. The arrows move the selection, and enter plays the selected pad.
+
+### Dropping a file
+
+- On the arrangement: a ghost of the clip the drop will make, from the snap step under the pointer and as long as the file, with the file name and a 2 pt lavender ring. Under the last track, the ghost comes with `New audio track` in the header column, and the new track takes the name of the file. Over an instrument track there is no target and the cursor says no. Several files go one after another on one track.
+- On a card: the 2 pt lavender ring on the Sampler's display, or on the pad that takes the file. The drop makes it a sample pad.
+
+### Recording
+
+Decided by the owner: an arm toggle on audio tracks only. To set a level before a take, the composer must see the input without recording, and armed is that state. `r` records every armed audio track, plus the selected track when it is an instrument track, so a keyboard still always sounds somewhere. With nothing armed and an audio track selected, `r` arms that track and records.
+
+### Overlapping clips on an audio track
+
+Decided by the owner: where clips of an audio track overlap, the newest covers the older one, as in Ableton and Logic. No clip is changed, so moving or deleting the top clip brings the older one back. A retake then replaces what it lies over, and does not sound doubled. Note clips keep their rule: overlapping note clips all play.
+
+### Colour
+
+The meanings of "Colour" stay. These are the new uses, each an exception written down:
+
+- Green fills a pad while it sounds, at 24 % fading with the sound: sound is moving. A green line in the waveform display is where the sound plays.
+- The waveform of an audio clip is in the track colour: it is a mark, like a note, though it covers more area than notes do.
+- Lavender is also the ring of a drop target, the ring a dragged effect card already shows on the card whose place it would take.
+- Red is the arm toggle when on and the border of a take while it records.
+
+### New components
+
+- Waveform display: the display inset. The waveform is `alpha/30`, and the part outside start and end is shaded with `gray-50` at 72 %. Start and end are 1 pt `gray-950` lines with hollow handles 8 pt above the bottom. A curve over it (an envelope, or gain and fades) follows the rules of every display. The Sampler and the Clip card share it.
+- Clip waveform: the mark in the track colour described above, with the three handles.
+- Pad: 72 x 32, 6 pt corners, with the fill and border of a clip and its name in 12 pt medium, 8 pt in. Selected has the `gray-950` border. Sounding is green as above. A sample pad has a 12 pt waveform glyph at its right. A pad with no glyph is synthesized. A long name ends in an ellipsis.
+- Arm toggle: the 28 x 24 toggle with a 10 pt circle glyph, red when on. The input select is the select of the design system.
+
+### Grid arithmetic
+
+- Window: title row 48, arrangement 656 (ruler 32, nine rows of 64, 8, master row 40), panel 216 (12, card 192, 12). 48 + 656 + 216 = 920.
+- Card: 32 + 72 + 72 + 16 = 192. Width = 32 + display + 8 + 56 per column. Clip card and Sampler: 32 + 312 + 8 + 112 = 464. Drum pad: 32 + 300 + 8 + 112 = 452. Expanded adds 8 + 1 + 8 of air and hairline, plus 56 per hidden column: Clip card 464 + 17 + 56 = 537, Sampler 464 + 17 + 168 = 649, Drum pad 452 + 17 + 112 = 581.
+- Pad grid: 4 x 72 + 3 x 4 = 300 wide, 4 x 32 + 3 x 4 = 140 tall, which is 72 + 54 + 14, the body top to the bottom of the value line of row 2.
+- Racks at 1470: the divider of an audio track takes 12 + 1 + 12 = 25 where two cards had 12, so 13 more. `window-audio.png`, Clip card, divider, Compressor and Reverb, takes 464 + 25 + 288 + 12 + 352 = 1141 of 1262 pt. `recording.png`, the empty Clip card, divider, Compressor and Reverb, takes 200 + 25 + 288 + 12 + 352 = 877. `drop-file.png`, Drum pad and Compressor, takes 452 + 12 + 288 = 752.
+- Header column, 176: the arm toggle at 140 to 168, 8 pt from the edge; the armed meter at 88 to 133; the name from 44, to 80 while armed. In the track panel, pan 84 to 140, M 84 to 112, S 116 to 144, and the input select 84 to 144, ending at 888 with the value line.
+
 ## Direction for the third milestone
 
 **Decided by the owner on September 25, 2026:** our own palette (see "Colour"), the transport in the title row, and the mixer strip in the header column. The owner also asked for a shorter panel, one volume control on the meter, a power icon in the card header and a look of its own for each device. The sizes, components and devices below are this step's answer to that, drawn in the mockups. Where this section differs from the sections after it, this section holds.
@@ -95,7 +170,7 @@ Volume, one control:
 
 Gain reduction: a bar of 4 to 6 pt from the top down in `gray-950`, 0 to 24 dB. It is not level, so it has no level colours. Compressor and Limiter draw it inside their display.
 
-Toggle: 24 pt tall, 28 wide for a letter and wider for a word. Off: `alpha/5` with `gray-700` text. On: white at 10 %, or its colour at 16 % with that colour as text: mute peach, solo yellow. Click or space toggles. M and S of a track are meant to sit in its arrangement header too, right aligned, when they are on, when the pointer is on the header, or when it has the focus; that is not built yet. A muted track has its name, dot and clips at 40 %.
+Toggle: 24 pt tall, 28 wide for a letter and wider for a word. Off: `alpha/5` with `gray-700` text. On: white at 10 %, or its colour at 16 % with that colour as text: mute peach, solo yellow. Click or space toggles. M and S of a track were meant to sit in its arrangement header too; the fourth milestone drops that, because the arm toggle of an audio track takes that place, and M and S stay in the track panel. A muted track has its name, dot and clips at 40 %.
 
 Segmented and select: 24 pt, on the knob line of their cell or at the top of a display. A select is for a list that does not fit as segments, such as an EQ band shape.
 
@@ -263,12 +338,12 @@ Roles:
 
 Each colour has one meaning:
 
-- Green: sound is moving. Play, a meter below -6 dBFS, a level inside a display.
+- Green: sound is moving. Play, a meter below -6 dBFS, a level inside a display. Since the fourth milestone: a sounding drum pad, and where the sound plays in a waveform display.
 - Yellow: a meter from -6 to 0 dBFS, and solo.
 - Peach: warning, files not live, and mute.
-- Red: record, the clip light of a meter, errors.
-- Lavender: keyboard focus, and the agent.
-- Track colours: dots, notes, velocity bars. No control uses a track colour.
+- Red: record, the clip light of a meter, errors. Since the fourth milestone: the arm toggle when on, and the border of a take while it records.
+- Lavender: keyboard focus, and the agent. Also the ring where a drag lands: a dragged effect card, and, since the fourth milestone, a dropped file.
+- Track colours: dots, notes, velocity bars, and since the fourth milestone the waveform of an audio clip. No control uses a track colour.
 
 A meter is the one place colour fills an area, because level is a signal. Nothing else is filled with colour except a toggle that is on (its colour at 16 %). Solid colour buttons need dark text (`gray-200`).
 
@@ -294,7 +369,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 - Steadiness, September 21, 2026: right of the tempo, and only when the project has a fit, so a project that was never fitted has the pill it always had. The same shape as the tempo: a whole percent in tabular `gray_950` with a muted 12 px `steady` after it, no box and no fill. Dragging up makes it steadier, one percent per pixel, by whole percent from where it began, with shift by tenths at a tenth of the speed (fifths before step 1b of the third milestone). The arrows step by 5 and with shift by 1. It is in the transport and not on the clip because it is the same kind of thing as the tempo: one number about the time of the whole project.
 - Fit tempo to take, September 21, 2026: the second item of the project menu, under `Add track`, at 40 % when the selected clip was not recorded, and at 40 % with why under it for a project whose `extensions` does not list `fit-tempo`: `This project does not include the tempo fit.` It showed the file edit until step 1b of the third milestone; that is in `agent-docs/project-json.md` now. It is in the project menu and not on the clip because a fit is about the whole project: it rewrites the tempo map every other part follows. One undo step named `Fit tempo`. There is no control for the first downbeat and none for half and double; those are a file edit, and `agent-docs/fit-tempo.md` says which field to change.
 - Click, September 20, 2026: a 28 px icon button at the right end of the pill, the metronome icon. A muted glyph when it is off, white with a dark glyph when it sounds (a subtle fill before step 1b of the third milestone, which was hard to see): no colour, because the click is a reference and not part of the piece. No volume, no count-in and no sounds to choose from.
-- Record, September 20, 2026: a 28 px icon button right of stop, a circle in red, a red ring while it is off and solid red while it records (a subtle red fill before step 1b of the third milestone, which was hard to see). Red because a record control is red everywhere, and it is the one place a warning colour says something true. `r` toggles it, anywhere but in a text field. Pressing it starts playback if the project is stopped, because a take needs the playhead to move; pressing it again ends the take and leaves playback as it is. A stop, a pause or a seek ends the take too. The take goes to the track it began on, and so does the keyboard while it runs. There is no arm button per track, no count-in and no input meter: the take goes to the selected track, or to the first track when nothing is selected, so a keyboard always sounds somewhere.
+- Record, September 20, 2026: a 28 px icon button right of stop, a circle in red, a red ring while it is off and solid red while it records (a subtle red fill before step 1b of the third milestone, which was hard to see). Red because a record control is red everywhere, and it is the one place a warning colour says something true. `r` toggles it, anywhere but in a text field. Pressing it starts playback if the project is stopped, because a take needs the playhead to move; pressing it again ends the take and leaves playback as it is. A stop, a pause or a seek ends the take too. The take goes to the track it began on, and so does the keyboard while it runs. There is no count-in. Until the fourth milestone there was no arm button: the take went to the selected track, or to the first track when nothing is selected, so a keyboard always sounds somewhere. Since the fourth milestone, audio tracks have an arm toggle: `r` records every armed audio track, plus the selected track when it is an instrument track (or the first track when nothing is selected), and with nothing armed and an audio track selected it arms that track and records. The meter of an armed track shows its input.
 - Project menu: add track, undo and redo with the name of the step and their shortcuts, the output device by name with a check, reveal project folder, open terminal in project folder. An item that cannot run is at 40% opacity.
 - Arrangement: 176 px track headers with the accent dot and the name at 14 px medium in `gray-900`, 64 px rows, a 32 px ruler with one short mark and one 12 px number in `gray-700` per bar. Bar numbers thin out to every 2nd, 4th, 8th bar when bars get narrow. No grid lines, no row lines, no zoom or scroll controls. Two hairlines at `alpha/5`: under the ruler and right of the headers. Tick 0 sits 8 px into the timeline.
 - Clips: `alpha/5` fill with an `alpha/10` hairline border and 6 px corners, 4 px inside the row. The notes are small bars in the accent of the track. That is the one place where a track accent is more than a dot: notes are marks, not fills, and they tie a clip to its track without a label. The selected clip has a `gray-950` border. Clips have no name label.
@@ -322,7 +397,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Where | Mouse or key | What it does |
 | --- | --- | --- |
 | Anywhere | space | Play or pause |
-| Anywhere | r | Record on the selected track from the playhead, and again to end the take |
+| Anywhere | r | Record from the playhead on every armed audio track and on the selected instrument track; with nothing armed and an audio track selected, arm it and record. Again to end the take |
 | Anywhere | cmd-z, shift-cmd-z | Undo, redo. Both wait while a drag is going on |
 | Anywhere | tab, shift-tab | Move the focus: project menu, transport, arrangement, the panel below |
 | Project menu | Add track | A new track with a synth |
