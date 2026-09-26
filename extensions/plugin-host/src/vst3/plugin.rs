@@ -14,6 +14,7 @@
 //! the block's output parameter changes. Both mark the state to be saved, and the second is
 //! also given to the controller, which is how the two halves stay in step.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -21,7 +22,8 @@ use vst3::Steinberg::Vst::{
     BusDirections_, BusInfo, ControllerNumbers_, IAudioProcessor, IAudioProcessorTrait, IComponent,
     IComponent_iid, IComponentTrait, IConnectionPoint, IConnectionPointTrait, IEditController,
     IEditController_iid, IEditControllerTrait, IMidiMapping, IMidiMappingTrait, MediaTypes_,
-    ParamID, ProcessSetup, SpeakerArr, SpeakerArrangement, SymbolicSampleSizes_,
+    ParamID, ParamValue, ParameterInfo, ParameterInfo_::ParameterFlags_, ProcessSetup, SpeakerArr,
+    SpeakerArrangement, SymbolicSampleSizes_,
 };
 use vst3::Steinberg::{
     IPluginBaseTrait, TUID, int32, kNotImplemented, kResultFalse, kResultOk, kResultTrue,
@@ -30,9 +32,7 @@ use vst3::{ComPtr, ComWrapper};
 
 use super::context::{Handler, HostContext, as_handler, as_unknown};
 use super::module::Module;
-use super::process::{
-    EDIT_CAPACITY, ParameterChange, REPORT_CAPACITY, Vst3Processor, process_mode,
-};
+use super::process::{ParameterChange, PedalTarget, Vst3Processor, process_mode};
 use super::stream::{MemoryStream, as_stream};
 use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
@@ -127,44 +127,13 @@ pub fn load(
             read_state(&plugin_id, bytes, &component, controller.as_ref())?;
         }
 
-        let inputs = bus_channels(&component, BusDirections_::kInput as int32);
-        let outputs = bus_channels(&component, BusDirections_::kOutput as int32);
         let processor = component
             .cast::<IAudioProcessor>()
             .ok_or_else(|| fail("the plugin makes no audio".to_string()))?;
         if processor.canProcessSampleSize(SymbolicSampleSizes_::kSample32 as int32) != kResultOk {
             return Err(fail("the plugin does not take 32-bit samples".to_string()));
         }
-        // A plugin may change its buses while it answers the arrangement, in either
-        // direction, so what it has is read again and the buffers are made from that.
-        arrange(&processor, &inputs, &outputs);
-        let inputs = bus_channels(&component, BusDirections_::kInput as int32);
-        let outputs = bus_channels(&component, BusDirections_::kOutput as int32);
-
-        // The first event input is the one that gets the notes, and there is no more than one.
-        component.activateBus(
-            MediaTypes_::kEvent as int32,
-            BusDirections_::kInput as int32,
-            0,
-            1,
-        );
-        // The first audio input is the one an effect is played into. A bus that is not active
-        // is one the plugin may ignore, so an effect would be silent without this. An
-        // instrument with an audio input gets the silence it always got.
-        if !inputs.is_empty() {
-            component.activateBus(
-                MediaTypes_::kAudio as int32,
-                BusDirections_::kInput as int32,
-                0,
-                1,
-            );
-        }
-        component.activateBus(
-            MediaTypes_::kAudio as int32,
-            BusDirections_::kOutput as int32,
-            0,
-            1,
-        );
+        let buses = prepare_buses(&component, &processor);
 
         // A render is told to the plugin here and carried in every block below, which is what
         // VST 3 asks: the mode of a `ProcessData` is the mode of the `setupProcessing` it
@@ -187,39 +156,40 @@ pub fn load(
         // After `setActive`, which is when a plugin's latency is settled.
         let latency = not_ours(|| processor.getLatencySamples());
 
-        let pedal_parameter = pedal_parameter(controller.as_ref());
+        let pedal = Arc::new(PedalTarget::new(pedal_parameter(controller.as_ref())));
+        // What the processor holds now, as far as the host can know: the values the controller
+        // shows once the state is read. `kParamValuesChanged` is answered against these.
+        let values = controller
+            .as_ref()
+            .map(|controller| parameter_values(controller, &BTreeMap::new()))
+            .unwrap_or_default();
         // The window side, made here so that nothing but a load ever asks the plugin for a
         // view. A plugin with no edit controller has no window at all.
         let gui = Vst3Gui::new(controller.as_ref(), &plugin_id);
         let live = Arc::new(());
-        let (reports, changed) = rtrb::RingBuffer::new(REPORT_CAPACITY);
-        // The other way: what the composer changes in the plugin's own window, on its way to
-        // the processor. Both rings are made here, so nothing allocates once a block runs.
-        let (edited, edits) = rtrb::RingBuffer::new(EDIT_CAPACITY);
-        let started = Vst3Processor::new(
+        let (started, ends) = Vst3Processor::new(
             processor.clone(),
             live.clone(),
-            &inputs,
-            &outputs,
-            pedal_parameter,
-            reports,
-            edits,
+            &buses.inputs,
+            &buses.outputs,
+            pedal.clone(),
+            joined.handler.clone(),
             mode,
             latency,
         );
         // The pedal is only missing from a plugin that has somewhere to take notes. A plugin
         // with no event input bus, which is what an ordinary effect is, has no pedal to miss,
         // and this host cannot ask what a record is for.
-        let takes_notes = component.getBusCount(
-            MediaTypes_::kEvent as int32,
-            BusDirections_::kInput as int32,
-        ) > 0;
-        let notes = match (takes_notes, pedal_parameter) {
+        let notes = match (buses.takes_notes, pedal.get()) {
             (true, None) => vec![PluginProblem::NoPedal {
                 plugin_id: plugin_id.clone(),
             }],
             _ => Vec::new(),
         };
+        // A plugin may ask for a restart or a reload while its state is read or while it is
+        // activated. It has just been set up and everything is read after that, so asking
+        // again would only start it again, for ever if it asks every time.
+        joined.handler.forget_restarts();
         Opening {
             started: Box::new(started),
             plugin: Box::new(Vst3Plugin {
@@ -228,13 +198,13 @@ pub fn load(
                 gui,
                 joined,
                 _context: context,
-                changed,
-                edited,
+                changed: ends.changed,
+                edited: ends.edited,
                 live,
                 processor,
-                inputs,
-                outputs,
-                pedal_parameter,
+                pedal,
+                takes_notes: buses.takes_notes,
+                values,
                 mode,
             }),
             notes,
@@ -322,21 +292,27 @@ pub struct Vst3Plugin {
     /// deactivated: the two ends would be in different hands.
     live: Arc<()>,
     /// What a new audio side is made of when the plugin is started again: the plugin's
-    /// processor interface, its buses, the parameter the pedal goes to and the process mode.
+    /// processor interface, the parameter the pedal goes to and the process mode. The buses are
+    /// read again then, because a change of them is one reason to start again.
     processor: ComPtr<IAudioProcessor>,
-    inputs: Vec<usize>,
-    outputs: Vec<usize>,
-    pedal_parameter: Option<ParamID>,
+    pedal: Arc<PedalTarget>,
+    /// Whether the plugin has an event input, so that a pedal it no longer maps is worth saying.
+    takes_notes: bool,
+    /// The value of every parameter the processor was last given or reported, as far as the
+    /// host knows: read off the controller when the plugin loaded, and kept up with every edit
+    /// and report since. Read-only parameters are left out, because a host never sends one.
+    values: BTreeMap<ParamID, ParamValue>,
     mode: int32,
 }
 
-impl LoadedPlugin for Vst3Plugin {
-    fn poll(&mut self) -> Requests {
-        // What the plugin changed by itself goes to its controller, which is how the two
-        // halves of a plugin stay in step, and says that the state is to be saved.
+impl Vst3Plugin {
+    /// What the plugin changed by itself goes to its controller, which is how the two halves
+    /// of a plugin stay in step, and says that the state is to be saved.
+    fn take_reports(&mut self) {
         let mut changed = false;
         while let Ok(change) = self.changed.pop() {
             changed = true;
+            self.values.insert(change.id, change.value);
             if let Some(controller) = &self.joined.controller {
                 // SAFETY: the controller came from the plugin and is alive.
                 unsafe { controller.setParamNormalized(change.id, change.value) };
@@ -345,20 +321,80 @@ impl LoadedPlugin for Vst3Plugin {
         if changed {
             self.joined.handler.mark_dirty();
         }
+    }
+
+    /// `kParamValuesChanged`: "The host invalidates all caches of parameter values and asks the
+    /// edit controller for the current values." What the host holds is what the processor was
+    /// given, so every parameter whose value the controller now shows differently is sent to
+    /// the processor, the way an edit is. That is what keeps the half that makes the sound on
+    /// what the controller shows after it changed its values by itself, such as a preset it
+    /// loaded. A parameter nobody changed is not sent again, so a plugin that says this after
+    /// its state is read, which most do, is sent nothing.
+    fn follow_the_controller(&mut self) {
+        let Some(controller) = &self.joined.controller else {
+            return;
+        };
+        // SAFETY: the controller came from the plugin and is alive.
+        let now = |id| unsafe { controller.getParamNormalized(id) };
+        for change in differences(&mut self.values, now) {
+            self.joined.handler.keep_edit(change);
+        }
+    }
+}
+
+impl LoadedPlugin for Vst3Plugin {
+    fn poll(&mut self) -> Requests {
+        self.take_reports();
+        // `kParamIDMappingChanged`: the plugin has other parameters now. They are listed again
+        // before any values are compared, so a parameter that is new is compared from here on.
+        if self.joined.handler.take_ids_changed()
+            && let Some(controller) = &self.joined.controller
+        {
+            self.values = parameter_values(controller, &self.values);
+        }
+        if self.joined.handler.take_values_changed() {
+            self.follow_the_controller();
+        }
+        // `kMidiCCAssignmentChanged`: "The host has to rebuild the MIDI-CC => parameter
+        // mapping". The audio side reads the pedal's parameter for every move, so from the
+        // next block the pedal goes where the plugin says now.
+        let mut pedal_unmapped = false;
+        if self.joined.handler.take_midi_mapping_changed() {
+            // SAFETY: the controller came from the plugin and is alive.
+            let now = unsafe { pedal_parameter(self.joined.controller.as_ref()) };
+            let before = self.pedal.get();
+            pedal_unmapped = self.takes_notes && now.is_none() && before.is_some();
+            self.pedal.set(now);
+            // A pedal held on the parameter it leaves would stay down there for good, so that
+            // parameter is let go of, the way an edit is.
+            if let Some(before) = before
+                && now != Some(before)
+            {
+                self.joined.handler.keep_edit(ParameterChange {
+                    id: before,
+                    value: 0.0,
+                });
+            }
+        }
         // The other way: what the composer changed in the plugin's own window goes to the
         // processor, which is the half that makes the sound. `ivsteditcontroller.h` says that
         // is what `IComponentHandler` is for. What the ring has no room for goes back and is
         // sent at the next poll, so a parameter never ends on a value the composer left behind.
-        for edit in self.joined.handler.take_edits() {
-            if self.edited.push(edit).is_err() {
-                self.joined.handler.keep_edit(edit);
+        // An audio side that has gone takes nothing: the plugin is being started again, and
+        // the edits wait for the next one.
+        if !self.edited.is_abandoned() {
+            for edit in self.joined.handler.take_edits() {
+                self.values.insert(edit.id, edit.value);
+                if self.edited.push(edit).is_err() {
+                    self.joined.handler.keep_edit(edit);
+                }
             }
         }
         Requests {
-            restart: self.joined.handler.take_latency_changed(),
-            restart_not_done: self.joined.handler.take_restart_requested(),
+            restart: self.joined.handler.take_restart_wanted(),
+            reload: self.joined.handler.take_reload_wanted(),
             state_is_dirty: self.joined.handler.take_state_is_dirty(),
-            midi_mapping_changed: self.joined.handler.take_midi_mapping_changed(),
+            pedal_unmapped,
             // VST 3 has no way for a plugin to close the window it is in: the host owns that
             // window and the plugin only fills it. CLAP's `clap_host_gui.closed` has no
             // counterpart here, so this is always false.
@@ -416,45 +452,54 @@ impl LoadedPlugin for Vst3Plugin {
     }
 
     /// `kLatencyChanged`: "The host has to deactivate and reactivate the plug-in, then
-    /// afterwards the host could ask for the current latency." The buses and the setup stay
-    /// as they were, so a new audio side is made from what the load found.
+    /// afterwards the host could ask for the current latency." `kIoChanged`: "The host has to
+    /// deactivate the plug-in, asks the plug-in for its wanted new bus configurations, adapts
+    /// its processing graph and reactivate the plug-in." One way for both: the buses are asked
+    /// for and read again while the plugin is inactive, which changes nothing when only the
+    /// latency changed, and the new audio side is made from what the plugin says afterwards.
     fn restart(
         &mut self,
         _config: PrepareConfig,
     ) -> Option<Result<Box<dyn Started>, PluginProblem>> {
         Arc::get_mut(&mut self.live)?;
+        // Whatever the old audio side reported last reaches the controller before its ring
+        // goes.
+        self.take_reports();
         let did_not_restart = |call: &str, result: int32| PluginProblem::DidNotRestart {
             plugin_id: self.plugin_id.clone(),
             message: format!("the plugin answered {result} to {call}"),
         };
+        let component = &self.joined.component;
         // SAFETY: the component came from the plugin and is alive, and nothing processes: the
         // engine gave the audio side back, which stopped it on the audio thread.
-        let result = unsafe {
-            not_ours(|| self.joined.component.setActive(0));
-            not_ours(|| self.joined.component.setActive(1))
+        let (buses, result) = unsafe {
+            not_ours(|| component.setActive(0));
+            let buses = prepare_buses(component, &self.processor);
+            (buses, not_ours(|| component.setActive(1)))
         };
         if result != kResultOk && result != kResultTrue {
             return Some(Err(did_not_restart("setActive", result)));
         }
+        self.takes_notes = buses.takes_notes;
         // SAFETY: as above.
         let latency = unsafe { not_ours(|| self.processor.getLatencySamples()) };
-        // New rings: their other ends went with the audio side that came back. A parameter
-        // the plugin moved in the moment it was away is saved with its state anyway.
-        let (reports, changed) = rtrb::RingBuffer::new(REPORT_CAPACITY);
-        let (edited, edits) = rtrb::RingBuffer::new(EDIT_CAPACITY);
-        self.changed = changed;
-        self.edited = edited;
-        let started = Vst3Processor::new(
+        // What the plugin asked for while it was started again, as after a load.
+        self.joined.handler.forget_restarts();
+        // New rings: their other ends went with the audio side that came back. An edit that
+        // was on its way there went back to the handler as that side was dropped, and goes to
+        // this one at the next poll.
+        let (started, ends) = Vst3Processor::new(
             self.processor.clone(),
             self.live.clone(),
-            &self.inputs,
-            &self.outputs,
-            self.pedal_parameter,
-            reports,
-            edits,
+            &buses.inputs,
+            &buses.outputs,
+            self.pedal.clone(),
+            self.joined.handler.clone(),
             self.mode,
             latency,
         );
+        self.changed = ends.changed;
+        self.edited = ends.edited;
         Some(Ok(Box::new(started)))
     }
 }
@@ -493,6 +538,123 @@ unsafe fn create<I: vst3::Interface>(
         }
         ComPtr::from_raw(object.cast::<I>())
     }
+}
+
+/// What this host plays of a plugin's buses: the channels of every audio bus each way, and
+/// whether it has an event input for the notes.
+struct Buses {
+    inputs: Vec<usize>,
+    outputs: Vec<usize>,
+    takes_notes: bool,
+}
+
+/// Asks the plugin for stereo on its first audio input and output, reads what it has
+/// afterwards, and activates the buses this host plays. VST 3 allows all of it only while the
+/// plugin is inactive: when it loads, and when it is started again because its buses changed.
+///
+/// # Safety
+///
+/// Both objects must be alive, and the plugin inactive.
+unsafe fn prepare_buses(
+    component: &ComPtr<IComponent>,
+    processor: &ComPtr<IAudioProcessor>,
+) -> Buses {
+    // SAFETY: the caller keeps the contract.
+    unsafe {
+        let inputs = bus_channels(component, BusDirections_::kInput as int32);
+        let outputs = bus_channels(component, BusDirections_::kOutput as int32);
+        // A plugin may change its buses while it answers the arrangement, in either
+        // direction, so what it has is read again and the buffers are made from that.
+        arrange(processor, &inputs, &outputs);
+        let inputs = bus_channels(component, BusDirections_::kInput as int32);
+        let outputs = bus_channels(component, BusDirections_::kOutput as int32);
+
+        // The first event input is the one that gets the notes, and there is no more than one.
+        component.activateBus(
+            MediaTypes_::kEvent as int32,
+            BusDirections_::kInput as int32,
+            0,
+            1,
+        );
+        // The first audio input is the one an effect is played into. A bus that is not active
+        // is one the plugin may ignore, so an effect would be silent without this. An
+        // instrument with an audio input gets the silence it always got.
+        if !inputs.is_empty() {
+            component.activateBus(
+                MediaTypes_::kAudio as int32,
+                BusDirections_::kInput as int32,
+                0,
+                1,
+            );
+        }
+        component.activateBus(
+            MediaTypes_::kAudio as int32,
+            BusDirections_::kOutput as int32,
+            0,
+            1,
+        );
+        let takes_notes = component.getBusCount(
+            MediaTypes_::kEvent as int32,
+            BusDirections_::kInput as int32,
+        ) > 0;
+        Buses {
+            inputs,
+            outputs,
+            takes_notes,
+        }
+    }
+}
+
+/// Every parameter a host may send, with the value the processor holds as far as the host
+/// knows: the one in `known` for a parameter the host already knew, and the one the controller
+/// shows for a parameter it did not. A read-only parameter, such as a meter, is the plugin's to
+/// set and never the host's.
+fn parameter_values(
+    controller: &ComPtr<IEditController>,
+    known: &BTreeMap<ParamID, ParamValue>,
+) -> BTreeMap<ParamID, ParamValue> {
+    let mut values = BTreeMap::new();
+    // SAFETY: the controller came from the plugin and is alive. `info` is written by the plugin
+    // before it is read, and a call that fails leaves it untouched, which is why it starts
+    // zeroed.
+    unsafe {
+        for index in 0..controller.getParameterCount() {
+            let mut info: ParameterInfo = std::mem::zeroed();
+            if controller.getParameterInfo(index, &mut info) != kResultOk {
+                continue;
+            }
+            if info.flags & ParameterFlags_::kIsReadOnly as int32 != 0 {
+                continue;
+            }
+            let value = match known.get(&info.id) {
+                Some(value) => *value,
+                None => controller.getParamNormalized(info.id),
+            };
+            values.insert(info.id, value);
+        }
+    }
+    values
+}
+
+/// Every parameter whose value `now` gives differently from `known`, as an edit, with `known`
+/// brought up to date. Compared bit for bit, so a value that is not a number, which never
+/// equals itself, is sent once and not every time.
+fn differences(
+    known: &mut BTreeMap<ParamID, ParamValue>,
+    now: impl Fn(ParamID) -> ParamValue,
+) -> Vec<ParameterChange> {
+    let mut changes = Vec::new();
+    for (id, value) in known {
+        let shown = now(*id);
+        if shown.to_bits() != value.to_bits() {
+            *value = shown;
+            changes.push(ParameterChange {
+                id: *id,
+                value: shown,
+            });
+        }
+    }
+    changes
 }
 
 /// How many channels each audio bus of one direction has.
@@ -758,6 +920,21 @@ mod tests {
         assert!(error.contains("left as it is"), "{error}");
         let error = write_state(b"component", &long).expect_err("a controller state is too");
         assert!(error.contains("controller"), "{error}");
+    }
+
+    /// A value that is not a number never equals itself. Compared as a number it would be sent
+    /// at every `kParamValuesChanged`; it is sent once.
+    #[test]
+    fn a_value_that_is_not_a_number_is_sent_once() {
+        let mut known = BTreeMap::from([(1, 0.5), (2, 0.25)]);
+        let shown = |id| match id {
+            1 => f64::NAN,
+            _ => 0.25,
+        };
+        let first = differences(&mut known, shown);
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].id, 1);
+        assert!(differences(&mut known, shown).is_empty());
     }
 
     #[test]

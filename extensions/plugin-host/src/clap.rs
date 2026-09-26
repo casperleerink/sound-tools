@@ -330,8 +330,8 @@ impl LoadedPlugin for ClapPlugin {
         let (restart, window_closed, size) = self.instance.access_shared_handler(shared);
         Requests {
             restart,
-            // CLAP asks for a restart with no reason given, and every restart is done.
-            restart_not_done: false,
+            // CLAP has no call that asks to be unloaded: a restart is all it asks for.
+            reload: false,
             // The flag is cleared here and the host keeps what it was told until the bytes are
             // written, so a change that the once-a-second rule made wait is not forgotten.
             state_is_dirty: self
@@ -339,7 +339,7 @@ impl LoadedPlugin for ClapPlugin {
                 .access_handler(|main| main.state_is_dirty.replace(false)),
             // CLAP sends the sustain pedal as a MIDI message, so no mapping stands between the
             // pedal and the plugin and there is nothing that can move.
-            midi_mapping_changed: false,
+            pedal_unmapped: false,
             window_closed,
             window_size: (size != 0).then(|| {
                 let size = GuiSize::unpack_from_u64(size);

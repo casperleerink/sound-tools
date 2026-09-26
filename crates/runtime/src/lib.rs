@@ -393,6 +393,10 @@ pub fn render_block(
     project.engine().poll()?;
     let mut problems = plugins.poll(project);
     problems.extend(plugins.send_restarts(project));
+    // A plugin that asked to be loaded again gets what a record that changed gets.
+    for instance in plugins.take_retries() {
+        project.rebind(&instance)?;
+    }
     Ok(problems)
 }
 

@@ -32,8 +32,9 @@ pub trait LoadedPlugin {
     fn released(&mut self) -> bool;
 
     /// Deactivates the plugin and activates it again, and gives the new audio side, which
-    /// knows the plugin's latency as it is now. It is how both formats let a plugin change its
-    /// latency: CLAP's `request_restart`, VST 3's `kLatencyChanged`.
+    /// knows the plugin's latency and buses as they are now. It is how both formats let a
+    /// plugin change its latency, and how VST 3 lets one change its buses: CLAP's
+    /// `request_restart`, VST 3's `kLatencyChanged` and `kIoChanged`.
     ///
     /// Only once the engine has given the audio side back, as [`Self::released`]: `None` says
     /// it has not, and the caller asks again at the next poll. An error leaves the plugin
@@ -47,18 +48,18 @@ pub trait LoadedPlugin {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Requests {
     /// The plugin asked to be deactivated and activated again, which this host does, and then
-    /// reads its latency again: CLAP's `request_restart`, and VST 3's `kLatencyChanged`.
+    /// reads its latency and its buses again: CLAP's `request_restart`, and VST 3's
+    /// `kLatencyChanged` and `kIoChanged`.
     pub restart: bool,
-    /// A VST 3 plugin asked for a restart this build does not do: `kReloadComponent`,
-    /// `kIoChanged` or `kPrefetchableSupportChanged`. The composer is told.
-    pub restart_not_done: bool,
+    /// The plugin asked to be unloaded and loaded again: VST 3's `kReloadComponent`. The host
+    /// saves it and loads its record again.
+    pub reload: bool,
     /// The plugin says its own state changed and the host should save it.
     pub state_is_dirty: bool,
-    /// The plugin moved the mapping from a MIDI controller to one of its parameters, which is
-    /// how the sustain pedal reaches a VST 3 plugin. This build looks that mapping up once, so
-    /// the pedal keeps going where it went. CLAP has no such call: there the pedal is a MIDI
-    /// message and no mapping is in the way.
-    pub midi_mapping_changed: bool,
+    /// The plugin moved its sustain pedal to no parameter at all, so the pedal no longer
+    /// reaches it. VST 3 only: there the pedal goes through a mapping the plugin can change,
+    /// and a mapping that moved to another parameter is simply followed.
+    pub pedal_unmapped: bool,
     /// The plugin closed its own window, by its title bar or by losing it. CLAP only: VST 3
     /// has no such call, because there the host owns the window and the plugin only fills it.
     pub window_closed: bool,

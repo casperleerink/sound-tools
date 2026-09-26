@@ -228,7 +228,8 @@ impl Session {
     ///
     /// It is not an edit: nothing is written and there is no undo step. It is for a service
     /// outside the project that can do more now than it could before, so far only the plugin
-    /// host when its scan has found a plugin a record was waiting for.
+    /// host: its scan has found a plugin a record was waiting for, or a VST 3 plugin asked to be
+    /// unloaded and loaded again (`kReloadComponent`).
     pub fn rebind(&mut self, instances: &[InstanceId], cx: &mut Context<Self>) {
         for id in instances {
             if let Err(error) = self.project.rebind(id) {
