@@ -1,16 +1,18 @@
-//! The mixer of a track: gain, pan and mute, after the instrument and before the output.
+//! The mixer of a track: gain, pan, mute and solo, after the effects and before the master.
 //!
 //! The record holds units an agent can reason about (decibels, -1 to 1, on or off). The
-//! behaviour of the track turns them into one gain per channel and sends those, so the audio
-//! thread works out no pan law. The processor ramps to a new pair, so no change clicks.
+//! behaviour of the arrangement turns them into one gain per channel and sends those, so the
+//! audio thread works out no pan law. The processor ramps to a new pair, so no change clicks,
+//! and keeps the peaks of what it sends on, which is the meter of the track.
 
 use std::f64::consts::{FRAC_PI_2, SQRT_2};
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
+    AudioInput, AudioOutput, CHANNELS, Peaks, Ports, PrepareConfig, ProcessContext, Processor,
+    Smoothed,
 };
 
-use crate::TrackState;
+use crate::{TrackState, decibels};
 
 /// How long a change of gain, pan or mute takes to arrive. A jump would click.
 pub const RAMP_SECONDS: f32 = 0.02;
@@ -18,7 +20,8 @@ pub const RAMP_SECONDS: f32 = 0.02;
 /// What a track sends its mixer: the gain of each channel, left first.
 pub type ChannelGains = [f32; CHANNELS];
 
-/// The gain of each channel of a track, from its record.
+/// The gain of each channel of a track, from its record. A track that solo leaves out is
+/// silenced by its owner with the gains of a muted one, so the two sound the same.
 ///
 /// The pan law is equal power: the two gains are the sine and the cosine of a quarter turn,
 /// scaled so that the middle is exactly 1. A track keeps its loudness wherever it is panned.
@@ -29,7 +32,8 @@ pub fn channel_gains(track: &TrackState) -> ChannelGains {
         return [0.0; CHANNELS];
     }
     // In f64, so that 0 dB in the middle is exactly 1 and leaves every sample as it was.
-    let level = 10_f64.powf(f64::from(track.gain_db) / 20.0);
+    // `-inf` is exactly 0.
+    let level = f64::from(decibels::amplitude(track.gain_db));
     let pan = f64::from(track.pan);
     // The part of the quarter turn each channel gets. Both are a sine, so a channel that is
     // panned away is exactly 0 and not a rounding of it.
@@ -42,6 +46,8 @@ pub struct Mixer {
     gains: [Smoothed; CHANNELS],
     /// The frames a change takes. One until `prepare` runs.
     ramp_frames: f32,
+    /// What the track sends on, for its meter.
+    peaks: Peaks,
 }
 
 impl Mixer {
@@ -49,10 +55,11 @@ impl Mixer {
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
 
     /// Starts at these gains, so a track that opens or is added is not faded in.
-    pub fn new(gains: ChannelGains) -> Self {
+    pub fn new(gains: ChannelGains, peaks: Peaks) -> Self {
         Self {
             gains: gains.map(Smoothed::new),
             ramp_frames: 1.0,
+            peaks,
         }
     }
 }
@@ -84,13 +91,15 @@ impl Processor for Mixer {
         }
         let frames = context.frames;
         let input = context.audio_inputs.get(Self::INPUT);
-        let output = context.audio_outputs.get(Self::OUTPUT);
-        for ((output, input), gain) in output.into_iter().zip(input).zip(&mut self.gains) {
+        let [left, right] = context.audio_outputs.get(Self::OUTPUT);
+        let outputs = [&mut *left, &mut *right];
+        for ((output, input), gain) in outputs.into_iter().zip(input).zip(&mut self.gains) {
             let before = gain.current();
             let step = (gain.advance(frames) - before) / frames as f32;
             for (frame, (output, input)) in output.iter_mut().zip(input).enumerate() {
                 *output = input * (before + step * (frame + 1) as f32);
             }
         }
+        self.peaks.record_block([&*left, &*right]);
     }
 }

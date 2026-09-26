@@ -15,19 +15,21 @@
 //! added or removed next to it.
 //!
 //! The view of a device draws its whole card, from the frame the panel gives it: the picker as
-//! its title, and the close icon of an effect.
+//! its title, and the power and close icons of an effect. Whether an effect is on is saved on
+//! its slot in the track record, so the panel edits it.
 //!
-//! The mixer strip of the track (volume, pan and mute) is not a device. It is in the header
-//! column under the name of the track, on the rows of the cards, and it is the one thing the
-//! panel edits itself: those values are in the track record.
+//! The mixer strip of the track (volume, pan, mute and solo) is not a device. It is in the
+//! header column under the name of the track, on the rows of the cards, and the panel edits it
+//! itself: those values are in the track record. The meter of the volume shows what the track
+//! sends to the master.
 //!
 //! The panel is 216 pt: 12 above the cards, a card of 192, 12 below. The rack scrolls sideways
 //! with two fingers, and a fade at its right edge says when cards go past it.
 
 use gpui::{
     AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    ScrollHandle, SharedString, Window, canvas, div, fill, linear_color_stop, linear_gradient,
-    prelude::*, px,
+    ScrollHandle, SharedString, Task, Window, canvas, div, fill, linear_color_stop,
+    linear_gradient, prelude::*, px,
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -41,8 +43,8 @@ use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::components::volume::Volume;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, Session, Slot, Views,
-    weak_callback,
+    ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, Metering, Session, Slot, Views,
+    every_poll, weak_action, weak_callback,
 };
 
 use super::layout::HEADER_WIDTH;
@@ -52,22 +54,24 @@ use crate::TrackState;
 /// The height of the panel: the cards and 12 pt above and below them.
 pub const PANEL_HEIGHT: f32 = CARD_HEIGHT + 2. * RACK_TOP;
 /// From the top of the panel to the top of the cards.
-const RACK_TOP: f32 = 12.;
+pub(super) const RACK_TOP: f32 = 12.;
 /// From the header column to the first card.
-const RACK_LEFT: f32 = 16.;
+pub(super) const RACK_LEFT: f32 = 16.;
 const CARD_GAP: f32 = 12.;
 /// The fade at the right edge of the rack when cards go past it.
 const FADE_WIDTH: f32 = 48.;
 /// The middle of the title line of the cards, where the name of the track is too.
-const TITLE_MIDDLE: f32 = RACK_TOP + HEADER_HEIGHT / 2.;
+pub(super) const TITLE_MIDDLE: f32 = RACK_TOP + HEADER_HEIGHT / 2.;
 /// The top of the first row of cells, where the mixer strip starts.
-const ROW_TOP: f32 = RACK_TOP + HEADER_HEIGHT;
+pub(super) const ROW_TOP: f32 = RACK_TOP + HEADER_HEIGHT;
 /// The left of the volume in the header column, and of the column of pan and mute.
-const VOLUME_LEFT: f32 = 8.;
+pub(super) const VOLUME_LEFT: f32 = 8.;
 const PAN_LEFT: f32 = 84.;
+/// Solo right of mute, a toggle and 4 pt of air on.
+const SOLO_LEFT: f32 = PAN_LEFT + toggle::LETTER_WIDTH + 4.;
 
 /// What an undo step of the volume is called.
-const VOLUME_LABEL: &str = "Change volume";
+pub(super) const VOLUME_LABEL: &str = "Change volume";
 const PAN_LABEL: &str = "Change pan";
 
 /// The pan as people read it: `C` in the middle, else how far to a side in percent.
@@ -206,17 +210,36 @@ impl Device {
         })
         .detach();
         let frame = CardFrame::new(card_id(&slot), picker.clone());
-        // An effect comes off the track by the close icon of its card. It holds the panel
-        // weakly, as every callback of a control does.
+        // An effect comes off the track by the close icon of its card, and is bypassed by its
+        // power icon. Both hold the panel weakly, as every callback of a control does. Whether
+        // it is on is read from the track record when the card draws.
         let frame = match kind {
             Slot::Instrument => frame,
             Slot::Effect => {
-                let (panel, slot) = (cx.weak_entity(), slot.clone());
-                frame.close(move |_, cx| {
-                    panel
-                        .update(cx, |panel, cx| panel.remove_effect(&slot, cx))
-                        .ok();
-                })
+                let (panel, removed, toggled) = (cx.weak_entity(), slot.clone(), slot.clone());
+                let (session, name) = (session.clone(), slot.name().to_string());
+                let track = slot
+                    .parent()
+                    .and_then(|track| session.read(cx).project().resolve::<TrackState>(&track));
+                let is_on = move |cx: &App| {
+                    let project = session.read(cx).project();
+                    let track = track.as_ref().and_then(|track| project.state(track));
+                    !track
+                        .and_then(|track| track.bypassed(&name))
+                        .unwrap_or(false)
+                };
+                let power_panel = panel.clone();
+                frame
+                    .power(is_on, move |_, cx| {
+                        power_panel
+                            .update(cx, |panel, cx| panel.toggle_bypass(&toggled, cx))
+                            .ok();
+                    })
+                    .close(move |_, cx| {
+                        panel
+                            .update(cx, |panel, cx| panel.remove_effect(&removed, cx))
+                            .ok();
+                    })
             }
         };
         Self {
@@ -278,6 +301,9 @@ pub struct TrackPanel {
     close_focus: FocusHandle,
     /// Where the rack is scrolled, and how far it can go, for the fade at its right edge.
     rack_scroll: ScrollHandle,
+    /// The meter of the volume: what the track sends to the master.
+    metering: Metering,
+    _metering: Task<()>,
 }
 
 impl EventEmitter<TrackPanelEvent> for TrackPanel {}
@@ -373,6 +399,8 @@ impl TrackPanel {
             focus_handle: cx.focus_handle(),
             close_focus: cx.focus_handle().tab_stop(true),
             rack_scroll: ScrollHandle::new(),
+            metering: Metering::default(),
+            _metering: every_poll(cx, Self::read_meter),
         };
         panel.set_track(track, window, cx);
         panel
@@ -380,6 +408,16 @@ impl TrackPanel {
 
     pub fn track(&self) -> &Instance<TrackState> {
         &self.track
+    }
+
+    /// One poll of the meter of the volume. Its timer calls it; a snapshot calls it to skip
+    /// the wait.
+    pub fn read_meter(&mut self, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project();
+        let peaks = crate::track_peaks(project, self.track.id());
+        if self.metering.read(peaks.as_ref()) {
+            cx.notify();
+        }
     }
 
     /// The view in each card of the rack, left to right. `None` for a card without one.
@@ -415,6 +453,7 @@ impl TrackPanel {
     ) {
         self.end_drag(cx);
         self.track = track;
+        self.metering.reset();
         self.devices.clear();
         self.set_slots(window, cx);
         cx.notify();
@@ -525,6 +564,37 @@ impl TrackPanel {
         });
     }
 
+    /// Bypasses an effect, or turns it on again: one flag on its slot in the track record, as
+    /// one undo step named after it.
+    fn toggle_bypass(&mut self, slot: &InstanceId, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project();
+        let Some(mut state) = project.state(&self.track).cloned() else {
+            return;
+        };
+        let Some(effect) = state
+            .effects
+            .iter_mut()
+            .find(|effect| effect.name == slot.name())
+        else {
+            return;
+        };
+        effect.bypass = !effect.bypass;
+        let name = device_label(&self.session, slot, Slot::Effect, cx).name;
+        let label = match effect.bypass {
+            true => format!("Turn off {name}"),
+            false => format!("Turn on {name}"),
+        };
+        self.end_drag(cx);
+        let track = self.track.clone();
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.set(&track, state);
+                project.commit(&label, changes)
+            });
+        });
+    }
+
     fn end_drag(&mut self, cx: &mut Context<Self>) {
         self.edit.finish(&self.session, cx);
     }
@@ -568,26 +638,22 @@ impl TrackPanel {
 
     /// The mixer strip, in the header column on the rows of the cards: the volume at the left
     /// from the top of the first row to the value line of the second, the pan in the first row
-    /// right of it, and mute on the knob line of the second. Solo comes with step 2.
-    fn mixer_strip(&self, track: &TrackState, cx: &mut Context<Self>) -> [Div; 3] {
-        let peach = cx.theme().peach;
-        // The record keeps no `-inf` yet: the bottom of the volume is the lowest gain it keeps.
-        let volume = Volume::new("gain_db", track.gain_db).on_change(weak_callback(
-            cx,
-            |panel, change: ValueChange, cx| {
+    /// right of it, and mute and solo on the knob line of the second.
+    fn mixer_strip(&self, track: &TrackState, cx: &mut Context<Self>) -> [Div; 4] {
+        let (peach, yellow) = (cx.theme().peach, cx.theme().yellow);
+        let volume = Volume::new("gain_db", track.gain_db)
+            .level(self.metering.level())
+            .on_clear_clip(weak_action(cx, |panel: &mut Self, cx| {
+                panel.metering.clear_clip();
+                cx.notify();
+            }))
+            .on_change(weak_callback(cx, |panel, change: ValueChange, cx| {
                 let (session, track) = (&panel.session, &panel.track);
-                let set = |track: &mut TrackState, db: f32| {
-                    let (min, max) = TrackState::GAIN_DB;
-                    track.gain_db = match db.is_nan() {
-                        true => min,
-                        false => db.clamp(min, max),
-                    };
-                };
+                let set = |track: &mut TrackState, db: f32| track.gain_db = volume_db(db);
                 panel
                     .edit
                     .apply(session, track, VOLUME_LABEL, change, set, cx);
-            },
-        ));
+            }));
         let pan = Knob::new("pan")
             .range(KnobRange::linear(TrackState::PAN.0, TrackState::PAN.1))
             .bipolar(true)
@@ -610,6 +676,15 @@ impl TrackPanel {
                 let set = |track: &mut TrackState, mute| track.mute = mute;
                 panel.edit.apply(session, track, label, change, set, cx);
             }));
+        let solo = Toggle::new("solo", "S", track.solo)
+            .color(yellow)
+            .on_change(weak_callback(cx, |panel, solo: bool, cx| {
+                let label = if solo { "Solo track" } else { "Unsolo track" };
+                let change = ValueChange::Set(solo);
+                let (session, track) = (&panel.session, &panel.track);
+                let set = |track: &mut TrackState, solo| track.solo = solo;
+                panel.edit.apply(session, track, label, change, set, cx);
+            }));
         let at = |left: f32, top: f32| div().absolute().left(px(left)).top(px(top));
         // A toggle sits on the line of the middle of a knob.
         let toggle_top = ROW_TOP + ROW_HEIGHT + (CONTROL_HEIGHT - toggle::HEIGHT) / 2.;
@@ -617,7 +692,17 @@ impl TrackPanel {
             at(VOLUME_LEFT, ROW_TOP).child(volume),
             at(PAN_LEFT, ROW_TOP).child(pan),
             at(PAN_LEFT, toggle_top).child(mute),
+            at(SOLO_LEFT, toggle_top).child(solo),
         ]
+    }
+}
+
+/// The gain a volume control saves: its bottom is `-inf`, which the record keeps as silence,
+/// and nothing goes over the top of the record.
+pub(super) fn volume_db(db: f32) -> f32 {
+    match db.is_nan() {
+        true => f32::NEG_INFINITY,
+        false => db.min(TrackState::MAX_GAIN_DB),
     }
 }
 

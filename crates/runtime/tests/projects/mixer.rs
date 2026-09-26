@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use sound_core::Ticks;
 
-use crate::support::{BAR, Harness, difference};
+use crate::support::{BAR, Harness, clip, difference};
 
 const PIANO: &str = "state/arrangement/piano/instance.json";
 
@@ -102,4 +102,96 @@ fn gain_pan_and_mute_from_a_file_apply_live_through_the_synth() {
     let (left, right) = from_the_start(&mut harness);
     assert_eq!(left[BAR / 2..], right[BAR / 2..]);
     assert!(peak(&left[BAR / 2..]) > 0.05);
+}
+
+/// The piece with both synths at full gain: its chords sum far over full scale.
+fn loud_piece() -> Harness {
+    let mut harness = Harness::new();
+    let chords = [
+        (0, 15360, 48),
+        (0, 15360, 55),
+        (0, 15360, 64),
+        (0, 15360, 67),
+    ];
+    harness.write_track("piano", 1, 1.0, &[("chords", clip(0, 15360, &chords))]);
+    harness.write_track(
+        "pad",
+        2,
+        1.0,
+        &[("long", clip(0, 15360, &[(0, 15360, 72)]))],
+    );
+    assert_eq!(harness.project.problems(), []);
+    harness
+}
+
+#[test]
+fn a_project_that_clipped_renders_under_the_ceiling_and_the_meter_says_so() {
+    let mut clipping = loud_piece();
+    clipping.bypass_limiter();
+    let before = clipping.play(2 * BAR);
+    let mut limited = loud_piece();
+    let after = limited.play(2 * BAR);
+    println!(
+        "sample peak without the limiter {:.4} ({:+.2} dBFS), with it {:.6} ({:+.4} dBFS)",
+        peak(&before),
+        20.0 * peak(&before).log10(),
+        peak(&after),
+        20.0 * peak(&after).log10()
+    );
+    assert!(peak(&before) > 1.5, "{}", peak(&before));
+    assert!(peak(&after) <= 1.0, "{}", peak(&after));
+    // The master meter took exactly the peak of the render.
+    let arrangement = sound_core::InstanceId::new("arrangement").unwrap();
+    let master = arrangement::master_peaks(&limited.project, &arrangement).unwrap();
+    let (left, right) = split(&after);
+    assert_eq!(master.take(), [peak(&left), peak(&right)]);
+    // And the device output, which the transport shows, is the same here: the master is all
+    // this project plays.
+    let output = limited.project.engine().output_peaks().take();
+    assert_eq!(output, [peak(&left), peak(&right)]);
+}
+
+/// A project of before the master: its arrangement record says nothing, as every record of
+/// the first two milestones did. It opens with the limiter on, and no file is written for it.
+#[test]
+fn a_project_from_before_the_master_opens_unchanged_and_renders_under_the_ceiling() {
+    let folder = tempfile::tempdir().unwrap();
+    let old = [
+        (
+            "project.json",
+            r#"{"format": 1, "extensions": ["arrangement", "instrument"], "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}, "connections": []}"#.to_string(),
+        ),
+        (
+            "state/arrangement/instance.json",
+            r#"{"tool": "arrangement", "state": {}}"#.to_string(),
+        ),
+        (
+            "state/arrangement/piano/instance.json",
+            r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1}}"#.to_string(),
+        ),
+        ("state/arrangement/piano/instrument.json", crate::support::synth(1.0)),
+        (
+            "state/arrangement/piano/chords.json",
+            clip(0, 15360, &[(0, 15360, 48), (0, 15360, 55), (0, 15360, 64), (0, 15360, 67)]),
+        ),
+    ];
+    for (path, body) in &old {
+        crate::support::write(folder.path(), path, body);
+    }
+    let before = files(folder.path());
+    let mut harness = Harness::open(folder);
+    assert_eq!(harness.project.problems(), []);
+    let render = harness.play(2 * BAR);
+    let (left, right) = split(&render);
+    // The chord at full gain is over full scale, and the limiter holds it.
+    assert!(peak(&left) <= 1.0 && peak(&right) <= 1.0, "{}", peak(&left));
+    assert!(peak(&left) > 0.99, "{}", peak(&left));
+    // Opening, playing and closing wrote no record: every one of them is byte for byte what it
+    // was. Only the generated files are new.
+    let reopened = harness.reopen();
+    let after = files(reopened.project.root());
+    for (path, bytes) in &before {
+        let now = after.iter().find(|(other, _)| other == path);
+        assert_eq!(now.map(|(_, now)| now), Some(bytes), "{}", path.display());
+    }
 }

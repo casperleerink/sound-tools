@@ -73,14 +73,16 @@ A tool that edits what it owns shows that inside its own view. The window has on
 
 Any view may call `Views::view_of`, because the registry is a global and not a field of the window. So a view can host the view of an instance whose tool it does not know, and an extension can show what another extension owns without depending on it.
 
-A rack is the common case, and it has a registration of its own. A tool whose instances sit in the slots of a rack registers a card: a view that draws the whole device card, because it owns what the body shows. The rack gives it a `CardFrame`: an id that tells this card from every other, the title, which is the picker of the slot, and the close icon of an effect. The track panel of the arrangement does this (`extensions/arrangement/src/view/track_panel.rs`), and the synth is the example of a card (`extensions/instrument/src/view.rs`):
+A rack is the common case, and it has a registration of its own. A tool whose instances sit in the slots of a rack registers a card: a view that draws the whole device card, because it owns what the body shows. The rack gives it a `CardFrame`: an id that tells this card from every other, the title, which is the picker of the slot, and the power and close icons of an effect. Whether an effect is on is saved on its slot, which the rack owns, so `CardFrame::power(is_on, on_toggle)` takes a function that is read every time the card draws. The track panel of the arrangement does this (`extensions/arrangement/src/view/track_panel.rs`), and the synth is the example of a card (`extensions/instrument/src/view.rs`):
 
 ```rust
 // Where the tool registers.
 views.register_card(SynthView::new);   // new(session, instance, frame, window, cx)
 
 // In the rack. `None`: the instance is gone, its tool has no card, or no registry is installed.
-let frame = CardFrame::new(card_id, picker.clone()).close(move |window, cx| { /* take it off */ });
+let frame = CardFrame::new(card_id, picker.clone())
+    .power(move |cx| /* is the slot on? */ true, move |window, cx| { /* bypass it */ })
+    .close(move |window, cx| { /* take it off */ });
 let view: Option<AnyView> = Views::card_of(&session, &slot, frame, window, cx);
 
 // In the render of the card: the frame gives the header, the view adds the rest.
@@ -224,6 +226,27 @@ A number without a dial, such as the tempo of the transport, is a `DragNumber`: 
 
 A device card is built from `DeviceCard`, `Column`, `Cell` and `Display`, see the rack section of the gallery (`crates/gallery/src/sections/rack.rs`). The meter shows a `Level`; where it comes from is the owner's business, and `meter::Ballistics` makes one from a peak per frame.
 
+A meter of a level on the audio thread: the processor records `sound_core::Peaks` every block, and the view keeps a `Metering` and reads the peaks once per poll of the session with `sound_ui::every_poll`. It notifies only when what the meter shows changed, so a meter at rest costs no frame.
+
+```rust
+metering: Metering::default(),
+_metering: every_poll(cx, |view: &mut Self, cx| {
+    let peaks = view.session.read(cx).project().peaks(view.instance.id(), "level");
+    if view.metering.read(peaks.as_ref()) {
+        cx.notify();
+    }
+}),
+// In render:
+Volume::new("gain_db", state.gain_db)
+    .level(self.metering.level())
+    .on_clear_clip(weak_action(cx, |view: &mut Self, cx| {
+        view.metering.clear_clip();
+        cx.notify();
+    }))
+```
+
+The track panel does this for the track, the master panel for the master and the transport for the device output.
+
 ## Rules
 
 - No `cx.notify()` and no entity updates inside `render` or inside a paint callback. Mouse listeners that a canvas registers while painting may update: they run later, on an event.
@@ -232,7 +255,7 @@ A device card is built from `DeviceCard`, `Column`, `Cell` and `Display`, see th
 - Keep what walks many records between the project events that can change it, and read it again in `render`, once per group of events, not per paint and not per event. The arrangement keeps its track order and its end this way. This is the one kind of copy a view holds.
 - Keys: the window binds space, cmd-z and shift-cmd-z in the context `Shell && !TextInput`, so a focused `TextInput` gets them first, and tab and shift-tab in `Shell`. Bindings run before key listeners. For keys of your own view, the simplest is `track_focus` with a tab stop and `on_key_down` on the root of the view, as the arrangement does: they reach the view only while it has the focus, and it calls `cx.stop_propagation()` for a key it used. Focus the view on mouse down.
 - Show a focus ring only when the focus came from the keyboard. `.focus_visible(..)` also shows it when a key follows a click, and space follows a click all the time. `sound_ui::KeyboardFocus` works it out while rendering or painting: keep one next to the focus handle, ask `shows_ring(&handle, window)` and call `pressed(cx)` on a mouse press. The arrangement, the knob and the segmented control use it.
-- A callback that a control keeps, such as `Knob::on_change`, should hold the view weakly. `cx.listener` does. `cx.processor` holds it strongly, and then the mouse listeners of the last frame keep a view that was just closed alive for one more frame, with its open drag. `sound_ui::weak_callback(cx, f)` is the weak form for a callback that takes its argument by value.
+- A callback that a control keeps, such as `Knob::on_change`, should hold the view weakly. `cx.listener` does. `cx.processor` holds it strongly, and then the mouse listeners of the last frame keep a view that was just closed alive for one more frame, with its open drag. `sound_ui::weak_callback(cx, f)` is the weak form for a callback that takes its argument by value, and `weak_action(cx, f)` for one that takes none, such as the clip light of a meter.
 - Keep what repaints with the playhead apart from the rest. A view that GPUI is to keep while the playhead moves must not have the playhead view inside it: a notified view also renders every view above it. Make them siblings and put `.cached(..)` on the heavy one. See `ArrangementView`.
 - Put coordinate math in pure functions with tests (`extensions/arrangement/src/view/layout.rs`).
 - Use the components of this crate and the theme tokens (`cx.theme()`). A new general component goes here with a gallery entry. What only one tool needs stays in its extension.

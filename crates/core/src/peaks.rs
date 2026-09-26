@@ -12,6 +12,10 @@ use crate::processor::CHANNELS;
 
 /// The largest value per channel since the last [`Peaks::take`]. Clones share the values.
 ///
+/// One reader per peaks: a take empties them, so two views that took from the same peaks
+/// would each see only part of the level. A view that shows one level in two places, as the
+/// master panel does for its meter and its display, takes once and uses the values twice.
+///
 /// A processor that shows a level keeps one and records every block; the interface gets the
 /// same one through [`Project::peaks`](crate::Project::peaks) and takes from it once per frame.
 /// The engine keeps one for the device output, [`EngineControl::output_peaks`](crate::EngineControl::output_peaks).
@@ -25,14 +29,15 @@ impl Peaks {
 
     /// Keeps `value` for `channel` when it is the largest since the last take. Realtime safe.
     ///
-    /// For a value of 0 or more: the bits of such floats sort as the floats do, so the maximum
-    /// of the bits is the maximum of the values. Anything else, and a channel the peaks do not
-    /// have, is ignored, so a sample that is not a number never shows as the loudest.
+    /// For a value above 0: the bits of such floats sort as the floats do, so the maximum of
+    /// the bits is the maximum of the values. Anything else, and a channel the peaks do not
+    /// have, is ignored. So a sample that is not a number never shows as the loudest, and
+    /// neither does -0.0, whose sign bit would sort above every positive value.
     pub fn record(&self, channel: usize, value: f32) {
         let Some(peak) = self.0.get(channel) else {
             return;
         };
-        if value >= 0.0 {
+        if value > 0.0 {
             peak.fetch_max(value.to_bits(), Ordering::Relaxed);
         }
     }
@@ -74,8 +79,14 @@ mod tests {
         let peaks = Peaks::new();
         peaks.record(0, f32::NAN);
         peaks.record(0, -1.0);
+        peaks.record(0, -0.0);
+        peaks.record(1, -0.0);
         peaks.record(5, 1.0);
         peaks.record(1, f32::INFINITY);
         assert_eq!(peaks.take(), [0.0, f32::INFINITY]);
+        // -0.0 would have sorted above every level, and hidden this one.
+        peaks.record(0, -0.0);
+        peaks.record(0, 0.25);
+        assert_eq!(peaks.take()[0], 0.25);
     }
 }

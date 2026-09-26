@@ -19,7 +19,7 @@ use crate::focus::KeyboardFocus;
 use crate::theme::ActiveTheme;
 
 pub const HEIGHT: f32 = 24.;
-const LETTER_WIDTH: f32 = 28.;
+pub const LETTER_WIDTH: f32 = 28.;
 
 type ChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 

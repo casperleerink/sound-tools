@@ -153,6 +153,7 @@ fn a_change_in_the_middle_of_a_render_ramps_and_takes_no_step_larger_than_the_bo
     for fields in [
         r#", "mute": true"#,
         r#", "gain_db": -60.0"#,
+        r#", "gain_db": "-inf""#,
         r#", "pan": -1.0"#,
         r#", "gain_db": 6.0"#,
     ] {
@@ -207,7 +208,9 @@ fn a_value_out_of_range_names_the_field_and_the_track_plays_on() {
     harness.write_and_apply(TRACK_FILE, &track_record(r#", "gain_db": 12.0"#));
     assert_eq!(
         harness.problems(),
-        ["state/arrangement/piano/instance.json: state: gain_db must be from -60 to 6, not 12"]
+        [
+            "state/arrangement/piano/instance.json: state: gain_db must be a number of decibels up to 6, or \"-inf\" for silence, not 12"
+        ]
     );
     let (left, _) = render(&mut harness, 2_000);
     assert_eq!(peak(&left), LEVEL);
@@ -216,5 +219,94 @@ fn a_value_out_of_range_names_the_field_and_the_track_plays_on() {
     assert_eq!(
         harness.problems(),
         ["state/arrangement/piano/instance.json: state: pan must be from -1 to 1, not -2"]
+    );
+}
+
+/// Two tracks in one channel, told apart by their scale: the piano plays 60 and the bass
+/// 60000, so every sample says which of them sound.
+fn two_tracks() -> Harness {
+    let mut harness = playing();
+    harness.add_track("bass", 1000.0);
+    let mut changes = sound_core::Changes::new();
+    changes.create(
+        id("arrangement/bass/long"),
+        clip(0, 8 * BAR, vec![note(0, 8 * BAR, PITCH)]),
+    );
+    harness.project.commit("Add clip", changes).unwrap();
+    harness
+}
+
+const BASS_FILE: &str = "state/arrangement/bass/instance.json";
+
+fn bass_record(fields: &str) -> String {
+    format!(r#"{{"tool": "arrangement.track", "state": {{"name": "bass"{fields}}}}}"#)
+}
+
+#[test]
+fn solo_sounds_sample_for_sample_as_muting_every_other_track() {
+    let mut soloed = two_tracks();
+    render(&mut soloed, 1_000);
+    soloed.write_and_apply(TRACK_FILE, &track_record(r#", "solo": true"#));
+    let solo = soloed.render(16_000);
+
+    let mut muted = two_tracks();
+    render(&mut muted, 1_000);
+    muted.write_and_apply(BASS_FILE, &bass_record(r#", "mute": true"#));
+    let mute = muted.render(16_000);
+    // Every sample, the ramp of the change included.
+    assert_eq!(solo, mute);
+    let (left, _) = split(&solo);
+    assert_eq!(peak(&left[4_000..]), LEVEL);
+
+    // Soloing the second track too brings it back: both are soloed, so both play.
+    soloed.write_and_apply(BASS_FILE, &bass_record(r#", "solo": true"#));
+    let (left, _) = render(&mut soloed, 8_000);
+    assert_eq!(left[7_999], LEVEL + LEVEL * 1000.0);
+    // A muted track stays silent when it is soloed: mute wins.
+    soloed.write_and_apply(TRACK_FILE, &track_record(r#", "solo": true, "mute": true"#));
+    let (left, _) = render(&mut soloed, 8_000);
+    assert_eq!(left[7_999], LEVEL * 1000.0);
+}
+
+#[test]
+fn solo_from_a_file_is_one_undo_step_and_saved_only_when_on() {
+    let mut harness = two_tracks();
+    render(&mut harness, 1_000);
+    harness.write_and_apply(TRACK_FILE, &track_record(r#", "solo": true"#));
+    let (left, _) = render(&mut harness, 8_000);
+    assert_eq!(left[7_999], LEVEL);
+    assert_eq!(harness.project.undo_label(), Some("File change"));
+    harness.project.undo().unwrap();
+    let (left, _) = render(&mut harness, 8_000);
+    assert_eq!(left[7_999], LEVEL + LEVEL * 1000.0);
+    // Off is left out of the record, so a track of before solo gives the same bytes.
+    let file = std::fs::read_to_string(harness.path(TRACK_FILE)).unwrap();
+    assert!(!file.contains("solo"), "{file}");
+}
+
+#[test]
+fn the_bottom_of_the_volume_is_silence_and_saved_as_minus_inf() {
+    let mut harness = playing();
+    render(&mut harness, 1_000);
+    harness.write_and_apply(TRACK_FILE, &track_record(r#", "gain_db": "-inf""#));
+    assert_eq!(harness.problems(), Vec::<String>::new());
+    // Past the ramp, every sample is exactly 0.
+    let (left, right) = render(&mut harness, 8_000);
+    assert_eq!(peak(&left[2_000..]), 0.0);
+    assert_eq!(peak(&right[2_000..]), 0.0);
+    // The record keeps it as the string, and the state as minus infinity.
+    let state = harness
+        .project
+        .state_json(&id("arrangement/piano"))
+        .unwrap();
+    assert!(state.contains(r#""gain_db":"-inf""#), "{state}");
+    // Under -60 is a gain too: a fader can be dragged there.
+    harness.write_and_apply(TRACK_FILE, &track_record(r#", "gain_db": -80.0"#));
+    let (left, _) = render(&mut harness, 8_000);
+    let expected = LEVEL * 1e-4;
+    assert!(
+        (peak(&left[4_000..]) - expected).abs() < 1e-6,
+        "{}",
+        peak(&left)
     );
 }

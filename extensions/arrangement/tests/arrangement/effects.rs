@@ -327,3 +327,39 @@ fn a_list_with_no_order_to_read_does_not_load() {
         assert_eq!(steady(&mut harness, 2400), LEVEL);
     }
 }
+
+#[test]
+fn a_bypassed_effect_lets_the_sound_past_untouched_as_one_undo_step() {
+    let mut dry = playing();
+    let without = dry.render(9_600);
+
+    let mut harness = playing();
+    add_effect(&mut harness, "trim", Trim::new(0.5, 1.0));
+    add_effect(&mut harness, "echo", Trim::new(1.0, 2.0));
+    assert_eq!(steady(&mut harness, 2400), LEVEL * 0.5 + 1.0 + 2.0);
+
+    // The agent bypasses the first effect: the slot says so, the record of the effect stays.
+    let bypassed = r#"{"tool": "arrangement.track", "state": {"name": "piano", "effects": [{"name": "trim", "bypass": true}, "echo"]}}"#;
+    assert_eq!(harness.write_and_apply(TRACK_FILE, bypassed), 1);
+    assert_eq!(harness.problems(), Vec::<String>::new());
+    assert_eq!(steady(&mut harness, 2400), LEVEL + 2.0);
+
+    // Both bypassed: the render is the dry one, sample for sample, from the first frame.
+    let both = r#"{"tool": "arrangement.track", "state": {"name": "piano", "effects": [{"name": "trim", "bypass": true}, {"name": "echo", "bypass": true}]}}"#;
+    harness.write_and_apply(TRACK_FILE, both);
+    harness.project.engine().stop();
+    harness.render(480);
+    let heard = harness.play(9_600);
+    dry.project.engine().stop();
+    dry.render(480);
+    assert_eq!(heard, dry.play(9_600));
+    assert_eq!(without.len(), heard.len());
+
+    // One undo step each way, and the file keeps the short form of a slot that is on.
+    harness.project.undo().unwrap();
+    assert_eq!(steady(&mut harness, 2400), LEVEL + 2.0);
+    harness.project.undo().unwrap();
+    assert_eq!(steady(&mut harness, 2400), LEVEL * 0.5 + 1.0 + 2.0);
+    let file = std::fs::read_to_string(harness.path(TRACK_FILE)).unwrap();
+    assert!(file.contains(r#""effects": ["trim", "echo"]"#), "{file}");
+}

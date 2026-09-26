@@ -149,6 +149,18 @@ impl Harness {
         assert_eq!(self.apply(&[folder]), 2 + clips.len());
     }
 
+    /// Turns the limiter of the master off, for a test whose render goes over full scale on
+    /// purpose, such as two test plugins at full level: the limiter would hold it at full
+    /// scale, which is its job and not what such a test is about.
+    pub fn bypass_limiter(&mut self) {
+        let record =
+            r#"{"tool": "arrangement", "state": {"master": {"limiter": {"bypass": true}}}}"#;
+        assert_eq!(
+            self.write_and_apply("state/arrangement/instance.json", record),
+            1
+        );
+    }
+
     pub fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
         let path = self.write(relative, contents);
         self.apply(&[path])

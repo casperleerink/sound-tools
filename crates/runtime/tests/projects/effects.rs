@@ -187,6 +187,8 @@ fn a_listed_effect_with_no_record_is_reported_and_says_what_to_write() {
 fn the_state_of_an_effect_survives_close_and_reopen_and_is_not_an_undo_step() {
     for format in [PluginFormat::Clap, PluginFormat::Vst3] {
         let (mut harness, plugins) = Harness::with_test_plugin(tempfile::tempdir().unwrap());
+        // The note plus the offset is over full scale, and the test reads that sum.
+        harness.bypass_limiter();
         // A note at full velocity, which the effect hears at 1.0 and takes as its offset.
         write_track(&mut harness, format, 127, &[("trim", 0)]);
         assert_eq!(harness.project.problems(), [], "{format:?}");

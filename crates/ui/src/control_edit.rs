@@ -95,3 +95,15 @@ pub fn weak_callback<V: 'static, E>(
         view.update(cx, |view, cx| f(view, event, cx)).ok();
     }
 }
+
+/// The same for a control that reports a click with nothing to say, such as the clip light of
+/// a meter.
+pub fn weak_action<V: 'static>(
+    cx: &Context<V>,
+    f: impl Fn(&mut V, &mut Context<V>) + 'static,
+) -> impl Fn(&mut Window, &mut App) + 'static {
+    let view = cx.weak_entity();
+    move |_, cx| {
+        view.update(cx, |view, cx| f(view, cx)).ok();
+    }
+}

@@ -7,6 +7,7 @@
 mod effects;
 mod held_notes;
 mod live_edits;
+mod master;
 mod mixer;
 mod pedal;
 mod preview;
