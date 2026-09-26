@@ -5,7 +5,7 @@ One file at the top of the project folder. Most work needs no edit here: a track
 ```json project.json
 {
   "format": 1,
-  "extensions": [{{extensions}}],
+  "extensions": {{extensions}},
   "tempo_map": {"time_signature": "{{time_signature}}", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
   "connections": []
 }
