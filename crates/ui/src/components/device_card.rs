@@ -44,8 +44,10 @@ pub const DISPLAY_GAP: f32 = 8.;
 const ICON_TARGET: f32 = 24.;
 const ICON_GLYPH: f32 = 12.;
 const ICON_GAP: f32 = 4.;
+/// The border of a card, inside its width and height: its header and body start this far in.
+pub const BORDER: f32 = 1.;
 /// The border is inside the width, so the padding is one point less than the room it makes.
-const INSIDE: f32 = CARD_PADDING - 1.;
+const INSIDE: f32 = CARD_PADDING - BORDER;
 /// Air on each side of the hairline before the hidden columns.
 const HIDDEN_GAP: f32 = 8.;
 

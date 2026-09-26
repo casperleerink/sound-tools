@@ -40,6 +40,10 @@
 //! - `track-panel-eq-expanded.png`: the same with the EQ expanded: the bands on and off, and
 //!   the output.
 //! - `track-panel-reverb.png`: the synth and the built-in reverb after it.
+//! - `track-panel-all-effects.png`: the synth and all four built-in effects, at the start of
+//!   the rack. The test measures in the pixels that every card, the mixer strip and the master
+//!   panel share one card top, one height and the value lines of both rows of cells.
+//! - `track-panel-all-effects-end.png`: the same scrolled to the end of the rack.
 //! - `track-panel-reverb-expanded.png`: the same with the reverb expanded: the cuts, diffusion,
 //!   freeze, pre-delay and decay.
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
@@ -87,7 +91,8 @@ use filter::FilterState;
 use filter::view::FilterView;
 use gpui::{
     AppContext, Entity, HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformInput, Point, WindowHandle, point, px, size,
+    MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, WindowHandle, point,
+    px, size,
 };
 use instrument::SynthState;
 use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand};
@@ -585,6 +590,128 @@ fn add_compressor(project: &mut Project, track: &str, sound: CompressorState) ->
     changes.create(slot, sound);
     project.commit("Add Compressor", changes)?;
     Ok(())
+}
+
+/// Where the cards of a panel and the value lines in it are drawn, read from the pixels of a
+/// snapshot, in points from the top of the window. The check of "aligned" is of what the
+/// screen shows, not of the constants the layout was built from.
+#[derive(Debug)]
+struct PanelLines {
+    /// The top and the height of every card wholly in view, left to right.
+    cards: Vec<(f32, f32)>,
+    /// The value line of the first row of the last column of each of those cards.
+    row_1: Vec<f32>,
+    /// The value line of the second row of each: the lowest line of text in the card.
+    row_2: Vec<f32>,
+    /// The same two lines in the header column: pan, when there is one, and the readout of
+    /// the volume.
+    strip_row_1: Option<f32>,
+    strip_row_2: f32,
+}
+
+/// Reads [`PanelLines`] from a snapshot at scale 2. `pixel` gives the colour at a pixel.
+fn panel_lines(pixel: impl Fn(u32, u32) -> [u8; 3]) -> Result<PanelLines> {
+    use arrangement::view::track_panel::PANEL_HEIGHT;
+    use sound_ui::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};
+    use sound_ui::components::device_card::{CARD_PADDING, HEADER_HEIGHT};
+    const SCALE: f32 = 2.;
+    let at = |points: f32| (points * SCALE) as u32;
+    let (width, bottom) = (at(WINDOW_WIDTH), at(WINDOW_HEIGHT));
+    let (panel_top, header) = (at(WINDOW_HEIGHT - PANEL_HEIGHT), at(HEADER_WIDTH));
+    // The rack between two cards, above them.
+    let background = pixel(header + 8, panel_top + 8);
+    let differs = |x: u32, y: u32| {
+        let colour = pixel(x, y);
+        (0..3).any(|channel| colour[channel].abs_diff(background[channel]) > 3)
+    };
+    // Text is light on the dark cards: labels, values and the lines under a display.
+    let is_text = |x: u32, y: u32| pixel(x, y).iter().any(|channel| *channel > 110);
+    // The value line in a box: the lowest row of it with text across, which leaves out the
+    // tail of a letter such as `Q` that reaches below the line.
+    let value_line = |left: u32, right: u32, top: u32, below: u32| -> Option<f32> {
+        let counts = (top..below)
+            .map(|y| (y, (left..right).filter(|x| is_text(*x, y)).count()))
+            .collect::<Vec<_>>();
+        let most = counts.iter().map(|(_, count)| *count).max()?;
+        let line = counts
+            .iter()
+            .rev()
+            .find(|(_, count)| *count * 10 >= most * 3 && *count > 0)?;
+        Some(line.0 as f32 / SCALE)
+    };
+
+    // The cards cross a row in their headers, above the titles.
+    let row = at(WINDOW_HEIGHT - PANEL_HEIGHT + 16.);
+    let mut runs = Vec::new();
+    let mut start = None;
+    for x in header + 2..width {
+        match (differs(x, row), start) {
+            (true, None) => start = Some(x),
+            (false, Some(from)) => {
+                runs.push((from, x - 1));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    // Wholly in view: not cut at the left of the rack, and clear of the fade at its right.
+    let cards = runs
+        .into_iter()
+        .filter(|(left, right)| right - left > 200 && *left > header + 8 && *right + 100 < width)
+        .collect::<Vec<_>>();
+    anyhow::ensure!(!cards.is_empty(), "no card wholly in view");
+
+    let mut lines = PanelLines {
+        cards: Vec::new(),
+        row_1: Vec::new(),
+        row_2: Vec::new(),
+        strip_row_1: None,
+        strip_row_2: 0.,
+    };
+    for (left, right) in cards {
+        // Down the left padding of the card, where nothing is drawn on it, from under the
+        // hairline at the top of the panel.
+        let column = left + 8;
+        let rows = (panel_top + at(4.)..bottom).filter(|y| differs(column, *y));
+        let top = rows.clone().min().context("a card with no top")?;
+        let last = rows.max().context("a card with no bottom")?;
+        lines
+            .cards
+            .push((top as f32 / SCALE, (last + 1 - top) as f32 / SCALE));
+        // The rows of cells start under the header, inside the border of one point.
+        let row_1 = top + at(1. + HEADER_HEIGHT);
+        let row_2 = row_1 + at(ROW_HEIGHT);
+        let last_column = right - at(CARD_PADDING + CELL_WIDTH);
+        let value = |row: u32| row + at(VALUE_LINE - 4.);
+        lines.row_1.push(
+            value_line(
+                last_column,
+                right - at(CARD_PADDING),
+                value(row_1),
+                row_2 - at(2.),
+            )
+            .context("no value line in row 1")?,
+        );
+        lines.row_2.push(
+            value_line(left + 2, right - 2, value(row_2), last)
+                .context("no value line in row 2")?,
+        );
+    }
+    // The header column, on the rows of the cards: pan right of the volume in row 1, the
+    // readout of the volume under it in row 2.
+    let (first_top, _) = lines.cards[0];
+    let row_1 = at(first_top + 1. + HEADER_HEIGHT);
+    let row_2 = row_1 + at(ROW_HEIGHT);
+    let pan_left = at(76.);
+    lines.strip_row_1 = value_line(
+        pan_left,
+        header - 8,
+        row_1 + at(VALUE_LINE - 4.),
+        row_2 - at(2.),
+    );
+    lines.strip_row_2 = value_line(0, pan_left, row_2 + at(VALUE_LINE - 4.), bottom - 2)
+        .context("no readout under the volume")?;
+    Ok(lines)
 }
 
 fn print_times(what: &str, mut times: Vec<Duration>) {
@@ -1117,6 +1244,11 @@ fn main() -> Result<()> {
     anyhow::ensure!(open, "the master panel did not open");
     opened.listen(4.2, &mut cx)?;
     save(&mut cx, &opened, "master-panel")?;
+    let image = cx.capture_screenshot(opened.window.into())?;
+    let master = panel_lines(|x, y| {
+        let [red, green, blue, _] = image.get_pixel(x, y).0;
+        [red, green, blue]
+    })?;
     drop(opened);
 
     // The synth with five effects: more than the rack has room for on the screen of the
@@ -1244,6 +1376,87 @@ fn main() -> Result<()> {
     cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "track-panel-compressor-expanded")?;
+    drop(opened);
+
+    // A track with the synth and all four built-in effects, at the start of the rack and
+    // scrolled to its end: every card, the mixer strip and the master panel above share one
+    // card top, one height and the two value lines, measured in the pixels.
+    let opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        add_filter(project, "bass")?;
+        let sound = CompressorState {
+            threshold_db: -30.0,
+            ratio: 4.0,
+            ..CompressorState::default()
+        };
+        add_compressor(project, "bass", sound)?;
+        add_eq(project, "bass")?;
+        add_reverb(project, "bass")
+    })?;
+    opened.click_track_header(1., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-all-effects")?;
+    let read = |cx: &mut HeadlessAppContext| -> Result<PanelLines> {
+        let image = cx.capture_screenshot(opened.window.into())?;
+        panel_lines(|x, y| {
+            let [red, green, blue, _] = image.get_pixel(x, y).0;
+            [red, green, blue]
+        })
+    };
+    let start = read(&mut cx)?;
+    let wheel = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        position: point(px(HEADER_WIDTH + 300.), px(WINDOW_HEIGHT - 100.)),
+        delta: ScrollDelta::Pixels(point(px(-4000.), px(0.))),
+        ..Default::default()
+    });
+    opened.mouse(wheel, &mut cx)?;
+    save(&mut cx, &opened, "track-panel-all-effects-end")?;
+    let end = read(&mut cx)?;
+    println!("alignment at the start of the rack: {start:?}");
+    println!("alignment at the end of the rack: {end:?}");
+    println!("alignment of the master panel: {master:?}");
+    let panels = [&start, &end, &master];
+    let cards = panels.iter().map(|panel| panel.cards.len()).sum::<usize>();
+    // Synth, filter and compressor at the start, EQ and reverb at the end, the limiter.
+    anyhow::ensure!(cards >= 6, "only {cards} cards wholly in view");
+    let expected_top = WINDOW_HEIGHT - arrangement::view::track_panel::PANEL_HEIGHT + 12.;
+    let card_height = sound_ui::components::device_card::CARD_HEIGHT;
+    for panel in panels {
+        for (top, height) in &panel.cards {
+            // Half a point is the one row of pixels the border shares with the rack.
+            anyhow::ensure!(
+                (top - expected_top).abs() <= 0.5 && (height - card_height).abs() <= 1.,
+                "a card at {top} pt, {height} pt tall, where every card is at {expected_top}, \
+                 {card_height} tall: {panel:?}"
+            );
+        }
+    }
+    // One pixel of the screen either way is the edge of a letter, not a line.
+    let same_line = |lines: &[f32]| {
+        let (low, high) = lines
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(low, high), line| {
+                (low.min(*line), high.max(*line))
+            });
+        high - low <= 0.5
+    };
+    let mut row_1 = panels
+        .iter()
+        .flat_map(|panel| panel.row_1.iter().copied())
+        .collect::<Vec<_>>();
+    row_1.extend(start.strip_row_1);
+    anyhow::ensure!(
+        same_line(&row_1),
+        "the value lines of row 1 are not one line: {row_1:?}"
+    );
+    let mut row_2 = panels
+        .iter()
+        .flat_map(|panel| panel.row_2.iter().copied())
+        .collect::<Vec<_>>();
+    row_2.extend(panels.iter().map(|panel| panel.strip_row_2));
+    anyhow::ensure!(
+        same_line(&row_2),
+        "the value lines of row 2 are not one line: {row_2:?}"
+    );
     drop(opened);
 
     // A track whose instrument is a tool that has no view: the tone.
