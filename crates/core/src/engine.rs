@@ -21,6 +21,7 @@ pub(crate) trait ErasedProcessor: Send {
     fn update(&mut self, update: &mut dyn Any);
     fn process(&mut self, context: &mut ProcessContext<'_>);
     fn leaving(&mut self);
+    fn latency(&self) -> u32;
 }
 
 impl<P: Processor> ErasedProcessor for P {
@@ -37,9 +38,23 @@ impl<P: Processor> ErasedProcessor for P {
     fn leaving(&mut self) {
         Processor::leaving(self);
     }
+
+    fn latency(&self) -> u32 {
+        Processor::latency(self)
+    }
 }
 
-pub(crate) type Slot = Option<Box<dyn ErasedProcessor>>;
+/// One place in the slot table: a processor, and how far ahead of the device it runs.
+#[derive(Default)]
+pub(crate) struct Slot {
+    processor: Option<Box<dyn ErasedProcessor>>,
+    /// The latency of everything after this processor on its way to the device: how many
+    /// frames ahead of the device its blocks are. `None` until the leads were worked out with
+    /// this processor in place.
+    lead: Option<u64>,
+    /// The lead changed since this processor's last block. It sees that as a jump.
+    moved: bool,
+}
 
 /// One step of an edit. The audio thread applies it by swapping, so the value it replaces
 /// ends up inside the command and rides back to the control thread with the batch.
@@ -49,7 +64,7 @@ pub(crate) enum Command {
     /// `Some` inserts a processor, `None` removes one.
     SetSlot {
         slot: usize,
-        processor: Slot,
+        processor: Option<Box<dyn ErasedProcessor>>,
     },
     Update {
         slot: usize,
@@ -93,7 +108,15 @@ pub struct EngineStatus {
     /// tempo map change move it.
     pub playhead_frame: Frames,
     /// The project position in ticks: the first tick at or after `playhead_frame`.
+    ///
+    /// The playhead is what the device plays. A track with latency runs ahead of it by that
+    /// latency, so everything reaches the device in time. Right after a play or a seek in a
+    /// project with latency, the playhead waits where playback starts for `latency` frames,
+    /// until the track furthest ahead has reached the device.
     pub playhead_tick: Ticks,
+    /// The longest latency from any processor to the device, in frames: how long the playhead
+    /// waits after a play or a seek. Zero in a project where nothing reports latency.
+    pub latency: u64,
 }
 
 pub struct Engine {
@@ -106,6 +129,8 @@ pub struct Engine {
     returns: rtrb::Producer<Batch>,
     status: EngineStatus,
     status_writer: triple_buffer::Input<EngineStatus>,
+    /// See [`Self::preroll_frames`].
+    preroll_frames: u64,
 }
 
 impl Engine {
@@ -121,13 +146,16 @@ impl Engine {
         Self {
             sample_rate,
             channels,
-            slots: std::iter::repeat_with(|| None).take(slot_count).collect(),
+            slots: std::iter::repeat_with(Slot::default)
+                .take(slot_count)
+                .collect(),
             schedule: Box::default(),
             transport: TransportState::new(clock),
             commands,
             returns,
             status: EngineStatus::default(),
             status_writer,
+            preroll_frames: 0,
         }
     }
 
@@ -146,6 +174,14 @@ impl Engine {
         self.status.frames
     }
 
+    /// Frames played so far while the playhead waited after a play or a seek, for the tracks
+    /// with latency to reach the device. It only grows, and the engine plays a wait before
+    /// anything else of a block. An offline render leaves these frames out, so that tick 0 of a
+    /// render from the start is frame 0 of the file.
+    pub fn preroll_frames(&self) -> u64 {
+        self.preroll_frames
+    }
+
     /// Renders the next frames into `output`, interleaved by channel. The device callback,
     /// offline rendering and tests all call this. Samples past the last whole frame are zeroed.
     #[nonblocking]
@@ -161,7 +197,9 @@ impl Engine {
                 let (frames, rest) = output.split_at_mut(whole);
                 rest.fill(0.0);
                 for sub_block in frames.chunks_mut(MAX_BLOCK * self.channels.max(1)) {
-                    self.apply_batches();
+                    if self.apply_batches() {
+                        self.find_leads();
+                    }
                     self.run(sub_block);
                 }
                 self.status.blocks += 1;
@@ -172,15 +210,18 @@ impl Engine {
 
     /// One batch in gives one batch out, so a batch is only taken when the return ring has room.
     /// Otherwise the batch waits in the command ring for a later block. Nothing is dropped here.
-    fn apply_batches(&mut self) {
+    /// Returns whether a batch was applied.
+    fn apply_batches(&mut self) -> bool {
+        let mut applied = false;
         while !self.commands.is_empty() {
             if self.returns.is_full() {
                 self.status.return_ring_full += 1;
-                return;
+                return applied;
             }
             let Ok(mut batch) = self.commands.pop() else {
-                return;
+                return applied;
             };
+            applied = true;
             for command in &mut batch {
                 match command {
                     Command::GrowSlots(table) => {
@@ -191,7 +232,10 @@ impl Engine {
                     }
                     Command::SetSlot { slot, processor } => {
                         if let Some(current) = self.slots.get_mut(*slot) {
-                            std::mem::swap(current, processor);
+                            std::mem::swap(&mut current.processor, processor);
+                            // A new processor has no block to jump from.
+                            current.lead = None;
+                            current.moved = false;
                             // The one that came out gets its last call here, on this thread,
                             // before it rides back with the batch.
                             if let Some(leaving) = processor {
@@ -200,7 +244,7 @@ impl Engine {
                         }
                     }
                     Command::Update { slot, update } => {
-                        if let Some(Some(processor)) = self.slots.get_mut(*slot) {
+                        if let Some(processor) = self.processor_mut(*slot) {
                             processor.update(update.as_mut());
                         }
                     }
@@ -218,6 +262,65 @@ impl Engine {
                 std::mem::forget(batch);
             }
         }
+        applied
+    }
+
+    fn processor_mut(&mut self, slot: usize) -> Option<&mut Box<dyn ErasedProcessor>> {
+        self.slots.get_mut(slot)?.processor.as_mut()
+    }
+
+    /// Works out how far ahead of the device every processor runs: the latency of everything
+    /// between its input and the device, along the slowest way there. A processor that feeds
+    /// several others runs as far ahead as the one of them that needs the most.
+    ///
+    /// Runs after every batch, which is the only way a latency changes: a processor arrives or
+    /// goes, the routing changes, or an update changes what a processor reports. It walks the
+    /// schedule backwards, so everything a step feeds has been seen before the step itself, and
+    /// it uses only room the schedule brought, so nothing here allocates.
+    fn find_leads(&mut self) {
+        let Schedule {
+            steps,
+            audio_producers,
+            event_producers,
+            needed,
+            ..
+        } = &mut *self.schedule;
+        needed.fill(0);
+        let mut longest = 0;
+        for (index, step) in steps.iter().enumerate().rev() {
+            let Some(slot) = self.slots.get_mut(step.slot) else {
+                continue;
+            };
+            let latency = slot
+                .processor
+                .as_ref()
+                .map_or(0, |processor| processor.latency());
+            let lead = needed
+                .get(index)
+                .copied()
+                .unwrap_or_default()
+                .saturating_add(u64::from(latency));
+            slot.moved |= slot.lead.is_some_and(|before| before != lead);
+            slot.lead = Some(lead);
+            longest = longest.max(lead);
+            let feeders = step
+                .audio_sources
+                .iter()
+                .flatten()
+                .filter_map(|buffer| audio_producers.get(*buffer))
+                .chain(
+                    step.event_sources
+                        .iter()
+                        .flatten()
+                        .filter_map(|buffer| event_producers.get(*buffer)),
+                );
+            for feeder in feeders {
+                if let Some(need) = needed.get_mut(*feeder) {
+                    *need = (*need).max(lead);
+                }
+            }
+        }
+        self.transport.set_latency(longest);
     }
 
     /// Runs the schedule once for a sub-block of at most `MAX_BLOCK` frames.
@@ -231,9 +334,13 @@ impl Engine {
             event_outputs,
             event_inputs,
             device_sources,
+            ..
         } = &mut *self.schedule;
 
-        let transport = self.transport.block(frames);
+        self.transport.begin_block();
+        // What the device plays in this block. Every processor with no latency after it sees
+        // exactly this, so a project without latency builds it once per block, as it always did.
+        let heard = self.transport.view(frames, 0, false);
         let port_misuses = Cell::new(0);
         let dropped_events = Cell::new(0);
         for step in steps.iter() {
@@ -271,11 +378,22 @@ impl Engine {
                 .iter_mut()
                 .for_each(|buffer| buffer.clear());
 
-            if let Some(Some(processor)) = self.slots.get_mut(step.slot) {
+            if let Some(Slot {
+                processor: Some(processor),
+                lead,
+                moved,
+            }) = self.slots.get_mut(step.slot)
+            {
+                let lead = lead.unwrap_or_default();
+                let transport = match (lead, *moved) {
+                    (0, false) => heard.clone(),
+                    _ => self.transport.view(frames, lead, *moved),
+                };
+                *moved = false;
                 processor.process(&mut ProcessContext {
                     frames,
                     start_frame: self.status.frames,
-                    transport: transport.clone(),
+                    transport,
                     audio_inputs: AudioInputs {
                         buffers: audio_scratch
                             .get(..step.audio_sources.len())
@@ -321,11 +439,12 @@ impl Engine {
         self.status.frames += frames as u64;
         self.status.port_misuses += port_misuses.get();
         self.status.event_overflows += dropped_events.get();
-        self.status.playing = transport.playing;
+        self.status.playing = heard.playing;
         // `jumped` is set for one block, so this counts one per seek and per stop.
-        self.status.jumps += u64::from(transport.jumped);
-        self.status.playhead_frame = transport.frame_range.end;
-        self.status.playhead_tick = transport.tick_range.end;
-        self.transport.finish_block(self.status.playhead_frame);
+        self.status.jumps += u64::from(heard.jumped);
+        self.status.playhead_frame = heard.frame_range.end;
+        self.status.playhead_tick = heard.tick_range.end;
+        self.status.latency = self.transport.latency();
+        self.preroll_frames += self.transport.finish_block(frames);
     }
 }

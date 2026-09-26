@@ -68,9 +68,10 @@ Engine time (`context.start_frame`) always runs, so live instruments and tails k
 - `stopped_playing`: true for the one block where the project stopped playing, by a pause or a stop.
 - `tick_range`: the ticks that land on a frame of this block, as a half-open range. While playing, each block starts at the tick where the previous block ended. This holds for every device buffer size, for tempo changes inside a block and for a tempo map change. So every tick belongs to exactly one block. While not playing the range is empty.
 - `offset_of(tick)`: the frame offset inside this block where a tick of `tick_range` lands. Pass it to `event_outputs.push`.
-- `jumped`: true for one block after a seek or a stop. Nothing between the old and the new position is replayed. Decide what that means for your tool, for example release held notes.
+- `jumped`: true for one block after a seek or a stop, or after the latency after this processor changed. Nothing between the old and the new position is replayed. Decide what that means for your tool, for example release held notes.
 - `frame_range`: the same block in project frames. A tempo map change moves the frame position, because it keeps the tick position. Schedule by ticks unless your data is in frames.
 - `clock`: the `Clock`, for anything else, for example `tempo_at(tick)` or the time signature.
+- `heard_tick`: the tick the device plays at the start of this block, the same for every processor. Stamp something that arrives live, such as a key, with this.
 
 A timeline-driven processor emits what starts inside `tick_range`. It never converts or rounds time itself:
 
@@ -91,6 +92,10 @@ fn process(&mut self, context: &mut ProcessContext<'_>) {
 ```
 
 Starting notes needs no `if transport.playing`: the range is empty while the project does not play. Each note is sent exactly once, on the frame the clock gives for its tick. Ending notes is different. A note off that lies after the pause position is never reached, so a processor must release its held notes when `stopped_playing` is set, and also when `jumped` is set. Without this a paused project sounds forever. The `Beats` processor in `tests/transport.rs` is a small complete example.
+
+### Latency
+
+A processor whose output lags its input, such as a lookahead or a hosted plugin, says so with `Processor::latency`, in frames. The engine reads it when the processor arrives and after each of its updates, so change it in `update` only. The engine delays nothing. Every processor before one with latency sees `tick_range` that many frames ahead of what the device plays, so a timeline-driven processor needs no code of its own for it: it emits what `tick_range` holds and the sound reaches the device in time. After a play or a seek in a project with latency, `tick_range` starts where playback starts and is empty or short until the device catches up. `EngineStatus::latency` is the longest latency of the project. See ARCHITECTURE.md, "Latency compensation".
 
 ### Events
 
