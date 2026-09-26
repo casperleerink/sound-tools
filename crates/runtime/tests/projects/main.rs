@@ -7,6 +7,7 @@
 mod agent_doc;
 mod compressor;
 mod effects;
+mod eq;
 mod filter;
 mod fit;
 mod generated_take;

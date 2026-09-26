@@ -30,6 +30,7 @@ fn the_default_project_is_a_small_musical_template() {
         [
             "arrangement",
             "compressor",
+            "eq",
             "filter",
             "fit-tempo",
             "instrument",

@@ -18,6 +18,7 @@
 mod clips;
 mod compressor;
 mod effects;
+mod eq;
 mod filter;
 mod fit;
 mod instruments;

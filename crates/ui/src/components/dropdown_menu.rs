@@ -3,7 +3,8 @@
 //! `dropdown-menu.tsx` and the desktop app's model picker.
 //!
 //! [`Trigger::Select`] makes it a select: a 24 pt trigger that says what is picked, for a list
-//! that does not fit as segments, such as the shape of an EQ band.
+//! that does not fit as segments, such as the shape of an EQ band. When the picked item has an
+//! icon, the trigger shows the icon and not the words, so that it fits in a cell of a card.
 
 use std::rc::Rc;
 
@@ -577,16 +578,18 @@ impl Render for DropdownMenu {
             Trigger::Ghost => ghost_trigger("dropdown-trigger", cx),
             Trigger::Select => select_trigger("dropdown-trigger", cx),
         };
-        let (label, chevron) = match self.trigger {
+        let (label, icon, chevron) = match self.trigger {
             Trigger::Select => {
                 let picked = self.selected.as_ref().and_then(|value| self.item(value));
                 (
                     picked.map_or_else(|| self.label.clone(), MenuItem::label),
+                    picked.and_then(|item| item.icon.clone()),
                     12.,
                 )
             }
-            Trigger::Outline | Trigger::Ghost => (self.label.clone(), 14.),
+            Trigger::Outline | Trigger::Ghost => (self.label.clone(), None, 14.),
         };
+        let text = cx.theme().gray_950;
         let (muted, ring) = (cx.theme().gray_700, cx.theme().lavender);
 
         // A trigger in less room than its label, such as the title of a narrow card, gives way
@@ -604,7 +607,10 @@ impl Render for DropdownMenu {
                     .track_focus(&self.trigger_focus)
                     .border_1()
                     .focus_visible(move |s| s.border_color(ring))
-                    .child(div().min_w_0().truncate().child(label))
+                    .map(|trigger| match icon {
+                        Some(icon) => trigger.child(Icon::new(icon).size(14.).color(text)),
+                        None => trigger.child(div().min_w_0().truncate().child(label)),
+                    })
                     .child(
                         div()
                             .flex_none()

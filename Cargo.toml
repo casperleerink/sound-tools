@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/metronome", "extensions/midi", "extensions/plugin-host", "extensions/tone", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/core", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/metronome", "extensions/midi", "extensions/plugin-host", "extensions/tone", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -14,6 +14,7 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f", features = ["runtime_shaders", "font-kit"] }
 arrangement = { path = "extensions/arrangement" }
 compressor = { path = "extensions/compressor" }
+eq = { path = "extensions/eq" }
 filter = { path = "extensions/filter" }
 fit-tempo = { path = "extensions/fit-tempo" }
 instrument = { path = "extensions/instrument" }
@@ -95,6 +96,7 @@ taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
 arrangement = { opt-level = 3 }
 compressor = { opt-level = 3 }
+eq = { opt-level = 3 }
 filter = { opt-level = 3 }
 fit-tempo = { opt-level = 3 }
 instrument = { opt-level = 3 }

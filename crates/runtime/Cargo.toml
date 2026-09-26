@@ -11,6 +11,7 @@ workspace = true
 anyhow.workspace = true
 arrangement.workspace = true
 compressor.workspace = true
+eq.workspace = true
 filter.workspace = true
 fit-tempo.workspace = true
 gpui.workspace = true

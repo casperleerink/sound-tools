@@ -1,8 +1,9 @@
 use gpui::{App, Hsla, IntoElement, RenderOnce, SharedString, Styled, Svg, Window, px, svg};
 
 /// An icon from `crates/ui/assets/icons`. Path is the file name without `.svg`. They are
-/// lucide icons, except `metronome`, which lucide does not have and which is drawn in the same
-/// style: 24 by 24, 2 px strokes, round caps and `currentColor`.
+/// lucide icons, except `metronome` and the shapes of an EQ band, `eq-*`, which lucide does not
+/// have and which are drawn in the same style: 24 by 24, 2 px strokes, round caps and
+/// `currentColor`.
 /// Defaults to 16 px and the inherited text colour.
 #[derive(IntoElement)]
 pub struct Icon {
