@@ -47,7 +47,7 @@ A feedback delay network of sixteen lines (Jot and Chaigne, 1991). Why this one 
 
 `view::register(views, devices)` registers `ReverbView` as the card of `reverb` (`Views::register_card`) and says the card of a reverb is called `Reverb`. The runtime offers `Reverb` in the control that adds an effect.
 
-The rack gives the view a `CardFrame`, the picker of the slot as the title and the close icon, and the view draws the whole card, 352 pt wide as DESIGN.md gives it, with its expand icon:
+The rack gives the view a `CardFrame`, the picker of the slot as the title, the power icon and the close icon, and the view draws the whole card, 352 pt wide as DESIGN.md gives it, with its expand icon:
 
 - The display, 200 pt: the decay in time. The pre-delay and the decay each have a zone across on the travel of their knob. The tail is a line from full level at the end of the pre-delay to the floor, 60 dB down, at the end of the decay; the highs are a dashed line that reaches the floor at their part of the way; the early reflections are thin lines under the tail after its start, wider apart in a larger room. The hollow handle at the start drags the pre-delay, the handle at the end the decay. The line under it: `Pre-delay 20 ms · Decay 2 s`.
 - Size and Width, Damping and Mix, as knobs in two columns.
@@ -58,6 +58,7 @@ Editing, the same rules as every control on saved state (`sound_ui::ControlEdit`
 - A drag of a knob or a handle is one gesture and one undo step: "Change size", "Change damping", "Change width", "Change mix", "Change low cut", "Change high cut", "Change diffusion", "Change pre-delay", "Change decay". A handle has the step of its knob. The file is written once, at the end. Escape cancels.
 - A click on Freeze is one step, "Change freeze". A double click or backspace on a knob sets its default, a double click on a handle sets its value's.
 - The view keeps no copy of the state, so an outside edit shows at once, also during a drag. Whether the card is expanded is the view's own interface state and is not saved.
+- The power icon bypasses the slot, as for every effect: "Turn off Reverb" is saved on the track, not in this record. A bypassed reverb leaves the chain, so its tail stops at once and does not ring out.
 
 ## Checks
 

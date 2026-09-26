@@ -431,6 +431,12 @@ impl Opened<'_> {
             .read(|cx| arrangement.read(cx).track_panel().cloned())
     }
 
+    pub fn master_panel(&mut self) -> Option<Entity<arrangement::view::MasterPanel>> {
+        let arrangement = self.arrangement.clone();
+        self.cx
+            .read(|cx| arrangement.read(cx).master_panel().cloned())
+    }
+
     /// The track that the open track panel shows.
     pub fn panel_track(&mut self) -> Option<InstanceId> {
         let panel = self.track_panel()?;

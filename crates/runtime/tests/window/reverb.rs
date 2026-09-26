@@ -181,3 +181,66 @@ fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
     assert!(!state(&mut opened).freeze);
     assert_eq!(opened.undo_label().as_deref(), Some("Change freeze"));
 }
+
+/// How far apart the two channels of what the track plays are, against its level. The synth
+/// plays the same in both, so a track without the reverb is 0 and a wide reverb is not.
+fn stereo(opened: &mut Opened<'_>) -> f32 {
+    opened.settle();
+    opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, _| session.engine().play());
+    });
+    opened.settle();
+    opened.render(12_000);
+    let render = opened.render(12_000);
+    let apart: f32 = render
+        .chunks(2)
+        .map(|frame| (frame[0] - frame[1]).abs())
+        .sum();
+    let level: f32 = render.iter().map(|sample| sample.abs()).sum();
+    apart / level
+}
+
+/// The reverb gets the power icon of every effect: it bypasses the slot, the record of the
+/// reverb stays, and the track sounds as it does without it. The tail stops at once, as the
+/// slot leaves the chain. One undo step each way.
+#[gpui::test]
+fn the_power_icon_bypasses_the_reverb_as_one_undo_step(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let mut changes = sound_core::Changes::new();
+        let note = support::note(0, 4 * support::BAR, 64);
+        let part = support::clip(0, 4 * support::BAR, vec![note]);
+        changes.create(id("arrangement/track-1/part"), part);
+        project.commit("Add clip", changes).unwrap();
+        project.clear_history();
+    });
+    let header = opened.track_header(0);
+    opened.click(header);
+    let plain = stereo(&mut opened);
+    assert_eq!(plain, 0.0);
+    let trigger = opened.control("add-effect");
+    opened.click(trigger);
+    let row = opened.control("menu-reverb");
+    opened.click(row);
+    let wide = stereo(&mut opened);
+    assert!(wide > 0.01, "{wide}");
+
+    let power = opened.control("card-reverb-power");
+    opened.click(power);
+    assert_eq!(opened.undo_label().as_deref(), Some("Turn off Reverb"));
+    let track = std::fs::read_to_string(opened.path("state/arrangement/track-1/instance.json"));
+    assert!(
+        track
+            .unwrap()
+            .contains(r#"{"name": "reverb", "bypass": true}"#)
+    );
+    assert!(opened.path(REVERB_FILE).exists());
+    assert_eq!(stereo(&mut opened), 0.0);
+
+    opened.keys("cmd-z");
+    assert!(stereo(&mut opened) > 0.01);
+    let power = opened.control("card-reverb-power");
+    opened.click(power);
+    opened.click(power);
+    assert_eq!(opened.undo_label().as_deref(), Some("Turn on Reverb"));
+}

@@ -24,12 +24,14 @@ use gpui::{
 };
 use metronome::Click;
 use midi::{Input, Keyboard, Latency, Lost};
-use sound_core::{Changes, Instance, ProjectEvent, StreamTiming, Tempo, TempoChange, Ticks};
+use sound_core::{Changes, Instance, Peaks, ProjectEvent, StreamTiming, Tempo, TempoChange, Ticks};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::meter::{Level, Meter};
-use sound_ui::{ActiveTheme, POLL_INTERVAL, Playhead, Session, typography, weak_callback};
+use sound_ui::components::meter::Meter;
+use sound_ui::{
+    ActiveTheme, Metering, Playhead, Session, every_poll, typography, weak_action, weak_callback,
+};
 
 use super::{recording, steadiness, tempo};
 
@@ -96,7 +98,11 @@ pub struct TransportPill {
     record_focus: FocusHandle,
     strip_focus: FocusHandle,
     click_focus: FocusHandle,
-    /// Drains what the engine reports about the MIDI input, as the session polls the engine.
+    /// What the device plays, taken once per poll: the master meter at the right end.
+    output: Peaks,
+    metering: Metering,
+    /// Drains what the engine reports about the MIDI input, as the session polls the engine,
+    /// and reads the master meter.
     _polling: Task<()>,
 }
 
@@ -170,14 +176,11 @@ impl TransportPill {
         .detach();
         // Its own timer, next to the one of the session: what the engine reports about the
         // MIDI input must be drained whether the project plays or not.
-        let polling = cx.spawn(async move |pill, cx| {
-            loop {
-                cx.background_executor().timer(POLL_INTERVAL).await;
-                if pill.update(cx, |pill, cx| pill.poll_input(cx)).is_err() {
-                    break;
-                }
-            }
+        let polling = every_poll(cx, |pill: &mut Self, cx| {
+            pill.poll_input(cx);
+            pill.read_meter(cx);
         });
+        let output = session.update(cx, |session, _| session.engine().output_peaks().clone());
         Self {
             end: session.read(cx).project().end(),
             fit: fit_tempo::fit_of(session.read(cx).project()),
@@ -197,6 +200,8 @@ impl TransportPill {
             record_focus: cx.focus_handle().tab_stop(true),
             strip_focus: cx.focus_handle().tab_stop(true),
             click_focus: cx.focus_handle().tab_stop(true),
+            output,
+            metering: Metering::default(),
             _polling: polling,
         }
     }
@@ -231,6 +236,14 @@ impl TransportPill {
         };
         if let Err(error) = polled.and(wired) {
             session.update(cx, |session, cx| session.report(error, cx));
+        }
+    }
+
+    /// One poll of the master meter: what the device played since the last one. The timer
+    /// calls it; tests call it to skip the wait.
+    pub fn read_meter(&mut self, cx: &mut Context<Self>) {
+        if self.metering.read(Some(&self.output)) {
+            cx.notify();
         }
     }
 
@@ -845,9 +858,15 @@ impl Render for TransportPill {
                     .focus_handle(&self.click_focus)
                     .on_click(cx.listener(|pill, _, _, cx| pill.toggle_click(cx))),
             )
-            // The level of the master. Step 2 of the third milestone feeds it; until then it
-            // is at rest.
-            .child(Meter::new("master", Level::SILENT).horizontal())
+            // What the device plays: the master, and the click beside it.
+            .child(
+                Meter::new("master", self.metering.level())
+                    .horizontal()
+                    .on_clear_clip(weak_action(cx, |pill: &mut Self, cx| {
+                        pill.metering.clear_clip();
+                        cx.notify();
+                    })),
+            )
     }
 }
 

@@ -11,8 +11,10 @@ use rtsan_standalone::nonblocking;
 
 use crate::clock::{Clock, Frames, Ticks};
 use crate::graph::Schedule;
+use crate::peaks::Peaks;
 use crate::processor::{
-    AudioInputs, AudioOutputs, EventInputs, EventOutputs, MAX_BLOCK, ProcessContext, Processor,
+    AudioInputs, AudioOutputs, CHANNELS, EventInputs, EventOutputs, MAX_BLOCK, ProcessContext,
+    Processor,
 };
 use crate::transport::{TransportCommand, TransportState};
 
@@ -134,6 +136,8 @@ pub struct Engine {
     status_writer: triple_buffer::Input<EngineStatus>,
     /// See [`Self::preroll_frames`].
     preroll_frames: u64,
+    /// What the device plays, for a meter. The control side has a clone.
+    output_peaks: Peaks,
 }
 
 impl Engine {
@@ -145,6 +149,7 @@ impl Engine {
         commands: rtrb::Consumer<Batch>,
         returns: rtrb::Producer<Batch>,
         status_writer: triple_buffer::Input<EngineStatus>,
+        output_peaks: Peaks,
     ) -> Self {
         Self {
             sample_rate,
@@ -158,6 +163,7 @@ impl Engine {
             returns,
             status: EngineStatus::default(),
             status_writer,
+            output_peaks,
             preroll_frames: 0,
         }
     }
@@ -458,6 +464,12 @@ impl Engine {
                     }
                 }
             }
+        }
+        // The first two device channels, left and right, as the master meter shows them.
+        for channel in 0..CHANNELS.min(channels) {
+            let samples = output.iter().skip(channel).step_by(channels);
+            let peak = samples.fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+            self.output_peaks.record(channel, peak);
         }
         self.status.frames += frames as u64;
         self.status.port_misuses += port_misuses.get();

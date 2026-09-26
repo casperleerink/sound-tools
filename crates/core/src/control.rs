@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::clock::{Clock, TempoMap, Ticks};
 use crate::engine::{Batch, Command, Engine, EngineStatus, ErasedProcessor, Slot};
 use crate::graph::{Connection, Graph, GraphError, NodeId};
+use crate::peaks::Peaks;
 use crate::processor::{Ports, PrepareConfig, Processor};
 use crate::transport::TransportCommand;
 
@@ -59,6 +60,7 @@ impl Engine {
         let (status_writer, status_reader) = triple_buffer::triple_buffer(&EngineStatus::default());
         let graph = Graph::with_slots(config.processor_slots);
         let clock = Arc::new(Clock::new(TempoMap::default(), config.sample_rate));
+        let output_peaks = Peaks::new();
         let engine = Engine::from_parts(
             config.sample_rate,
             config.channels,
@@ -67,6 +69,7 @@ impl Engine {
             command_consumer,
             return_producer,
             status_writer,
+            output_peaks.clone(),
         );
         let control = EngineControl {
             config,
@@ -78,6 +81,7 @@ impl Engine {
             returns: return_consumer,
             status: status_reader,
             command_ring_full: 0,
+            output_peaks,
         };
         (control, engine)
     }
@@ -129,6 +133,7 @@ pub struct EngineControl {
     returns: rtrb::Consumer<Batch>,
     status: triple_buffer::Output<EngineStatus>,
     command_ring_full: u64,
+    output_peaks: Peaks,
 }
 
 impl EngineControl {
@@ -213,6 +218,12 @@ impl EngineControl {
             return Err(EngineStopped);
         }
         Ok(*self.status.read())
+    }
+
+    /// The peaks of what the device plays, left and right, for the master meter of an
+    /// interface. Take from it once per frame: it holds the largest sample since the last take.
+    pub fn output_peaks(&self) -> &Peaks {
+        &self.output_peaks
     }
 
     /// Edits still waiting on the control side for ring space.
