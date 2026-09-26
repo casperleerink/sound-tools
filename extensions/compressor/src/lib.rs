@@ -178,9 +178,8 @@ pub const MIX: Parameter = Parameter {
 };
 
 /// Every number of the state, in the order of its fields.
-pub const PARAMETERS: [&Parameter; 7] = [
-    &THRESHOLD, &RATIO, &ATTACK, &RELEASE, &KNEE, &MAKEUP, &MIX,
-];
+pub const PARAMETERS: [&Parameter; 7] =
+    [&THRESHOLD, &RATIO, &ATTACK, &RELEASE, &KNEE, &MAKEUP, &MIX];
 
 impl Default for CompressorState {
     fn default() -> Self {

@@ -42,7 +42,7 @@ const FLOOR: f32 = 1e-9;
 
 /// A reduction this close to where it is going has arrived: 0.0001 dB, a gain error of one in
 /// a hundred thousand. So a compressor that lets go comes to exactly 0 dB, and to rest.
-const ARRIVED_DB: f32 = 1e-4;
+const ARRIVED_DB: f64 = 1e-4;
 
 /// How many dB the gain computer takes off a level of `level_db`: nothing under the knee, the
 /// part `slope` of what is over the threshold above it, and a quadratic bend between, which
@@ -139,9 +139,11 @@ impl Detector {
     }
 }
 
-/// The one-pole factor for a time constant: after `seconds` a step is 63 % of the way.
-fn pole(seconds: f32, sample_rate: f32) -> f32 {
-    (-1.0 / (seconds * sample_rate)).exp()
+/// The one-pole factor for a time constant: after `seconds` a step is 63 % of the way. In
+/// `f64`, as is the reduction it moves: in `f32` a slow pole stops short of where it goes, when
+/// the step it would take is smaller than the precision of the reduction.
+fn pole(seconds: f32, sample_rate: f32) -> f64 {
+    (-1.0 / (f64::from(seconds) * f64::from(sample_rate))).exp()
 }
 
 /// A sample as the compressor takes it: held to [`INPUT_LIMIT`], and silence for anything that
@@ -166,11 +168,11 @@ pub struct Compressor {
     knee: Smoothed,
     makeup: Smoothed,
     mix: Smoothed,
-    attack: f32,
-    release: f32,
+    attack: f64,
+    release: f64,
     detector: Detector,
     /// The reduction now, in dB, 0 or more.
-    reduction: f32,
+    reduction: f64,
     /// The lookahead: every frame of the input, both channels, for 10 ms and one frame.
     delay: Vec<[f32; CHANNELS]>,
     /// Where the next frame goes.
@@ -306,7 +308,10 @@ impl Processor for Compressor {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
-        let silent_input = left_in.iter().chain(right_in).all(|sample| held(*sample) == 0.0);
+        let silent_input = left_in
+            .iter()
+            .chain(right_in)
+            .all(|sample| held(*sample) == 0.0);
         if silent_input && self.is_resting() {
             // Nothing sounds, nothing is left in the lookahead and nothing is turned down: the
             // output is silent already, and no glide can be heard.
@@ -331,7 +336,7 @@ impl Processor for Compressor {
             let threshold = self.threshold.advance(1);
             let slope = self.slope.advance(1);
             let knee = self.knee.advance(1);
-            let target = reduction(level_db, threshold, slope, knee);
+            let target = f64::from(reduction(level_db, threshold, slope, knee));
             let pole = match target > self.reduction {
                 true => self.attack,
                 false => self.release,
@@ -340,7 +345,7 @@ impl Processor for Compressor {
             if (self.reduction - target).abs() < ARRIVED_DB {
                 self.reduction = target;
             }
-            let gain = decibels_to_gain(self.makeup.advance(1) - self.reduction);
+            let gain = decibels_to_gain(self.makeup.advance(1) - self.reduction as f32);
             let gain = 1.0 + self.mix.advance(1) * (gain - 1.0);
             let fade = self.fade.advance(1);
             let (from, to) = (self.tap(self.from_frames), self.tap(self.to_frames));

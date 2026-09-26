@@ -99,15 +99,10 @@ impl Control {
     }
 }
 
-const THRESHOLD_KNOB: Control = Control::new(
-    &THRESHOLD,
-    "Threshold",
-    "Change threshold",
-    Unit::Decibels,
-);
+const THRESHOLD_KNOB: Control =
+    Control::new(&THRESHOLD, "Threshold", "Change threshold", Unit::Decibels);
 const RATIO_KNOB: Control = Control::new(&RATIO, "Ratio", "Change ratio", Unit::Ratio);
-const ATTACK_KNOB: Control =
-    Control::new(&ATTACK, "Attack", "Change attack", Unit::Milliseconds);
+const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", Unit::Milliseconds);
 const RELEASE_KNOB: Control =
     Control::new(&RELEASE, "Release", "Change release", Unit::Milliseconds);
 const KNEE_KNOB: Control = Control::new(&KNEE, "Knee", "Change knee", Unit::Decibels);
@@ -364,12 +359,16 @@ impl CompressorView {
     }
 
     fn lookahead(&self, state: &CompressorState, cx: &mut Context<Self>) -> Cell {
-        let selected = LOOKAHEADS.iter().find(|(value, _)| *value == state.lookahead);
+        let selected = LOOKAHEADS
+            .iter()
+            .find(|(value, _)| *value == state.lookahead);
         let selected = selected.map_or("", |(_, label)| label);
         let segments = SegmentedControl::new("lookahead", selected)
             .options(LOOKAHEADS.map(|(_, label)| (label, label)))
             .on_change(weak_callback(cx, |view, value: SharedString, cx| {
-                let picked = LOOKAHEADS.iter().find(|(_, label)| *label == value.as_ref());
+                let picked = LOOKAHEADS
+                    .iter()
+                    .find(|(_, label)| *label == value.as_ref());
                 if let Some((lookahead, _)) = picked {
                     let set = |state: &mut CompressorState, lookahead| state.lookahead = lookahead;
                     view.change("Change lookahead", ValueChange::Set(*lookahead), set, cx);
