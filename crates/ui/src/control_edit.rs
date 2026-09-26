@@ -1,7 +1,7 @@
 //! The session side of a control on saved state: what every view that puts a knob, a volume or
 //! a handle on a record does with its [`ValueChange`]s.
 
-use gpui::{App, Entity};
+use gpui::{App, Context, Entity, Window};
 use sound_core::{Changes, Instance, State};
 
 use crate::components::gesture::ValueChange;
@@ -78,5 +78,20 @@ impl ControlEdit {
         if std::mem::take(&mut self.dragging) {
             session.update(cx, |session, cx| session.finish_gesture(cx));
         }
+    }
+}
+
+/// A callback for a control that a view puts on screen, such as `Knob::on_change`. It holds the
+/// view weakly, as `cx.listener` does: with `cx.processor` the listeners of the last frame would
+/// keep a view that was just closed alive for one more frame, and an open drag with it. It takes
+/// its argument by value, which `cx.listener` does not.
+pub fn weak_callback<V: 'static, E>(
+    cx: &Context<V>,
+    f: impl Fn(&mut V, E, &mut Context<V>) + 'static,
+) -> impl Fn(E, &mut Window, &mut App) + 'static {
+    let view = cx.weak_entity();
+    move |event, _, cx| {
+        // Released: there is nothing left to tell.
+        view.update(cx, |view, cx| f(view, event, cx)).ok();
     }
 }

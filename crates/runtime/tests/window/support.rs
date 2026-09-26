@@ -7,7 +7,7 @@ use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor, Timeline, TrackPanel};
 use gpui::{
-    AppContext, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
+    AppContext, Bounds, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
     TestAppContext, VisualTestContext, point, px,
 };
@@ -445,6 +445,14 @@ impl Opened<'_> {
             .unwrap_or_else(|| panic!("nothing on screen is called {selector}"))
     }
 
+    /// Where a control is on screen, whole. `None` when it is not there.
+    pub fn bounds(&mut self, selector: &str) -> Option<Bounds<Pixels>> {
+        let selector: &'static str = Box::leak(selector.to_string().into_boxed_str());
+        self.cx.update(|window, _| window.refresh());
+        self.cx.run_until_parked();
+        self.cx.debug_bounds(selector)
+    }
+
     /// The same, `None` when that control is not on screen. A selector that is made while the
     /// test runs, such as a menu row of a plugin, is leaked: GPUI keeps them by `&'static str`
     /// and a test process is short.
@@ -538,6 +546,17 @@ impl Opened<'_> {
     pub fn drag_to(&mut self, position: Point<Pixels>) {
         self.cx
             .simulate_mouse_move(position, MouseButton::Left, Modifiers::default());
+        self.cx.run_until_parked();
+    }
+
+    /// A move of a drag with shift held.
+    pub fn drag_to_fine(&mut self, position: Point<Pixels>) {
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        };
+        self.cx
+            .simulate_mouse_move(position, MouseButton::Left, shift);
         self.cx.run_until_parked();
     }
 

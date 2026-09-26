@@ -4,7 +4,7 @@
 //! so no test needs a plugin of this machine. Its left channel is a cosine per key and its
 //! right channel is the sustain pedal as a number, so a render says which instrument played.
 
-use gpui::TestAppContext;
+use gpui::{AppContext, TestAppContext};
 use plugin_host::{PluginFormat, PluginRecord};
 use sound_core::Changes;
 
@@ -533,4 +533,35 @@ fn a_plugin_that_is_picked_never_starts_from_a_state_file_that_was_there(cx: &mu
     let record = slot_file(&mut opened).unwrap();
     assert!(record.contains(&format!("\"{}\"", first[0])), "{record}");
     assert_eq!(left(&playing(&mut opened)), transposed);
+}
+
+/// Every device a rack offers, of both kinds of slot, draws its own card: its tool registered
+/// it with `Views::register_card`. A tool whose view was registered the old way, as a plain
+/// view, fails here and not only as a quiet card in the window.
+#[gpui::test]
+fn every_device_a_rack_offers_has_a_card(cx: &mut TestAppContext) {
+    use sound_ui::components::device_card::CardFrame;
+    use sound_ui::{Devices, Slot, Views};
+
+    let mut opened = support::open_with_test_plugin(cx, |_| {});
+    let session = opened.session.clone();
+    let slot = id(SLOT);
+    for kind in [Slot::Instrument, Slot::Effect] {
+        let offers = opened.cx.update(|_, cx| Devices::offered(kind, cx));
+        assert!(!offers.is_empty(), "nothing is offered for {kind:?}");
+        for offer in offers {
+            // Any record fits the instrument slot, and the card does not depend on the slot.
+            opened.edit(|project| {
+                let mut changes = Changes::new();
+                offer.write(project, &slot, &mut changes)?;
+                project.commit("Probe", changes)
+            });
+            let has_card = opened.cx.update(|window, cx| {
+                let title = cx.new(|_| gpui::EmptyView);
+                let frame = CardFrame::new("probe", title);
+                Views::card_of(&session, &slot, frame, window, cx).is_some()
+            });
+            assert!(has_card, "{} ({kind:?}) has no card", offer.name);
+        }
+    }
 }

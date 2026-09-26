@@ -133,7 +133,10 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
                     Ok(())
                 },
             )
-            .needs(instrument::EXTENSION),
+            .needs(
+                instrument::EXTENSION,
+                "This project does not load the synth.",
+            ),
         ]
     });
     // What the picker says under its offers: that the scan of this machine is still running,
@@ -216,11 +219,11 @@ fn plugin_offers(
                     Ok(())
                 },
             )
-            .needs(plugin_host::EXTENSION);
-            match found.vendor.is_empty() {
-                true => offer.with_detail(format.name()),
-                false => offer.with_detail(format!("{} · {}", format.name(), found.vendor)),
-            }
+            .needs(
+                plugin_host::EXTENSION,
+                "This project does not load plugins.",
+            );
+            offer.with_detail(found.detail())
         })
         .collect()
 }

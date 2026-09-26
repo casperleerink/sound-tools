@@ -62,19 +62,6 @@ plugin that takes no audio in replaces the sound that reached it instead of chan
 The composer can do the same in the app, by picking an instrument on the card of the track
 panel, so the record may change under you. Read it before you write it.
 
-## The extension has to be enabled
-
-`project.json` lists the extensions this project loads. A project made before the plugin host
-existed does not list it, and then a plugin record does not load: `problems.txt` says the tool
-is not registered. One edit fixes it: add `"plugin-host"` to the
-`extensions` list in `project.json`, so that it reads
-
-    "extensions": ["arrangement", "instrument", "plugin-host", "tone"]
-
-and then tell the composer to open the project again. Enabling an extension while a project
-runs is refused, so nothing of it works until they do. A project this runtime made lists it
-already, and the app shows every plugin in its picker as out of reach until then.
-
 ## Never edit the state asset
 
 `assets/plugin-state/<name>.bin` holds the plugin's own settings, in a format only that plugin

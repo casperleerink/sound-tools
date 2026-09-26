@@ -1,6 +1,7 @@
-//! The transport: a floating pill. Play or pause, stop, record, the position as bar and beat
-//! and as time, a hairline seek strip with the duration when the project has an end, the tempo
-//! at the playhead, and the click.
+//! The transport: a pill in the middle of the title row. Play or pause, stop, record, the
+//! position as bar and beat and as time, a hairline seek strip with the duration when the
+//! project has an end, the tempo at the playhead, the steadiness of a fit, the click and the
+//! master meter.
 //!
 //! It follows the playhead, so it renders every frame while the project plays. It therefore
 //! reads the end of the project, which walks every clip, only after a project event, and
@@ -17,18 +18,23 @@ use std::sync::Arc;
 use arrangement::TrackState;
 use fit_tempo::FitState;
 use gpui::{
-    App, BorderStyle, Bounds, BoxShadow, Context, CursorStyle, DispatchPhase, Entity, FocusHandle,
-    Hitbox, HitboxBehavior, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Task, Window, canvas, div, fill, hsla, point, prelude::*, px, quad, size,
+    App, BorderStyle, Bounds, Context, DispatchPhase, Entity, FocusHandle, Hitbox, HitboxBehavior,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Task, Window,
+    canvas, div, fill, point, prelude::*, px, quad, size,
 };
 use metronome::Click;
 use midi::{Input, Keyboard, Latency, Lost};
 use sound_core::{Changes, Instance, ProjectEvent, StreamTiming, Tempo, TempoChange, Ticks};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::{ActiveTheme, POLL_INTERVAL, Playhead, Session, typography};
+use sound_ui::components::drag_number::DragNumber;
+use sound_ui::components::gesture::ValueChange;
+use sound_ui::components::meter::{Level, Meter};
+use sound_ui::{ActiveTheme, POLL_INTERVAL, Playhead, Session, typography, weak_callback};
 
 use super::{recording, steadiness, tempo};
 
+/// The height of the pill, in the 48 pt title row.
+pub const HEIGHT: f32 = 36.;
 const STRIP_WIDTH: f32 = 200.;
 const STRIP_HEIGHT: f32 = 16.;
 const KNOB: f32 = 8.;
@@ -44,13 +50,9 @@ fn fraction_at(x: f32, strip_width: f32) -> f32 {
     ((x - KNOB / 2.) / (strip_width - KNOB).max(1.)).clamp(0., 1.)
 }
 
-/// A drag on the tempo number, from mouse down to mouse up.
+/// A drag of the tempo, from the press to its end.
 struct TempoDrag {
-    /// Where the pointer went down, and the tempo there. A drag works out from these, so a
-    /// drag there and back ends at the tempo it began with.
-    start_y: f32,
-    start_bpm: f64,
-    /// The tick of the tempo change this drag edits, picked at mouse down. By its tick and
+    /// The tick of the tempo change this drag edits, picked at the press. By its tick and
     /// never by its place in the list: an outside edit may add or remove a tempo change while
     /// the drag goes on, and a drag must never change one that only took the place of the one
     /// the composer grabbed. A playhead that runs over a later tempo change does not move it
@@ -59,17 +61,8 @@ struct TempoDrag {
     /// Whether the gesture of the session is open. It begins with the first move that changes
     /// something, so a press without a move is no undo step.
     begun: bool,
-    /// The tempo that went out last. Several mouse moves may arrive between two frames.
-    sent: f64,
-}
-
-/// A drag on a plain number in the pill, from mouse down to mouse up. The steadiness uses it;
-/// the tempo has one of its own, because it also has to remember which tempo change it holds.
-struct NumberDrag {
-    start_y: f32,
-    start_value: f64,
-    begun: bool,
-    sent: f64,
+    /// The tempo change went away under the drag, and the gesture ended with it.
+    gone: bool,
 }
 
 pub struct TransportPill {
@@ -96,13 +89,12 @@ pub struct TransportPill {
     /// selects while it runs.
     recording_track: Option<Instance<TrackState>>,
     tempo_drag: Option<TempoDrag>,
-    steadiness_drag: Option<NumberDrag>,
+    /// Whether a drag of the steadiness has the gesture of the session open.
+    steadiness_drag: bool,
     play_focus: FocusHandle,
     stop_focus: FocusHandle,
     record_focus: FocusHandle,
     strip_focus: FocusHandle,
-    tempo_focus: FocusHandle,
-    steadiness_focus: FocusHandle,
     click_focus: FocusHandle,
     /// Drains what the engine reports about the MIDI input, as the session polls the engine.
     _polling: Task<()>,
@@ -199,13 +191,11 @@ impl TransportPill {
             keyboard,
             timing,
             tempo_drag: None,
-            steadiness_drag: None,
+            steadiness_drag: false,
             play_focus: cx.focus_handle().tab_stop(true),
             stop_focus: cx.focus_handle().tab_stop(true),
             record_focus: cx.focus_handle().tab_stop(true),
             strip_focus: cx.focus_handle().tab_stop(true),
-            tempo_focus: cx.focus_handle().tab_stop(true),
-            steadiness_focus: cx.focus_handle().tab_stop(true),
             click_focus: cx.focus_handle().tab_stop(true),
             _polling: polling,
         }
@@ -340,6 +330,11 @@ impl TransportPill {
         });
     }
 
+    /// Whether a press on the tempo is held, from the press to its end. For tests.
+    pub fn holds_a_tempo_drag(&self) -> bool {
+        self.tempo_drag.is_some()
+    }
+
     /// Whether the click sounds. For tests and for the button.
     pub fn click_is_on(&self) -> bool {
         self.click.as_ref().is_some_and(Click::is_on)
@@ -372,41 +367,52 @@ impl TransportPill {
         tempo::change_at(&project.project_file().tempo_map, tick)
     }
 
-    fn begin_tempo_drag(&mut self, y: f32, cx: &mut Context<Self>) {
-        let change = self.change_at_playhead(cx);
-        self.tempo_drag = Some(TempoDrag {
-            start_y: y,
-            start_bpm: change.bpm.bpm(),
-            at: change.tick,
-            begun: false,
-            sent: change.bpm.bpm(),
-        });
+    /// A change of the tempo control: a drag through the gesture of the session, so playback
+    /// and every other view follow each move and the whole drag is one undo step, or a key step
+    /// as one commit.
+    fn on_tempo(&mut self, change: ValueChange<f64>, cx: &mut Context<Self>) {
+        match change {
+            ValueChange::Drag(bpm) => self.drag_tempo(bpm, cx),
+            ValueChange::DragEnd => {
+                if self
+                    .tempo_drag
+                    .take()
+                    .is_some_and(|drag| drag.begun && !drag.gone)
+                {
+                    self.session
+                        .update(cx, |session, cx| session.finish_gesture(cx));
+                }
+            }
+            // Escape: the tempo goes back to what it was at the press.
+            ValueChange::DragCancel => {
+                if self
+                    .tempo_drag
+                    .take()
+                    .is_some_and(|drag| drag.begun && !drag.gone)
+                {
+                    self.session
+                        .update(cx, |session, cx| session.cancel_gesture(cx));
+                }
+            }
+            ValueChange::Set(bpm) => self.set_tempo(bpm, cx),
+        }
     }
 
-    /// One mouse move of a tempo drag: the tempo change becomes what the pointer says, through
-    /// the gesture of the session, so playback and every other view follow at once.
-    fn drag_tempo(&mut self, y: f32, fine: bool, cx: &mut Context<Self>) {
-        let Some(drag) = &mut self.tempo_drag else {
+    /// One move of a tempo drag. The tempo map it changes is the one the project has now, so a
+    /// file edit during the drag keeps what it changed.
+    fn drag_tempo(&mut self, bpm: f64, cx: &mut Context<Self>) {
+        let Some(drag) = self.tempo_drag.as_mut().filter(|drag| !drag.gone) else {
             return;
         };
-        let bpm = tempo::dragged_bpm(drag.start_bpm, drag.start_y - y, fine);
-        if bpm == drag.sent {
-            return;
-        }
         let at = drag.at;
-        // The gesture opens with the first move that changes something, so a press without a
-        // move is no undo step. It opens even when the tempo change turns out to be gone: the
-        // empty step is dropped, and the drag must not leave a gesture open.
+        // It opens even when the tempo change turns out to be gone: the empty step is dropped,
+        // and the drag must not leave a gesture open.
         let begun = std::mem::replace(&mut drag.begun, true);
-        drag.sent = bpm;
         let found = self.session.update(cx, |session, cx| {
             if !begun {
                 session.begin_gesture(tempo::LABEL, cx);
             }
             session.gesture(cx, |project, edit| {
-                // The tempo map the project has now, read here and nowhere earlier. A file
-                // edit during the drag has already applied to it, so this move keeps what it
-                // changed and only sets its own tempo change.
                 let live = &project.project_file().tempo_map;
                 let Some(tempo_map) = tempo::with_bpm(live, at, bpm) else {
                     return Ok(false);
@@ -420,44 +426,21 @@ impl TransportPill {
         // The tempo change is gone, removed from outside. That delete was the last write, so
         // the drag finishes and does not cancel, as a clip drag does when its clip is deleted.
         if found == Some(false) {
-            self.end_tempo_drag(cx);
-        }
-    }
-
-    /// Mouse up: the gesture becomes one undo step and `project.json` is written once.
-    fn end_tempo_drag(&mut self, cx: &mut Context<Self>) {
-        if self.tempo_drag.take().is_some_and(|drag| drag.begun) {
+            if let Some(drag) = self.tempo_drag.as_mut() {
+                drag.gone = true;
+            }
             self.session
                 .update(cx, |session, cx| session.finish_gesture(cx));
         }
     }
 
-    /// Escape: the tempo goes back to what it was at mouse down. Whether there was a drag.
-    fn cancel_tempo_drag(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(drag) = self.tempo_drag.take() else {
-            return false;
-        };
-        if drag.begun {
-            self.session
-                .update(cx, |session, cx| session.cancel_gesture(cx));
-        }
-        true
-    }
-
-    /// An arrow key on the focused tempo: one finished change and one undo step.
-    fn nudge_tempo(&mut self, delta: f64, cx: &mut Context<Self>) {
-        // The mouse has the tempo: a key would fight the next mouse move.
-        if self.tempo_drag.is_some() {
-            return;
-        }
+    /// An arrow key on the tempo: one finished change of the tempo change at the playhead.
+    fn set_tempo(&mut self, bpm: f64, cx: &mut Context<Self>) {
         let tick = self.playhead.read(cx).tick;
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
-                // The tempo map the project has now, as in a drag. A key adds to the tempo it
-                // finds and does not round it, so a tempo of 93.5 becomes 94.5.
                 let live = &project.project_file().tempo_map;
                 let change = tempo::change_at(live, tick);
-                let bpm = change.bpm.bpm() + delta;
                 let Some(tempo_map) = tempo::with_bpm(live, change.tick, bpm) else {
                     return Ok(());
                 };
@@ -468,74 +451,45 @@ impl TransportPill {
         });
     }
 
-    /// The keys of the focused tempo: the arrows step, with shift by a tenth, and escape puts
-    /// a drag back.
-    fn on_tempo_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let modifiers = event.keystroke.modifiers;
-        if modifiers.control || modifiers.alt || modifiers.platform {
-            return;
-        }
-        let step = match modifiers.shift {
-            true => tempo::FINE_KEY_STEP,
-            false => tempo::KEY_STEP,
-        };
-        match event.keystroke.key.as_str() {
-            "escape" => {
-                if self.cancel_tempo_drag(cx) {
-                    cx.stop_propagation();
-                }
-            }
-            "up" | "right" => {
-                cx.stop_propagation();
-                self.nudge_tempo(step, cx);
-            }
-            "down" | "left" => {
-                cx.stop_propagation();
-                self.nudge_tempo(-step, cx);
-            }
-            _ => {}
-        }
-    }
-
-    /// The tempo at the playhead, as a number that a drag and the arrows change.
+    /// The tempo at the playhead, as a number that a drag and the arrows change: whole bpm
+    /// from where a drag began, half a bpm per point, with shift tenths.
     fn tempo(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = cx.theme();
-        let (muted, ring) = (theme.gray_700, theme.lavender);
+        let muted = cx.theme().gray_700;
         let tempo = self.shown_tempo(cx);
-        let pill = cx.entity();
-        // A drag goes on wherever the pointer is, so these listeners are not hit tested.
-        let listeners = canvas(
-            |_, _, _| {},
-            move |_, (), window, _| listen_to_tempo(pill, window),
-        );
-        div()
-            .id("tempo")
-            .debug_selector(|| "tempo".to_string())
-            .track_focus(&self.tempo_focus)
-            .on_key_down(cx.listener(|pill, event, _, cx| pill.on_tempo_key(event, cx)))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|pill, event: &MouseDownEvent, _, cx| {
-                    pill.begin_tempo_drag(f32::from(event.position.y), cx);
-                }),
-            )
-            .flex()
-            .flex_none()
-            .items_baseline()
-            .gap(px(4.))
-            .px(px(6.))
-            .rounded(px(6.))
-            .border_1()
-            .border_color(Hsla::transparent_black())
-            .focus_visible(move |style| style.border_color(ring))
-            .cursor(CursorStyle::ResizeUpDown)
+        let number = DragNumber::new("tempo", tempo.bpm(), Tempo::MIN_BPM, Tempo::MAX_BPM)
+            .drag(tempo::DRAG_PER_POINT, tempo::DRAG_STEP)
+            .keys(tempo::KEY_STEP, tempo::FINE_KEY_STEP)
+            .on_change(weak_callback(cx, Self::on_tempo))
             .child(
                 div()
                     .font(typography::tabular())
                     .child(tempo::tempo_text(tempo)),
             )
-            .child(div().text_size(px(12.)).text_color(muted).child("bpm"))
-            .child(listeners.absolute().size_0())
+            .child(div().text_size(px(12.)).text_color(muted).child("bpm"));
+        // The press picks the tempo change the drag edits, before the first move. A press that
+        // moved nothing leaves nothing behind when it comes up, and the second press of a double
+        // click opens no drag.
+        div()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|pill, event: &MouseDownEvent, _, cx| {
+                    if event.click_count != 1 {
+                        return;
+                    }
+                    let at = pill.change_at_playhead(cx).tick;
+                    let (begun, gone) = (false, false);
+                    pill.tempo_drag = Some(TempoDrag { at, begun, gone });
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|pill, _: &MouseUpEvent, _, _| {
+                    if pill.tempo_drag.as_ref().is_some_and(|drag| !drag.begun) {
+                        pill.tempo_drag = None;
+                    }
+                }),
+            )
+            .child(number)
     }
 
     /// The steadiness the transport shows, as a percentage. The value is read from the project
@@ -547,156 +501,68 @@ impl TransportPill {
         Some(steadiness::percent_of(state.steadiness))
     }
 
-    fn begin_steadiness_drag(&mut self, y: f32, cx: &mut Context<Self>) {
-        let Some(percent) = self.shown_steadiness(cx) else {
-            return;
-        };
-        self.steadiness_drag = Some(NumberDrag {
-            start_y: y,
-            start_value: percent,
-            begun: false,
-            sent: percent,
-        });
-    }
-
-    /// One mouse move of a steadiness drag: the tempo map is rewritten through the derive of
-    /// the fit, so playback and every other view follow at once.
-    fn drag_steadiness(&mut self, y: f32, fine: bool, cx: &mut Context<Self>) {
-        let Some(drag) = &mut self.steadiness_drag else {
-            return;
-        };
-        let percent = steadiness::dragged_percent(drag.start_value, drag.start_y - y, fine);
-        if percent == drag.sent {
-            return;
-        }
-        // The gesture opens with the first move that changes something, so a press without a
-        // move is no undo step.
-        let begun = std::mem::replace(&mut drag.begun, true);
-        drag.sent = percent;
-        self.session.update(cx, |session, cx| {
-            if !begun {
-                session.begin_gesture(fit_tempo::STEADINESS_LABEL, cx);
+    /// A change of the steadiness control, the same way as the tempo: a drag is one gesture
+    /// that rewrites the tempo map through the derive of the fit on each move, a key one commit.
+    fn on_steadiness(&mut self, change: ValueChange<f64>, cx: &mut Context<Self>) {
+        let session = self.session.clone();
+        match change {
+            ValueChange::Drag(percent) => {
+                let begun = std::mem::replace(&mut self.steadiness_drag, true);
+                session.update(cx, |session, cx| {
+                    if !begun {
+                        session.begin_gesture(fit_tempo::STEADINESS_LABEL, cx);
+                    }
+                    session.gesture(cx, |project, edit| {
+                        let mut changes = Changes::new();
+                        let steadiness = steadiness::steadiness_of(percent);
+                        if fit_tempo::set_steadiness(project, &mut changes, steadiness).is_some() {
+                            project.publish(edit, changes)?;
+                        }
+                        Ok(())
+                    });
+                });
             }
-            session.gesture(cx, |project, edit| {
-                let mut changes = Changes::new();
-                let steadiness = steadiness::steadiness_of(percent);
-                if fit_tempo::set_steadiness(project, &mut changes, steadiness).is_some() {
-                    project.publish(edit, changes)?;
-                }
-                Ok(())
-            });
-        });
-    }
-
-    fn end_steadiness_drag(&mut self, cx: &mut Context<Self>) {
-        if self.steadiness_drag.take().is_some_and(|drag| drag.begun) {
-            self.session
-                .update(cx, |session, cx| session.finish_gesture(cx));
-        }
-    }
-
-    /// Escape: the steadiness goes back to what it was at mouse down.
-    fn cancel_steadiness_drag(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(drag) = self.steadiness_drag.take() else {
-            return false;
-        };
-        if drag.begun {
-            self.session
-                .update(cx, |session, cx| session.cancel_gesture(cx));
-        }
-        true
-    }
-
-    /// An arrow key on the focused steadiness: one finished change and one undo step.
-    fn nudge_steadiness(&mut self, delta: f64, cx: &mut Context<Self>) {
-        // The mouse has it: a key would fight the next mouse move.
-        if self.steadiness_drag.is_some() {
-            return;
-        }
-        let Some(percent) = self.shown_steadiness(cx) else {
-            return;
-        };
-        let wanted = (percent + delta).clamp(0.0, 100.0);
-        self.session.update(cx, |session, cx| {
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                let steadiness = steadiness::steadiness_of(wanted);
-                match fit_tempo::set_steadiness(project, &mut changes, steadiness) {
-                    Some(()) => project.commit(fit_tempo::STEADINESS_LABEL, changes),
-                    None => Ok(()),
-                }
-            });
-        });
-    }
-
-    fn on_steadiness_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let modifiers = event.keystroke.modifiers;
-        if modifiers.control || modifiers.alt || modifiers.platform {
-            return;
-        }
-        let step = match modifiers.shift {
-            true => steadiness::FINE_KEY_STEP,
-            false => steadiness::KEY_STEP,
-        };
-        match event.keystroke.key.as_str() {
-            "escape" => {
-                if self.cancel_steadiness_drag(cx) {
-                    cx.stop_propagation();
+            ValueChange::DragEnd => {
+                if std::mem::take(&mut self.steadiness_drag) {
+                    session.update(cx, |session, cx| session.finish_gesture(cx));
                 }
             }
-            "up" | "right" => {
-                cx.stop_propagation();
-                self.nudge_steadiness(step, cx);
+            // Escape: the steadiness goes back to what it was at the press.
+            ValueChange::DragCancel => {
+                if std::mem::take(&mut self.steadiness_drag) {
+                    session.update(cx, |session, cx| session.cancel_gesture(cx));
+                }
             }
-            "down" | "left" => {
-                cx.stop_propagation();
-                self.nudge_steadiness(-step, cx);
-            }
-            _ => {}
+            ValueChange::Set(percent) => session.update(cx, |session, cx| {
+                session.edit(cx, |project| {
+                    let mut changes = Changes::new();
+                    let steadiness = steadiness::steadiness_of(percent);
+                    match fit_tempo::set_steadiness(project, &mut changes, steadiness) {
+                        Some(()) => project.commit(fit_tempo::STEADINESS_LABEL, changes),
+                        None => Ok(()),
+                    }
+                });
+            }),
         }
     }
 
-    /// How steady the fitted tempo is, as a number that a drag and the arrows change. `None`
-    /// when the project has no fit: then the pill is the one every project has always had.
+    /// How steady the fitted tempo is, as a number that a drag and the arrows change: one
+    /// percent per point, with shift tenths. `None` when the project has no fit: then the pill
+    /// is the one every project has always had.
     fn steadiness(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let percent = self.shown_steadiness(cx)?;
-        let theme = cx.theme();
-        let (muted, ring) = (theme.gray_700, theme.lavender);
-        let pill = cx.entity();
-        let listeners = canvas(
-            |_, _, _| {},
-            move |_, (), window, _| listen_to_steadiness(pill, window),
-        );
-        Some(
-            div()
-                .id("steadiness")
-                .debug_selector(|| "steadiness".to_string())
-                .track_focus(&self.steadiness_focus)
-                .on_key_down(cx.listener(|pill, event, _, cx| pill.on_steadiness_key(event, cx)))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|pill, event: &MouseDownEvent, _, cx| {
-                        pill.begin_steadiness_drag(f32::from(event.position.y), cx);
-                    }),
-                )
-                .flex()
-                .flex_none()
-                .items_baseline()
-                .gap(px(4.))
-                .px(px(6.))
-                .rounded(px(6.))
-                .border_1()
-                .border_color(Hsla::transparent_black())
-                .focus_visible(move |style| style.border_color(ring))
-                .cursor(CursorStyle::ResizeUpDown)
-                .child(
-                    div()
-                        .font(typography::tabular())
-                        .child(steadiness::percent_text(percent)),
-                )
-                .child(div().text_size(px(12.)).text_color(muted).child("steady"))
-                .child(listeners.absolute().size_0()),
-        )
+        let muted = cx.theme().gray_700;
+        let number = DragNumber::new("steadiness", percent, 0., 100.)
+            .drag(steadiness::DRAG_PER_POINT, steadiness::DRAG_STEP)
+            .keys(steadiness::KEY_STEP, steadiness::FINE_KEY_STEP)
+            .on_change(weak_callback(cx, Self::on_steadiness))
+            .child(
+                div()
+                    .font(typography::tabular())
+                    .child(steadiness::percent_text(percent)),
+            )
+            .child(div().text_size(px(12.)).text_color(muted).child("steady"));
+        Some(number)
     }
 
     /// Reads the end again when an event made it stale. `render` calls it, so a group of ten
@@ -836,63 +702,6 @@ fn listen(pill: Entity<TransportPill>, strip: Bounds<Pixels>, hitbox: Hitbox, wi
     });
 }
 
-/// A drag on the steadiness number goes on wherever the pointer is, until the button is up.
-fn listen_to_steadiness(pill: Entity<TransportPill>, window: &mut Window) {
-    window.on_mouse_event({
-        let pill = pill.clone();
-        move |event: &MouseMoveEvent, phase, _, cx| {
-            if phase != DispatchPhase::Bubble {
-                return;
-            }
-            pill.update(cx, |pill, cx| {
-                if pill.steadiness_drag.is_none() {
-                    return;
-                }
-                if event.dragging() {
-                    pill.drag_steadiness(f32::from(event.position.y), event.modifiers.shift, cx);
-                } else {
-                    // The button came up somewhere that did not tell this window.
-                    pill.end_steadiness_drag(cx);
-                }
-            });
-        }
-    });
-    window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-        if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
-            pill.update(cx, |pill, cx| pill.end_steadiness_drag(cx));
-        }
-    });
-}
-
-/// A drag on the tempo number goes on wherever the pointer is, until the button is up.
-fn listen_to_tempo(pill: Entity<TransportPill>, window: &mut Window) {
-    window.on_mouse_event({
-        let pill = pill.clone();
-        move |event: &MouseMoveEvent, phase, _, cx| {
-            if phase != DispatchPhase::Bubble {
-                return;
-            }
-            pill.update(cx, |pill, cx| {
-                if pill.tempo_drag.is_none() {
-                    return;
-                }
-                if event.dragging() {
-                    let fine = event.modifiers.shift;
-                    pill.drag_tempo(f32::from(event.position.y), fine, cx);
-                } else {
-                    // The button came up somewhere that did not tell this window.
-                    pill.end_tempo_drag(cx);
-                }
-            });
-        }
-    });
-    window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-        if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
-            pill.update(cx, |pill, cx| pill.end_tempo_drag(cx));
-        }
-    });
-}
-
 /// Minutes and seconds, as `1:07`.
 fn clock_time(seconds: f64) -> String {
     let seconds = seconds.max(0.) as u64;
@@ -938,25 +747,19 @@ impl Render for TransportPill {
         let session = self.session.clone();
 
         div()
+            .debug_selector(|| "transport".to_string())
             .flex()
             .flex_none()
             .items_center()
             .gap(px(12.))
-            .h(px(48.))
-            .pl(px(12.))
-            .pr(px(20.))
+            .h(px(HEIGHT))
+            .pl(px(4.))
+            .pr(px(16.))
             .rounded_full()
             .bg(fill)
             .border_1()
             .border_color(border)
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.25),
-                offset: point(px(0.), px(8.)),
-                blur_radius: px(24.),
-                spread_radius: px(-8.),
-                inset: false,
-            }])
-            // A click on the pill is not a click on what lies under it.
+            // A click on the pill does not move the window, as the rest of the title row does.
             .occlude()
             .child(
                 div()
@@ -965,6 +768,7 @@ impl Render for TransportPill {
                     .gap(px(4.))
                     .child(
                         Button::icon_only("play", if playing { "pause" } else { "play" })
+                            .debug_selector(|| "play".to_string())
                             .variant(if playing {
                                 ButtonVariant::SubtleColor(green)
                             } else {
@@ -991,12 +795,12 @@ impl Render for TransportPill {
                                 session.update(cx, |session, _| session.engine().stop())
                             }),
                     )
-                    // Red, like every record control anywhere, and in the same two variants
-                    // as play: ghost while it is off, a subtle fill while it records.
+                    // Red, like every record control anywhere: a red ring while it is off, and
+                    // solid red while it records, which a laptop screen shows from afar.
                     .child(
                         Button::icon_only("record", "circle")
                             .variant(match recording {
-                                true => ButtonVariant::SubtleColor(red),
+                                true => ButtonVariant::Solid(red),
                                 false => ButtonVariant::GhostColor(red),
                             })
                             .size(ButtonSize::Sm)
@@ -1026,13 +830,13 @@ impl Render for TransportPill {
             .child(tempo)
             // Only a project with a fit has this, so every other pill is what it always was.
             .children(steadiness)
-            // The click is a reference, not part of the mix, so it takes no accent: a subtle
-            // fill says it sounds, as the mute button of a track does.
+            // The click is a reference, not part of the mix, so it takes no colour: a muted
+            // glyph while it is off, and white under a dark glyph while it sounds.
             .child(
                 Button::icon_only("click", "metronome")
                     .variant(match click_on {
-                        true => ButtonVariant::Subtle,
-                        false => ButtonVariant::Ghost,
+                        true => ButtonVariant::Primary,
+                        false => ButtonVariant::GhostColor(muted),
                     })
                     .size(ButtonSize::Sm)
                     .rounded(true)
@@ -1041,6 +845,9 @@ impl Render for TransportPill {
                     .focus_handle(&self.click_focus)
                     .on_click(cx.listener(|pill, _, _, cx| pill.toggle_click(cx))),
             )
+            // The level of the master. Step 2 of the third milestone feeds it; until then it
+            // is at rest.
+            .child(Meter::new("master", Level::SILENT).horizontal())
     }
 }
 

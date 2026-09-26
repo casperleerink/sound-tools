@@ -16,9 +16,11 @@ An edit applies while notes are held. The notes go on. Gain, cutoff and resonanc
 
 ## The view
 
-`view::register(views)` registers `SynthView` for `instrument.synth`, as the arrangement registers its view. `view.rs` is the only module here that uses GPUI. Whatever hosts the view gives it a surface. The track panel of the arrangement puts it into a device card, and it does not know this crate: it asks the view registry for the view of the instance in the `instrument` slot of a track.
+`view::register(views, devices)` registers `SynthView` as the card of `instrument.synth` (`Views::register_card`). `view.rs` is the only module here that uses GPUI. The track panel of the arrangement does not know this crate: it asks the view registry for the card of the instance in the `instrument` slot of a track and gives it a `CardFrame`, the picker as its title. The view draws the whole device card, 352 pt, from that frame.
 
-The view shows the title `Synth` and one control per field, in four groups parted by air: oscillator, filter, envelope, output. The waveform is a segmented control. Every number is a knob with its label and its value under it.
+The card, as DESIGN.md sets it for the Synth: the envelope as a display at the left, one line from attack to the decay corner, the sustain level and the release, with the waveform as two segments at its top right and `A 5 ms · D 200 ms · S 70% · R 300 ms` under it. Then Cutoff and Resonance in the first row of cells and Gain under Cutoff. Behind the expand icon: Attack, Decay, Sustain and Release as knobs.
+
+The display is not only a picture. The attack peak drags sideways, the decay corner sideways for the decay and up and down for the sustain, the release end sideways. Each handle edits the field of its knob, under the name of its knob in the history, so a drag of the attack peak is "Change attack" and the corner is "Change decay and sustain", one undo step each. A handle is no tab stop: its knob is how the keys reach the value. Each time has a zone of its own across the display, a bit over a quarter of it, on the travel of its knob: any time from 1 ms to 10 s shows, and the handle moves as the knob turns. Whether the card is expanded is interface state of the view and is not saved.
 
 | Field | Knob | Range | Default | Travel | Shown as |
 | --- | --- | --- | --- | --- | --- |
@@ -36,9 +38,9 @@ Frequencies and times are heard in ratios, so their knobs travel in ratios: a th
 
 Editing:
 
-- A knob drag is one gesture of the session. It begins with the first mouse move that changes the value, publishes per move, so the sound follows during the drag, and ends as one undo step: "Change cutoff", "Change resonance", "Change attack", "Change decay", "Change sustain", "Change release", "Change gain". The file is written once, at the end. Escape cancels. A press without a move is no step, and a drag there and back is none either.
+- A knob or handle drag is one gesture of the session. It begins with the first mouse move that changes the value, publishes per move, so the sound follows during the drag, and ends as one undo step: "Change cutoff", "Change resonance", "Change attack", "Change decay", "Change sustain", "Change release", "Change gain". The file is written once, at the end. Escape cancels. A press without a move is no step, and a drag there and back is none either.
 - A double click sets the default. An arrow key is one step of a fiftieth of the travel, with shift a five-hundredth. A waveform switch is "Change waveform". Each is one commit.
-- The view keeps no copy of the state. Its one field of its own says whether a drag has the gesture open. An outside edit of the record shows at once, also during a drag, and the next mouse move is the later write. It works from the value at the press, and it writes only its own field, so what else the file changed is kept.
+- The view keeps no copy of the state. Its fields of its own say whether a drag has the gesture open and whether the card is expanded. An outside edit of the record shows at once, also during a drag, and the next mouse move is the later write. It works from the value at the press, and it writes only its own field, so what else the file changed is kept.
 - When the record is deleted under a drag, the gesture finishes and does not cancel: the delete was the last write, and undo gives the synth back as it was before the drag. When the view is released during a drag, because the panel closed, it finishes the gesture too.
 - The callbacks of the controls hold the view weakly. `cx.processor` holds it strongly, and the mouse listeners of the last frame would then keep a closed view, and its open drag, alive for one more frame.
 

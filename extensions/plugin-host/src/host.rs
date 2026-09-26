@@ -568,6 +568,13 @@ impl Plugins {
         Some(scanned.scan.find(format, plugin_id)?.name.clone())
     }
 
+    /// What this machine knows of the plugin with this id, for the line on its card. `None`
+    /// when it is missing.
+    pub fn installed(&self, format: PluginFormat, plugin_id: &str) -> Option<ScannedPlugin> {
+        let scanned = self.0.scanned.lock().ok()?;
+        scanned.scan.find(format, plugin_id).cloned()
+    }
+
     /// Loads the plugin the record names and gives it to the caller for the engine.
     ///
     /// It loads every time. A behaviour runs when its own record changed, on opening the

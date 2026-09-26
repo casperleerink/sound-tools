@@ -27,7 +27,7 @@ pub struct DeviceOffer {
     pub detail: Option<SharedString>,
     /// The extension whose tool this offer writes. A project that does not enable it cannot
     /// load what the offer writes, so a picker shows the offer and does not take it.
-    pub needs: Option<SharedString>,
+    pub needs: Option<Needs>,
     write: Rc<dyn Fn(&Project, &InstanceId, &mut Changes) -> Result<(), ProjectError>>,
 }
 
@@ -51,9 +51,17 @@ impl DeviceOffer {
         self
     }
 
-    /// The extension this offer needs the project to enable.
-    pub fn needs(mut self, extension: impl Into<SharedString>) -> Self {
-        self.needs = Some(extension.into());
+    /// The extension this offer needs the project to enable, and why the offer is off in a
+    /// project that does not, in words for a composer: `This project does not load plugins.`
+    pub fn needs(
+        mut self,
+        extension: impl Into<SharedString>,
+        reason: impl Into<SharedString>,
+    ) -> Self {
+        self.needs = Some(Needs {
+            extension: extension.into(),
+            reason: reason.into(),
+        });
         self
     }
 
@@ -62,7 +70,7 @@ impl DeviceOffer {
     /// the composer edits `project.json` and opens the project again.
     pub fn is_enabled_in(&self, project: &Project) -> bool {
         match &self.needs {
-            Some(needs) => extension_is_enabled(project, needs),
+            Some(needs) => extension_is_enabled(project, &needs.extension),
             None => true,
         }
     }
@@ -77,6 +85,14 @@ impl DeviceOffer {
     ) -> Result<(), ProjectError> {
         (self.write)(project, slot, changes)
     }
+}
+
+/// What an offer needs of the project. The file edit that enables an extension is for the
+/// agent docs; a composer reads the reason.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Needs {
+    pub extension: SharedString,
+    pub reason: SharedString,
 }
 
 type ListOffers = Rc<dyn Fn() -> Vec<DeviceOffer>>;
@@ -207,11 +223,4 @@ impl Devices {
 pub fn extension_is_enabled(project: &Project, extension: &str) -> bool {
     let enabled = &project.project_file().extensions;
     enabled.iter().any(|it| it == extension)
-}
-
-/// The one edit that brings an extension within reach. Every control that offers something a
-/// project has not enabled says this and nothing else: enabling an extension while a project
-/// runs is refused, so it is a file edit and a reopen.
-pub fn enable_extension(extension: &str) -> String {
-    format!("Add \"{extension}\" to \"extensions\" in project.json and open the project again.")
 }
