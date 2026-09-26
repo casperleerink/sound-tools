@@ -21,8 +21,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, AnyView, App, ClickEvent, Div, ElementId, Entity, Hsla, MouseButton,
-    SharedString, Stateful, StyleRefinement, Window, div, prelude::*, px,
+    AnyElement, AnyView, App, ClickEvent, Div, ElementId, Entity, Hsla, MouseButton, SharedString,
+    Stateful, StyleRefinement, Window, div, prelude::*, px,
 };
 
 use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};

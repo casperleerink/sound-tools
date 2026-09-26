@@ -9,9 +9,7 @@ use gpui::{Modifiers, Pixels, Point, TestAppContext, point, px};
 use sound_core::{Changes, InstanceId, Ticks};
 use sound_notes::Clip;
 
-use crate::support::{
-    self, BAR, Opened, STEP, clip, id, mark, note, one_undo_step, write_outside,
-};
+use crate::support::{self, BAR, Opened, STEP, clip, id, mark, note, one_undo_step, write_outside};
 
 const PART: &str = "arrangement/track-1/part";
 const OTHER: &str = "arrangement/track-2/other";
@@ -103,7 +101,10 @@ fn shift_cmd_and_a_rectangle_select_notes_as_for_clips(cx: &mut TestAppContext) 
     let (from, to) = (on(&mut opened, 0, 66), on(&mut opened, 1900, 59));
     opened.drag(from, to);
     assert_eq!(opened.selected_notes(), [0, 1]);
-    let (from, to) = (on(&mut opened, BAR + 700, 69), on(&mut opened, BAR + 1000, 66));
+    let (from, to) = (
+        on(&mut opened, BAR + 700, 69),
+        on(&mut opened, BAR + 1000, 66),
+    );
     opened.drag_with(from, to, shift());
     assert_eq!(opened.selected_notes(), [0, 1, 2]);
     // Escape during a rectangle puts back what was selected.

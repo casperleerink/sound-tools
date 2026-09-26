@@ -477,7 +477,10 @@ impl NoteEditor {
             return;
         }
         let cmd = modifiers.platform;
-        let several = matches!(kind, NoteDragKind::Move { .. } | NoteDragKind::Velocity { .. });
+        let several = matches!(
+            kind,
+            NoteDragKind::Move { .. } | NoteDragKind::Velocity { .. }
+        );
         let dragged: Vec<Note> = match (several, self.selection.contains(&note) || cmd) {
             (true, true) => {
                 let mut notes: Vec<Note> = self.selection.iter().copied().collect();
@@ -498,7 +501,10 @@ impl NoteEditor {
             (false, true) => Some(OnRelease::SelectAlone(note)),
             (false, false) => None,
         };
-        if matches!(kind, NoteDragKind::Move { .. } | NoteDragKind::Resize { .. }) {
+        if matches!(
+            kind,
+            NoteDragKind::Move { .. } | NoteDragKind::Resize { .. }
+        ) {
             self.preview(note.pitch, note.velocity, cx);
         }
         self.drag = Some(NoteDrag {
@@ -724,7 +730,9 @@ impl NoteEditor {
             NoteDragKind::Move { grabbed, .. } => {
                 let grabbed = drag.notes.iter().find(|tracked| tracked.origin == *grabbed);
                 let grabbed = grabbed.map(|tracked| tracked.written);
-                let moved = changes.iter().find(|(_, written, _)| Some(*written) == grabbed);
+                let moved = changes
+                    .iter()
+                    .find(|(_, written, _)| Some(*written) == grabbed);
                 moved
                     .filter(|(_, written, next)| written.pitch != next.pitch)
                     .map(|(_, _, next)| *next)
@@ -732,8 +740,7 @@ impl NoteEditor {
             _ => None,
         };
         for tracked in &mut drag.notes {
-            if let Some((_, _, next)) = changes.iter().find(|(_, old, _)| *old == tracked.written)
-            {
+            if let Some((_, _, next)) = changes.iter().find(|(_, old, _)| *old == tracked.written) {
                 tracked.written = *next;
             }
         }
@@ -952,7 +959,7 @@ impl NoteEditor {
             }
         }
         if self.commit(label, edited, cx) {
-            let pairs: Vec<(Note, Note)> = origins.iter().copied().zip(next.clone()).collect();
+            let pairs: Vec<(Note, Note)> = origins.iter().copied().zip(next).collect();
             self.follow_selection(&pairs, cx);
             let first = self.selection.primary().copied();
             let moved_first = pairs.iter().find(|(_, new)| Some(*new) == first);
@@ -1292,10 +1299,7 @@ fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx
         height: row_height,
     };
     let upright = |x: f32, top: Point<Pixels>, tall: f32| {
-        Bounds::new(
-            top + point(px(x.round()), px(0.)),
-            size(px(1.), px(tall)),
-        )
+        Bounds::new(top + point(px(x.round()), px(0.)), size(px(1.), px(tall)))
     };
     // Notes live inside the clip. What is outside is a shade darker, in the rows and the lane.
     let veils = [(0.0, scene.clip_start), (scene.clip_end, width)];
@@ -1352,7 +1356,14 @@ fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx
         if let Some(rect) = scene.marquee {
             let solid = BorderStyle::Solid;
             let body = placed(rect, area.origin);
-            window.paint_quad(quad(body, px(2.), marquee_fill, px(1.), marquee_border, solid));
+            window.paint_quad(quad(
+                body,
+                px(2.),
+                marquee_fill,
+                px(1.),
+                marquee_border,
+                solid,
+            ));
         }
     });
 
@@ -1374,7 +1385,16 @@ fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx
     });
     let lane_label = bounds.origin + point(px(24.), px(RULER_HEIGHT + height + 19.));
     let (weight, fit) = (FontWeight::NORMAL, Fit::Truncate(HEADER_WIDTH - 48.));
-    paint_text("Velocity".into(), lane_label, 12., weight, label, fit, window, cx);
+    paint_text(
+        "Velocity".into(),
+        lane_label,
+        12.,
+        weight,
+        label,
+        fit,
+        window,
+        cx,
+    );
 
     window.with_content_mask(Some(ContentMask { bounds: keys }), |window| {
         for pitch in pitches.clone() {

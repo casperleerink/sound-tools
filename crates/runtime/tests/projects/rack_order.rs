@@ -48,8 +48,14 @@ fn project(format: PluginFormat, effects: &str) -> Harness {
         r#"{"tool": "filter", "state": {"cutoff_hz": 900.0, "resonance": 0.4}}"#,
     );
     let plugins = [("late", LATE, 10), ("held", HELD, 30)];
-    for (name, latency, offset) in plugins.into_iter().filter(|(name, ..)| effects.contains(name)) {
-        harness.write(&format!("{FOLDER}/{name}.json"), &test_plugin_of(format, name));
+    for (name, latency, offset) in plugins
+        .into_iter()
+        .filter(|(name, ..)| effects.contains(name))
+    {
+        harness.write(
+            &format!("{FOLDER}/{name}.json"),
+            &test_plugin_of(format, name),
+        );
         let asset = harness.path(&format!("assets/plugin-state/{name}.bin"));
         std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
         let state = SavedState {
@@ -121,7 +127,10 @@ fn a_reorder_renders_what_a_project_written_in_that_order_renders() {
         assert_eq!(latency(&mut written), HELD as u64, "{format:?}");
         let expected = written.play_from_the_start(FRAMES);
         assert!(after.iter().any(|sample| sample.abs() > 0.01), "{format:?}");
-        assert_eq!(after, expected, "{format:?}: the reorder plays as the written order");
+        assert_eq!(
+            after, expected,
+            "{format:?}: the reorder plays as the written order"
+        );
         // A bypassed effect is as if it were not there, wherever it is, latency and all.
         let without = project(format, r#"["filter", "late"]"#).play_from_the_start(FRAMES);
         assert_eq!(after, without, "{format:?}");

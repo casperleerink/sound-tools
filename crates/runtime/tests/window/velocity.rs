@@ -68,9 +68,12 @@ fn a_drag_of_a_bar_sets_the_velocity_of_its_note(cx: &mut TestAppContext) {
     assert_eq!(velocities(&mut opened), [60, 100, 100]);
     assert!(!opened.clip_file(PART).unwrap().contains("\"velocity\": 60"));
     opened.release(to);
-    assert!(opened.clip_file(PART).unwrap().contains(
-        r#"{"start": 960, "length": 480, "pitch": 60, "velocity": 60}"#
-    ));
+    assert!(
+        opened
+            .clip_file(PART)
+            .unwrap()
+            .contains(r#"{"start": 960, "length": 480, "pitch": 60, "velocity": 60}"#)
+    );
     one_undo_step(&mut opened, "Change velocity", &before);
 
     // Far above the lane is 127, far below is 1.
@@ -130,7 +133,10 @@ fn a_drag_across_the_lane_draws_every_bar_it_passes_as_one_undo_step(cx: &mut Te
     let mut opened = open(cx);
     let before = mark(&mut opened);
     // From before the first bar to after the last, at the height of velocity 20.
-    let (from, to) = (opened.in_lane(BAR + 500, 20), opened.in_lane(3 * BAR - 200, 20));
+    let (from, to) = (
+        opened.in_lane(BAR + 500, 20),
+        opened.in_lane(3 * BAR - 200, 20),
+    );
     opened.press(from);
     let middle = opened.in_lane(BAR + 1500, 20);
     opened.drag_to(middle);
@@ -143,7 +149,10 @@ fn a_drag_across_the_lane_draws_every_bar_it_passes_as_one_undo_step(cx: &mut Te
     one_undo_step(&mut opened, "Draw velocities", &before);
 
     // A slope: the bars take the height of the line where they are.
-    let (from, to) = (opened.in_lane(BAR + 500, 40), opened.in_lane(3 * BAR - 200, 120));
+    let (from, to) = (
+        opened.in_lane(BAR + 500, 40),
+        opened.in_lane(3 * BAR - 200, 120),
+    );
     opened.drag(from, to);
     let drawn = velocities(&mut opened);
     assert!(
@@ -158,12 +167,13 @@ fn a_velocity_written_from_outside_shows_in_the_lane_at_once(cx: &mut TestAppCon
     let record = serde_json::json!({"tool": "arrangement.clip", "state": clip(BAR, 2 * BAR, vec![
         with_velocity(note(960, 480, 60), 40), note(1920, 480, 64), note(BAR + 960, 480, 67),
     ])});
-    write_outside(&mut opened, &format!("state/{PART}.json"), &record.to_string());
-    // A drag from the top of the bar as the file has it lands exactly where it is let go.
-    let (from, to) = (
-        opened.in_lane(BAR + 960, 40),
-        opened.in_lane(BAR + 960, 90),
+    write_outside(
+        &mut opened,
+        &format!("state/{PART}.json"),
+        &record.to_string(),
     );
+    // A drag from the top of the bar as the file has it lands exactly where it is let go.
+    let (from, to) = (opened.in_lane(BAR + 960, 40), opened.in_lane(BAR + 960, 90));
     opened.drag(from, to);
     assert_eq!(velocities(&mut opened), [90, 100, 100]);
     // And undo gives back what the file had.

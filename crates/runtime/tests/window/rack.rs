@@ -4,8 +4,8 @@
 //! each move is one undo step that undo gives back byte for byte. A reorder written from
 //! outside shows in the rack at once.
 
-use arrangement::TrackState;
 use arrangement::EffectSlot;
+use arrangement::TrackState;
 use gpui::{Pixels, Point, TestAppContext, point, px};
 use plugin_host::{PluginFormat, PluginRecord};
 
@@ -105,7 +105,11 @@ fn a_drag_of_an_effect_card_onto_another_moves_it_as_one_undo_step(cx: &mut Test
     // The filter takes the place of the reverb, which keeps its bypass.
     assert_eq!(
         effects(&mut opened),
-        [slot("space", true), slot("filter", false), slot(PLUGIN, false)]
+        [
+            slot("space", true),
+            slot("filter", false),
+            slot(PLUGIN, false)
+        ]
     );
     assert_eq!(
         names(&mut opened),
@@ -119,12 +123,20 @@ fn a_drag_of_an_effect_card_onto_another_moves_it_as_one_undo_step(cx: &mut Test
     drag_card(&mut opened, PLUGIN, onto);
     assert_eq!(
         effects(&mut opened),
-        [slot(PLUGIN, false), slot("space", true), slot("filter", false)]
+        [
+            slot(PLUGIN, false),
+            slot("space", true),
+            slot("filter", false)
+        ]
     );
     one_undo_step(&mut opened, "Move Sound Tools Test Tone", &before);
     // Every record is where it was: only the list of the track changed.
     opened.project(|project| assert_eq!(project.problems(), []));
-    assert!(opened.path("state/arrangement/track-1/filter.json").exists());
+    assert!(
+        opened
+            .path("state/arrangement/track-1/filter.json")
+            .exists()
+    );
 }
 
 #[gpui::test]
@@ -137,7 +149,11 @@ fn the_instrument_stays_first_and_a_drop_on_it_or_on_add_effect_goes_first_or_la
     drag_card(&mut opened, PLUGIN, onto);
     assert_eq!(
         effects(&mut opened),
-        [slot(PLUGIN, false), slot("filter", false), slot("space", true)]
+        [
+            slot(PLUGIN, false),
+            slot("filter", false),
+            slot("space", true)
+        ]
     );
     assert_eq!(names(&mut opened)[0], "Synth");
     // A drop on `Add effect`: the last.
@@ -145,7 +161,11 @@ fn the_instrument_stays_first_and_a_drop_on_it_or_on_add_effect_goes_first_or_la
     drag_card(&mut opened, PLUGIN, onto);
     assert_eq!(
         effects(&mut opened),
-        [slot("filter", false), slot("space", true), slot(PLUGIN, false)]
+        [
+            slot("filter", false),
+            slot("space", true),
+            slot(PLUGIN, false)
+        ]
     );
     // The instrument card has no grip: a drag of its header moves nothing.
     let label = opened.undo_label();
@@ -170,19 +190,31 @@ fn cmd_and_the_arrows_move_the_effect_whose_card_has_the_focus(cx: &mut TestAppC
     opened.keys("cmd-right");
     assert_eq!(
         effects(&mut opened),
-        [slot("space", true), slot("filter", false), slot(PLUGIN, false)]
+        [
+            slot("space", true),
+            slot("filter", false),
+            slot(PLUGIN, false)
+        ]
     );
     one_undo_step(&mut opened, "Move Filter", &before);
     opened.keys("cmd-right cmd-right");
     assert_eq!(
         effects(&mut opened),
-        [slot("space", true), slot(PLUGIN, false), slot("filter", false)]
+        [
+            slot("space", true),
+            slot(PLUGIN, false),
+            slot("filter", false)
+        ]
     );
     // It never goes before the instrument.
     opened.keys("cmd-left cmd-left cmd-left cmd-left");
     assert_eq!(
         effects(&mut opened),
-        [slot("filter", false), slot("space", true), slot(PLUGIN, false)]
+        [
+            slot("filter", false),
+            slot("space", true),
+            slot(PLUGIN, false)
+        ]
     );
     assert_eq!(names(&mut opened)[..2], ["Synth", "Filter"]);
 }
@@ -206,6 +238,10 @@ fn a_reorder_written_from_outside_shows_in_the_rack_at_once(cx: &mut TestAppCont
     drag_card(&mut opened, "filter", onto);
     assert_eq!(
         effects(&mut opened),
-        [slot("filter", false), slot(PLUGIN, false), slot("space", true)]
+        [
+            slot("filter", false),
+            slot(PLUGIN, false),
+            slot("space", true)
+        ]
     );
 }

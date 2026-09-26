@@ -42,6 +42,7 @@ use sound_notes::Clip;
 use sound_ui::{ActiveTheme, KeyboardFocus, NoticeRoom, Session, Views};
 
 use crate::{ArrangementState, TrackState};
+use clipboard::SharedClipboard;
 use editor::EditorEvent;
 pub use editor::NoteEditor;
 use layout::HEADER_WIDTH;
@@ -49,7 +50,6 @@ pub use master_panel::MasterPanel;
 use master_panel::{MASTER_NAME, MasterPanelEvent};
 use paint::PlayheadLine;
 use roll::EDITOR_HEIGHT;
-use clipboard::SharedClipboard;
 use snap::SharedSnap;
 use timeline::scrolled_or_zoomed;
 pub use timeline::{ClipShape, Scene, Timeline, TimelineEvent};

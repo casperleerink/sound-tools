@@ -70,7 +70,11 @@ impl<T: Ord + Clone> Selection<T> {
     /// Keeps only the things for which `keep` holds, for example those the project still has.
     pub fn retain(&mut self, keep: impl FnMut(&T) -> bool) {
         self.items.retain(keep);
-        if self.primary.as_ref().is_some_and(|primary| !self.items.contains(primary)) {
+        if self
+            .primary
+            .as_ref()
+            .is_some_and(|primary| !self.items.contains(primary))
+        {
             self.primary = self.items.first().cloned();
         }
     }

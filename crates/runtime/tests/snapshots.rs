@@ -975,7 +975,11 @@ fn main() -> Result<()> {
         opened.session.update(cx, |session, cx| {
             let instance = session.project().resolve::<Clip>(&melody);
             let instance = instance.context("no melody")?;
-            let mut state = session.project().state(&instance).cloned().context("a clip")?;
+            let mut state = session
+                .project()
+                .state(&instance)
+                .cloned()
+                .context("a clip")?;
             for (index, note) in state.notes.iter_mut().enumerate() {
                 note.velocity = Velocity::nearest(40 + (index as i64 * 37) % 87);
             }
@@ -1298,7 +1302,14 @@ fn main() -> Result<()> {
     let grip = point(px(warmth_right - 8. - 24. - 4. - 24. - 12.), px(title_line));
     let over_space = point(px(warmth_right + 12. + 100.), px(title_line));
     let undo_label = |cx: &mut HeadlessAppContext| {
-        cx.update(|cx| opened.session.read(cx).project().undo_label().map(str::to_string))
+        cx.update(|cx| {
+            opened
+                .session
+                .read(cx)
+                .project()
+                .undo_label()
+                .map(str::to_string)
+        })
     };
     let before = undo_label(&mut cx);
     opened.press_and_move(grip, over_space, &mut cx)?;

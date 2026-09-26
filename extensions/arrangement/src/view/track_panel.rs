@@ -657,7 +657,10 @@ impl TrackPanel {
     fn move_effect(&mut self, slot: &InstanceId, to: usize, cx: &mut Context<Self>) {
         let project = self.session.read(cx).project();
         let listed = project.state(&self.track).is_some_and(|track| {
-            let at = track.effects.iter().position(|effect| effect.name == slot.name());
+            let at = track
+                .effects
+                .iter()
+                .position(|effect| effect.name == slot.name());
             at.is_some_and(|at| at != to.min(track.effects.len().saturating_sub(1)))
         });
         if !listed {
@@ -677,14 +680,22 @@ impl TrackPanel {
 
     /// Cmd-left and cmd-right with the focus in an effect card: the effect one place to the
     /// left or the right. It stays after the instrument. Whether the key was one of them.
-    fn on_card_key(&mut self, slot: &InstanceId, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+    fn on_card_key(
+        &mut self,
+        slot: &InstanceId,
+        event: &KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let modifiers = event.keystroke.modifiers;
         if !modifiers.platform || modifiers.shift || modifiers.alt || modifiers.control {
             return false;
         }
         let project = self.session.read(cx).project();
         let Some(at) = project.state(&self.track).and_then(|track| {
-            track.effects.iter().position(|effect| effect.name == slot.name())
+            track
+                .effects
+                .iter()
+                .position(|effect| effect.name == slot.name())
         }) else {
             return false;
         };
@@ -938,7 +949,8 @@ impl Render for TrackPanel {
             .child(self.add_effect.clone());
         // A drop on it puts the effect last.
         let add_effect = add_effect.into_any_element();
-        let add_effect = self.drop_target(add_effect, "rack-add".into(), usize::MAX, None, ring, cx);
+        let add_effect =
+            self.drop_target(add_effect, "rack-add".into(), usize::MAX, None, ring, cx);
 
         let close = Button::icon_only("close-track-panel", "x")
             // Quiet until it is wanted, as in the note editor.

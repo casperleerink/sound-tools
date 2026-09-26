@@ -625,7 +625,10 @@ mod tests {
         assert_eq!(velocity_bars_at(&viewport, &clip, 9.0), [0, 1]);
         assert_eq!(velocity_bars_at(&viewport, &clip, 110.0), [2]);
         assert!(velocity_bars_at(&viewport, &clip, 60.0).is_empty());
-        assert_eq!(velocity_bars_between(&viewport, &clip, 200.0, 0.0), [0, 1, 2]);
+        assert_eq!(
+            velocity_bars_between(&viewport, &clip, 200.0, 0.0),
+            [0, 1, 2]
+        );
         assert_eq!(velocity_bars_between(&viewport, &clip, 50.0, 105.0), [2]);
     }
 
