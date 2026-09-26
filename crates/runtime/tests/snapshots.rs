@@ -32,6 +32,9 @@
 //! - `track-panel-eq.png`: the synth and the built-in EQ after it, band 3 selected.
 //! - `track-panel-eq-expanded.png`: the same with the EQ expanded: the bands on and off, and
 //!   the output.
+//! - `track-panel-reverb.png`: the synth and the built-in reverb after it.
+//! - `track-panel-reverb-expanded.png`: the same with the reverb expanded: the cuts, diffusion,
+//!   freeze, pre-delay and decay.
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
 //! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
 //! - `track-panel-picker.png`: the same with the instrument picker open.
@@ -71,6 +74,8 @@ use gpui::{
 };
 use instrument::SynthState;
 use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand};
+use reverb::ReverbState;
+use reverb::view::ReverbView;
 use runtime::window::Shell;
 use runtime::{OFFLINE, main_arrangement, open_or_create_with, views};
 use sound_core::{Changes, Engine, Instance, InstanceId, Project, Ticks};
@@ -466,6 +471,27 @@ fn add_eq(project: &mut Project, track: &str) -> Result<()> {
     };
     changes.create(slot, sound);
     project.commit("Add EQ", changes)?;
+    Ok(())
+}
+
+/// Puts a reverb after the instrument of a track, as `Add effect` does, with the values of the
+/// mockup.
+fn add_reverb(project: &mut Project, track: &str) -> Result<()> {
+    let id = InstanceId::new(&format!("arrangement/{track}"))?;
+    let track = project
+        .resolve::<TrackState>(&id)
+        .context("the track is not there")?;
+    let mut changes = Changes::new();
+    let slot = arrangement::add_effect(project, &mut changes, &track, "Reverb")?;
+    let sound = ReverbState {
+        decay_seconds: 2.4,
+        size: 0.6,
+        low_cut_hz: 200.0,
+        mix: 0.25,
+        ..ReverbState::default()
+    };
+    changes.create(slot, sound);
+    project.commit("Add Reverb", changes)?;
     Ok(())
 }
 
@@ -964,6 +990,27 @@ fn main() -> Result<()> {
     cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "track-panel-eq-expanded")?;
+    drop(opened);
+
+    // The built-in reverb after the synth, then expanded.
+    let opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        add_reverb(project, "bass")
+    })?;
+    opened.click_track_header(1., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-reverb")?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let card = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
+        let card = card.context("the reverb has no card")?;
+        card.downcast::<ReverbView>()
+            .map_err(|_| anyhow::anyhow!("the second card is not the reverb"))
+    })?;
+    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-reverb-expanded")?;
     drop(opened);
 
     // A track whose instrument is a tool that has no view: the tone.

@@ -24,6 +24,7 @@ mod instruments;
 mod notes;
 mod piece;
 mod recording;
+mod reverb;
 mod shell;
 mod support;
 mod track_panel;

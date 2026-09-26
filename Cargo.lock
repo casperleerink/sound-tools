@@ -5009,6 +5009,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "reverb"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "proptest 1.11.0",
+ "serde",
+ "sound-core",
+ "sound-notes",
+ "sound-ui",
+]
+
+[[package]]
 name = "rgb"
 version = "0.8.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5084,6 +5096,7 @@ dependencies = [
  "metronome",
  "midi",
  "plugin-host",
+ "reverb",
  "serde_json",
  "sound-core",
  "sound-notes",

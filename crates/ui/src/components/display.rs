@@ -1,7 +1,8 @@
 //! Display: the inset at the left of a device card that shows what the device does to the
 //! sound, 118 pt tall, with the line of its numbers or its scale under it on the value line of
 //! row 2. A curve is 1.5 pt over a fill of `alpha/5`, grid lines are `alpha/4` and the 0 dB
-//! line `alpha/8`. Controls such as a segmented control go at its top as children.
+//! line `alpha/8`. Thin marks up from the bottom and a dashed second line are 1 pt of `gray-950`
+//! at 50 %. Controls such as a segmented control go at its top as children.
 //!
 //! The display is not only a picture: its handles drag. A [`Handle`] moves one or two values,
 //! sideways and up and down, each on a [`KnobRange`] across the width or the height of the
@@ -35,6 +36,9 @@ pub const INSET_HEIGHT: f32 = 118.;
 const CAPTION_GAP: f32 = 8.;
 const CAPTION_HEIGHT: f32 = 14.;
 const CURVE_WIDTH: f32 = 1.5;
+/// A mark and a dashed line are thin, under the curve in weight.
+const THIN_WIDTH: f32 = 1.;
+const DASH: f32 = 3.;
 const HANDLE: f32 = 10.;
 /// The dot of a handle with a number in it.
 const NUMBERED_HANDLE: f32 = 16.;
@@ -155,6 +159,10 @@ pub struct Display {
     grid: (Vec<f32>, Vec<f32>),
     /// The 0 dB line, at this place up.
     zero: Option<f32>,
+    /// Thin lines up from the bottom, each at a place across to a height.
+    marks: Vec<Point<f32>>,
+    /// A second line, dashed and not filled, from left to right.
+    dashed: Vec<Point<f32>>,
     handles: Vec<Handle>,
     caption: Option<SharedString>,
     children: Vec<AnyElement>,
@@ -169,6 +177,8 @@ impl Display {
             curve: Vec::new(),
             grid: (Vec::new(), Vec::new()),
             zero: None,
+            marks: Vec::new(),
+            dashed: Vec::new(),
             handles: Vec::new(),
             caption: None,
             children: Vec::new(),
@@ -191,6 +201,20 @@ impl Display {
     /// The 0 dB line, at a place up.
     pub fn zero_line(mut self, up: f32) -> Self {
         self.zero = Some(up);
+        self
+    }
+
+    /// Thin lines up from the bottom, each at `x` across to `y` up, such as the early
+    /// reflections of a reverb.
+    pub fn marks(mut self, marks: impl IntoIterator<Item = Point<f32>>) -> Self {
+        self.marks = marks.into_iter().collect();
+        self
+    }
+
+    /// A second line, dashed and not filled, as points from left to right, such as how the
+    /// highs of a reverb fall.
+    pub fn dashed(mut self, points: impl IntoIterator<Item = Point<f32>>) -> Self {
+        self.dashed = points.into_iter().collect();
         self
     }
 
@@ -220,6 +244,36 @@ struct Ink {
     fill: Hsla,
     grid: Hsla,
     zero: Hsla,
+    thin: Hsla,
+}
+
+/// What the display draws, in places from 0 to 1.
+struct Drawing {
+    curve: Vec<Point<f32>>,
+    grid: (Vec<f32>, Vec<f32>),
+    zero: Option<f32>,
+    marks: Vec<Point<f32>>,
+    dashed: Vec<Point<f32>>,
+}
+
+/// A line through `points`, `width` wide, dashed or not.
+fn stroke(
+    bounds: Bounds<Pixels>,
+    points: &[Point<f32>],
+    width: f32,
+    dash: Option<f32>,
+) -> Option<gpui::Path<Pixels>> {
+    let (first, rest) = points.split_first()?;
+    let mut stroke = PathBuilder::stroke(px(width));
+    if let Some(dash) = dash {
+        stroke = stroke.dash_array(&[px(dash)]);
+    }
+    stroke.move_to(at(bounds, *first));
+    for place in rest {
+        stroke.line_to(at(bounds, *place));
+    }
+    // A path that does not tessellate paints nothing, which is all there is to do about it.
+    stroke.build().ok()
 }
 
 /// A place on the display in points, from `x` and `y` from 0 to 1 with `y` up.
@@ -228,14 +282,14 @@ fn at(bounds: Bounds<Pixels>, place: Point<f32>) -> Point<Pixels> {
     bounds.origin + point(px(place.x * width), px((1. - place.y) * height))
 }
 
-fn paint_display(
-    bounds: Bounds<Pixels>,
-    curve: &[Point<f32>],
-    (across, up): &(Vec<f32>, Vec<f32>),
-    zero: Option<f32>,
-    ink: Ink,
-    window: &mut Window,
-) {
+fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &mut Window) {
+    let Drawing {
+        curve,
+        grid: (across, up),
+        zero,
+        marks,
+        dashed,
+    } = drawing;
     let mask = ContentMask { bounds };
     window.with_content_mask(Some(mask), |window| {
         let line = |window: &mut Window, from: Point<Pixels>, to: Point<Pixels>, color| {
@@ -250,13 +304,22 @@ fn paint_display(
             let left = at(bounds, point(0., *y));
             line(window, left, at(bounds, point(1., *y)), ink.grid);
         }
-        if let Some(y) = zero {
+        if let Some(y) = *zero {
             line(
                 window,
                 at(bounds, point(0., y)),
                 at(bounds, point(1., y)),
                 ink.zero,
             );
+        }
+        for mark in marks {
+            let bottom = at(bounds, point(mark.x, 0.));
+            let top = at(bounds, *mark);
+            let area = Bounds::new(point(top.x, top.y), size(px(THIN_WIDTH), bottom.y - top.y));
+            window.paint_quad(fill(area, ink.thin));
+        }
+        if let Some(path) = stroke(bounds, dashed, THIN_WIDTH, Some(DASH)) {
+            window.paint_path(path, ink.thin);
         }
         let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
             return;
@@ -268,16 +331,10 @@ fn paint_display(
         }
         area.line_to(at(bounds, point(last.x, 0.)));
         area.close();
-        let mut stroke = PathBuilder::stroke(px(CURVE_WIDTH));
-        stroke.move_to(at(bounds, *first));
-        for place in &curve[1..] {
-            stroke.line_to(at(bounds, *place));
-        }
-        // A path that does not tessellate paints nothing, which is all there is to do about it.
         if let Ok(area) = area.build() {
             window.paint_path(area, ink.fill);
         }
-        if let Ok(stroke) = stroke.build() {
+        if let Some(stroke) = stroke(bounds, curve, CURVE_WIDTH, None) {
             window.paint_path(stroke, ink.curve);
         }
     });
@@ -420,13 +477,20 @@ impl RenderOnce for Display {
             fill: theme.alpha_at(0.05),
             grid: theme.alpha_at(0.04),
             zero: theme.alpha_at(0.08),
+            thin: theme.gray_950.opacity(0.5),
         };
         let handle_colors = (theme.gray_950, theme.gray_50);
         let caption_color = theme.gray_800;
-        let (curve, grid, zero) = (self.curve, self.grid, self.zero);
+        let drawing = Drawing {
+            curve: self.curve,
+            grid: self.grid,
+            zero: self.zero,
+            marks: self.marks,
+            dashed: self.dashed,
+        };
         let drawing = canvas(
             |_, _, _| {},
-            move |bounds, (), window, _| paint_display(bounds, &curve, &grid, zero, ink, window),
+            move |bounds, (), window, _| paint_display(bounds, &drawing, ink, window),
         )
         .absolute()
         .top_0()
