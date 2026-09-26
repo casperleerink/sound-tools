@@ -748,8 +748,9 @@ fn main() -> Result<()> {
     })?;
     opened.click_track_header(1., &mut cx)?;
     save(&mut cx, &opened, "track-panel")?;
-    // From the timeline, tab goes to the close control, the waveform and then the cutoff.
-    for _ in 0..3 {
+    // From the timeline, tab goes to the close control, the picker, the waveform and then the
+    // cutoff.
+    for _ in 0..4 {
         opened.key("tab", &mut cx)?;
     }
     save(&mut cx, &opened, "track-panel-focus")?;

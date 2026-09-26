@@ -197,10 +197,10 @@ fn header_icon(
     let theme = cx.theme();
     let (hover, ring) = (theme.alpha_at(0.08), theme.lavender);
     // For tests, which find an icon by the card and its name: `<card>-power`.
-    let selector = format!("{card}-{name}");
+    let card = card.clone();
     div()
         .id(id)
-        .debug_selector(move || selector.clone())
+        .debug_selector(move || format!("{card}-{name}"))
         .flex()
         .flex_none()
         .items_center()
