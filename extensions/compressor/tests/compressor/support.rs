@@ -68,6 +68,18 @@ pub fn step(before: f32, at: usize, after: f32) -> Signal {
     })
 }
 
+/// Silence for `frames`, then another signal from its start.
+pub fn after_silence(frames: usize, mut then: Signal) -> Signal {
+    let mut frame = 0_usize;
+    Box::new(move || {
+        frame += 1;
+        match frame > frames {
+            true => then(),
+            false => [0.0; 2],
+        }
+    })
+}
+
 /// White noise from -amplitude to amplitude, the same every run, other in each channel.
 pub fn noise(amplitude: f32) -> Signal {
     let mut state = 0x2545_f491_4f6c_dd1d_u64;
@@ -126,6 +138,16 @@ impl Rig {
     pub fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
         let mut output = vec![0.0; frames * 2];
         for buffer in output.chunks_mut(480 * 2) {
+            self.engine.process_block(buffer);
+        }
+        let channel = |channel: usize| output.iter().skip(channel).step_by(2).copied().collect();
+        [channel(0), channel(1)]
+    }
+
+    /// The same in device buffers of `block` frames.
+    pub fn render_in_blocks(&mut self, frames: usize, block: usize) -> [Vec<f32>; 2] {
+        let mut output = vec![0.0; frames * 2];
+        for buffer in output.chunks_mut(block * 2) {
             self.engine.process_block(buffer);
         }
         let channel = |channel: usize| output.iter().skip(channel).step_by(2).copied().collect();

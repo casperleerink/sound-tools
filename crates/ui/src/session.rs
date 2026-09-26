@@ -241,24 +241,23 @@ impl Session {
     /// Undo for keys and menus. Ignored while a gesture is open: undo in the middle of a drag
     /// would be overwritten by the next mouse move and leave a step that ends nowhere.
     pub fn undo(&mut self, cx: &mut Context<Self>) {
-        if self.gesture.is_none() {
+        if self.gesture.is_none() && self.edit(cx, Project::undo).flatten().is_some() {
             self.history_moves += 1;
-            self.edit(cx, Project::undo);
         }
     }
 
     /// Redo, ignored while a gesture is open, like [`Self::undo`].
     pub fn redo(&mut self, cx: &mut Context<Self>) {
-        if self.gesture.is_none() {
+        if self.gesture.is_none() && self.edit(cx, Project::redo).flatten().is_some() {
             self.history_moves += 1;
-            self.edit(cx, Project::redo);
         }
     }
 
     /// How many times undo or redo was asked for in this session. A view that keeps the last
     /// value knows that the events it hears now come from one, so it can select what the undo
-    /// brought back: the project events do not say where a change came from. It counts before
-    /// the step applies, so the events of the step already see the new value.
+    /// brought back: the project events do not say where a change came from. It counts only a
+    /// step that applied. Views hear the events of an update when it is over, so the events of
+    /// the step already see the new count.
     pub fn history_moves(&self) -> u64 {
         self.history_moves
     }

@@ -492,6 +492,12 @@ impl Render for ArrangementView {
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
                 let escape =
                     event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
+                // A card of the rack on its way to another place: escape lets go of it, and
+                // the button coming up drops nothing.
+                if escape && cx.stop_active_drag(window) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if escape && view.detail.is_some() {
                     view.close_detail(window, cx);
                     cx.stop_propagation();

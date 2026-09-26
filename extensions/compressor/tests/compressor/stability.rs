@@ -5,7 +5,7 @@
 use compressor::{ATTACK, CompressorState, KNEE, Lookahead, MAKEUP, RATIO, RELEASE, THRESHOLD};
 use proptest::prelude::*;
 
-use crate::support::{Rig, SAMPLE_RATE, Signal, noise, peak, sine};
+use crate::support::{Rig, SAMPLE_RATE, Signal, after_silence, noise, peak, sine};
 
 /// The loudest the compressor makes a full scale input: the makeup gain at its top, +24 dB.
 const BOUND: f32 = 15.9;
@@ -159,6 +159,37 @@ fn renders_are_the_same_every_time_to_the_byte() {
         [first[0].clone(), first[1].clone(), left, right].map(|samples| bytes(&samples))
     };
     assert_eq!(render(), render());
+}
+
+/// The detector counts its stretches of 1 ms from the first frame of sound after a rest, not
+/// from `prepare`: how much silence came before the sound, and in what blocks, changes nothing
+/// of what the sound becomes, to the bit.
+#[test]
+fn the_same_sound_after_any_silence_and_in_any_blocks_is_the_same_to_the_bit() {
+    let state = CompressorState {
+        threshold_db: -30.0,
+        ratio: 6.0,
+        attack_ms: 1.0,
+        release_ms: 60.0,
+        knee_db: 3.0,
+        makeup_db: 4.0,
+        mix: 1.0,
+        lookahead: Lookahead::One,
+    };
+    let sound = SAMPLE_RATE as usize / 2;
+    let render = |silence: usize, block: usize| {
+        let mut rig = Rig::new(state, after_silence(silence, noise(0.8)));
+        let [left, right] = rig.render_in_blocks(silence + sound, block);
+        [left[silence..].to_vec(), right[silence..].to_vec()]
+    };
+    let first = render(64, 480);
+    assert!(first[0].iter().any(|sample| sample.abs() > 0.1));
+    for (silence, block) in [(100, 480), (128, 480), (64, 128), (100, 97), (5_000, 512)] {
+        assert!(
+            render(silence, block) == first,
+            "{silence} frames of silence in blocks of {block}"
+        );
+    }
 }
 
 fn any_state() -> impl Strategy<Value = CompressorState> {

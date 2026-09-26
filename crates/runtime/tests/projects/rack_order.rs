@@ -142,21 +142,10 @@ fn a_reorder_renders_what_a_project_written_in_that_order_renders() {
             after, expected,
             "{format:?}: the reorder plays as the written order"
         );
-        // A bypassed effect is as if it were not there, wherever it is, latency and all. Not to
-        // the bit: with the compressor in the chain the track without the bypassed record
-        // differs by up to 2e-5 (-94 dB), from frame 354 on. Without the compressor the two
-        // were equal to the bit. Why a record with nothing going through it changes that is
-        // not known; it is not the reorder, since the reordered and the written projects are
-        // equal to the bit above. Reported as a gap.
-        let without =
-            project(format, r#"["squeeze", "filter", "late"]"#).play_from_the_start(FRAMES);
-        assert_eq!(after.len(), without.len());
-        let most = after
-            .iter()
-            .zip(&without)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0_f32, f32::max);
-        assert!(most < 1e-4, "{format:?}: {most}");
+        // A bypassed effect is as if it were not there, wherever it is, latency and all.
+        let mut without = project(format, r#"["squeeze", "filter", "late"]"#);
+        assert_eq!(latency(&mut without), CHAIN, "{format:?}");
+        assert_eq!(after, without.play_from_the_start(FRAMES), "{format:?}");
         // The order is audible: the offset of `late` goes through the filter or not.
         assert_ne!(before, after, "{format:?}");
 

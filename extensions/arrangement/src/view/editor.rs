@@ -142,6 +142,12 @@ pub struct NoteEditor {
     /// then, to tell what an undo or a redo brought: it selects that.
     known: Vec<Note>,
     seen_history: u64,
+    /// The events arriving now come from an undo or a redo: the count moved at the first of
+    /// them, and it is cleared when the group is over.
+    history_group: bool,
+    /// What was selected before the last single press, which a double click that draws puts
+    /// back on escape: its first click already let go of the selection.
+    before_click: Selection<Note>,
     drag: Option<NoteDrag>,
     marquee: Option<Marquee>,
     /// What the pointer is over, so the cursor says what a drag from there does.
@@ -176,6 +182,9 @@ impl NoteEditor {
     ) -> Self {
         let focus_handle = cx.focus_handle().tab_stop(true);
         let project_events = cx.subscribe(&session, |editor, _, event, cx| {
+            // Every event, not only those of this clip, sees the count of undo and redo, so an
+            // undo elsewhere is not taken for one of this clip later.
+            editor.note_history(cx);
             let track = editor.clip.id().parent();
             let shown = |id: &InstanceId| id == editor.clip.id() || Some(id) == track.as_ref();
             let changed = match event {
@@ -211,6 +220,8 @@ impl NoteEditor {
             selection: Selection::default(),
             known: Vec::new(),
             seen_history: 0,
+            history_group: false,
+            before_click: Selection::default(),
             drag: None,
             marquee: None,
             hover: Hover::Nothing,
@@ -323,14 +334,12 @@ impl NoteEditor {
     /// selection names notes by value, so without this an undo of a move would leave nothing
     /// selected.
     fn select_what_history_brought(&mut self, cx: &mut Context<Self>) {
-        let session = self.session.read(cx);
-        let history = session.history_moves();
-        let Some(clip) = session.project().state(&self.clip) else {
+        let Some(clip) = self.session.read(cx).project().state(&self.clip) else {
             return;
         };
         let notes = clip.notes.clone();
         let known = std::mem::replace(&mut self.known, notes.clone());
-        if std::mem::replace(&mut self.seen_history, history) == history || self.drag.is_some() {
+        if !self.history_group || self.drag.is_some() {
             return;
         }
         let mut before = known;
@@ -348,6 +357,22 @@ impl NoteEditor {
             let first = brought.first().copied();
             self.set_selection(brought, first, cx);
         }
+    }
+
+    /// Whether the group of events that arrives now comes from an undo or a redo: the count of
+    /// the session moved since the last event. It holds until the group is over.
+    fn note_history(&mut self, cx: &mut Context<Self>) {
+        let history = self.session.read(cx).history_moves();
+        if std::mem::replace(&mut self.seen_history, history) == history {
+            return;
+        }
+        self.history_group = true;
+        let this = cx.weak_entity();
+        cx.defer(move |cx| {
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |editor, _| editor.history_group = false);
+            }
+        });
     }
 
     /// Shows another clip: zoomed to fit it, with the middle of its notes in the middle.
@@ -409,6 +434,9 @@ impl NoteEditor {
     }
 
     fn on_mouse_down(&mut self, event: &MouseDownEvent, x: f32, y: f32, cx: &mut Context<Self>) {
+        if event.click_count < 2 {
+            self.before_click = self.selection.clone();
+        }
         let viewport = self.painted.get();
         let grid = self.grid(cx);
         if y < 0.0 {
@@ -582,7 +610,8 @@ impl NoteEditor {
                 .update(cx, |session, cx| session.cancel_gesture(cx));
             return;
         }
-        let at_press = self.selection.clone();
+        // Escape gives back what was selected before the first click of the double click.
+        let at_press = self.before_click.clone();
         self.select_alone(Some(note), cx);
         self.drag = Some(NoteDrag {
             kind: NoteDragKind::Draw { down: start },
@@ -1059,9 +1088,10 @@ impl NoteEditor {
         }
     }
 
-    /// Cmd-v: the copied notes, at the playhead when it is inside the clip, else at the start
-    /// of the selected notes, else at the start of the clip. One undo step, and the pasted
-    /// notes are selected.
+    /// Cmd-v: the copied notes, at the playhead when it is inside the clip, else right after
+    /// the selected notes, as a duplicate goes, else at the start of the clip. Never on the
+    /// selection itself: a copy and a paste would stack exact copies on the notes. One undo
+    /// step, and the pasted notes are selected.
     fn paste(&mut self, cx: &mut Context<Self>) {
         let copied = match self.clipboard.borrow().as_ref() {
             Some(Copied::Notes(copied)) => copied.clone(),
@@ -1071,13 +1101,11 @@ impl NoteEditor {
             return;
         };
         let playhead = self.session.read(cx).playhead().read(cx).tick;
+        let after_selection = CopiedNotes::new(selected.into_iter().map(|(_, note)| note))
+            .map(|selected| selected.start() + selected.span());
         let at = match (clip.start..clip.end()).contains(&playhead) {
             true => Ticks(playhead.0 - clip.start.0),
-            false => selected
-                .iter()
-                .map(|(_, note)| note.start)
-                .min()
-                .unwrap_or_default(),
+            false => after_selection.unwrap_or_default(),
         };
         let notes = copied.placed(at, clip.length);
         self.add_notes(clip, notes, "Paste note", "Paste notes", cx);

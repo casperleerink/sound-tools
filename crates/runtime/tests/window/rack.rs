@@ -9,7 +9,7 @@ use arrangement::TrackState;
 use gpui::{Pixels, Point, TestAppContext, point, px};
 use plugin_host::{PluginFormat, PluginRecord};
 
-use crate::support::{self, Opened, id, mark, one_undo_step, test_plugin_id, write_outside};
+use crate::support::{self, BAR, Opened, id, mark, one_undo_step, test_plugin_id, write_outside};
 
 const TRACK: &str = "arrangement/track-1";
 const TRACK_FILE: &str = "state/arrangement/track-1/instance.json";
@@ -244,4 +244,37 @@ fn a_reorder_written_from_outside_shows_in_the_rack_at_once(cx: &mut TestAppCont
             slot("space", true)
         ]
     );
+}
+
+#[gpui::test]
+fn escape_or_a_drop_outside_the_rack_moves_nothing(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let label = opened.undo_label();
+    let files = support::files(opened.folder.path());
+    // Escape with the card over another: the drop that follows lands nowhere, and the panel
+    // stays open.
+    let from = grip(&mut opened, "filter");
+    let onto = header(&mut opened, "space");
+    opened.press(from);
+    opened.drag_to(from + point(px(20.), px(0.)));
+    opened.drag_to(onto);
+    opened.keys("escape");
+    opened.release(onto);
+    opened.settle();
+    assert!(opened.track_panel().is_some());
+    // A drop on the timeline, outside the rack.
+    let from = grip(&mut opened, "filter");
+    let timeline = opened.at(2 * BAR, 0);
+    opened.drag(from, timeline);
+    opened.settle();
+    assert_eq!(
+        effects(&mut opened),
+        [
+            slot("filter", false),
+            slot("space", true),
+            slot(PLUGIN, false)
+        ]
+    );
+    assert_eq!(opened.undo_label(), label);
+    assert_eq!(support::files(opened.folder.path()), files);
 }

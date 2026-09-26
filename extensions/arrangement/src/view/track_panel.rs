@@ -654,25 +654,21 @@ impl TrackPanel {
 
     /// Moves an effect to a place among the effects, 0 right after the instrument, as one undo
     /// step named after it. The slot keeps its record and whether it is bypassed.
+    ///
+    /// A slot that is where it would go already, or that the track does not list, which a drop
+    /// from another track's panel would be, is no edit.
     fn move_effect(&mut self, slot: &InstanceId, to: usize, cx: &mut Context<Self>) {
-        let project = self.session.read(cx).project();
-        let listed = project.state(&self.track).is_some_and(|track| {
-            let at = track
-                .effects
-                .iter()
-                .position(|effect| effect.name == slot.name());
-            at.is_some_and(|at| at != to.min(track.effects.len().saturating_sub(1)))
-        });
-        if !listed {
-            return;
-        }
-        self.end_drag(cx);
         let name = device_label(&self.session, slot, Slot::Effect, cx).name;
         let (track, slot) = (self.track.clone(), slot.clone());
+        let project = self.session.read(cx).project();
+        let mut changes = Changes::new();
+        match crate::move_effect(project, &mut changes, &track, &slot, to) {
+            Ok(true) => {}
+            Ok(false) | Err(_) => return,
+        }
+        self.end_drag(cx);
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                crate::move_effect(project, &mut changes, &track, &slot, to)?;
                 project.commit(&format!("Move {name}"), changes)
             });
         });

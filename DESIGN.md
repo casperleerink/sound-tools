@@ -380,7 +380,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Track panel | click the name on a card | Pick another instrument or effect for that card. One undo step |
 | Track panel | Add effect, at the end of the rack | Put an effect at the end of the chain. One undo step |
 | Track panel | the close icon in the header of an effect card | Take that effect off the track. One undo step, and undo brings it back as it sounded |
-| Track panel | drag the header of an effect card onto another card | Move the effect to that place in the chain. On the instrument it goes first, on `Add effect` last. One undo step. It keeps its bypass |
+| Track panel | drag the header of an effect card onto another card | Move the effect to that place in the chain. On the instrument it goes first, on `Add effect` last. One undo step. It keeps its bypass. Escape during the drag lets go |
 | Track panel | cmd-left, cmd-right, in an effect card | Move that effect one place. The instrument stays first |
 | Track panel | Open window, on the card of a plugin | The plugin's own window, above this one, where it was the last time. The same control closes it |
 | Note editor | double click on empty space inside the clip | Add a note of one step of the snap. Keep the second press down and drag to draw its length. It sounds |
@@ -394,7 +394,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Note editor | left, right | Move the selected notes by a step of the snap |
 | Note editor | up, down, with shift | Move them by a semitone, by an octave |
 | Note editor | cmd-c, cmd-x | Copy, cut the selected notes. The clipboard is the one of the timeline: a copy of notes replaces copied clips |
-| Note editor | cmd-v | Paste at the playhead when it is in the clip, else at the first selected note, else at the start of the clip. A note that would start past the clip end is left out |
+| Note editor | cmd-v | Paste at the playhead when it is in the clip, else right after the selected notes, else at the start of the clip. A note that would start past the clip end is left out |
 | Note editor | cmd-d | A copy of the selected notes right after them |
 | Note editor | drag a bar of the velocity lane up or down | Change the velocity of its note, and of every selected note with it |
 | Note editor | drag across the velocity lane from off a bar | Draw: every bar it passes gets the height of the pointer there. One undo step |

@@ -260,6 +260,9 @@ impl Compressor {
         (self.from_frames, self.to_frames) = (lookahead, lookahead);
         self.aim(self.state);
         self.snap();
+        // At rest: nothing has come in, so the first sound restarts the detector and its
+        // stretches begin with it, whatever ran before.
+        self.quiet = self.delay.len() + self.detector.window_frames();
     }
 
     /// Sets every target from a record.
@@ -369,7 +372,14 @@ impl Processor for Compressor {
             .zip(right_out.iter_mut());
         for (((left_in, right_in), left_out), right_out) in frames {
             let input = [held(*left_in), held(*right_in)];
-            self.quiet = match input == [0.0; CHANNELS] {
+            let silent = input == [0.0; CHANNELS];
+            // The first sound after a rest starts a new stretch of the detector. So where the
+            // stretches of 1 ms begin depends only on when the sound came, not on how many
+            // frames ran since `prepare` or on the blocks around it.
+            if !silent && self.is_resting() {
+                self.detector.restart();
+            }
+            self.quiet = match silent {
                 true => self.quiet.saturating_add(1),
                 false => 0,
             };

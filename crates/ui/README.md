@@ -17,7 +17,7 @@ What the session tells its observers:
 
 - It emits every `ProjectEvent` (`Created`, `Changed`, `Deleted`, `ProjectFileChanged`, `ProblemsChanged`). Interface edits, file edits by an agent, undo and redo all arrive this way. Subscribe and refresh only for the ids you show.
 - It notifies once per group of events, after every `edit` and when the notice changes. Observe it when you refresh on anything, as a menu with undo labels does.
-- `history_moves()` counts undo and redo. The events do not say where a change came from, so a view that keeps the last count knows that what it hears now comes from an undo or a redo, and can select what it brought back, as the note editor does.
+- `history_moves()` counts the undo and redo steps that applied; one with nothing to undo does not count. Read it on every event, not only on those of what the view shows, or an undo elsewhere looks like one of yours later. The events do not say where a change came from, so a view that keeps the last count knows that what it hears now comes from an undo or a redo, and can select what it brought back, as the note editor does.
 
 ## Write a view
 

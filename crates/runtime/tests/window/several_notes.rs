@@ -221,7 +221,7 @@ fn a_paste_goes_to_the_playhead_in_the_clip_or_to_the_selected_notes(cx: &mut Te
     assert_eq!(selected, pasted);
     one_undo_step(&mut opened, "Paste notes", &before);
 
-    // The playhead outside the clip: the paste goes to the start of the selected notes.
+    // The playhead outside the clip: the paste goes right after the selected notes.
     opened.keys("cmd-z");
     let outside = opened.ruler(0);
     opened.click(outside);
@@ -231,15 +231,15 @@ fn a_paste_goes_to_the_playhead_in_the_clip_or_to_the_selected_notes(cx: &mut Te
     opened.click(third);
     opened.keys("cmd-v");
     let now = notes(&mut opened, PART);
-    assert!(now.contains(&note(BAR + 960, 480, 60)), "{now:?}");
-    assert!(now.contains(&note(BAR + 1920, 480, 64)), "{now:?}");
+    assert!(now.contains(&note(BAR + 1440, 480, 60)), "{now:?}");
+    assert!(now.contains(&note(BAR + 2400, 480, 64)), "{now:?}");
     // A note that would start past the end of the clip is left out.
     opened.keys("cmd-z");
     let end = opened.in_editor(3 * BAR - 480 + 100, 67);
     opened.double_click(end);
     opened.keys("cmd-v");
     let now = notes(&mut opened, PART);
-    assert!(now.contains(&note(2 * BAR - 480, 480, 60)), "{now:?}");
+    assert!(now.contains(&note(2 * BAR - 240, 480, 60)), "{now:?}");
     assert_eq!(now.len(), 5);
     assert_eq!(opened.undo_label().as_deref(), Some("Paste note"));
 }
@@ -354,4 +354,72 @@ fn with_snap_off_a_double_click_adds_a_sixteenth(cx: &mut TestAppContext) {
     let added = added.iter().find(|note| note.pitch.number() == 70).unwrap();
     assert_eq!(added.length.ticks(), Ticks(STEP));
     assert_eq!(opened.undo_label().as_deref(), Some("Draw note"));
+}
+
+#[gpui::test]
+fn a_copy_and_a_paste_with_the_playhead_outside_never_stack_notes(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    assert_eq!(opened.playhead().tick, Ticks(0));
+    opened.keys("cmd-a cmd-c cmd-v");
+    let now = notes(&mut opened, PART);
+    assert_eq!(now.len(), 5, "{now:?}");
+    for (index, note) in now.iter().enumerate() {
+        assert!(!now[index + 1..].contains(note), "{note:?} twice: {now:?}");
+    }
+    // They went right after the copied ones, which span a bar and 480 ticks from 960; the
+    // copy of the last would start past the clip end.
+    assert!(now.contains(&note(BAR + 1440, 480, 60)), "{now:?}");
+    assert!(now.contains(&note(BAR + 2400, 480, 64)), "{now:?}");
+}
+
+#[gpui::test]
+fn an_undo_elsewhere_is_not_taken_for_one_of_this_clip(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let first = on(&mut opened, 960, 60);
+    opened.click(first);
+    let outside = |opened: &mut Opened<'_>, pitch: u8| {
+        write_outside(
+            opened,
+            &format!("state/{PART}.json"),
+            &format!(
+                r#"{{"tool": "arrangement.clip", "state": {{"start": 3840, "length": 7680, "notes": [
+                    {{"start": 960, "length": 480, "pitch": 60, "velocity": 100}},
+                    {{"start": 2880, "length": 480, "pitch": {pitch}, "velocity": 100}}]}}}}"#
+            ),
+        )
+    };
+    // Undo with nothing to undo is no undo.
+    opened.keys("cmd-z");
+    outside(&mut opened, 70);
+    assert_eq!(opened.selected_notes(), [0]);
+    // An undo of an edit on the other track, then notes written into this clip from outside.
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.set(
+            &project.resolve::<Clip>(&id(OTHER)).unwrap(),
+            clip(4 * BAR, 2 * BAR, vec![]),
+        );
+        project.commit("Resize clip", changes)
+    });
+    opened.keys("cmd-z");
+    assert_eq!(opened.clip(OTHER), Some(other()));
+    outside(&mut opened, 72);
+    assert_eq!(opened.selected_notes(), [0]);
+}
+
+#[gpui::test]
+fn escape_during_a_double_click_draw_gives_back_the_selection_of_before(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let first = on(&mut opened, 960, 60);
+    opened.click(first);
+    let files = support::files(opened.folder.path());
+    let (from, to) = (on(&mut opened, 2400, 70), on(&mut opened, 3000, 70));
+    opened.double_press(from);
+    opened.drag_to(to);
+    assert_eq!(notes(&mut opened, PART).len(), 4);
+    opened.keys("escape");
+    opened.release(to);
+    assert_eq!(notes(&mut opened, PART), part().notes);
+    assert_eq!(opened.selected_notes(), [0]);
+    assert_eq!(support::files(opened.folder.path()), files);
 }
