@@ -187,8 +187,16 @@ So:
   have no window to keep answering and wait for it the first time a record needs a plugin.
 - There is a cache, and it belongs to the machine and not to any project:
   `~/Library/Caches/sound-tools/plugins.json`, or `SOUND_TOOLS_PLUGIN_CACHE`. A bundle is
-  remembered by the modified time and size of the binary inside it, so a plugin that was
-  installed or updated is looked at again and nothing else is. A bundle that crashed or hung is
+  remembered by a stamp: the latest status change time (`ctime`) of its binary folder, of
+  every file directly in it and of its `Info.plist`, and the architecture of the host. The
+  system sets that time on every write, rename or replace and nothing sets it back, so a
+  plugin that was installed, updated or replaced is looked at again, even one whose installer
+  kept the binary's modified time and size, and nothing else is. No file has to be picked as
+  the executable.
+- The cache is written to a file of its own and renamed into place, so two runtimes that
+  finish a scan at once never leave half a file: the last one wins, and both are right. A scan
+  that found what was remembered writes nothing. A cache with no file, which every test has,
+  keeps the last scan in memory instead. A bundle that crashed or hung is
   remembered as such and is not tried again on every start. `runtime --plugins` looks at
   everything again and writes the result, which is how one that was fixed comes back.
 - A record whose plugin the scan has not found yet is reported as such, the track is silent, and
@@ -201,7 +209,18 @@ So:
 - The picker shows what is known and says "Still looking for the plugins of this Mac…" while a
   scan runs.
 
-A plugin installed while the app runs is not found until the next start.
+### A plugin installed while the app runs
+
+The window's host looks at the plugin folders again, on a thread of its own, when a picker asks
+what there is (`Plugins::instruments`, `Plugins::effects`), which is when a track panel opens,
+and at a poll every two seconds while a record names a plugin this machine did not have. With
+the cache, a look at folders that did not change costs a few milliseconds and starts no child.
+What the host knows and `Plugins::scan_generation` move only when the plugins or the failures
+do, so a picker that is filled again because of a look does not make the host look again for
+ever. A record that waited for the plugin is run again once it is found, like one that waited
+for the first scan. Only the window looks again: `--render`, `--inspect`, `--headless` and
+`--plugins` scan once. A picker that is open while the plugin is installed shows it after the
+track panel is opened again.
 
 `runtime --plugins` prints every plugin of this machine with its format, its id and how long
 the scan took. It is how a composer or an agent finds the id a record needs.
@@ -429,13 +448,12 @@ agreement to host or to write plugins.
 AU, a plugin sandbox, parameter automation, a parameter view,
 presets and program lists, MIDI out of a plugin, more than the first event input and the first
 stereo output, the transport a plugin can read (`ProcessContext` is null, so a plugin that syncs
-to the tempo runs free), answering `kParamValuesChanged` by reading every parameter of the
-controller back into the processor, a plugin window that follows a drag of its edge (VST 3 says how, with
+to the tempo runs free), a plugin window that follows a drag of its edge (VST 3 says how, with
 `canResize` and `checkSizeConstraint`, and CLAP does too; neither is wired to a GPUI resize),
 key events passed to a view (`IPlugView::onKeyDown`; a plugin's own `NSView` is in the responder
 chain of our window, so typing in it works through AppKit), remembering where a window sat or
-whether it was open, a floating window for a plugin that only floats, keeping a plugin's window
-above the main one, and finding a plugin installed while the app runs.
+whether it was open, a floating window for a plugin that only floats, and keeping a plugin's
+window above the main one.
 
 Two records may name one `state_asset` and then share it. Nothing refuses either: the project
 runs only the behaviour of the record that was edited, so a complaint about another record
@@ -443,14 +461,31 @@ could never be taken back when that other record went. Two records for *differen
 report themselves anyway, because the second cannot read the first one's state.
 
 A plugin whose latency changes is started again: CLAP's `request_restart` and VST 3's
-`kLatencyChanged`. The host asks the engine for the plugin's audio side back, deactivates and
-activates the same plugin on the main thread, reads its latency (`clap_plugin_latency.get`,
-`getLatencySamples`) and hands the audio side back. The plugin keeps its state and its window;
-in between its slot is empty, so an instrument is silent and an effect lets the sound through,
-for about two buffers. The engine compensates the latency the plugin reports, see
-ARCHITECTURE.md, "Latency compensation". The other VST 3 flags that ask for a restart,
-`kReloadComponent`, `kIoChanged` and `kPrefetchableSupportChanged`, are told to the composer
-and not done. ARCHITECTURE.md has the table of every flag.
+`kLatencyChanged`, and a VST 3 plugin whose buses change, `kIoChanged`. The host asks the
+engine for the plugin's audio side back, deactivates the same plugin on the main thread, asks
+for its buses and reads them again, activates it, reads its latency
+(`clap_plugin_latency.get`, `getLatencySamples`) and hands a new audio side back. The plugin
+keeps its state and its window; in between its slot is empty, so an instrument is silent and an
+effect lets the sound through, for about two buffers. The engine compensates the latency the
+plugin reports, see ARCHITECTURE.md, "Latency compensation". What the composer changed in the
+plugin's window on the way to the audio side that went is given back by it as it is dropped,
+and reaches the next one.
+
+The other VST 3 flags, each acted on in `Vst3Plugin::poll`:
+
+- `kReloadComponent`: the record is given to whoever polls to be run again
+  (`Plugins::take_retries`), which saves the plugin on its way out and loads a new one from
+  that state, the same path as a record that changed.
+- `kParamValuesChanged`: the host keeps the value of every parameter that is not read-only as
+  it last gave it to the processor or heard it from there, and sends the processor every value
+  the controller now shows differently, like an edit. After a state is read, which is when real
+  plugins send it, nothing differs and nothing is sent.
+- `kMidiCCAssignmentChanged`: the pedal's parameter is looked up again and handed to the audio
+  side through an atomic.
+- Nothing for the rest, and ARCHITECTURE.md has the table of every flag with the reason.
+  `tests/plugin_host/restarts.rs` makes the repository's VST 3 plugin send each flag the host
+  acts on, with a note on a key it does not play (`test_plugin_support::PRESET_KEY` and the two
+  after it).
 
 A plugin is an instrument when it says so: the CLAP feature `instrument`, or the VST 3
 subcategory `Instrument`, and an effect by `audio-effect` or `Fx`. Nothing checks whether
