@@ -84,6 +84,8 @@ pub struct Vst3Processor {
     processing: bool,
     /// What every block says it is. The same mode the plugin was set up with.
     mode: int32,
+    /// What the plugin said its latency was when it was activated.
+    latency: u32,
 }
 
 // SAFETY: everything a `Vst3Processor` holds is reached from one thread at a time. The engine
@@ -102,6 +104,7 @@ impl Vst3Processor {
         reports: rtrb::Producer<ParameterChange>,
         edits: rtrb::Consumer<ParameterChange>,
         mode: int32,
+        latency: u32,
     ) -> Self {
         let events = ComWrapper::new(HostEventList::new());
         let input_changes = ComWrapper::new(HostParameterChanges::new());
@@ -132,6 +135,7 @@ impl Vst3Processor {
             edits,
             processing: false,
             mode,
+            latency,
         }
     }
 }
@@ -147,6 +151,10 @@ impl Drop for Vst3Processor {
 impl Started for Vst3Processor {
     fn takes_pedal(&self) -> bool {
         self.pedal_parameter.is_some()
+    }
+
+    fn latency(&self) -> u32 {
+        self.latency
     }
 
     fn begin_block(&mut self) {

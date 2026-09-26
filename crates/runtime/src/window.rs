@@ -385,7 +385,7 @@ pub fn run(folder: &Path) -> Result<()> {
                             break;
                         };
                         let problems =
-                            session.read_with(cx, |session, _| plugins.poll(session.project()));
+                            session.update(cx, |session, _| plugins.poll(session.project_mut()));
                         for problem in problems {
                             session.update(cx, |session, cx| session.report(problem, cx));
                         }

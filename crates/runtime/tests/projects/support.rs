@@ -241,10 +241,16 @@ pub fn test_plugin_of(format: PluginFormat, state_asset: &str) -> String {
 /// because VST 3 keeps two states: `SVT3`, the component's state with its length, then the
 /// controller's.
 pub fn plugin_state(format: PluginFormat, offset: i32) -> Vec<u8> {
-    let own = test_plugin_support::save_state(test_plugin_support::SavedState {
+    let state = test_plugin_support::SavedState {
         offset,
         ..Default::default()
-    });
+    };
+    plugin_state_of(format, state)
+}
+
+/// A state asset of the test plugin that holds `state`, in the form of each format.
+pub fn plugin_state_of(format: PluginFormat, state: test_plugin_support::SavedState) -> Vec<u8> {
+    let own = test_plugin_support::save_state(state);
     match format {
         PluginFormat::Clap => own,
         PluginFormat::Vst3 => {

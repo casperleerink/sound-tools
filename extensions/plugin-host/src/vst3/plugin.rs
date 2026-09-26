@@ -37,6 +37,7 @@ use super::stream::{MemoryStream, as_stream};
 use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
+use crate::processor::Started;
 use crate::scan::ScannedPlugin;
 use crate::{PluginProblem, processor::not_ours};
 
@@ -183,6 +184,8 @@ pub fn load(
         if result != kResultOk && result != kResultTrue {
             return Err(refused(&plugin_id, "setActive", result));
         }
+        // After `setActive`, which is when a plugin's latency is settled.
+        let latency = not_ours(|| processor.getLatencySamples());
 
         let pedal_parameter = pedal_parameter(controller.as_ref());
         // The window side, made here so that nothing but a load ever asks the plugin for a
@@ -194,7 +197,7 @@ pub fn load(
         // the processor. Both rings are made here, so nothing allocates once a block runs.
         let (edited, edits) = rtrb::RingBuffer::new(EDIT_CAPACITY);
         let started = Vst3Processor::new(
-            processor,
+            processor.clone(),
             live.clone(),
             &inputs,
             &outputs,
@@ -202,6 +205,7 @@ pub fn load(
             reports,
             edits,
             mode,
+            latency,
         );
         // The pedal is only missing from a plugin that has somewhere to take notes. A plugin
         // with no event input bus, which is what an ordinary effect is, has no pedal to miss,
@@ -219,6 +223,7 @@ pub fn load(
         Opening {
             started: Box::new(started),
             plugin: Box::new(Vst3Plugin {
+                plugin_id: plugin_id.clone(),
                 _module: module,
                 gui,
                 joined,
@@ -226,6 +231,11 @@ pub fn load(
                 changed,
                 edited,
                 live,
+                processor,
+                inputs,
+                outputs,
+                pedal_parameter,
+                mode,
             }),
             notes,
         }
@@ -294,6 +304,7 @@ impl Drop for Joined {
 
 /// One loaded VST 3 plugin, from the control thread.
 pub struct Vst3Plugin {
+    plugin_id: String,
     /// The bundle this plugin came out of. Nothing unloads one, but a plugin owning its module
     /// says so rather than leaving it to a table somewhere else.
     _module: Rc<Module>,
@@ -310,6 +321,13 @@ pub struct Vst3Plugin {
     /// The audio side holds a second one of these. While it does, this plugin may not be
     /// deactivated: the two ends would be in different hands.
     live: Arc<()>,
+    /// What a new audio side is made of when the plugin is started again: the plugin's
+    /// processor interface, its buses, the parameter the pedal goes to and the process mode.
+    processor: ComPtr<IAudioProcessor>,
+    inputs: Vec<usize>,
+    outputs: Vec<usize>,
+    pedal_parameter: Option<ParamID>,
+    mode: int32,
 }
 
 impl LoadedPlugin for Vst3Plugin {
@@ -337,7 +355,8 @@ impl LoadedPlugin for Vst3Plugin {
             }
         }
         Requests {
-            restart: self.joined.handler.take_restart_requested(),
+            restart: self.joined.handler.take_latency_changed(),
+            restart_not_done: self.joined.handler.take_restart_requested(),
             state_is_dirty: self.joined.handler.take_state_is_dirty(),
             midi_mapping_changed: self.joined.handler.take_midi_mapping_changed(),
             // VST 3 has no way for a plugin to close the window it is in: the host owns that
@@ -394,6 +413,49 @@ impl LoadedPlugin for Vst3Plugin {
         }
         self.joined.let_go();
         true
+    }
+
+    /// `kLatencyChanged`: "The host has to deactivate and reactivate the plug-in, then
+    /// afterwards the host could ask for the current latency." The buses and the setup stay
+    /// as they were, so a new audio side is made from what the load found.
+    fn restart(
+        &mut self,
+        _config: PrepareConfig,
+    ) -> Option<Result<Box<dyn Started>, PluginProblem>> {
+        Arc::get_mut(&mut self.live)?;
+        let did_not_restart = |call: &str, result: int32| PluginProblem::DidNotRestart {
+            plugin_id: self.plugin_id.clone(),
+            message: format!("the plugin answered {result} to {call}"),
+        };
+        // SAFETY: the component came from the plugin and is alive, and nothing processes: the
+        // engine gave the audio side back, which stopped it on the audio thread.
+        let result = unsafe {
+            not_ours(|| self.joined.component.setActive(0));
+            not_ours(|| self.joined.component.setActive(1))
+        };
+        if result != kResultOk && result != kResultTrue {
+            return Some(Err(did_not_restart("setActive", result)));
+        }
+        // SAFETY: as above.
+        let latency = unsafe { not_ours(|| self.processor.getLatencySamples()) };
+        // New rings: their other ends went with the audio side that came back. A parameter
+        // the plugin moved in the moment it was away is saved with its state anyway.
+        let (reports, changed) = rtrb::RingBuffer::new(REPORT_CAPACITY);
+        let (edited, edits) = rtrb::RingBuffer::new(EDIT_CAPACITY);
+        self.changed = changed;
+        self.edited = edited;
+        let started = Vst3Processor::new(
+            self.processor.clone(),
+            self.live.clone(),
+            &self.inputs,
+            &self.outputs,
+            self.pedal_parameter,
+            reports,
+            edits,
+            self.mode,
+            latency,
+        );
+        Some(Ok(Box::new(started)))
     }
 }
 

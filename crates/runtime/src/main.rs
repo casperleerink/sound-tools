@@ -153,7 +153,7 @@ fn run(folder: &Path) -> Result<()> {
         if let Err(error) = project.poll() {
             println!("error: {error}");
         }
-        for problem in plugins.poll(&project) {
+        for problem in plugins.poll(&mut project) {
             println!("error: {problem}");
         }
         print_events(&mut project);
@@ -220,23 +220,20 @@ fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
             sample_format: hound::SampleFormat::Float,
         },
     )?;
-    let mut buffer = [0.0_f32; 512 * OFFLINE.channels];
-    let mut frames_left = (seconds * f64::from(OFFLINE.sample_rate)) as usize;
+    let frames = (seconds * f64::from(OFFLINE.sample_rate)) as usize;
     let mut peak = 0.0_f32;
-    while frames_left > 0 {
-        let frames = frames_left.min(buffer.len() / OFFLINE.channels);
-        let output = &mut buffer[..frames * OFFLINE.channels];
-        // The plugin host is polled for every buffer, as the live loop does: a render answers a
-        // plugin's main-thread requests or it renders what a plugin that is waiting for one
-        // sounds like, which can be nothing at all.
-        for problem in runtime::render_block(&mut project, &mut engine, &plugins, output)? {
-            println!("error: {problem}");
-        }
-        for sample in output.iter() {
+    // The plugin host is polled for every buffer, as the live loop does: a render answers a
+    // plugin's main-thread requests or it renders what a plugin that is waiting for one sounds
+    // like, which can be nothing at all.
+    let problems = runtime::render_into(&mut project, &mut engine, &plugins, frames, |samples| {
+        for sample in samples {
             peak = peak.max(sample.abs());
             writer.write_sample(*sample)?;
         }
-        frames_left -= frames;
+        Ok(())
+    })?;
+    for problem in problems {
+        println!("error: {problem}");
     }
     writer.finalize()?;
     println!("rendered {seconds} s to {}, peak {peak:.4}", wav.display());

@@ -119,7 +119,7 @@ fn a_record_waiting_for_the_scan_is_reported_and_plays_when_the_plugin_turns_up(
     let scan = harness.plugins.scan();
     let vst3 = PluginFormat::Vst3;
     assert!(scan.find(vst3, plugin_id(vst3)).is_some(), "{scan:?}");
-    harness.plugins.poll(&harness.project);
+    harness.plugins.poll(&mut harness.project);
     let retries = harness.plugins.take_retries();
     assert_eq!(retries, vec![id("track/instrument")], "{retries:?}");
     for instance in &retries {

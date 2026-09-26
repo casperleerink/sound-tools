@@ -261,7 +261,7 @@ impl Opened<'_> {
         let session = self.session.clone();
         let scanned = std::mem::replace(&mut self.scanned, plugins.scan_generation());
         let changed = self.cx.update(|_, cx| {
-            plugins.poll(session.read(cx).project());
+            session.update(cx, |session, _| plugins.poll(session.project_mut()));
             plugins.settle_windows(cx);
             plugins.take_window_change()
         });

@@ -74,7 +74,7 @@ pub enum Played {
 }
 
 impl Played {
-    fn frame(self) -> u64 {
+    pub fn frame(self) -> u64 {
         match self {
             Self::On { frame, .. }
             | Self::Off { frame, .. }
@@ -733,7 +733,7 @@ impl Harness {
         for buffer in output.chunks_mut(512 * 2) {
             self.engine.process_block(buffer);
             self.project.engine().poll().expect("the engine polls");
-            self.plugins.poll(&self.project);
+            self.plugins.poll(&mut self.project);
         }
         Render { output }
     }

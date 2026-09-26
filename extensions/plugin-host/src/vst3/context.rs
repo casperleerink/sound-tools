@@ -310,6 +310,9 @@ impl IAttributeListTrait for HostAttributes {
 pub struct Handler {
     state_is_dirty: AtomicBool,
     restart_requested: AtomicBool,
+    /// The plugin's latency changed, so the host deactivates it, activates it again and reads
+    /// the new latency, which is what `kLatencyChanged` asks.
+    latency_changed: AtomicBool,
     /// The plugin moved its MIDI controller mapping, which is where the sustain pedal goes.
     midi_mapping_changed: AtomicBool,
     /// How many edits are open (`beginEdit` without `endEdit`). Only for the log of the test
@@ -340,6 +343,11 @@ impl Handler {
 
     pub fn take_restart_requested(&self) -> bool {
         self.restart_requested.swap(false, Ordering::AcqRel)
+    }
+
+    /// Whether the plugin said its latency changed since the last call.
+    pub fn take_latency_changed(&self) -> bool {
+        self.latency_changed.swap(false, Ordering::AcqRel)
     }
 
     /// Whether the plugin has moved its MIDI controller mapping since the last call.
@@ -373,17 +381,17 @@ impl Handler {
 /// - `kReloadComponent`: "The host has to unload completely the plug-in ... and reload it."
 /// - `kIoChanged`: "The host has to deactivate the plug-in, asks the plug-in for its wanted
 ///   new bus configurations, adapts its processing graph and reactivate the plug-in."
-/// - `kLatencyChanged`: "The host has to deactivate and reactivate the plug-in, then
-///   afterwards the host could ask for the current latency." True whether or not a host
-///   compensates latency, which this one does not.
 /// - `kPrefetchableSupportChanged`: "The host has to deactivate the plug-in, calls
 ///   `IPrefetchableSupport::getPrefetchableSupport` and reactivate the plug-in."
+///
+/// `kLatencyChanged` asks the same, "The host has to deactivate and reactivate the plug-in,
+/// then afterwards the host could ask for the current latency", and this build does it: it is
+/// how a plugin's latency changes, and the engine compensates latency.
 ///
 /// Every other flag is in [`Handler::restartComponent`]. ARCHITECTURE.md holds the whole list
 /// with what this build does about each.
 const NEEDS_RESTART: int32 = RestartFlags_::kReloadComponent as int32
     | RestartFlags_::kIoChanged as int32
-    | RestartFlags_::kLatencyChanged as int32
     | RestartFlags_::kPrefetchableSupportChanged as int32;
 
 impl IComponentHandlerTrait for Handler {
@@ -412,9 +420,11 @@ impl IComponentHandlerTrait for Handler {
     /// treats each class the same way. ARCHITECTURE.md holds the table.
     ///
     /// - **Needs a restart this build does not do**, [`NEEDS_RESTART`]: the composer is told.
-    /// - **Handled**: `kParamValuesChanged` means the values the host holds are stale, so the
-    ///   state is written again; `kMidiCCAssignmentChanged` means the pedal may now reach
-    ///   another parameter than the one this host found when the plugin loaded.
+    /// - **Handled**: `kLatencyChanged` means the plugin is to be deactivated and activated
+    ///   again, and its latency read again, which the host does; `kParamValuesChanged` means the
+    ///   values the host holds are stale, so the state is written again;
+    ///   `kMidiCCAssignmentChanged` means the pedal may now reach another parameter than the one
+    ///   this host found when the plugin loaded.
     /// - **Nothing to say**: `kParamTitlesChanged`, `kNoteExpressionChanged`,
     ///   `kIoTitlesChanged`, `kRoutingInfoChanged`, `kKeyswitchChanged` and
     ///   `kParamIDMappingChanged` are each about a cache a host with a parameter view, a note
@@ -429,6 +439,9 @@ impl IComponentHandlerTrait for Handler {
         }
         if flags & RestartFlags_::kMidiCCAssignmentChanged as int32 != 0 {
             self.midi_mapping_changed.store(true, Ordering::Release);
+        }
+        if flags & RestartFlags_::kLatencyChanged as int32 != 0 {
+            self.latency_changed.store(true, Ordering::Release);
         }
         if flags & NEEDS_RESTART != 0 {
             self.restart_requested.store(true, Ordering::Release);
@@ -554,31 +567,69 @@ mod tests {
     #[test]
     fn every_restart_flag_falls_in_the_class_the_header_gives_it() {
         // The flag, whether it needs a restart this build does not do, whether it marks the
-        // state to be saved, and whether it moves the sustain pedal's mapping.
-        let flags: [(RestartFlags, bool, bool, bool); 12] = [
+        // state to be saved, whether it moves the sustain pedal's mapping, and whether it is a
+        // latency change, which the host restarts the plugin for.
+        let flags: [(RestartFlags, bool, bool, bool, bool); 12] = [
             // Needs a deactivate and an activate again, which this build does not do.
-            (RestartFlags_::kReloadComponent, true, false, false),
-            (RestartFlags_::kIoChanged, true, false, false),
-            (RestartFlags_::kLatencyChanged, true, false, false),
+            (RestartFlags_::kReloadComponent, true, false, false, false),
+            (RestartFlags_::kIoChanged, true, false, false, false),
             (
                 RestartFlags_::kPrefetchableSupportChanged,
                 true,
                 false,
                 false,
+                false,
             ),
             // Handled.
-            (RestartFlags_::kParamValuesChanged, false, true, false),
-            (RestartFlags_::kMidiCCAssignmentChanged, false, false, true),
+            (RestartFlags_::kLatencyChanged, false, false, false, true),
+            (
+                RestartFlags_::kParamValuesChanged,
+                false,
+                true,
+                false,
+                false,
+            ),
+            (
+                RestartFlags_::kMidiCCAssignmentChanged,
+                false,
+                false,
+                true,
+                false,
+            ),
             // Nothing for a host without those caches to do or to say.
-            (RestartFlags_::kParamTitlesChanged, false, false, false),
-            (RestartFlags_::kNoteExpressionChanged, false, false, false),
-            (RestartFlags_::kIoTitlesChanged, false, false, false),
-            (RestartFlags_::kRoutingInfoChanged, false, false, false),
-            (RestartFlags_::kKeyswitchChanged, false, false, false),
-            (RestartFlags_::kParamIDMappingChanged, false, false, false),
+            (
+                RestartFlags_::kParamTitlesChanged,
+                false,
+                false,
+                false,
+                false,
+            ),
+            (
+                RestartFlags_::kNoteExpressionChanged,
+                false,
+                false,
+                false,
+                false,
+            ),
+            (RestartFlags_::kIoTitlesChanged, false, false, false, false),
+            (
+                RestartFlags_::kRoutingInfoChanged,
+                false,
+                false,
+                false,
+                false,
+            ),
+            (RestartFlags_::kKeyswitchChanged, false, false, false, false),
+            (
+                RestartFlags_::kParamIDMappingChanged,
+                false,
+                false,
+                false,
+                false,
+            ),
         ];
         let mut seen = 0_i32;
-        for (flag, restart, dirty, mapping) in flags {
+        for (flag, restart, dirty, mapping, latency) in flags {
             assert_eq!(seen & flag, 0, "flag {flag} is in the list twice");
             seen |= flag;
             let handler = Handler::default();
@@ -595,6 +646,11 @@ mod tests {
                 mapping,
                 "flag {flag}, midi mapping"
             );
+            assert_eq!(
+                handler.take_latency_changed(),
+                latency,
+                "flag {flag}, latency"
+            );
         }
         // The whole enum, 1 to 1 << 11, and nothing else is in it.
         assert_eq!(seen, (1 << 12) - 1);
@@ -605,11 +661,13 @@ mod tests {
     fn a_combination_is_read_flag_by_flag() {
         let handler = Handler::default();
         let flags = RestartFlags_::kParamTitlesChanged
+            | RestartFlags_::kIoChanged
             | RestartFlags_::kLatencyChanged
             | RestartFlags_::kParamValuesChanged;
         // SAFETY: as above.
         unsafe { handler.restartComponent(flags) };
         assert!(handler.take_restart_requested());
+        assert!(handler.take_latency_changed());
         assert!(handler.take_state_is_dirty());
         assert!(!handler.take_midi_mapping_changed());
     }

@@ -65,7 +65,7 @@ fn a_rejected_group_leaves_it_playing(format: PluginFormat) {
     // The record is the one from before, and so is the sound.
     assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
     assert!(plays(&mut harness), "{format:?}");
-    harness.plugins.poll(&harness.project);
+    harness.plugins.poll(&mut harness.project);
     assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
     assert!(plays(&mut harness), "{format:?}");
 
@@ -105,7 +105,7 @@ fn a_delete_and_an_undo_before_a_poll(format: PluginFormat) {
 
     assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
     assert!(plays(&mut harness), "{format:?}");
-    harness.plugins.poll(&harness.project);
+    harness.plugins.poll(&mut harness.project);
     assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
     assert!(plays(&mut harness), "{format:?}");
 }
@@ -174,7 +174,7 @@ fn a_rejected_group_with_an_effect(format: PluginFormat) {
     assert!(error.to_string().contains("refuses"), "{error}");
 
     assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
-    harness.plugins.poll(&harness.project);
+    harness.plugins.poll(&mut harness.project);
     assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
     // The chain is the one it was: the effect still has the state it had.
     let again = harness.play(4096).samples().to_vec();
@@ -199,7 +199,7 @@ fn a_delete_and_an_undo_with_an_effect(format: PluginFormat) {
     assert!(harness.project.undo().expect("undo").is_some());
 
     assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
-    harness.plugins.poll(&harness.project);
+    harness.plugins.poll(&mut harness.project);
     assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
     let again = harness.play(4096).samples().to_vec();
     assert_eq!(peak(&again), peak(&through), "{format:?}");
@@ -227,10 +227,10 @@ fn undo_and_redo_of_the_record(format: PluginFormat) {
 
     for _ in 0..3 {
         assert!(harness.project.undo().expect("undo").is_some());
-        harness.plugins.poll(&harness.project);
+        harness.plugins.poll(&mut harness.project);
         assert!(plays(&mut harness), "{format:?}");
         assert!(harness.project.redo().expect("redo").is_some());
-        harness.plugins.poll(&harness.project);
+        harness.plugins.poll(&mut harness.project);
         assert!(plays(&mut harness), "{format:?}");
     }
     assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");

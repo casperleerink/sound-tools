@@ -391,17 +391,52 @@ pub fn render_block(
     Ok(plugins.poll(project))
 }
 
-/// Renders `frames` frames in device buffers of 512 frames, interleaved by channel.
+/// Renders `frames` frames in device buffers of 512 frames, interleaved by channel. See
+/// [`render_into`].
 pub fn render(
     project: &mut Project,
     engine: &mut Engine,
     plugins: &Plugins,
     frames: usize,
 ) -> Result<Vec<f32>> {
-    let channels = engine.channels();
-    let mut output = vec![0.0_f32; frames * channels];
-    for buffer in output.chunks_mut(512 * channels) {
-        render_block(project, engine, plugins, buffer)?;
-    }
+    let mut output = Vec::with_capacity(frames * engine.channels());
+    render_into(project, engine, plugins, frames, |samples| {
+        output.extend_from_slice(samples);
+        Ok(())
+    })?;
     Ok(output)
+}
+
+/// Renders `frames` frames in device buffers of 512 frames and gives them to `write`,
+/// interleaved by channel, with whatever the plugin host reported on the way.
+///
+/// What the engine plays while it waits after a play or a seek, for the tracks with latency to
+/// reach the device, is left out and does not count: a render from the start has tick 0 on its
+/// first frame and ends where it would without latency. A project without latency never waits,
+/// so it renders exactly what it did before latency was compensated.
+pub fn render_into(
+    project: &mut Project,
+    engine: &mut Engine,
+    plugins: &Plugins,
+    frames: usize,
+    mut write: impl FnMut(&[f32]) -> Result<()>,
+) -> Result<Vec<plugin_host::PluginProblem>> {
+    let channels = engine.channels();
+    let mut buffer = vec![0.0_f32; 512 * channels];
+    let mut problems = Vec::new();
+    let mut waited = engine.preroll_frames();
+    let mut left = frames;
+    while left > 0 {
+        let size = left.min(512);
+        let output = &mut buffer[..size * channels];
+        problems.extend(render_block(project, engine, plugins, output)?);
+        // The engine plays a wait before anything else of a block, so it is the front of this
+        // buffer.
+        let now = engine.preroll_frames();
+        let skip = usize::try_from(now - waited).unwrap_or(size).min(size);
+        waited = now;
+        write(&output[skip * channels..])?;
+        left -= size - skip;
+    }
+    Ok(problems)
 }

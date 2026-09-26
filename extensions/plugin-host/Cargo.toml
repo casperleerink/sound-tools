@@ -19,6 +19,7 @@ clack-extensions = { workspace = true, features = [
   "clack-host",
   "audio-ports",
   "gui",
+  "latency",
   "note-ports",
   "render",
   "state",
