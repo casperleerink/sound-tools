@@ -71,8 +71,8 @@ fn log_folder() -> tempfile::TempDir {
 }
 
 /// Opens the window of the one plugin of `harness`, through the application.
-fn open_window(harness: &Harness, title: &str, cx: &mut TestAppContext) {
-    cx.update(|cx| harness.plugins.open_window(&id(SLOT), title, cx))
+fn open_window(harness: &Harness, cx: &mut TestAppContext) {
+    cx.update(|cx| harness.plugins.open_window(&id(SLOT), cx))
         .expect("the window opens");
 }
 
@@ -94,6 +94,18 @@ fn window_size(cx: &mut TestAppContext) -> (u32, u32) {
     (
         f32::from(bounds.size.width) as u32,
         f32::from(bounds.size.height) as u32,
+    )
+}
+
+/// Where the one window of the application is.
+fn window_origin(cx: &mut TestAppContext) -> (i32, i32) {
+    let handle = cx.update(|cx| cx.windows().first().copied()).unwrap();
+    let bounds = cx
+        .update(|cx| handle.update(cx, |_, window, _| window.bounds()))
+        .expect("the window is there");
+    (
+        f32::from(bounds.origin.x) as i32,
+        f32::from(bounds.origin.y) as i32,
     )
 }
 
@@ -135,7 +147,7 @@ fn a_window_is_made_once(format: PluginFormat, cx: &mut TestAppContext) {
     assert_eq!(asked, expected, "{format:?}");
 
     let made_before = times(&log, MADE_A_WINDOW);
-    open_window(&harness, "Piano — Night", cx);
+    open_window(&harness, cx);
     assert!(harness.plugins.window_is_open(&slot));
     assert!(harness.plugins.take_window_change());
     assert_eq!(windows(cx), 1);
@@ -144,12 +156,22 @@ fn a_window_is_made_once(format: PluginFormat, cx: &mut TestAppContext) {
     let opening: Vec<String> = window_calls(&log).split_off(asked.len());
     let expected: &[&str] = match format {
         // CLAP: the negotiation right before `create`, which is its order for an embedded
-        // window, and then the plugin is shown.
-        PluginFormat::Clap => &["gui_is_api_supported", "gui_create", "gui_show"],
+        // window, whether the composer may resize it, and then the plugin is shown.
+        PluginFormat::Clap => &[
+            "gui_is_api_supported",
+            "gui_create",
+            "gui_can_resize",
+            "gui_show",
+        ],
         // VST 3: the controller makes a view, the host checks that a Cocoa view of ours suits
-        // it, and the frame goes in before the view can have a parent. There is no separate
-        // show in this format.
-        PluginFormat::Vst3 => &["gui_create", "gui_is_api_supported", "gui_set_frame"],
+        // it, the frame goes in before the view can have a parent, and the host asks whether
+        // the composer may resize it. There is no separate show in this format.
+        PluginFormat::Vst3 => &[
+            "gui_create",
+            "gui_is_api_supported",
+            "gui_set_frame",
+            "gui_can_resize",
+        ],
     };
     assert_eq!(opening, expected, "{format:?}");
     // The window is as big as the plugin said.
@@ -163,7 +185,7 @@ fn a_window_is_made_once(format: PluginFormat, cx: &mut TestAppContext) {
 
     // Opening again brings the one window forward: nothing is made again and there is no
     // second window.
-    open_window(&harness, "Piano — Night", cx);
+    open_window(&harness, cx);
     assert!(harness.plugins.window_is_open(&slot));
     assert_eq!(windows(cx), 1);
     assert_eq!(times(&log, MADE_A_WINDOW) - made_before, 1, "{format:?}");
@@ -184,7 +206,7 @@ fn closing_the_window_leaves_the_plugin(format: PluginFormat, cx: &mut TestAppCo
     let log = folder.path().join("calls.txt");
     let mut harness = open(format, &log);
     let slot = id(SLOT);
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     let made_before = times(&log, MADE_A_WINDOW);
     close_window(&harness, cx);
     assert!(!harness.plugins.window_is_open(&slot));
@@ -205,7 +227,7 @@ fn closing_the_window_leaves_the_plugin(format: PluginFormat, cx: &mut TestAppCo
     assert_eq!(render.first_sound(), Some(0));
 
     // And it can be opened again, which makes it anew.
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     assert!(harness.plugins.window_is_open(&slot));
     assert_eq!(times(&log, MADE_A_WINDOW) - made_before, 1, "{format:?}");
     close_window(&harness, cx);
@@ -231,7 +253,7 @@ fn a_plugin_sizes_its_own_window(format: PluginFormat, cx: &mut TestAppContext) 
     let log = folder.path().join("calls.txt");
     tell_the_plugin_to_ask_for_a_window_size(640, 480);
     let harness = open(format, &log);
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     // Where the window is born differs, because the two formats ask at different moments. A
     // CLAP plugin asks from `show`, which is after the window was made, so the window is still
     // the size the plugin first reported. A VST 3 plugin asks from `setFrame`, which is before
@@ -305,7 +327,7 @@ fn no_window_is_offered(format: PluginFormat, cx: &mut TestAppContext) {
     assert_eq!(harness.plugins.window_offered(&slot), offered_before);
 
     let problem = cx
-        .update(|cx| harness.plugins.open_window(&slot, "Piano", cx))
+        .update(|cx| harness.plugins.open_window(&slot, cx))
         .expect_err("a plugin with no window opens none");
     assert!(
         problem.to_string().contains("no window of its own"),
@@ -355,7 +377,7 @@ fn nested_resize_ends_on(cx: &mut TestAppContext, asked: (u32, u32), from_inside
     tell_the_plugin_to_ask_for_a_window_size(asked.0, asked.1);
     tell_the_plugin_to_ask_again_from_inside_the_answer(from_inside.0, from_inside.1);
     let harness = open(PluginFormat::Vst3, &log);
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     harness.plugins.poll(&harness.project);
     cx.update(|cx| harness.plugins.settle_windows(cx));
 
@@ -392,7 +414,7 @@ fn a_window_the_plugin_closes_itself_is_freed_at_the_next_poll(cx: &mut TestAppC
     tell_the_plugin_to_close_its_window();
     let harness = open(PluginFormat::Clap, &log);
     let slot = id(SLOT);
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     // The plugin asked for a call on the main thread; until the host makes it nothing changed.
     assert!(harness.plugins.window_is_open(&slot));
     harness.plugins.take_window_change();
@@ -412,22 +434,30 @@ fn a_window_the_plugin_closes_itself_is_freed_at_the_next_poll(cx: &mut TestAppC
     assert_eq!(windows(cx), 0);
 }
 
+/// The same plugin loading again in the same record brings its window back, where it was: a
+/// record that names another state file, and a VST 3 plugin that asks to be loaded again
+/// (`kReloadComponent`), which goes the same way, see `restarts.rs`. Another plugin in the
+/// record does not get the window of the one it replaced.
 #[gpui::test]
-fn the_window_goes_when_the_record_names_another_plugin_state(cx: &mut TestAppContext) {
+fn the_same_plugin_loading_again_gets_its_window_back_and_another_one_does_not(
+    cx: &mut TestAppContext,
+) {
     for format in FORMATS {
-        another_record_takes_the_window(format, cx);
+        another_state_brings_the_window_back(format, cx);
     }
 }
 
-fn another_record_takes_the_window(format: PluginFormat, cx: &mut TestAppContext) {
+fn another_state_brings_the_window_back(format: PluginFormat, cx: &mut TestAppContext) {
     let folder = log_folder();
     let log = folder.path().join("calls.txt");
     let mut harness = open(format, &log);
     let slot = id(SLOT);
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
+    let before = window_origin(cx);
     harness.plugins.take_window_change();
 
-    // Another state file is another plugin as far as the host is concerned: it loads again.
+    // Another state file is another plugin load as far as the host is concerned: the window
+    // of the one that goes goes with it.
     let mut changes = Changes::new();
     changes.create(slot.clone(), record(format, "organ"));
     harness.project.commit("Choose organ", changes).unwrap();
@@ -439,8 +469,24 @@ fn another_record_takes_the_window(format: PluginFormat, cx: &mut TestAppContext
         "{calls:?}"
     );
     assert_eq!(harness.problems(), Vec::<String>::new());
+    // It is the same plugin, so the window comes back where it was.
+    cx.update(|cx| harness.plugins.settle_windows(cx));
+    assert_eq!(windows(cx), 1);
+    assert!(harness.plugins.window_is_open(&slot));
+    assert_eq!(window_origin(cx), before);
+
+    // Another plugin in the record: its window stays closed.
+    let other = match format {
+        PluginFormat::Clap => PluginFormat::Vst3,
+        PluginFormat::Vst3 => PluginFormat::Clap,
+    };
+    let mut changes = Changes::new();
+    changes.create(slot.clone(), record(other, "organ"));
+    harness.project.commit("Choose another", changes).unwrap();
+    assert!(!harness.plugins.window_is_open(&slot));
     cx.update(|cx| harness.plugins.settle_windows(cx));
     assert_eq!(windows(cx), 0);
+    assert!(!harness.plugins.window_is_open(&slot));
 }
 
 #[gpui::test]
@@ -455,7 +501,7 @@ fn a_deleted_record_takes_the_window(format: PluginFormat, cx: &mut TestAppConte
     let log = folder.path().join("calls.txt");
     let mut harness = open(format, &log);
     let slot = id(SLOT);
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     harness.plugins.take_window_change();
 
     // Deleted, from the window or from a file: the host lets go of it at the next poll.
@@ -483,7 +529,7 @@ fn a_deleted_record_takes_the_window(format: PluginFormat, cx: &mut TestAppConte
     assert_eq!(harness.problems(), Vec::<String>::new());
 
     // The project closing frees every window that is still open.
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     assert!(harness.plugins.window_is_open(&slot));
     harness.plugins.close(&harness.project);
     assert!(!harness.plugins.window_is_open(&slot));
@@ -507,7 +553,7 @@ fn dropping_the_host_frees_the_view(format: PluginFormat, cx: &mut TestAppContex
     let folder = log_folder();
     let log = folder.path().join("calls.txt");
     let harness = open(format, &log);
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     let before = times(&log, LET_GO_OF_ITS_WINDOW);
 
     // What quitting does: the project goes, and with it the registry, the behaviour and the
@@ -570,7 +616,7 @@ fn window_calls_are_on_the_main_thread(format: PluginFormat, cx: &mut TestAppCon
         harness.plugins.poll(&harness.project);
     };
     play(2, &mut harness);
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     play(2, &mut harness);
     close_window(&harness, cx);
     play(2, &mut harness);
@@ -618,7 +664,7 @@ fn the_view_goes_before_its_parent(format: PluginFormat, cx: &mut TestAppContext
 
     // The way the window's own close control goes: GPUI removes the window, and this host is
     // told while the window is still there.
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     assert_eq!(windows(cx), 1);
     remove_the_window(cx);
     assert_eq!(windows(cx), 0);
@@ -630,7 +676,7 @@ fn the_view_goes_before_its_parent(format: PluginFormat, cx: &mut TestAppContext
     );
 
     // The way the card goes: this host frees the view and then takes the window down.
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     close_window(&harness, cx);
     assert_eq!(windows(cx), 0);
     assert_eq!(
@@ -640,7 +686,7 @@ fn the_view_goes_before_its_parent(format: PluginFormat, cx: &mut TestAppContext
     );
 
     // The way quitting goes: every window of every plugin, before anything is torn down.
-    open_window(&harness, "Piano", cx);
+    open_window(&harness, cx);
     assert_eq!(windows(cx), 1);
     cx.update(|cx| harness.plugins.close_all_windows(cx));
     assert!(!harness.plugins.window_is_open(&slot));

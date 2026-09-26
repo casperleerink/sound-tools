@@ -150,6 +150,24 @@ pub fn wanted_edits() -> Option<u32> {
 pub const WINDOW_WIDTH: u32 = 320;
 pub const WINDOW_HEIGHT: u32 = 240;
 
+/// Makes the plugin's window one the composer may resize by dragging its edge, within
+/// [`constrained_size`]. Without it the window keeps the size the plugin says, as most real
+/// instruments do.
+pub const RESIZABLE_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_RESIZABLE";
+
+/// The smallest and the largest window a resizable test plugin takes.
+pub const SMALLEST_WINDOW: (u32, u32) = (200, 150);
+pub const LARGEST_WINDOW: (u32, u32) = (1200, 900);
+
+/// The size a resizable test plugin makes of a size it is offered: CLAP's `adjust_size` and
+/// VST 3's `checkSizeConstraint`. Each side is kept between the smallest and the largest.
+pub fn constrained_size(width: u32, height: u32) -> (u32, u32) {
+    (
+        width.clamp(SMALLEST_WINDOW.0, LARGEST_WINDOW.0),
+        height.clamp(SMALLEST_WINDOW.1, LARGEST_WINDOW.1),
+    )
+}
+
 /// Makes the plugin say its output is silent and write nothing into it, from its second block
 /// on. VST 3 allows that (`silenceFlags`), and a host that does not clear its own output
 /// buffers would then play the block before over and over. VST 3 only: CLAP has no such flag.

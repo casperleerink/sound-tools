@@ -520,7 +520,7 @@ const STALE_AFTER: Duration = Duration::from_secs(60);
 /// its process and a count, and renames it over the cache, which the system does in one step: a
 /// reader sees one whole file or the other, and the last rename wins. Both are what one scan
 /// found, so either is right.
-fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static WRITES: AtomicU64 = AtomicU64::new(0);
     if let Some(folder) = path.parent() {

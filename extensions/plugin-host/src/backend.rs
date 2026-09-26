@@ -8,6 +8,7 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
+use gpui::Keystroke;
 use sound_core::PrepareConfig;
 
 use crate::PluginProblem;
@@ -92,8 +93,31 @@ pub trait PluginGui {
     /// attached, so its backend answers this with nothing.
     fn show(&mut self) -> Result<(), PluginProblem>;
 
+    /// Whether the composer may resize the window by dragging its edge. Asked once the view is
+    /// made: CLAP's `can_resize`, VST 3's `canResize`.
+    fn can_resize(&mut self) -> bool;
+
+    /// The composer dragged the window to `wanted`. The plugin makes a size it takes of it and
+    /// takes that size, and this gives the size the view is now, for the window to end on.
+    /// CLAP's `adjust_size` and `set_size`, VST 3's `checkSizeConstraint` and `onSize`.
+    fn resize(&mut self, wanted: WindowSize) -> Option<WindowSize>;
+
+    /// A key the window got while the plugin's own view did not have the keyboard. `true` says
+    /// the plugin used it. Only VST 3 has a call for this (`IPlugView::onKeyDown` and
+    /// `onKeyUp`); a CLAP plugin takes the keyboard in its own view, through the system.
+    fn key(&mut self, _keystroke: &Keystroke, _direction: KeyDirection) -> bool {
+        false
+    }
+
     /// Frees everything the plugin made for its window. Its sound and its state are untouched.
     fn destroy(&mut self);
+}
+
+/// Whether a key went down or came up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyDirection {
+    Down,
+    Up,
 }
 
 /// A plugin that loaded: the two ends of it, and what to report about it while it plays.

@@ -22,14 +22,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use gpui::WindowHandle;
+use gpui::{Keystroke, WindowHandle, WindowId};
 use sound_core::{AssetName, Assets, InstanceId, PrepareConfig, Project};
 
 use crate::processor::{HostedPlugin, HostedUpdate};
 
-use crate::backend::LoadedPlugin;
+use crate::backend::{KeyDirection, LoadedPlugin};
 use crate::scan::{Scan, ScanCache, ScanCommand, ScannedPlugin, scan_folders};
-use crate::window::{PluginFrame, PluginWindow, Prepared, WindowOwner};
+use crate::window::{
+    Placement, PluginFrame, PluginWindow, Prepared, WindowOwner, WindowRequest, WindowSize,
+};
+use crate::workspace::{self, Placements};
 use crate::{PluginFormat, PluginRecord};
 
 /// How often a plugin that keeps saying its state changed is written. A plugin marks itself
@@ -83,6 +86,8 @@ pub enum PluginProblem {
     NoWindow { plugin_id: String },
     #[error("the window of the plugin {plugin_id:?} did not open: {message}")]
     WindowDidNotOpen { plugin_id: String, message: String },
+    #[error("where the plugin windows were is not kept: {message}")]
+    Workspace { message: String },
 }
 
 /// What [`Plugins::open`] gives back. The behaviour hands the engine whatever is here every
@@ -161,6 +166,40 @@ struct Table {
     /// Windows whose plugin has gone. Their views are already freed; taking a window down
     /// needs the application, which the moments that find them do not have.
     finished_windows: Vec<WindowHandle<PluginFrame>>,
+    /// Where each plugin's window was and whether it was open, read from `workspace.json` when
+    /// the project is first polled, and written back there. See [`Plugins::settle_windows`].
+    placements: Placements,
+    /// A placement changed since it was last written.
+    placements_changed: bool,
+    /// When they were last written, for the once-a-second rule a plugin's state has too: a
+    /// window that is dragged moves many times a second.
+    placements_written: Option<Instant>,
+    /// What went wrong while the windows were settled, which has no project to report to. The
+    /// next poll gives it.
+    window_problems: Vec<PluginProblem>,
+}
+
+impl Table {
+    /// Says whether the window of `id` is to be open, the next time it can be. Only the
+    /// composer decides this: opening a window, closing one, or a plugin's own window that
+    /// the composer closed. A window the host takes down because its plugin reloads, or because
+    /// the project closes, stays open in here, and comes back.
+    fn keep_open(&mut self, id: &InstanceId, open: bool) {
+        if let Some(placement) = self.placements.get_mut(id)
+            && placement.open != open
+        {
+            placement.open = open;
+            self.placements_changed = true;
+        }
+    }
+
+    /// Notes where the window of `id` is now.
+    fn place(&mut self, id: &InstanceId, placement: Placement) {
+        if self.placements.get(id) != Some(&placement) {
+            self.placements.insert(id.clone(), placement);
+            self.placements_changed = true;
+        }
+    }
 }
 
 /// What this machine has, filled in by whoever scans. Shared with the scan thread, so this is
@@ -205,6 +244,9 @@ struct Inner {
     /// The `assets/` folder of the project, from the first plugin that loaded. Kept so that
     /// dropping the host can still save, see [`Drop`].
     assets: RefCell<Option<Assets>>,
+    /// The folder of the project, from the first poll. It names the windows and holds
+    /// `workspace.json`.
+    root: RefCell<Option<std::path::PathBuf>>,
     table: RefCell<Table>,
 }
 
@@ -233,6 +275,12 @@ impl Drop for Inner {
                 // Nobody is left to tell. The composer at least sees it in the terminal.
                 eprintln!("error: {problem}");
             }
+        }
+        if self.writes_state
+            && let Some(root) = self.root.get_mut()
+            && let Err(problem) = write_placements(table, root, None)
+        {
+            eprintln!("error: {problem}");
         }
     }
 }
@@ -320,6 +368,7 @@ impl Plugins {
             writes_state,
             loads,
             assets: RefCell::new(None),
+            root: RefCell::new(None),
             table: RefCell::new(Table::default()),
         }))
     }
@@ -542,6 +591,12 @@ impl Plugins {
         {
             let mut table = self.0.table.borrow_mut();
             if let Some(hosted) = table.loaded.remove(id) {
+                // The same plugin loading again, which is a reload or another state file, gets
+                // its window back where it was. Another plugin in the record does not get the
+                // window of the one it replaces.
+                if hosted.format != record.format || hosted.plugin_id != record.plugin_id {
+                    table.keep_open(id, false);
+                }
                 retire(hosted, &mut table, self.0.writes_state.then_some(assets));
             }
         }
@@ -675,26 +730,36 @@ impl Plugins {
             .is_some_and(|hosted| hosted.window.is_open())
     }
 
-    /// Opens the plugin's own window, or brings the one that is open forward. `title` is what
-    /// the window is called.
+    /// Opens the plugin's own window, or brings the one that is open forward, for the composer.
+    /// It opens where it was the last time, and the project remembers that it is open.
+    pub fn open_window(&self, id: &InstanceId, cx: &mut gpui::App) -> Result<(), PluginProblem> {
+        let opened = self.show_window(id, true, cx);
+        let mut table = self.0.table.borrow_mut();
+        table.keep_open(id, opened.is_ok());
+        opened
+    }
+
+    /// Opens the window of `id`, taking the keyboard or not. See [`Self::open_window`].
     ///
     /// It is in three steps because the table may not be borrowed while GPUI runs: opening a
     /// window draws, and a card being drawn asks this host what its plugin has.
-    pub fn open_window(
+    fn show_window(
         &self,
         id: &InstanceId,
-        title: &str,
+        focus: bool,
         cx: &mut gpui::App,
     ) -> Result<(), PluginProblem> {
         // One: what the plugin says, with the table borrowed and no GPUI in sight.
         let prepared = {
             let mut table = self.0.table.borrow_mut();
+            let placement = table.placements.get(id).copied();
             let Some(hosted) = table.loaded.get_mut(id) else {
                 // The record names a plugin this machine does not have, or the load failed.
                 // That is reported, and the card shows it instead of offering a window.
                 return Ok(());
             };
             let plugin_id = hosted.plugin_id.clone();
+            let title = self.title(hosted);
             let no_window = || PluginProblem::NoWindow {
                 plugin_id: plugin_id.clone(),
             };
@@ -715,12 +780,13 @@ impl Plugins {
             if matches!(prepared, Err(PluginProblem::NoWindow { .. })) {
                 *has_window = false;
             }
+            let resizable = window.resizable();
             table.window_changed = true;
-            prepared.map(|prepared| (prepared, plugin_id))?
+            prepared.map(|prepared| (prepared, plugin_id, title, resizable, placement))?
         };
         // Two: the window itself, with nothing borrowed.
-        let (prepared, plugin_id) = prepared;
-        let wanted = match prepared {
+        let (prepared, plugin_id, title, resizable, placement) = prepared;
+        let size = match prepared {
             Prepared::AlreadyOpen(handle) => {
                 return handle
                     .update(cx, |_, window, _| window.activate_window())
@@ -735,7 +801,14 @@ impl Plugins {
             instance: id.clone(),
             plugins: self.downgrade(),
         };
-        let opened = crate::window::open_window(&owner, title, wanted, cx);
+        let request = WindowRequest {
+            title: &title,
+            size,
+            resizable,
+            placement,
+            focus,
+        };
+        let opened = crate::window::open_window(&owner, request, cx);
         let (handle, view, closed) = match opened {
             Ok(opened) => opened,
             Err(error) => {
@@ -747,6 +820,9 @@ impl Plugins {
                 });
             }
         };
+        let placed = handle
+            .update(cx, |_, window, cx| crate::window::placement_of(window, cx))
+            .ok();
         // Three: the plugin fills it. A window whose plugin went while it opened, or that the
         // plugin refused, waits for the next poll to be taken down.
         let mut table = self.0.table.borrow_mut();
@@ -760,7 +836,12 @@ impl Plugins {
             None => Err((PluginProblem::NoWindow { plugin_id }, handle)),
         };
         match attached {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                if let Some(placed) = placed {
+                    table.place(id, placed);
+                }
+                Ok(())
+            }
             Err((problem, handle)) => {
                 table.finished_windows.push(handle);
                 Err(problem)
@@ -768,12 +849,80 @@ impl Plugins {
         }
     }
 
-    /// Closes the plugin's own window. Its sound and its state are untouched.
+    /// What a plugin's window is called: the plugin and the piece it plays in.
+    fn title(&self, hosted: &Hosted) -> String {
+        let name = self
+            .installed_name(hosted.format, &hosted.plugin_id)
+            .unwrap_or_else(|| hosted.plugin_id.clone());
+        let root = self.0.root.borrow();
+        let folder = root.as_deref().and_then(std::path::Path::file_name);
+        match folder {
+            Some(folder) => format!("{name} — {}", folder.to_string_lossy()),
+            None => name,
+        }
+    }
+
+    /// Closes the plugin's own window, for the composer. Its sound and its state are untouched,
+    /// and the project remembers that it is closed.
     pub fn close_window(&self, id: &InstanceId, cx: &mut gpui::App) {
+        self.0.table.borrow_mut().keep_open(id, false);
+        self.take_down(id, cx);
+    }
+
+    /// Takes the window of `id` down, and leaves what the project remembers of it as it is.
+    fn take_down(&self, id: &InstanceId, cx: &mut gpui::App) {
         // Outside the borrow: taking a window down runs GPUI.
         if let Some(handle) = self.give_up_window(id) {
             crate::window::remove(handle, cx);
         }
+    }
+
+    /// A key the window of `id` got while the plugin's own view did not have the keyboard.
+    /// `true` says the plugin used it. See `backend::PluginGui::key`.
+    pub(crate) fn key(
+        &self,
+        id: &InstanceId,
+        keystroke: &Keystroke,
+        direction: KeyDirection,
+    ) -> bool {
+        let Ok(mut table) = self.0.table.try_borrow_mut() else {
+            return false;
+        };
+        let Some(hosted) = table.loaded.get_mut(id) else {
+            return false;
+        };
+        hosted
+            .plugin
+            .gui()
+            .is_some_and(|gui| gui.key(keystroke, direction))
+    }
+
+    /// The window of `id` moved or was resized. Where it is now is noted for the project, and
+    /// a drag of its edge is given to the plugin. The window this says is checked, because one
+    /// that went may still report a move on its way out.
+    pub(crate) fn window_bounds_changed(
+        &self,
+        id: &InstanceId,
+        window: WindowId,
+        placement: Placement,
+        content: WindowSize,
+    ) {
+        // A move that GPUI reports from inside a call of ours that has the table is noted by
+        // that call itself.
+        let Ok(mut table) = self.0.table.try_borrow_mut() else {
+            return;
+        };
+        let Some(hosted) = table.loaded.get_mut(id) else {
+            return;
+        };
+        if !hosted.window.is(window) {
+            return;
+        }
+        let Hosted { window, plugin, .. } = hosted;
+        if let Some(gui) = plugin.gui() {
+            window.resized(gui, content);
+        }
+        table.place(id, placement);
     }
 
     /// Frees whatever the plugin of `id` holds for a window and gives back the window it was
@@ -790,42 +939,67 @@ impl Plugins {
     /// The window is going, whatever took it down. GPUI tells its observers while it still
     /// holds the window, so this is the moment the plugin lets go of the view it is in, before
     /// that view is released. See `window::open_window`.
+    ///
+    /// A window this host took down has let go of its view already. One that still has it was
+    /// closed by the composer, with its close control, and the project remembers that.
     pub(crate) fn window_was_closed(&self, id: &InstanceId) {
         let mut table = self.0.table.borrow_mut();
         if let Some(hosted) = table.loaded.get_mut(id)
             && hosted.window.give_up(hosted.plugin.gui()).is_some()
         {
             table.window_changed = true;
+            table.keep_open(id, false);
         }
     }
 
     /// The window work that needs the application: taking down the windows of plugins that
-    /// have gone, and giving a window the size its plugin asked for. Whoever polls the host
-    /// calls it after [`Self::poll`]; the moments that find such a plugin, a record that was
-    /// deleted or an undo, have no application at hand.
+    /// have gone, giving a window the size its plugin asked for, and opening the windows the
+    /// project remembers as open whose plugin is loaded, which is how they come back when the
+    /// project opens and when their plugin reloads. Whoever polls the host calls it after
+    /// [`Self::poll`]; the moments that find such a plugin, a record that was deleted, an undo
+    /// or a reload, have no application at hand.
     pub fn settle_windows(&self, cx: &mut gpui::App) {
         // Everything is read out first: running GPUI while the table is borrowed would let a
         // card that is drawn ask this host about its plugin.
-        let (finished, resize) = {
+        let (finished, resize, reopen) = {
             let mut table = self.0.table.borrow_mut();
             let Table {
                 loaded,
                 retired,
                 finished_windows,
+                placements,
                 ..
             } = &mut *table;
+            let reopen: Vec<InstanceId> = loaded
+                .iter()
+                .filter(|(id, hosted)| {
+                    hosted.has_window
+                        && !hosted.window.is_open()
+                        && placements.get(*id).is_some_and(|placement| placement.open)
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
             let resize: Vec<_> = loaded
                 .values_mut()
                 .chain(retired)
                 .filter_map(|hosted| hosted.window.take_wanted_size())
                 .collect();
-            (std::mem::take(finished_windows), resize)
+            (std::mem::take(finished_windows), resize, reopen)
         };
         for (handle, wanted) in resize {
             crate::window::resize(handle, wanted, cx);
         }
         for handle in finished {
             crate::window::remove(handle, cx);
+        }
+        // A window that comes back by itself leaves the keyboard where it is. One that cannot
+        // come back is forgotten as open, so it is not tried again at every poll.
+        for id in reopen {
+            if let Err(problem) = self.show_window(&id, false, cx) {
+                let mut table = self.0.table.borrow_mut();
+                table.keep_open(&id, false);
+                table.window_problems.push(problem);
+            }
         }
     }
 
@@ -840,8 +1014,9 @@ impl Plugins {
                 .map(|(id, _)| id.clone())
                 .collect()
         };
+        // The project remembers them as open: they come back when it opens again.
         for id in open {
-            self.close_window(&id, cx);
+            self.take_down(&id, cx);
         }
     }
 
@@ -859,15 +1034,23 @@ impl Plugins {
     pub fn close(&self, project: &Project) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
         let mut table = self.0.table.borrow_mut();
+        if self.0.writes_state
+            && let Some(root) = self.0.root.borrow().as_deref()
+            && let Err(problem) = write_placements(&mut table, root, Some(project))
+        {
+            problems.push(problem);
+        }
         let Table {
             loaded,
             retired,
             window_changed,
             finished_windows,
+            ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
         for hosted in loaded.values_mut().chain(&mut *retired) {
-            // Every window closes with the project, whether it writes or not.
+            // Every window closes with the project, whether it writes or not, and the project
+            // remembers the ones that were open.
             if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
                 finished_windows.push(handle);
                 *window_changed = true;
@@ -963,6 +1146,7 @@ impl Plugins {
 
     fn serve(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
+        self.remember_the_windows(project, &mut problems);
         self.note_what_the_scan_found(project);
         // A record waits for a plugin this machine did not have. Once the first scan is over,
         // that is a plugin the composer may be installing right now.
@@ -973,13 +1157,26 @@ impl Plugins {
             self.look_again();
         }
         let mut table = self.0.table.borrow_mut();
+        problems.append(&mut table.window_problems);
         let Table {
             loaded,
             retired,
             window_changed,
             finished_windows,
+            placements,
+            placements_changed,
+            ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
+        // What the composer decides about a window, see `Table::keep_open`.
+        let mut closed_for_good = |id: &InstanceId| {
+            if let Some(placement) = placements.get_mut(id)
+                && placement.open
+            {
+                placement.open = false;
+                *placements_changed = true;
+            }
+        };
 
         // Everything the records no longer say. A record that is gone, that is no longer a
         // plugin, or that names another plugin or another state file than the entry holds:
@@ -992,11 +1189,13 @@ impl Plugins {
         for id in stale {
             if let Some(mut hosted) = loaded.remove(&id) {
                 // The window of a plugin that is going goes with it: a record that was deleted
-                // from a file or by an undo leaves no window behind.
+                // from a file or by an undo leaves no window behind, and an undo that brings
+                // the record back does not bring the window.
                 if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
                     finished_windows.push(handle);
                     *window_changed = true;
                 }
+                closed_for_good(&id);
                 // Saved on the way out, so undo of a delete brings the plugin back as it
                 // sounded and not as it was last written.
                 if let Some(assets) = assets
@@ -1023,6 +1222,9 @@ impl Plugins {
             {
                 finished_windows.push(handle);
                 *window_changed = true;
+                if let Some(id) = id {
+                    closed_for_good(id);
+                }
             }
             // A plugin that asks to be deactivated and activated again, which is how its
             // latency changes. A retired plugin is marked as well, but only loaded ones are
@@ -1067,7 +1269,37 @@ impl Plugins {
         // A plugin may only go once the engine has given its audio side back. Until then
         // letting it go would leave the two ends of one plugin in different hands.
         retired.retain_mut(|hosted| !hosted.plugin.released());
+
+        // Where the windows are, at most once a second while one is dragged. The project
+        // closing writes whatever is left.
+        let due = table
+            .placements_written
+            .is_none_or(|last| now.duration_since(last) >= SAVE_INTERVAL);
+        if self.0.writes_state
+            && table.placements_changed
+            && due
+            && let Some(root) = self.0.root.borrow().as_deref()
+        {
+            table.placements_written = Some(now);
+            if let Err(problem) = write_placements(&mut table, root, Some(project)) {
+                problems.push(problem);
+            }
+        }
         problems
+    }
+
+    /// The first poll of a project reads where its plugin windows were. Every host reads it,
+    /// and only the one that has windows opens any, see [`Self::settle_windows`].
+    fn remember_the_windows(&self, project: &Project, problems: &mut Vec<PluginProblem>) {
+        if self.0.root.borrow().is_some() {
+            return;
+        }
+        let root = project.root().to_path_buf();
+        match workspace::read(&root) {
+            Ok(placements) => self.0.table.borrow_mut().placements = placements,
+            Err(message) => problems.push(PluginProblem::Workspace { message }),
+        }
+        *self.0.root.borrow_mut() = Some(root);
     }
 
     /// Records that were waiting for a plugin the scan had not reached. When it has learned
@@ -1183,6 +1415,27 @@ fn publish(scanned: &Arc<Mutex<Scanning>>, scan: &Scan) {
     held.notices.extend(scan.cache_error.clone());
     held.scan = scan.clone();
     held.generation += 1;
+}
+
+/// Writes where the plugin windows are into `workspace.json`, when they changed since the last
+/// write. A window whose record is gone is forgotten on the way, when the project is at hand.
+fn write_placements(
+    table: &mut Table,
+    root: &std::path::Path,
+    project: Option<&Project>,
+) -> Result<(), PluginProblem> {
+    if !table.placements_changed {
+        return Ok(());
+    }
+    if let Some(project) = project {
+        table
+            .placements
+            .retain(|id, _| project.resolve::<PluginRecord>(id).is_some());
+    }
+    workspace::write(root, &table.placements)
+        .map_err(|message| PluginProblem::Workspace { message })?;
+    table.placements_changed = false;
+    Ok(())
 }
 
 /// Saves a plugin that is going, when the project is one that writes, and puts its handle

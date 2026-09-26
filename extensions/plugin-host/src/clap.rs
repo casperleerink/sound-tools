@@ -473,6 +473,34 @@ impl PluginGui for ClapPlugin {
             .map_err(|error| self.failed(error))
     }
 
+    fn can_resize(&mut self) -> bool {
+        let Some(gui) = self.gui_extension() else {
+            return false;
+        };
+        gui.can_resize(&self.instance.plugin_handle())
+    }
+
+    /// The plugin's own answer to the size first (`adjust_size`), and then that size. A plugin
+    /// that cannot adjust, or refuses the size, keeps the one it has, and the window goes back
+    /// to it.
+    fn resize(&mut self, wanted: WindowSize) -> Option<WindowSize> {
+        let gui = self.gui_extension()?;
+        let plugin = self.instance.plugin_handle();
+        let offered = GuiSize {
+            width: wanted.width,
+            height: wanted.height,
+        };
+        if let Some(adjusted) = gui.adjust_size(&plugin, offered) {
+            // Refused: the size it has stays, and that is read below.
+            gui.set_size(&plugin, adjusted).ok();
+        }
+        let size = gui.get_size(&plugin)?;
+        Some(WindowSize {
+            width: size.width,
+            height: size.height,
+        })
+    }
+
     fn destroy(&mut self) {
         if std::mem::take(&mut self.created_window)
             && let Some(gui) = self.gui_extension()

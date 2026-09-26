@@ -1175,12 +1175,17 @@ impl IPlugViewTrait for TestView {
         kNotImplemented
     }
 
-    unsafe fn onKeyDown(&self, _key: u16, _code: i16, _modifiers: i16) -> tresult {
-        kResultFalse
+    /// A key the host passes on. It is written down with what the host said about it, as
+    /// `gui_key_down[<key>,<code>,<modifiers>]`, and taken: a real plugin answers `kResultTrue`
+    /// for a key it used, and the host then gives it to nobody else.
+    unsafe fn onKeyDown(&self, key: u16, code: i16, modifiers: i16) -> tresult {
+        support::log(&format!("gui_key_down[{key},{code},{modifiers}]"), 0, 0);
+        kResultTrue
     }
 
-    unsafe fn onKeyUp(&self, _key: u16, _code: i16, _modifiers: i16) -> tresult {
-        kResultFalse
+    unsafe fn onKeyUp(&self, key: u16, code: i16, modifiers: i16) -> tresult {
+        support::log(&format!("gui_key_up[{key},{code},{modifiers}]"), 0, 0);
+        kResultTrue
     }
 
     /// The size the plugin wants to start at. It does not change when the plugin asks for
@@ -1251,13 +1256,31 @@ impl IPlugViewTrait for TestView {
         kResultOk
     }
 
-    /// This window is not resizable by dragging, which is what the host expects of it.
+    /// Whether the composer may resize the window by dragging its edge. Only when a test says
+    /// so, because most real instruments keep one size.
     unsafe fn canResize(&self) -> tresult {
-        kResultFalse
+        support::log("gui_can_resize", 0, 0);
+        match support::told_to(support::RESIZABLE_VARIABLE) {
+            true => kResultTrue,
+            false => kResultFalse,
+        }
     }
 
-    unsafe fn checkSizeConstraint(&self, _rect: *mut ViewRect) -> tresult {
-        kResultFalse
+    /// Makes a size the host offers one this view takes, see `support::constrained_size`.
+    unsafe fn checkSizeConstraint(&self, rect: *mut ViewRect) -> tresult {
+        support::log("gui_adjust_size", 0, 0);
+        if rect.is_null() || !support::told_to(support::RESIZABLE_VARIABLE) {
+            return kResultFalse;
+        }
+        // SAFETY: the host gives one rectangle that lives for this call.
+        let offered = unsafe { &mut *rect };
+        let (width, height) = support::constrained_size(
+            (offered.right - offered.left).max(0) as u32,
+            (offered.bottom - offered.top).max(0) as u32,
+        );
+        offered.right = offered.left + width as int32;
+        offered.bottom = offered.top + height as int32;
+        kResultTrue
     }
 }
 
