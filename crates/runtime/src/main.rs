@@ -158,6 +158,12 @@ fn run(folder: &Path) -> Result<()> {
         for problem in problems {
             println!("error: {problem}");
         }
+        // A plugin that asked to be loaded again gets what a record that changed gets.
+        for instance in plugins.take_retries() {
+            if let Err(error) = project.rebind(&instance) {
+                println!("error: {error}");
+            }
+        }
         print_events(&mut project);
         match lines.try_recv() {
             Ok(line) => match run_command(&line, &mut project, &status) {
@@ -277,6 +283,9 @@ fn list_plugins() -> Result<()> {
     }
     for failure in &scan.failures {
         println!("{}: {}", failure.path.display(), failure.message);
+    }
+    if let Some(error) = &scan.cache_error {
+        println!("error: {error}");
     }
     println!(
         "{} bundles, {} plugins, {} failed, in {took:?}",

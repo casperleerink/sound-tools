@@ -373,8 +373,9 @@ impl Project {
     /// It is for a service outside the project that can do more later than it could before, so
     /// far only the plugin host: a scan that was still running when a plugin record was applied
     /// has found the plugin, and the behaviour now hands the engine that plugin and stops
-    /// reporting it. A behaviour that fails here leaves the instance as it was, as any failed
-    /// group does.
+    /// reporting it; or a plugin asked to be unloaded and loaded again, and the behaviour saves
+    /// it on its way out and loads a new one. A behaviour that fails here leaves the instance as
+    /// it was, as any failed group does.
     ///
     /// `Ok(false)` says there is no such instance, which is what a record that went away while
     /// something waited for it looks like.

@@ -122,7 +122,8 @@ record may name any plugin in either place.
   the plugin is not installed here. The record stays as it is, while everything else plays.
   A missing instrument leaves its track silent; a missing effect lets the sound through
   unchanged, so the rest of the chain still plays. Correct `plugin_id` and it plays at once,
-  with no restart.
+  with no restart. While the app's window is open, a plugin installed meanwhile is found
+  within seconds and the record plays then.
 - `a vst3 plugin_id is the class id as thirty-two hex digits`: the record itself is refused.
   You wrote something else, perhaps a CLAP-style id or the plugin's name.
 - `the plugins of this machine are still being looked at`: nothing is wrong. The app looks for
@@ -135,12 +136,9 @@ record may name any plugin in either place.
   There is nothing to fix in the file. A CLAP plugin whose note port takes no MIDI, or a VST 3
   plugin that maps no parameter to MIDI controller 64, says this. An effect with no note port
   at all never says it: it has no pedal to miss.
-- `... asked to be started again`: the plugin wants the app to reload it, which this build does
-  not do. Nothing in the file is wrong. Tell the composer to take the plugin off the track and
-  put it back if it stopped sounding.
-- `... asked to be started again, to change its latency, and did not start`: the app restarts a
-  plugin whose latency changes, and this one failed to start. Nothing in the file is wrong. The
-  slot is silent, or lets the sound through for an effect, until the record changes.
+- `... asked to be started again, because its latency or its buses changed, and did not
+  start`: the app restarts such a plugin, and this one failed to start. Nothing in the file is
+  wrong. The slot is silent, or lets the sound through for an effect, until the record changes.
 
 ## VST
 
