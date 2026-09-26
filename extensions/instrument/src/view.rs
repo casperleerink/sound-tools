@@ -11,14 +11,14 @@
 //! What is only about the interface is here: the label, the unit, the travel of the knob, the
 //! name of the undo step and whether the card is expanded.
 
-use gpui::{App, Context, Entity, Point, SharedString, Window, div, point, prelude::*};
+use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, KnobScale, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views};
+use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
 
 use crate::{
     ATTACK, CUTOFF, DECAY, GAIN, Parameter, RELEASE, RESONANCE, SUSTAIN, SynthState, Waveform,
@@ -214,20 +214,6 @@ impl SynthView {
         }
     }
 
-    /// A callback of a control. It holds the view weakly, as `cx.listener` does. With
-    /// `cx.processor` the listeners of the last frame would keep a closed view alive for one
-    /// more frame, and an open drag with it.
-    fn callback<E>(
-        cx: &Context<Self>,
-        f: impl Fn(&mut Self, E, &mut Context<Self>) + 'static,
-    ) -> impl Fn(E, &mut Window, &mut App) + 'static {
-        let view = cx.weak_entity();
-        move |event, _, cx| {
-            // Released: there is nothing left to tell.
-            view.update(cx, |view, cx| f(view, event, cx)).ok();
-        }
-    }
-
     fn end_drag(&mut self, cx: &mut Context<Self>) {
         self.edit.finish(&self.session, cx);
     }
@@ -246,7 +232,7 @@ impl SynthView {
             .default_value(control.parameter.default)
             .label(control.label)
             .readout(readout(control.unit, value))
-            .on_change(Self::callback(cx, move |view, change, cx| {
+            .on_change(weak_callback(cx, move |view, change, cx| {
                 view.on_knob(control, change, cx)
             }))
     }
@@ -266,7 +252,7 @@ impl SynthView {
             parameter.default,
         );
         let id = control.label.to_lowercase();
-        Handle::new(SharedString::from(id), x, Axis::fixed(height)).on_change(Self::callback(
+        Handle::new(SharedString::from(id), x, Axis::fixed(height)).on_change(weak_callback(
             cx,
             move |view, change: ValueChange<Point<f32>>, cx| {
                 let (session, synth) = (&view.session, &view.synth);
@@ -301,7 +287,7 @@ impl SynthView {
             Axis::new(envelope::time_axis(time, peak), decay, DECAY.default),
             Axis::new(envelope::level_axis(), sustain, SUSTAIN.default),
         )
-        .on_change(Self::callback(
+        .on_change(weak_callback(
             cx,
             |view, change: ValueChange<Point<f32>>, cx| {
                 let (session, synth) = (&view.session, &view.synth);
@@ -336,7 +322,7 @@ impl SynthView {
         let selected = selected.map_or("", |(_, value, _)| value);
         SegmentedControl::new("waveform", selected)
             .options(WAVEFORMS.map(|(_, value, label)| (value, label)))
-            .on_change(Self::callback(cx, |view, value: SharedString, cx| {
+            .on_change(weak_callback(cx, |view, value: SharedString, cx| {
                 let picked = WAVEFORMS
                     .iter()
                     .find(|(_, name, _)| *name == value.as_ref());

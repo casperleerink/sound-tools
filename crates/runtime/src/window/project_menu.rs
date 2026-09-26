@@ -82,6 +82,7 @@ impl ProjectMenu {
         let items = entries(&shown, &device_name);
         let menu = cx.new(|cx| {
             DropdownMenu::new(name, items, cx)
+                .debug_name("project-menu")
                 .selected(DEVICE)
                 .trigger(Trigger::Ghost)
                 .width(280.)

@@ -32,7 +32,7 @@ use gpui::{
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CONTROL_HEIGHT, ROW_HEIGHT};
-use sound_ui::components::device_card::{CARD_HEIGHT, CardFrame, HEADER_HEIGHT};
+use sound_ui::components::device_card::{CARD_HEIGHT, CardFrame, HEADER_HEIGHT, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
@@ -40,7 +40,10 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::components::volume::Volume;
-use sound_ui::{ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, Session, Slot, Views};
+use sound_ui::{
+    ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, Session, Slot, Views,
+    weak_callback,
+};
 
 use super::layout::HEADER_WIDTH;
 use super::paint::accent;
@@ -55,8 +58,6 @@ const RACK_LEFT: f32 = 16.;
 const CARD_GAP: f32 = 12.;
 /// The fade at the right edge of the rack when cards go past it.
 const FADE_WIDTH: f32 = 48.;
-/// The width of a card the panel draws itself, for a slot whose tool has no card.
-const PLAIN_CARD_WIDTH: f32 = 200.;
 /// The middle of the title line of the cards, where the name of the track is too.
 const TITLE_MIDDLE: f32 = RACK_TOP + HEADER_HEIGHT / 2.;
 /// The top of the first row of cells, where the mixer strip starts.
@@ -524,18 +525,6 @@ impl TrackPanel {
         });
     }
 
-    /// A callback of a control. It holds the view weakly, as `cx.listener` does, so the
-    /// listeners of the last frame keep no closed panel and no open drag alive.
-    fn callback<E>(
-        cx: &Context<Self>,
-        f: impl Fn(&mut Self, E, &mut Context<Self>) + 'static,
-    ) -> impl Fn(E, &mut Window, &mut App) + 'static {
-        let panel = cx.weak_entity();
-        move |event, _, cx| {
-            panel.update(cx, |panel, cx| f(panel, event, cx)).ok();
-        }
-    }
-
     fn end_drag(&mut self, cx: &mut Context<Self>) {
         self.edit.finish(&self.session, cx);
     }
@@ -583,7 +572,7 @@ impl TrackPanel {
     fn mixer_strip(&self, track: &TrackState, cx: &mut Context<Self>) -> [Div; 3] {
         let peach = cx.theme().peach;
         // The record keeps no `-inf` yet: the bottom of the volume is the lowest gain it keeps.
-        let volume = Volume::new("gain_db", track.gain_db).on_change(Self::callback(
+        let volume = Volume::new("gain_db", track.gain_db).on_change(weak_callback(
             cx,
             |panel, change: ValueChange, cx| {
                 let (session, track) = (&panel.session, &panel.track);
@@ -607,14 +596,14 @@ impl TrackPanel {
             .default_value(0.)
             .label("Pan")
             .readout(pan_readout(track.pan))
-            .on_change(Self::callback(cx, |panel, change, cx| {
+            .on_change(weak_callback(cx, |panel, change, cx| {
                 let (session, track) = (&panel.session, &panel.track);
                 let set = |track: &mut TrackState, pan| track.pan = pan;
                 panel.edit.apply(session, track, PAN_LABEL, change, set, cx);
             }));
         let mute = Toggle::new("mute", "M", track.mute)
             .color(peach)
-            .on_change(Self::callback(cx, |panel, mute: bool, cx| {
+            .on_change(weak_callback(cx, |panel, mute: bool, cx| {
                 let label = if mute { "Mute track" } else { "Unmute track" };
                 let change = ValueChange::Set(mute);
                 let (session, track) = (&panel.session, &panel.track);

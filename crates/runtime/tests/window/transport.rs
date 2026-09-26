@@ -114,9 +114,12 @@ fn shift_makes_a_tempo_drag_finer_from_where_it_is(cx: &mut TestAppContext) {
     assert_eq!(opened.shown_tempo(), 126.0);
     opened.drag_to_fine(up(32.));
     assert!((opened.shown_tempo() - 126.1).abs() < 1e-9);
-    // Shift let go: on from there, in whole bpm from where the drag began.
+    // Shift let go: on in whole bpm from where the tempo is, with no jump back to the grid of
+    // the press.
     opened.drag_to(up(34.));
-    assert_eq!(opened.shown_tempo(), 127.0);
+    assert!((opened.shown_tempo() - 127.1).abs() < 1e-9);
+    opened.drag_to_fine(up(34.));
+    assert!((opened.shown_tempo() - 127.1).abs() < 1e-9);
     opened.release(up(34.));
     assert!(!opened.gesture_open());
 
@@ -126,6 +129,29 @@ fn shift_makes_a_tempo_drag_finer_from_where_it_is(cx: &mut TestAppContext) {
     opened.settle();
     assert_eq!(opened.shown_tempo(), 120.0);
     assert_eq!(opened.undo_label(), None);
+}
+
+/// A press that moved nothing, and a double click, leave no drag held behind them.
+#[gpui::test]
+fn a_click_or_a_double_click_on_the_tempo_holds_no_drag(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let pill = opened
+        .shell
+        .read_with(opened.cx, |shell, _| shell.transport().clone());
+    let holds =
+        |opened: &mut Opened<'_>| pill.read_with(opened.cx, |pill, _| pill.holds_a_tempo_drag());
+    let tempo = tempo_control(&mut opened);
+    opened.click(tempo);
+    assert!(!holds(&mut opened));
+    opened.double_click(tempo);
+    assert!(!holds(&mut opened));
+    assert_eq!(opened.undo_label(), None);
+    // A drag holds one until it ends.
+    opened.press(tempo);
+    opened.drag_to(tempo - point(px(0.), px(10.)));
+    assert!(holds(&mut opened));
+    opened.release(tempo - point(px(0.), px(10.)));
+    assert!(!holds(&mut opened));
 }
 
 #[gpui::test]

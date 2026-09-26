@@ -24,12 +24,17 @@ use gpui::{
     StyleRefinement, Window, div, prelude::*, px,
 };
 
-use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT};
+use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};
 use crate::components::icon::Icon;
 use crate::focus::KeyboardFocus;
 use crate::theme::ActiveTheme;
 
 pub const CARD_HEIGHT: f32 = 192.;
+/// A card with no display and no cells: a plugin, or a slot with nothing to show.
+pub const PLAIN_CARD_WIDTH: f32 = 200.;
+/// The value line of the second row of cells, from the top of the body: where a card puts its
+/// quiet line, such as `CLAP · <maker>`.
+pub const BODY_VALUE_LINE: f32 = ROW_HEIGHT + VALUE_LINE;
 pub const HEADER_HEIGHT: f32 = 32.;
 /// From the sides of the card to its body, and from its left edge to the title.
 pub const CARD_PADDING: f32 = 16.;

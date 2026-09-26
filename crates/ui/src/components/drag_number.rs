@@ -5,7 +5,8 @@
 //! the press, shift ten times finer, escape puts it back, the arrows step. What is its own: a
 //! drag moves by whole steps from the value it began on and does not round the result, so a
 //! value written by hand keeps its fraction and a drag there and back ends on exactly that
-//! value. With shift the step is a tenth too.
+//! value. With shift the step is a tenth too, and pressing or letting go of shift goes on in
+//! steps from where the value is.
 //!
 //! Controlled: the owner gives the value on every render and hears a [`ValueChange`].
 
@@ -138,15 +139,22 @@ impl RenderOnce for DragNumber {
                     move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
                         let y = -f32::from(event.position.y);
                         let mut along = Travel::new(y, position, travel);
-                        let value_at = move |pointer: Point<Pixels>, fine: bool| match along
-                            .position(-f32::from(pointer.y), fine)
-                        {
-                            Some(position) => {
-                                let raw = range.0 + f64::from(position) * span;
-                                let step = if fine { step / fine_divisor() } else { step };
-                                stepped(value, raw, step, range)
+                        // The steps count from the value of the press, and from where the value
+                        // is when shift is pressed or let go, so neither jumps.
+                        let (mut base, mut last, mut was_fine) = (value, value, false);
+                        let value_at = move |pointer: Point<Pixels>, fine: bool| {
+                            if fine != was_fine {
+                                (base, was_fine) = (last, fine);
                             }
-                            None => value,
+                            last = match along.position(-f32::from(pointer.y), fine) {
+                                Some(position) => {
+                                    let raw = range.0 + f64::from(position) * span;
+                                    let step = if fine { step / fine_divisor() } else { step };
+                                    stepped(base, raw, step, range)
+                                }
+                                None => value,
+                            };
+                            last
                         };
                         gesture::press(
                             &state, event, value, None, value_at, &on_change, window, cx,

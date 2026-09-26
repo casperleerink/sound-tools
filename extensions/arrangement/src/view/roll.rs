@@ -15,7 +15,7 @@ use super::gesture::{Zone, shortest, zone_at};
 use super::layout::{LEAD_IN, Rect, SNAP, Viewport, shifted, snap, snap_floor};
 
 /// The height of the editor panel, ruler included.
-pub const EDITOR_HEIGHT: f32 = 320.0;
+pub const EDITOR_HEIGHT: f32 = 352.0;
 /// The height of the row of one pitch.
 pub const KEY_HEIGHT: f32 = 12.0;
 /// The width of the key strip, at the right edge of the header column.

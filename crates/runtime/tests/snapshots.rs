@@ -20,8 +20,9 @@
 //! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
 //! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default.
 //! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
-//! - `track-panel-synth-effects.png`: the synth with four effects after it, which is wider
-//!   than the rack has room for on this screen, so its right edge fades.
+//! - `track-panel-synth-effects.png`: the synth with five effects after it, which is wider
+//!   than the rack has room for on this screen, so its right edge fades. The test checks
+//!   the fade in the pixels.
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
 //! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
 //! - `track-panel-picker.png`: the same with the instrument picker open.
@@ -756,14 +757,26 @@ fn main() -> Result<()> {
     save(&mut cx, &opened, "track-panel-focus")?;
     drop(opened);
 
-    // The synth with four effects: more than the rack has room for on the screen of the
+    // The synth with five effects: more than the rack has room for on the screen of the
     // laptop, so it fades at its right edge.
     let opened = Opened::new(&mut cx, |project| {
         piece(project)?;
-        set_effects(project, "bass", &["Warmth", "Space", "Air", "Echo"])
+        set_effects(project, "bass", &["Warmth", "Space", "Air", "Echo", "Room"])
     })?;
     opened.click_track_header(1., &mut cx)?;
     save(&mut cx, &opened, "track-panel-synth-effects")?;
+    // The last card runs under the right edge of the window, and there the rack fades to the
+    // window colour: dark at the edge, the card itself 40 pt in, in the blank of its body.
+    let image = cx.capture_screenshot(opened.window.into())?;
+    let red_at = |x: f32| {
+        let y = WINDOW_HEIGHT - 216. + 12. + 32. + 60.;
+        image.get_pixel((x * 2.) as u32, (y * 2.) as u32).0[0]
+    };
+    let (edge, card) = (red_at(WINDOW_WIDTH - 2.), red_at(WINDOW_WIDTH - 45.));
+    anyhow::ensure!(
+        edge < 22 && card > 24,
+        "no fade at the right edge of the rack: {edge} at the edge, {card} on the card"
+    );
     drop(opened);
 
     // A track whose instrument is a tool that has no view: the tone.
