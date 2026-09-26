@@ -10,8 +10,8 @@
 //!   "tool": "eq",
 //!   "state": {
 //!     "bands": [
-//!       { "on": true, "shape": "low_cut", "frequency_hz": 80.0, "gain_db": 0.0, "q": 0.71 },
-//!       { "on": true, "shape": "bell", "frequency_hz": 400.0, "gain_db": -3.0, "q": 1.5 }
+//!       {"on": true, "shape": "low_cut", "frequency_hz": 80.0, "gain_db": 0.0, "q": 0.71},
+//!       {"on": true, "shape": "bell", "frequency_hz": 400.0, "gain_db": -3.0, "q": 1.5}
 //!     ],
 //!     "output_gain_db": 0.0
 //!   }

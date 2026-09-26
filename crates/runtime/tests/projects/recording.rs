@@ -141,7 +141,7 @@ fn a_take_becomes_a_clip_that_renders_what_was_heard() {
     // 150 bpm from bar 2, written into project.json as an agent would.
     recorder.harness.write_and_apply(
         "project.json",
-        r#"{"format": 1, "extensions": ["arrangement", "filter", "fit-tempo", "instrument", "plugin-host", "tone"], "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 3840, "bpm": 150.0}]}, "connections": []}"#,
+        r#"{"format": 1, "extensions": ["arrangement", "eq", "filter", "fit-tempo", "instrument", "plugin-host", "tone"], "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 3840, "bpm": 150.0}]}, "connections": []}"#,
     );
     assert_eq!(recorder.harness.project.problems(), []);
 

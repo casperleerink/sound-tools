@@ -24,34 +24,10 @@ Like every effect it is two lines: the record in the track folder, and its file 
   "tool": "eq",
   "state": {
     "bands": [
-      {
-        "on": true,
-        "shape": "low_cut",
-        "frequency_hz": 100.0,
-        "gain_db": 0.0,
-        "q": 0.71
-      },
-      {
-        "on": true,
-        "shape": "bell",
-        "frequency_hz": 400.0,
-        "gain_db": -3.0,
-        "q": 1.5
-      },
-      {
-        "on": true,
-        "shape": "bell",
-        "frequency_hz": 3000.0,
-        "gain_db": 2.0,
-        "q": 1.0
-      },
-      {
-        "on": true,
-        "shape": "high_shelf",
-        "frequency_hz": 10000.0,
-        "gain_db": 3.0,
-        "q": 0.71
-      }
+      {"on": true, "shape": "low_cut", "frequency_hz": 100.0, "gain_db": 0.0, "q": 0.71},
+      {"on": true, "shape": "bell", "frequency_hz": 400.0, "gain_db": -3.0, "q": 1.5},
+      {"on": true, "shape": "bell", "frequency_hz": 3000.0, "gain_db": 2.0, "q": 1.0},
+      {"on": true, "shape": "high_shelf", "frequency_hz": 10000.0, "gain_db": 3.0, "q": 0.71}
     ],
     "output_gain_db": 0.0
   }

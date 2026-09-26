@@ -5074,6 +5074,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrangement",
+ "eq",
  "filter",
  "fit-tempo",
  "gpui",

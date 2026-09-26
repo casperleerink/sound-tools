@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 arrangement.workspace = true
+eq.workspace = true
 filter.workspace = true
 fit-tempo.workspace = true
 gpui.workspace = true
