@@ -13,13 +13,11 @@ use crate::support::{
     Harness, Played, id, no_cache, plugin_folder, plugin_folder_of, plugin_id, record, scanner,
 };
 
-/// How long a bundle may take in these tests. Shorter than the ten seconds of a real scan, so
-/// a test waits seconds and not minutes, and long enough that a bundle which answers is never
-/// given up on because the machine was busy.
-const DEADLINE: Duration = Duration::from_secs(2);
+/// How long a bundle may take in the test of a bundle that hangs. It is the only bundle there,
+/// so no bundle that answers can miss it.
+const DEADLINE: Duration = Duration::from_millis(300);
 
-/// A scanner where the bundle of one format never answers and the other does, so a scan has
-/// one of each.
+/// A scanner where the bundle of one format never answers.
 fn one_bundle_hangs(format: PluginFormat) -> ScanCommand {
     scanner()
         .with_environment("SOUND_TOOLS_TEST_PLUGIN_HANG", format.as_str())
@@ -41,42 +39,72 @@ fn open_the_gate(gate: &std::path::Path) {
 
 /// What the composer's thread does while the scan runs: it draws, which means it asks the host
 /// what it knows. None of that may wait for a bundle.
+///
+/// The scan is held at a gate this test opens itself, so it is still running for as long as
+/// the test asks, however busy the machine is. An answer that waited for it would take until
+/// the gate opens, which it does not while the test asks. With a bundle that hangs and a two
+/// second deadline instead, the bundle that was meant to answer was killed on that deadline
+/// when the machine was busy.
 #[test]
 fn a_scan_in_the_background_never_blocks_the_thread_that_started_it() {
     let folder = tempfile::tempdir().unwrap();
+    let gate = folder.path().join("scan-gate");
     let search = vec![plugin_folder(folder.path())];
-    let plugins = Plugins::new(search, one_bundle_hangs(PluginFormat::Vst3), no_cache());
+    let plugins = Plugins::new(search, waiting_at(&gate), no_cache());
 
     let started = Instant::now();
     plugins.start_scanning();
-    // Everything the window asks while it draws, over and over, while a bundle hangs.
-    let mut asked = 0;
+    // Everything the window asks while it draws, over and over, while every bundle waits.
+    let mut slowest = Duration::ZERO;
     while started.elapsed() < Duration::from_millis(200) {
+        let asked = Instant::now();
         plugins.instruments();
         plugins.installed_name(PluginFormat::Clap, plugin_id(PluginFormat::Clap));
         plugins.scan_is_running();
-        asked += 1;
+        slowest = slowest.max(asked.elapsed());
     }
-    let longest = Instant::now();
-    plugins.instruments();
+    // A generous bound: an answer that waited for the scan would wait for the gate.
     assert!(
-        longest.elapsed() < Duration::from_millis(50),
-        "the picker waited {:?} for the scan",
-        longest.elapsed()
+        slowest < Duration::from_secs(1),
+        "the picker waited {slowest:?} for the scan"
     );
-    assert!(asked > 100, "only {asked} answers in 200 ms");
     assert!(plugins.scan_is_running(), "the scan was already over");
+    assert_eq!(
+        plugins.instruments(),
+        [],
+        "a bundle answered through the gate"
+    );
 
-    // And when it ends, the picker has what answered and the bundle that hung is reported.
+    // And when it ends, the picker has what answered.
+    open_the_gate(&gate);
     plugins.wait_for_scan();
     let scan = plugins.scan();
     assert!(scan.finished);
     assert_eq!(scan.bundles, 2);
-    let clap = PluginFormat::Clap;
-    assert!(scan.find(clap, plugin_id(clap)).is_some(), "{scan:?}");
+    for format in [PluginFormat::Clap, PluginFormat::Vst3] {
+        assert!(scan.find(format, plugin_id(format)).is_some(), "{scan:?}");
+    }
+    assert_eq!(scan.failures, [], "{:?}", scan.failures);
+    assert_eq!(plugins.instruments().len(), 2);
+}
+
+/// A bundle that hangs in a scan in the background is given up on and reported, and the scan
+/// ends. It is the only bundle, so a busy machine cannot make another one miss the deadline.
+#[test]
+fn a_bundle_that_hangs_in_a_scan_in_the_background_is_reported() {
+    let folder = tempfile::tempdir().unwrap();
+    let search = vec![plugin_folder_of(folder.path(), PluginFormat::Vst3)];
+    let plugins = Plugins::new(search, one_bundle_hangs(PluginFormat::Vst3), no_cache());
+    plugins.start_scanning();
+    assert!(plugins.scan_is_running(), "the scan was already over");
+
+    plugins.wait_for_scan();
+    let scan = plugins.scan();
+    assert!(scan.finished);
+    assert_eq!(scan.bundles, 1);
     assert_eq!(scan.failures.len(), 1, "{:?}", scan.failures);
     assert!(scan.failures[0].path.ends_with("test-tone.vst3"));
-    assert_eq!(plugins.instruments().len(), 1);
+    assert_eq!(plugins.instruments(), []);
 }
 
 /// A project that names a plugin the scan has not reached yet opens, says so, and plays the
