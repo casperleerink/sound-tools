@@ -5612,6 +5612,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sound-media"
+version = "0.1.0"
+dependencies = [
+ "hound",
+ "serde",
+ "serde_json",
+ "sound-core",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "sound-notes"
 version = "0.1.0"
 dependencies = [
