@@ -813,19 +813,33 @@ impl Plugins {
     }
 
     /// Main-thread work for every plugin this host holds: the callbacks they asked for, the
-    /// state they said changed, starting again the ones that asked for it, and letting go of
-    /// the ones no record names any more.
+    /// state they said changed, and letting go of the ones no record names any more. A plugin
+    /// that asked to be started again is noted here and started by [`Self::send_restarts`].
     ///
-    /// Call it as often as the project is polled. It needs the project mutable only to hand the
-    /// engine a plugin that was started again, which is not an edit: nothing is written and
-    /// there is no undo step.
-    pub fn poll(&self, project: &mut Project) -> Vec<PluginProblem> {
+    /// Call it as often as the project is polled.
+    pub fn poll(&self, project: &Project) -> Vec<PluginProblem> {
         self.poll_at(project, Instant::now())
     }
 
     /// [`Self::poll`] with the time given, so a test can move it.
-    pub fn poll_at(&self, project: &mut Project, now: Instant) -> Vec<PluginProblem> {
-        let mut problems = self.serve(project, now);
+    pub fn poll_at(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
+        self.serve(project, now)
+    }
+
+    /// Whether a plugin is waiting for [`Self::send_restarts`]. Cheap, so a caller that has to
+    /// ask for the project mutably only does so while this is true.
+    pub fn restarts_pending(&self) -> bool {
+        let table = self.0.table.borrow();
+        let mut loaded = table.loaded.values();
+        loaded.any(|hosted| hosted.restart != Restart::Idle)
+    }
+
+    /// Moves every restart a plugin asked for one step on, see [`Self::restarts`]. Call it
+    /// after [`Self::poll`] while [`Self::restarts_pending`] says so. It needs the project
+    /// mutably only to hand the engine the plugin's audio side, which is not an edit: nothing
+    /// is written and there is no undo step.
+    pub fn send_restarts(&self, project: &mut Project) -> Vec<PluginProblem> {
+        let mut problems = Vec::new();
         // Outside the borrow of the table: the engine is the project's.
         for (id, plugin_id, update) in self.restarts(&mut problems) {
             if let Err(error) = project.send::<HostedPlugin>(&id, crate::PROCESSOR, update) {
@@ -932,7 +946,8 @@ impl Plugins {
                 *window_changed = true;
             }
             // A plugin that asks to be deactivated and activated again, which is how its
-            // latency changes. A plugin that is going is not started again.
+            // latency changes. A retired plugin is marked as well, but only loaded ones are
+            // started again, see `Self::restarts`.
             if requests.restart && hosted.restart == Restart::Idle {
                 hosted.restart = Restart::Asked;
             }

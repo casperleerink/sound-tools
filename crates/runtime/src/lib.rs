@@ -388,7 +388,9 @@ pub fn render_block(
 ) -> Result<Vec<plugin_host::PluginProblem>> {
     engine.process_block(output);
     project.engine().poll()?;
-    Ok(plugins.poll(project))
+    let mut problems = plugins.poll(project);
+    problems.extend(plugins.send_restarts(project));
+    Ok(problems)
 }
 
 /// Renders `frames` frames in device buffers of 512 frames, interleaved by channel. See

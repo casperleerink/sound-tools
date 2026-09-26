@@ -89,7 +89,7 @@ fn plugin_state_is_saved_comes_back_on_reopen_and_the_render_is_the_same() {
     let (mut harness, plugins) = Harness::with_test_plugin(folder);
     write_plugin_track(&mut harness, "piano", &clip_with_pedal(Some(100)));
     let before = harness.play(16_000);
-    plugins.poll(&mut harness.project);
+    plugins.poll(&harness.project);
 
     // A pedal of 100 makes the test plugin transpose by 36 and say its state changed.
     let asset = harness.path("assets/plugin-state/piano.bin");
@@ -104,7 +104,7 @@ fn plugin_state_is_saved_comes_back_on_reopen_and_the_render_is_the_same() {
     let (mut harness, plugins) = harness.reopen_with_test_plugin();
     let after = harness.play(16_000);
     assert_eq!(difference(&before, &after), None);
-    plugins.poll(&mut harness.project);
+    plugins.poll(&harness.project);
     assert_eq!(std::fs::read(&asset).unwrap(), saved);
 
     // Now take the pedal out of the clip and open it again. The notes are still transposed,

@@ -230,7 +230,7 @@ fn a_plugin_sizes_its_own_window(format: PluginFormat, cx: &mut TestAppContext) 
     let folder = log_folder();
     let log = folder.path().join("calls.txt");
     tell_the_plugin_to_ask_for_a_window_size(640, 480);
-    let mut harness = open(format, &log);
+    let harness = open(format, &log);
     open_window(&harness, "Piano", cx);
     // Where the window is born differs, because the two formats ask at different moments. A
     // CLAP plugin asks from `show`, which is after the window was made, so the window is still
@@ -264,7 +264,7 @@ fn a_plugin_sizes_its_own_window(format: PluginFormat, cx: &mut TestAppContext) 
         );
     }
 
-    harness.plugins.poll(&mut harness.project);
+    harness.plugins.poll(&harness.project);
     cx.update(|cx| harness.plugins.settle_windows(cx));
     assert_eq!(
         window_size(cx),
@@ -354,9 +354,9 @@ fn nested_resize_ends_on(cx: &mut TestAppContext, asked: (u32, u32), from_inside
     let log = folder.path().join("calls.txt");
     tell_the_plugin_to_ask_for_a_window_size(asked.0, asked.1);
     tell_the_plugin_to_ask_again_from_inside_the_answer(from_inside.0, from_inside.1);
-    let mut harness = open(PluginFormat::Vst3, &log);
+    let harness = open(PluginFormat::Vst3, &log);
     open_window(&harness, "Piano", cx);
-    harness.plugins.poll(&mut harness.project);
+    harness.plugins.poll(&harness.project);
     cx.update(|cx| harness.plugins.settle_windows(cx));
 
     let calls = window_calls(&log);
@@ -390,14 +390,14 @@ fn a_window_the_plugin_closes_itself_is_freed_at_the_next_poll(cx: &mut TestAppC
     let folder = log_folder();
     let log = folder.path().join("calls.txt");
     tell_the_plugin_to_close_its_window();
-    let mut harness = open(PluginFormat::Clap, &log);
+    let harness = open(PluginFormat::Clap, &log);
     let slot = id(SLOT);
     open_window(&harness, "Piano", cx);
     // The plugin asked for a call on the main thread; until the host makes it nothing changed.
     assert!(harness.plugins.window_is_open(&slot));
     harness.plugins.take_window_change();
 
-    harness.plugins.poll(&mut harness.project);
+    harness.plugins.poll(&harness.project);
     assert!(!harness.plugins.window_is_open(&slot));
     assert!(harness.plugins.take_window_change());
     let calls = window_calls(&log);
@@ -465,7 +465,7 @@ fn a_deleted_record_takes_the_window(format: PluginFormat, cx: &mut TestAppConte
         .project
         .commit("Delete instrument", changes)
         .unwrap();
-    harness.plugins.poll(&mut harness.project);
+    harness.plugins.poll(&harness.project);
     assert!(!harness.plugins.window_is_open(&slot));
     assert_eq!(
         window_calls(&log).last().map(String::as_str),
@@ -478,7 +478,7 @@ fn a_deleted_record_takes_the_window(format: PluginFormat, cx: &mut TestAppConte
     // Undo brings the plugin back. Its window does not come with it: opening one is not an
     // edit, so there is nothing to undo.
     harness.project.undo().unwrap();
-    harness.plugins.poll(&mut harness.project);
+    harness.plugins.poll(&harness.project);
     assert!(!harness.plugins.window_is_open(&slot));
     assert_eq!(harness.problems(), Vec::<String>::new());
 
@@ -567,7 +567,7 @@ fn window_calls_are_on_the_main_thread(format: PluginFormat, cx: &mut TestAppCon
             });
         });
         harness.project.engine().poll().expect("the engine polls");
-        harness.plugins.poll(&mut harness.project);
+        harness.plugins.poll(&harness.project);
     };
     play(2, &mut harness);
     open_window(&harness, "Piano", cx);

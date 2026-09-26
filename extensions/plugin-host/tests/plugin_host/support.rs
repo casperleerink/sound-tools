@@ -733,7 +733,8 @@ impl Harness {
         for buffer in output.chunks_mut(512 * 2) {
             self.engine.process_block(buffer);
             self.project.engine().poll().expect("the engine polls");
-            self.plugins.poll(&mut self.project);
+            self.plugins.poll(&self.project);
+            self.plugins.send_restarts(&mut self.project);
         }
         Render { output }
     }

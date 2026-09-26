@@ -211,7 +211,7 @@ fn saved_on_the_way_out(format: PluginFormat) {
         .project
         .commit("Delete the plugin", changes)
         .unwrap();
-    harness.plugins.poll(&mut harness.project);
+    harness.plugins.poll(&harness.project);
     let saved = std::fs::read(&asset).expect("the plugin was saved when its record went");
     assert_eq!(saved_transpose(format, &saved), 36, "{format:?}");
 
@@ -280,7 +280,7 @@ fn a_controller_that_cannot_give_its_state_leaves_the_file_that_is_there_alone()
     harness.add_track(record(format, "piano"), change_the_state_and_play());
     // The host is polled once, by hand, so the problem of that one save is the one read here.
     harness.render_without_polling(2048);
-    let problems = harness.plugins.poll(&mut harness.project);
+    let problems = harness.plugins.poll(&harness.project);
     let problems: Vec<String> = problems.iter().map(ToString::to_string).collect();
     assert!(
         problems.iter().any(|problem| problem.contains("getState")),
@@ -359,16 +359,15 @@ fn written_at_most_once_a_second(format: PluginFormat) {
     // The first change is written at once.
     let start = std::time::Instant::now();
     harness.render_without_polling(1024);
-    harness.plugins.poll_at(&mut harness.project, start);
+    harness.plugins.poll_at(&harness.project, start);
     assert_eq!(saved(&asset), 70 + 1 - 64);
 
     // Everything in the second after it waits.
     for step in 1..8 {
         harness.render_without_polling(1024);
-        harness.plugins.poll_at(
-            &mut harness.project,
-            start + Duration::from_millis(100 * step),
-        );
+        harness
+            .plugins
+            .poll_at(&harness.project, start + Duration::from_millis(100 * step));
     }
     assert_eq!(
         saved(&asset),
@@ -379,7 +378,7 @@ fn written_at_most_once_a_second(format: PluginFormat) {
     // A second later the last change is written, and only once.
     harness
         .plugins
-        .poll_at(&mut harness.project, start + Duration::from_millis(1100));
+        .poll_at(&harness.project, start + Duration::from_millis(1100));
     let after_a_second = saved(&asset);
     assert!(
         after_a_second > 70 + 1 - 64,

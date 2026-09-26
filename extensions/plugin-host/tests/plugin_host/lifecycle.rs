@@ -459,6 +459,8 @@ fn a_latency_change_keeps_the_thread_rules(format: PluginFormat) {
             harness.project.engine().poll().expect("the engine polls");
             let problems = harness.plugins.poll(harness.project);
             assert_eq!(problems, [], "{format:?}");
+            let problems = harness.plugins.send_restarts(harness.project);
+            assert_eq!(problems, [], "{format:?}");
         }
     });
 

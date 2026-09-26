@@ -92,7 +92,7 @@ fn taking_an_effect_off_gives_the_sound_of_the_instrument_back() {
             .project
             .commit("Remove the effect", changes)
             .expect("the delete applies");
-        harness.plugins.poll(&mut harness.project);
+        harness.plugins.poll(&harness.project);
         assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
 
         let plain = harness.play(4096).samples().to_vec();

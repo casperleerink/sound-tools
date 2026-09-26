@@ -197,7 +197,7 @@ fn the_state_of_an_effect_survives_close_and_reopen_and_is_not_an_undo_step() {
             before[0], 0.0,
             "{format:?}: the effect started with an offset"
         );
-        plugins.poll(&mut harness.project);
+        plugins.poll(&harness.project);
 
         // What the plugin learned is in the project, and no undo step was made for it.
         let asset = harness.path("assets/plugin-state/trim.bin");

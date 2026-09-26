@@ -131,7 +131,7 @@ fn a_plugin_that_moves_its_pedal_mapping_is_reported_and_the_pedal_still_reaches
     assert_eq!(render.right()[64], 100.0 / 127.0);
 
     // The first poll after the load is where the host says so, once.
-    let reported = harness.plugins.poll(&mut harness.project);
+    let reported = harness.plugins.poll(&harness.project);
     assert_eq!(reported.len(), 1, "{reported:?}");
     assert!(
         reported[0]
@@ -140,5 +140,5 @@ fn a_plugin_that_moves_its_pedal_mapping_is_reported_and_the_pedal_still_reaches
         "{reported:?}"
     );
     // And not again at the next poll: the plugin said it once.
-    assert_eq!(harness.plugins.poll(&mut harness.project), Vec::new());
+    assert_eq!(harness.plugins.poll(&harness.project), Vec::new());
 }

@@ -153,7 +153,9 @@ fn run(folder: &Path) -> Result<()> {
         if let Err(error) = project.poll() {
             println!("error: {error}");
         }
-        for problem in plugins.poll(&mut project) {
+        let mut problems = plugins.poll(&project);
+        problems.extend(plugins.send_restarts(&mut project));
+        for problem in problems {
             println!("error: {problem}");
         }
         print_events(&mut project);

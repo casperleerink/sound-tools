@@ -90,14 +90,6 @@ impl Session {
         &self.project
     }
 
-    /// The project, for a service outside it that serves its processors without editing it,
-    /// such as the plugin host handing the engine a plugin it started again. Edit through
-    /// [`Self::edit`] and the gestures instead: they are what the undo history and the views
-    /// follow.
-    pub fn project_mut(&mut self) -> &mut Project {
-        &mut self.project
-    }
-
     pub fn playhead(&self) -> &Entity<Playhead> {
         &self.playhead
     }
