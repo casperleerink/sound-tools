@@ -544,12 +544,12 @@ impl Reverb {
         }
         // What comes in stays in the lines until the loop loses it, so at each frequency the
         // lines hold the power of the input over the part the loop loses per pass, on average
-        // over the lines, and what comes out of them is the part a pass keeps of that. Over the
-        // heard frequencies that is the power of the tail of a noise; scaled by its root, the
+        // over the lines, and what comes out is what they hold. Over the heard frequencies that
+        // is the power of the tail of a noise; scaled by its root, the
         // tail comes out at the level of the noise at every size, decay and damping. A frozen
         // reverb keeps the factor it had, so it holds its level.
         if freeze == 0.0 {
-            let held: f32 = lost.iter().map(|lost| (LINES as f32 - lost) / lost).sum();
+            let held: f32 = lost.iter().map(|lost| LINES as f32 / lost).sum();
             let held = (held / HEARD_HZ.len() as f32).max(f32::MIN_POSITIVE);
             self.tail_gain_target = OUTPUT / held.sqrt();
         }
@@ -588,15 +588,13 @@ impl Reverb {
             into[channel] = sound * input_gain;
         }
 
-        let mut out = [0.0_f32; LINES];
-        for (index, out) in out.iter_mut().enumerate() {
-            let read = self
-                .line_taps
-                .read(&self.lines[index], index, position, line_fade);
-            let damped = self.line_gains[index] * read + self.poles[index] * self.damped[index];
-            self.damped[index] = damped;
-            *out = damped;
-        }
+        // What comes out is what the lines hold, so the tail is what a freeze keeps: a frozen
+        // loop holds the energy of the lines, and the tail was that energy all along. The loss
+        // of a pass is on the way back in, after the mix, on what goes into each line.
+        let out: [f32; LINES] = std::array::from_fn(|index| {
+            let line = &self.lines[index];
+            self.line_taps.read(line, index, position, line_fade)
+        });
         let mut wet = [0.0; CHANNELS];
         for (index, out) in out.iter().enumerate() {
             let [left, right] = signs(index);
@@ -607,7 +605,9 @@ impl Reverb {
         let mut loudest = 0.0_f32;
         for (index, mixed) in mixed.iter().enumerate() {
             let [left, right] = signs(index);
-            let written = mixed + 0.5 * (left * into[0] + right * into[1]);
+            let damped = self.line_gains[index] * mixed + self.poles[index] * self.damped[index];
+            self.damped[index] = damped;
+            let written = damped + 0.5 * (left * into[0] + right * into[1]);
             self.lines[index].write(position, written);
             loudest = loudest.max(written.abs());
         }

@@ -13,6 +13,14 @@ const SECOND: usize = SAMPLE_RATE as usize;
 /// about the level of what goes in, whatever the size and the decay.
 const BOUND: f32 = 8.0;
 
+/// Freeze holds what the tail had: its level once frozen is within 2 dB of its level while it
+/// played, and its peak at most 2.5 dB over its peak in as long a time. A frozen loop keeps its
+/// energy exactly; what moves the level is that the tail of a short decay is mostly the first
+/// pass, and a frozen one is the sum of many, where paths through the same lines in another
+/// order arrive together. The worst is +1.5 dB, at size 1 and a decay of 0.2 s.
+const FREEZE_LEVEL_DB: f64 = 2.0;
+const FREEZE_PEAK_DB: f64 = 2.5;
+
 fn assert_bounded(label: &str, [left, right]: &[Vec<f32>; 2]) {
     for sample in left.iter().chain(right) {
         assert!(sample.is_finite(), "{label}: {sample}");
@@ -260,4 +268,80 @@ fn full_scale_noise_for_thirty_seconds_keeps_the_level_of_the_defaults_at_every_
             assert!(change.abs() < 3.0, "size {size}, decay {decay}: {change}");
         }
     }
+}
+
+/// The level and the peak of the output over 3 s while full scale noise plays, and over 3 s
+/// once freeze turns on while the noise goes on, in dB from the first. The tail of a long
+/// decay grows for a while before it settles, so the noise plays for half the decay first.
+fn freeze_changes(before: ReverbState) -> (f32, f64, f64) {
+    let mut rig = Rig::new(before, noise(1.0));
+    let settle = SECOND + (before.decay_seconds * 0.5 * SAMPLE_RATE as f32) as usize;
+    rig.render(settle);
+    let level = |[left, right]: &[Vec<f32>; 2]| {
+        let rms = crate::support::rms(left).hypot(crate::support::rms(right));
+        (rms, peak(left).max(peak(right)))
+    };
+    let (playing_rms, playing_peak) = level(&rig.render(3 * SECOND));
+    rig.update(ReverbState {
+        freeze: true,
+        ..before
+    });
+    let (frozen_rms, frozen_peak) = level(&rig.render(3 * SECOND));
+    let db = |after: f64, before: f64| 20.0 * (after / before).log10();
+    (
+        frozen_peak,
+        db(frozen_rms, playing_rms),
+        db(f64::from(frozen_peak), f64::from(playing_peak)),
+    )
+}
+
+/// Freeze over a short decay in a large room with strong damping, while loud noise plays,
+/// the case the milestone check found holding a tail about 80 times full scale.
+#[test]
+fn freeze_over_a_short_decay_while_loud_noise_plays_keeps_its_level() {
+    let before = ReverbState {
+        pre_delay_ms: 0.5,
+        decay_seconds: 0.2,
+        size: 0.88,
+        damping: 0.9,
+        diffusion: 0.0,
+        width: 0.0,
+        mix: 0.6,
+        ..ReverbState::default()
+    };
+    let (frozen, level, peak) = freeze_changes(before);
+    println!("frozen: peak {frozen:.2}, level {level:+.2} dB, peak {peak:+.2} dB");
+    assert!(frozen < BOUND, "{frozen}");
+    assert!(
+        level.abs() < FREEZE_LEVEL_DB && peak < FREEZE_PEAK_DB,
+        "{level} {peak}"
+    );
+}
+
+/// Freezing holds the tail at the level it had, at every corner of size, decay and damping.
+#[test]
+fn freeze_keeps_the_level_of_the_tail_at_every_corner() {
+    let (mut worst_level, mut worst_peak) = (0.0_f64, f64::MIN);
+    for size in [SIZE.min, SIZE.default, SIZE.max] {
+        for decay_seconds in [DECAY.min, DECAY.default, DECAY.max] {
+            for damping in [0.0, 1.0] {
+                let before = ReverbState {
+                    size,
+                    decay_seconds,
+                    damping,
+                    mix: 1.0,
+                    ..ReverbState::default()
+                };
+                let (_, level, peak) = freeze_changes(before);
+                println!(
+                    "size {size}, decay {decay_seconds} s, damping {damping}: level {level:+.2} dB, peak {peak:+.2} dB"
+                );
+                worst_level = worst_level.max(level.abs());
+                worst_peak = worst_peak.max(peak);
+                assert!(level.abs() < FREEZE_LEVEL_DB, "{before:?}: {level}");
+                assert!(peak < FREEZE_PEAK_DB, "{before:?}: {peak}");
+            }
+        }
+    }
+    println!("worst: level {worst_level:.2} dB, peak {worst_peak:+.2} dB");
 }
