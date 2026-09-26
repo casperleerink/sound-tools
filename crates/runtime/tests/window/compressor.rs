@@ -246,3 +246,71 @@ fn the_level_shows_on_the_curve_while_the_track_plays(cx: &mut TestAppContext) {
     }
     assert_eq!(opened.find("compressor-level"), None);
 }
+
+/// How loud the track plays, from its left channel: the mean level of a stretch of it once it
+/// has started.
+fn loudness(opened: &mut Opened<'_>) -> f32 {
+    opened.settle();
+    opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, _| session.engine().play());
+    });
+    opened.settle();
+    opened.render(12_000);
+    let render = opened.render(12_000);
+    let left: Vec<f32> = render.iter().step_by(2).copied().collect();
+    left.iter().map(|sample| sample.abs()).sum::<f32>() / left.len() as f32
+}
+
+/// The compressor gets the power icon of every effect: it bypasses the slot, the record of the
+/// compressor stays, and the track sounds as it does without it. One undo step each way.
+#[gpui::test]
+fn the_power_icon_bypasses_the_compressor_as_one_undo_step(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let mut changes = sound_core::Changes::new();
+        let note = support::note(0, 4 * support::BAR, 64);
+        let part = support::clip(0, 4 * support::BAR, vec![note]);
+        changes.create(id("arrangement/track-1/part"), part);
+        project.commit("Add clip", changes).unwrap();
+        project.clear_history();
+    });
+    let header = opened.track_header(0);
+    opened.click(header);
+    let plain = loudness(&mut opened);
+    let trigger = opened.control("add-effect");
+    opened.click(trigger);
+    let row = opened.control("menu-compressor");
+    opened.click(row);
+    // The threshold all the way down, so the synth is turned down hard.
+    let threshold = opened.control("knob-threshold_db");
+    opened.drag(threshold, threshold + point(px(0.), px(150.)));
+    let compressed = loudness(&mut opened);
+    assert!(compressed < plain * 0.3, "{plain} then {compressed}");
+
+    let power = opened.control("card-compressor-power");
+    opened.click(power);
+    assert_eq!(opened.undo_label().as_deref(), Some("Turn off Compressor"));
+    let track = std::fs::read_to_string(opened.path("state/arrangement/track-1/instance.json"));
+    assert!(
+        track
+            .unwrap()
+            .contains(r#"{"name": "compressor", "bypass": true}"#)
+    );
+    assert!(opened.path(COMPRESSOR_FILE).exists());
+    let bypassed = loudness(&mut opened);
+    assert!(
+        (bypassed - plain).abs() < plain * 0.05,
+        "{plain} then {bypassed}"
+    );
+
+    opened.keys("cmd-z");
+    let back = loudness(&mut opened);
+    assert!(
+        (back - compressed).abs() < compressed * 0.05,
+        "{compressed} then {back}"
+    );
+    let power = opened.control("card-compressor-power");
+    opened.click(power);
+    opened.click(power);
+    assert_eq!(opened.undo_label().as_deref(), Some("Turn on Compressor"));
+}

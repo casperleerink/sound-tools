@@ -1,7 +1,7 @@
 //! The card of the compressor: the transfer curve with the threshold and ratio handles, the
 //! level now as a dot on it and the gain reduction as a bar, then Threshold, Ratio, Attack and
 //! Release, and behind expand Knee, Makeup, Mix and Lookahead. The rack gives the view a
-//! [`CardFrame`]: the picker of the slot as the title, and the close icon.
+//! [`CardFrame`]: the picker of the slot as the title, and the power and close icons.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one

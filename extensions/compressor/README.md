@@ -41,7 +41,7 @@ The compressor owns no children, so an instance is one file: `<name>.json` in a 
 
 `view::register(views, devices)` registers `CompressorView` as the card of `compressor` (`Views::register_card`) and says the card of a compressor is called `Compressor`. The runtime offers `Compressor` in the control that adds an effect.
 
-The rack gives the view a `CardFrame`, the picker of the slot as the title and the close icon, and the view draws the whole card, 288 pt wide as DESIGN.md gives it, with its expand icon:
+The rack gives the view a `CardFrame`, the picker of the slot as the title with the power and close icons, and the view draws the whole card, 288 pt wide as DESIGN.md gives it, with its expand icon:
 
 - The display, 136 pt: the transfer curve, input across and output up, both -60 to 0 dBFS, square so that a ratio of 1 is the diagonal. It is the reduction only; makeup and mix are not in it. A line at the threshold. A handle on the curve at the threshold: sideways is threshold. A hollow handle at its right end, at 0 dBFS in: up and down is ratio. The level now as a green dot on the curve, and the gain reduction as a bar from the top at the right edge, 0 to 24 dB. The line under it: the gain reduction now, `GR -6.8 dB`.
 - Threshold and Attack, Ratio and Release, as knobs in two columns.
@@ -53,6 +53,7 @@ Editing, the same rules as every control on saved state (`sound_ui::ControlEdit`
 
 - A drag of a knob or a handle is one gesture and one undo step: "Change threshold", "Change ratio", "Change attack", "Change release", "Change knee", "Change makeup", "Change mix". The file is written once, at the end. Escape cancels.
 - A pick in the lookahead select is one step, "Change lookahead". A double click or backspace on a knob sets its default, a double click on a handle sets its value's.
+- Power bypasses the slot, as for every effect: it is saved on the track's effect slot, not in the compressor's record, so the compressor has no on and off field. "Turn off Compressor" and "Turn on Compressor" are one undo step each.
 - The view keeps no copy of the state, so an outside edit shows at once, also during a drag. Whether the card is expanded is the view's own interface state and is not saved.
 
 ## Checks
