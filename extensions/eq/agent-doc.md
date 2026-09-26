@@ -44,7 +44,7 @@ It takes away the rumble under 100 Hz, makes the vocal a little less boxy at 400
 | `shape` | What the band does, see below. | `"low_cut"`, `"low_shelf"`, `"bell"`, `"notch"`, `"high_shelf"`, `"high_cut"` | `"low_shelf"`, `"bell"`, `"bell"`, `"high_shelf"` |
 | `frequency_hz` | Where the band works. | 20 to 20000 | 100, 400, 2000, 8000 |
 | `gain_db` | How much a shelf or a bell raises (above 0) or lowers (below 0). A cut and a notch have no gain. | -15 to 15 | 0 |
-| `q` | How narrow a bell or a notch is: 0.5 is wide, 4 is narrow, 18 very narrow. For a cut or a shelf, above 0.71 adds a bump at the frequency. | 0.1 to 18 | 0.71 |
+| `q` | How narrow a bell or a notch is: 0.5 is wide, 4 is narrow, 18 very narrow. For a cut or a shelf, above 0.71 adds a bump at the frequency, which grows fast: keep it under 2 there. | 0.1 to 18 | 0.71 |
 | `output_gain_db` | A gain after all the bands, on `state` and not on a band. | -12 to 12 | 0 |
 
 The shapes:
