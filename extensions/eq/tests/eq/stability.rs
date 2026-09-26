@@ -66,11 +66,13 @@ fn every_shape_at_its_extremes_stays_bounded_at_every_sample_rate() {
                         let one = band(shape, frequency_hz, gain_db, q);
                         let mut state = with_bands(&[one; BANDS]);
                         state.output_gain_db = OUTPUT_GAIN.max;
-                        let label =
-                            format!("{sample_rate} Hz: {shape:?} {frequency_hz} Hz Q {q} {gain_db} dB");
+                        let label = format!(
+                            "{sample_rate} Hz: {shape:?} {frequency_hz} Hz Q {q} {gain_db} dB"
+                        );
                         let bound = bound(&state, rate);
                         let frames = sample_rate as usize / 2;
-                        let square = square(f64::from(frequency_hz).min(5_000.0) / 3.0, sample_rate);
+                        let square =
+                            square(f64::from(frequency_hz).min(5_000.0) / 3.0, sample_rate);
                         let mut rig = Rig::at_rate(state, square, sample_rate);
                         assert_bounded(&label, bound, &rig.render(frames));
                         let mut rig = Rig::at_rate(state, noise(1.0), sample_rate);
@@ -109,7 +111,11 @@ fn a_full_scale_sweep_through_the_most_resonant_bands_stays_bounded() {
         let loudest = peak(&output[0]);
         let steady = eq::response(&state, frequency_hz, SAMPLE_RATE as f32);
         println!("{shape:?} at {frequency_hz} Hz: peak {loudest:.2}, steady peak {steady:.2}");
-        assert_bounded(&format!("{shape:?}"), bound(&state, SAMPLE_RATE as f32), &output);
+        assert_bounded(
+            &format!("{shape:?}"),
+            bound(&state, SAMPLE_RATE as f32),
+            &output,
+        );
         assert!(loudest > steady * 0.3, "{shape:?}: {loudest}");
     }
 }
@@ -213,14 +219,12 @@ fn any_band() -> impl Strategy<Value = Band> {
 }
 
 fn any_state() -> impl Strategy<Value = EqState> {
-    (
-        proptest::array::uniform4(any_band()),
-        -12.0_f32..=12.0,
-    )
-        .prop_map(|(bands, output_gain_db)| EqState {
+    (proptest::array::uniform4(any_band()), -12.0_f32..=12.0).prop_map(|(bands, output_gain_db)| {
+        EqState {
             bands,
             output_gain_db,
-        })
+        }
+    })
 }
 
 proptest! {

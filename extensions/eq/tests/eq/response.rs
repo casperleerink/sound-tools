@@ -47,12 +47,21 @@ fn check_against_exact(label: &str, state: &EqState, frequencies: &[f64], sample
 fn every_shape_gain_and_q_measures_as_its_exact_response() {
     let mut worst = 0.0_f64;
     for shape in Shape::ALL {
-        let gains: &[f32] = if shape.has_gain() { &[-12.0, 9.0] } else { &[0.0] };
+        let gains: &[f32] = if shape.has_gain() {
+            &[-12.0, 9.0]
+        } else {
+            &[0.0]
+        };
         for gain_db in gains {
             for q in [0.3, 0.71, 4.0, 18.0] {
                 let state = with_bands(&[band(shape, 1_000.0, *gain_db, q)]);
                 let label = format!("{shape:?} {gain_db} dB Q {q}");
-                worst = worst.max(check_against_exact(&label, &state, &FREQUENCIES, SAMPLE_RATE));
+                worst = worst.max(check_against_exact(
+                    &label,
+                    &state,
+                    &FREQUENCIES,
+                    SAMPLE_RATE,
+                ));
             }
         }
     }
@@ -66,7 +75,11 @@ fn every_band_of_the_list_is_heard() {
         let mut state = with_bands(&[]);
         state.bands[index] = band(Shape::Bell, 700.0, 6.0, 2.0);
         let measured = measured_db(state, 700.0);
-        assert!((measured - 6.0).abs() < 0.02, "band {}: {measured}", index + 1);
+        assert!(
+            (measured - 6.0).abs() < 0.02,
+            "band {}: {measured}",
+            index + 1
+        );
     }
 }
 
@@ -85,19 +98,39 @@ fn the_shapes_do_what_their_settings_say() {
     for (gain_db, q) in [(9.0, 0.5), (-12.0, 2.0), (15.0, 18.0), (-15.0, 0.1)] {
         let state = with_bands(&[band(Shape::Bell, 1_000.0, gain_db, q)]);
         let label = format!("bell {gain_db} dB Q {q} at its frequency");
-        near(&label, measured_db(state, 1_000.0), f64::from(gain_db), 0.02);
+        near(
+            &label,
+            measured_db(state, 1_000.0),
+            f64::from(gain_db),
+            0.02,
+        );
     }
     // A shelf is half its gain at its frequency and all of it far on its side, and nothing on
     // the other.
     for gain_db in [-10.0, 6.0] {
         let gain = f64::from(gain_db);
         let low = with_bands(&[band(Shape::LowShelf, 1_000.0, gain_db, 0.71)]);
-        near("low shelf at its frequency", measured_db(low, 1_000.0), gain / 2.0, 0.02);
+        near(
+            "low shelf at its frequency",
+            measured_db(low, 1_000.0),
+            gain / 2.0,
+            0.02,
+        );
         near("low shelf at 30 Hz", measured_db(low, 30.0), gain, 0.02);
         near("low shelf at 16 kHz", measured_db(low, 16_000.0), 0.0, 0.02);
         let high = with_bands(&[band(Shape::HighShelf, 1_000.0, gain_db, 0.71)]);
-        near("high shelf at its frequency", measured_db(high, 1_000.0), gain / 2.0, 0.02);
-        near("high shelf at 16 kHz", measured_db(high, 16_000.0), gain, 0.02);
+        near(
+            "high shelf at its frequency",
+            measured_db(high, 1_000.0),
+            gain / 2.0,
+            0.02,
+        );
+        near(
+            "high shelf at 16 kHz",
+            measured_db(high, 16_000.0),
+            gain,
+            0.02,
+        );
         near("high shelf at 30 Hz", measured_db(high, 30.0), 0.0, 0.02);
     }
     // A cut at Q 0.71 is a second order Butterworth filter: 3 dB down at its frequency, 12 dB
@@ -107,10 +140,20 @@ fn the_shapes_do_what_their_settings_say() {
     for hz in [250.0, 500.0, 1_000.0, 2_000.0] {
         let low_cut = with_bands(&[band(Shape::LowCut, 1_000.0, 0.0, q)]);
         let label = format!("low cut at {hz} Hz");
-        near(&label, measured_db(low_cut, hz), butterworth(1_000.0 / hz), 0.2);
+        near(
+            &label,
+            measured_db(low_cut, hz),
+            butterworth(1_000.0 / hz),
+            0.2,
+        );
         let high_cut = with_bands(&[band(Shape::HighCut, 1_000.0, 0.0, q)]);
         let label = format!("high cut at {hz} Hz");
-        near(&label, measured_db(high_cut, hz), butterworth(hz / 1_000.0), 0.2);
+        near(
+            &label,
+            measured_db(high_cut, hz),
+            butterworth(hz / 1_000.0),
+            0.2,
+        );
     }
     // A notch takes its frequency out, and an octave away is where Q puts it.
     for q in [1.0, 8.0] {
@@ -120,7 +163,12 @@ fn the_shapes_do_what_their_settings_say() {
         // |1 - x²| / sqrt((1 - x²)² + (x / Q)²) at x = 2.
         let q = f64::from(q);
         let expected = 20.0 * (3.0 / (9.0 + 4.0 / (q * q)).sqrt()).log10();
-        near("notch an octave up", measured_db(notch, 2_000.0), expected, 0.1);
+        near(
+            "notch an octave up",
+            measured_db(notch, 2_000.0),
+            expected,
+            0.1,
+        );
     }
 }
 
@@ -143,7 +191,9 @@ fn several_bands_measure_as_the_sum_of_each_band_alone() {
     for (name, bands) in [("vocal", vocal), ("overlapping", overlapping)] {
         let mut state = with_bands(&bands);
         state.output_gain_db = -2.5;
-        let frequencies = [60.0, 150.0, 300.0, 700.0, 1_500.0, 3_000.0, 6_000.0, 12_000.0];
+        let frequencies = [
+            60.0, 150.0, 300.0, 700.0, 1_500.0, 3_000.0, 6_000.0, 12_000.0,
+        ];
         let worst = check_against_exact(name, &state, &frequencies, SAMPLE_RATE);
         println!("{name}: largest difference from the exact response {worst:.4} dB");
         for hz in frequencies {
@@ -153,7 +203,9 @@ fn several_bands_measure_as_the_sum_of_each_band_alone() {
                 .sum::<f64>()
                 - 2.5;
             let together = measured_db(state, hz);
-            println!("{name} at {hz} Hz: {together:.3} dB, the bands alone add up to {alone:.3} dB");
+            println!(
+                "{name} at {hz} Hz: {together:.3} dB, the bands alone add up to {alone:.3} dB"
+            );
             assert!(
                 (together - alone).abs() < 0.05,
                 "{name} at {hz} Hz: together {together:.3} dB, alone {alone:.3} dB"
@@ -177,11 +229,19 @@ fn other_sample_rates_and_the_top_of_the_range_measure_as_the_exact_response() {
         for extreme in extremes {
             let state = with_bands(&[extreme]);
             let frequencies = [1_000.0, 10_000.0, 16_000.0, 19_000.0, 20_000.0];
-            let label = format!("{:?} at {} Hz Q {}", extreme.shape, extreme.frequency_hz, extreme.q);
+            let label = format!(
+                "{:?} at {} Hz Q {}",
+                extreme.shape, extreme.frequency_hz, extreme.q
+            );
             check_against_exact(&label, &state, &frequencies, sample_rate);
         }
         let mid = with_bands(&[band(Shape::Bell, 1_000.0, -6.0, 1.0)]);
-        check_against_exact("bell at 1 kHz", &mid, &[500.0, 1_000.0, 2_000.0], sample_rate);
+        check_against_exact(
+            "bell at 1 kHz",
+            &mid,
+            &[500.0, 1_000.0, 2_000.0],
+            sample_rate,
+        );
     }
     // At 44.1 kHz the bell at 20 kHz is at 45 % of the sample rate, and there it has its gain.
     let top = with_bands(&[band(Shape::Bell, 20_000.0, 15.0, 18.0)]);

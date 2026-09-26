@@ -213,9 +213,7 @@ struct BandInRecord {
 
 /// The bands of a record: at most [`BANDS`], each field that is left out from the default of
 /// its band, and a band that is left out the default band.
-fn bands_from_list<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<[Band; BANDS], D::Error> {
+fn bands_from_list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[Band; BANDS], D::Error> {
     let listed = Vec::<BandInRecord>::deserialize(deserializer)?;
     if listed.len() > BANDS {
         let count = listed.len();
@@ -294,7 +292,9 @@ mod tests {
             ("agent-doc.md", include_str!("../agent-doc.md")),
             ("README.md", include_str!("../README.md")),
         ];
-        let frequencies = FREQUENCIES.each_ref().map(|parameter| parameter.default.to_string());
+        let frequencies = FREQUENCIES
+            .each_ref()
+            .map(|parameter| parameter.default.to_string());
         let shapes = SHAPES.map(|shape| format!("`\"{}\"`", snake_case(shape)));
         for (name, doc) in docs {
             let ranges = [&FREQUENCIES[0], &GAIN, &Q].map(|parameter| {
@@ -349,7 +349,10 @@ mod tests {
                 (parameter.set)(&mut state.bands[index], parameter.max * 2.0 + 1.0);
                 let error = state.validate().unwrap_err();
                 assert!(error.contains(parameter.field), "{error}");
-                assert!(error.starts_with(&format!("band {}: ", index + 1)), "{error}");
+                assert!(
+                    error.starts_with(&format!("band {}: ", index + 1)),
+                    "{error}"
+                );
             }
         }
         for value in [OUTPUT_GAIN.min, OUTPUT_GAIN.default, OUTPUT_GAIN.max] {

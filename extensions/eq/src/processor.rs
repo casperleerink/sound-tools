@@ -172,11 +172,7 @@ impl Factors {
     fn new(g: f32, k: f32) -> Self {
         let a1 = 1.0 / (1.0 + g * (g + k));
         let a2 = g * a1;
-        Self {
-            a1,
-            a2,
-            a3: g * a2,
-        }
+        Self { a1, a2, a3: g * a2 }
     }
 }
 

@@ -10,9 +10,7 @@
 //! about the interface is here: the label, the unit, the travel of a knob, the name of the
 //! undo step, which band is selected and whether the card is expanded.
 
-use gpui::{
-    Context, Entity, KeyDownEvent, Point, SharedString, Window, div, point, prelude::*,
-};
+use gpui::{Context, Entity, KeyDownEvent, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
@@ -25,9 +23,7 @@ use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
 
-use crate::{
-    BANDS, Band, EqState, FREQUENCIES, GAIN, OUTPUT_GAIN, Q, Shape, response,
-};
+use crate::{BANDS, Band, EqState, FREQUENCIES, GAIN, OUTPUT_GAIN, Q, Shape, response};
 
 /// The name the rack puts on the card of an EQ.
 pub const NAME: &str = "EQ";
@@ -139,7 +135,12 @@ const SHAPES: [(Shape, &str, &str, &str); 6] = [
     (Shape::LowShelf, "low_shelf", "Low shelf", "eq-low-shelf"),
     (Shape::Bell, "bell", "Bell", "eq-bell"),
     (Shape::Notch, "notch", "Notch", "eq-notch"),
-    (Shape::HighShelf, "high_shelf", "High shelf", "eq-high-shelf"),
+    (
+        Shape::HighShelf,
+        "high_shelf",
+        "High shelf",
+        "eq-high-shelf",
+    ),
     (Shape::HighCut, "high_cut", "High cut", "eq-high-cut"),
 ];
 
@@ -149,7 +150,7 @@ fn readout(unit: Unit, value: f32) -> String {
         Unit::Hertz if value < 1_000.0 => format!("{} Hz", short(value)),
         Unit::Hertz => format!("{} kHz", short(value / 1_000.0)),
         Unit::Decibels => format!("{} dB", short(value)),
-        Unit::Plain => short(value).to_string(),
+        Unit::Plain => short(value),
     }
 }
 
@@ -470,7 +471,13 @@ mod tests {
         }
         let output: &crate::Parameter = OUTPUT_KNOB.parameter;
         let values = [output.min, output.default, output.max];
-        check(OUTPUT_KNOB.scale(), output.field, output.min, output.max, &values);
+        check(
+            OUTPUT_KNOB.scale(),
+            output.field,
+            output.min,
+            output.max,
+            &values,
+        );
     }
 
     /// The handle of a band with a gain is at its gain on the display, so it sits on the curve

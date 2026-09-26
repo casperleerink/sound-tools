@@ -188,10 +188,10 @@ pub fn band(shape: Shape, frequency_hz: f32, gain_db: f32, q: f32) -> Band {
 pub fn with_bands(bands: &[Band]) -> EqState {
     let mut state = EqState::default();
     for (index, slot) in state.bands.iter_mut().enumerate() {
-        *slot = bands.get(index).copied().unwrap_or(Band {
-            on: false,
-            ..*slot
-        });
+        *slot = bands
+            .get(index)
+            .copied()
+            .unwrap_or(Band { on: false, ..*slot });
     }
     state
 }

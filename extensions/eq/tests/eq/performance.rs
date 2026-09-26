@@ -65,6 +65,8 @@ fn realtime_ratio_of_one_hundred_eqs() {
         }
         let elapsed = started.elapsed().as_secs_f64();
         let ratio = SECONDS as f64 / elapsed;
-        println!("100 EQs of four bands, {label}: {SECONDS} s in {elapsed:.3} s, {ratio:.1} times realtime");
+        println!(
+            "100 EQs of four bands, {label}: {SECONDS} s in {elapsed:.3} s, {ratio:.1} times realtime"
+        );
     }
 }

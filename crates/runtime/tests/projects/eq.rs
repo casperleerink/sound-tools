@@ -141,7 +141,10 @@ fn the_eq_comes_back_after_close_and_reopen_and_renders_the_same() {
     assert_eq!(harness.project.problems(), []);
     let eq = harness.project.resolve::<EqState>(&id).unwrap();
     assert_eq!(harness.project.state(&eq), Some(&sound));
-    assert_eq!(std::fs::read_to_string(harness.path(EQ_FILE)).unwrap(), file);
+    assert_eq!(
+        std::fs::read_to_string(harness.path(EQ_FILE)).unwrap(),
+        file
+    );
     let second = harness.play(2 * BAR);
     let bytes = |samples: &[f32]| -> Vec<u8> {
         samples

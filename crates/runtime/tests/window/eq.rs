@@ -103,7 +103,12 @@ fn a_click_on_a_handle_selects_its_band_and_the_knobs_follow(cx: &mut TestAppCon
     let after = state(&mut opened);
     assert_eq!(opened.undo_label().as_deref(), Some("Change gain"));
     for band in [0, 1, 3] {
-        assert_eq!(after.bands[band], Band::default_at(band), "band {}", band + 1);
+        assert_eq!(
+            after.bands[band],
+            Band::default_at(band),
+            "band {}",
+            band + 1
+        );
     }
     assert!(file(&mut opened).contains(&format!("\"gain_db\": {:?}", after.bands[2].gain_db)));
 

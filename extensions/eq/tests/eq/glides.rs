@@ -40,29 +40,53 @@ fn no_edit_steps_the_sound() {
         after
     };
     let edits: [(&str, EqState); 12] = [
-        ("frequency", edit(&|state| state.bands[1].frequency_hz = 3_000.0)),
+        (
+            "frequency",
+            edit(&|state| state.bands[1].frequency_hz = 3_000.0),
+        ),
         ("gain", edit(&|state| state.bands[1].gain_db = -15.0)),
         ("q", edit(&|state| state.bands[1].q = 18.0)),
-        ("bell to high cut", edit(&|state| state.bands[1].shape = Shape::HighCut)),
-        ("bell to low cut", edit(&|state| state.bands[1].shape = Shape::LowCut)),
-        ("bell to notch", edit(&|state| state.bands[1].shape = Shape::Notch)),
-        ("bell to low shelf", edit(&|state| state.bands[1].shape = Shape::LowShelf)),
-        ("bell to high shelf", edit(&|state| state.bands[1].shape = Shape::HighShelf)),
+        (
+            "bell to high cut",
+            edit(&|state| state.bands[1].shape = Shape::HighCut),
+        ),
+        (
+            "bell to low cut",
+            edit(&|state| state.bands[1].shape = Shape::LowCut),
+        ),
+        (
+            "bell to notch",
+            edit(&|state| state.bands[1].shape = Shape::Notch),
+        ),
+        (
+            "bell to low shelf",
+            edit(&|state| state.bands[1].shape = Shape::LowShelf),
+        ),
+        (
+            "bell to high shelf",
+            edit(&|state| state.bands[1].shape = Shape::HighShelf),
+        ),
         ("band off", edit(&|state| state.bands[1].on = false)),
-        ("band on", edit(&|state| {
-            state.bands[2] = band(Shape::Notch, 440.0, 0.0, 4.0);
-        })),
+        (
+            "band on",
+            edit(&|state| {
+                state.bands[2] = band(Shape::Notch, 440.0, 0.0, 4.0);
+            }),
+        ),
         ("output", edit(&|state| state.output_gain_db = -12.0)),
-        ("everything", edit(&|state| {
-            // Nothing glides across the tone, and every change makes it quieter: a resonance
-            // that glides over it, or a gain that rises while another falls, makes it louder on
-            // the way than at either end. That is a sweep and not a click, and it is not what
-            // this measures.
-            state.bands[0] = band(Shape::LowCut, 60.0, 0.0, 8.0);
-            state.bands[1].on = false;
-            state.bands[3] = band(Shape::HighCut, 12_000.0, 0.0, 0.3);
-            state.output_gain_db = -6.0;
-        })),
+        (
+            "everything",
+            edit(&|state| {
+                // Nothing glides across the tone, and every change makes it quieter: a resonance
+                // that glides over it, or a gain that rises while another falls, makes it louder on
+                // the way than at either end. That is a sweep and not a click, and it is not what
+                // this measures.
+                state.bands[0] = band(Shape::LowCut, 60.0, 0.0, 8.0);
+                state.bands[1].on = false;
+                state.bands[3] = band(Shape::HighCut, 12_000.0, 0.0, 0.3);
+                state.output_gain_db = -6.0;
+            }),
+        ),
     ];
     for (name, after) in edits {
         let ratio = step_ratio(base, after);
