@@ -10,6 +10,9 @@
 //! the gesture of the knob, see [`gesture`](super::gesture). A handle is not a tab stop: every
 //! value a handle moves also has a knob or a hidden control, which is the path for the keys.
 //!
+//! A handle may carry a number, such as the band of an EQ: its dot is then larger, with the
+//! number in it, and [`Handle::on_press`] hears every press on it, so that a click selects it.
+//!
 //! The display knows no device. The owner gives the curve as points on the display and the
 //! handles with their values, and hears what a handle moves.
 
@@ -33,6 +36,8 @@ const CAPTION_GAP: f32 = 8.;
 const CAPTION_HEIGHT: f32 = 14.;
 const CURVE_WIDTH: f32 = 1.5;
 const HANDLE: f32 = 10.;
+/// The dot of a handle with a number in it.
+const NUMBERED_HANDLE: f32 = 16.;
 const HANDLE_RING: f32 = 1.5;
 /// The target of a handle is larger than its dot: a trackpad is not a mouse.
 const HANDLE_TARGET: f32 = 18.;
@@ -85,6 +90,9 @@ pub struct Handle {
     x: Axis,
     y: Axis,
     hollow: bool,
+    label: Option<SharedString>,
+    dimmed: bool,
+    on_press: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     on_change: Option<ChangeHandler<HandleValues>>,
 }
 
@@ -95,8 +103,30 @@ impl Handle {
             x,
             y,
             hollow: false,
+            label: None,
+            dimmed: false,
+            on_press: None,
             on_change: None,
         }
+    }
+
+    /// A number or a letter in the dot, which makes it 16 pt.
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// At 40 %, for what does nothing now, such as a band that is off. It still drags.
+    pub fn dimmed(mut self, dimmed: bool) -> Self {
+        self.dimmed = dimmed;
+        self
+    }
+
+    /// Hears every press on the handle, a click as well as the start of a drag, before the
+    /// drag does.
+    pub fn on_press(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_press = Some(Rc::new(f));
+        self
     }
 
     /// A secondary handle: a ring and no fill.
@@ -292,6 +322,11 @@ fn handle_element(
         false => (dot, ring),
     };
     let selector = handle.id.clone();
+    let dot = match handle.label {
+        Some(_) => NUMBERED_HANDLE,
+        None => HANDLE,
+    };
+    let on_press = handle.on_press;
     div()
         .id(handle.id)
         .debug_selector(move || format!("handle-{selector}"))
@@ -302,19 +337,34 @@ fn handle_element(
         .flex()
         .items_center()
         .justify_center()
+        .when(handle.dimmed, |d| d.opacity(0.4))
         .child(
             div()
-                .size(px(HANDLE))
+                .size(px(dot))
+                .flex()
+                .items_center()
+                .justify_center()
                 .rounded_full()
                 .bg(fill)
                 .border(px(HANDLE_RING))
-                .border_color(border),
+                .border_color(border)
+                .font(typography::tabular())
+                .text_size(px(10.))
+                .line_height(px(10.))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                // The number is in the colour of the ring on a full dot, and of the dot on a
+                // hollow one: always the other of the two.
+                .text_color(border)
+                .children(handle.label),
         )
         .when_some(handle.on_change, |d, on_change| {
             let on_mouse_down = {
                 let (state, on_change) = (state.clone(), on_change.clone());
                 let press_focus = focus_handle.clone();
                 move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+                    if let Some(on_press) = &on_press {
+                        on_press(window, cx);
+                    }
                     let pointer = event.position;
                     let (px_x, px_y) = (f32::from(pointer.x), -f32::from(pointer.y));
                     let mut across = Travel::new(px_x, place.x, width);
