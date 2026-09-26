@@ -140,7 +140,7 @@ impl SynthView {
         .detach();
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-        .detach();
+            .detach();
         Self {
             session,
             synth,

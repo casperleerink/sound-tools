@@ -15,7 +15,7 @@ use gpui::{
 };
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem};
+use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem, Trigger};
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::popover::Align;
 use sound_ui::components::text_input::TextInput;
@@ -113,7 +113,7 @@ impl AgentSidebar {
         let model = cx.new(|cx| {
             DropdownMenu::new("Opus 5 · high", model_entries(), cx)
                 .selected("opus-5")
-                .ghost(true)
+                .trigger(Trigger::Ghost)
                 .align(Align::Start)
                 .width(280.)
         });

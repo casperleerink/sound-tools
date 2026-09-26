@@ -582,7 +582,10 @@ impl Render for DropdownMenu {
         let (label, chevron) = match self.trigger {
             Trigger::Select => {
                 let picked = self.selected.as_ref().and_then(|value| self.item(value));
-                (picked.map_or_else(|| self.label.clone(), MenuItem::label), 12.)
+                (
+                    picked.map_or_else(|| self.label.clone(), MenuItem::label),
+                    12.,
+                )
             }
             Trigger::Outline | Trigger::Ghost => (self.label.clone(), 14.),
         };

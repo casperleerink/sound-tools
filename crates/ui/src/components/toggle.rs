@@ -11,8 +11,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, ClickEvent, Div, ElementId, FocusHandle, FontWeight, Hsla, SharedString,
-    StyleRefinement, Window, div, prelude::*, px,
+    App, ClickEvent, Div, ElementId, FocusHandle, FontWeight, Hsla, SharedString, StyleRefinement,
+    Window, div, prelude::*, px,
 };
 
 use crate::focus::KeyboardFocus;

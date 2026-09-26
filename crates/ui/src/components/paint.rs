@@ -47,7 +47,10 @@ pub(crate) fn arc(
     if (to - from).abs() < 0.01 {
         return;
     }
-    let (start, end) = (on_circle(centre, radius, from), on_circle(centre, radius, to));
+    let (start, end) = (
+        on_circle(centre, radius, from),
+        on_circle(centre, radius, to),
+    );
     let mut path = PathBuilder::stroke(px(width));
     path.move_to(start);
     let radii = point(px(radius), px(radius));

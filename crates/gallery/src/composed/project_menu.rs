@@ -5,7 +5,7 @@ use gpui::{
     Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, prelude::*, px,
 };
 use sound_ui::ActiveTheme;
-use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem};
+use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem, Trigger};
 
 fn entries() -> Vec<MenuEntry> {
     vec![
@@ -45,7 +45,7 @@ impl ProjectMenu {
         let menu = cx.new(|cx| {
             DropdownMenu::new("Night Study", entries(), cx)
                 .selected("speakers")
-                .ghost(true)
+                .trigger(Trigger::Ghost)
                 .width(260.)
         });
         Self { menu }

@@ -15,8 +15,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Div, ElementId, Hsla, MouseButton, SharedString,
-    StyleRefinement, Window, div, prelude::*, px,
+    AnyElement, App, ClickEvent, Div, ElementId, Hsla, MouseButton, SharedString, StyleRefinement,
+    Window, div, prelude::*, px,
 };
 
 use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT};
@@ -33,6 +33,8 @@ pub const DISPLAY_GAP: f32 = 8.;
 const ICON_TARGET: f32 = 24.;
 const ICON_GLYPH: f32 = 12.;
 const ICON_GAP: f32 = 4.;
+/// The border is inside the width, so the padding is one point less than the room it makes.
+const INSIDE: f32 = CARD_PADDING - 1.;
 /// Air on each side of the hairline before the hidden columns.
 const HIDDEN_GAP: f32 = 8.;
 
@@ -133,7 +135,10 @@ impl DeviceCard {
     }
 
     /// The close icon, which takes the device off.
-    pub fn close(mut self, on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn close(
+        mut self,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.close = Some(Box::new(on_click));
         self
     }
@@ -232,7 +237,11 @@ impl RenderOnce for DeviceCard {
 
         let mut icons = Vec::new();
         if let Some((expanded, on_click)) = self.expand {
-            let chevron = if expanded { "chevron-left" } else { "chevron-right" };
+            let chevron = if expanded {
+                "chevron-left"
+            } else {
+                "chevron-right"
+            };
             let icon = header_icon(&self.id, "expand", chevron, glyph, on_click, window, cx);
             icons.push(icon.into_any_element());
         }
@@ -251,8 +260,8 @@ impl RenderOnce for DeviceCard {
             .h(px(HEADER_HEIGHT))
             .flex()
             .items_center()
-            .pl(px(CARD_PADDING))
-            .pr(px(8.))
+            .pl(px(INSIDE))
+            .pr(px(8. - 1.))
             .gap(px(ICON_GAP))
             .child(
                 div()
@@ -276,7 +285,7 @@ impl RenderOnce for DeviceCard {
             .flex_none()
             .h(px(ROW_HEIGHT * 2.))
             .flex()
-            .px(px(CARD_PADDING))
+            .px(px(INSIDE))
             .when(!on, |body| body.opacity(0.4))
             .children(
                 self.display

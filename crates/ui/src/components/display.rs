@@ -220,7 +220,12 @@ fn paint_display(
             line(window, left, at(bounds, point(1., *y)), ink.grid);
         }
         if let Some(y) = zero {
-            line(window, at(bounds, point(0., y)), at(bounds, point(1., y)), ink.zero);
+            line(
+                window,
+                at(bounds, point(0., y)),
+                at(bounds, point(1., y)),
+                ink.zero,
+            );
         }
         let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
             return;
@@ -313,7 +318,9 @@ fn handle_element(
                         )
                     };
                     let reset = Some(reset);
-                    gesture::press(&state, event, value, reset, value_at, &on_change, window, cx);
+                    gesture::press(
+                        &state, event, value, reset, value_at, &on_change, window, cx,
+                    );
                 }
             };
             // Only escape: the keys of a value are those of its knob.

@@ -123,10 +123,7 @@ impl Volume {
         self
     }
 
-    pub fn on_change(
-        mut self,
-        f: impl Fn(ValueChange, &mut Window, &mut App) + 'static,
-    ) -> Self {
+    pub fn on_change(mut self, f: impl Fn(ValueChange, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Rc::new(f));
         self
     }
@@ -178,7 +175,10 @@ fn paint_thumb(bounds: Bounds<Pixels>, position: f32, colors: ThumbColors, windo
         let ring = box_of(width + outer, height + outer);
         window.paint_quad(fill(ring, focus).corner_radii(px(4.5)));
     }
-    let ring = box_of(THUMB_WIDTH + THUMB_RING * 2., THUMB_HEIGHT + THUMB_RING * 2.);
+    let ring = box_of(
+        THUMB_WIDTH + THUMB_RING * 2.,
+        THUMB_HEIGHT + THUMB_RING * 2.,
+    );
     window.paint_quad(fill(ring, colors.ring).corner_radii(px(3.)));
     let thumb = box_of(THUMB_WIDTH, THUMB_HEIGHT);
     window.paint_quad(fill(thumb, colors.thumb).corner_radii(px(2.)));
@@ -233,11 +233,11 @@ impl RenderOnce for Volume {
                     move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
                         let y = -f32::from(event.position.y);
                         let mut travel = Travel::new(y, position, length);
-                        let value_at = move |pointer: Point<Pixels>, fine| {
-                            match travel.position(-f32::from(pointer.y), fine) {
-                                Some(position) => db_at(position),
-                                None => db,
-                            }
+                        let value_at = move |pointer: Point<Pixels>, fine| match travel
+                            .position(-f32::from(pointer.y), fine)
+                        {
+                            Some(position) => db_at(position),
+                            None => db,
                         };
                         gesture::press(
                             &state,

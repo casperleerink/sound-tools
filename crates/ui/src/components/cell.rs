@@ -88,9 +88,9 @@ pub(crate) fn frame(
                 .children(control),
         )
         .children(label.map(|label| line(LINE_TOP, label_color, false).child(label)))
-        .children(value.map(|value| {
-            line(LINE_TOP + LINE_HEIGHT + 2., value_color, true).child(value)
-        }))
+        .children(
+            value.map(|value| line(LINE_TOP + LINE_HEIGHT + 2., value_color, true).child(value)),
+        )
 }
 
 /// One line of 12 pt text, centred on the cell. It may be wider than the cell: a long label

@@ -25,16 +25,14 @@ use gpui::{
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::card::Card;
+use sound_ui::components::cell::Cell;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::cell::Cell;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::toggle::Toggle;
-use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, Session, Slot, Views,
-};
+use sound_ui::{ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, Session, Slot, Views};
 
 use super::layout::{HEADER_WIDTH, RULER_HEIGHT};
 use super::paint::accent;
@@ -600,9 +598,14 @@ impl TrackPanel {
                 let label = if mute { "Mute track" } else { "Unmute track" };
                 let change = ValueChange::Set(mute);
                 let (session, track) = (&panel.session, &panel.track);
-                panel
-                    .edit
-                    .apply(session, track, label, change, |track, mute| track.mute = mute, cx);
+                panel.edit.apply(
+                    session,
+                    track,
+                    label,
+                    change,
+                    |track, mute| track.mute = mute,
+                    cx,
+                );
             }));
         // In a cell of its own, where the knobs are, as the waveform switch of the synth is. It
         // gets no label under it: it says what it is.

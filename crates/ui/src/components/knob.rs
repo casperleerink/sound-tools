@@ -180,10 +180,7 @@ impl Knob {
         self
     }
 
-    pub fn on_change(
-        mut self,
-        f: impl Fn(ValueChange, &mut Window, &mut App) + 'static,
-    ) -> Self {
+    pub fn on_change(mut self, f: impl Fn(ValueChange, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Rc::new(f));
         self
     }
@@ -218,10 +215,26 @@ fn paint_dial(
     let centre = bounds.center();
     let radius = DIAL / 2. - TRACK_WIDTH / 2.;
     let full = (angle(0.), angle(1.));
-    paint::arc(window, centre, radius, TRACK_WIDTH, full, colors.track, false);
+    paint::arc(
+        window,
+        centre,
+        radius,
+        TRACK_WIDTH,
+        full,
+        colors.track,
+        false,
+    );
     let start = if bipolar { 0. } else { angle(0.) };
     let value = (start, angle(position));
-    paint::arc(window, centre, radius, TRACK_WIDTH, value, colors.value, true);
+    paint::arc(
+        window,
+        centre,
+        radius,
+        TRACK_WIDTH,
+        value,
+        colors.value,
+        true,
+    );
     paint::circle(window, centre, FACE / 2., colors.face);
     if let Some(ring) = colors.ring {
         paint::ring(window, centre, FACE / 2. + RING_WIDTH, RING_WIDTH, ring);
@@ -274,11 +287,11 @@ impl RenderOnce for Knob {
                     move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
                         let y = -f32::from(event.position.y);
                         let mut travel = Travel::new(y, position, TRAVEL);
-                        let value_at = move |pointer: gpui::Point<Pixels>, fine| {
-                            match travel.position(-f32::from(pointer.y), fine) {
-                                Some(position) => range.value(position),
-                                None => value,
-                            }
+                        let value_at = move |pointer: gpui::Point<Pixels>, fine| match travel
+                            .position(-f32::from(pointer.y), fine)
+                        {
+                            Some(position) => range.value(position),
+                            None => value,
                         };
                         gesture::press(
                             &state,
@@ -399,11 +412,23 @@ mod tests {
         // 1234.5 is at 0.5967 of the travel; one point up and down is 0.005 of it.
         let mut travel = Travel::new(-300., range.position(1234.5), TRAVEL);
         assert_eq!(travel.position(-300., false), None);
-        assert_eq!(travel.position(-299., false).map(|p| range.value(p)), Some(1280.));
-        assert_eq!(travel.position(-301., false).map(|p| range.value(p)), Some(1190.));
+        assert_eq!(
+            travel.position(-299., false).map(|p| range.value(p)),
+            Some(1280.)
+        );
+        assert_eq!(
+            travel.position(-301., false).map(|p| range.value(p)),
+            Some(1190.)
+        );
         // With shift a tenth of that.
-        assert_eq!(travel.position(-301., true).map(|p| range.value(p)), Some(1190.));
-        assert_eq!(travel.position(-311., true).map(|p| range.value(p)), Some(1150.));
+        assert_eq!(
+            travel.position(-301., true).map(|p| range.value(p)),
+            Some(1190.)
+        );
+        assert_eq!(
+            travel.position(-311., true).map(|p| range.value(p)),
+            Some(1150.)
+        );
     }
 
     #[test]
