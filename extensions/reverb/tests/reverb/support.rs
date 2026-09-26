@@ -165,7 +165,10 @@ pub fn peak(samples: &[f32]) -> f32 {
 }
 
 pub fn rms(samples: &[f32]) -> f64 {
-    let energy: f64 = samples.iter().map(|sample| f64::from(*sample).powi(2)).sum();
+    let energy: f64 = samples
+        .iter()
+        .map(|sample| f64::from(*sample).powi(2))
+        .sum();
     (energy / samples.len().max(1) as f64).sqrt()
 }
 
@@ -184,9 +187,9 @@ pub fn largest_step(samples: &[f32]) -> f32 {
 /// The slope of the least squares line through `points`, in y per x.
 pub fn slope(points: &[(f64, f64)]) -> f64 {
     let count = points.len() as f64;
-    let (x_mean, y_mean) = points
-        .iter()
-        .fold((0.0, 0.0), |(x, y), point| (x + point.0 / count, y + point.1 / count));
+    let (x_mean, y_mean) = points.iter().fold((0.0, 0.0), |(x, y), point| {
+        (x + point.0 / count, y + point.1 / count)
+    });
     let (mut over, mut under) = (0.0, 0.0);
     for (x, y) in points {
         over += (x - x_mean) * (y - y_mean);

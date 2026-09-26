@@ -11,11 +11,11 @@ use anyhow::Result;
 use arrangement::{ArrangementState, Colour};
 use filter::FilterState;
 use instrument::SynthState;
-use reverb::ReverbState;
 use plugin_host::{
     PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK, WeakPlugins,
     default_search_paths,
 };
+use reverb::ReverbState;
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
     ProjectError, Registry, SavedDestination, State,

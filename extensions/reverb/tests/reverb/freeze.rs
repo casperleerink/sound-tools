@@ -47,11 +47,16 @@ fn freeze_holds_the_tail_for_a_minute_without_growing_or_letting_sound_in() {
     }
     let (lowest, highest) = levels
         .iter()
-        .fold((f64::MAX, f64::MIN), |(low, high), level| (low.min(*level), high.max(*level)));
+        .fold((f64::MAX, f64::MIN), |(low, high), level| {
+            (low.min(*level), high.max(*level))
+        });
     println!("held {held:.4}: from {lowest:+.2} dB to {highest:+.2} dB over a minute");
     assert!(highest < 0.5, "{levels:?}");
     assert!(lowest > -3.0, "{levels:?}");
-    assert!(levels[..28].iter().all(|level| level.abs() < 0.5), "{levels:?}");
+    assert!(
+        levels[..28].iter().all(|level| level.abs() < 0.5),
+        "{levels:?}"
+    );
 }
 
 /// A frozen reverb with silence coming in holds a tail for a minute as well: freeze does not

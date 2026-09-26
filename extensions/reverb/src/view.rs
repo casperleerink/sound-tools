@@ -94,8 +94,7 @@ const DAMPING_KNOB: Control = Control::new(&DAMPING, "Damping", "Change damping"
 const WIDTH_KNOB: Control = Control::new(&WIDTH, "Width", "Change width", Unit::Part);
 const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::Part);
 const LOW_CUT_KNOB: Control = Control::new(&LOW_CUT, "Low cut", "Change low cut", Unit::Hertz);
-const HIGH_CUT_KNOB: Control =
-    Control::new(&HIGH_CUT, "High cut", "Change high cut", Unit::Hertz);
+const HIGH_CUT_KNOB: Control = Control::new(&HIGH_CUT, "High cut", "Change high cut", Unit::Hertz);
 const DIFFUSION_KNOB: Control =
     Control::new(&DIFFUSION, "Diffusion", "Change diffusion", Unit::Part);
 const PRE_DELAY_KNOB: Control = Control::new(

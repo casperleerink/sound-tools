@@ -24,7 +24,10 @@ fn realtime_ratio_of_twenty_reverbs() {
                 .add_processor(&format!("source-{index}"), Source::new(noise(0.01)))
                 .unwrap();
             let reverb = edit
-                .add_processor(&format!("reverb-{index}"), Reverb::new(ReverbState::default()))
+                .add_processor(
+                    &format!("reverb-{index}"),
+                    Reverb::new(ReverbState::default()),
+                )
                 .unwrap();
             edit.connect(Connection::new(
                 source.id(),

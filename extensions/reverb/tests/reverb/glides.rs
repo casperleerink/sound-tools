@@ -59,7 +59,13 @@ fn no_edit_steps_the_sound() {
                 ..base
             },
         ),
-        ("damping", ReverbState { damping: 1.0, ..base }),
+        (
+            "damping",
+            ReverbState {
+                damping: 1.0,
+                ..base
+            },
+        ),
         (
             "diffusion",
             ReverbState {
@@ -83,7 +89,13 @@ fn no_edit_steps_the_sound() {
         ),
         ("width", ReverbState { width: 0.0, ..base }),
         ("mix", ReverbState { mix: 0.0, ..base }),
-        ("freeze", ReverbState { freeze: true, ..base }),
+        (
+            "freeze",
+            ReverbState {
+                freeze: true,
+                ..base
+            },
+        ),
     ];
     for (name, after) in edits {
         let ratio = step_ratio(base, after);

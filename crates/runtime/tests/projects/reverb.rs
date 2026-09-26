@@ -66,7 +66,13 @@ fn an_outside_edit_of_the_reverb_while_it_plays_is_heard_and_undone_in_one_step(
     assert_eq!(heard, expected);
     // And during the glide it was neither.
     let gliding = BAR / 2 + 480;
-    assert!(difference(&played[2 * gliding..2 * gliding + 2], &dry_all[2 * gliding..2 * gliding + 2]).is_some());
+    assert!(
+        difference(
+            &played[2 * gliding..2 * gliding + 2],
+            &dry_all[2 * gliding..2 * gliding + 2]
+        )
+        .is_some()
+    );
 
     // One undo takes the agent's edit back, file and sound.
     assert!(harness.project.undo().unwrap().is_some());
@@ -74,7 +80,13 @@ fn an_outside_edit_of_the_reverb_while_it_plays_is_heard_and_undone_in_one_step(
     let state: serde_json::Value = serde_json::from_str(&file).unwrap();
     assert_eq!(state["state"]["mix"], 0.8);
     let after_undo = harness.play(BAR / 4);
-    assert!(difference(&after_undo, frames(&dry_all, BAR + BAR / 2, BAR + BAR / 2 + BAR / 4)).is_some());
+    assert!(
+        difference(
+            &after_undo,
+            frames(&dry_all, BAR + BAR / 2, BAR + BAR / 2 + BAR / 4)
+        )
+        .is_some()
+    );
 }
 
 /// Everything of the record survives close and reopen, and the render after it is the render
@@ -157,7 +169,11 @@ fn a_reverb_record_out_of_range_is_reported_and_the_track_keeps_what_it_had() {
     harness.write_and_apply(REVERB_FILE, &wrong);
     let problems = harness.project.problems();
     assert_eq!(problems.len(), 1);
-    assert!(problems[0].message.contains("freeze"), "{}", problems[0].message);
+    assert!(
+        problems[0].message.contains("freeze"),
+        "{}",
+        problems[0].message
+    );
     let id = InstanceId::new("arrangement/piano/room").unwrap();
     let reverb = harness.project.resolve::<ReverbState>(&id).unwrap();
     assert_eq!(harness.project.state(&reverb).unwrap().decay_seconds, 3.0);

@@ -40,8 +40,8 @@ const LINES: usize = 16;
 /// The lengths of the lines at size 1, in seconds. Spread from 37 to 97 ms on a ratio, with no
 /// two of them in a simple ratio, so their echoes never pile up on one another.
 const LINE_SECONDS: [f32; LINES] = [
-    0.0371, 0.0403, 0.0437, 0.0469, 0.0503, 0.0539, 0.0577, 0.0613, 0.0651, 0.0691, 0.0733,
-    0.0779, 0.0823, 0.0869, 0.0917, 0.0971,
+    0.0371, 0.0403, 0.0437, 0.0469, 0.0503, 0.0539, 0.0577, 0.0613, 0.0651, 0.0691, 0.0733, 0.0779,
+    0.0823, 0.0869, 0.0917, 0.0971,
 ];
 
 /// Size is a ratio: size 0 makes every line a tenth of its length at size 1.
@@ -611,8 +611,11 @@ mod tests {
     fn the_loss_of_a_line_is_the_decay_at_zero_and_the_damped_decay_at_five_kilohertz() {
         let rate = 48_000.0;
         let damped_cos = (TAU * DAMPED_HZ / rate).cos();
-        for (length, decay, part) in [(2_000.0, 2.0, 0.55), (600.0, 0.5, 0.3), (4_000.0, 20.0, 0.1)]
-        {
+        for (length, decay, part) in [
+            (2_000.0, 2.0, 0.55),
+            (600.0, 0.5, 0.3),
+            (4_000.0, 20.0, 0.1),
+        ] {
             let (gain, pole) = line_loss(length, decay, part, damped_cos, rate);
             let dc_db = 20.0 * gain.log10();
             let expected = -60.0 * length / (decay * rate);

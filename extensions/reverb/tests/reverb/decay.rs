@@ -23,7 +23,12 @@ fn decay_time([left, right]: &[Vec<f32>; 2], sample_rate: u32) -> f64 {
     let points: Vec<(f64, f64)> = still_to_come
         .iter()
         .enumerate()
-        .map(|(frame, energy)| (frame as f64 / f64::from(sample_rate), 10.0 * (energy / total).log10()))
+        .map(|(frame, energy)| {
+            (
+                frame as f64 / f64::from(sample_rate),
+                10.0 * (energy / total).log10(),
+            )
+        })
         .filter(|(_, level)| (-35.0..=-5.0).contains(level))
         .collect();
     -60.0 / slope(&points)
@@ -49,7 +54,10 @@ fn an_impulse_falls_by_sixty_db_in_the_decay_time() {
             };
             let measured = decay_time(&impulse_response(state, SAMPLE_RATE), SAMPLE_RATE);
             let error = measured / f64::from(decay) - 1.0;
-            println!("size {size}, decay {decay} s: measured {measured:.3} s, {:+.1} %", error * 100.0);
+            println!(
+                "size {size}, decay {decay} s: measured {measured:.3} s, {:+.1} %",
+                error * 100.0
+            );
             worst = worst.max(error.abs());
         }
     }
@@ -63,7 +71,10 @@ fn the_decay_is_the_same_at_other_sample_rates() {
     for sample_rate in [44_100, 96_000] {
         let measured = decay_time(&impulse_response(plain(2.0), sample_rate), sample_rate);
         println!("{sample_rate} Hz: measured {measured:.3} s for 2 s");
-        assert!((measured / 2.0 - 1.0).abs() < 0.05, "{sample_rate}: {measured}");
+        assert!(
+            (measured / 2.0 - 1.0).abs() < 0.05,
+            "{sample_rate}: {measured}"
+        );
     }
 }
 

@@ -135,7 +135,12 @@ fn mix_zero_is_the_dry_sound() {
     let [dry_left, dry_right] = {
         let mut dry = noise(0.5);
         let frames: Vec<[f32; 2]> = (0..SECOND / 10).map(|_| dry()).collect();
-        [0, 1].map(|channel| frames.iter().map(|frame| frame[channel]).collect::<Vec<_>>())
+        [0, 1].map(|channel| {
+            frames
+                .iter()
+                .map(|frame| frame[channel])
+                .collect::<Vec<_>>()
+        })
     };
     assert_eq!(left, dry_left);
     assert_eq!(right, dry_right);
@@ -143,7 +148,12 @@ fn mix_zero_is_the_dry_sound() {
 
 fn any_state() -> impl Strategy<Value = ReverbState> {
     (
-        (0.5_f32..=250.0, 0.2_f32..=60.0, 0.0_f32..=1.0, 0.0_f32..=1.0),
+        (
+            0.5_f32..=250.0,
+            0.2_f32..=60.0,
+            0.0_f32..=1.0,
+            0.0_f32..=1.0,
+        ),
         (0.0_f32..=1.0, 20.0_f32..=20_000.0, 20.0_f32..=20_000.0),
         (0.0_f32..=1.0, 0.0_f32..=1.0, any::<bool>()),
     )
@@ -196,15 +206,9 @@ fn at_the_defaults_the_tail_of_noise_is_about_as_loud_as_the_noise() {
         ..ReverbState::default()
     };
     let [left, right] = Rig::new(state, noise(0.5)).render(4 * SECOND);
-    let [dry_left, _] = Rig::new(
-        ReverbState {
-            mix: 0.0,
-            ..state
-        },
-        noise(0.5),
-    )
-    .render(SECOND);
-    let level = crate::support::rms(&left[2 * SECOND..]).hypot(crate::support::rms(&right[2 * SECOND..]))
+    let [dry_left, _] = Rig::new(ReverbState { mix: 0.0, ..state }, noise(0.5)).render(SECOND);
+    let level = crate::support::rms(&left[2 * SECOND..])
+        .hypot(crate::support::rms(&right[2 * SECOND..]))
         / std::f64::consts::SQRT_2;
     let change = crate::support::db(level / crate::support::rms(&dry_left));
     println!("the tail of noise at the defaults: {change:+.1} dB");
