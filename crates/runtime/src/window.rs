@@ -404,9 +404,10 @@ pub fn run(folder: &Path) -> Result<()> {
                             println!("{notice}");
                             session.update(cx, |session, cx| session.report(notice, cx));
                         }
-                        // Records that were waiting for a plugin the scan had not reached.
-                        // Running their behaviour again is what makes them play and takes
-                        // their problem away. It is not an edit and is never undone.
+                        // Records that were waiting for a plugin the scan had not reached,
+                        // and plugins that asked to be loaded again. Running their behaviour
+                        // again is what makes them play and takes their problem away. It is
+                        // not an edit and is never undone.
                         let retries = plugins.take_retries();
                         if !retries.is_empty() {
                             session.update(cx, |session, cx| session.rebind(&retries, cx));

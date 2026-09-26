@@ -63,7 +63,7 @@ pub enum PluginProblem {
     #[error("the plugin {plugin_id:?} did not load: {message}")]
     DidNotLoad { plugin_id: String, message: String },
     #[error(
-        "the plugin {plugin_id:?} asked to be started again, to change its latency, and did not start: {message}. Nothing plays through it until its record changes"
+        "the plugin {plugin_id:?} asked to be started again, because its latency or its buses changed, and did not start: {message}. Nothing plays through it until its record changes"
     )]
     DidNotRestart { plugin_id: String, message: String },
     #[error("the state of the plugin {plugin_id:?} could not be read: {message}")]
@@ -71,17 +71,9 @@ pub enum PluginProblem {
     #[error("the state of the plugin {plugin_id:?} could not be saved: {message}")]
     StateNotWritten { plugin_id: String, message: String },
     #[error(
-        "the plugin {plugin_id:?} asked to be started again, which this build does not do. Take it off the track and put it back if it stopped sounding"
-    )]
-    AskedForRestart { plugin_id: String },
-    #[error(
         "the plugin {plugin_id:?} offers the host no way to send the sustain pedal, so the pedal does not reach it. Its notes play"
     )]
     NoPedal { plugin_id: String },
-    #[error(
-        "the plugin {plugin_id:?} moved the parameter its sustain pedal is mapped to. The pedal still reaches the parameter it was mapped to when the plugin loaded, which may now be another control. Open the project again to pick the new mapping up"
-    )]
-    PedalMappingMoved { plugin_id: String },
     #[error("the plugin {plugin_id:?} has no window of its own")]
     NoWindow { plugin_id: String },
     #[error("the window of the plugin {plugin_id:?} did not open: {message}")]
@@ -574,9 +566,10 @@ impl Plugins {
         })
     }
 
-    /// Records whose plugin was not there when their behaviour ran and may be now, because the
-    /// scan has learned something since. Whoever polls runs their behaviour again, which is
-    /// what makes a plugin play and takes its problem away.
+    /// Records whose behaviour is worth running again: their plugin was not there when it ran
+    /// and may be now, because the scan has learned something since, or their plugin asked to
+    /// be unloaded and loaded again. Whoever polls runs their behaviour again, which is what
+    /// makes a plugin play and takes its problem away, and what loads a plugin afresh.
     pub fn take_retries(&self) -> Vec<InstanceId> {
         std::mem::take(&mut self.0.retries.borrow_mut())
     }
@@ -932,7 +925,8 @@ impl Plugins {
 
         // Retired plugins are served too: one that is still playing, because the engine has
         // not given its audio side back yet, must not miss a callback or lose a change.
-        for hosted in loaded.values_mut().chain(&mut *retired) {
+        let serving = loaded.iter_mut().map(|(id, hosted)| (Some(id), hosted));
+        for (id, hosted) in serving.chain(retired.iter_mut().map(|hosted| (None, hosted))) {
             let requests = hosted.plugin.poll();
             if let Some(wanted) = requests.window_size {
                 hosted.window.wants_size(wanted);
@@ -951,18 +945,19 @@ impl Plugins {
             if requests.restart && hosted.restart == Restart::Idle {
                 hosted.restart = Restart::Asked;
             }
-            // A VST 3 restart this build does not do, so the composer is told instead of being
-            // left with a plugin that stopped.
-            if requests.restart_not_done {
-                problems.push(PluginProblem::AskedForRestart {
-                    plugin_id: hosted.plugin_id.clone(),
-                });
+            // A plugin that asks to be unloaded and loaded again gets exactly what a record
+            // that changed gets: whoever polls runs its behaviour again, which saves this one
+            // on its way out and loads its record from that state. A retired plugin is going
+            // anyway.
+            if requests.reload
+                && let Some(id) = id
+            {
+                self.0.retries.borrow_mut().push(id.clone());
             }
-            // The plugin moved the parameter the sustain pedal reaches. The host looked that
-            // mapping up while the plugin loaded and keeps it, so the pedal goes on reaching
-            // the parameter it reached before, which is now the wrong one.
-            if requests.midi_mapping_changed {
-                problems.push(PluginProblem::PedalMappingMoved {
+            // The plugin now maps its sustain pedal to nothing, so the pedal stops reaching
+            // it. The same line a plugin gets that never mapped one.
+            if requests.pedal_unmapped {
+                problems.push(PluginProblem::NoPedal {
                     plugin_id: hosted.plugin_id.clone(),
                 });
             }

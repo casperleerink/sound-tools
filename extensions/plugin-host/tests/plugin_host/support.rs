@@ -311,12 +311,19 @@ pub fn tell_the_plugin_to_go_silent() {
 }
 
 /// Makes the VST 3 test plugin move the parameter its sustain pedal is mapped to, once, right
-/// after the host has looked that mapping up, and tell the host about it. Same rules as
-/// [`tell_the_plugin`].
-pub fn tell_the_plugin_to_move_its_pedal() {
+/// after the host has looked that mapping up, and tell the host about it: to another
+/// parameter, or with `nowhere` to none at all. Same rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_move_its_pedal(to: &str) {
     // SAFETY: nextest runs one test per process and this is called before any thread but this
     // one exists, so no other thread can be reading the environment.
-    unsafe { std::env::set_var(test_plugin_support::MOVE_PEDAL_VARIABLE, "1") };
+    unsafe { std::env::set_var(test_plugin_support::MOVE_PEDAL_VARIABLE, to) };
+}
+
+/// Makes the VST 3 test plugin's controller edit its `Level` to a quarter in the same moment it
+/// asks to be started again for a new latency. Same rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_edit_as_it_restarts() {
+    // SAFETY: as above.
+    unsafe { std::env::set_var(test_plugin_support::EDIT_AT_RESTART_VARIABLE, "1") };
 }
 
 /// Makes the VST 3 test plugin keep a state in its edit controller as well as in its component:

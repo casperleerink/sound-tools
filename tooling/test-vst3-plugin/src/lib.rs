@@ -14,6 +14,11 @@
 //! - `Sustain`, which `IMidiMapping` maps MIDI controller 64 to. That is how the format says a
 //!   host sends the sustain pedal, and it is what the host under test uses.
 //!
+//! And more, for what a test needs to make it do: see the constants below. A few keys are not
+//! played but ask the host for something through `restartComponent`, one flag each
+//! (`test_plugin_support::PRESET_KEY` and the two after it), the way `LATENCY_KEY` asks for a
+//! new latency.
+//!
 //! It has a window, `TestView`, which draws nothing: CI has no display. It answers the calls a
 //! host makes of an `IPlugView` and writes each one down with the thread it arrived on, which is
 //! what a real plugin would assert, and it can ask its host to resize it.
@@ -74,6 +79,19 @@ const OFFSET: ParamID = 3;
 /// is the way round a VST 3 plugin has to go: `restartComponent` belongs to the main thread.
 const LATENCY: ParamID = 4;
 
+/// Which key of the three that ask the host for something a note was on. The processor reports
+/// it, as it reports a latency, so that the controller acts on the main thread, where
+/// `restartComponent` belongs. The value is the key over 127.
+const ASK: ParamID = 5;
+
+/// Where the sustain pedal is mapped once the plugin has moved it, see
+/// `test_plugin_support::MOVE_PEDAL_VARIABLE`.
+const MOVED_SUSTAIN: ParamID = 6;
+
+/// The longest block this plugin plays a mono output of. A host asks for no more than
+/// `maxSamplesPerBlock`, which is far less.
+const SCRATCH: usize = 4096;
+
 /// What [`TestTone::wanted_latency`] holds when no note asked for one.
 const NO_LATENCY_WANTED: u32 = u32::MAX;
 
@@ -110,8 +128,16 @@ pub struct TestTone {
     /// The processor writes it and the component's state saves it.
     edit_level: AtomicI32,
     /// Whether this plugin has already moved its sustain pedal to another parameter, which it
-    /// does once, after the host has looked the mapping up. See [`IMidiMappingTrait`].
-    pedal_moved: Cell<bool>,
+    /// does once, after the host has looked the mapping up. See [`IMidiMappingTrait`]. The
+    /// processor reads it to know which parameter the pedal comes on.
+    pedal_moved: AtomicBool,
+    /// How loud the controller shows the plugin, in hundredths: what an edit of its own window
+    /// or a preset it loaded left it on. The processor plays [`Self::edit_level`], which only a
+    /// block's parameter changes set, so the two differ until the host carries a value across.
+    shown_level: AtomicI32,
+    /// Whether the main output is one channel. The plugin changes it on [`support::MONO_KEY`]
+    /// and says so with `kIoChanged`.
+    mono: AtomicBool,
     /// The latency the plugin reports and plays with, in frames. Saved in the component's
     /// state.
     latency: AtomicU32,
@@ -133,6 +159,9 @@ struct Audio {
     goes_silent: bool,
     /// Whether this plugin keeps a state in its edit controller as well.
     controller_state: bool,
+    /// The second channel a mono output has nowhere to go, so a block has somewhere to render
+    /// it. Made once, so `process` never allocates.
+    scratch: Vec<f32>,
 }
 
 // SAFETY: the component is reached from the main thread and the audio thread, never at once:
@@ -156,6 +185,7 @@ impl TestTone {
                 reports_out: support::events_out(),
                 goes_silent: support::told_to(support::SILENT_VARIABLE),
                 controller_state: support::told_to(support::CONTROLLER_STATE_VARIABLE),
+                scratch: vec![0.0; SCRATCH],
             }),
             handler: RefCell::new(None),
             semitones: AtomicI32::new(0),
@@ -163,7 +193,9 @@ impl TestTone {
             level: AtomicI32::new(FULL_LEVEL),
             answered: AtomicBool::new(!support::told_to(support::NEEDS_HOST_VARIABLE)),
             edit_level: AtomicI32::new(support::FULL_EDIT_LEVEL),
-            pedal_moved: Cell::new(false),
+            pedal_moved: AtomicBool::new(false),
+            shown_level: AtomicI32::new(support::FULL_EDIT_LEVEL),
+            mono: AtomicBool::new(false),
             latency: AtomicU32::new(0),
             wanted_latency: AtomicU32::new(NO_LATENCY_WANTED),
             plugin: support::next_plugin(),
@@ -196,20 +228,63 @@ impl TestTone {
             for step in 0..count {
                 let value = f64::from(count - step) / f64::from(count);
                 support::log("edit_value", 0, 0);
+                self.show_level(value);
                 handler.performEdit(LEVEL, value);
             }
             handler.endEdit(LEVEL);
         }
         support::log("edit_end", 0, 0);
     }
+
+    /// What the controller shows `Level` at, from a normalized value.
+    fn show_level(&self, value: ParamValue) {
+        let level = (value * f64::from(support::FULL_EDIT_LEVEL)).round() as i32;
+        self.shown_level.store(level, Ordering::Release);
+    }
+
+    /// The host, on its own thread, telling the controller about a key that asks for
+    /// something: the controller does what the key says and tells the host with
+    /// `restartComponent`, which is how a VST 3 plugin asks its host for anything.
+    fn ask(&self, key: u8) {
+        let Some(handler) = self.handler.borrow().clone() else {
+            return;
+        };
+        let flag = match key {
+            support::PRESET_KEY => {
+                // A preset the controller loads by itself: it shows another level and tells
+                // nobody but the host that its values changed.
+                support::log("preset_loaded", self.plugin, 0);
+                self.shown_level
+                    .store(support::PRESET_LEVEL, Ordering::Release);
+                RestartFlags_::kParamValuesChanged
+            }
+            support::MONO_KEY => {
+                support::log("went_mono", self.plugin, 0);
+                self.mono.store(true, Ordering::Release);
+                RestartFlags_::kIoChanged
+            }
+            support::RELOAD_KEY => {
+                support::log("reload_asked", self.plugin, 0);
+                RestartFlags_::kReloadComponent
+            }
+            _ => return,
+        };
+        // SAFETY: the handler came from the host and the host keeps it alive until it takes
+        // it back with a null `setComponentHandler`.
+        unsafe { handler.restartComponent(flag) };
+    }
 }
 
-/// Every parameter, in the order `getParameterInfo` lists them.
-const PARAMETERS: [(ParamID, &str, &str, ParamValue); 4] = [
-    (TRANSPOSE, "Transpose", "st", 0.0),
-    (SUSTAIN, "Sustain", "", 0.0),
-    (LEVEL, "Level", "", 1.0),
-    (OFFSET, "Offset", "", 0.0),
+/// Every parameter, in the order `getParameterInfo` lists them, and whether it is only ever set
+/// by the plugin, which a host must never send.
+const PARAMETERS: [(ParamID, &str, &str, ParamValue, bool); 7] = [
+    (TRANSPOSE, "Transpose", "st", 0.0, false),
+    (SUSTAIN, "Sustain", "", 0.0, false),
+    (LEVEL, "Level", "", 1.0, false),
+    (OFFSET, "Offset", "", 0.0, false),
+    (LATENCY, "Latency", "", 0.0, true),
+    (ASK, "Ask", "", 0.0, true),
+    (MOVED_SUSTAIN, "Moved sustain", "", 0.0, false),
 ];
 
 impl IPluginBaseTrait for TestTone {
@@ -261,7 +336,9 @@ impl IComponentTrait for TestTone {
             let bus = &mut *bus;
             bus.mediaType = media;
             bus.direction = direction;
-            bus.channelCount = if media == MediaTypes_::kAudio as int32 {
+            let mono =
+                self.mono.load(Ordering::Acquire) && direction == BusDirections_::kOutput as int32;
+            bus.channelCount = if media == MediaTypes_::kAudio as int32 && !mono {
                 2
             } else {
                 1
@@ -328,6 +405,7 @@ impl IComponentTrait for TestTone {
         };
         self.semitones.store(saved.semitones, Ordering::Release);
         self.edit_level.store(saved.edit_level, Ordering::Release);
+        self.shown_level.store(saved.edit_level, Ordering::Release);
         self.offset.store(saved.offset, Ordering::Release);
         let latency = u32::try_from(saved.latency).unwrap_or_default();
         self.latency
@@ -390,7 +468,10 @@ impl IAudioProcessorTrait for TestTone {
             // this reads the first of at least one.
             unsafe { *pointer == SpeakerArr::kStereo }
         };
-        let taken = stereo(outputs, num_outs, 1) && (num_ins == 0 || stereo(inputs, num_ins, 1));
+        // Gone mono, it takes nothing else, and the host has to read its buses to see.
+        let taken = !self.mono.load(Ordering::Acquire)
+            && stereo(outputs, num_outs, 1)
+            && (num_ins == 0 || stereo(inputs, num_ins, 1));
         match taken {
             true => kResultTrue,
             false => kResultFalse,
@@ -408,8 +489,15 @@ impl IAudioProcessorTrait for TestTone {
         if arrangement.is_null() || index != 0 || !known {
             return kInvalidArgument;
         }
+        let mono =
+            self.mono.load(Ordering::Acquire) && direction == BusDirections_::kOutput as int32;
         // SAFETY: the caller gave a place to write one arrangement.
-        unsafe { *arrangement = SpeakerArr::kStereo };
+        unsafe {
+            *arrangement = match mono {
+                true => SpeakerArr::kMono,
+                false => SpeakerArr::kStereo,
+            }
+        };
         kResultOk
     }
 
@@ -460,9 +548,10 @@ impl IAudioProcessorTrait for TestTone {
         // and whose lists live for this call, which is what VST 3 promises.
         unsafe {
             let data = &mut *data;
-            let Ok(mut audio) = self.audio.try_borrow_mut() else {
+            let Ok(mut guard) = self.audio.try_borrow_mut() else {
                 return kResultFalse;
             };
+            let audio = &mut *guard;
             // The first one names the thread that processes, which the rest of a log is read
             // against. A block says what kind of run it belongs to, which must be the mode the
             // plugin was set up with.
@@ -488,7 +577,7 @@ impl IAudioProcessorTrait for TestTone {
                 return kResultOk;
             }
             let bus = &mut *data.outputs;
-            if bus.numChannels < 2 || bus.__field0.channelBuffers32.is_null() {
+            if bus.numChannels < 1 || bus.__field0.channelBuffers32.is_null() {
                 return kResultOk;
             }
             // A plugin that is waiting for its host. It reports a parameter it changed by
@@ -515,8 +604,17 @@ impl IAudioProcessorTrait for TestTone {
             }
             bus.silenceFlags = 0;
             let left = std::slice::from_raw_parts_mut(*bus.__field0.channelBuffers32, frames);
-            let right =
-                std::slice::from_raw_parts_mut(*bus.__field0.channelBuffers32.add(1), frames);
+            // A mono output has no second channel: what would be in it is rendered and
+            // dropped. So is the second channel of a host that did not read the buses again
+            // after they changed, which it then hears as silence.
+            let right = match bus.numChannels >= 2 && !self.mono.load(Ordering::Acquire) {
+                true => {
+                    std::slice::from_raw_parts_mut(*bus.__field0.channelBuffers32.add(1), frames)
+                }
+                false => &mut audio.scratch[..frames.min(SCRATCH)],
+            };
+            let frames = right.len();
+            let left = &mut left[..frames];
 
             // The pedal comes as points of the parameter the MIDI mapping names, and the
             // notes as events. Both lists are in time order, so they are walked together and
@@ -545,7 +643,12 @@ impl IAudioProcessorTrait for TestTone {
                         }
                         continue;
                     }
-                    if id != SUSTAIN {
+                    // The pedal comes on the parameter the plugin maps it to now.
+                    let pedal_id = match self.pedal_moved.load(Ordering::Acquire) {
+                        true => MOVED_SUSTAIN,
+                        false => SUSTAIN,
+                    };
+                    if id != pedal_id {
                         continue;
                     }
                     for point in 0..queue.getPointCount() {
@@ -567,6 +670,7 @@ impl IAudioProcessorTrait for TestTone {
             let (mut next_event, mut next_pedal, mut played) = (0, 0, 0);
             let mut transposed = false;
             let mut latency_asked = None;
+            let mut asked = None;
             loop {
                 let event_at = (next_event < event_count)
                     .then(|| {
@@ -601,8 +705,10 @@ impl IAudioProcessorTrait for TestTone {
                 if event.r#type == EventTypes_::kNoteOnEvent as u16 {
                     let note = event.__field0.noteOn;
                     let key = note.pitch.clamp(0, 127) as u8;
+                    let asks = [support::PRESET_KEY, support::MONO_KEY, support::RELOAD_KEY];
                     match support::asked_latency(key, note.velocity) {
                         Some(latency) => latency_asked = Some(latency.min(support::MAX_LATENCY)),
+                        None if asks.contains(&key) => asked = Some(key),
                         None => audio.tone.note_on(key, note.velocity),
                     }
                 } else if event.r#type == EventTypes_::kNoteOffEvent as u16 {
@@ -685,6 +791,9 @@ impl IAudioProcessorTrait for TestTone {
                         f64::from(latency) / f64::from(support::MAX_LATENCY),
                     );
                 }
+                if let Some(key) = asked {
+                    report(ASK, f64::from(key) / 127.0);
+                }
                 for extra in 0..reports {
                     report(TRANSPOSE + 2 + extra, 0.5);
                 }
@@ -740,11 +849,12 @@ impl IEditControllerTrait for TestTone {
     }
 
     unsafe fn getParameterCount(&self) -> int32 {
-        3
+        PARAMETERS.len() as int32
     }
 
     unsafe fn getParameterInfo(&self, index: int32, info: *mut ParameterInfo) -> tresult {
-        let Some((id, title, units, default)) = PARAMETERS.get(index.max(0) as usize).copied()
+        let Some((id, title, units, default, read_only)) =
+            PARAMETERS.get(index.max(0) as usize).copied()
         else {
             return kInvalidArgument;
         };
@@ -761,7 +871,10 @@ impl IEditControllerTrait for TestTone {
             info.stepCount = 0;
             info.defaultNormalizedValue = default;
             info.unitId = 0;
-            info.flags = ParameterFlags_::kCanAutomate as int32;
+            info.flags = match read_only {
+                true => ParameterFlags_::kIsReadOnly as int32,
+                false => ParameterFlags_::kCanAutomate as int32,
+            };
         }
         kResultOk
     }
@@ -801,10 +914,13 @@ impl IEditControllerTrait for TestTone {
     unsafe fn getParamNormalized(&self, id: ParamID) -> ParamValue {
         match id {
             TRANSPOSE => f64::from(self.semitones.load(Ordering::Acquire)) / TRANSPOSE_RANGE,
+            // What the controller shows, which is what the processor plays once the host has
+            // carried it across.
             LEVEL => {
-                f64::from(self.edit_level.load(Ordering::Acquire))
+                f64::from(self.shown_level.load(Ordering::Acquire))
                     / f64::from(support::FULL_EDIT_LEVEL)
             }
+            OFFSET => f64::from(self.offset.load(Ordering::Acquire)) / 100.0,
             _ => 0.0,
         }
     }
@@ -815,7 +931,9 @@ impl IEditControllerTrait for TestTone {
         if id == TRANSPOSE {
             support::log("setParamNormalized", self.plugin, 0);
             self.answered.store(true, Ordering::Release);
-            let _ = value;
+        }
+        if id == LEVEL {
+            self.show_level(value);
         }
         // A latency a note asked for, on the main thread at last, which is where a plugin may
         // ask its host to start it again.
@@ -826,7 +944,15 @@ impl IEditControllerTrait for TestTone {
                 // SAFETY: the handler came from the host and the host keeps it alive until it
                 // takes it back with a null `setComponentHandler`.
                 unsafe { handler.restartComponent(RestartFlags_::kLatencyChanged as int32) };
+                // And the composer's hand on a knob in the same moment, when a test asks.
+                if support::told_to(support::EDIT_AT_RESTART_VARIABLE) {
+                    self.edit_the_level(&handler, 4);
+                }
             }
+        }
+        // A key that asks the host for something, on the main thread at last.
+        if id == ASK {
+            self.ask((value * 127.0).round() as u8);
         }
         kResultOk
     }
@@ -1086,18 +1212,22 @@ impl IMidiMappingTrait for TestTone {
         id: *mut ParamID,
     ) -> tresult {
         // Told to take no pedal, this plugin maps no parameter to any controller, which is
-        // what a VST 3 plugin that cannot be sent the pedal looks like.
+        // what a VST 3 plugin that cannot be sent the pedal looks like. Told to move its pedal
+        // to nothing, it is that plugin once it has moved.
+        let moved_to_nothing = self.pedal_moved.load(Ordering::Acquire)
+            && std::env::var(support::MOVE_PEDAL_VARIABLE).as_deref() == Ok("nowhere");
         if bus != 0
             || controller != ControllerNumbers_::kCtrlSustainOnOff as i16
             || id.is_null()
             || support::takes_no_pedal()
+            || moved_to_nothing
         {
             return kResultFalse;
         }
         // SAFETY: the caller gave a place to write one parameter id.
         unsafe {
-            *id = if self.pedal_moved.get() {
-                OFFSET
+            *id = if self.pedal_moved.load(Ordering::Acquire) {
+                MOVED_SUSTAIN
             } else {
                 SUSTAIN
             }
@@ -1106,7 +1236,9 @@ impl IMidiMappingTrait for TestTone {
         // mapping has changed. That is the order a MIDI learn or a loaded preset makes after a
         // host has looked the mapping up, and it leaves the host holding the older parameter.
         // Both calls are on the thread the interface lives on, which is where the host is.
-        if support::told_to(support::MOVE_PEDAL_VARIABLE) && !self.pedal_moved.replace(true) {
+        if support::told_to(support::MOVE_PEDAL_VARIABLE)
+            && !self.pedal_moved.swap(true, Ordering::AcqRel)
+        {
             let handler = self.handler.borrow().clone();
             if let Some(handler) = handler {
                 support::log("pedal_moved", 0, 0);
