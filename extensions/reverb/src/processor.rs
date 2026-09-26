@@ -357,8 +357,8 @@ pub struct Reverb {
     /// The factor on what each line reads, `k (1 - p)`, and the pole of its damping filter.
     line_gains: [f32; LINES],
     poles: [f32; LINES],
-    /// The factor on the tail, at the end of the last run of frames and where it is going in the
-    /// run now, so it moves frame by frame and makes no step.
+    /// The factor on what goes into the lines, at the end of the last run of frames and where it
+    /// is going in the run now, so it moves frame by frame and makes no step.
     tail_gain: f32,
     tail_gain_target: f32,
     /// The low cut and the high cut of each channel, and their factors.
@@ -545,14 +545,14 @@ impl Reverb {
         // What comes in stays in the lines until the loop loses it, so at each frequency the
         // lines hold the power of the input over the part the loop loses per pass, on average
         // over the lines, and what comes out is what they hold. Over the heard frequencies that
-        // is the power of the tail of a noise; scaled by its root, the
-        // tail comes out at the level of the noise at every size, decay and damping. A frozen
-        // reverb keeps the factor it had, so it holds its level.
-        if freeze == 0.0 {
-            let held: f32 = lost.iter().map(|lost| LINES as f32 / lost).sum();
-            let held = (held / HEARD_HZ.len() as f32).max(f32::MIN_POSITIVE);
-            self.tail_gain_target = OUTPUT / held.sqrt();
-        }
+        // is the power of the tail of a noise. What goes in is scaled by its root, so the tail
+        // comes out at the level of the noise at every size, decay and damping. The factor is
+        // on the way in and not on the way out, so a change of decay changes only how fast the
+        // lines fill and drain, and never what the sound already in them comes out at. It is
+        // worked out from the loss before freeze, which lets nothing in anyway.
+        let held: f32 = lost.iter().map(|lost| LINES as f32 / lost).sum();
+        let held = (held / HEARD_HZ.len() as f32).max(f32::MIN_POSITIVE);
+        self.tail_gain_target = OUTPUT / held.sqrt();
         if std::mem::take(&mut self.snapped) {
             self.tail_gain = self.tail_gain_target;
         }
@@ -565,7 +565,7 @@ impl Reverb {
     }
 
     /// One frame of the reverb, from the input of each channel to the wet sound of each.
-    fn frame(&mut self, input: [f32; CHANNELS]) -> [f32; CHANNELS] {
+    fn frame(&mut self, input: [f32; CHANNELS], tail_gain: f32) -> [f32; CHANNELS] {
         let position = self.position;
         let (line_fade, pre_fade) = (self.line_taps.weight(), self.pre_delay_tap.weight());
         let diffusion = self.diffusion.advance(1);
@@ -585,7 +585,7 @@ impl Reverb {
                 diffuser.write(position, kept);
                 sound = delayed - diffusion * kept;
             }
-            into[channel] = sound * input_gain;
+            into[channel] = sound * input_gain * tail_gain;
         }
 
         // What comes out is what the lines hold, so the tail is what a freeze keeps: a frozen
@@ -668,12 +668,12 @@ impl Processor for Reverb {
                 .zip(left_out.iter_mut())
                 .zip(right_out.iter_mut());
             for (index, (((left_in, right_in), left_out), right_out)) in frames.enumerate() {
-                let [left, right] = self.frame([held(*left_in), held(*right_in)]);
                 let tail_gain = from + (to - from) * (index + 1) as f32 / length;
+                let [left, right] = self.frame([held(*left_in), held(*right_in)], tail_gain);
                 let width = self.width.advance(1);
                 let mix = self.mix.advance(1);
-                let middle = (left + right) * 0.5 * tail_gain;
-                let side = (left - right) * 0.5 * width * tail_gain;
+                let middle = (left + right) * 0.5;
+                let side = (left - right) * 0.5 * width;
                 // The dry sound as it came in: only what goes into the reverb is held.
                 *left_out = (1.0 - mix) * *left_in + mix * (middle + side);
                 *right_out = (1.0 - mix) * *right_in + mix * (middle - side);

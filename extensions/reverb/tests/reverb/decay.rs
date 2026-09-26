@@ -1,6 +1,6 @@
 //! The tail falls by 60 dB in the decay time, and the highs in their part of it.
 
-use reverb::{DAMPED_HZ, ReverbState, high_decay_seconds};
+use reverb::{DAMPED_HZ, DECAY, ReverbState, high_decay_seconds};
 
 use crate::support::{Rig, SAMPLE_RATE, impulse, plain, slope};
 
@@ -42,12 +42,13 @@ fn impulse_response(state: ReverbState, sample_rate: u32) -> [Vec<f32>; 2] {
     rig.render((seconds * sample_rate as f32) as usize)
 }
 
-/// Measured on an impulse for decays across the range, at three sizes, and the error printed.
+/// Measured on an impulse for decays across the whole range, both ends included, at three
+/// sizes, and the error printed.
 #[test]
 fn an_impulse_falls_by_sixty_db_in_the_decay_time() {
     let mut worst = 0.0_f64;
     for size in [0.0, 0.5, 1.0] {
-        for decay in [0.3, 0.5, 1.0, 2.0, 5.0, 10.0] {
+        for decay in [DECAY.min, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, DECAY.max] {
             let state = ReverbState {
                 size,
                 ..plain(decay)

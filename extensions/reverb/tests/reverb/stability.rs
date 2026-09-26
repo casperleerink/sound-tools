@@ -15,9 +15,10 @@ const BOUND: f32 = 8.0;
 
 /// Freeze holds what the tail had: its level once frozen is within 2 dB of its level while it
 /// played, and its peak at most 2.5 dB over its peak in as long a time. A frozen loop keeps its
-/// energy exactly; what moves the level is that the tail of a short decay is mostly the first
-/// pass, and a frozen one is the sum of many, where paths through the same lines in another
-/// order arrive together. The worst is +1.5 dB, at size 1 and a decay of 0.2 s.
+/// energy exactly, yet a short decay in a large room rises by up to 1.5 dB once frozen. The
+/// likely cause, not proven: the tail of a short decay is mostly the first pass, and a frozen
+/// one is the sum of many, where paths through the same lines in another order arrive
+/// together. A known gap, in the README.
 const FREEZE_LEVEL_DB: f64 = 2.0;
 const FREEZE_PEAK_DB: f64 = 2.5;
 
@@ -344,4 +345,94 @@ fn freeze_keeps_the_level_of_the_tail_at_every_corner() {
         }
     }
     println!("worst: level {worst_level:.2} dB, peak {worst_peak:+.2} dB");
+}
+
+/// Turning the decay down on a long tail drains it faster and never makes it louder: after 20 s
+/// of full scale noise at the longest decay, the shortest one stays under the bound. So does a
+/// freeze, a change of decay while frozen, and the end of the freeze.
+#[test]
+fn a_shorter_decay_on_a_long_tail_drains_it_and_never_bursts() {
+    let long = ReverbState {
+        decay_seconds: DECAY.max,
+        mix: 1.0,
+        ..ReverbState::default()
+    };
+    let short = ReverbState {
+        decay_seconds: DECAY.min,
+        ..long
+    };
+    let mut rig = Rig::new(long, noise(1.0));
+    let [left, right] = rig.render(20 * SECOND);
+    let playing = peak(&left).max(peak(&right));
+    rig.update(short);
+    let [left, right] = rig.render(3 * SECOND);
+    let shortened = peak(&left).max(peak(&right));
+
+    let mut rig = Rig::new(long, noise(1.0));
+    rig.render(20 * SECOND);
+    rig.update(ReverbState {
+        freeze: true,
+        ..long
+    });
+    rig.render(SECOND);
+    rig.update(ReverbState {
+        freeze: true,
+        ..short
+    });
+    rig.render(SECOND);
+    rig.update(short);
+    let [left, right] = rig.render(3 * SECOND);
+    let thawed = peak(&left).max(peak(&right));
+    println!(
+        "peak {playing:.2} at 60 s, then {shortened:.2} at 0.2 s, and {thawed:.2} after a freeze"
+    );
+    assert!(shortened < BOUND && thawed < BOUND, "{shortened} {thawed}");
+    assert!(
+        shortened < playing && thawed < playing,
+        "{playing}: {shortened} {thawed}"
+    );
+}
+
+/// Freeze switched on and off over and over while full scale noise plays, every 37, 480 and
+/// 4800 frames for 3 s: the peak stays within `FREEZE_PEAK_DB` of the peak while it plays.
+#[test]
+fn freeze_toggled_quickly_while_noise_plays_keeps_the_peak() {
+    let mut worst = f64::MIN;
+    for (size, decay_seconds, damping) in [
+        (0.0, 0.2, 0.0),
+        (1.0, 0.2, 1.0),
+        (0.5, 2.0, 0.5),
+        (1.0, 60.0, 0.0),
+    ] {
+        for every in [37, 480, 4_800] {
+            let state = ReverbState {
+                size,
+                decay_seconds,
+                damping,
+                mix: 1.0,
+                ..ReverbState::default()
+            };
+            let mut rig = Rig::new(state, noise(1.0));
+            let settle = SECOND + (decay_seconds * 0.5 * SAMPLE_RATE as f32) as usize;
+            rig.render(settle);
+            let [left, right] = rig.render(3 * SECOND);
+            let playing = peak(&left).max(peak(&right));
+            let mut toggled = 0.0_f32;
+            for step in 0..3 * SECOND / every {
+                rig.update(ReverbState {
+                    freeze: step % 2 == 0,
+                    ..state
+                });
+                let [left, right] = rig.render(every);
+                toggled = toggled.max(peak(&left)).max(peak(&right));
+            }
+            let change = 20.0 * f64::from(toggled / playing).log10();
+            println!(
+                "size {size}, decay {decay_seconds} s, damping {damping}, every {every}: {change:+.2} dB"
+            );
+            worst = worst.max(change);
+            assert!(change < FREEZE_PEAK_DB, "{state:?} every {every}: {change}");
+        }
+    }
+    println!("worst: {worst:+.2} dB");
 }
