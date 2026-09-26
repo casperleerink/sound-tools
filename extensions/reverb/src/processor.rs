@@ -73,7 +73,7 @@ const HIGHEST_PART: f32 = 0.45;
 
 /// The level of the tail. At the defaults, noise comes out of the reverb alone at about its own
 /// level.
-const OUTPUT: f32 = 0.18;
+const OUTPUT: f32 = 0.27;
 
 /// While factors move, they are worked out again this often.
 const FACTOR_FRAMES: usize = 16;

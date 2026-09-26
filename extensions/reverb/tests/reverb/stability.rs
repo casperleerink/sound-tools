@@ -9,9 +9,9 @@ use crate::support::{Rig, SAMPLE_RATE, Signal, burst, noise, peak, sine};
 
 const SECOND: usize = SAMPLE_RATE as usize;
 
-/// The loudest the reverb makes full scale noise, with room to spare: 31 at the longest decay.
-/// The tail is louder the longer it lasts, as in a room, and it never grows without end.
-const BOUND: f32 = 48.0;
+/// The loudest the reverb makes full scale noise, with room to spare. The tail is louder the
+/// longer it lasts, as in a room, and it never grows without end.
+const BOUND: f32 = 64.0;
 
 fn assert_bounded(label: &str, [left, right]: &[Vec<f32>; 2]) {
     for sample in left.iter().chain(right) {
@@ -186,4 +186,27 @@ proptest! {
             }
         }
     }
+}
+
+/// At the defaults the reverb alone gives back noise at about the level it came in.
+#[test]
+fn at_the_defaults_the_tail_of_noise_is_about_as_loud_as_the_noise() {
+    let state = ReverbState {
+        mix: 1.0,
+        ..ReverbState::default()
+    };
+    let [left, right] = Rig::new(state, noise(0.5)).render(4 * SECOND);
+    let [dry_left, _] = Rig::new(
+        ReverbState {
+            mix: 0.0,
+            ..state
+        },
+        noise(0.5),
+    )
+    .render(SECOND);
+    let level = crate::support::rms(&left[2 * SECOND..]).hypot(crate::support::rms(&right[2 * SECOND..]))
+        / std::f64::consts::SQRT_2;
+    let change = crate::support::db(level / crate::support::rms(&dry_left));
+    println!("the tail of noise at the defaults: {change:+.1} dB");
+    assert!(change.abs() < 3.0, "{change}");
 }

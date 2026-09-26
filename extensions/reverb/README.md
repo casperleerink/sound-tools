@@ -25,3 +25,54 @@ The reverb owns no children, so an instance is one file: `<name>.json` in a trac
 | `mix` | Mix | 0 to 1 | 0.3 | linear | `30%` |
 
 `freeze` is `true` or `false`. The numbers are `Parameter` constants next to `ReverbState` (`sound_core::Parameter`), and `validate`, `Default`, the knobs, the reset and a test of both docs read them.
+
+## How it sounds
+
+A feedback delay network of sixteen lines (Jot and Chaigne, 1991). Why this one and not a plate of Dattorro's: its decay time is a formula and not a tuning, so the tail meets the setting at every size; its mixing matrix loses no energy, so freeze is a gain of exactly 1; and the damping is the same formula at a second frequency. It is well known, small, and needs no modulation or randomness.
+
+- The path: the input through a low cut and a high cut, one-pole filters of 6 dB per octave in their trapezoidal form; the pre-delay; four short allpass diffusers per channel, 2 to 5 ms, whose factor is `0.7 × diffusion`; then the sixteen lines. The mix of the dry sound and the reverb comes last. Stereo: the left and the right go into every line with the signs of two rows of a Hadamard matrix, and come out with the same signs, so the two sides of the tail are different. Width is mid and side on the tail only.
+- The lines are 37 to 97 ms long at size 1 and a tenth of that at size 0, on a ratio (`0.1^(1 - size)`). Every line is mixed back into every other through the Householder matrix `I - 2/16`, which keeps the energy exactly. The first time each line comes out is an early reflection.
+- Decay: each line loses `60 dB × length / decay` on each pass, so the whole tail falls by 60 dB in the decay time, whatever the size. The loss is a one-pole low pass whose gain at 0 Hz is that, and whose gain at 5 kHz (`DAMPED_HZ`) is what falls by 60 dB in `1 - 0.9 × damping` of the decay time: damping 0 is as long, 0.5 is 55 %, 1 is a tenth. `high_decay_seconds` gives it. The pole is capped at 0.99, which takes at most about 36 dB more from the highs per pass; only a short decay in a large room at full damping reaches it.
+- Freeze glides every line to a gain of exactly 1 and no damping, and the input into the lines to 0, over 20 ms. The matrix keeps the energy, so the tail holds; rounding moves it by 0.02 dB in a minute. The dry sound passes as before. A change of size while frozen may lose a little of the tail and never adds.
+- Every change glides over 20 ms (`RAMP_SECONDS`): the decay on a ratio, the cuts on a ratio, damping, diffusion, width, mix and freeze. Size and pre-delay do not move a read position, which would bend the pitch: the read fades from the old tap to the new one over 20 ms. A new value during a fade waits for its end, so a drag is a row of fades, each from where the last one ended. No edit clicks.
+- All delay memory is allocated when the reverb is made, for 48 kHz, and again in `prepare` for another sample rate: for the largest size, the longest pre-delay and the diffusers. `process` never allocates, and a change of size or pre-delay only moves where it reads.
+- The tail is louder the longer it lasts, as in a room: at the defaults, noise comes out of the reverb alone at its own level, within 0.1 dB; at a decay of 60 s full scale noise peaks at 47.
+- It is linear and stable at every setting, also while they move: the loss of every line is at most 1 at every frequency, and 1 only when frozen. Input louder than +36 dBFS is held there and a sample that is not a number is taken as silence.
+- No modulation and no randomness, so a render, which makes the reverb new, is the same every time, to the byte, and so is a session from the same start.
+- No latency: `Processor::latency` stays 0. The first reflection comes after the pre-delay, the diffusers (about 13 ms) and the shortest line.
+- When the input is silent and nothing in the lines is louder than -180 dB for longer than the longest way through, it does no work and its output is silent.
+- Nothing allocates, locks or makes a system call in `process`; the tests run under the realtime sanitizer.
+
+## The card
+
+`view::register(views, devices)` registers `ReverbView` as the card of `reverb` (`Views::register_card`) and says the card of a reverb is called `Reverb`. The runtime offers `Reverb` in the control that adds an effect.
+
+The rack gives the view a `CardFrame`, the picker of the slot as the title and the close icon, and the view draws the whole card, 352 pt wide as DESIGN.md gives it, with its expand icon:
+
+- The display, 200 pt: the decay in time. The pre-delay and the decay each have a zone across on the travel of their knob. The tail is a line from full level at the end of the pre-delay to the floor, 60 dB down, at the end of the decay; the highs are a dashed line that reaches the floor at their part of the way; the early reflections are thin lines under the tail after its start, wider apart in a larger room. The hollow handle at the start drags the pre-delay, the handle at the end the decay. The line under it: `Pre-delay 20 ms · Decay 2 s`.
+- Size and Width, Damping and Mix, as knobs in two columns.
+- Behind expand: Low cut over Diffusion, High cut over Pre-delay, Freeze over Decay.
+
+Editing, the same rules as every control on saved state (`sound_ui::ControlEdit`):
+
+- A drag of a knob or a handle is one gesture and one undo step: "Change size", "Change damping", "Change width", "Change mix", "Change low cut", "Change high cut", "Change diffusion", "Change pre-delay", "Change decay". A handle has the step of its knob. The file is written once, at the end. Escape cancels.
+- A click on Freeze is one step, "Change freeze". A double click or backspace on a knob sets its default, a double click on a handle sets its value's.
+- The view keeps no copy of the state, so an outside edit shows at once, also during a drag. Whether the card is expanded is the view's own interface state and is not saved.
+
+## Checks
+
+```sh
+cargo nextest run -p reverb --no-capture                                 # prints the measured decay times
+RTSAN_ENABLE=1 cargo nextest run -p reverb                               # with the realtime sanitizer
+cargo nextest run -p runtime --test projects reverb                      # in a real project: files, reopen, renders
+cargo nextest run -p runtime --test window reverb                        # the card, with a simulated mouse and keys
+cargo nextest run -p reverb --run-ignored only realtime_ratio --no-capture   # speed of 20 reverbs
+```
+
+Measured September 26, 2026 on an Apple Silicon laptop, dev profile with `opt-level = 3`, 48 kHz, offline:
+
+- Decay: the time an impulse takes to fall by 60 dB (T30 of Schroeder's energy decay curve, fitted from -5 to -35 dB) is within 2.5 % of the setting for decays of 0.3, 0.5, 1, 2, 5 and 10 s at sizes 0, 0.5 and 1, and within 0.3 % at 44.1 and 96 kHz for 2 s. The tests hold it within 5 %.
+- Damping: measured on a third of an octave, the decay at 200 Hz is within 4.2 % of the setting and at 5 kHz within 14.7 % of `high_decay_seconds`, at damping 0, 0.5 and 1. The band is wide where the loss rises fast, so the 5 kHz figure is the measurement's more than the reverb's; the loss of a line at 5 kHz is exact to 0.001 dB.
+- Freeze: over a minute with loud noise still coming in, the level of the held tail stays within 0.1 dB until a change of size half way, which takes 2.4 dB off it and never adds; with silence coming in it moves by 0.02 dB. Every sample is a normal number or 0. Off again, it is 64 dB down 5 to 6 s later at a decay of 5 s.
+- No edit steps the sound: the largest step in the 30 ms after an edit of any field is at most 1.0 times the largest step of the reverb before and after it; with the glides off, a change of size steps 8.4 times.
+- Speed: 20 reverbs, each fed by its own noise, render 10.7 times faster than realtime, also with the size of every one moving all the time: about 0.5 % of one core for one reverb.
