@@ -152,6 +152,7 @@ Step 1b, September 26, 2026. What the spec above left open, or what the build sh
 - A dropdown trigger gives way in a narrow place and ends its label in an ellipsis, so a long plugin name in a card title leaves room for the icons.
 - Tab goes through a card column by column, not row by row as "What this changes in the window" says: that is the order of the elements, and a tab index per cell was not worth it.
 - The real window opens at 1470 x 920, the size the design is for.
+- The Filter, step 5 of the third milestone: the display spans 20 Hz to 20 kHz across and -36 to +18 dB up, so the +11.5 dB peak of full resonance fits. The handle sits on the peak of a low or high pass: its travel up and down is resonance stretched so that the dot is where the curve is, and it stops at 0 and 1. The slope is a segmented `12 · 24` with the label `Slope` and `dB / oct` on its value line; it is 8 pt wider than its cell and takes that from the air around it. The hidden columns are the slope, then LFO rate over LFO depth. No power icon: bypass is saved on the track's effect slot, which step 2 builds.
 
 ### Settled with the mixer
 

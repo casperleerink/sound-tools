@@ -27,6 +27,8 @@
 //! - `track-panel-synth-effects.png`: the synth with five effects after it, which is wider
 //!   than the rack has room for on this screen, so its right edge fades. The test checks
 //!   the fade in the pixels.
+//! - `track-panel-filter.png`: the synth and the built-in filter after it.
+//! - `track-panel-filter-expanded.png`: the same with the filter expanded: slope and LFO.
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
 //! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
 //! - `track-panel-picker.png`: the same with the instrument picker open.
@@ -56,6 +58,8 @@ use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT, Viewpo
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor};
 use arrangement::{Colour, TrackState};
+use filter::FilterState;
+use filter::view::FilterView;
 use gpui::{
     AppContext, Entity, HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, PlatformInput, Point, WindowHandle, point, px, size,
@@ -409,6 +413,24 @@ fn set_effects(project: &mut Project, track: &str, names: &[&str]) -> Result<()>
         changes.create(slot, record.context("a plugin record")?);
         project.commit(&format!("Add {name}"), changes)?;
     }
+    Ok(())
+}
+
+/// Puts a filter after the instrument of a track, as `Add effect` does.
+fn add_filter(project: &mut Project, track: &str) -> Result<()> {
+    let id = InstanceId::new(&format!("arrangement/{track}"))?;
+    let track = project
+        .resolve::<TrackState>(&id)
+        .context("the track is not there")?;
+    let mut changes = Changes::new();
+    let slot = arrangement::add_effect(project, &mut changes, &track, "Filter")?;
+    let sound = FilterState {
+        cutoff_hz: 1_200.0,
+        resonance: 0.3,
+        ..FilterState::default()
+    };
+    changes.create(slot, sound);
+    project.commit("Add Filter", changes)?;
     Ok(())
 }
 
@@ -861,6 +883,28 @@ fn main() -> Result<()> {
         edge < 22 && card > 24,
         "no fade at the right edge of the rack: {edge} at the edge, {card} on the card"
     );
+    drop(opened);
+
+    // The built-in filter after the synth, with the values of the mockup, then expanded with
+    // the slope and the LFO.
+    let opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        add_filter(project, "bass")
+    })?;
+    opened.click_track_header(1., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-filter")?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let card = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
+        let card = card.context("the filter has no card")?;
+        card.downcast::<FilterView>()
+            .map_err(|_| anyhow::anyhow!("the second card is not the filter"))
+    })?;
+    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-filter-expanded")?;
     drop(opened);
 
     // A track whose instrument is a tool that has no view: the tone.

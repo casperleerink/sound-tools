@@ -9,6 +9,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use arrangement::{ArrangementState, Colour};
+use filter::FilterState;
 use instrument::SynthState;
 use plugin_host::{
     PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK, WeakPlugins,
@@ -100,6 +101,7 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
     arrangement::register(&mut registry)?;
+    filter::register(&mut registry)?;
     fit_tempo::register(&mut registry)?;
     instrument::register(&mut registry)?;
     plugin_host::register(&mut registry, plugins)?;
@@ -122,6 +124,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut devices = Devices::new();
     arrangement::view::register(&mut views);
     instrument::view::register(&mut views, &mut devices);
+    filter::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     devices.instruments(|| {
         vec![
@@ -137,6 +140,16 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
                 instrument::EXTENSION,
                 "This project does not load the synth.",
             ),
+        ]
+    });
+    // The built-in effects come before the plugins of this Mac in the list.
+    devices.effects(|| {
+        vec![
+            DeviceOffer::new(FilterState::TOOL, filter::view::NAME, |_, slot, changes| {
+                changes.create(slot.clone(), FilterState::default());
+                Ok(())
+            })
+            .needs(filter::EXTENSION, "This project does not load the filter."),
         ]
     });
     // What the picker says under its offers: that the scan of this machine is still running,

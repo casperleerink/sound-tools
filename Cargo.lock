@@ -1764,6 +1764,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "filter"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "proptest 1.11.0",
+ "serde",
+ "sound-core",
+ "sound-notes",
+ "sound-ui",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5049,6 +5061,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrangement",
+ "filter",
  "fit-tempo",
  "gpui",
  "gpui_platform",
