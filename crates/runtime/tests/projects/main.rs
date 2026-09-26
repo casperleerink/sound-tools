@@ -6,6 +6,7 @@
 
 mod agent_doc;
 mod effects;
+mod eq;
 mod filter;
 mod fit;
 mod generated_take;

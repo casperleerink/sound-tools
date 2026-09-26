@@ -9,6 +9,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use arrangement::{ArrangementState, Colour};
+use eq::EqState;
 use filter::FilterState;
 use instrument::SynthState;
 use plugin_host::{
@@ -101,6 +102,7 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
     arrangement::register(&mut registry)?;
+    eq::register(&mut registry)?;
     filter::register(&mut registry)?;
     fit_tempo::register(&mut registry)?;
     instrument::register(&mut registry)?;
@@ -125,6 +127,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     arrangement::view::register(&mut views);
     instrument::view::register(&mut views, &mut devices);
     filter::view::register(&mut views, &mut devices);
+    eq::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     devices.instruments(|| {
         vec![
@@ -150,6 +153,11 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
                 Ok(())
             })
             .needs(filter::EXTENSION, "This project does not load the filter."),
+            DeviceOffer::new(EqState::TOOL, eq::view::NAME, |_, slot, changes| {
+                changes.create(slot.clone(), EqState::default());
+                Ok(())
+            })
+            .needs(eq::EXTENSION, "This project does not load the EQ."),
         ]
     });
     // What the picker says under its offers: that the scan of this machine is still running,
