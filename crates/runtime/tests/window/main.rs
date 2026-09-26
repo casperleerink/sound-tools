@@ -18,6 +18,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod clips;
+mod compressor;
 mod editing;
 mod effects;
 mod eq;

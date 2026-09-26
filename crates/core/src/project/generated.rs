@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 
 use super::registry::AgentDoc;
+use super::storage::layout;
 use super::{Project, ProjectError};
 
 pub const AGENT_DOC_FILE: &str = "AGENTS.md";
@@ -88,12 +89,18 @@ impl Project {
             time_signature.ticks_per_bar(),
         );
         // Every extension of this runtime, as a new project lists them: in a project that
-        // lists fewer, the example of `project.json` is the edit that enables the rest.
+        // lists fewer, the example of `project.json` is the edit that enables the rest. Laid
+        // out as the runtime writes the file, which puts a long list on several lines.
         let extensions: Vec<String> = (self.registry.extensions().iter())
             .map(|name| format!("{name:?}"))
             .collect();
+        let object = layout(&format!("{{\"extensions\":[{}]}}", extensions.join(",")));
+        let list = object
+            .trim_end()
+            .trim_start_matches("{\n  \"extensions\": ")
+            .trim_end_matches("\n}");
         let values = [
-            ("{{extensions}}", extensions.join(", ")),
+            ("{{extensions}}", list.to_string()),
             ("{{time_signature}}", time_signature.to_string()),
             ("{{ticks_per_beat}}", beat.to_string()),
             ("{{ticks_per_bar}}", bar.to_string()),

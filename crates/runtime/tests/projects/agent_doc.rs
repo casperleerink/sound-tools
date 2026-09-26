@@ -59,6 +59,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "AGENTS.md",
             "agent-docs/project-json.md",
             "agent-docs/arrangement.md",
+            "agent-docs/compressor.md",
             "agent-docs/eq.md",
             "agent-docs/filter.md",
             "agent-docs/fit-tempo.md",
@@ -96,7 +97,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             );
         }
     }
-    let inspect = &files[10].1;
+    let inspect = &files[11].1;
     assert!(inspect.contains("```sh\nruntime . --inspect\n```"));
     assert_eq!(
         std::fs::read_to_string(harness.path("CLAUDE.md")).unwrap(),
@@ -152,7 +153,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .iter()
             .flat_map(|(_, text)| json_examples(text))
             .collect();
-        assert_eq!(all.len(), 21, "{time_signature}");
+        assert_eq!(all.len(), 23, "{time_signature}");
 
         // The raw take of a recording is not a record: it is an asset the runtime writes once
         // and never reads back. Its example is checked as the file it is.
@@ -224,6 +225,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
                 "arrangement",
                 "arrangement/bass",
                 "arrangement/bass/dark",
+                "arrangement/drums",
+                "arrangement/drums/glue",
                 "arrangement/keys",
                 "arrangement/keys/room",
                 "arrangement/piano",
@@ -272,8 +275,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 
 /// The map is what an agent reads on every task. One doc more adds one line to it, not a
 /// section: the whole agent doc was 2030 words before the split, the map was about 960. Each
-/// built-in effect adds a line of about 20 words: with the Filter, the EQ and the Reverb it is
-/// 1115, and the bound leaves room for the Compressor.
+/// built-in effect adds a line of about 20 words: with the Filter, the EQ, the Reverb and the
+/// Compressor it is about 1130.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
