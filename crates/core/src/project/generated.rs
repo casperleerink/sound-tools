@@ -87,7 +87,9 @@ impl Project {
             time_signature.ticks_per_beat(),
             time_signature.ticks_per_bar(),
         );
-        let extensions: Vec<String> = (self.project_file.extensions.iter())
+        // Every extension of this runtime, as a new project lists them: in a project that
+        // lists fewer, the example of `project.json` is the edit that enables the rest.
+        let extensions: Vec<String> = (self.registry.extensions().iter())
             .map(|name| format!("{name:?}"))
             .collect();
         let values = [

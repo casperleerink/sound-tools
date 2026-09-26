@@ -12,10 +12,10 @@ pub mod typography;
 pub mod views;
 
 pub use assets::Assets;
-pub use control_edit::ControlEdit;
+pub use control_edit::{ControlEdit, weak_callback};
 pub use devices::{DeviceLabel, DeviceOffer, Devices, Needs, Slot, extension_is_enabled};
 pub use focus::KeyboardFocus;
-pub use session::{POLL_INTERVAL, Playhead, Session};
+pub use session::{NoticeRoom, POLL_INTERVAL, Playhead, Session};
 pub use theme::{ActiveTheme, Theme};
 pub use views::Views;
 

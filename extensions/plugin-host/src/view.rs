@@ -15,7 +15,7 @@ use gpui::{Context, Div, Entity, FocusHandle, SharedString, Window, div, prelude
 use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::ROW_HEIGHT;
-use sound_ui::components::device_card::CardFrame;
+use sound_ui::components::device_card::{BODY_VALUE_LINE, CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::{ActiveTheme, DeviceLabel, Devices, Session, Views};
 
 use crate::{PluginRecord, Plugins, WeakPlugins};
@@ -41,11 +41,6 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
         }
     });
 }
-
-/// The width of the card.
-const CARD_WIDTH: f32 = 200.;
-/// The value line of the second row of a card body.
-const VALUE_LINE: f32 = ROW_HEIGHT + 54.;
 
 pub struct PluginView {
     session: Entity<Session>,
@@ -132,7 +127,7 @@ impl Render for PluginView {
                 .text_color(muted)
                 .child(text)
         };
-        let card = self.frame.card().w(px(CARD_WIDTH));
+        let card = self.frame.card().w(px(PLAIN_CARD_WIDTH));
         // The body: what is at its top, and the line on the value line of the second row.
         let body = |top: Div, bottom: Option<Div>| {
             div()
@@ -140,7 +135,7 @@ impl Render for PluginView {
                 .w_full()
                 .h(px(ROW_HEIGHT * 2.))
                 .child(top)
-                .children(bottom.map(|bottom| bottom.absolute().top(px(VALUE_LINE))))
+                .children(bottom.map(|bottom| bottom.absolute().top(px(BODY_VALUE_LINE))))
         };
 
         let Some(installed) = plugins.installed(record.format, &record.plugin_id) else {

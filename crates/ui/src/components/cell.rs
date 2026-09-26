@@ -19,6 +19,8 @@ pub const ROW_HEIGHT: f32 = 72.;
 pub const CONTROL_HEIGHT: f32 = 36.;
 const LINE_TOP: f32 = 38.;
 const LINE_HEIGHT: f32 = 14.;
+/// The value line of a cell, from its top.
+pub const VALUE_LINE: f32 = LINE_TOP + LINE_HEIGHT + 2.;
 
 #[derive(IntoElement)]
 pub struct Cell {
@@ -88,9 +90,7 @@ pub(crate) fn frame(
                 .children(control),
         )
         .children(label.map(|label| line(LINE_TOP, label_color, false).child(label)))
-        .children(
-            value.map(|value| line(LINE_TOP + LINE_HEIGHT + 2., value_color, true).child(value)),
-        )
+        .children(value.map(|value| line(VALUE_LINE, value_color, true).child(value)))
 }
 
 /// One line of 12 pt text, centred on the cell. It may be wider than the cell: a long label

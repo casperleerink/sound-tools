@@ -145,6 +145,25 @@ fn opening_a_clip_swaps_the_panel_for_the_note_editor_and_a_header_click_swaps_b
     assert!(opened.track_panel().is_none());
 }
 
+/// Devices need less room than notes: the track panel is 216 pt and the note editor 352, and
+/// the timeline above takes the rest.
+#[gpui::test]
+fn the_track_panel_and_the_note_editor_have_heights_of_their_own(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let panel = opened.bounds("track-panel").unwrap();
+    assert_eq!(panel.size.height, px(216.));
+    let window = opened.cx.update(|window, _| window.viewport_size());
+    assert_eq!(panel.bottom(), window.height);
+
+    let on_clip = opened.at(BAR, 0);
+    opened.double_click(on_clip);
+    assert!(opened.editor().is_some());
+    let editor = opened.bounds("note-editor").unwrap();
+    assert_eq!(editor.size.height, px(352.));
+    assert_eq!(editor.bottom(), window.height);
+    assert_eq!(opened.bounds("track-panel"), None);
+}
+
 #[gpui::test]
 fn the_keys_select_a_track_open_its_panel_and_close_it(cx: &mut TestAppContext) {
     let mut opened = open(cx);
@@ -906,7 +925,26 @@ fn the_bottom_of_the_volume_is_the_lowest_gain_a_track_keeps(cx: &mut TestAppCon
     let volume = opened.control(VOLUME);
     opened.drag(volume, volume + point(px(0.), px(400.)));
     assert_eq!(track(&mut opened).unwrap().gain_db, TrackState::GAIN_DB.0);
+    // One step.
+    assert_eq!(opened.undo_label().as_deref(), Some("Change volume"));
+    opened.keys("cmd-z");
+    assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
+    assert_eq!(opened.undo_label(), None);
+    opened.keys("shift-cmd-z");
+
+    // From the bottom, a press that does not move and a drag further down change nothing and
+    // make no step.
+    let volume = opened.control(VOLUME);
+    opened.drag(volume, volume);
+    opened.drag(volume, volume + point(px(0.), px(200.)));
+    assert_eq!(track(&mut opened).unwrap().gain_db, TrackState::GAIN_DB.0);
+    assert!(!opened.gesture_open());
+    opened.keys("cmd-z");
+    assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
+    assert_eq!(opened.undo_label(), None);
+
     // And a double click is 0 dB again, as its own step.
+    opened.keys("shift-cmd-z");
     opened.double_click(volume);
     assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
     assert_eq!(opened.undo_label().as_deref(), Some("Change volume"));

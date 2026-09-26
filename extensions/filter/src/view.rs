@@ -9,7 +9,7 @@
 //! here: the label, the unit, the travel of a knob, the name of the undo step and whether the
 //! card is expanded.
 
-use gpui::{App, Context, Entity, Point, SharedString, Window, div, point, prelude::*};
+use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
@@ -17,7 +17,7 @@ use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views};
+use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
 
 use crate::{
     CUTOFF, DRIVE, FilterState, FilterType, LFO_DEPTH, LFO_RATE, MIX, Parameter, RESONANCE, Slope,
@@ -226,19 +226,6 @@ impl FilterView {
         cx.notify();
     }
 
-    /// A callback of a control. It holds the view weakly, as `cx.listener` does, so the
-    /// listeners of the last frame keep no closed view and no open drag alive.
-    fn callback<E>(
-        cx: &Context<Self>,
-        f: impl Fn(&mut Self, E, &mut Context<Self>) + 'static,
-    ) -> impl Fn(E, &mut Window, &mut App) + 'static {
-        let view = cx.weak_entity();
-        move |event, _, cx| {
-            // Released: there is nothing left to tell.
-            view.update(cx, |view, cx| f(view, event, cx)).ok();
-        }
-    }
-
     fn change<V>(
         &mut self,
         label: &str,
@@ -258,7 +245,7 @@ impl FilterView {
             .default_value(control.parameter.default)
             .label(control.label)
             .readout(readout(control.unit, value))
-            .on_change(Self::callback(cx, move |view, change, cx| {
+            .on_change(weak_callback(cx, move |view, change, cx| {
                 let set = control.parameter.set;
                 view.change(control.undo_label, change, set, cx);
             }))
@@ -273,7 +260,7 @@ impl FilterView {
             state.resonance,
             RESONANCE.default,
         );
-        Handle::new("cutoff-resonance", x, y).on_change(Self::callback(
+        Handle::new("cutoff-resonance", x, y).on_change(weak_callback(
             cx,
             |view, change: ValueChange<Point<f32>>, cx| {
                 let set = |state: &mut FilterState, at: Point<f32>| {
@@ -292,7 +279,7 @@ impl FilterView {
         let selected = selected.map_or("", |(_, value, _)| value);
         let types = SegmentedControl::new("type", selected)
             .options(TYPES.map(|(_, value, label)| (value, label)))
-            .on_change(Self::callback(cx, |view, value: SharedString, cx| {
+            .on_change(weak_callback(cx, |view, value: SharedString, cx| {
                 let picked = TYPES.iter().find(|(_, name, _)| *name == value.as_ref());
                 if let Some((kind, ..)) = picked {
                     let set = |state: &mut FilterState, kind| state.kind = kind;
@@ -313,7 +300,7 @@ impl FilterView {
         let selected = selected.map_or("", |(_, value, _)| value);
         let slopes = SegmentedControl::new("slope", selected)
             .options(SLOPES.map(|(_, value, label)| (value, label)))
-            .on_change(Self::callback(cx, |view, value: SharedString, cx| {
+            .on_change(weak_callback(cx, |view, value: SharedString, cx| {
                 let picked = SLOPES.iter().find(|(_, name, _)| *name == value.as_ref());
                 if let Some((slope, ..)) = picked {
                     let set = |state: &mut FilterState, slope| state.slope = slope;

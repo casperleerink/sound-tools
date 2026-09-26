@@ -29,7 +29,7 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::meter::{Level, Meter};
-use sound_ui::{ActiveTheme, POLL_INTERVAL, Playhead, Session, typography};
+use sound_ui::{ActiveTheme, POLL_INTERVAL, Playhead, Session, typography, weak_callback};
 
 use super::{recording, steadiness, tempo};
 
@@ -330,6 +330,11 @@ impl TransportPill {
         });
     }
 
+    /// Whether a press on the tempo is held, from the press to its end. For tests.
+    pub fn holds_a_tempo_drag(&self) -> bool {
+        self.tempo_drag.is_some()
+    }
+
     /// Whether the click sounds. For tests and for the button.
     pub fn click_is_on(&self) -> bool {
         self.click.as_ref().is_some_and(Click::is_on)
@@ -454,35 +459,37 @@ impl TransportPill {
         let number = DragNumber::new("tempo", tempo.bpm(), Tempo::MIN_BPM, Tempo::MAX_BPM)
             .drag(tempo::DRAG_PER_POINT, tempo::DRAG_STEP)
             .keys(tempo::KEY_STEP, tempo::FINE_KEY_STEP)
-            .on_change(Self::callback(cx, Self::on_tempo))
+            .on_change(weak_callback(cx, Self::on_tempo))
             .child(
                 div()
                     .font(typography::tabular())
                     .child(tempo::tempo_text(tempo)),
             )
             .child(div().text_size(px(12.)).text_color(muted).child("bpm"));
-        // The press picks the tempo change the drag edits, before the first move.
+        // The press picks the tempo change the drag edits, before the first move. A press that
+        // moved nothing leaves nothing behind when it comes up, and the second press of a double
+        // click opens no drag.
         div()
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|pill, _: &MouseDownEvent, _, cx| {
+                cx.listener(|pill, event: &MouseDownEvent, _, cx| {
+                    if event.click_count != 1 {
+                        return;
+                    }
                     let at = pill.change_at_playhead(cx).tick;
                     let (begun, gone) = (false, false);
                     pill.tempo_drag = Some(TempoDrag { at, begun, gone });
                 }),
             )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|pill, _: &MouseUpEvent, _, _| {
+                    if pill.tempo_drag.as_ref().is_some_and(|drag| !drag.begun) {
+                        pill.tempo_drag = None;
+                    }
+                }),
+            )
             .child(number)
-    }
-
-    /// A callback of a control of the pill. It holds the pill weakly, as `cx.listener` does.
-    fn callback<E>(
-        cx: &Context<Self>,
-        f: impl Fn(&mut Self, E, &mut Context<Self>) + 'static,
-    ) -> impl Fn(E, &mut Window, &mut App) + 'static {
-        let pill = cx.weak_entity();
-        move |event, _, cx| {
-            pill.update(cx, |pill, cx| f(pill, event, cx)).ok();
-        }
     }
 
     /// The steadiness the transport shows, as a percentage. The value is read from the project
@@ -548,7 +555,7 @@ impl TransportPill {
         let number = DragNumber::new("steadiness", percent, 0., 100.)
             .drag(steadiness::DRAG_PER_POINT, steadiness::DRAG_STEP)
             .keys(steadiness::KEY_STEP, steadiness::FINE_KEY_STEP)
-            .on_change(Self::callback(cx, Self::on_steadiness))
+            .on_change(weak_callback(cx, Self::on_steadiness))
             .child(
                 div()
                     .font(typography::tabular())
@@ -740,6 +747,7 @@ impl Render for TransportPill {
         let session = self.session.clone();
 
         div()
+            .debug_selector(|| "transport".to_string())
             .flex()
             .flex_none()
             .items_center()
@@ -760,6 +768,7 @@ impl Render for TransportPill {
                     .gap(px(4.))
                     .child(
                         Button::icon_only("play", if playing { "pause" } else { "play" })
+                            .debug_selector(|| "play".to_string())
                             .variant(if playing {
                                 ButtonVariant::SubtleColor(green)
                             } else {

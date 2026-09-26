@@ -58,6 +58,10 @@ const NOTICE_WIDTH: f32 = 400.;
 /// The window of the design: a 13 to 14 inch MacBook, less its menu bar.
 const WINDOW_WIDTH: f32 = 1470.;
 const WINDOW_HEIGHT: f32 = 920.;
+/// The smallest window: the project menu, the whole transport of a fitted project beside it,
+/// and a track panel with room for a card.
+const MIN_WINDOW_WIDTH: f32 = 1100.;
+const MIN_WINDOW_HEIGHT: f32 = 640.;
 
 /// The root view of the window.
 pub struct Shell {
@@ -161,14 +165,17 @@ impl Shell {
             count => Some(format!("{count} files are not live, see problems.txt")),
         };
         let error = session.notice().cloned();
+        // In the corner the main view leaves free: right of the track headers and above the
+        // panel below the timeline.
+        let room = session.notice_room();
         // A definite width, so that a message wraps at the width it gets and the box is as tall
         // as its lines: with only a largest width the text was measured on one line and then
         // painted on three, past the bottom of the window. A notice is as wide as its text up
         // to this width.
         div()
             .absolute()
-            .left(px(NOTICE_INSET))
-            .bottom(px(NOTICE_INSET))
+            .left(px(room.left + NOTICE_INSET))
+            .bottom(px(room.bottom + NOTICE_INSET))
             .w(px(NOTICE_WIDTH))
             .flex()
             .flex_col()
@@ -255,32 +262,22 @@ impl Render for Shell {
             .text_color(text)
             .font(typography::ui_font())
             .text_size(px(14.))
+            // The title row: the project menu, then the transport in the middle of the room
+            // right of it. The air on both sides of the pill moves the window. In a narrow
+            // window the air goes first, so the pill never covers the menu.
             .child(
                 div()
                     .flex()
                     .flex_none()
                     .items_center()
                     .h(px(TOP_ROW_HEIGHT))
-                    .child(Self::drag_region().w(px(TRAFFIC_LIGHTS_WIDTH)))
-                    .child(self.project_menu.clone())
+                    .child(Self::drag_region().flex_none().w(px(TRAFFIC_LIGHTS_WIDTH)))
+                    .child(div().flex_none().child(self.project_menu.clone()))
+                    .child(Self::drag_region().flex_1())
+                    .child(self.transport.clone())
                     .child(Self::drag_region().flex_1()),
             )
             .child(div().flex_1().min_h_0().child(main))
-            // The transport in the middle of the title row, whatever the project menu is wide.
-            // Nothing floats over the content any more. It comes after the main area, so tab
-            // reaches it last, as before.
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .w_full()
-                    .h(px(TOP_ROW_HEIGHT))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(self.transport.clone()),
-            )
             .child(self.notices(cx))
     }
 }
@@ -475,6 +472,7 @@ pub fn run(folder: &Path) -> Result<()> {
                     size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)),
                     cx,
                 ))),
+                window_min_size: Some(size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))),
                 titlebar: Some(TitlebarOptions {
                     title: Some(title.into()),
                     appears_transparent: true,

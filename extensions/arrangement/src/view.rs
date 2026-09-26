@@ -38,7 +38,7 @@ use gpui::{
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent, State, Ticks, TimeSignature};
 use sound_notes::Clip;
-use sound_ui::{ActiveTheme, KeyboardFocus, Playhead, Session, Views};
+use sound_ui::{ActiveTheme, KeyboardFocus, NoticeRoom, Playhead, Session, Views};
 
 use crate::{ArrangementState, TrackState, add_clip, move_clip, tracks};
 use editor::EditorEvent;
@@ -136,13 +136,38 @@ impl ArrangementView {
             }
         })
         .detach();
-
-        Self {
+        // The notices of the window sit right of the track headers and above the panel below.
+        // A view that is gone keeps no room.
+        cx.on_release(|view, cx| {
+            let room = NoticeRoom::default();
+            view.session
+                .update(cx, |session, cx| session.set_notice_room(room, cx));
+        })
+        .detach();
+        let view = Self {
             session,
             timeline,
             playhead_line,
             detail: None,
-        }
+        };
+        view.publish_notice_room(cx);
+        view
+    }
+
+    /// Tells the window where the notices go: right of the header column and above the panel
+    /// below, whichever is open, so a notice never covers the mixer strip of a track.
+    fn publish_notice_room(&self, cx: &mut Context<Self>) {
+        let bottom = match &self.detail {
+            Some(Detail::Editor(_)) => EDITOR_HEIGHT,
+            Some(Detail::Track(_)) => track_panel::PANEL_HEIGHT,
+            None => 0.,
+        };
+        let room = NoticeRoom {
+            left: HEADER_WIDTH,
+            bottom,
+        };
+        self.session
+            .update(cx, |session, cx| session.set_notice_room(room, cx));
     }
 
     pub fn timeline(&self) -> &Entity<Timeline> {
@@ -197,6 +222,7 @@ impl ArrangementView {
                 playhead_line,
                 _events: events,
             }));
+            self.publish_notice_room(cx);
             cx.notify();
         }
         if let Some(editor) = self.editor() {
@@ -230,6 +256,7 @@ impl ArrangementView {
             panel,
             _events: events,
         }));
+        self.publish_notice_room(cx);
         cx.notify();
     }
 
@@ -249,6 +276,7 @@ impl ArrangementView {
         if focus_handle.contains_focused(window, cx) {
             window.focus(&self.timeline.focus_handle(cx), cx);
         }
+        self.publish_notice_room(cx);
         cx.notify();
     }
 
@@ -289,13 +317,21 @@ impl Render for ArrangementView {
         // own and a swap between them moves the lower edge of the timeline. Both are cached:
         // the playhead line above draws this view again on every frame.
         let detail = self.detail.as_ref().map(|detail| {
-            let panel = |height: f32| div().flex_none().h(px(height)).relative();
+            // Named for tests: `note-editor`, `track-panel`.
+            let panel = |name: &'static str, height: f32| {
+                div()
+                    .debug_selector(move || name.to_string())
+                    .flex_none()
+                    .h(px(height))
+                    .relative()
+            };
             match detail {
-                Detail::Editor(open) => panel(EDITOR_HEIGHT)
+                Detail::Editor(open) => panel("note-editor", EDITOR_HEIGHT)
                     .child(open.editor.clone().cached(fill_parent()))
                     .child(open.playhead_line.clone()),
                 Detail::Track(open) => {
-                    panel(track_panel::PANEL_HEIGHT).child(open.panel.clone().cached(fill_parent()))
+                    let height = track_panel::PANEL_HEIGHT;
+                    panel("track-panel", height).child(open.panel.clone().cached(fill_parent()))
                 }
             }
         });

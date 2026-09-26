@@ -76,17 +76,6 @@ It is a deterministic algorithm, not a model, and it is right about the beat wit
 
 `assets/takes/take-1.json: ... the most a take may hold is ...`, or `the messages of a take are in the order they arrived`, means the take file is damaged. It is never rewritten by the app. Mend it, then touch `state/fit-tempo.json` — a fit is worked out again when its own record changes.
 
-## The extension has to be enabled
-
-`project.json` lists the extensions this project loads. A project made before the fit existed
-does not list `"fit-tempo"`, and then the app shows `Fit tempo to take` as out of reach. One
-edit fixes it: add `"fit-tempo"` to the `extensions` list in `project.json`, so that it reads
-
-    "extensions": ["arrangement", "fit-tempo", "instrument", "plugin-host", "tone"]
-
-with whatever else it listed, and then tell the composer to open the project again. Enabling an
-extension while a project runs is refused.
-
 ## Check your work
 
 `problems.txt` in the project folder lists everything that is not live, including what a fit could not do: a take file that is missing, a take with too little in it, and a clip that no longer names the take. A missing file means no runtime is watching and nothing has checked your edit.
