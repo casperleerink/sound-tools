@@ -17,6 +17,7 @@
 
 mod clips;
 mod effects;
+mod filter;
 mod fit;
 mod instruments;
 mod notes;

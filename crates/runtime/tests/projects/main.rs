@@ -6,6 +6,7 @@
 
 mod agent_doc;
 mod effects;
+mod filter;
 mod fit;
 mod generated_take;
 mod latency;

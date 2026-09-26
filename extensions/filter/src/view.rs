@@ -205,6 +205,9 @@ impl FilterView {
             _ => {}
         })
         .detach();
+        // Whether the card is expanded is interface state of the session, and the rack sets
+        // it. The session notifies once per group of events, so this costs little.
+        cx.observe(&session, |_, _, cx| cx.notify()).detach();
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();

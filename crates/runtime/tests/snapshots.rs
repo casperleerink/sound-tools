@@ -22,6 +22,9 @@
 //! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
 //! - `track-panel-synth-effects.png`: the synth with two effects after it and the mixer
 //!   section, which is wider than the rack has room for on this screen.
+//! - `track-panel-filter.png`: the synth and the built-in filter after it.
+//! - `track-panel-filter-expanded.png`: the filter expanded, with slope and LFO, on a track
+//!   with no instrument.
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
 //! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
 //! - `track-panel-picker.png`: the same with the instrument picker open.
@@ -50,6 +53,7 @@ use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT, Viewpo
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor};
 use arrangement::{Colour, TrackState};
+use filter::FilterState;
 use gpui::{
     AppContext, Entity, HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, PlatformInput, Point, WindowHandle, point, px, size,
@@ -375,6 +379,24 @@ fn set_effects(project: &mut Project, track: &str, names: &[&str]) -> Result<()>
         changes.create(slot, record.context("a plugin record")?);
         project.commit(&format!("Add {name}"), changes)?;
     }
+    Ok(())
+}
+
+/// Puts a filter after the instrument of a track, as `Add effect` does.
+fn add_filter(project: &mut Project, track: &str) -> Result<()> {
+    let id = InstanceId::new(&format!("arrangement/{track}"))?;
+    let track = project
+        .resolve::<TrackState>(&id)
+        .context("the track is not there")?;
+    let mut changes = Changes::new();
+    let slot = arrangement::add_effect(project, &mut changes, &track, "Filter")?;
+    let sound = FilterState {
+        cutoff_hz: 1_200.0,
+        resonance: 0.3,
+        ..FilterState::default()
+    };
+    changes.create(slot, sound);
+    project.commit("Add Filter", changes)?;
     Ok(())
 }
 
@@ -764,6 +786,36 @@ fn main() -> Result<()> {
     })?;
     opened.click_track_header(1., &mut cx)?;
     save(&mut cx, &opened, "track-panel-synth-effects")?;
+    drop(opened);
+
+    // The built-in filter after the synth, with the values of the mockup, then expanded with
+    // the slope and the LFO.
+    let opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        add_filter(project, "bass")
+    })?;
+    opened.click_track_header(1., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-filter")?;
+    drop(opened);
+    // Expanded, on a track with no instrument, so the card has the room the synth of step 1
+    // of the third milestone will leave it.
+    let opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        let mut changes = Changes::new();
+        changes.delete(&InstanceId::new("arrangement/bass/instrument")?);
+        project.commit("Remove synth", changes)?;
+        add_filter(project, "bass")
+    })?;
+    opened.click_track_header(1., &mut cx)?;
+    let filter = InstanceId::new("arrangement/bass/filter")?;
+    cx.update(|cx| {
+        opened
+            .session
+            .update(cx, |session, cx| session.set_expanded(filter, true, cx))
+    });
+    cx.update_window(opened.window.into(), |_, window, _| window.refresh())?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-filter-expanded")?;
     drop(opened);
 
     // A track whose instrument is a tool that has no view: the tone.

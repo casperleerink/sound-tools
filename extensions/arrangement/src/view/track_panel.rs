@@ -686,6 +686,9 @@ impl Render for TrackPanel {
                             panel.session.update(cx, |session, cx| {
                                 session.set_expanded(slot, !expanded, cx)
                             });
+                            // The header is drawn here; the view draws the body itself, as
+                            // it observes the session.
+                            cx.notify();
                         }),
                     );
                 }
