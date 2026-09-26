@@ -98,6 +98,10 @@ Starting notes needs no `if transport.playing`: the range is empty while the pro
 
 A processor whose output lags its input, such as a lookahead or a hosted plugin, says so with `Processor::latency`, in frames. The engine reads it when the processor arrives and after each of its updates, so change it in `update` only. The engine delays nothing. Every processor before one with latency sees `tick_range` that many frames ahead of what the device plays, so a timeline-driven processor needs no code of its own for it: it emits what `tick_range` holds and the sound reaches the device in time. After a play or a seek in a project with latency, `tick_range` starts where playback starts and is empty or short until the device catches up. After a tempo map change while playing, a processor ahead of the device goes on from the tick after its last block, so for one block `tick_range` can start before the block and `offset_of` gives 0 for those ticks. `EngineStatus::latency` is the longest latency of the project. See ARCHITECTURE.md, "Latency compensation".
 
+### Meters: `Peaks`
+
+A processor that shows a level, such as the mixer of a track, records `Peaks` every block: `peaks.record_block([left, right])`, or `peaks.record(channel, value)` for a value of 0 or more of its own. It is an atomic maximum per channel, realtime safe, and an interface takes it once per frame with `take()`, which sets it back to zero, so no peak between two frames is missed. The behaviour gets them with `context.peaks("level")` and gives a clone to the processor when it makes it; they stay the same for as long as the name is declared, as a processor does. An interface finds them with `project.peaks(&instance_id, "level")`. `EngineControl::output_peaks()` are the peaks of the device output.
+
 ### Events
 
 Any `Copy + Send + 'static` type is an event. Two extensions share an event type through a small contract crate, for example `NoteEvent` in `crates/notes`. The core does not know the type. Each event port holds `EngineConfig::event_capacity` events per block. More are dropped and counted in `EngineStatus::event_overflows`.
