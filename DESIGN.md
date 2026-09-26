@@ -125,12 +125,15 @@ Knob:
 - Drag up or down, 200 pt for the whole travel, from the value at the press. With shift ten times finer. Double click, or backspace on the focused knob, sets the default. Arrows step a fiftieth, with shift a five-hundredth. Escape during a drag puts it back. The cursor is the up-down resize cursor.
 - No two-finger scroll on a knob: the same gesture pans the rack, and a knob that took it would change a sound while the composer scrolls past.
 - Focus from the keyboard: a 2 pt lavender ring around the face.
+- Tab order in the track panel: the close icon of the panel, then the header column top to bottom and left to right (fader, pan, M, S), then the rack card by card, each card's header (picker, switch, close) and then its cells row by row, and last `Add effect`.
 - GPUI's `PathBuilder` has `arc_to` and `stroke` in the pinned version, so the arc no longer needs dots.
 
 Fader:
 
 - Vertical, from row 1 to the value line of row 3 of the rack. A 2 pt track at `alpha/10`, a tick at 0 dB, a 28 x 14 cap in `gray-400` with a 1 pt `gray-950` line. -inf to +6 dB, 0 dB at 80 % of the travel.
 - The cap follows the finger one to one, with shift ten times finer. A press on the track does not jump. Double click sets 0 dB. Arrows 0.5 dB, with shift 0.1 dB. The readout (`-3.5 dB`, `-inf`) sits on the value line.
+- Tab reaches the fader as it reaches a knob, with the same 2 pt lavender ring around the cap when the focus came from the keyboard.
+- Two-finger scroll over a fader does what it does over a knob: it pans the rack and never changes the value.
 
 Meter:
 
@@ -158,7 +161,7 @@ Display: an inset in `gray-50` at 70 % with 6 pt corners. A curve is 1.5 pt `gra
 - The mixer strip of a track moves into the header column of the track panel, under the name, on the rows of the cards: the fader and its meter at the left, pan on row 1 at the right, M and S on row 2. The rack gets the full width. This changes "Mixer section, September 20, 2026".
 - The master is a row of 40 pt pinned under the tracks, with a ring where a track has its dot. A click opens its panel: the master fader and meter in the header column, and the rack with the limiter first.
 - The velocity lane is the lowest 56 pt of the note editor: a 3 pt bar at the start of each note in the track colour at 70 %, the selected one in `gray-950`. Drag a bar up or down. `Velocity` in 12 pt `gray-700` in the header column.
-- The notice stays bottom-left and must fit inside the window (item 3).
+- The notice stays bottom-left, 24 pt from the edges, at most 400 pt wide. A message wraps to at most three lines and the third ends in an ellipsis. The box grows with its text and its bottom stays 24 pt above the window edge, so it always fits (item 3). The full text is in `problems.txt` for a file that is not live, and in the tooltip of the notice for an error.
 - The picker and the menu say in words why an item is off and keep the file edit for the agent docs (item 4). For example: `This project does not load plugins.`
 
 Everything else in the sections below stays: the arrangement, clips, the note editor, menus and the picker.
