@@ -306,9 +306,11 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .behaviour(apply_arrangement)
         .summary(summary::of_arrangement)
         .end(|project, arrangement| end(project, arrangement.id()));
+    // A track whose clip names a file that is not there yet plays it once the file arrives.
     registry
         .tool::<TrackState>(EXTENSION)?
-        .behaviour(apply_track);
+        .behaviour(apply_track)
+        .rebinds_on_assets(sound_media::AUDIO_FOLDER);
     registry.tool::<Clip>(EXTENSION)?;
     registry.tool::<AudioClip>(EXTENSION)?;
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
@@ -544,8 +546,8 @@ pub fn audio_clips<'a>(
 /// The first tick after an audio clip under the clock of the project. Its start when its file
 /// is not there.
 pub fn audio_clip_end(project: &Project, clip: &AudioClip) -> Ticks {
-    let audio = sound_media::load(project.assets(), &clip.asset).ok();
-    clip.end(audio.as_deref(), project.clock())
+    let file = sound_media::info(project.assets(), &clip.asset).ok();
+    clip.end(file.as_ref(), project.clock())
 }
 
 /// The end of the last clip of an arrangement. `None` when it has no clips.

@@ -4,11 +4,9 @@
 //! it starts and never how fast it plays. It names its file by asset name, never by a path,
 //! and never changes the file: everything a composer does to a clip is in its record.
 
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 use sound_core::{Clock, Frames, Place, State, Ticks};
-use sound_media::{Audio, AudioAsset};
+use sound_media::{AudioAsset, Info};
 use sound_notes::TRACK_TOOL;
 
 use crate::decibels;
@@ -66,28 +64,28 @@ impl AudioClip {
     }
 
     /// The part of the file that plays, in frames of the file: from, and up to.
-    pub fn file_frames(&self, audio: &Audio) -> (u64, u64) {
-        let rate = f64::from(audio.sample_rate());
-        let frame = |seconds: f64| ((seconds * rate).round().max(0.0) as u64).min(audio.frames());
+    pub fn file_frames(&self, file: &Info) -> (u64, u64) {
+        let rate = f64::from(file.sample_rate);
+        let frame = |seconds: f64| ((seconds * rate).round().max(0.0) as u64).min(file.frames);
         let from = frame(self.file_start_seconds);
-        let to = self.file_end_seconds.map_or(audio.frames(), frame);
+        let to = self.file_end_seconds.map_or(file.frames, frame);
         (from, to.max(from))
     }
 
     /// How many engine frames the clip plays at `engine_rate`.
-    pub fn length(&self, audio: &Audio, engine_rate: u32) -> u64 {
-        let (from, to) = self.file_frames(audio);
-        sound_media::engine_frames(to - from, audio.sample_rate(), engine_rate)
+    pub fn length(&self, file: &Info, engine_rate: u32) -> u64 {
+        let (from, to) = self.file_frames(file);
+        sound_media::engine_frames(to - from, file.sample_rate, engine_rate)
     }
 
     /// The first tick after the clip, under this clock. It depends on the tempo, because the
     /// clip plays at its own speed. The start when the file is not there.
-    pub fn end(&self, audio: Option<&Audio>, clock: &Clock) -> Ticks {
-        let Some(audio) = audio else {
+    pub fn end(&self, file: Option<&Info>, clock: &Clock) -> Ticks {
+        let Some(file) = file else {
             return self.start;
         };
         let start = clock.frame_of(self.start).0;
-        let length = self.length(audio, clock.sample_rate());
+        let length = self.length(file, clock.sample_rate());
         clock.tick_at(Frames(start.saturating_add(length)))
     }
 }
@@ -132,7 +130,8 @@ impl State for AudioClip {
 /// The snapshot of the audio clips of one track, and a line for each clip that cannot play.
 ///
 /// `clips` are `(name, clip)` in any order. Reads every file the first time it is named, on
-/// this thread, see [`sound_media::load`].
+/// this thread, see [`sound_media::load`]. A file that does not play, or a clip that plays
+/// none of its file, costs one look at the file after that, see [`sound_media::info`].
 pub(crate) fn snapshot<'a>(
     clips: impl IntoIterator<Item = (&'a str, &'a AudioClip)>,
     assets: &sound_core::Assets,
@@ -141,11 +140,11 @@ pub(crate) fn snapshot<'a>(
     let mut placed = Vec::new();
     let mut problems = Vec::new();
     for (name, clip) in clips {
-        let audio = match sound_media::load(assets, &clip.asset) {
-            Ok(audio) => audio,
+        let file = match sound_media::info(assets, &clip.asset) {
+            Ok(file) => file,
             Err(sound_media::MediaError::Missing { path }) => {
                 problems.push(format!(
-                    "the clip {name:?} plays {path}, which is not there. The clip keeps its place and is silent, and the rest plays. Copy the file into assets/audio/ under that name, then change the clip or open the project again, or correct `asset`"
+                    "the clip {name:?} plays {path}, which is not there. The clip keeps its place and is silent, and the rest plays. Copy the file into assets/audio/ under that name and the clip plays, or correct `asset`"
                 ));
                 continue;
             }
@@ -154,24 +153,35 @@ pub(crate) fn snapshot<'a>(
                 continue;
             }
         };
-        let length = clip.length(&audio, engine_rate);
+        let length = clip.length(&file, engine_rate);
         if length == 0 {
             problems.push(format!(
                 "the clip {name:?} plays nothing: file_start_seconds {} is at or past the end of {}, which is {:.3} s long",
                 clip.file_start_seconds,
                 clip.asset,
-                audio.seconds()
+                file.seconds()
             ));
             continue;
         }
-        placed.push((name, clip, Arc::clone(&audio), length));
+        let audio = match sound_media::load(assets, &clip.asset) {
+            Ok(audio) => audio,
+            Err(error) => {
+                problems.push(format!("the clip {name:?} is silent: {error}"));
+                continue;
+            }
+        };
+        placed.push((name, clip, audio, length));
     }
     // The clip that covers the others comes last.
     placed.sort_by(|(a_name, a, ..), (b_name, b, ..)| {
         (a.layer, a.start, a_name).cmp(&(b.layer, b.start, b_name))
     });
     let clips = placed.into_iter().map(|(_, clip, audio, length)| {
-        let (origin, _) = clip.file_frames(&audio);
+        let file = audio.info();
+        let (origin, _) = clip.file_frames(&file);
+        // What the file holds from where the clip starts, which a join may play past its end.
+        let rate = file.sample_rate;
+        let available = sound_media::engine_frames(file.frames - origin, rate, engine_rate);
         let milliseconds =
             |ms: f32| (f64::from(ms) / 1000.0 * f64::from(engine_rate)).round() as u64;
         PlacedAudio {
@@ -180,6 +190,7 @@ pub(crate) fn snapshot<'a>(
             audio,
             origin,
             length,
+            available,
             gain: decibels::amplitude(clip.gain_db),
             fade_in: milliseconds(clip.fade_in_ms),
             fade_out: milliseconds(clip.fade_out_ms),

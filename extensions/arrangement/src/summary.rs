@@ -82,10 +82,10 @@ fn audio_track(
         lines.push("    no clips".to_string());
     }
     for (clip, state) in clips {
-        let file = match sound_media::load(project.assets(), &state.asset) {
+        let file = match sound_media::info(project.assets(), &state.asset) {
             Ok(audio) => {
                 let (from, to) = state.file_frames(&audio);
-                let rate = f64::from(audio.sample_rate());
+                let rate = f64::from(audio.sample_rate);
                 format!(
                     "{} from {:.3} s to {:.3} s of {:.3} s",
                     state.asset,

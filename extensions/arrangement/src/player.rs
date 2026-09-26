@@ -6,11 +6,14 @@
 //! - Nothing reads a file here. Every file is in memory, in the snapshot, before it arrives.
 //! - Where clips overlap, the one that comes last in the snapshot is heard (see
 //!   [`crate::AudioClip::layer`]). The others are not changed, only not heard there.
-//! - Every edge of what is heard gets a short ramp, [`DECLICK_SECONDS`]: the start and end of
-//!   each clip, and where a clip is covered and uncovered. So no edge clicks, whatever the
-//!   file holds there, and a fade of 0 ms is this ramp alone.
+//! - No edge clicks, and no join dips. Where a clip hands over to another, at a cut between
+//!   two clips or where one covers or uncovers another, the outgoing clip plays on past the
+//!   edge for [`DECLICK_SECONDS`], reading its file past its trim, and fades out while the
+//!   incoming one fades in: a crossfade. A free edge, with silence on the other side, and a
+//!   hand-over where the outgoing file has nothing more to play, get the same ramp inside the
+//!   clip. A fade of 0 ms is this ramp alone.
 //! - Where the sound would jump, because of a seek, a stop, a tempo change or an edit while it
-//!   plays, the old sound fades out over the same ramp while the new one fades in.
+//!   plays, what sounded goes on for one ramp and fades out while the new sound fades in.
 
 use std::sync::Arc;
 
@@ -30,40 +33,55 @@ pub struct PlacedAudio {
     pub(crate) origin: u64,
     /// Engine frames the clip plays, 1 or more.
     pub(crate) length: u64,
+    /// Engine frames the file holds from `origin` on: `length`, and what is past the trim.
+    pub(crate) available: u64,
     pub(crate) gain: f32,
     pub(crate) fade_in: u64,
     pub(crate) fade_out: u64,
 }
 
+/// A part of a clip that is heard, in frames of the clip: from, up to, and whether it hands
+/// over to another clip at its end, so that it plays on past it for one ramp, fading out.
+#[derive(Copy, Clone)]
+struct Part {
+    from: u64,
+    to: u64,
+    hands_over: bool,
+}
+
 impl PlacedAudio {
-    /// The level of frame `frame` of the clip, heard in its part `from..to`: the gain, the
-    /// fades, and the ramp at each edge of that part. `entered` frames ago the sound came in
-    /// after a jump, which is one more edge with the same ramp. A clip that starts where the
-    /// sound comes in therefore gets one ramp and not two.
-    fn level(&self, frame: u64, (from, to): (u64, u64), ramp: u64, entered: u64) -> f32 {
-        if frame < from || frame >= to {
+    /// The level of frame `frame` of the clip, heard in `part`: the gain, the fades, and the
+    /// ramp at each edge of that part. `entered` frames ago the sound came in after a jump,
+    /// which is one more edge with the same ramp. A clip that starts where the sound comes in
+    /// therefore gets one ramp and not two.
+    fn level(&self, frame: u64, part: Part, ramp: u64, entered: u64) -> f32 {
+        let end = match part.hands_over {
+            true => part.to + ramp,
+            false => part.to,
+        };
+        if frame < part.from || frame >= end {
             return 0.0;
         }
-        let ramp = (ramp + 1) as f64;
-        let rising = (frame - from + 1) as f64 / ramp;
-        let falling = (to - frame) as f64 / ramp;
-        let entering = entered.saturating_add(1) as f64 / ramp;
+        let steps = (ramp + 1) as f64;
+        let rising = (frame - part.from + 1) as f64 / steps;
+        let falling = (end - frame) as f64 / steps;
+        let entering = entered.saturating_add(1) as f64 / steps;
         let mut level = rising.min(falling).min(entering).min(1.0);
         if self.fade_in > 0 {
             level = level.min(frame as f64 / self.fade_in as f64);
         }
         if self.fade_out > 0 {
-            level = level.min((self.length - frame) as f64 / self.fade_out as f64);
+            level = level.min(self.length.saturating_sub(frame) as f64 / self.fade_out as f64);
         }
         (level * f64::from(self.gain)) as f32
     }
 
-    /// Frames `first..` of the clip as heard in its part `part`, into `out`. `entered` is
-    /// for `first`, see [`Self::level`].
+    /// Frames `first..` of the clip as heard in `part`, into `out`. `entered` is for `first`,
+    /// see [`Self::level`].
     fn write(
         &self,
         (first, entered): (u64, u64),
-        part: (u64, u64),
+        part: Part,
         ramp: u64,
         out: &mut [[f32; 2]],
         scratch: &mut [[f32; 2]],
@@ -137,10 +155,12 @@ pub struct AudioPlayer {
     scratch: Box<[[f32; 2]]>,
     /// One block of one clip.
     piece: Box<[[f32; 2]]>,
-    /// What sounded, going on past a jump and fading out.
+    /// What sounded, going on past a jump and fading out. One ramp long.
     tail: Box<[[f32; 2]]>,
     /// The next frame of `tail` to play: its length when it is done.
     tail_at: usize,
+    /// Where a new tail is made, one ramp long.
+    going_on: Box<[[f32; 2]]>,
     /// Frames since the sound came in after the last jump.
     entered: u64,
     last: Option<Sounding>,
@@ -162,6 +182,7 @@ impl AudioPlayer {
             piece: vec![[0.0; 2]; MAX_BLOCK].into_boxed_slice(),
             tail: Box::default(),
             tail_at: 0,
+            going_on: Box::default(),
             entered: u64::MAX,
             last: None,
             played_to: None,
@@ -169,25 +190,98 @@ impl AudioPlayer {
         }
     }
 
-    /// What was heard goes on for one ramp from where it was, fading out.
-    fn start_tail(&mut self, sounding: Sounding) {
-        let Some(clip) = self.snapshot.clips.get(sounding.clip) else {
-            return;
-        };
-        let whole = (0, clip.length);
-        clip.write(
-            (sounding.next, u64::MAX),
-            whole,
-            self.ramp,
-            &mut self.tail,
-            &mut self.scratch,
-        );
-        let ramp = (self.ramp + 1) as f32;
-        for (index, frame) in self.tail.iter_mut().enumerate() {
-            let level = (self.ramp as f32 - index as f32) / ramp;
-            *frame = frame.map(|sample| sample * level);
+    /// What is heard now goes on for one ramp from where it was, fading out: the clip that
+    /// sounded, still coming in if it came in after a jump just now, and what is left of a
+    /// tail of an earlier jump.
+    fn start_tail(&mut self) {
+        let sounding = self.last.take();
+        let clip =
+            sounding.and_then(|sounding| Some((sounding, self.snapshot.clips.get(sounding.clip)?)));
+        match clip {
+            Some((sounding, clip)) => {
+                let whole = Part {
+                    from: 0,
+                    to: clip.length,
+                    hands_over: false,
+                };
+                let first = (sounding.next, self.entered);
+                clip.write(
+                    first,
+                    whole,
+                    self.ramp,
+                    &mut self.going_on,
+                    &mut self.scratch,
+                );
+            }
+            None => self.going_on.fill([0.0; 2]),
+        }
+        // The rest of the old tail is read from ahead of where the new one is written, so one
+        // pass over the one buffer is enough.
+        let steps = (self.ramp + 1) as f32;
+        for index in 0..self.tail.len() {
+            let left_over = self
+                .tail
+                .get(self.tail_at + index)
+                .copied()
+                .unwrap_or_default();
+            let going_on = self.going_on.get(index).copied().unwrap_or_default();
+            let level = (self.ramp as f32 - index as f32) / steps;
+            if let Some(frame) = self.tail.get_mut(index) {
+                *frame = [0, 1].map(|channel| (going_on[channel] + left_over[channel]) * level);
+            }
         }
         self.tail_at = 0;
+    }
+
+    /// Adds, to frames `range` of a block that starts on project frame `block`, what the clips
+    /// that hand over play past their edge.
+    fn play_past_hand_overs(
+        &mut self,
+        range: std::ops::Range<u64>,
+        block: u64,
+        outputs: [&mut [f32]; 2],
+    ) {
+        let [left, right] = outputs;
+        let ramp = self.ramp;
+        for (index, span) in self.spans.iter().enumerate() {
+            for edge in [span.start, span.end] {
+                // The frames a hand-over at this edge plays past it must meet this block.
+                if edge == 0 || edge >= range.end || edge + ramp <= range.start {
+                    continue;
+                }
+                // Once for each edge, which several clips may share.
+                let before = self.spans.get(..index).unwrap_or_default();
+                let seen = before
+                    .iter()
+                    .any(|other| other.start == edge || other.end == edge);
+                if seen || (edge == span.end && span.start == edge) {
+                    continue;
+                }
+                let Some((outgoing, part)) = hand_over(&self.spans, &self.snapshot, edge, ramp)
+                else {
+                    continue;
+                };
+                let (Some(clip), Some(outgoing_span)) =
+                    (self.snapshot.clips.get(outgoing), self.spans.get(outgoing))
+                else {
+                    continue;
+                };
+                let from = edge.max(range.start);
+                let to = (edge + ramp).min(range.end);
+                let Some(piece) = self.piece.get_mut(..(to - from) as usize) else {
+                    continue;
+                };
+                let entered = self.entered.saturating_add(from - range.start);
+                let first = (from - outgoing_span.start, entered);
+                clip.write(first, part, ramp, piece, &mut self.scratch);
+                let at = (from - block) as usize;
+                let outputs = left.iter_mut().zip(right.iter_mut()).skip(at);
+                for ((left, right), sample) in outputs.zip(piece.iter()) {
+                    *left += sample[0];
+                    *right += sample[1];
+                }
+            }
+        }
     }
 }
 
@@ -228,6 +322,39 @@ fn heard_part(spans: &[Span], owner: usize, frame: u64) -> (u64, u64) {
     (from - span.start, to - span.start)
 }
 
+/// Whether one clip hands over to another at project frame `edge`, with file enough to play
+/// on past it for one ramp: the clip heard before the edge and its part, which then ends in
+/// a crossfade.
+fn hand_over(
+    spans: &[Span],
+    snapshot: &AudioSnapshot,
+    edge: u64,
+    ramp: u64,
+) -> Option<(usize, Part)> {
+    let before = edge.checked_sub(1)?;
+    let (outgoing, _) = heard_at(spans, before, edge);
+    let (incoming, _) = heard_at(spans, edge, edge + 1);
+    let (outgoing, incoming) = (outgoing?, incoming?);
+    if outgoing == incoming {
+        return None;
+    }
+    let span = spans.get(outgoing)?;
+    let clip = snapshot.clips.get(outgoing)?;
+    let (from, to) = heard_part(spans, outgoing, before);
+    if span.start + to != edge || to + ramp > clip.available {
+        return None;
+    }
+    let hands_over = true;
+    Some((
+        outgoing,
+        Part {
+            from,
+            to,
+            hands_over,
+        },
+    ))
+}
+
 impl Processor for AudioPlayer {
     type Update = AudioUpdate;
 
@@ -240,13 +367,14 @@ impl Processor for AudioPlayer {
             .round()
             .max(1.0) as u64;
         self.tail = vec![[0.0; 2]; self.ramp as usize].into_boxed_slice();
+        self.going_on = vec![[0.0; 2]; self.ramp as usize].into_boxed_slice();
         self.tail_at = self.tail.len();
     }
 
     fn update(&mut self, update: &mut AudioUpdate) {
         // The old snapshot is still here: what it played fades out from where it was.
-        if let Some(sounding) = self.last.take() {
-            self.start_tail(sounding);
+        if self.last.is_some() {
+            self.start_tail();
         }
         // The old ones ride back to the control thread inside the update.
         std::mem::swap(&mut self.snapshot, &mut update.snapshot);
@@ -262,8 +390,8 @@ impl Processor for AudioPlayer {
         let continues =
             playing && !self.changed && !transport.jumped && self.played_to == Some(range.start);
         if !continues {
-            if let Some(sounding) = self.last.take() {
-                self.start_tail(sounding);
+            if self.last.is_some() {
+                self.start_tail();
             }
             self.entered = 0;
         }
@@ -282,9 +410,9 @@ impl Processor for AudioPlayer {
                     self.spans.push(Span { start, end });
                 }
             }
-            // The offset in this block of a project frame of `range`. Right after a play in a
+            // The project frame of the first frame of this block. Right after a play in a
             // project with latency, `range` may start later than the block.
-            let offset = |frame: u64| (frame + frames as u64 - range.end) as usize;
+            let block = range.end - frames as u64;
             let mut frame = range.start;
             while frame < range.end {
                 let (owner, next) = heard_at(&self.spans, frame, range.end);
@@ -292,18 +420,21 @@ impl Processor for AudioPlayer {
                 if let (Some((owner, clip)), Some(span)) =
                     (clip, owner.and_then(|owner| self.spans.get(owner)))
                 {
-                    let part = heard_part(&self.spans, owner, frame);
+                    let (from, to) = heard_part(&self.spans, owner, frame);
+                    let hands_over =
+                        hand_over(&self.spans, &self.snapshot, span.start + to, self.ramp)
+                            .is_some_and(|(outgoing, _)| outgoing == owner);
+                    let part = Part {
+                        from,
+                        to,
+                        hands_over,
+                    };
                     let count = (next - frame) as usize;
                     if let Some(piece) = self.piece.get_mut(..count) {
                         let entered = self.entered.saturating_add(frame - range.start);
-                        clip.write(
-                            (frame - span.start, entered),
-                            part,
-                            self.ramp,
-                            piece,
-                            &mut self.scratch,
-                        );
-                        let at = offset(frame);
+                        let first = (frame - span.start, entered);
+                        clip.write(first, part, self.ramp, piece, &mut self.scratch);
+                        let at = (frame - block) as usize;
                         let outputs = left.iter_mut().zip(right.iter_mut()).skip(at);
                         for ((left, right), sample) in outputs.zip(piece.iter()) {
                             *left = sample[0];
@@ -313,6 +444,7 @@ impl Processor for AudioPlayer {
                 }
                 frame = next;
             }
+            self.play_past_hand_overs(range.clone(), block, [&mut *left, &mut *right]);
             self.entered = self.entered.saturating_add(range.end - range.start);
             let (owner, _) = heard_at(&self.spans, range.end - 1, range.end);
             self.last = owner.and_then(|clip| {

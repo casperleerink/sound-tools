@@ -13,7 +13,7 @@ state/arrangement/<track>/<clip>.json      an audio clip of that track
 - A clip plays a file in `assets/audio/` and nothing else. To use a file from anywhere else, copy it there first. The app never changes a file in that folder.
 - The name is lowercase letters, digits, `-` and `_`, a dot and the extension: `voice-take-1.wav`. Rename the copy when the original has capitals or spaces.
 - WAV and AIFF, at any sample rate and bit depth, mono or stereo. A file at another sample rate than the device plays at its own pitch and speed.
-- Copy the file first, then write the clip. A clip whose file is not there yet is listed in `problems.txt` and stays silent until the clip changes or the project is opened again: writing the same bytes again is no change.
+- Copy the file first, then write the clip. A clip whose file is not there yet is listed in `problems.txt` and is silent; it plays as soon as the file is there.
 
 ## An audio track
 
@@ -61,7 +61,7 @@ This clip starts on bar 5 and plays four seconds of `assets/audio/voice-take-1.w
 - `file_start_seconds`: where in the file the clip starts playing. 0 is the beginning of the file, and 0 when left out.
 - `file_end_seconds`: where in the file it stops, after `file_start_seconds`. Leave it out to play to the end of the file. A value past the end of the file stops at the end.
 - `gain_db`: how much louder or quieter than the file, a number up to 24, or `"-inf"` for silence. 0 when left out.
-- `fade_in_ms`, `fade_out_ms`: a straight line from silence at the start of the clip up to its level, and down to silence at its end. 0 when left out. Every edge of a clip also gets a short ramp of 2 ms that is not a setting, so a clip never clicks; a fade of 0 is that ramp alone.
+- `fade_in_ms`, `fade_out_ms`: a straight line from silence at the start of the clip up to its level, and down to silence at its end. 0 when left out. Every edge of a clip also gets a short ramp of 2 ms that is not a setting, so a clip never clicks; a fade of 0 is that ramp alone. Where one clip hands over to another, the two cross over those 2 ms, so a file cut in two clips that touch plays as it did whole.
 - `layer`: where clips of one track overlap, only the one with the higher layer is heard there. The one below is not changed: where the top one ends, it plays on. Of two clips with the same layer the one that starts later is heard. 0 when left out.
 
 ## How to
@@ -76,7 +76,7 @@ This clip starts on bar 5 and plays four seconds of `assets/audio/voice-take-1.w
 
 What `problems.txt` says, and what to do:
 
-- `plays assets/audio/voice-take-1.wav, which is not there`: copy the file there under that name, then change the clip, or correct `asset`. The clip keeps its place and the rest plays.
+- `plays assets/audio/voice-take-1.wav, which is not there`: copy the file there under that name, or correct `asset`. The clip keeps its place and the rest plays.
 - `is silent: ... it is not a WAV or AIFF file`: the file cannot be played. Use a WAV or AIFF file.
 - `plays nothing: file_start_seconds ... is at or past the end`: the file is shorter than you thought. Lower `file_start_seconds`.
 - `is a note clip, and this is an audio track`: note clips belong in an instrument track, and audio clips in an audio track.

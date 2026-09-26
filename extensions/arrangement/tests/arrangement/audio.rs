@@ -325,18 +325,14 @@ fn a_file_that_is_not_there_is_a_problem_and_the_rest_plays() {
     assert!(output[..24_000].iter().all(|frame| *frame == [0.0; 2]));
     assert_eq!(output[24_500], [0.5; 2]);
 
-    // The file arrives. The clip plays once it changes: the same record again is no change.
+    // The file arrives, and what the watcher reports of it is enough: the clip plays, with
+    // no edit of its record.
     write_wav(&harness, "gone.wav", SAMPLE_RATE, &steady(0.25, 1000));
-    assert_eq!(harness.apply(&["state/arrangement/voice/gone.json"]), 0);
-    let record =
-        r#"{"tool": "arrangement.audio_clip", "state": {"asset": "gone.wav", "start": 480}}"#;
-    assert_eq!(
-        harness.write_and_apply("state/arrangement/voice/gone.json", record),
-        1
-    );
+    assert_eq!(harness.apply(&["assets/audio/gone.wav"]), 0);
     assert_eq!(harness.problems(), Vec::<String>::new());
+    assert_eq!(harness.project.undo_label(), Some("File change"));
     harness.project.engine().seek(Ticks(0));
-    assert_eq!(play(&mut harness, 12_600)[12_500], [0.25; 2]);
+    assert_eq!(play(&mut harness, 600)[500], [0.25; 2]);
 }
 
 fn add_outside(harness: &mut Harness, name: &str, start: u64, file: &str) {
@@ -402,4 +398,61 @@ fn clips_in_the_wrong_kind_of_track_are_problems() {
     assert!(
         problems[1].starts_with("state/arrangement/voice/instance.json: notes.json is a note clip")
     );
+}
+
+#[test]
+fn a_file_cut_in_two_clips_plays_as_the_whole_file_with_no_dip_at_the_cut() {
+    let noise = |frame: usize| ((frame * 7_919 % 1_000) as f32 / 1_000.0 - 0.5) * 0.8;
+    let file: Vec<[f32; 2]> = (0..96_000)
+        .map(|frame| [noise(frame), -noise(frame)])
+        .collect();
+    let render = |cut: bool| {
+        let mut harness = audio_harness();
+        write_wav(&harness, "take.wav", SAMPLE_RATE, &file);
+        if cut {
+            // The first second, then the second one from beat 3, which is frame 48000.
+            let mut first = clip("take.wav", 0);
+            first.file_end_seconds = Some(1.0);
+            let mut second = clip("take.wav", 1920);
+            second.file_start_seconds = 1.0;
+            add(&mut harness, "first", first);
+            add(&mut harness, "second", second);
+        } else {
+            add(&mut harness, "whole", clip("take.wav", 0));
+        }
+        play(&mut harness, 96_000)
+    };
+    let (whole, cut) = (render(false), render(true));
+    let largest = whole
+        .iter()
+        .zip(&cut)
+        .flat_map(|(whole, cut)| [(whole[0] - cut[0]).abs(), (whole[1] - cut[1]).abs()])
+        .fold(0.0_f32, f32::max);
+    println!("a file cut in two clips against the whole: largest difference {largest:e}");
+    assert!(largest < 1e-6, "{largest}");
+}
+
+#[test]
+fn a_second_jump_while_the_first_fades_does_not_click() {
+    let mut harness = audio_harness();
+    write_wav(&harness, "high.wav", SAMPLE_RATE, &steady(0.8, 144_000));
+    write_wav(&harness, "low.wav", SAMPLE_RATE, &steady(-0.8, 48_000));
+    add(&mut harness, "high", clip("high.wav", 0));
+    // Apart from the first, from beat 7 (frame 144000).
+    add(&mut harness, "low", clip("low.wav", 5760));
+    harness.project.engine().seek(Ticks(960));
+    let mut played = play(&mut harness, 1_024);
+    // Into the low clip, then after one block of 64 frames back into the high one: the second
+    // jump comes while the first one still fades.
+    harness.project.engine().seek(Ticks(6_000));
+    played.extend(render(&mut harness, 64));
+    harness.project.engine().seek(Ticks(1_200));
+    played.extend(render(&mut harness, 1_024));
+    let step = largest_step(&played[512..]);
+    let single = 2.0 * 0.8 / (RAMP + 1) as f32 + 1e-6;
+    println!(
+        "largest step at two jumps one block apart: {step:.5}, one jump has up to {single:.5}"
+    );
+    assert!(step <= single, "{step}");
+    assert_eq!(played.last().unwrap()[0], 0.8);
 }
