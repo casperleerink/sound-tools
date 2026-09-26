@@ -121,16 +121,6 @@ struct Marquee {
     at_press: Selection<Note>,
 }
 
-/// The notes a delete or a cut of this editor took away, so that they are selected again when
-/// they come back, which is what undo does.
-#[derive(Default)]
-struct Deleted {
-    notes: Vec<Note>,
-    /// Whether the clip had all of them at the last event, so they are selected when they
-    /// come back and not on every event after that.
-    present: bool,
-}
-
 pub struct NoteEditor {
     session: Entity<Session>,
     clip: Instance<Clip>,
@@ -148,7 +138,10 @@ pub struct NoteEditor {
     /// agent, an undo or a clip resize, and an index would then name another note. They are
     /// looked up when they are used, and leave the selection when the clip no longer has them.
     selection: Selection<Note>,
-    deleted: Deleted,
+    /// The notes of the clip at the last event, and the count of undo and redo of the session
+    /// then, to tell what an undo or a redo brought: it selects that.
+    known: Vec<Note>,
+    seen_history: u64,
     drag: Option<NoteDrag>,
     marquee: Option<Marquee>,
     /// What the pointer is over, so the cursor says what a drag from there does.
@@ -193,7 +186,7 @@ impl NoteEditor {
             };
             if changed {
                 editor.drop_lost_selection(cx);
-                editor.reselect_deleted(cx);
+                editor.select_what_history_brought(cx);
                 cx.notify();
             }
         });
@@ -216,7 +209,8 @@ impl NoteEditor {
             painted: Rc::default(),
             painted_width: Rc::new(Cell::new(width)),
             selection: Selection::default(),
-            deleted: Deleted::default(),
+            known: Vec::new(),
+            seen_history: 0,
             drag: None,
             marquee: None,
             hover: Hover::Nothing,
@@ -324,21 +318,35 @@ impl NoteEditor {
         self.selection.retain(|note| clip.notes.contains(note));
     }
 
-    /// The notes of the last delete or cut come back, by an undo: they are selected again.
-    fn reselect_deleted(&mut self, cx: &mut Context<Self>) {
-        if self.deleted.notes.is_empty() {
-            return;
-        }
-        let Some(clip) = self.session.read(cx).project().state(&self.clip) else {
+    /// An undo or a redo selects the notes it brought: those the clip has now and did not have
+    /// before, such as deleted notes that came back or moved notes where they were. The
+    /// selection names notes by value, so without this an undo of a move would leave nothing
+    /// selected.
+    fn select_what_history_brought(&mut self, cx: &mut Context<Self>) {
+        let session = self.session.read(cx);
+        let history = session.history_moves();
+        let Some(clip) = session.project().state(&self.clip) else {
             return;
         };
-        let present = self.deleted.notes.iter().all(|note| clip.notes.contains(note));
-        let came_back = present && !self.deleted.present;
-        self.deleted.present = present;
-        if came_back {
-            let notes = self.deleted.notes.clone();
-            let first = notes.first().copied();
-            self.set_selection(notes, first, cx);
+        let notes = clip.notes.clone();
+        let known = std::mem::replace(&mut self.known, notes.clone());
+        if std::mem::replace(&mut self.seen_history, history) == history || self.drag.is_some() {
+            return;
+        }
+        let mut before = known;
+        let brought: Vec<Note> = notes
+            .into_iter()
+            .filter(|note| match before.iter().position(|had| had == note) {
+                Some(index) => {
+                    before.swap_remove(index);
+                    false
+                }
+                None => true,
+            })
+            .collect();
+        if !brought.is_empty() {
+            let first = brought.first().copied();
+            self.set_selection(brought, first, cx);
         }
     }
 
@@ -348,8 +356,9 @@ impl NoteEditor {
         self.marquee = None;
         self.clip = clip;
         self.selection = Selection::default();
-        self.deleted = Deleted::default();
+        self.seen_history = self.session.read(cx).history_moves();
         if let Some(state) = self.session.read(cx).project().state(&self.clip) {
+            self.known = state.notes.clone();
             self.viewport = opened(state, self.painted_width.get(), ROLL_HEIGHT);
             self.painted.set(self.viewport);
         }
@@ -1021,8 +1030,8 @@ impl NoteEditor {
         true
     }
 
-    /// Takes the selected notes out of the clip, as one undo step. They are kept so that they
-    /// are selected again when an undo brings them back.
+    /// Takes the selected notes out of the clip, as one undo step. An undo brings them back
+    /// selected, see [`Self::select_what_history_brought`].
     fn delete(
         &mut self,
         clip: &Clip,
@@ -1038,12 +1047,7 @@ impl NoteEditor {
         for index in indices.into_iter().rev() {
             edited.notes.remove(index);
         }
-        let deleted: Vec<Note> = selected.iter().map(|(_, note)| *note).collect();
         if self.commit(label, edited, cx) {
-            self.deleted = Deleted {
-                notes: deleted,
-                present: false,
-            };
             self.select_alone(None, cx);
         }
     }

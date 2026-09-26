@@ -902,7 +902,7 @@ fn main() -> Result<()> {
     let melody =
         InstanceId::new("arrangement/a-melody-with-a-name-too-long-for-its-header/clip-000")?;
     let editor = opened.open_editor(&melody, &mut cx)?;
-    cx.update(|cx| editor.update(cx, |editor, cx| editor.select_note(Some(5), cx)));
+    cx.update(|cx| editor.update(cx, |editor, cx| editor.select_notes(&[5], cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "editor")?;
     // The bass, low in the pitch range, as the editor looks after tab gave it the focus.

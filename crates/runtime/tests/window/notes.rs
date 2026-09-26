@@ -78,13 +78,13 @@ fn enter_opens_the_editor_for_the_selected_clip_and_escape_closes_it(cx: &mut Te
 }
 
 #[gpui::test]
-fn a_drag_on_empty_space_draws_a_note_as_one_undo_step(cx: &mut TestAppContext) {
+fn a_double_click_on_empty_space_draws_a_note_as_one_undo_step(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     // From inside the cell at beat 3 of bar 2, to a little past beat 4, on another row.
     let from = opened.in_editor(BAR + 1920 + 50, 67);
     let to = opened.in_editor(BAR + 2880 + 20, 70);
-    opened.press(from);
-    // A press alone is a note of one snap step already.
+    opened.double_press(from);
+    // A double press alone is a note of one snap step already.
     assert_eq!(opened.clip(PART).unwrap().notes[2], note(1920, STEP, 67));
     assert!(opened.gesture_open());
     opened.drag_to(to);
@@ -239,7 +239,7 @@ fn notes_never_leave_their_clip(cx: &mut TestAppContext) {
 
     // A drawn note ends with the clip, and outside the clip nothing is drawn.
     let from = opened.in_editor(3 * BAR - 100, 67);
-    opened.drag(from, far);
+    opened.draw(from, far);
     assert_eq!(
         opened.clip(PART).unwrap().notes[2],
         note(2 * BAR - STEP, STEP, 67)
@@ -247,9 +247,9 @@ fn notes_never_leave_their_clip(cx: &mut TestAppContext) {
     opened.keys("cmd-z");
     assert_eq!(opened.undo_label(), None);
     let outside = opened.in_editor(3 * BAR + 100, 67);
-    opened.drag(outside, far);
+    opened.draw(outside, far);
     let before_clip = opened.in_editor(BAR - 100, 67);
-    opened.drag(before_clip, from);
+    opened.draw(before_clip, from);
     assert_eq!(opened.clip(PART), Some(part()));
     assert_eq!(opened.undo_label(), None);
     assert_eq!(opened.notice(), None);
@@ -263,7 +263,7 @@ fn escape_cancels_a_note_drag_and_restores_the_clip(cx: &mut TestAppContext) {
         opened.in_editor(BAR + 2000, 67),
         opened.in_editor(BAR + 3000, 67),
     );
-    opened.press(from);
+    opened.double_press(from);
     opened.drag_to(to);
     assert_eq!(opened.clip(PART).unwrap().notes.len(), 3);
     opened.keys("escape");
@@ -417,7 +417,7 @@ fn a_note_that_is_touched_sounds_for_a_moment_while_the_project_is_stopped(
 
     // A drawn note, and a key of the strip.
     let place = opened.in_editor(BAR + 2000, 67);
-    opened.click(place);
+    opened.double_click(place);
     assert!(peak(&opened.render(SECOND / 4)) > 0.01);
     opened.render(SECOND);
     assert_eq!(peak(&opened.render(SECOND / 4)), 0.0);
@@ -598,7 +598,7 @@ fn the_selection_names_a_note_and_not_a_place_in_the_file(cx: &mut TestAppContex
 fn undo_of_a_drawn_note_leaves_nothing_selected(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let place = opened.in_editor(BAR + 2000, 67);
-    opened.click(place);
+    opened.double_click(place);
     assert_eq!(opened.selected_note(), Some(1));
     opened.keys("cmd-z");
     assert_eq!(opened.clip(PART), Some(part()));

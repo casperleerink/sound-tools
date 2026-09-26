@@ -531,6 +531,36 @@ pub fn remove_effect(
     Ok(())
 }
 
+/// Moves an effect of a track to another place in its chain, to a group of changes: `to` is
+/// its place among the effects, 0 right after the instrument, and a place past the last is the
+/// last. Only the list in the track record changes, so the slot keeps its record, its state and
+/// whether it is bypassed, and a reorder is one record and one undo step. Whether it moved.
+pub fn move_effect(
+    project: &Project,
+    changes: &mut Changes,
+    track: &Instance<TrackState>,
+    slot: &InstanceId,
+    to: usize,
+) -> Result<bool, ProjectError> {
+    let missing = || ProjectError::MissingInstance(track.id().clone());
+    let mut state = project.state(track).ok_or_else(missing)?.clone();
+    let Some(from) = state
+        .effects
+        .iter()
+        .position(|effect| effect.name == slot.name())
+    else {
+        return Err(ProjectError::MissingInstance(slot.clone()));
+    };
+    let to = to.min(state.effects.len() - 1);
+    if from == to {
+        return Ok(false);
+    }
+    let effect = state.effects.remove(from);
+    state.effects.insert(to, effect);
+    changes.set(track, state);
+    Ok(true)
+}
+
 /// Adds a clip to a track, to a group of changes. The id comes from `name`, as for a track.
 pub fn add_clip(
     project: &Project,

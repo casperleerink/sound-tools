@@ -63,6 +63,8 @@ pub struct Session {
     selected_clip: Option<InstanceId>,
     /// A stopped engine fails every poll. It is reported once.
     engine_stopped: bool,
+    /// See [`Self::history_moves`].
+    history_moves: u64,
     _polling: Task<()>,
 }
 
@@ -93,6 +95,7 @@ impl Session {
             notice_room: NoticeRoom::default(),
             selected_clip: None,
             engine_stopped: false,
+            history_moves: 0,
             _polling: polling,
         }
     }
@@ -239,6 +242,7 @@ impl Session {
     /// would be overwritten by the next mouse move and leave a step that ends nowhere.
     pub fn undo(&mut self, cx: &mut Context<Self>) {
         if self.gesture.is_none() {
+            self.history_moves += 1;
             self.edit(cx, Project::undo);
         }
     }
@@ -246,8 +250,17 @@ impl Session {
     /// Redo, ignored while a gesture is open, like [`Self::undo`].
     pub fn redo(&mut self, cx: &mut Context<Self>) {
         if self.gesture.is_none() {
+            self.history_moves += 1;
             self.edit(cx, Project::redo);
         }
+    }
+
+    /// How many times undo or redo was asked for in this session. A view that keeps the last
+    /// value knows that the events it hears now come from one, so it can select what the undo
+    /// brought back: the project events do not say where a change came from. It counts before
+    /// the step applies, so the events of the step already see the new value.
+    pub fn history_moves(&self) -> u64 {
+        self.history_moves
     }
 
     /// Runs the behaviours of these instances again, with the records they already have.

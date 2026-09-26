@@ -21,8 +21,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, AnyView, App, ClickEvent, Div, ElementId, Hsla, MouseButton, SharedString,
-    StyleRefinement, Window, div, prelude::*, px,
+    AnyElement, AnyView, App, ClickEvent, Div, ElementId, Entity, Hsla, MouseButton,
+    SharedString, Stateful, StyleRefinement, Window, div, prelude::*, px,
 };
 
 use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};
@@ -52,6 +52,8 @@ const HIDDEN_GAP: f32 = 8.;
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 /// Whether a device is on, read when the card draws.
 type IsOn = Rc<dyn Fn(&App) -> bool>;
+/// What makes the header of a card a handle that drags it, see [`CardFrame::draggable`].
+type Grip = Rc<dyn Fn(Stateful<Div>) -> Stateful<Div>>;
 
 /// What a rack gives the view of the device in one of its slots, so that the view can draw the
 /// whole card with [`CardFrame::card`] and add its display and cells.
@@ -64,6 +66,7 @@ pub struct CardFrame {
     title: AnyView,
     power: Option<(IsOn, Rc<dyn Fn(&mut Window, &mut App)>)>,
     close: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
+    grip: Option<Grip>,
 }
 
 impl CardFrame {
@@ -73,7 +76,27 @@ impl CardFrame {
             title: title.into(),
             power: None,
             close: None,
+            grip: None,
         }
+    }
+
+    /// Makes the header of the card a handle that drags it, as a rack reorders its cards: a
+    /// press on the header that moves carries `value` to wherever the rack takes a drop of it,
+    /// with `preview` under the pointer. A press that does not move is still a click on the
+    /// title or an icon.
+    pub fn draggable<T: Clone + 'static, W: Render>(
+        mut self,
+        value: T,
+        preview: impl Fn(&T, &mut Window, &mut App) -> Entity<W> + 'static,
+    ) -> Self {
+        let preview = Rc::new(preview);
+        self.grip = Some(Rc::new(move |header: Stateful<Div>| {
+            let preview = preview.clone();
+            header.on_drag(value.clone(), move |value, _, window, cx| {
+                preview(value, window, cx)
+            })
+        }));
+        self
     }
 
     /// The power icon, which bypasses the device. `is_on` is read every time the card draws,
@@ -100,6 +123,7 @@ impl CardFrame {
         // where a card title is.
         let title = div().flex().min_w_0().ml(px(-8.)).child(self.title.clone());
         let mut card = DeviceCard::new(ElementId::Name(self.id.clone()), title);
+        card.grip = self.grip.clone();
         if let Some((is_on, toggle)) = self.power.clone() {
             card.power = Some((is_on, Box::new(move |_, window, cx| toggle(window, cx))));
         }
@@ -160,6 +184,7 @@ pub struct DeviceCard {
     expand: Option<(bool, ClickHandler)>,
     power: Option<(IsOn, ClickHandler)>,
     close: Option<ClickHandler>,
+    grip: Option<Grip>,
     display: Option<AnyElement>,
     columns: Vec<Column>,
     hidden: Vec<Column>,
@@ -177,6 +202,7 @@ impl DeviceCard {
             expand: None,
             power: None,
             close: None,
+            grip: None,
             display: None,
             columns: Vec::new(),
             hidden: Vec::new(),
@@ -326,7 +352,14 @@ impl RenderOnce for DeviceCard {
             icons.push(icon.into_any_element());
         }
 
+        // For tests, which find the header of a card by its id: `<card>-header`.
+        let card = self.id.clone();
         let header = div()
+            .id(ElementId::NamedChild(
+                Arc::new(self.id.clone()),
+                SharedString::from("header"),
+            ))
+            .debug_selector(move || format!("{card}-header"))
             .flex_none()
             .h(px(HEADER_HEIGHT))
             .flex()
@@ -345,6 +378,10 @@ impl RenderOnce for DeviceCard {
                     .child(self.title),
             )
             .children(icons);
+        let header = match self.grip {
+            Some(grip) => grip(header),
+            None => header,
+        };
 
         let hidden = (expanded && !self.hidden.is_empty()).then(|| {
             div()

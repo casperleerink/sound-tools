@@ -4,6 +4,8 @@
 //! - `shell`: the keys of the window, the focus, the transport and the read-only timeline.
 //! - `clips`: adding, moving, resizing, deleting and nudging clips in the arrangement.
 //! - `notes`: the note editor.
+//! - `several_notes`, `velocity`: several notes, copy and paste, and the velocity lane.
+//! - `rack`: reordering the track rack.
 //! - `track_panel`: the track panel and the view of the synth in it.
 //! - `instruments`: picking the instrument of a track, and the plugin's own window.
 //! - `effects`: adding and removing effects in the rack.
@@ -24,9 +26,12 @@ mod fit;
 mod instruments;
 mod notes;
 mod piece;
+mod rack;
 mod recording;
 mod reverb;
+mod several_notes;
 mod shell;
 mod support;
 mod track_panel;
 mod transport;
+mod velocity;

@@ -16,7 +16,7 @@ const BASS: &str = "arrangement/track-2/clip";
 fn draw(opened: &mut Opened<'_>, start: u64, length: u64, pitch: u8) {
     let from = opened.in_editor(start + 20, pitch);
     let to = opened.in_editor(start + length, pitch);
-    opened.drag(from, to);
+    opened.draw(from, to);
 }
 
 /// Plays the first three bars of the project folder offline, without its lock.
