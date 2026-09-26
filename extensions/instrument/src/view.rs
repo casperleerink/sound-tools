@@ -383,7 +383,9 @@ impl Render for SynthView {
             .card()
             .expand(self.expanded, expand)
             .display(self.display(&state, cx));
-        let card = columns.into_iter().fold(card, |card, column| card.column(column));
+        let card = columns
+            .into_iter()
+            .fold(card, |card, column| card.column(column));
         let card = hidden
             .into_iter()
             .fold(card, |card, column| card.hidden_column(column));

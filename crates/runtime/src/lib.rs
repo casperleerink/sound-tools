@@ -219,7 +219,10 @@ fn plugin_offers(
                     Ok(())
                 },
             )
-            .needs(plugin_host::EXTENSION, "This project does not load plugins.");
+            .needs(
+                plugin_host::EXTENSION,
+                "This project does not load plugins.",
+            );
             offer.with_detail(found.detail())
         })
         .collect()

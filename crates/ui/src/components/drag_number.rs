@@ -138,17 +138,19 @@ impl RenderOnce for DragNumber {
                     move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
                         let y = -f32::from(event.position.y);
                         let mut along = Travel::new(y, position, travel);
-                        let value_at = move |pointer: Point<Pixels>, fine: bool| {
-                            match along.position(-f32::from(pointer.y), fine) {
-                                Some(position) => {
-                                    let raw = range.0 + f64::from(position) * span;
-                                    let step = if fine { step / fine_divisor() } else { step };
-                                    stepped(value, raw, step, range)
-                                }
-                                None => value,
+                        let value_at = move |pointer: Point<Pixels>, fine: bool| match along
+                            .position(-f32::from(pointer.y), fine)
+                        {
+                            Some(position) => {
+                                let raw = range.0 + f64::from(position) * span;
+                                let step = if fine { step / fine_divisor() } else { step };
+                                stepped(value, raw, step, range)
                             }
+                            None => value,
                         };
-                        gesture::press(&state, event, value, None, value_at, &on_change, window, cx);
+                        gesture::press(
+                            &state, event, value, None, value_at, &on_change, window, cx,
+                        );
                     }
                 };
                 let on_key_down = {

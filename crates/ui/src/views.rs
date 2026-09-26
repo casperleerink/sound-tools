@@ -21,9 +21,8 @@ use crate::session::Session;
 
 type CreateView =
     Rc<dyn Fn(&Entity<Session>, &InstanceId, &mut Window, &mut App) -> Option<AnyView>>;
-type CreateCard = Rc<
-    dyn Fn(&Entity<Session>, &InstanceId, CardFrame, &mut Window, &mut App) -> Option<AnyView>,
->;
+type CreateCard =
+    Rc<dyn Fn(&Entity<Session>, &InstanceId, CardFrame, &mut Window, &mut App) -> Option<AnyView>>;
 
 #[derive(Default)]
 pub struct Views {

@@ -26,7 +26,7 @@ fn tempo_in_file(opened: &mut Opened<'_>) -> String {
 
 /// The middle of the tempo number in the transport.
 fn tempo_control(opened: &mut Opened<'_>) -> Point<gpui::Pixels> {
-    opened.control("tempo")
+    opened.control("number-tempo")
 }
 
 #[gpui::test]
@@ -94,6 +94,38 @@ fn a_tempo_drag_is_one_undo_step_and_the_file_follows(cx: &mut TestAppContext) {
     assert!(tempo_in_file(&mut opened).contains("120"));
     opened.keys("shift-cmd-z");
     assert_eq!(opened.shown_tempo(), 140.0);
+}
+
+/// The tempo drags with the gesture every control of the window shares: shift is ten times
+/// finer, and pressing it during a drag goes on from where the tempo is.
+#[gpui::test]
+fn shift_makes_a_tempo_drag_finer_from_where_it_is(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let from = tempo_control(&mut opened);
+    let up = |points: f32| from - point(px(0.), px(points));
+    opened.press(from);
+    opened.drag_to(up(10.));
+    assert_eq!(opened.shown_tempo(), 125.0);
+    // Shift at the same place: no jump.
+    opened.drag_to_fine(up(10.));
+    assert_eq!(opened.shown_tempo(), 125.0);
+    // Twenty points more with shift are one bpm, in tenths.
+    opened.drag_to_fine(up(30.));
+    assert_eq!(opened.shown_tempo(), 126.0);
+    opened.drag_to_fine(up(32.));
+    assert!((opened.shown_tempo() - 126.1).abs() < 1e-9);
+    // Shift let go: on from there, in whole bpm from where the drag began.
+    opened.drag_to(up(34.));
+    assert_eq!(opened.shown_tempo(), 127.0);
+    opened.release(up(34.));
+    assert!(!opened.gesture_open());
+
+    // All of it is one step.
+    assert_eq!(opened.undo_label().as_deref(), Some("Change tempo"));
+    opened.keys("cmd-z");
+    opened.settle();
+    assert_eq!(opened.shown_tempo(), 120.0);
+    assert_eq!(opened.undo_label(), None);
 }
 
 #[gpui::test]

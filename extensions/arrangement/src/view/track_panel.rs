@@ -594,7 +594,9 @@ impl TrackPanel {
                         false => db.clamp(min, max),
                     };
                 };
-                panel.edit.apply(session, track, VOLUME_LABEL, change, set, cx);
+                panel
+                    .edit
+                    .apply(session, track, VOLUME_LABEL, change, set, cx);
             },
         ));
         let pan = Knob::new("pan")

@@ -20,8 +20,8 @@
 //! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
 //! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default.
 //! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
-//! - `track-panel-synth-effects.png`: the synth with two effects after it and the mixer
-//!   section, which is wider than the rack has room for on this screen.
+//! - `track-panel-synth-effects.png`: the synth with four effects after it, which is wider
+//!   than the rack has room for on this screen, so its right edge fades.
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
 //! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
 //! - `track-panel-picker.png`: the same with the instrument picker open.
@@ -748,19 +748,19 @@ fn main() -> Result<()> {
     })?;
     opened.click_track_header(1., &mut cx)?;
     save(&mut cx, &opened, "track-panel")?;
-    // From the timeline, tab goes to the close control, the picker, the waveform and then the
-    // cutoff.
-    for _ in 0..4 {
+    // From the timeline, tab goes to the close control, the volume, the pan and mute, then the
+    // picker and the expand icon of the card, the waveform and the cutoff.
+    for _ in 0..8 {
         opened.key("tab", &mut cx)?;
     }
     save(&mut cx, &opened, "track-panel-focus")?;
     drop(opened);
 
-    // The synth with two effects and the mixer section: the whole rack of a track as a
-    // composer builds it, on the screen of the laptop.
+    // The synth with four effects: more than the rack has room for on the screen of the
+    // laptop, so it fades at its right edge.
     let opened = Opened::new(&mut cx, |project| {
         piece(project)?;
-        set_effects(project, "bass", &["Warmth", "Space"])
+        set_effects(project, "bass", &["Warmth", "Space", "Air", "Echo"])
     })?;
     opened.click_track_header(1., &mut cx)?;
     save(&mut cx, &opened, "track-panel-synth-effects")?;

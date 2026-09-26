@@ -76,7 +76,7 @@ impl CardFrame {
     pub fn card(&self) -> DeviceCard {
         // The trigger brings its own padding, so it moves left by that much and its text lands
         // where a card title is.
-        let title = div().ml(px(-8.)).child(self.title.clone());
+        let title = div().flex().min_w_0().ml(px(-8.)).child(self.title.clone());
         let card = DeviceCard::new(ElementId::Name(self.id.clone()), title);
         match self.close.clone() {
             Some(close) => card.close(move |_, window, cx| close(window, cx)),

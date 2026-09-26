@@ -151,9 +151,7 @@ impl Render for PluginView {
                 "This Mac has no {} plugin with this id. Install it, or pick another.",
                 record.format.name()
             );
-            return card
-                .child(body(line(text), None))
-                .into_any_element();
+            return card.child(body(line(text), None)).into_any_element();
         };
         let detail = line(installed.detail());
 

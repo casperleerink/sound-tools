@@ -194,7 +194,7 @@ fn the_action_follows_the_clip_that_is_selected(cx: &mut TestAppContext) {
 /// is then at 40 % with the one edit under it, as an instrument such a project cannot load is,
 /// and clicking it does nothing instead of failing with a tool name.
 #[gpui::test]
-fn the_fit_says_what_a_project_without_the_extension_has_to_add(cx: &mut TestAppContext) {
+fn the_fit_says_why_it_is_off_in_a_project_without_the_extension(cx: &mut TestAppContext) {
     let mut opened = support::open_without_extensions(
         cx,
         r#"["arrangement", "instrument", "plugin-host", "tone"]"#,
@@ -219,7 +219,8 @@ fn the_fit_says_what_a_project_without_the_extension_has_to_add(cx: &mut TestApp
     assert!(item.is_disabled(), "the fit can be picked");
     assert_eq!(
         item.description.as_deref(),
-        Some("Add \"fit-tempo\" to \"extensions\" in project.json and open the project again.")
+        // Why, in words. The file edit is for an agent, in the agent docs.
+        Some("This project does not include the tempo fit.")
     );
     // And picking it anyway changes nothing and reports nothing.
     assert!(!pick_fit(&mut opened));
@@ -269,7 +270,7 @@ fn a_steadiness_drag_is_one_undo_step(cx: &mut TestAppContext) {
     let fitted = map(&mut opened);
     let fitted_file = project_file(&mut opened);
 
-    let control = opened.control("steadiness");
+    let control = opened.control("number-steadiness");
     opened.mouse_down(control);
     // Up is more steady: thirty pixels is thirty percent.
     opened.drag_to(control - gpui::point(px(0.), px(30.)));
