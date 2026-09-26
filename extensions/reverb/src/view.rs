@@ -22,7 +22,7 @@ use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback}
 
 use crate::{
     DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PRE_DELAY, Parameter, ReverbState, SIZE,
-    WIDTH, high_decay_seconds, line_seconds, longest_line_seconds,
+    WIDTH, high_decay_seconds, line_seconds,
 };
 
 /// The name the rack puts on the card of a reverb.
@@ -139,7 +139,7 @@ fn readout(unit: Unit, value: f32) -> String {
 /// pre-delay, at full level, and is a straight line in dB to the floor at the end of the decay.
 /// Between the two the time is linear, so the highs, which die in a part of the decay time, end
 /// at that part of the way. The early reflections are drawn after the start in a zone of their
-/// own, as far apart as the size makes them: in the time of the tail they would be one line.
+/// own, wider as the room grows: in the time of the tail they would be one line.
 mod layout {
     use sound_ui::components::knob::KnobRange;
 
@@ -151,8 +151,11 @@ mod layout {
     /// The shortest tail is this long, so it still falls and its end can be taken apart from
     /// its start.
     pub const SHORTEST_TAIL: f32 = 0.04;
-    /// How far after the start the reflections of the largest room reach.
-    pub const EARLY_ZONE: f32 = 0.12;
+    /// How far after the start the reflections of the largest room reach. A smaller room
+    /// takes a part of it, from half at size 0.
+    pub const EARLY_ZONE: f32 = 0.3;
+    /// Every so many lines is drawn as a reflection, so the marks stay apart.
+    pub const EVERY: usize = 2;
     /// Full level and the floor 60 dB under it, clear of the edges so a handle there can be
     /// taken.
     pub const TOP: f32 = 0.88;
@@ -186,14 +189,18 @@ struct Drawing {
 }
 
 fn drawing(state: &ReverbState) -> Drawing {
-    use layout::{EARLY_ZONE, FLOOR, MARK_HEIGHT, TOP};
+    use layout::{EARLY_ZONE, EVERY, FLOOR, MARK_HEIGHT, TOP};
     let (start, end) = start_and_end(state);
     let length = end - start;
     let highs_end = start + length * high_decay_seconds(state) / state.decay_seconds;
     let height_at = |x: f32| TOP + (FLOOR - TOP) * (x - start) / length;
-    let reflections = line_seconds(state.size)
+    let lines = line_seconds(state.size);
+    let longest = lines[lines.len() - 1];
+    let zone = EARLY_ZONE * (0.5 + 0.5 * state.size);
+    let reflections = lines
         .into_iter()
-        .map(|seconds| start + EARLY_ZONE * seconds / longest_line_seconds())
+        .step_by(EVERY)
+        .map(|seconds| start + zone * seconds / longest)
         .filter(|x| *x < end)
         .map(|x| point(x, height_at(x) * MARK_HEIGHT))
         .collect();

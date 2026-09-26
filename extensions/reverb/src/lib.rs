@@ -36,9 +36,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
-pub use processor::{
-    DAMPED_HZ, LINES, Reverb, high_decay_seconds, line_seconds, longest_line_seconds,
-};
+pub use processor::{DAMPED_HZ, Reverb, high_decay_seconds, line_seconds};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "reverb";

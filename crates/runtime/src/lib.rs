@@ -11,6 +11,7 @@ use anyhow::Result;
 use arrangement::{ArrangementState, Colour};
 use filter::FilterState;
 use instrument::SynthState;
+use reverb::ReverbState;
 use plugin_host::{
     PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK, WeakPlugins,
     default_search_paths,
@@ -105,6 +106,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     fit_tempo::register(&mut registry)?;
     instrument::register(&mut registry)?;
     plugin_host::register(&mut registry, plugins)?;
+    reverb::register(&mut registry)?;
     tone::register(&mut registry)?;
     registry.runtime_agent_doc(INSPECT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
@@ -125,6 +127,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     arrangement::view::register(&mut views);
     instrument::view::register(&mut views, &mut devices);
     filter::view::register(&mut views, &mut devices);
+    reverb::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     devices.instruments(|| {
         vec![
@@ -150,6 +153,11 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
                 Ok(())
             })
             .needs(filter::EXTENSION, "This project does not load the filter."),
+            DeviceOffer::new(ReverbState::TOOL, reverb::view::NAME, |_, slot, changes| {
+                changes.create(slot.clone(), ReverbState::default());
+                Ok(())
+            })
+            .needs(reverb::EXTENSION, "This project does not load the reverb."),
         ]
     });
     // What the picker says under its offers: that the scan of this machine is still running,

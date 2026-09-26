@@ -33,6 +33,7 @@ fn the_default_project_is_a_small_musical_template() {
             "fit-tempo",
             "instrument",
             "plugin-host",
+            "reverb",
             "tone"
         ]
     );

@@ -35,7 +35,7 @@ use crate::{PRE_DELAY, ReverbState};
 const RAMP_SECONDS: f32 = 0.02;
 
 /// The delay lines of the network.
-pub const LINES: usize = 16;
+const LINES: usize = 16;
 
 /// The lengths of the lines at size 1, in seconds. Spread from 37 to 97 ms on a ratio, with no
 /// two of them in a simple ratio, so their echoes never pile up on one another.
@@ -94,7 +94,7 @@ pub fn line_seconds(size: f32) -> [f32; LINES] {
 }
 
 /// The longest line of the largest room.
-pub fn longest_line_seconds() -> f32 {
+fn longest_line_seconds() -> f32 {
     LINE_SECONDS[LINES - 1]
 }
 

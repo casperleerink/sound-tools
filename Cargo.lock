@@ -5082,6 +5082,7 @@ dependencies = [
  "metronome",
  "midi",
  "plugin-host",
+ "reverb",
  "serde_json",
  "sound-core",
  "sound-notes",

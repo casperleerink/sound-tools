@@ -15,6 +15,7 @@ mod metronome;
 mod mixer;
 mod plugins;
 mod recording;
+mod reverb;
 mod scale;
 mod summary;
 mod support;
