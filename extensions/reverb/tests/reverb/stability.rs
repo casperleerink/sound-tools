@@ -261,3 +261,39 @@ fn full_scale_noise_for_thirty_seconds_keeps_the_level_of_the_defaults_at_every_
         }
     }
 }
+
+/// Found by `any_edits_while_it_plays_keep_the_output_bounded` in CI on September 26, 2026, and
+/// not fixed yet: freeze turned on over a short decay and a large size while loud noise plays
+/// holds a tail about 100 times full scale. The tail is scaled up by the loss of a short decay,
+/// and during the 20 ms glide into freeze the loop already keeps nearly everything while the
+/// input still comes in, so it holds far more than it did before. Run it with `--run-ignored`.
+#[test]
+#[ignore = "a known gap of the Reverb, see ARCHITECTURE.md, Known gaps after the third milestone"]
+fn freeze_over_a_short_decay_while_loud_noise_plays_keeps_its_level() {
+    let before = ReverbState {
+        pre_delay_ms: 0.5,
+        decay_seconds: 0.2,
+        size: 0.88,
+        damping: 0.9,
+        diffusion: 0.0,
+        width: 0.0,
+        mix: 0.6,
+        ..ReverbState::default()
+    };
+    let mut rig = Rig::new(before, noise(1.0));
+    let [left, _] = rig.render(4_800);
+    let playing = left
+        .iter()
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+    rig.update(ReverbState {
+        freeze: true,
+        ..before
+    });
+    let [left, right] = rig.render(3 * SECOND);
+    let frozen = left
+        .iter()
+        .chain(&right)
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+    println!("peak {playing} while it plays, {frozen} once frozen");
+    assert!(frozen < BOUND, "{frozen}");
+}
