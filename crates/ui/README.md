@@ -179,25 +179,34 @@ Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Ses
 
 `Session::selected` and `Session::select` are the one instance the composer is working on, such as the track whose header was clicked last. It is interface state: nothing is saved and there is no undo step. The view that owns a selection publishes it, and anything outside that view reads it. The arrangement view publishes its selected track there, and the window uses it to send a MIDI keyboard into the instrument of that track, so the two extensions need nothing of each other.
 
-### A knob on saved state
+### A control on saved state
 
-`Knob` is controlled, so a view of saved state keeps no copy of it: give the value on every render and handle the `KnobChange`. `extensions/instrument/src/view.rs` is the example, and the mixer section of `extensions/arrangement/src/view/track_panel.rs` is a shorter one.
+The knob, the volume and the handles of a display are controlled, so a view of saved state keeps no copy of what they show: give the value on every render and handle the `ValueChange`. `ControlEdit` does the session side, so a view keeps one of it and nothing else of a drag. `extensions/instrument/src/view.rs` is the example, and the mixer section of `extensions/arrangement/src/view/track_panel.rs` is a shorter one.
 
 ```rust
 Knob::new("cutoff_hz")
     .range(KnobRange::logarithmic(20., 20_000.))   // or `KnobRange::linear`
     .value(state.cutoff_hz)
-    .default_value(2_000.)                          // what a double click sets
+    .default_value(2_000.)                          // what a double click and backspace set
     .label("Cutoff")
     .readout("2 kHz")                               // the caller formats: it knows the unit
-    .on_change(callback)
+    .on_change(callback)                            // gets a `ValueChange`
+
+// In the callback. `set` is `fn(&mut SynthState, f32)`; one call handles every kind of change.
+self.edit.apply(&self.session, &self.synth, "Change cutoff", change, set, cx);
+// When the view goes, and when its record is deleted from outside during a drag:
+self.edit.finish(&self.session, cx);
 ```
 
-- `KnobChange::Drag(value)`: begin the gesture when it is the first of this drag, then publish. The knob works the value out from the value at the press, and sends it only when it is not the value it sent last. It does not compare with the value of the last render, because several mouse moves arrive between two frames. Back at the height of the press the value is exactly that of the press, so a press with a sideways move never rounds a value that was written by hand.
-- `KnobChange::DragEnd`: `finish_gesture`. `KnobChange::DragCancel` (escape): `cancel_gesture`. Both come only after a `Drag`, so a plain click is no undo step.
-- `KnobChange::Set(value)`: a key step or a reset. One `commit`.
-- The knob has its own tab stop and focus ring, and stops at the ends of its range. `KnobRange::value` gives three significant digits, and `knob::short` writes a number the same way for a readout: `2`, `15.5`, `632`.
-- Every knob hears every mouse up and every press of the window, because a drag goes on outside it. It tells nobody unless a drag was open, so a click somewhere else renders nothing. A press while a drag is still open ends that drag: its mouse up was lost.
+What `ControlEdit::apply` does with each change, which is what a view that does it by hand must do:
+
+- `ValueChange::Drag(value)`: begin the gesture when it is the first of this drag, then publish. The control works the value out from the value at the press, and sends it only when it is not the value it sent last. It does not compare with the value of the last render, because several mouse moves arrive between two frames. Back at the height of the press the value is exactly that of the press, so a press with a sideways move never rounds a value that was written by hand.
+- `ValueChange::DragEnd`: `finish_gesture`. `ValueChange::DragCancel` (escape): `cancel_gesture`. Both come only after a `Drag`, so a plain click is no undo step.
+- `ValueChange::Set(value)`: a key step or a reset. One `commit`. A toggle or a segmented control is one `Set` too: `ValueChange::Set(on)`.
+
+The gesture is one for all three controls, in `components/gesture.rs`: a drag from the press that never jumps, shift ten times finer, double click or backspace for the default, the arrows, escape. A knob travels 200 pt; the volume and a handle follow the pointer. Every one of them has its own tab stop and focus ring except a handle, whose value always has a knob too. `KnobRange::value` gives three significant digits, and `knob::short` writes a number the same way for a readout: `2`, `15.5`, `632`. Every such control hears every mouse up and every press of the window, because a drag goes on outside it. It tells nobody unless a drag was open, so a click somewhere else renders nothing. A press while a drag is still open ends that drag: its mouse up was lost.
+
+A device card is built from `DeviceCard`, `Column`, `Cell` and `Display`, see the rack section of the gallery (`crates/gallery/src/sections/rack.rs`). The meter shows a `Level`; where it comes from is the owner's business, and `meter::Ballistics` makes one from a peak per frame.
 
 ## Rules
 
@@ -214,6 +223,6 @@ Knob::new("cutoff_hz")
 
 ## Test a view
 
-`crates/ui/tests/bridge.rs` and `crates/runtime/tests/window/` show the pattern: a project on a temporary folder with an offline engine, a `Session`, `#[gpui::test]`, and `cx.executor().advance_clock(POLL_INTERVAL)` to let the poll timer fire. Call `engine.process_block(..)` yourself, so that transport commands apply. Wait with `cx.background_executor().timer(..)`, never with `smol::Timer`. `tests/window/support.rs` has the hands of a composer: press, drag and release at the place of a tick, a track or a pitch, worked out with the layout functions of the view. A control made of elements has no layout function. The knob and the segments of a segmented control name themselves for tests with GPUI's `debug_selector` (`knob-<id>`, `segment-<value>`), which does nothing in a normal build, and `Opened::control("knob-cutoff_hz")` gives the middle of one. It asks for a whole frame first, because a cached view that was not painted again has no bounds in the last frame. Two keys in one `simulate_keystrokes` call have no frame between them. Send them one by one when the second needs what the first painted, such as the tab order.
+`crates/ui/tests/bridge.rs` and `crates/runtime/tests/window/` show the pattern: a project on a temporary folder with an offline engine, a `Session`, `#[gpui::test]`, and `cx.executor().advance_clock(POLL_INTERVAL)` to let the poll timer fire. Call `engine.process_block(..)` yourself, so that transport commands apply. Wait with `cx.background_executor().timer(..)`, never with `smol::Timer`. `tests/window/support.rs` has the hands of a composer: press, drag and release at the place of a tick, a track or a pitch, worked out with the layout functions of the view. A control made of elements has no layout function. The controls name themselves for tests with GPUI's `debug_selector` (`knob-<id>`, `volume-<id>`, `toggle-<id>`, `handle-<id>`, `segment-<value>`, and `<card>-expand`, `<card>-power`, `<card>-close` for the icons of a device card), which does nothing in a normal build, and `Opened::control("knob-cutoff_hz")` gives the middle of one. It asks for a whole frame first, because a cached view that was not painted again has no bounds in the last frame. Two keys in one `simulate_keystrokes` call have no frame between them. Send them one by one when the second needs what the first painted, such as the tab order.
 
 `cargo test -p runtime --test snapshots` renders the whole window to PNGs with no visible window, and `cargo test -p gallery --test snapshots` renders the components.

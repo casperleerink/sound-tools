@@ -1,7 +1,9 @@
 //! Dropdown menu: labelled groups, radio items with an optional second line,
 //! separators and a group that scrolls. Ported from the source design system's
-//! `dropdown-menu.tsx` and the desktop app's model picker. The list itself
-//! (`MenuList`) is reused by `select.rs`.
+//! `dropdown-menu.tsx` and the desktop app's model picker.
+//!
+//! [`Trigger::Select`] makes it a select: a 24 pt trigger that says what is picked, for a list
+//! that does not fit as segments, such as the shape of an EQ band.
 
 use std::rc::Rc;
 
@@ -138,7 +140,7 @@ fn flat(entries: &[MenuEntry]) -> Vec<&MenuItem> {
 
 type SelectFn = Rc<dyn Fn(SharedString, &mut Window, &mut App)>;
 
-/// The menu body: groups, separators, rows. Shared by the dropdown and select.
+/// The menu body: groups, separators, rows.
 #[derive(IntoElement)]
 pub struct MenuList {
     base: Div,
@@ -317,6 +319,41 @@ impl RenderOnce for MenuList {
     }
 }
 
+/// What opens the menu.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Trigger {
+    /// The shared 32 pt trigger with a border.
+    #[default]
+    Outline,
+    /// No border or fill, just a hover wash. For the project name and the title of a card.
+    Ghost,
+    /// A 24 pt select on `alpha/5` that says what is picked, or the label while nothing is.
+    Select,
+}
+
+/// A select: 24 pt, 12 pt medium type, 6 pt corners, as a toggle or a segmented control.
+fn select_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    let (background, hover, text) = (theme.alpha_at(0.05), theme.alpha_at(0.10), theme.gray_950);
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(4.))
+        .h(px(24.))
+        .pl(px(8.))
+        .pr(px(6.))
+        .rounded(px(6.))
+        .bg(background)
+        .text_size(px(12.))
+        .line_height(px(14.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(text)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+}
+
 /// Quiet version of the shared trigger: no border or fill, just a hover wash.
 fn ghost_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
@@ -355,7 +392,7 @@ pub struct DropdownMenu {
     side: Side,
     align: Align,
     width: f32,
-    ghost: bool,
+    trigger: Trigger,
     /// What a test looks the trigger up by, see `VisualTestContext::debug_bounds`.
     debug_name: Option<SharedString>,
 }
@@ -377,7 +414,7 @@ impl DropdownMenu {
             side: Side::default(),
             align: Align::default(),
             width: 320.,
-            ghost: false,
+            trigger: Trigger::Outline,
             debug_name: None,
         }
     }
@@ -408,9 +445,8 @@ impl DropdownMenu {
         self
     }
 
-    /// Quiet trigger: no border or fill, muted label. For the project name and the model picker.
-    pub fn ghost(mut self, ghost: bool) -> Self {
-        self.ghost = ghost;
+    pub fn trigger(mut self, trigger: Trigger) -> Self {
+        self.trigger = trigger;
         self
     }
 
@@ -538,10 +574,20 @@ impl DropdownMenu {
 impl Render for DropdownMenu {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (side, align, width) = (self.side, self.align, self.width);
-        let trigger_element = if self.ghost {
-            ghost_trigger("dropdown-trigger", cx)
-        } else {
-            trigger("dropdown-trigger", cx)
+        let trigger_element = match self.trigger {
+            Trigger::Outline => trigger("dropdown-trigger", cx),
+            Trigger::Ghost => ghost_trigger("dropdown-trigger", cx),
+            Trigger::Select => select_trigger("dropdown-trigger", cx),
+        };
+        let (label, chevron) = match self.trigger {
+            Trigger::Select => {
+                let picked = self.selected.as_ref().and_then(|value| self.item(value));
+                (
+                    picked.map_or_else(|| self.label.clone(), MenuItem::label),
+                    12.,
+                )
+            }
+            Trigger::Outline | Trigger::Ghost => (self.label.clone(), 14.),
         };
         let (muted, ring) = (cx.theme().gray_700, cx.theme().lavender);
 
@@ -557,8 +603,8 @@ impl Render for DropdownMenu {
                     .track_focus(&self.trigger_focus)
                     .border_1()
                     .focus_visible(move |s| s.border_color(ring))
-                    .child(self.label.clone())
-                    .child(Icon::new("chevron-down").size(14.).color(muted))
+                    .child(label)
+                    .child(Icon::new("chevron-down").size(chevron).color(muted))
                     .on_click(cx.listener(|this, _, window, cx| {
                         if this.open {
                             this.close(window, cx);

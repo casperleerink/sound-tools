@@ -1,14 +1,12 @@
-//! Tooltip, popover, dropdown menu, select and dialog.
-//! `GALLERY_OPEN=dropdown|select|popover|dialog` opens one overlay at startup.
+//! Tooltip, popover and dropdown menu. The select, a style of the dropdown menu, is in the
+//! rack section. `GALLERY_OPEN=dropdown|popover` opens one overlay at startup.
 
 use gpui::{
-    App, Entity, FontWeight, Global, IntoElement, ParentElement, SharedString, Styled, Window, div,
-    prelude::*, px,
+    App, Entity, FontWeight, Global, IntoElement, ParentElement, Styled, Window, div, prelude::*,
+    px,
 };
-use sound_ui::components::dialog::{Dialog, DialogAction};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem};
 use sound_ui::components::popover::{Align, Popover};
-use sound_ui::components::select::Select;
 use sound_ui::components::tooltip::{Tooltip, TooltipVariant};
 use sound_ui::theme::ActiveTheme;
 
@@ -16,8 +14,6 @@ use sound_ui::theme::ActiveTheme;
 struct OverlaysState {
     popover: Entity<Popover>,
     menu: Entity<DropdownMenu>,
-    select: Entity<Select>,
-    dialog: Entity<Dialog>,
 }
 
 impl Global for OverlaysState {}
@@ -85,45 +81,13 @@ fn install(window: &mut Window, cx: &mut App) {
             .align(Align::Start)
             .width(300.)
     });
-    let select = cx.new(|cx| {
-        Select::new(
-            "Choose a scale",
-            vec![
-                MenuItem::new("major", "Major").icon("music"),
-                MenuItem::new("minor", "Minor").icon("music"),
-                MenuItem::new("dorian", "Dorian").icon("music"),
-                MenuItem::new("locrian", "Locrian")
-                    .icon("music")
-                    .disabled(true),
-            ],
-            cx,
-        )
-        .selected("minor")
-    });
-    let dialog = cx.new(|cx| {
-        Dialog::new(
-            "Discard take?",
-            "This take has not been bounced. Discarding removes it from the project.",
-            cx,
-        )
-        .action(DialogAction::new("Cancel"))
-        .action(DialogAction::new("Discard").primary(true))
-    });
-
     match open.as_str() {
         "popover" => popover.update(cx, |this, cx| this.open(window, cx)),
         "dropdown" => menu.update(cx, |this, cx| this.open(window, cx)),
-        "select" => select.update(cx, |this, cx| this.open(window, cx)),
-        "dialog" => dialog.update(cx, |this, cx| this.open(window, cx)),
         _ => {}
     }
 
-    cx.set_global(OverlaysState {
-        popover,
-        menu,
-        select,
-        dialog,
-    });
+    cx.set_global(OverlaysState { popover, menu });
 }
 
 fn heading(label: &'static str, cx: &App) -> impl IntoElement {
@@ -149,12 +113,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         install(window, cx);
     }
     let state = cx.global::<OverlaysState>();
-    let (popover, menu, select, dialog) = (
-        state.popover.clone(),
-        state.menu.clone(),
-        state.select.clone(),
-        state.dialog.clone(),
-    );
+    let (popover, menu) = (state.popover.clone(), state.menu.clone());
     let theme = cx.theme();
     let (border, text, hover) = (theme.alpha_at(0.10), theme.gray_950, theme.alpha_at(0.10));
 
@@ -202,27 +161,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                 }),
         );
 
-    let dialog_trigger = div()
-        .id("dialog-trigger")
-        .flex()
-        .flex_none()
-        .items_center()
-        .h(px(32.))
-        .px(px(12.))
-        .rounded(px(8.))
-        .border_1()
-        .border_color(border)
-        .text_size(px(14.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(text)
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .child(SharedString::from("Discard take"))
-        .on_click({
-            let dialog = dialog.clone();
-            move |_, window, cx| dialog.update(cx, |this, cx| this.open(window, cx))
-        });
-
     div()
         .flex()
         .flex_col()
@@ -230,7 +168,4 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .child(row("Tooltip", cx, tooltips))
         .child(row("Popover", cx, popover))
         .child(row("Dropdown menu", cx, menu))
-        .child(row("Select", cx, select))
-        .child(row("Dialog", cx, dialog_trigger))
-        .child(dialog)
 }

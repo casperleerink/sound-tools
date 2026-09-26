@@ -973,7 +973,7 @@ Window:
 - The window's mouse could not be driven from the session that ran this check, so the fit action, selecting a clip and picking an instrument were reached through the editing path and through file edits. They are covered by the window tests with a simulated mouse.
 - Reordering the rack, renaming a track, adding or removing a tempo change, copy and paste, multi-select, a velocity lane and adjustable snap are all still file edits or not built.
 - Playback does not stop at the end of the project and there is no loop. Whether the click is on is not saved; there is no `workspace.json`. Only the window has a click at all, so a measurement of it needs the window.
-- The knob handling of the synth view, the mixer section and an effect card is the same shape written three times (begin, publish, finish, cancel). It is the moment to pull it into a helper and nobody has.
+- The knob handling of the synth view, the mixer section and an effect card is the same shape written three times (begin, publish, finish, cancel). It is the moment to pull it into a helper and nobody has. Done with step 1a of the third milestone: `sound_ui::ControlEdit` is the session side and `components/gesture.rs` the mouse and key side, shared by the knob, the volume and the handles of a display. The tempo and the steadiness of the transport keep drags of their own, in whole steps from where they began, until step 1b moves the transport.
 
 Tooling:
 
@@ -1016,7 +1016,7 @@ Window:
 - Not tried by hand: pinch zoom on a trackpad, the resize cursor on a real screen, dragging the window by its top row.
 - GPUI's focus-visible covers the menu trigger and the seek strip. The arrangement, the note editor, the knob and the segmented control show their ring for a focus from the keyboard only. The button still shows it on any focus. The accessibility tree is not used.
 - The track panel: nobody has turned a knob by ear yet, only by event injection and offline renders. The rack scrolls sideways with the wheel or the trackpad, but a knob that tab reaches outside the visible part is not scrolled into view.
-- Every change of an instrument runs the behaviour of its track again, which builds a new `TrackSnapshot`: the same cost per mouse move as a clip drag. Fine until a profile says otherwise. A knob has no fine drag with a modifier and no typed value. Track selection has no keys of its own while a clip is selected: click a header, or deselect the clip.
+- Every change of an instrument runs the behaviour of its track again, which builds a new `TrackSnapshot`: the same cost per mouse move as a clip drag. Fine until a profile says otherwise. A knob has no typed value; shift makes a drag ten times finer since step 1a of the third milestone. Track selection has no keys of its own while a clip is selected: click a header, or deselect the clip.
 - The rack reorders only by a file edit, since step 6 of the second milestone. Dragging a card is a later item. A card gives an effect no name of its own either: two of one plugin on a track are two cards with one name, told apart by their place and by their file.
 - The main area shows the first top instance with a view, and "Add track" names the arrangement. Both go with workspace composition.
 - The timeline and the note editor each have their own block of mouse listeners.

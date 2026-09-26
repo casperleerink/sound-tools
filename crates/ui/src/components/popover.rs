@@ -1,6 +1,6 @@
 //! Popover: a trigger plus floating content. Stateful view, because it owns
 //! `open`. Also holds the anchoring and surface helpers the other overlays use
-//! (dropdown menu, select, dialog). Ported from the source design system's `popover.tsx`.
+//! (the dropdown menu, which is also the select). Ported from the source design system's `popover.tsx`.
 
 use std::rc::Rc;
 

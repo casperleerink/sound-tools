@@ -12,6 +12,7 @@ fn main() {
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             sound_ui::init(cx);
+            gallery::init(cx);
             cx.on_window_closed(|cx, _window_id| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -27,7 +28,7 @@ fn main() {
                     ))),
                     ..Default::default()
                 },
-                |_, cx| cx.new(|_| Gallery::new(only)),
+                |window, cx| cx.new(|cx| Gallery::new(only, window, cx)),
             )
             .expect("failed to open the gallery window");
             cx.activate(true);

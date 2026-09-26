@@ -3,6 +3,7 @@
 
 pub mod assets;
 pub mod components;
+pub mod control_edit;
 pub mod devices;
 pub mod focus;
 pub mod session;
@@ -11,6 +12,7 @@ pub mod typography;
 pub mod views;
 
 pub use assets::Assets;
+pub use control_edit::ControlEdit;
 pub use devices::{
     DeviceLabel, DeviceOffer, Devices, Slot, enable_extension, extension_is_enabled,
 };
