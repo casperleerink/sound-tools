@@ -98,8 +98,46 @@ fn no_edit_steps_the_sound() {
     }
 }
 
-/// The cutoff glides in octaves: halfway through its glide it is halfway in octaves, so a sweep
-/// sounds even. Checked by the step of the output never being larger than at either end.
+/// A change of slope at high resonance glides between the two peaks and never passes the larger
+/// of them: during the glide, no section rings at a Q that neither end has.
+#[test]
+fn a_change_of_slope_at_high_resonance_does_not_peak_during_its_glide() {
+    let steady_peak = |state: FilterState| {
+        let mut rig = Rig::new(state, sine(1_000.0, 0.05));
+        let [left, _] = rig.render(SAMPLE_RATE as usize / 2);
+        crate::support::peak(&left[left.len() - 4_800..])
+    };
+    for resonance in [0.8, 1.0] {
+        for (from, to) in [
+            (Slope::Twelve, Slope::TwentyFour),
+            (Slope::TwentyFour, Slope::Twelve),
+        ] {
+            let before = FilterState {
+                cutoff_hz: 1_000.0,
+                resonance,
+                slope: from,
+                ..FilterState::default()
+            };
+            let after = FilterState {
+                slope: to,
+                ..before
+            };
+            let limit = steady_peak(before).max(steady_peak(after)) * 1.05;
+            let mut rig = Rig::new(before, sine(1_000.0, 0.05));
+            rig.render(SAMPLE_RATE as usize / 2);
+            rig.update(after);
+            let [glide, _] = rig.render(SAMPLE_RATE as usize / 4);
+            let peak = crate::support::peak(&glide);
+            println!("resonance {resonance}, {from:?} to {to:?}: peak {peak:.4}, limit {limit:.4}");
+            assert!(
+                peak <= limit,
+                "resonance {resonance}, {from:?} to {to:?}: {peak} over {limit}"
+            );
+        }
+    }
+}
+
+/// A glide of the cutoff over the whole range is done in 20 ms.
 #[test]
 fn a_glide_takes_twenty_milliseconds() {
     let base = FilterState {

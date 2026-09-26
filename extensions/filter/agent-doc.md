@@ -50,4 +50,4 @@ These are the defaults. A field you leave out takes its default, so `"state": {}
 
 Starting points: darker is `low_pass` with `cutoff_hz` 400 to 2000. Thinner, for a sound that fights the bass, is `high_pass` at 150 to 400. A telephone voice is `band_pass` at 1500 with `resonance` 0.4. A wah is `band_pass` or `low_pass` with `resonance` 0.6, `lfo_rate_hz` 2 and `lfo_depth_octaves` 1.5. An acid bass is `low_pass`, `slope` 24, `resonance` 0.7 to 0.9 and some `drive_db`.
 
-An edit applies while the track plays and glides over 20 ms, so it does not click. At the cutoff a `low_pass` or `high_pass` is 3 dB down with `resonance` 0. With `resonance` 1 the peak is 26 dB up at `slope` 12 and 21 dB at `slope` 24, so turn the track down when you use that much.
+An edit applies while the track plays and glides over 20 ms, so it does not click. At the cutoff a `low_pass` or `high_pass` is 3 dB down with `resonance` 0. With `resonance` 1 the peak is about 12 dB up at `slope` 12 and 9 dB at `slope` 24, and the sound below the peak gets quieter as resonance rises, as on an analog filter.

@@ -8,12 +8,16 @@
 
 use filter::{FilterState, FilterType, MAX_Q, Slope, response};
 
-use crate::support::{SAMPLE_RATE, measured_db};
+use crate::support::{SAMPLE_RATE, measured_db, measured_db_at};
 
 const OCTAVES: [f64; 7] = [125.0, 250.0, 500.0, 1_000.0, 2_000.0, 4_000.0, 8_000.0];
 
 fn exact_db(state: &FilterState, hz: f64) -> f64 {
-    20.0 * f64::from(response(state, hz as f32, SAMPLE_RATE as f32)).log10()
+    exact_db_at(state, hz, SAMPLE_RATE)
+}
+
+fn exact_db_at(state: &FilterState, hz: f64, sample_rate: u32) -> f64 {
+    20.0 * f64::from(response(state, hz as f32, sample_rate as f32)).log10()
 }
 
 fn state(kind: FilterType, slope: Slope, resonance: f32, cutoff_hz: f32) -> FilterState {
@@ -101,19 +105,19 @@ fn the_cutoff_is_three_db_down_wherever_it_is_set() {
     }
 }
 
-/// Each step of resonance is the same step of the peak in dB, up to a Q of 20 on the last
-/// section: +26 dB at 12 dB per octave, and 20 times the first section's Q at 24.
+/// Each step of resonance is the same step of the peak in dB. Resonance raises the Q of the
+/// first section up to 20 and takes half of that rise in dB off its low and high pass, so the
+/// peak at the cutoff is `sqrt(q0 q)`: +11.5 dB at full resonance at 12 dB per octave, and times
+/// the fixed Q of the second section, +8.8 dB, at 24.
 #[test]
 fn resonance_raises_the_gain_at_the_cutoff_in_equal_steps_of_db() {
-    let expected = |slope: Slope, resonance: f64| match slope {
-        Slope::Twelve => {
-            let base = std::f64::consts::FRAC_1_SQRT_2;
-            20.0 * (base * (f64::from(MAX_Q) / base).powf(resonance)).log10()
-        }
-        Slope::TwentyFour => {
-            let [first, second] = [0.541_196_1_f64, 1.306_563];
-            20.0 * (first * second * (f64::from(MAX_Q) / second).powf(resonance)).log10()
-        }
+    let expected = |slope: Slope, resonance: f64| {
+        let (butterworth, second) = match slope {
+            Slope::Twelve => (std::f64::consts::FRAC_1_SQRT_2, 1.0),
+            Slope::TwentyFour => (1.306_563, 0.541_196_1),
+        };
+        let q = butterworth * (f64::from(MAX_Q) / butterworth).powf(resonance);
+        20.0 * ((butterworth * q).sqrt() * second).log10()
     };
     for slope in Slope::ALL {
         for resonance in [0.0, 0.25, 0.5, 0.75, 1.0] {
@@ -130,7 +134,45 @@ fn resonance_raises_the_gain_at_the_cutoff_in_equal_steps_of_db() {
         }
     }
     let full = state(FilterType::LowPass, Slope::Twelve, 1.0, 1_000.0);
-    assert!((measured_db(full, 1_000.0) - 26.02).abs() < 0.02);
+    assert!((measured_db(full, 1_000.0) - 11.51).abs() < 0.02);
+}
+
+/// At 44.1 and 96 kHz too, and with the cutoff at the top of the range: the measured sound is
+/// the exact response, which bends the cutoff to under 45 % of the sample rate at 44.1 kHz.
+#[test]
+fn other_sample_rates_and_the_top_of_the_range_measure_as_the_exact_response() {
+    for sample_rate in [44_100, 96_000] {
+        for cutoff in [1_000.0, 20_000.0] {
+            for slope in Slope::ALL {
+                for kind in FilterType::ALL {
+                    let state = state(kind, slope, 0.5, cutoff);
+                    for hz in [250.0, 1_000.0, 5_000.0, 16_000.0, 20_000.0] {
+                        let exact = exact_db_at(&state, hz, sample_rate);
+                        if exact < -80.0 {
+                            continue;
+                        }
+                        let measured = measured_db_at(state, hz, sample_rate);
+                        assert!(
+                            (measured - exact).abs() < 0.02,
+                            "{sample_rate} Hz, {kind:?} {slope:?} cutoff {cutoff} at {hz} Hz: measured {measured:.3} dB, exact {exact:.3} dB"
+                        );
+                    }
+                }
+            }
+            let low = state(FilterType::LowPass, Slope::Twelve, 0.0, cutoff);
+            let at_cutoff = measured_db_at(
+                low,
+                f64::from(cutoff).min(0.45 * f64::from(sample_rate)),
+                sample_rate,
+            );
+            if sample_rate == 96_000 {
+                assert!(
+                    (at_cutoff + 3.0103).abs() < 0.02,
+                    "{sample_rate}: {at_cutoff}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

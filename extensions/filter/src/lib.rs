@@ -34,7 +34,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
-pub use processor::{Filter, MAX_Q, RAMP_SECONDS, response};
+pub use processor::{Filter, MAX_Q, response};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "filter";

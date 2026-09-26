@@ -48,8 +48,13 @@ impl Processor for Source {
 
 /// A sine of this frequency and amplitude in both channels, from phase 0.
 pub fn sine(hz: f64, amplitude: f32) -> Signal {
+    sine_at(hz, amplitude, SAMPLE_RATE)
+}
+
+/// The same at another sample rate.
+pub fn sine_at(hz: f64, amplitude: f32, sample_rate: u32) -> Signal {
     let mut phase = 0.0_f64;
-    let step = hz / f64::from(SAMPLE_RATE);
+    let step = hz / f64::from(sample_rate);
     Box::new(move || {
         let sample = (TAU * phase).sin() as f32 * amplitude;
         phase = (phase + step).fract();
@@ -78,8 +83,12 @@ pub struct Rig {
 
 impl Rig {
     pub fn new(state: FilterState, signal: Signal) -> Self {
+        Self::at_rate(state, signal, SAMPLE_RATE)
+    }
+
+    pub fn at_rate(state: FilterState, signal: Signal, sample_rate: u32) -> Self {
         let (mut control, engine) =
-            Engine::new(EngineConfig::new(SAMPLE_RATE, 2).rendering_offline());
+            Engine::new(EngineConfig::new(sample_rate, 2).rendering_offline());
         let mut edit = control.edit();
         let source = edit.add_processor("source", Source::new(signal)).unwrap();
         let filter = edit.add_processor("filter", Filter::new(state)).unwrap();
@@ -118,10 +127,10 @@ impl Rig {
 
 /// The amplitude of the part of `samples` at `hz`, by correlation with a sine and a cosine of
 /// that frequency. `samples` start at frame `start` of a signal whose phase was 0 at frame 0.
-pub fn amplitude_at(samples: &[f32], start: usize, hz: f64) -> f64 {
+pub fn amplitude_at(samples: &[f32], start: usize, hz: f64, sample_rate: u32) -> f64 {
     let (mut sine, mut cosine) = (0.0, 0.0);
     for (offset, sample) in samples.iter().enumerate() {
-        let angle = TAU * hz * (start + offset) as f64 / f64::from(SAMPLE_RATE);
+        let angle = TAU * hz * (start + offset) as f64 / f64::from(sample_rate);
         sine += f64::from(*sample) * angle.sin();
         cosine += f64::from(*sample) * angle.cos();
     }
@@ -131,17 +140,23 @@ pub fn amplitude_at(samples: &[f32], start: usize, hz: f64) -> f64 {
 /// The gain of a filter with this record at `hz`, measured: a quiet sine through it, once the
 /// filter has settled, in dB.
 pub fn measured_db(state: FilterState, hz: f64) -> f64 {
+    measured_db_at(state, hz, SAMPLE_RATE)
+}
+
+/// The same at another sample rate.
+pub fn measured_db_at(state: FilterState, hz: f64, sample_rate: u32) -> f64 {
     const AMPLITUDE: f32 = 0.01;
     // Long enough for the slowest ring of these tests to die away, then whole cycles over about
     // a quarter of a second, so the correlation sees no part of a cycle.
-    let settle = SAMPLE_RATE as usize;
+    let settle = sample_rate as usize;
     let cycles = (hz * 0.25).ceil();
-    let window = (cycles * f64::from(SAMPLE_RATE) / hz).round() as usize;
-    let mut rig = Rig::new(state, sine(hz, AMPLITUDE));
+    let window = (cycles * f64::from(sample_rate) / hz).round() as usize;
+    let mut rig = Rig::at_rate(state, sine_at(hz, AMPLITUDE, sample_rate), sample_rate);
     rig.render(settle);
     let [left, right] = rig.render(window);
     assert_eq!(left, right);
-    20.0 * (amplitude_at(&left, settle, hz) / f64::from(AMPLITUDE)).log10()
+    let amplitude = amplitude_at(&left, settle, hz, sample_rate);
+    20.0 * (amplitude / f64::from(AMPLITUDE)).log10()
 }
 
 pub fn peak(samples: &[f32]) -> f32 {

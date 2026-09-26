@@ -7,16 +7,19 @@ use sound_core::Processor;
 
 use crate::support::{Rig, SAMPLE_RATE, Signal, noise, peak, sine};
 
-/// The loudest the filter can make a full scale input: the peak of full resonance, 20 times,
-/// plus room for the ring of a step. Drive holds its input under full scale.
-const BOUND: f32 = 40.0;
+/// The loudest the filter makes a full scale input: the peak of full resonance, +11.5 dB or
+/// 3.76 times, plus a little for the ring of a step.
+const BOUND: f32 = 4.0;
 
-fn assert_bounded(label: &str, [left, right]: &[Vec<f32>; 2]) {
+/// The drive curve holds what goes into the filter under 1.5.
+const DRIVEN_BOUND: f32 = BOUND * 1.5;
+
+fn assert_bounded(label: &str, bound: f32, [left, right]: &[Vec<f32>; 2]) {
     for sample in left.iter().chain(right) {
         assert!(sample.is_finite(), "{label}: {sample}");
     }
     let loudest = peak(left).max(peak(right));
-    assert!(loudest < BOUND, "{label}: peak {loudest}");
+    assert!(loudest < bound, "{label}: peak {loudest}");
 }
 
 /// A square at full scale, whose every edge rings a resonant filter.
@@ -44,10 +47,11 @@ fn full_resonance_at_every_type_slope_and_end_of_the_range_stays_bounded() {
                         ..FilterState::default()
                     };
                     let label = format!("{kind:?} {slope:?} {cutoff_hz} Hz drive {drive_db}");
+                    let bound = if drive_db > 0.0 { DRIVEN_BOUND } else { BOUND };
                     let mut rig = Rig::new(state, square(f64::from(cutoff_hz) / 3.0));
-                    assert_bounded(&label, &rig.render(SAMPLE_RATE as usize));
+                    assert_bounded(&label, bound, &rig.render(SAMPLE_RATE as usize));
                     let mut rig = Rig::new(state, noise(1.0));
-                    assert_bounded(&label, &rig.render(SAMPLE_RATE as usize));
+                    assert_bounded(&label, bound, &rig.render(SAMPLE_RATE as usize));
                 }
             }
         }
@@ -67,7 +71,11 @@ fn the_deepest_fastest_lfo_at_full_resonance_stays_bounded() {
             ..FilterState::default()
         };
         let mut rig = Rig::new(state, noise(1.0));
-        assert_bounded(&format!("{slope:?}"), &rig.render(2 * SAMPLE_RATE as usize));
+        assert_bounded(
+            &format!("{slope:?}"),
+            BOUND,
+            &rig.render(2 * SAMPLE_RATE as usize),
+        );
     }
 }
 
@@ -97,7 +105,7 @@ fn input_that_is_not_a_number_or_infinite_does_not_reach_the_output() {
     // The limit rings a resonant filter, and that ring dies away like any other.
     let [left, _] = &output;
     let tail = &left[SAMPLE_RATE as usize / 2..];
-    assert!(peak(tail) < 0.5 * 20.0 * 1.01, "{}", peak(tail));
+    assert!(peak(tail) < 0.5 * BOUND, "{}", peak(tail));
 }
 
 /// After the sound ends the filter rings out and then is exactly silent: its memory lets go,
@@ -123,6 +131,42 @@ fn after_the_sound_the_filter_comes_to_rest_and_is_silent() {
     rig.render(10 * SAMPLE_RATE as usize);
     let [rest, other] = rig.render(SAMPLE_RATE as usize);
     assert!(rest.iter().chain(&other).all(|sample| *sample == 0.0));
+}
+
+/// A full scale sine that sweeps across the cutoff at full resonance, the loudest thing a
+/// resonant filter meets: it stays under the bound, for every cutoff and slope.
+#[test]
+fn a_full_scale_sweep_across_the_cutoff_at_full_resonance_stays_bounded() {
+    for slope in Slope::ALL {
+        for cutoff_hz in [100.0, 1_000.0, 10_000.0] {
+            let state = FilterState {
+                slope,
+                cutoff_hz,
+                resonance: 1.0,
+                ..FilterState::default()
+            };
+            // Up from two octaves under the cutoff to two over it in two seconds, on a ratio.
+            let (from, octaves, seconds) = (f64::from(cutoff_hz) / 4.0, 4.0, 2.0);
+            let mut phase = 0.0_f64;
+            let mut frame = 0_u64;
+            let sweep: Signal = Box::new(move || {
+                let time = frame as f64 / f64::from(SAMPLE_RATE);
+                let hz = from * 2_f64.powf(octaves * (time / seconds).min(1.0));
+                phase = (phase + hz / f64::from(SAMPLE_RATE)).fract();
+                frame += 1;
+                [(std::f64::consts::TAU * phase).sin() as f32; 2]
+            });
+            let mut rig = Rig::new(state, sweep);
+            let output = rig.render(2 * SAMPLE_RATE as usize);
+            let loudest = peak(&output[0]);
+            println!("{slope:?} at {cutoff_hz} Hz: peak {loudest:.3}");
+            assert_bounded(&format!("{slope:?} {cutoff_hz}"), BOUND, &output);
+            // And it did go through the peak. A low cutoff rings slowly, so a sweep this fast
+            // gets to half of its steady peak there.
+            let steady = filter::response(&state, cutoff_hz, SAMPLE_RATE as f32);
+            assert!(loudest > steady * 0.5, "{slope:?} {cutoff_hz}: {loudest}");
+        }
+    }
 }
 
 #[test]
@@ -207,7 +251,7 @@ proptest! {
             let output = rig.render(480);
             for sample in output.iter().flatten() {
                 prop_assert!(sample.is_finite());
-                prop_assert!(sample.abs() < BOUND, "{sample} after {state:?}");
+                prop_assert!(sample.abs() < DRIVEN_BOUND, "{sample} after {state:?}");
             }
         }
     }

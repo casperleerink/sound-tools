@@ -27,12 +27,13 @@ use crate::{
 /// The name the rack puts on the card of a filter.
 pub const NAME: &str = "Filter";
 
-/// The width of the display: a card of two columns is 352 pt, as DESIGN.md gives the filter.
-pub const DISPLAY_WIDTH: f32 = 200.;
+/// The width of the display. With it and two columns of cells the card is 352 pt, as DESIGN.md
+/// gives the filter.
+const DISPLAY_WIDTH: f32 = 200.;
 
 /// The display shows gains from here to there, in dB. The top leaves room for the peak of full
-/// resonance, +26 dB.
-const DISPLAY_DB: (f32, f32) = (-36., 30.);
+/// resonance, +11.5 dB.
+const DISPLAY_DB: (f32, f32) = (-36., 18.);
 
 /// The sample rate the curve is drawn for. The curve of another rate differs only near the top
 /// of the scale, where the display has no room to show it.
