@@ -441,7 +441,7 @@ impl Engine {
         self.status.event_overflows += dropped_events.get();
         self.status.playing = heard.playing;
         // `jumped` is set for one block, so this counts one per seek and per stop.
-        self.status.jumps += u64::from(heard.jumped);
+        self.status.jumps += u64::from(self.transport.seek_or_stop());
         self.status.playhead_frame = heard.frame_range.end;
         self.status.playhead_tick = heard.tick_range.end;
         self.status.latency = self.transport.latency();

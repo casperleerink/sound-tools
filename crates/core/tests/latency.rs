@@ -382,3 +382,25 @@ fn a_processor_ahead_of_the_device_is_told_what_the_device_plays() {
     // of the project, which is tick 98.48, and a frame belongs to the tick at or after it.
     assert_eq!(heard, 99);
 }
+
+/// A play from rest waits for the latency, and the processors see that as a jump, but it is no
+/// seek: the engine status counts none. A take or a view that ends on a jump must not end
+/// because play was pressed.
+#[test]
+fn a_play_from_rest_with_latency_counts_no_jump() {
+    let mut chains = Chains::new(700);
+    chains.render(512);
+    chains.control.play();
+    chains.render(2048);
+    chains.control.pause();
+    chains.render(512);
+    chains.control.play();
+    chains.render(2048);
+    let status = chains.control.poll().unwrap();
+    assert_eq!(status.jumps, 0);
+    assert_eq!(chains.engine.preroll_frames(), 1400);
+    // A seek still counts.
+    chains.control.seek(Ticks(0));
+    chains.render(512);
+    assert_eq!(chains.control.poll().unwrap().jumps, 1);
+}

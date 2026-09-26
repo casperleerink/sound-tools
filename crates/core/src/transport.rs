@@ -27,7 +27,8 @@ pub struct Transport<'a> {
     /// The ranges are empty from here on, so release held notes now or they sound forever.
     pub stopped_playing: bool,
     /// The position moved by a seek or a stop since the previous block, or the latency after
-    /// this processor changed, which moves where its blocks are. Set for one block. Nothing
+    /// this processor changed, which moves where its blocks are, or a play from rest in a
+    /// project with latency. Set for one block. `EngineStatus::jumps` counts only seeks and stops. Nothing
     /// between the old and the new position is replayed. Each processor decides what to do,
     /// for example release its held notes.
     pub jumped: bool,
@@ -89,6 +90,10 @@ pub(crate) struct TransportState {
     preroll_due: bool,
     /// A play from rest since the last block.
     started: bool,
+    /// This block resumes after a play from rest in a project with latency. Processors see it
+    /// as a jump, but it is no seek: the engine status does not count it, so a view or a take
+    /// that ends on a jump is not ended by pressing play.
+    resumed: bool,
     /// The longest latency from any processor to the device.
     latency: u64,
     /// The tick of `position` at the start of the block, for [`Transport::heard_tick`].
@@ -106,6 +111,7 @@ impl TransportState {
             preroll: 0,
             preroll_due: false,
             started: false,
+            resumed: false,
             latency: 0,
             heard_tick: Ticks(0),
             clock,
@@ -150,6 +156,11 @@ impl TransportState {
         self.latency
     }
 
+    /// A seek or a stop since the last block: what the engine status counts as a jump.
+    pub(crate) fn seek_or_stop(&self) -> bool {
+        self.jumped
+    }
+
     /// Call once per block, before any [`Self::view`].
     ///
     /// A play from rest in a project with latency starts like a seek to where the project
@@ -157,7 +168,7 @@ impl TransportState {
     /// their first notes. Without latency it is what it always was, with no jump.
     pub(crate) fn begin_block(&mut self) {
         if std::mem::take(&mut self.started) && self.playing && self.latency > 0 {
-            self.jumped = true;
+            self.resumed = true;
             self.preroll_due = true;
         }
         if std::mem::take(&mut self.preroll_due) {
@@ -181,7 +192,7 @@ impl TransportState {
         Transport {
             playing: self.playing,
             stopped_playing: self.was_playing && !self.playing,
-            jumped: self.jumped || moved,
+            jumped: self.jumped || self.resumed || moved,
             // Both ends come from the same function, so the end of this block is the start of
             // the next, whatever the block sizes and tempo changes are.
             tick_range: self.clock.tick_at(start)..self.clock.tick_at(end),
@@ -201,6 +212,7 @@ impl TransportState {
         self.position = Frames(self.position.0.saturating_add(advance - waited));
         self.was_playing = self.playing;
         self.jumped = false;
+        self.resumed = false;
         waited
     }
 }
