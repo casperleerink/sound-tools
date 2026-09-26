@@ -1,22 +1,27 @@
 //! Renders the application window to PNGs with no visible window, and times its frames.
 //! `cargo test -p runtime --test snapshots` writes to `$WINDOW_SNAPSHOT_DIR`, default
-//! `<target>/window-snapshots`:
+//! `<target>/window-snapshots`. The window is 1470 x 920 points at scale 2, the screen of a
+//! 13 inch MacBook Air without the menu bar, which is the laptop the design is for:
 //!
 //! - `default.png`: the default project.
 //! - `piece.png`: three tracks with several clips, playing, one clip selected.
 //! - `transport-click-off.png`: the same with the transport in focus, the click off.
 //! - `transport-click-on.png`: the same with the click on.
 //! - `transport-recording.png`: the same while it records.
+//! - `notices.png`: an error from an edit and a file that is not live, bottom-left.
 //! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
 //! - `menu.png`: the project menu, open, after one edit.
 //! - `fit-action.png`: the project menu over a recorded take, with `Fit tempo to take`.
 //! - `fitted.png`: the same project after the fit, with the steadiness control in the
 //!   transport and the clip of the take on the grid the playing made.
 //! - `fit-steady.png`: the same with the steadiness at 60 %.
+//! - `fit-recording.png`: the same while it records: tempo, steadiness and record together.
 //! - `editor.png`: the note editor open on the selected clip, one note selected.
 //! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
 //! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default.
 //! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
+//! - `track-panel-synth-effects.png`: the synth with two effects after it and the mixer
+//!   section, which is wider than the rack has room for on this screen.
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
 //! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
 //! - `track-panel-picker.png`: the same with the instrument picker open.
@@ -62,6 +67,9 @@ use tempfile::TempDir;
 mod generated_take;
 
 const BAR: u64 = 3840;
+/// The window in points.
+const WINDOW_WIDTH: f32 = 1470.;
+const WINDOW_HEIGHT: f32 = 920.;
 
 struct Opened {
     _folder: TempDir,
@@ -86,7 +94,7 @@ impl Opened {
         fill(&mut project)?;
         let plugins = plugins.downgrade();
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
-        let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {
+        let window = cx.open_window(size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), |window, cx| {
             let (session, plugins) = (session.clone(), plugins.clone());
             cx.new(|cx| {
                 let name = "MacBook Pro Speakers".into();
@@ -149,7 +157,7 @@ impl Opened {
         fill(&mut project)?;
         let plugins = plugins.downgrade();
         let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
-        let window = cx.open_window(size(px(1440.), px(900.)), |window, cx| {
+        let window = cx.open_window(size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), |window, cx| {
             let (session, plugins) = (session.clone(), plugins.clone());
             cx.new(|cx| {
                 let name = "MacBook Pro Speakers".into();
@@ -561,6 +569,38 @@ fn main() -> Result<()> {
     cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_click(cx)));
     cx.run_until_parked();
 
+    // The two notices, bottom-left: an edit that failed, and a file that is not live, here
+    // the record of a plugin this machine does not have.
+    let notices = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        set_plugin(
+            project,
+            "bass",
+            PluginFormat::Clap,
+            "com.example.nowhere",
+            "bass",
+        )
+    })?;
+    // A clip with a note after its end, which the clip tool refuses.
+    let wrong = clip(0, 1, vec![note(2 * BAR, 480, 60)?])?;
+    let id = InstanceId::new("arrangement/bass/clip-wrong")?;
+    cx.update(|cx| {
+        notices.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.create(id, wrong);
+                project.commit("Add clip", changes)
+            })
+        })
+    });
+    anyhow::ensure!(
+        cx.update(|cx| notices.session.read(cx).notice().is_some()),
+        "the edit did not fail"
+    );
+    cx.run_until_parked();
+    save(&mut cx, &notices, "notices")?;
+    drop(notices);
+
     // The menu after an edit, so that undo has something to name.
     cx.update(|cx| {
         opened.session.update(cx, |session, cx| {
@@ -638,6 +678,12 @@ fn main() -> Result<()> {
     });
     cx.run_until_parked();
     save(&mut cx, &opened, "fit-steady")?;
+    let transport = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.transport().clone()))?;
+    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
+    cx.run_until_parked();
+    save(&mut cx, &opened, "fit-recording")?;
+    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
+    cx.run_until_parked();
     drop(opened);
 
     // A project made before the fit existed: the action is at 40 % and says the one edit that
@@ -707,6 +753,16 @@ fn main() -> Result<()> {
         opened.key("tab", &mut cx)?;
     }
     save(&mut cx, &opened, "track-panel-focus")?;
+    drop(opened);
+
+    // The synth with two effects and the mixer section: the whole rack of a track as a
+    // composer builds it, on the screen of the laptop.
+    let opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        set_effects(project, "bass", &["Warmth", "Space"])
+    })?;
+    opened.click_track_header(1., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-synth-effects")?;
     drop(opened);
 
     // A track whose instrument is a tool that has no view: the tone.
@@ -951,7 +1007,7 @@ fn main() -> Result<()> {
     });
     let state = state.context("the clip has no state")?;
     let first = state.notes.first().context("the clip has no notes")?;
-    let editor_top = 900.0 - EDITOR_HEIGHT + RULER_HEIGHT;
+    let editor_top = WINDOW_HEIGHT - EDITOR_HEIGHT + RULER_HEIGHT;
     let on_note = point(
         px(HEADER_WIDTH + viewport.x_of(state.start + first.start) + 40.),
         px(editor_top + roll::y_of(&viewport, first.pitch) + KEY_HEIGHT / 2.),

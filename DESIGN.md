@@ -2,6 +2,145 @@
 
 Design decisions for the Sound Tools UI. Settled from the three web prototypes reviewed on September 10, 2026 (removed September 14; two screenshots remain in `docs/reference/`). The real UI SDK is built in GPUI in `crates/ui`; the gallery in `crates/gallery` shows every component and variant.
 
+## Direction for the third milestone
+
+**Decided by the owner on September 25, 2026:** our own palette (see "Colour"), the transport in the title row, and the mixer strip in the header column. The owner also asked for a shorter panel, one volume control on the meter, a power icon in the card header and a look of its own for each device. The sizes, components and devices below are this step's answer to that, drawn in the mockups. Where this section differs from the sections after it, this section holds.
+
+Made on September 22, 2026, with milestone 3 step 0. The images are in `docs/reference/m3-step-0/`: `before/` is the window as built, at laptop size, `gallery/` the component gallery, and `mockups/` the direction. The mockups are drawn outside the product for review only. Step 1 builds the real thing and takes `before/` as its "before".
+
+The target is a 13 to 14 inch MacBook with a trackpad and keys: the window is 1470 x 920 points at scale 2. `cargo test -p runtime --test snapshots` renders it at that size since this step.
+
+### What is wrong now
+
+Located in `before/`. Measured in points.
+
+Window:
+
+1. The transport pill floats over content. In the note editor it covers the lowest keys and notes (`editor.png`), and a velocity lane at the bottom would sit under it. In the arrangement it covers the last rows when there are many tracks (`scale.png`).
+2. The title row, 48 pt tall and the full width, holds only the project name.
+3. The error notice runs off the bottom of the window: its third line is cut at the edge (`notices.png`). This is a bug in the notice layout.
+4. The disabled items of the instrument picker and of the project menu show a file edit (`Add "plugin-host" to "extensions" in project.json...`) to a composer (`track-panel-picker-disabled.png`, `fit-action-disabled.png`).
+
+Track panel:
+
+5. Three title lines that do not line up: the card title `Synth`, `Add effect` and `Mixer` sit at three heights (`track-panel.png`).
+6. The knob row of the mixer section is about 25 pt higher than the knob row of the synth, and `Mute` sits on neither the knob line nor the label line.
+7. Card heights follow content: the synth card is 160 pt, a plugin card 105, a missing plugin 93. The bottoms of the rack are ragged (`track-panel-effects.png`, `track-panel-effect-missing.png`).
+8. Card widths follow content. The synth card alone is 737 pt wide, so the synth and two effects do not fit next to the mixer section at 1470 pt. The third card hides behind the mixer section with no sign that the rack scrolls (`track-panel-synth-effects.png`).
+9. The header column is 176 x 350 pt of empty space under the track name, and about 200 pt under the cards is empty too.
+10. Four control styles in one row, with no shared cell: the waveform control has a label and no value line, the knobs have both, `Mute` is a text button, a plugin card has a 28 pt button. Groups inside the synth are made by air alone, and `Gain` sits alone at the far right.
+11. The knob draws its value as 25 dots, lit and unlit. At a glance the value is hard to read, the pointer is a 3 pt dot, and the ring reads as texture.
+12. The knob has no fine drag: 160 pt for the whole travel, so on the log range of the cutoff 1 pt is about 4 % in frequency. Shift makes only the arrow keys finer.
+13. Two effects of one plugin are two cards with one name (`track-panel-effects.png`). The close icon of an effect sits 8 pt from its menu chevron, easy to miss on a trackpad.
+14. Recording shows as a 10 % red fill behind an outlined circle, and the click as a subtle fill. Both are hard to see on a laptop screen (`transport-recording.png`, `transport-click-on.png`).
+
+Design system:
+
+15. No identity of our own. The palette is Catppuccin Mocha as published, the gallery shows web components nobody uses (badges, alerts, dialog), and the gallery's mixer strip has a third design for volume, a horizontal slider (`gallery/composed.png`).
+16. Control labels are `gray-700` on a card, 4.4 : 1. That is under 4.5 : 1 for 12 pt text, and the Quiet rule makes accessibility a product requirement.
+17. Track colours include green, yellow, peach and red, which also mean play, solo, warning and record. They are on dots and notes only, so this stays, but no control may use a track colour.
+
+### The direction
+
+Sound Tools looks like one calm instrument. What makes it ours:
+
+- Every device shows what it does to the sound. A card is a display of the sound on the left and a few knobs at its right. The display is not a picture only: its handles drag.
+- One grid: every card is 192 pt tall, with two rows of 56 x 72 pt cells. The panel below the arrangement is 216 pt, close to a device view.
+- A value is one bright line on dark: the arc and pointer of a knob, the thumb on a meter, a curve and its handles. Values are never coloured.
+- Colour means something or is not there, see "Colour" below.
+- The transport pill is the one floating shape, in the title row.
+- A track's colour is on its marks only: its dot, its notes, its velocity bars.
+
+It does not copy Ableton. The devices are Synth, Filter, Compressor, EQ, Reverb and Limiter with plain parameter names, the cards are the plain card of our design system, and the displays are our own drawings: no graphic, name or text of Ableton's.
+
+Mockups, all in our palette: `mockups/window.png` (the whole window), `mockups/track-panel.png` (the mixer strip, Synth, Filter, Compressor), `mockups/track-panel-plugin-eq-reverb.png` (a plugin, EQ, Reverb expanded, solo on, the rack running past the edge), `mockups/master-panel.png` (the master and its Limiter), `mockups/note-editor-velocity.png`, and `mockups/components.png` (every control of step 1 with its states, the header icons, the volume on its meter, the grid).
+
+### Type
+
+Unchanged from the source design system: InterDisplay with `ss03` and `cv01`, tabular numbers for every number. In the rack: 14 medium for card titles, track names and buttons; 12 regular for labels, values and the line under a display; 12 medium in toggles and segments.
+
+### Sizes
+
+Checked against the 1470 x 920 window:
+
+- Layout grid 8 pt, 4 pt inside controls. Radii 10 for a card, 8 for buttons, 6 for toggles, segments, selects, displays and clips, 3 for notes.
+- Window, top to bottom: the title row, 48 pt, with the transport. The arrangement: a ruler of 32, track rows of 64, and a master row of 40 pinned at its bottom. The panel below. The header column is 176 pt wide.
+- The track panel is **216 pt** tall: 12 above the cards, a card of 192, 12 below. It was 384. The arrangement then has 656 pt: the ruler, nine track rows and the master row.
+- The note editor keeps 352 pt: a ruler of 32, 264 for 22 semitones and a velocity lane of 56. Notes need the room and devices do not, so the two no longer share one height, and opening one in place of the other moves the arrangement's lower edge. This changes "a swap between it and the note editor moves nothing" below.
+- A card: a 32 pt header, a body of two rows of 72 pt, 16 pt below; 192 pt in all. It is 16 pt from each side to its body. The body is a display at the left, 8 pt of air, then two columns of cells.
+- A cell is 56 x 72: a 36 pt knob at its top, the label line at 38 and the value line at 54, 14 pt each. A 24 pt toggle, segment or select sits 6 pt from the top of its cell, on the same line as a knob's centre. A control with no value leaves its value line empty. Empty cells are fine.
+- A display is 118 pt tall, from the top of the body to 8 pt above the value line of row 2. That value line, under the display, carries its numbers or its scale.
+- A card's width is 32 pt plus its display plus 8 plus 56 per column: 288 pt (Compressor) to 464 pt (EQ). A plugin card is 200 pt. Cards are 12 pt apart, and the rack starts 16 pt right of the header column.
+- On the 1470 pt window the rack has 1262 pt. The track in `mockups/track-panel.png` (Synth, Filter, Compressor) takes 1016 of them. When the cards go past the right edge, a 48 pt fade to the window colour says so, and two-finger scroll moves the rack sideways.
+- The header column of the track panel holds the track's name on the line of the card titles, the close icon at its right, and the mixer strip on the rows of the cards: the volume at the left from the top of row 1 to the value line of row 2, pan in row 1 at the right, M and S on the knob line of row 2.
+
+### Components for step 1
+
+Every one lives in `crates/ui` with a gallery entry. The synth, plugin cards, effect cards and the mixer strip use only these. Two-finger scroll over any of them pans the rack and never changes a value: a control that took the gesture would change a sound while the composer scrolls past.
+
+Knob:
+
+- 36 pt dial. A 270° track of 2.5 pt at `alpha/10`, the value arc on it in `gray-950` with round ends, a 21 pt face in `gray-300`, a 2 pt pointer in `gray-950`. A bipolar knob (pan, EQ gain) draws its arc from the top. Disabled at 40 %. Label in `gray-800`, value in `gray-950`.
+- Drag up or down, 200 pt for the whole travel, from the value at the press. With shift ten times finer. Double click, or backspace on the focused knob, sets the default. Arrows step a fiftieth, with shift a five-hundredth. Escape during a drag puts it back. The cursor is the up-down resize cursor.
+- Focus from the keyboard: a 2 pt lavender ring around the face.
+- GPUI's `PathBuilder` has `arc_to` and `stroke` in the pinned version, so the arc no longer needs dots.
+
+Volume, one control:
+
+- The meter is the track of the fader. Two bars of 5 pt, 2 pt apart; the thumb, a 28 x 6 pt bar in `gray-950` with a 1.5 pt ring of the window colour, sits across them at the gain. The level shows through above and below the thumb. A tick at 0 dB. -inf to +6 dB, 0 dB at 80 % of the height, the same scale for thumb and level.
+- Meter colours: green up to -6 dBFS, yellow to 0, a red clip light above the bars until it is clicked, a 1 pt peak line in `gray-950` held 1.5 s. It falls 20 dB a second. Nothing shows at rest.
+- Drag the thumb, or anywhere on the meter: it moves from where it is, so a press never jumps. With shift ten times finer. Double click sets 0 dB. Arrows 0.5 dB, with shift 0.1 dB. The readout (`-3.5 dB`, `-inf`) sits on the value line under it.
+- Tab reaches it as it reaches a knob, and the 2 pt lavender ring goes around the thumb when the focus came from the keyboard.
+- The master meter: two 40 x 3 pt bars in the same colours at the right end of the transport pill.
+
+Gain reduction: a bar of 4 to 6 pt from the top down in `gray-950`, 0 to 24 dB. It is not level, so it has no level colours. Compressor and Limiter draw it inside their display.
+
+Toggle: 24 pt tall, 28 wide for a letter and wider for a word. Off: `alpha/5` with `gray-700` text. On: white at 10 %, or its colour at 16 % with that colour as text: mute peach, solo yellow. Click or space toggles. M and S of a track also sit in its arrangement header, right aligned, when they are on, when the pointer is on the header, or when it has the focus. A muted track has its name, dot and clips at 40 %.
+
+Segmented and select: 24 pt, on the knob line of their cell or at the top of a display. A select is for a list that does not fit as segments, such as an EQ band shape.
+
+Card header:
+
+- 32 pt. The picker is the title, 16 pt from the left edge.
+- At the right, 8 pt from the edge, icons in 24 pt targets 4 pt apart, every glyph 12 pt on the centre line of the title: **expand**, **power**, **close**. An instrument has only expand; the Limiter has expand and power; the other effects have all three.
+- Power replaces the switch. On: the glyph in `gray-950`. Off: the glyph in `gray-600`, the title in `gray-700` and the body at 40 %; the sound passes through untouched. Pointer on an icon: `alpha/8` behind it.
+- Expand shows the controls a card hides, in columns to the right of a hairline at `alpha/6`. The card gets wider and never taller. Whether a card is expanded is interface state and is not saved.
+
+Display:
+
+- An inset of `gray-50` at 70 % with 6 pt corners, 118 pt tall. A curve is 1.5 pt `gray-950` over a fill of `alpha/5`; grid lines at `alpha/4`, the 0 dB line at `alpha/8`. A level inside a display is green, because level is signal.
+- Handles are 10 pt circles in `gray-950` with a ring of `gray-50`; a secondary handle is hollow. A handle drags, with shift ten times finer, and double click resets what it moves. Every value a handle moves also has a knob or a hidden control, which is the path for the keys: a display is never the only way to reach a value.
+- The line under a display, on the value line of row 2, gives its numbers (`A 5 ms · D 350 ms · S 25% · R 120 ms`) or its scale (`100 · 1k · 10k`) in 12 pt.
+
+Plugin card: the picker, the `Open window` button at the top of the body, and `CLAP · <maker>` on the value line of row 2. 200 pt wide.
+
+### Devices
+
+Steps 5 to 8 build from these. "Shown" is on the card, "hidden" is behind expand. Every device keeps its parameters in its record, shown or hidden.
+
+| Device | Display, what drags | Shown | Hidden |
+| --- | --- | --- | --- |
+| Synth, 352 pt | The envelope: attack, decay to sustain, release, as one line. The attack peak drags sideways, the decay corner sideways and up, the release end sideways. The waveform as two drawn segments at the top right of the display. The line under it: A, D, S, R. | Cutoff, Resonance, Gain | Attack, Decay, Sustain, Release as knobs |
+| Filter, 352 pt | The response curve. One handle at the cutoff: sideways is cutoff, up and down is resonance. The type (Low, Band, High, Notch) as segments at the top of the display. The line under it: the frequency scale. | Cutoff, Resonance, Drive, Mix | Slope, LFO rate, LFO depth |
+| Compressor, 288 pt | The transfer curve, input across and output up, with the knee. The handle at the threshold drags sideways; the line above it drags up and down for the ratio. The level now as a green dot on the curve, and gain reduction as a bar at the right edge. The line under it: the gain reduction now. | Threshold, Ratio, Attack, Release | Knee, Makeup, Mix, Lookahead |
+| EQ, 464 pt | The summed curve with a numbered handle per band: sideways is frequency, up and down is gain. A click selects a band. The line under it: the frequency scale. | Frequency, Gain, Q and Shape of the selected band | Each band's on and off, output gain |
+| Reverb, 352 pt | The decay in time: pre-delay, early reflections as thin lines, the tail as a straight line in dB that reaches the floor at the decay time, and the highs as a dashed line that falls sooner with more damping. The start drags sideways for pre-delay, the end for decay. The line under it: pre-delay and decay. | Size, Damping, Width, Mix | Low cut, High cut, Freeze, Diffusion, and Pre-delay and Decay as knobs |
+| Limiter, 352 pt | The last four seconds of output peaks in green under the ceiling line, with gain reduction hanging from the top. The ceiling line drags up and down. The line under it: ceiling and gain reduction. | Gain, Ceiling, Release | Lookahead |
+
+### What this changes in the window
+
+Decided by the owner on September 25, 2026: the transport in the title row and the mixer strip in the header column.
+
+- The transport moves into the title row, centred, 36 pt tall, with the same contents plus the master meter at its right end. Nothing floats over content any more, so the note editor and a velocity lane are free. See the Quiet rule.
+- The mixer strip of a track is in the header column of the track panel, as in "Sizes". The rack gets the full width. This replaces "Mixer section, September 20, 2026".
+- The master is a row of 40 pt pinned under the tracks, with a ring where a track has its dot. A click opens its panel: the master volume in the header column, and the rack with the Limiter first.
+- The velocity lane is the lowest 56 pt of the note editor: a 3 pt bar at the start of each note in the track colour at 70 %, the selected one in `gray-950`. Drag a bar up or down. `Velocity` in 12 pt `gray-700` in the header column.
+- The notice stays bottom-left, 24 pt from the edges, at most 400 pt wide. A message wraps to at most three lines and the third ends in an ellipsis. The box grows with its text and its bottom stays 24 pt above the window edge, so it always fits (item 3). The full text is in `problems.txt` for a file that is not live, and in the tooltip of the notice for an error.
+- The picker and the menu say in words why an item is off and keep the file edit for the agent docs (item 4). For example: `This project does not load plugins.`
+- Tab order in the track panel: the close icon of the panel, then the header column top to bottom and left to right (volume, pan, M, S), then the rack card by card: each card's header (picker, expand, power, close) and then its cells row by row, the hidden ones too when the card is expanded. Last `Add effect`. A display handle is not a tab stop; its knob is.
+
+Everything else in the sections below stays: the arrangement, clips, the note editor, menus and the picker.
+
 ## Source design system
 
 The UI takes its language from an existing web design system (React and Tailwind). The values below are the parts that carry over.
@@ -14,58 +153,71 @@ The UI takes its language from an existing web design system (React and Tailwind
 - Shadows: dropdown `0 4px 24px -8px rgba(0,0,0,0.2)`, card `0 8px 16px -8px rgba(0,0,0,0.1)`.
 - Spacing: 8 px grid for layout, 4 px inside controls. Panel and card margins at least 24 px. Card padding at least 16 px.
 
-## Colour: Catppuccin Mocha over the source grey scale
+## Colour: our own palette over the source grey scale
 
 Dark only for now. The source dark theme uses `gray-50` as the darkest background and `gray-950` as text; keep that meaning.
 
-| Token | Mocha | Hex |
-| --- | --- | --- |
-| gray-50 | crust | `#11111b` |
-| gray-100 | mantle | `#181825` |
-| gray-200 | base | `#1e1e2e` |
-| gray-300 | surface0 | `#313244` |
-| gray-400 | surface1 | `#45475a` |
-| gray-500 | surface2 | `#585b70` |
-| gray-600 | overlay0 | `#6c7086` |
-| gray-700 | overlay1 | `#7f849c` |
-| gray-800 | overlay2 | `#9399b2` |
-| gray-900 | subtext0 | `#a6adc8` |
-| gray-950 | text | `#cdd6f4` |
-| alpha | white | `#ffffff` |
-| blue | blue | `#89b4fa` |
-| sapphire | sapphire | `#74c7ec` |
-| sky | sky | `#89dceb` |
-| teal | teal | `#94e2d5` |
-| green | green | `#a6e3a1` |
-| yellow | yellow | `#f9e2af` |
-| peach | peach | `#fab387` |
-| red | red | `#f38ba8` |
-| maroon | maroon | `#eba0ac` |
-| mauve | mauve | `#cba6f7` |
-| pink | pink | `#f5c2e7` |
-| lavender | lavender | `#b4befe` |
-| rosewater | rosewater | `#f5e0dc` |
-| flamingo | flamingo | `#f2cdcd` |
+Our own palette since September 25, 2026, decided by the owner. It replaced Catppuccin Mocha: a public theme that many apps wear is not an identity, and its violet greys shifted how the track and meter colours read. The token names stay, so only the values change, in `crates/ui/src/theme.rs`, with step 1 of the third milestone. Until then the code still has the Mocha values.
 
-Solid colour buttons need dark text (`#1e1e2e`). Accents are sparse: lavender for the agent, green for play state, peach for warnings, red for errors. Each track or tool instance gets one accent, used on dots, ports and wires only, never on fills.
+| Token | Hex | Token | Hex |
+| --- | --- | --- | --- |
+| gray-50 | `#0c0d10` | blue | `#7aa7ff` |
+| gray-100 | `#121317` | sapphire | `#5cc0e8` |
+| gray-200 | `#1b1d23` | sky | `#74d3ea` |
+| gray-300 | `#292c34` | teal | `#5fd4c4` |
+| gray-400 | `#363943` | green | `#7ee0a0` |
+| gray-500 | `#474b56` | yellow | `#f3d27a` |
+| gray-600 | `#60646f` | peach | `#f7a26b` |
+| gray-700 | `#7c808c` | red | `#f7657a` |
+| gray-800 | `#989ca8` | maroon | `#f08a96` |
+| gray-900 | `#b5b8c2` | mauve | `#b894ff` |
+| gray-950 | `#e9ebef` | pink | `#f28fd0` |
+| alpha | `#ffffff` | lavender | `#a9b1ff` |
+| | | rosewater | `#f5d9d2` |
+| | | flamingo | `#f0bcbc` |
+
+Roles:
+
+| Role | Token |
+| --- | --- |
+| Window | `gray-100` |
+| Card | `gray-200`, 1 pt border `alpha/6` |
+| Knob face | `gray-300` |
+| Display inset | `gray-50` at 70 % |
+| Values, names, value arcs, thumbs, curves | `gray-950` |
+| Control labels on a card | `gray-800`, 6.1 : 1. `gray-700` was 4.4 : 1, under 4.5 : 1 for 12 pt text |
+| Muted text on the window | `gray-700` |
+| Unlit arc, empty meter | `alpha/10`, `alpha/6` |
+
+Each colour has one meaning:
+
+- Green: sound is moving. Play, a meter below -6 dBFS, a level inside a display.
+- Yellow: a meter from -6 to 0 dBFS, and solo.
+- Peach: warning, files not live, and mute.
+- Red: record, the clip light of a meter, errors.
+- Lavender: keyboard focus, and the agent.
+- Track colours: dots, notes, velocity bars. No control uses a track colour.
+
+A meter is the one place colour fills an area, because level is a signal. Nothing else is filled with colour except a toggle that is on (its colour at 16 %). Solid colour buttons need dark text (`gray-200`).
 
 ## Quiet rule
 
-Every element must earn its keep. Reference feel: the source design system and Hive. Lots of air, one accent, calm type. Audio tools are usually crowded; we are not copying that.
+Every element must earn its keep. Reference feel: the source design system and Hive. Lots of air, colour only where it means something, calm type. Audio tools are usually crowded; we are not copying that.
 
 - Agent sidebar: a turn is the composer's message and the agent's result text. While working, one line such as `Building Polyrhythm` with a slow pulse. After, a muted `Worked for 12 s` that expands on click to the history. A failed build is `Build failed` in red plus one short sentence. No tool-call rows, progress bars, timestamps per message, or explanatory prose about builds and playback.
 - Composer: input, model name, send. Placeholder inside the input is the only hint.
-- Transport: floating pill, bottom centre. Play/pause, stop, record, position, duration if the project has one, a hairline seek strip, the tempo, and the click. Build status and device selection are not in it; at most a small dot when a reload is pending.
+- Transport: a pill centred in the title row, since September 25, 2026. Play/pause, stop, record, position, duration if the project has one, a hairline seek strip, the tempo, the click and the master meter. Build status and device selection are not in it; at most a small dot when a reload is pending.
 - Chrome: project name top-left as a quiet menu holding add, undo/redo, output device and the project folder in the Finder or in a terminal. No legends, no zoom controls, no grid.
-- Cards and panels: 16 px padding, no meta chips in headers, port labels on hover only, secondary parameters behind a disclosure or a second view.
+- Cards and panels: 16 px padding, no meta chips in headers, port labels on hover only, secondary parameters behind the expand icon of a card.
 - Accessible: visible focus rings, labelled controls, full keyboard reach. This is a product requirement.
 
 ## The window, September 19, 2026
 
 What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/view.rs` with `view/editor.rs` and `view/track_panel.rs`, `extensions/instrument/src/view.rs` and `extensions/plugin-host/src/view.rs`. The track panel was added on September 20, 2026. `cargo test -p runtime --test snapshots` renders it to PNGs.
 
+- `cargo test -p runtime --test snapshots` renders the window at 1470 x 920 points since September 22, 2026, the laptop the design is for. It was 1440 x 900.
 - One background, `gray-100`, for the whole window. No panels and no top bar: the title bar is transparent, the project name sits right of the traffic lights and the row around it drags the window.
-- Transport pill: play or pause in green, stop, record in red, the position as `bar.beat`, the time as `m:ss` muted, then the hairline seek strip and the duration when the project has an end, then the tempo and the click. Numbers are tabular and the pill sizes from its content, so it stays still while playing and grows by a digit at bar 100 or at ten minutes. Space toggles playback. Tab reaches the buttons, the strip, the tempo and the click, and left and right seek by a bar on the strip.
+- Transport pill: play or pause in green, stop, record in red, the position as `bar.beat`, the time as `m:ss` muted, then the hairline seek strip and the duration when the project has an end, then the tempo and the click. Numbers are tabular and the pill sizes from its content, so it stays still while playing and grows by a digit at bar 100 or at ten minutes. Space toggles playback. Tab reaches the buttons, the strip, the tempo and the click, and left and right seek by a bar on the strip. This changes with the third milestone, see "Direction for the third milestone".
 - Tempo, September 20, 2026: the tempo in effect at the playhead as a plain number in `gray_950` with a muted 12 px `bpm` after it, no box and no fill. Up to three decimals with no zeros at the end, so `120`, `93.5`, `120.125`. Dragging up on the number makes it faster, half a bpm per pixel. It moves by whole bpm from the tempo it began on and does not round the result, so 93.5 goes to 94.5 and back to exactly 93.5; with shift it moves by tenths at a tenth of the speed. The arrows step by 1 bpm and with shift by 0.1. It shows a 1 px lavender border when the focus came from the keyboard, like the seek strip. There is no tempo lane and no way to add or remove a tempo change in the window: an edit changes the tempo change in effect at the playhead, and the rest is a file edit.
 - Steadiness, September 21, 2026: right of the tempo, and only when the project has a fit, so a project that was never fitted has the pill it always had. The same shape as the tempo: a whole percent in tabular `gray_950` with a muted 12 px `steady` after it, no box and no fill. Dragging up makes it steadier, one percent per pixel, by whole percent from where it began, with shift by fifths at a fifth of the speed. The arrows step by 5 and with shift by 1. It is in the transport and not on the clip because it is the same kind of thing as the tempo: one number about the time of the whole project.
 - Fit tempo to take, September 21, 2026: the second item of the project menu, under `Add track`, at 40 % when the selected clip was not recorded, and at 40 % with the one edit under it for a project whose `extensions` does not list `fit-tempo`, which is the line an instrument picker gives an offer such a project cannot take. It is in the project menu and not on the clip because a fit is about the whole project: it rewrites the tempo map every other part follows. One undo step named `Fit tempo`. There is no control for the first downbeat and none for half and double; those are a file edit, and `agent-docs/fit-tempo.md` says which field to change.
@@ -78,13 +230,13 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 - The view follows the playhead, September 20, 2026: while the project plays, the arrangement pages forward once the playhead passes the right edge, and the playhead lands back at the left edge. A stop or a seek that leaves the playhead off screen brings it back the same way. While the composer has scrolled the playhead off screen nothing pulls the view back, until the next stop or seek. There is no follow switch, because there is nothing to switch off. The note editor does not follow: it shows one clip.
 - Notices: quiet lines bottom-left, 400 px wide at most. A red dot for the last error with a dismiss button that Tab reaches, a peach dot for files that are not live. A long message wraps to at most three lines. Nothing blocks.
 - Note editor: a panel of 384 px below the arrangement, on the same background, with one hairline above it. No toolbar and no tools: what the pointer is on decides what a drag does. The header column lines up with the track headers: the accent dot and the name of the track in the ruler row, then a quiet close icon at 60% opacity, and below them a slim key strip of 32 px at the right edge, white keys at `alpha/10` and black keys at `alpha/3`, with only the Cs named in 12 px `gray-700` left of it. Rows are 12 px per semitone. The rows of black keys are tinted `alpha/2`, so a pitch can be read without lines between rows. Bar lines are hairlines at `alpha/5`, beat lines at half of that and only from 24 px per beat. This is the one place with a grid, because notes are placed by it. The arrangement keeps none. Outside the clip the area is a shade darker (`gray-50` at 50%). Notes are rounded bars of 11 px in the track accent with 3 px corners, the selected one filled with `gray-950`, the lightest colour there is, inside its accent outline. An outline alone on a pastel fill was hard to see. The ruler and the playhead are those of the arrangement. The editor opens zoomed to fit its clip, with the middle of its notes in the middle of what the transport leaves free.
-- Track panel: the other thing the panel below the arrangement can show, in the same 384 px, so a swap between it and the note editor moves nothing. One at a time, like the clip view and the device view of Ableton. The header is that of the note editor: the accent dot, the name of the track and the quiet close icon, in the same places. Right of the header column is the rack: device cards from left to right, 24 px from the edges, at the top of the panel, so the transport pill never covers a control. The rack scrolls sideways when the window is narrower than its cards. There is no scrollbar. A card is the plain card of the design system with 16 px padding. No rack ears, screws or gradients. The rack holds the instrument of the track first, then its effects in the order the sound goes through them, then the control that adds one.
+- Track panel: the other thing the panel below the arrangement can show, in the same 384 px, so a swap between it and the note editor moves nothing. One at a time, like the clip view and the device view of Ableton. The header is that of the note editor: the accent dot, the name of the track and the quiet close icon, in the same places. Right of the header column is the rack: device cards from left to right, 24 px from the edges, at the top of the panel, so the transport pill never covers a control. The rack scrolls sideways when the window is narrower than its cards. There is no scrollbar. A card is the plain card of the design system with 16 px padding. No rack ears, screws or gradients. The rack holds the instrument of the track first, then its effects in the order the sound goes through them, then the control that adds one. This changes with the third milestone, see "Direction for the third milestone".
 - Instrument picker, September 20, 2026: the first row of every device card is a quiet dropdown menu with no border and no fill, whose label is the name of what is in the slot and which opens the list of what else could go there. It is the card's title as well, so no card has a title of its own. It sits where a card title sits: 8 px of card padding above it and 8 px left of it, because the trigger brings its own. The menu is 280 px wide with one group, `Instrument`, that scrolls past 320 px: `Synth` first, then every CLAP and VST 3 instrument of this Mac with `CLAP · <maker>` or `VST 3 · <maker>` as a muted second line, and, while a scan is still running or whenever a VST 3 plugin is offered, a quiet note under the list: "Still looking for the plugins of this Mac…" and Steinberg's trademark notice. What is already in the slot has a check. An instrument this project cannot load is at 40 % and cannot be picked, with the one edit under it: `Add "plugin-host" to "extensions" in project.json and open the project again.` A second line wraps rather than being cut, so it can be read. There is no search box and no favourites; a list of a few dozen is read, not searched. Picking one is one undo step, named `Choose <name>`; picking the one that is already there does nothing.
 - Effects in the rack, September 21, 2026: an effect is a card like any other, after the instrument, with the same picker as its title and one quiet 24 px close icon at 60 % right of that name, which takes the effect off the track. Its picker offers what this Mac declares an effect, in a group called `Effect`, and nothing else on the card changes: a plugin effect shows `Open window` like a plugin instrument. An effect whose plugin this Mac does not have is named by its id with the same muted line, and the sound passes through that card to the next one, so a missing effect is a card to fix and not a track that went quiet.
 - Add effect, September 21, 2026: at the end of the rack, after the last card and outside any card, a quiet dropdown menu that says `Add effect` and lists the same offers. It sits where a card title sits, so the row of names reads across the rack. Picking one puts that effect at the end of the chain, as one undo step named `Add <name>`; the close icon of a card removes one, as one step named `Remove <name>`. There is no way to reorder with the mouse: the order is the `effects` list of the track record, which an agent or a file edit writes.
 - Plugin card: the picker with the plugin's name, then one 28 px subtle button, `Open window` or `Close window`. Nothing else: a plugin's knobs are the plugin's own, in its own window. A plugin without a window of its own has the button at 40 % with one muted line under it, and a plugin that did not load has one line and no button. A VST 3 plugin is offered the button until it is asked once and turns out to have no window, which it then says in the quiet line bottom-left; asking a VST 3 plugin before that means building its whole interface, which is up to a second. A plugin this Mac does not have is named by its id in the picker, with one muted line saying so: the record stays as it is and the track is silent, and the quiet line bottom-left points at `problems.txt`.
 - The plugin's window, September 20, 2026, for both formats since September 21: a window of its own beside the main one, with a normal title bar called `<plugin> — <project>`, as big as the plugin asks and not resizable by dragging. A plugin that asks for another size gets it. Nothing of ours is drawn in it. It is not kept above the main window, so it can go behind it; cmd-` brings it back.
-- Mixer section, September 20, 2026: the right end of the track panel row, after the rack and outside what scrolls, so it is in the same place whatever a track holds. One hairline at `alpha/5` parts it from the rack, then 24 px of air, the title `Mixer` like a card title, and one row: the Gain knob, the Pan knob and the Mute button. The knobs are the 44 px knobs in 64 px columns of the synth card, with their labels and readouts in the same places: `0 dB`, `-6 dB`, and `C`, `50L`, `100R` for the pan. Mute is a 28 px button in the row of the knobs, with no label under it because it says what it is: subtle when the track plays, peach at 10% when it is muted. No meter, no fader, no solo.
+- Mixer section, September 20, 2026: the right end of the track panel row, after the rack and outside what scrolls, so it is in the same place whatever a track holds. One hairline at `alpha/5` parts it from the rack, then 24 px of air, the title `Mixer` like a card title, and one row: the Gain knob, the Pan knob and the Mute button. The knobs are the 44 px knobs in 64 px columns of the synth card, with their labels and readouts in the same places: `0 dB`, `-6 dB`, and `C`, `50L`, `100R` for the pan. Mute is a 28 px button in the row of the knobs, with no label under it because it says what it is: subtle when the track plays, peach at 10% when it is muted. No meter, no fader, no solo. This changes with the third milestone, see "Direction for the third milestone".
 - Selected track: its header gets an `alpha/5` fill in the shape and the place of a clip, 8 px from the edges of the header column. No accent, because it is a fill.
 - Synth card: the picker says `Synth`, then one row of controls. The waveform is a segmented control, then seven 44 px knobs in 64 px columns. Air makes the groups, 32 px between them and 8 px inside: oscillator, filter (cutoff, resonance), envelope (attack, decay, sustain, release), output (gain). No boxes and no group captions: the labels already say what a group is. Under each knob its label at 12 px in `gray-700` and its value at 12 px in `gray-950` with tabular numbers: `480 Hz`, `2 kHz`, `5 ms`, `1.5 s`, `40%`. Three significant digits at most, no zeros at the end, so a value at rest is short.
 - Focus: the arrangement and the note editor each show a 1 px lavender ring inside their edge, only when the focus came from the keyboard. A knob shows it as a 2 px lavender ring around its face, because 1 px on a 35 px circle was too weak to find, and a segmented control as its 1 px border, under the same rule. Tab goes from the project menu to the arrangement, then the note editor and its close icon, or the close icon of the track panel and its controls from left to right, which begins with the picker of the first card and ends with the control that adds an effect, then the transport: play, stop, record, the seek strip, the tempo and the click.
@@ -156,5 +308,5 @@ The UI SDK lives in `crates/ui`; the gallery in `crates/gallery` shows every com
 - Draggable controls use drag events with a delta, so a plain click on a slider track does not jump the handle. The knob is different since September 20, 2026: it is controlled, as a control on saved state has to be. The caller gives the value on every render and hears a change. The knob works a drag out from the value at the press with its own mouse listeners, so a drag goes on outside the knob and a press without a move reports nothing.
 - SVG icons take an explicit colour; `Icon` reads the inherited text colour at render time. Colour buttons therefore tint rather than invert on hover.
 - Overlays anchor to a zero-size box on the trigger edge and snap to the window with a margin. Side is explicit, not collision-aware. Click-outside uses `on_mouse_down_out` with an occluding surface.
-- No arc primitive; the knob draws its value ring with dots.
+- No arc primitive; the knob draws its value ring with dots. The pinned version has `PathBuilder` with `arc_to` and `stroke`.
 - No accessibility tree in 0.2.2. The pinned version has AccessKit support (roles, labels, actions; see `crates/gpui/examples/a11y.rs` in Zed). The components do not use it yet.
