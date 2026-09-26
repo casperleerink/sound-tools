@@ -2,16 +2,16 @@
 //! rest, and a render is the same every time.
 
 use proptest::prelude::*;
-use reverb::{DECAY, PRE_DELAY, ReverbState};
+use reverb::{DECAY, PRE_DELAY, ReverbState, SIZE};
 use sound_core::Processor;
 
 use crate::support::{Rig, SAMPLE_RATE, Signal, burst, noise, peak, sine};
 
 const SECOND: usize = SAMPLE_RATE as usize;
 
-/// The loudest the reverb makes full scale noise, with room to spare. The tail is louder the
-/// longer it lasts, as in a room, and it never grows without end.
-const BOUND: f32 = 64.0;
+/// The loudest the reverb makes full scale noise, with room to spare: the tail comes out at
+/// about the level of what goes in, whatever the size and the decay.
+const BOUND: f32 = 8.0;
 
 fn assert_bounded(label: &str, [left, right]: &[Vec<f32>; 2]) {
     for sample in left.iter().chain(right) {
@@ -51,9 +51,10 @@ fn full_scale_noise_at_every_end_stays_bounded() {
 }
 
 /// A sample that is not a number, or is infinite, is silence or the limit to the reverb. It
-/// goes on as if nothing had happened.
+/// goes on as if nothing had happened: only the dry sound of those frames carries them.
 #[test]
-fn input_that_is_not_a_number_or_infinite_does_not_reach_the_output() {
+fn input_that_is_not_a_number_or_infinite_does_not_reach_the_tail() {
+    const BROKEN: [usize; 3] = [1_000, 2_000, 3_000];
     let mut frame = 0_usize;
     let mut clean = sine(440.0, 0.5);
     let broken: Signal = Box::new(move || {
@@ -65,10 +66,25 @@ fn input_that_is_not_a_number_or_infinite_does_not_reach_the_output() {
             _ => clean(),
         }
     });
-    let output = Rig::new(ReverbState::default(), broken).render(4 * SECOND);
-    for sample in output.iter().flatten() {
-        assert!(sample.is_finite());
+    let [left, right] = Rig::new(ReverbState::default(), broken).render(4 * SECOND);
+    for (index, (left, right)) in left.iter().zip(&right).enumerate() {
+        if !BROKEN.contains(&(index + 1)) {
+            assert!(left.is_finite() && right.is_finite(), "frame {index}");
+        }
     }
+}
+
+/// Mix 0 is the sound as it came in, also what the reverb itself holds back.
+#[test]
+fn mix_zero_passes_even_what_is_too_loud_for_the_reverb() {
+    let loud: Signal = Box::new(|| [100.0, -1e30]);
+    let state = ReverbState {
+        mix: 0.0,
+        ..ReverbState::default()
+    };
+    let [left, right] = Rig::new(state, loud).render(4_800);
+    assert!(left.iter().all(|sample| *sample == 100.0));
+    assert!(right.iter().all(|sample| *sample == -1e30));
 }
 
 /// After the sound ends the tail dies away and then the output is exactly silent: the reverb
@@ -213,4 +229,35 @@ fn at_the_defaults_the_tail_of_noise_is_about_as_loud_as_the_noise() {
     let change = crate::support::db(level / crate::support::rms(&dry_left));
     println!("the tail of noise at the defaults: {change:+.1} dB");
     assert!(change.abs() < 3.0, "{change}");
+}
+
+/// The tail is scaled by the loss of the loop, so full scale noise for 30 s gives a tail of
+/// about the level of the defaults at every corner of size and decay, and never runs away.
+#[test]
+fn full_scale_noise_for_thirty_seconds_keeps_the_level_of_the_defaults_at_every_corner() {
+    let level = |size, decay_seconds| {
+        let state = ReverbState {
+            size,
+            decay_seconds,
+            mix: 1.0,
+            ..ReverbState::default()
+        };
+        let [left, right] = Rig::new(state, noise(1.0)).render(30 * SECOND);
+        let peak = peak(&left).max(peak(&right));
+        let late = 20 * SECOND;
+        let rms = crate::support::rms(&left[late..]).hypot(crate::support::rms(&right[late..]));
+        (peak, rms)
+    };
+    let (_, reference) = level(SIZE.default, DECAY.default);
+    for size in [SIZE.min, SIZE.max] {
+        for decay in [DECAY.min, DECAY.max] {
+            let (peak, rms) = level(size, decay);
+            let change = crate::support::db(rms / reference);
+            println!(
+                "size {size}, decay {decay} s: peak {peak:.2}, {change:+.1} dB from the defaults"
+            );
+            assert!(peak < 4.0, "size {size}, decay {decay}: {peak}");
+            assert!(change.abs() < 3.0, "size {size}, decay {decay}: {change}");
+        }
+    }
 }

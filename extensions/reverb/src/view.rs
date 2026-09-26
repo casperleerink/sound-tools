@@ -22,7 +22,7 @@ use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback}
 
 use crate::{
     DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PRE_DELAY, Parameter, ReverbState, SIZE,
-    WIDTH, high_decay_seconds, line_seconds,
+    WIDTH, high_decay_seconds, reflections,
 };
 
 /// The name the rack puts on the card of a reverb.
@@ -193,13 +193,11 @@ fn drawing(state: &ReverbState) -> Drawing {
     let length = end - start;
     let highs_end = start + length * high_decay_seconds(state) / state.decay_seconds;
     let height_at = |x: f32| TOP + (FLOOR - TOP) * (x - start) / length;
-    let lines = line_seconds(state.size);
-    let longest = lines[lines.len() - 1];
     let zone = EARLY_ZONE * (0.5 + 0.5 * state.size);
-    let reflections = lines
+    let reflections = reflections()
         .into_iter()
         .step_by(EVERY)
-        .map(|seconds| start + zone * seconds / longest)
+        .map(|part| start + zone * part)
         .filter(|x| *x < end)
         .map(|x| point(x, height_at(x) * MARK_HEIGHT))
         .collect();

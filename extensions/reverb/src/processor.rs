@@ -4,7 +4,7 @@
 //!
 //! Why this one: a feedback delay network is the plainest reverb whose decay time is a formula
 //! and not a tuning. Every line loses the same dB per second, so the tail falls by 60 dB in
-//! exactly the decay time, whatever the size. The lines are mixed by a Householder matrix, which
+//! exactly the decay time, whatever the size. The lines are mixed by a Hadamard matrix, which
 //! loses no energy, so a gain of 1 on every line holds the tail for ever: that is freeze. And
 //! each line's loss is a one-pole low pass whose gain at 5 kHz is set by the same formula, so
 //! the highs die in their own time. A plate of Dattorro's has a fixed structure whose decay is
@@ -12,8 +12,9 @@
 //!
 //! What comes in goes through a low cut and a high cut, then the pre-delay, then four allpass
 //! diffusers per channel that smear each click into a burst, then into the lines. The first time
-//! each line comes out is an early reflection; after that the Householder matrix mixes them into
-//! the tail.
+//! each line comes out is an early reflection; after that the Hadamard matrix mixes them into
+//! the tail. The tail is scaled by the loss of the loop, so it comes out at the level of the
+//! input at every size and decay.
 //!
 //! No modulation and no randomness: a render is the same every time and does not depend on
 //! where a session started.
@@ -71,9 +72,15 @@ const MOST_POLE: f32 = 0.99;
 /// The cuts stay under this part of the sample rate, below the Nyquist frequency.
 const HIGHEST_PART: f32 = 0.45;
 
-/// The level of the tail. At the defaults, noise comes out of the reverb alone at about its own
-/// level.
-const OUTPUT: f32 = 0.27;
+/// The level of the tail, on top of the loss of the loop. With it, noise comes out of the reverb
+/// alone at about its own level, at every size and decay.
+const OUTPUT: f32 = 0.533;
+
+/// The frequencies at which the level of the tail is worked out, evenly over the band of most
+/// sound, as a noise has its power.
+const HEARD_HZ: [f32; 8] = [
+    500.0, 1_500.0, 2_500.0, 3_500.0, 4_500.0, 5_500.0, 6_500.0, 7_500.0,
+];
 
 /// While factors move, they are worked out again this often.
 const FACTOR_FRAMES: usize = 16;
@@ -86,11 +93,33 @@ const INPUT_LIMIT: f32 = 64.0;
 /// has rung out: it does no work and its output is silent.
 const REST: f32 = 1e-9;
 
-/// The lengths of the lines at a size, in seconds: when each early reflection comes, after the
-/// pre-delay and the few milliseconds of the diffusers.
-pub fn line_seconds(size: f32) -> [f32; LINES] {
+/// The lengths of the lines at a size, in frames: each the prime nearest to its length, so no
+/// two lines share a factor and their echoes never fall on one another.
+fn line_frames(size: f32, sample_rate: f32) -> [usize; LINES] {
     let scale = SMALLEST_SCALE.powf(1.0 - size.clamp(0.0, 1.0));
-    LINE_SECONDS.map(|seconds| seconds * scale)
+    LINE_SECONDS.map(|seconds| nearest_prime(frames_of(seconds * scale, sample_rate)))
+}
+
+/// When each early reflection comes, after the pre-delay and the diffusers, as a part of when
+/// the last one comes. The same at every size: size scales them all.
+pub fn reflections() -> [f32; LINES] {
+    LINE_SECONDS.map(|seconds| seconds / longest_line_seconds())
+}
+
+/// The prime nearest to `number`, the lower one of two as near. Trial division: a line is at most
+/// some twenty thousand frames, so this is a few hundred steps, done on an update and not per
+/// frame.
+fn nearest_prime(number: usize) -> usize {
+    let is_prime = |candidate: usize| {
+        candidate >= 2
+            && (2..)
+                .take_while(|divisor| divisor * divisor <= candidate)
+                .all(|divisor| !candidate.is_multiple_of(divisor))
+    };
+    (0..number)
+        .flat_map(|distance| [number - distance, number + distance])
+        .find(|candidate| is_prime(*candidate))
+        .unwrap_or(2)
 }
 
 /// The longest line of the largest room.
@@ -250,12 +279,30 @@ impl OnePole {
 }
 
 /// The sign of line `index` in the left and the right output, and in what the left and the
-/// right input put into it. Two rows of a Hadamard matrix: each line is in both sides, the two
-/// sides are as different as sixteen lines allow, and neither is the sum of all lines, which
-/// the Householder matrix turns over on every pass.
+/// right input put into it. Two rows of a Hadamard matrix: each line is in both sides, and the
+/// two sides are as different as sixteen lines allow.
 fn signs(index: usize) -> [f32; CHANNELS] {
     let sign = |bit: usize| if index & bit == 0 { 1.0 } else { -1.0 };
     [sign(1), sign(2)]
+}
+
+/// The Hadamard matrix of sixteen, over 4: every line goes into every other with the same
+/// weight, a quarter, and a sign. It is orthogonal, so it keeps the energy exactly, and a
+/// quarter is exact in floating point, so a frozen tail is only rounded, never scaled. Four
+/// rounds of sums and differences, the fast Walsh-Hadamard transform.
+fn hadamard(mut lines: [f32; LINES]) -> [f32; LINES] {
+    let mut half = 1;
+    while half < LINES {
+        for start in (0..LINES).step_by(2 * half) {
+            for index in start..start + half {
+                let (a, b) = (lines[index], lines[index + half]);
+                lines[index] = a + b;
+                lines[index + half] = a - b;
+            }
+        }
+        half *= 2;
+    }
+    lines.map(|line| line * 0.25)
 }
 
 /// The loss of one line for one pass: its gain at 0 Hz and the pole of its low pass.
@@ -310,6 +357,10 @@ pub struct Reverb {
     /// The factor on what each line reads, `k (1 - p)`, and the pole of its damping filter.
     line_gains: [f32; LINES],
     poles: [f32; LINES],
+    /// The factor on the tail, at the end of the last run of frames and where it is going in the
+    /// run now, so it moves frame by frame and makes no step.
+    tail_gain: f32,
+    tail_gain_target: f32,
     /// The low cut and the high cut of each channel, and their factors.
     cuts: [[OnePole; 2]; CHANNELS],
     cut_factors: [f32; 2],
@@ -327,6 +378,8 @@ pub struct Reverb {
     input: Smoothed,
     /// Whether the factors have to be worked out again although nothing glides.
     stale: bool,
+    /// Whether the tail factor takes its target at once, with nothing to glide from.
+    snapped: bool,
     /// Frames in a row with a silent input and nothing audible in the lines.
     quiet_frames: usize,
 }
@@ -353,6 +406,8 @@ impl Reverb {
             damped: [0.0; LINES],
             line_gains: [0.0; LINES],
             poles: [0.0; LINES],
+            tail_gain: 0.0,
+            tail_gain_target: 0.0,
             cuts: [[OnePole::default(); 2]; CHANNELS],
             cut_factors: [0.0; 2],
             decay: Smoothed::new(0.0),
@@ -365,6 +420,7 @@ impl Reverb {
             freeze: Smoothed::new(0.0),
             input: Smoothed::new(0.0),
             stale: true,
+            snapped: true,
             quiet_frames: 0,
         };
         reverb.allocate(sample_rate);
@@ -389,6 +445,8 @@ impl Reverb {
         self.quiet_frames = 0;
         let state = self.state;
         self.aim(&state);
+        // Also a frozen reverb needs lines of its size to begin with.
+        self.line_taps = Taps::new(line_frames(state.size, sample_rate));
         self.snap();
     }
 
@@ -398,8 +456,11 @@ impl Reverb {
         let (ramp, rate) = (self.ramp_frames, self.sample_rate);
         let pre_delay = frames_of(state.pre_delay_ms / 1_000.0, rate);
         self.pre_delay_tap.aim([pre_delay], ramp);
-        let lines = line_seconds(state.size).map(|seconds| frames_of(seconds, rate));
-        self.line_taps.aim(lines, ramp);
+        // A frozen tail keeps its lines: every fade between taps loses a little of it, and
+        // nothing comes in to fill it again. The size arrives when freeze ends.
+        if !state.freeze {
+            self.line_taps.aim(line_frames(state.size, rate), ramp);
+        }
         self.decay.set_target(state.decay_seconds.log2(), ramp);
         self.low_cut.set_target(state.low_cut_hz.log2(), ramp);
         self.high_cut.set_target(state.high_cut_hz.log2(), ramp);
@@ -433,11 +494,13 @@ impl Reverb {
         self.pre_delay_tap.snap();
         self.line_taps.snap();
         self.stale = true;
+        self.snapped = true;
     }
 
     /// Moves the decay, the damping, freeze and the cuts `frames` along, and works out the
     /// factors for where they are when anything of them moves.
     fn move_factors(&mut self, frames: usize) {
+        self.tail_gain = self.tail_gain_target;
         let lines_move = self.stale
             || self.decay.is_moving()
             || self.damping.is_moving()
@@ -462,15 +525,36 @@ impl Reverb {
         }
         let part = highs_part(damping);
         let damped_cos = (TAU * DAMPED_HZ.min(HIGHEST_PART * rate) / rate).cos();
+        let heard = HEARD_HZ.map(|hz| (TAU * hz.min(HIGHEST_PART * rate) / rate).cos());
+        let mut lost = [0.0; HEARD_HZ.len()];
         for index in 0..LINES {
             let length = self.line_taps.length(index);
             let (gain, pole) = line_loss(length, decay, part, damped_cos, rate);
+            // What a pass loses of the power at each heard frequency.
+            let top = gain * (1.0 - pole);
+            for (lost, cos) in lost.iter_mut().zip(heard) {
+                *lost += 1.0 - top * top / (1.0 - 2.0 * pole * cos + pole * pole);
+            }
             // Freeze glides the loss to none: a gain of exactly 1 and no damping, written so
             // that a whole freeze gives exactly those.
             let gain = 1.0 - (1.0 - gain) * (1.0 - freeze);
             let pole = pole * (1.0 - freeze);
             self.line_gains[index] = gain * (1.0 - pole);
             self.poles[index] = pole;
+        }
+        // What comes in stays in the lines until the loop loses it, so at each frequency the
+        // lines hold the power of the input over the part the loop loses per pass, on average
+        // over the lines, and what comes out of them is the part a pass keeps of that. Over the
+        // heard frequencies that is the power of the tail of a noise; scaled by its root, the
+        // tail comes out at the level of the noise at every size, decay and damping. A frozen
+        // reverb keeps the factor it had, so it holds its level.
+        if freeze == 0.0 {
+            let held: f32 = lost.iter().map(|lost| (LINES as f32 - lost) / lost).sum();
+            let held = (held / HEARD_HZ.len() as f32).max(f32::MIN_POSITIVE);
+            self.tail_gain_target = OUTPUT / held.sqrt();
+        }
+        if std::mem::take(&mut self.snapped) {
+            self.tail_gain = self.tail_gain_target;
         }
     }
 
@@ -514,20 +598,16 @@ impl Reverb {
             *out = damped;
         }
         let mut wet = [0.0; CHANNELS];
-        let mut sum = 0.0;
         for (index, out) in out.iter().enumerate() {
             let [left, right] = signs(index);
             wet[0] += left * out;
             wet[1] += right * out;
-            sum += out;
         }
-        // The Householder matrix `I - 2/N`: every line gets back what it gave, less its share of
-        // the sum of all of them. It keeps the energy exactly.
-        let back = sum * (2.0 / LINES as f32);
+        let mixed = hadamard(out);
         let mut loudest = 0.0_f32;
-        for (index, out) in out.iter().enumerate() {
+        for (index, mixed) in mixed.iter().enumerate() {
             let [left, right] = signs(index);
-            let written = out - back + 0.5 * (left * into[0] + right * into[1]);
+            let written = mixed + 0.5 * (left * into[0] + right * into[1]);
             self.lines[index].write(position, written);
             loudest = loudest.max(written.abs());
         }
@@ -539,7 +619,7 @@ impl Reverb {
         } else {
             self.quiet_frames = 0;
         }
-        wet.map(|wet| wet * OUTPUT)
+        wet
     }
 }
 
@@ -580,19 +660,23 @@ impl Processor for Reverb {
             .zip(right_out.chunks_mut(FACTOR_FRAMES));
         for (((left_in, right_in), left_out), right_out) in chunks {
             self.move_factors(left_in.len());
+            let length = left_in.len() as f32;
+            let (from, to) = (self.tail_gain, self.tail_gain_target);
             let frames = left_in
                 .iter()
                 .zip(right_in)
                 .zip(left_out.iter_mut())
                 .zip(right_out.iter_mut());
-            for (((left_in, right_in), left_out), right_out) in frames {
-                let dry = [held(*left_in), held(*right_in)];
-                let [left, right] = self.frame(dry);
+            for (index, (((left_in, right_in), left_out), right_out)) in frames.enumerate() {
+                let [left, right] = self.frame([held(*left_in), held(*right_in)]);
+                let tail_gain = from + (to - from) * (index + 1) as f32 / length;
                 let width = self.width.advance(1);
                 let mix = self.mix.advance(1);
-                let (middle, side) = ((left + right) * 0.5, (left - right) * 0.5 * width);
-                *left_out = dry[0] + mix * (middle + side - dry[0]);
-                *right_out = dry[1] + mix * (middle - side - dry[1]);
+                let middle = (left + right) * 0.5 * tail_gain;
+                let side = (left - right) * 0.5 * width * tail_gain;
+                // The dry sound as it came in: only what goes into the reverb is held.
+                *left_out = (1.0 - mix) * *left_in + mix * (middle + side);
+                *right_out = (1.0 - mix) * *right_in + mix * (middle - side);
             }
         }
         if !silent_input {
@@ -624,6 +708,22 @@ mod tests {
             let high_db = 20.0 * (gain * at).log10();
             let expected = expected / part;
             assert!((high_db - expected).abs() < 1e-3, "{high_db} {expected}");
+        }
+    }
+
+    /// Every line is a prime number of frames, and no two are the same, at every size and rate.
+    #[test]
+    fn the_lines_are_different_primes() {
+        assert_eq!(nearest_prime(1_800), 1_801);
+        assert_eq!(nearest_prime(4), 3);
+        for rate in [44_100.0, 48_000.0, 96_000.0] {
+            for size in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let lines = line_frames(size, rate);
+                for (index, line) in lines.iter().enumerate() {
+                    assert!((2..*line).all(|divisor| line % divisor != 0), "{line}");
+                    assert!(!lines[index + 1..].contains(line), "{lines:?}");
+                }
+            }
         }
     }
 

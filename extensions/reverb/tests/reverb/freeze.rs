@@ -37,8 +37,7 @@ fn freeze_holds_the_tail_for_a_minute_without_growing_or_letting_sound_in() {
         let level = db(rms(&left).hypot(rms(&right)) / held);
         levels.push(level);
         if second == 30 {
-            // A change of size while frozen fades to other taps of the same lines: it may
-            // lose a little, and never adds.
+            // A change of size while frozen waits until freeze ends, so it takes nothing.
             rig.update(ReverbState {
                 size: 1.0,
                 ..frozen
@@ -86,4 +85,44 @@ fn a_frozen_tail_with_silence_coming_in_stays_where_it_was() {
     println!("5 to 6 s after freeze: {fallen:.1} dB");
     assert!(fallen < -58.0, "{fallen}");
     assert_clean(&after);
+}
+
+/// A drag of the size while frozen does not drain the tail: the lines keep their taps until
+/// freeze ends. Every fade between taps would lose a little of it, and a drag is sixty fades.
+#[test]
+fn a_drag_of_the_size_while_frozen_keeps_the_tail() {
+    let state = plain(3.0);
+    let mut rig = Rig::new(state, crate::support::burst(0.5, SECOND));
+    rig.render(SECOND);
+    let frozen = ReverbState {
+        freeze: true,
+        ..state
+    };
+    rig.update(frozen);
+    rig.render(SECOND / 2);
+    let [before, _] = rig.render(SECOND / 2);
+    let held = rms(&before);
+    // Sixty moves over one second, from size 0.5 to 1 and back to 0.
+    for step in 0..60 {
+        let along = step as f32 / 59.0;
+        let size = if step < 30 {
+            0.5 + along
+        } else {
+            2.0 - 2.0 * along
+        };
+        rig.update(ReverbState {
+            size: size.clamp(0.0, 1.0),
+            ..frozen
+        });
+        rig.render(SECOND / 60);
+    }
+    let [after, _] = rig.render(SECOND / 2);
+    let change = db(rms(&after) / held);
+    println!("frozen, after a drag of the size: {change:+.2} dB");
+    assert!(change.abs() < 0.5, "{change}");
+
+    // Off again, the reverb takes the size of the record.
+    rig.update(ReverbState { size: 0.0, ..state });
+    let [thawed, _] = rig.render(SECOND);
+    assert_clean(&thawed);
 }
