@@ -57,6 +57,7 @@ In `process`:
 - `context.event_outputs.push(port, offset, event)` sends an event. It returns whether the event fitted. Keep an event you must not lose, such as a note off, and send it in the next block. `context.event_outputs.count_dropped()` counts an event you dropped for a full list of your own.
 - `context.frames` is 1 to `MAX_BLOCK` (64). `context.start_frame` is the engine time of the block's first frame.
 - `Smoothed` is the one smoothing helper of the SDK. `set_target(value, ramp_frames)` in `update`, `advance(frames)` in `process`, `snap()` when nothing sounds. A parameter that jumps clicks; the core smooths nothing by itself.
+- `Parameter<S>` is one number of a saved state: its field, range and default, written once as a constant. `check(&state)` gives the error that names the field, for `State::validate`. The synth and the Filter are the examples.
 
 A handle that matches no declared port (wrong index, wrong event type, or the same output twice in `get_many`) never panics on the audio thread. Reads are empty, writes go nowhere, and each use counts in `EngineStatus::port_misuses`. Anything above zero there is a bug in a processor.
 

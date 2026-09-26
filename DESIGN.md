@@ -134,6 +134,8 @@ Step 1a, September 25, 2026. What the spec above left open, or what the build sh
 - Display: a handle moves one or two values, each an `Axis` on a `KnobRange` across the width or the height, or fixed. A handle whose place depends on another value, such as the decay corner of an envelope after its attack, gives its axis a range offset by that value. The target of a handle is 18 pt, larger than its 10 pt dot, for a trackpad. Controls at the top of a display sit 6 pt in from its edges.
 - Scroll: none of these controls handles a scroll, so two-finger scroll passes to what holds them.
 
+- The Filter, step 5: the display spans 20 Hz to 20 kHz across and -36 to +30 dB up, so the +26 dB of full resonance fits. The handle sits on the peak of a low or high pass: its travel up and down is resonance stretched so that the dot is where the curve is, and it stops at 0 and 1. The slope is a segmented `12 · 24` with the label `Slope` and `dB / oct` on its value line; it is 8 pt wider than its cell and takes that from the air around it. The hidden columns are the slope, then LFO rate over LFO depth. The rack draws the header of every card, the view of the device the body, see ARCHITECTURE.md, "Built-in effects". The power icon is not built.
+
 ### Devices
 
 Steps 5 to 8 build from these. "Shown" is on the card, "hidden" is behind expand. Every device keeps its parameters in its record, shown or hidden.
