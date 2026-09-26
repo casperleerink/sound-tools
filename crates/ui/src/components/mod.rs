@@ -12,6 +12,7 @@ pub(crate) mod paint;
 pub mod cell;
 pub mod device_card;
 pub mod display;
+pub mod drag_number;
 pub mod gesture;
 pub mod knob;
 pub mod meter;

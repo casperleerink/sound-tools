@@ -71,18 +71,29 @@ A tool that edits what it owns shows that inside its own view. The window has on
 
 ### Host the view of another instance
 
-Any view may call `Views::view_of`, because the registry is a global and not a field of the window. So a view can host the view of an instance whose tool it does not know, and an extension can show what another extension owns without depending on it. The track panel of the arrangement does this for the instrument of a track (`extensions/arrangement/src/view/track_panel.rs`):
+Any view may call `Views::view_of`, because the registry is a global and not a field of the window. So a view can host the view of an instance whose tool it does not know, and an extension can show what another extension owns without depending on it.
+
+A rack is the common case, and it has a registration of its own. A tool whose instances sit in the slots of a rack registers a card: a view that draws the whole device card, because it owns what the body shows. The rack gives it a `CardFrame`: an id that tells this card from every other, the title, which is the picker of the slot, and the close icon of an effect. The track panel of the arrangement does this (`extensions/arrangement/src/view/track_panel.rs`), and the synth is the example of a card (`extensions/instrument/src/view.rs`):
 
 ```rust
-// `None`: the instance is gone, its tool has no view, or no registry is installed.
-let view: Option<AnyView> = Views::view_of(&session, &slot, window, cx);
-// In `render`:
-card.child(view.clone())
+// Where the tool registers.
+views.register_card(SynthView::new);   // new(session, instance, frame, window, cx)
+
+// In the rack. `None`: the instance is gone, its tool has no card, or no registry is installed.
+let frame = CardFrame::new(card_id, picker.clone()).close(move |window, cx| { /* take it off */ });
+let view: Option<AnyView> = Views::card_of(&session, &slot, frame, window, cx);
+
+// In the render of the card: the frame gives the header, the view adds the rest.
+self.frame.card()
+    .expand(self.expanded, expand)       // whether it is expanded is the view's own state
+    .display(display)
+    .column(Column::new().top(cutoff).bottom(gain))
+    .hidden_column(Column::new().top(attack).bottom(sustain))
 ```
 
 - Keep the `AnyView` in a field and make it when the instance or its tool changes, in a subscription with a window (`cx.subscribe_in`), never in `render`. Remember the tool name you made it for (`project.tool_of(&id)`): a file from outside can put another tool at the same id.
-- Show something quiet when there is no view. A tool without a view is normal.
-- The hosted view owns its edits and its gestures. The host gives it a surface, such as a card, and nothing else. When the host drops the view during a drag, the view must finish its gesture when it is released (`cx.on_release`), as `SynthView` does.
+- Show something quiet when there is no view. A tool without a view is normal. The track panel draws a card of its own then, with the same frame.
+- The hosted view owns its edits and its gestures. The host gives it a surface, or a frame, and nothing else. When the host drops the view during a drag, the view must finish its gesture when it is released (`cx.on_release`), as `SynthView` does.
 - A test with the window of the runtime has the registry through `Shell::new`. A test of a view alone installs one itself: `views.install(cx)`.
 
 ### What a composer can put in a slot
@@ -107,6 +118,9 @@ devices.effects(|| vec![/* the same, for an effect slot */]);
 // In the view:
 let offers = Devices::offered(Slot::Effect, cx);         // when the picker is made, not per frame
 let label = Devices::label_of(&session, &slot, cx);      // `None`: the tool registered nothing
+// An offer a project cannot load says why, in words for a composer. The file edit that
+// enables the extension is for the agent docs.
+DeviceOffer::new(..).needs("plugin-host", "This project does not load plugins.");
 // When the composer picks one, as one undo step:
 offer.write(session.project(), &slot, &mut changes)?;
 project.commit(&format!("Choose {}", offer.name), changes)
@@ -181,7 +195,7 @@ Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Ses
 
 ### A control on saved state
 
-The knob, the volume and the handles of a display are controlled, so a view of saved state keeps no copy of what they show: give the value on every render and handle the `ValueChange`. `ControlEdit` does the session side, so a view keeps one of it and nothing else of a drag. `extensions/instrument/src/view.rs` is the example, and the mixer section of `extensions/arrangement/src/view/track_panel.rs` is a shorter one.
+The knob, the volume and the handles of a display are controlled, so a view of saved state keeps no copy of what they show: give the value on every render and handle the `ValueChange`. `ControlEdit` does the session side, so a view keeps one of it and nothing else of a drag. `extensions/instrument/src/view.rs` is the example, and the mixer strip of `extensions/arrangement/src/view/track_panel.rs` is a shorter one.
 
 ```rust
 Knob::new("cutoff_hz")
@@ -206,7 +220,9 @@ What `ControlEdit::apply` does with each change, which is what a view that does 
 
 The gesture is one for all three controls, in `components/gesture.rs`: a drag from the press that never jumps, shift ten times finer, double click or backspace for the default, the arrows, escape. A knob travels 200 pt; the volume and a handle follow the pointer. Every one of them has its own tab stop and focus ring except a handle, whose value always has a knob too. `KnobRange::value` gives three significant digits, and `knob::short` writes a number the same way for a readout: `2`, `15.5`, `632`. Every such control hears every mouse up and every press of the window, because a drag goes on outside it. It tells nobody unless a drag was open, so a click somewhere else renders nothing. A press while a drag is still open ends that drag: its mouse up was lost.
 
-A device card is built from `DeviceCard`, `Column`, `Cell` and `Display`, see the rack section of the gallery (`crates/gallery/src/sections/rack.rs`). In the track rack the card is two views' work: the rack draws the `DeviceCard` with the picker, expand and close, and the view of the device draws its body with `device_card::body(display, columns, hidden)`. A tool whose view hides controls says so with `devices.expands::<S>()`, and the view shows them while `Session::is_expanded` is set for its instance. `extensions/filter/src/view.rs` is the example. The meter shows a `Level`; where it comes from is the owner's business, and `meter::Ballistics` makes one from a peak per frame.
+A number without a dial, such as the tempo of the transport, is a `DragNumber`: the same gesture, and a drag in whole steps from the value it began on that does not round the result, so a value written by hand keeps its fraction. The owner gives the text as children and hears `ValueChange<f64>`.
+
+A device card is built from `DeviceCard`, `Column`, `Cell` and `Display`, see the rack section of the gallery (`crates/gallery/src/sections/rack.rs`). The meter shows a `Level`; where it comes from is the owner's business, and `meter::Ballistics` makes one from a peak per frame.
 
 ## Rules
 
@@ -223,6 +239,6 @@ A device card is built from `DeviceCard`, `Column`, `Cell` and `Display`, see th
 
 ## Test a view
 
-`crates/ui/tests/bridge.rs` and `crates/runtime/tests/window/` show the pattern: a project on a temporary folder with an offline engine, a `Session`, `#[gpui::test]`, and `cx.executor().advance_clock(POLL_INTERVAL)` to let the poll timer fire. Call `engine.process_block(..)` yourself, so that transport commands apply. Wait with `cx.background_executor().timer(..)`, never with `smol::Timer`. `tests/window/support.rs` has the hands of a composer: press, drag and release at the place of a tick, a track or a pitch, worked out with the layout functions of the view. A control made of elements has no layout function. The controls name themselves for tests with GPUI's `debug_selector` (`knob-<id>`, `volume-<id>`, `toggle-<id>`, `handle-<id>`, `segment-<value>`, and `<card>-expand`, `<card>-power`, `<card>-close` for the icons of a device card), which does nothing in a normal build, and `Opened::control("knob-cutoff_hz")` gives the middle of one. It asks for a whole frame first, because a cached view that was not painted again has no bounds in the last frame. Two keys in one `simulate_keystrokes` call have no frame between them. Send them one by one when the second needs what the first painted, such as the tab order.
+`crates/ui/tests/bridge.rs` and `crates/runtime/tests/window/` show the pattern: a project on a temporary folder with an offline engine, a `Session`, `#[gpui::test]`, and `cx.executor().advance_clock(POLL_INTERVAL)` to let the poll timer fire. Call `engine.process_block(..)` yourself, so that transport commands apply. Wait with `cx.background_executor().timer(..)`, never with `smol::Timer`. `tests/window/support.rs` has the hands of a composer: press, drag and release at the place of a tick, a track or a pitch, worked out with the layout functions of the view. A control made of elements has no layout function. The controls name themselves for tests with GPUI's `debug_selector` (`knob-<id>`, `volume-<id>`, `toggle-<id>`, `handle-<id>`, `segment-<value>`, `number-<id>`, `notice-<id>`, and `<card>-expand`, `<card>-power`, `<card>-close` for the icons of a device card), which does nothing in a normal build, and `Opened::control("knob-cutoff_hz")` gives the middle of one. It asks for a whole frame first, because a cached view that was not painted again has no bounds in the last frame. Two keys in one `simulate_keystrokes` call have no frame between them. Send them one by one when the second needs what the first painted, such as the tab order.
 
 `cargo test -p runtime --test snapshots` renders the whole window to PNGs with no visible window, and `cargo test -p gallery --test snapshots` renders the components.

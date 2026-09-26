@@ -17,8 +17,6 @@ pub const TRACK_HEIGHT: f32 = 64.0;
 pub const LEAD_IN: f32 = 8.0;
 /// The gap between a clip and the edge of its track row.
 pub const CLIP_INSET: f32 = 4.0;
-/// Scroll room below the last track, so that the floating transport never hides it.
-pub const BOTTOM_ROOM: f32 = 96.0;
 /// Scroll room after the last clip.
 pub const END_ROOM_BARS: u64 = 16;
 /// Everything snaps to a sixteenth note. Fixed for the first milestone.
@@ -209,7 +207,7 @@ impl Viewport {
     }
 
     /// The same for any content below the ruler: `end` with the room after it across, and
-    /// `content_height` with the room for the transport below it.
+    /// `content_height` down. Nothing floats over the content, so it needs no room below.
     pub fn clamped_to(
         &self,
         end: Ticks,
@@ -220,7 +218,6 @@ impl Viewport {
     ) -> Self {
         let end_room = END_ROOM_BARS * time_signature.ticks_per_bar();
         let content_width = (end.0 + end_room) as f64 * self.pixels_per_tick() + f64::from(LEAD_IN);
-        let content_height = content_height + f64::from(BOTTOM_ROOM);
         Self {
             scroll_x: self
                 .scroll_x
@@ -497,10 +494,9 @@ mod tests {
         };
         let far = Viewport::default().scrolled(-100_000.0, -100_000.0);
         let clamped = far.clamped(extent, four_four(), 960.0, 320.0);
-        // The lead-in, 8 bars and 16 bars of room are 2312 px. 10 rows and the bottom room
-        // are 736 px.
+        // The lead-in, 8 bars and 16 bars of room are 2312 px. 10 rows are 640 px.
         assert_eq!(clamped.scroll_x, 2312.0 - 960.0);
-        assert_eq!(clamped.scroll_y, 736.0 - 320.0);
+        assert_eq!(clamped.scroll_y, 640.0 - 320.0);
 
         let before_start = Viewport::default().scrolled(50.0, 50.0);
         assert_eq!(

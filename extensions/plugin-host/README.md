@@ -52,7 +52,7 @@ core's `AssetName`, so a record can never point outside the project folder.
 | `processor.rs` | The engine processor around a plugin's audio side: the note contract and one stereo port in, one stereo port out. `Started` is the audio side of a backend. |
 | `scan.rs` | What this machine has, found in a child process per bundle, with the cache of this machine. |
 | `window.rs` | The plugin's own window: one window of the application per open plugin. |
-| `view.rs` | The card of a plugin in a rack, and what a rack calls one. |
+| `view.rs` | The card of a plugin in a rack, 200 pt: `Open window` at the top of its body and `CLAP · <maker>` on the value line of its second row. No expand, because nothing is hidden, and no power, because there is no bypass yet. And what a rack calls one. |
 | `clap.rs` | The CLAP backend: the host callbacks, loading, the window and playing. |
 | `vst3/` | The VST 3 backend. `module.rs` loads a bundle, `plugin.rs` is the control side, `process.rs` the audio side, `context.rs` what the host is from the plugin's side, including the edits its controller makes, `stream.rs` an `IBStream` over bytes, `view.rs` the plugin's window (`IPlugView`, `IPlugFrame`). |
 | `src/bin/plugin-scan.rs` | The child process, for the tests of this crate. The runtime is its own child. |

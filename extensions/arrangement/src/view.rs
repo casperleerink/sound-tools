@@ -285,15 +285,18 @@ impl Render for ArrangementView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let timeline = self.timeline.clone();
         let fill_parent = || StyleRefinement::default().size_full();
-        // Both details have one height, so a swap between them does not move the timeline.
-        // Both are cached: the playhead line above draws this view again on every frame.
+        // Notes need the room and devices do not, so the two details have heights of their
+        // own and a swap between them moves the lower edge of the timeline. Both are cached:
+        // the playhead line above draws this view again on every frame.
         let detail = self.detail.as_ref().map(|detail| {
-            let panel = div().flex_none().h(px(EDITOR_HEIGHT)).relative();
+            let panel = |height: f32| div().flex_none().h(px(height)).relative();
             match detail {
-                Detail::Editor(open) => panel
+                Detail::Editor(open) => panel(EDITOR_HEIGHT)
                     .child(open.editor.clone().cached(fill_parent()))
                     .child(open.playhead_line.clone()),
-                Detail::Track(open) => panel.child(open.panel.clone().cached(fill_parent())),
+                Detail::Track(open) => {
+                    panel(track_panel::PANEL_HEIGHT).child(open.panel.clone().cached(fill_parent()))
+                }
             }
         });
         div()

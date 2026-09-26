@@ -29,7 +29,7 @@ The filter owns no children, so an instance is one file: `<name>.json` in a trac
 - At 12 dB per octave one section plays. At 24 dB the second follows it, and at resonance 0 the two are the sections of a fourth order Butterworth filter. So for both slopes, low and high pass are 3 dB down at the cutoff and flat before it.
 - Resonance raises the Q of the last section from its Butterworth value to 20 on a ratio, so the peak in dB grows in a straight line: at the cutoff a low or high pass is +26 dB with resonance 1 at 12 dB per octave, and +21 dB at 24. The band pass has its peak at 0 dB and gets narrower; the notch gets narrower.
 - The filter is linear and stable at every cutoff and resonance, also while they move. It never oscillates by itself and nothing blows up. Input louder than +36 dBFS is held there and a sample that is not a number is taken as silence, so nothing that comes in can make it infinite.
-- Drive is a gain into `tanh`. Drive 0 is exactly clean; the saturation fades in over the first 3 dB, so the knob does not jump there. It raises quiet sounds by its gain and holds loud ones under full scale before the filter.
+- Drive is a gain into one fixed curve: exactly clean up to full scale, then a `tanh` bend that never passes 1.5. So drive 0 leaves every sound up to full scale as it is, drive raises quiet sounds by its gain, and loud ones bend. The curve does not move with the knob, so turning drive up never makes the sound louder on the way than where it ends. `response` leaves drive out; for a quiet sound it is its gain.
 - The LFO is a sine on the cutoff in octaves, `lfo_depth_octaves` each way at `lfo_rate_hz`. Its phase starts at 0 when the filter is made, so a render is the same every time. It moves the cutoff between 5 Hz and 45 % of the sample rate.
 - Every change glides over 20 ms (`RAMP_SECONDS`): the cutoff in octaves, resonance, drive, mix, LFO depth, and also the type and the slope. Each section makes low, band and high pass from one memory, so a type is a weight of each and a new type is a glide of the weights. Both sections always run, so a new slope is a glide from the first to the second. Nothing is a switch, and no edit clicks.
 - The factors of the filter are worked out once per 16 frames while the cutoff, the resonance, the slope or the LFO moves, and not at all while they rest.
@@ -41,9 +41,9 @@ The filter owns no children, so an instance is one file: `<name>.json` in a trac
 
 ## The card
 
-`view::register(views, devices)` registers `FilterView` for `filter`, says the card of a filter is called `Filter`, and says it hides controls, so the rack gives its card the expand icon. The runtime offers `Filter` in the control that adds an effect.
+`view::register(views, devices)` registers `FilterView` as the card of `filter` (`Views::register_card`) and says the card of a filter is called `Filter`. The runtime offers `Filter` in the control that adds an effect.
 
-The track panel draws the card: the picker in the header, expand, and close. The view draws the body, 352 pt wide as DESIGN.md gives it:
+The rack gives the view a `CardFrame`, the picker of the slot as the title and the close icon, and the view draws the whole card, 352 pt wide as DESIGN.md gives it, with its expand icon:
 
 - The display, 200 pt: the response curve from 20 Hz to 20 kHz, -36 to +30 dB, with the scale `100 · 1k · 10k` under it. The type as segments at its top. One handle at the cutoff: sideways is cutoff, up and down is resonance, placed so that it sits on the peak of a low or high pass.
 - Cutoff and Drive, Resonance and Mix, as knobs in two columns.
@@ -53,7 +53,7 @@ Editing, the same rules as every control on saved state (`sound_ui::ControlEdit`
 
 - A drag of a knob is one gesture and one undo step: "Change cutoff", "Change resonance", "Change drive", "Change mix", "Change LFO rate", "Change LFO depth". A drag of the handle is one step for both of its values, "Change cutoff and resonance". The file is written once, at the end. Escape cancels.
 - A click on a type or a slope is one step, "Change filter type" or "Change slope". A double click or backspace on a knob sets its default, a double click on the handle sets both of its.
-- The view keeps no copy of the state, so an outside edit shows at once, also during a drag. Whether the card is expanded is interface state of the session and is not saved.
+- The view keeps no copy of the state, so an outside edit shows at once, also during a drag. Whether the card is expanded is the view's own interface state and is not saved.
 
 ## Checks
 

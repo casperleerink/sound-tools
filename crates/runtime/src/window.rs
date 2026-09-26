@@ -1,5 +1,6 @@
-//! The application window: the view of the project's main instance, the project menu top-left,
-//! the floating transport bottom centre, and a quiet line for errors and problems.
+//! The application window: the title row with the project menu at its left and the transport
+//! in its middle, the view of the project's main instance under it, and a quiet line for
+//! errors and problems bottom-left.
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
 //! view the installed [`Views`] has for the first instance at the top of the project.
@@ -50,6 +51,13 @@ actions!(
 /// Room for the traffic lights of a macOS window, left of the project menu.
 const TRAFFIC_LIGHTS_WIDTH: f32 = 80.;
 const TOP_ROW_HEIGHT: f32 = 48.;
+/// The notices sit this far in from the left and the bottom of the window.
+const NOTICE_INSET: f32 = 24.;
+/// The widest a notice gets. A longer message wraps, to three lines at most.
+const NOTICE_WIDTH: f32 = 400.;
+/// The window of the design: a 13 to 14 inch MacBook, less its menu bar.
+const WINDOW_WIDTH: f32 = 1470.;
+const WINDOW_HEIGHT: f32 = 920.;
 
 /// The root view of the window.
 pub struct Shell {
@@ -153,16 +161,24 @@ impl Shell {
             count => Some(format!("{count} files are not live, see problems.txt")),
         };
         let error = session.notice().cloned();
+        // A definite width, so that a message wraps at the width it gets and the box is as tall
+        // as its lines: with only a largest width the text was measured on one line and then
+        // painted on three, past the bottom of the window. A notice is as wide as its text up
+        // to this width.
         div()
             .absolute()
-            .left(px(24.))
-            .bottom(px(24.))
-            .max_w(px(400.))
+            .left(px(NOTICE_INSET))
+            .bottom(px(NOTICE_INSET))
+            .w(px(NOTICE_WIDTH))
             .flex()
             .flex_col()
             .items_start()
             .gap(px(8.))
-            .children(files.map(|files| Notice::new("problems", files).tone(NoticeTone::Warning)))
+            .children(files.map(|files| {
+                Notice::new("problems", files)
+                    .tone(NoticeTone::Warning)
+                    .max_w_full()
+            }))
             .children(error.map(|error| {
                 Notice::new("error", error)
                     .max_w_full()
@@ -250,13 +266,18 @@ impl Render for Shell {
                     .child(Self::drag_region().flex_1()),
             )
             .child(div().flex_1().min_h_0().child(main))
+            // The transport in the middle of the title row, whatever the project menu is wide.
+            // Nothing floats over the content any more. It comes after the main area, so tab
+            // reaches it last, as before.
             .child(
                 div()
                     .absolute()
-                    .bottom(px(24.))
+                    .top_0()
                     .left_0()
                     .w_full()
+                    .h(px(TOP_ROW_HEIGHT))
                     .flex()
+                    .items_center()
                     .justify_center()
                     .child(self.transport.clone()),
             )
@@ -450,7 +471,7 @@ pub fn run(folder: &Path) -> Result<()> {
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
-                    size(px(1440.), px(900.)),
+                    size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)),
                     cx,
                 ))),
                 titlebar: Some(TitlebarOptions {

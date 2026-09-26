@@ -338,7 +338,6 @@ fn select_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
-        .flex_none()
         .items_center()
         .gap(px(4.))
         .h(px(24.))
@@ -361,7 +360,6 @@ fn ghost_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
-        .flex_none()
         .items_center()
         .gap(px(6.))
         .h(px(TRIGGER_HEIGHT))
@@ -591,20 +589,27 @@ impl Render for DropdownMenu {
         };
         let (muted, ring) = (cx.theme().gray_700, cx.theme().lavender);
 
+        // A trigger in less room than its label, such as the title of a narrow card, gives way
+        // and ends its label in an ellipsis. The chevron stays.
         div()
             .relative()
             .flex()
-            .flex_none()
+            .min_w_0()
             .child(
                 trigger_element
+                    .min_w_0()
                     .when_some(self.debug_name.clone(), |element, name| {
                         element.debug_selector(move || name.to_string())
                     })
                     .track_focus(&self.trigger_focus)
                     .border_1()
                     .focus_visible(move |s| s.border_color(ring))
-                    .child(label)
-                    .child(Icon::new("chevron-down").size(chevron).color(muted))
+                    .child(div().min_w_0().truncate().child(label))
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(Icon::new("chevron-down").size(chevron).color(muted)),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         if this.open {
                             this.close(window, cx);

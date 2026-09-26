@@ -306,6 +306,39 @@ fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
 }
 
 #[gpui::test]
+fn a_long_error_fits_bottom_left_in_three_lines_at_most(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let session = opened.session.clone();
+    let long = "a problem that goes on and on, ".repeat(20);
+    opened
+        .cx
+        .update(|_, cx| session.update(cx, |session, cx| session.report(long, cx)));
+    let notice = opened.bounds("notice-error").unwrap();
+    let window = opened.cx.update(|window, _| window.viewport_size());
+    // 24 pt in from the left and the bottom, and 400 pt wide at most.
+    assert_eq!(notice.left(), px(24.));
+    assert_eq!(notice.bottom(), window.height - px(24.));
+    assert!(notice.size.width <= px(400.), "{notice:?}");
+    // As tall as the three lines of 20 pt it paints and its padding: the lines stay inside it,
+    // and so inside the window.
+    assert!(
+        (px(60.)..=px(74.)).contains(&notice.size.height),
+        "{notice:?}"
+    );
+
+    // A short one is as wide as its text.
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.dismiss_notice(cx);
+            session.report("short", cx);
+        })
+    });
+    let notice = opened.bounds("notice-error").unwrap();
+    assert!(notice.size.width < px(200.), "{notice:?}");
+    assert!(notice.size.height < px(40.), "{notice:?}");
+}
+
+#[gpui::test]
 fn cmd_z_waits_for_an_open_gesture(cx: &mut TestAppContext) {
     let opened = open(cx);
     let session = opened.session.clone();

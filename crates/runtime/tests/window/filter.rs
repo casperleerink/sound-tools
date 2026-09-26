@@ -129,7 +129,7 @@ fn the_type_is_one_click_and_one_step(cx: &mut TestAppContext) {
 #[gpui::test]
 fn expand_shows_the_slope_and_the_lfo(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    let expand = opened.control("device-filter-expand");
+    let expand = opened.control("card-filter-expand");
     opened.click(expand);
     assert_eq!(opened.undo_label().as_deref(), Some("Add Filter"));
     for hidden in ["knob-lfo_rate_hz", "knob-lfo_depth_octaves", "segment-24"] {
@@ -145,7 +145,7 @@ fn expand_shows_the_slope_and_the_lfo(cx: &mut TestAppContext) {
     assert!(state(&mut opened).lfo_depth_octaves > 0.0);
     assert_eq!(opened.undo_label().as_deref(), Some("Change LFO depth"));
 
-    let expand = opened.control("device-filter-expand");
+    let expand = opened.control("card-filter-expand");
     opened.click(expand);
     assert_eq!(opened.find("knob-lfo_rate_hz"), None);
 }

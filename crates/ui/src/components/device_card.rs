@@ -11,12 +11,17 @@
 //!
 //! The card knows no device. It shows what it is given and reports clicks; whether it is
 //! expanded is the owner's interface state and whether it is on the owner's record.
+//!
+//! In a rack the view of the device draws the whole card, because it owns what the body shows,
+//! and the rack gives it a [`CardFrame`]: the title, which is the picker of the slot, and the
+//! close icon of an effect.
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Div, ElementId, Hsla, MouseButton, SharedString, StyleRefinement,
-    Window, div, prelude::*, px,
+    AnyElement, AnyView, App, ClickEvent, Div, ElementId, Hsla, MouseButton, SharedString,
+    StyleRefinement, Window, div, prelude::*, px,
 };
 
 use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT};
@@ -39,6 +44,46 @@ const INSIDE: f32 = CARD_PADDING - 1.;
 const HIDDEN_GAP: f32 = 8.;
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// What a rack gives the view of the device in one of its slots, so that the view can draw the
+/// whole card with [`CardFrame::card`] and add its display and cells.
+#[derive(Clone)]
+pub struct CardFrame {
+    /// Tells this card from every other in the rack, so that two cards with controls of one
+    /// name keep a drag and a focus each, and names its icons for tests: `<id>-close`.
+    id: SharedString,
+    /// The picker of the slot: a ghost trigger, which brings 8 pt of padding of its own.
+    title: AnyView,
+    close: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
+}
+
+impl CardFrame {
+    pub fn new(id: impl Into<SharedString>, title: impl Into<AnyView>) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            close: None,
+        }
+    }
+
+    /// The close icon, which takes the device out of the rack.
+    pub fn close(mut self, on_close: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.close = Some(Rc::new(on_close));
+        self
+    }
+
+    /// A card with the id, the title and the close icon of this frame. The view adds the rest.
+    pub fn card(&self) -> DeviceCard {
+        // The trigger brings its own padding, so it moves left by that much and its text lands
+        // where a card title is.
+        let title = div().flex().min_w_0().ml(px(-8.)).child(self.title.clone());
+        let card = DeviceCard::new(ElementId::Name(self.id.clone()), title);
+        match self.close.clone() {
+            Some(close) => card.close(move |_, window, cx| close(window, cx)),
+            None => card,
+        }
+    }
+}
 
 /// A column of a card: one cell in each of the two rows. Either may be empty.
 #[derive(IntoElement, Default)]

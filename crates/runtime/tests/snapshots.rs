@@ -20,11 +20,10 @@
 //! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
 //! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default.
 //! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
-//! - `track-panel-synth-effects.png`: the synth with two effects after it and the mixer
-//!   section, which is wider than the rack has room for on this screen.
+//! - `track-panel-synth-effects.png`: the synth with four effects after it, which is wider
+//!   than the rack has room for on this screen, so its right edge fades.
 //! - `track-panel-filter.png`: the synth and the built-in filter after it.
-//! - `track-panel-filter-expanded.png`: the filter expanded, with slope and LFO, on a track
-//!   with no instrument.
+//! - `track-panel-filter-expanded.png`: the same with the filter expanded: slope and LFO.
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
 //! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
 //! - `track-panel-picker.png`: the same with the instrument picker open.
@@ -54,6 +53,7 @@ use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor};
 use arrangement::{Colour, TrackState};
 use filter::FilterState;
+use filter::view::FilterView;
 use gpui::{
     AppContext, Entity, HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, PlatformInput, Point, WindowHandle, point, px, size,
@@ -770,19 +770,19 @@ fn main() -> Result<()> {
     })?;
     opened.click_track_header(1., &mut cx)?;
     save(&mut cx, &opened, "track-panel")?;
-    // From the timeline, tab goes to the close control, the picker, the waveform and then the
-    // cutoff.
-    for _ in 0..4 {
+    // From the timeline, tab goes to the close control, the volume, the pan and mute, then the
+    // picker and the expand icon of the card, the waveform and the cutoff.
+    for _ in 0..8 {
         opened.key("tab", &mut cx)?;
     }
     save(&mut cx, &opened, "track-panel-focus")?;
     drop(opened);
 
-    // The synth with two effects and the mixer section: the whole rack of a track as a
-    // composer builds it, on the screen of the laptop.
+    // The synth with four effects: more than the rack has room for on the screen of the
+    // laptop, so it fades at its right edge.
     let opened = Opened::new(&mut cx, |project| {
         piece(project)?;
-        set_effects(project, "bass", &["Warmth", "Space"])
+        set_effects(project, "bass", &["Warmth", "Space", "Air", "Echo"])
     })?;
     opened.click_track_header(1., &mut cx)?;
     save(&mut cx, &opened, "track-panel-synth-effects")?;
@@ -796,24 +796,16 @@ fn main() -> Result<()> {
     })?;
     opened.click_track_header(1., &mut cx)?;
     save(&mut cx, &opened, "track-panel-filter")?;
-    drop(opened);
-    // Expanded, on a track with no instrument, so the card has the room the synth of step 1
-    // of the third milestone will leave it.
-    let opened = Opened::new(&mut cx, |project| {
-        piece(project)?;
-        let mut changes = Changes::new();
-        changes.delete(&InstanceId::new("arrangement/bass/instrument")?);
-        project.commit("Remove synth", changes)?;
-        add_filter(project, "bass")
+    let view = opened.arrangement_view(&mut cx)?;
+    let card = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
+        let card = card.context("the filter has no card")?;
+        card.downcast::<FilterView>()
+            .map_err(|_| anyhow::anyhow!("the second card is not the filter"))
     })?;
-    opened.click_track_header(1., &mut cx)?;
-    let filter = InstanceId::new("arrangement/bass/filter")?;
-    cx.update(|cx| {
-        opened
-            .session
-            .update(cx, |session, cx| session.set_expanded(filter, true, cx))
-    });
-    cx.update_window(opened.window.into(), |_, window, _| window.refresh())?;
+    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "track-panel-filter-expanded")?;
     drop(opened);

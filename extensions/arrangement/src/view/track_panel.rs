@@ -14,70 +14,60 @@
 //! slot that stays, by its slot id, so a knob drag in one card goes on while another card is
 //! added or removed next to it.
 //!
-//! The mixer of the track (gain, pan and mute) is not a device. It is a fixed section at the
-//! right end of the row, after the rack and outside what scrolls, and it is the one thing the
-//! panel edits itself: those three values are in the track record.
+//! The view of a device draws its whole card, from the frame the panel gives it: the picker as
+//! its title, and the close icon of an effect.
+//!
+//! The mixer strip of the track (volume, pan and mute) is not a device. It is in the header
+//! column under the name of the track, on the rows of the cards, and it is the one thing the
+//! panel edits itself: those values are in the track record.
+//!
+//! The panel is 216 pt: 12 above the cards, a card of 192, 12 below. The rack scrolls sideways
+//! with two fingers, and a fade at its right edge says when cards go past it.
 
 use gpui::{
-    AnyView, App, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    SharedString, Window, div, prelude::*, px,
+    AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    ScrollHandle, SharedString, Window, canvas, div, fill, linear_color_stop, linear_gradient,
+    prelude::*, px,
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::card::Card;
-use sound_ui::components::cell::Cell;
+use sound_ui::components::cell::{CONTROL_HEIGHT, ROW_HEIGHT};
+use sound_ui::components::device_card::{CARD_HEIGHT, CardFrame, HEADER_HEIGHT};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
-use sound_ui::components::toggle::Toggle;
+use sound_ui::components::toggle::{self, Toggle};
+use sound_ui::components::volume::Volume;
 use sound_ui::{ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, Session, Slot, Views};
 
-use super::layout::{HEADER_WIDTH, RULER_HEIGHT};
+use super::layout::HEADER_WIDTH;
 use super::paint::accent;
 use crate::TrackState;
 
-/// A knob of the mixer section: what it edits, and what an undo step of it is called.
-struct Control {
-    field: &'static str,
-    label: &'static str,
-    undo_label: &'static str,
-    range: (f32, f32),
-    /// The arc starts at the top, for a value with a middle.
-    bipolar: bool,
-    set: fn(&mut TrackState, f32),
-    get: fn(&TrackState) -> f32,
-    readout: fn(f32) -> String,
-}
+/// The height of the panel: the cards and 12 pt above and below them.
+pub const PANEL_HEIGHT: f32 = CARD_HEIGHT + 2. * RACK_TOP;
+/// From the top of the panel to the top of the cards.
+const RACK_TOP: f32 = 12.;
+/// From the header column to the first card.
+const RACK_LEFT: f32 = 16.;
+const CARD_GAP: f32 = 12.;
+/// The fade at the right edge of the rack when cards go past it.
+const FADE_WIDTH: f32 = 48.;
+/// The width of a card the panel draws itself, for a slot whose tool has no card.
+const PLAIN_CARD_WIDTH: f32 = 200.;
+/// The middle of the title line of the cards, where the name of the track is too.
+const TITLE_MIDDLE: f32 = RACK_TOP + HEADER_HEIGHT / 2.;
+/// The top of the first row of cells, where the mixer strip starts.
+const ROW_TOP: f32 = RACK_TOP + HEADER_HEIGHT;
+/// The left of the volume in the header column, and of the column of pan and mute.
+const VOLUME_LEFT: f32 = 8.;
+const PAN_LEFT: f32 = 84.;
 
-impl Control {
-    fn knob_range(&self) -> KnobRange {
-        KnobRange::linear(self.range.0, self.range.1)
-    }
-}
-
-const GAIN: Control = Control {
-    field: "gain_db",
-    label: "Gain",
-    undo_label: "Change gain",
-    range: TrackState::GAIN_DB,
-    bipolar: false,
-    set: |track, value| track.gain_db = value,
-    get: |track| track.gain_db,
-    readout: |value| format!("{} dB", short(value)),
-};
-
-const PAN: Control = Control {
-    field: "pan",
-    label: "Pan",
-    undo_label: "Change pan",
-    range: TrackState::PAN,
-    bipolar: true,
-    set: |track, value| track.pan = value,
-    get: |track| track.pan,
-    readout: pan_readout,
-};
+/// What an undo step of the volume is called.
+const VOLUME_LABEL: &str = "Change volume";
+const PAN_LABEL: &str = "Change pan";
 
 /// The pan as people read it: `C` in the middle, else how far to a side in percent.
 fn pan_readout(pan: f32) -> String {
@@ -104,10 +94,15 @@ const EMPTY_EFFECT_SLOT: &str = "No effect";
 /// What the control at the end of the rack says.
 const ADD_EFFECT: &str = "Add effect";
 
-/// What the control that takes an effect off the track is called, and what a test finds it by.
-/// It names the slot, because one view draws every card of the rack.
-pub fn remove_control(slot: &InstanceId) -> SharedString {
-    format!("remove-{}", slot.name()).into()
+/// The id of the card of a slot. It names the slot, because two cards of one device, such as two
+/// filters, must keep a drag and a focus each.
+fn card_id(slot: &InstanceId) -> SharedString {
+    format!("card-{}", slot.name()).into()
+}
+
+/// What a test finds the close icon of an effect card by, which takes the effect off the track.
+pub fn remove_control(slot: &InstanceId) -> String {
+    format!("{}-close", card_id(slot))
 }
 
 /// The same for the picker of an effect card.
@@ -140,11 +135,13 @@ fn offer_entries(
             .items(offers.iter().map(|offer| {
                 let item =
                     MenuItem::new(offer.key.clone(), offer.name.clone()).selectable(picks_one);
-                // An offer this project cannot load is shown and not taken, with the one
-                // edit that would make it work. Enabling an extension while the project
-                // runs is refused, and nothing here writes `project.json` for anyone.
+                // An offer this project cannot load is shown and not taken, with why in
+                // words. Enabling an extension while the project runs is refused, and the
+                // file edit that does it is in the agent docs, not in front of a composer.
                 match (offer.is_enabled_in(project), &offer.needs, &offer.detail) {
-                    (false, Some(needs), _) => item.disabled(true).description(needed(needs)),
+                    (false, Some(needs), _) => {
+                        item.disabled(true).description(needs.reason.clone())
+                    }
                     (_, _, Some(detail)) => item.description(detail.clone()),
                     _ => item,
                 }
@@ -167,8 +164,9 @@ struct Device {
     picker: Entity<DropdownMenu>,
     /// What the picker offers, so that choosing needs no second walk over the registry.
     offers: Vec<DeviceOffer>,
-    /// The remove control of an effect card takes one to be a tab stop and show a ring.
-    remove_focus: FocusHandle,
+    /// The title and the close icon of the card, which the view of the device draws, or the
+    /// panel when the tool has no card.
+    frame: CardFrame,
 }
 
 impl Device {
@@ -206,21 +204,30 @@ impl Device {
             }
         })
         .detach();
+        let frame = CardFrame::new(card_id(&slot), picker.clone());
+        // An effect comes off the track by the close icon of its card. It holds the panel
+        // weakly, as every callback of a control does.
+        let frame = match kind {
+            Slot::Instrument => frame,
+            Slot::Effect => {
+                let (panel, slot) = (cx.weak_entity(), slot.clone());
+                frame.close(move |_, cx| {
+                    panel
+                        .update(cx, |panel, cx| panel.remove_effect(&slot, cx))
+                        .ok();
+                })
+            }
+        };
         Self {
             tool: session.read(cx).project().tool_of(&slot),
-            view: Views::view_of(session, &slot, window, cx),
+            view: Views::card_of(session, &slot, frame.clone(), window, cx),
             slot,
             kind,
             picker,
             offers,
-            remove_focus: cx.focus_handle().tab_stop(true),
+            frame,
         }
     }
-}
-
-/// The one edit that puts an offer this project cannot load within reach.
-fn needed(extension: &SharedString) -> String {
-    sound_ui::enable_extension(extension)
 }
 
 /// What the picker of a slot says and which offer it marks. The device registry answers for a
@@ -261,13 +268,15 @@ pub struct TrackPanel {
     /// Mac on a thread of its own, so a panel opened at the start of a session holds a part of
     /// the list and the quiet line that says so. Every menu is filled again when this changes.
     offers: u64,
-    /// The gesture of a drag of a mixer knob.
+    /// The gesture of a drag of the volume or the pan.
     edit: ControlEdit,
     /// Not a tab stop. It tells whether the focus is inside the panel.
     focus_handle: FocusHandle,
-    /// The knobs and the mute toggle bring their own. A button takes one to be a tab stop and
-    /// show a ring.
+    /// The controls of the mixer strip bring their own. A button takes one to be a tab stop
+    /// and show a ring.
     close_focus: FocusHandle,
+    /// Where the rack is scrolled, and how far it can go, for the fade at its right edge.
+    rack_scroll: ScrollHandle,
 }
 
 impl EventEmitter<TrackPanelEvent> for TrackPanel {}
@@ -362,6 +371,7 @@ impl TrackPanel {
             edit: ControlEdit::default(),
             focus_handle: cx.focus_handle(),
             close_focus: cx.focus_handle().tab_stop(true),
+            rack_scroll: ScrollHandle::new(),
         };
         panel.set_track(track, window, cx);
         panel
@@ -567,76 +577,58 @@ impl TrackPanel {
         });
     }
 
-    fn on_knob(&mut self, control: &Control, change: ValueChange, cx: &mut Context<Self>) {
-        let (session, track) = (&self.session, &self.track);
-        self.edit
-            .apply(session, track, control.undo_label, change, control.set, cx);
-    }
-
-    fn knob(&self, control: &'static Control, track: &TrackState, cx: &mut Context<Self>) -> Knob {
-        let value = (control.get)(track);
-        Knob::new(control.field)
-            .range(control.knob_range())
-            .bipolar(control.bipolar)
-            .value(value)
-            // Both knobs rest at 0: no change of level, and the middle.
+    /// The mixer strip, in the header column on the rows of the cards: the volume at the left
+    /// from the top of the first row to the value line of the second, the pan in the first row
+    /// right of it, and mute on the knob line of the second. Solo comes with step 2.
+    fn mixer_strip(&self, track: &TrackState, cx: &mut Context<Self>) -> [Div; 3] {
+        let peach = cx.theme().peach;
+        // The record keeps no `-inf` yet: the bottom of the volume is the lowest gain it keeps.
+        let volume = Volume::new("gain_db", track.gain_db).on_change(Self::callback(
+            cx,
+            |panel, change: ValueChange, cx| {
+                let (session, track) = (&panel.session, &panel.track);
+                let set = |track: &mut TrackState, db: f32| {
+                    let (min, max) = TrackState::GAIN_DB;
+                    track.gain_db = match db.is_nan() {
+                        true => min,
+                        false => db.clamp(min, max),
+                    };
+                };
+                panel
+                    .edit
+                    .apply(session, track, VOLUME_LABEL, change, set, cx);
+            },
+        ));
+        let pan = Knob::new("pan")
+            .range(KnobRange::linear(TrackState::PAN.0, TrackState::PAN.1))
+            .bipolar(true)
+            .value(track.pan)
+            // The middle.
             .default_value(0.)
-            .label(control.label)
-            .readout((control.readout)(value))
-            .on_change(Self::callback(cx, move |panel, change, cx| {
-                panel.on_knob(control, change, cx)
-            }))
-    }
-
-    /// The fixed section at the right end: the mixer of the track.
-    fn mixer(&self, track: &TrackState, cx: &mut Context<Self>) -> Div {
-        let theme = cx.theme();
-        let (title, hairline, peach) = (theme.gray_900, theme.alpha_at(0.05), theme.peach);
-        let mute = Toggle::new("mute", "Mute", track.mute)
+            .label("Pan")
+            .readout(pan_readout(track.pan))
+            .on_change(Self::callback(cx, |panel, change, cx| {
+                let (session, track) = (&panel.session, &panel.track);
+                let set = |track: &mut TrackState, pan| track.pan = pan;
+                panel.edit.apply(session, track, PAN_LABEL, change, set, cx);
+            }));
+        let mute = Toggle::new("mute", "M", track.mute)
             .color(peach)
             .on_change(Self::callback(cx, |panel, mute: bool, cx| {
                 let label = if mute { "Mute track" } else { "Unmute track" };
                 let change = ValueChange::Set(mute);
                 let (session, track) = (&panel.session, &panel.track);
-                panel.edit.apply(
-                    session,
-                    track,
-                    label,
-                    change,
-                    |track, mute| track.mute = mute,
-                    cx,
-                );
+                let set = |track: &mut TrackState, mute| track.mute = mute;
+                panel.edit.apply(session, track, label, change, set, cx);
             }));
-        // In a cell of its own, where the knobs are, as the waveform switch of the synth is. It
-        // gets no label under it: it says what it is.
-        let mute = Cell::new(mute);
-
-        div()
-            .flex_none()
-            .h_full()
-            .flex()
-            .flex_col()
-            .gap(px(16.))
-            .p(px(24.))
-            .border_l_1()
-            .border_color(hairline)
-            .child(
-                div()
-                    .text_size(px(14.))
-                    .line_height(px(20.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(title)
-                    .child("Mixer"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(8.))
-                    .child(self.knob(&GAIN, track, cx))
-                    .child(self.knob(&PAN, track, cx))
-                    .child(mute),
-            )
+        let at = |left: f32, top: f32| div().absolute().left(px(left)).top(px(top));
+        // A toggle sits on the line of the middle of a knob.
+        let toggle_top = ROW_TOP + ROW_HEIGHT + (CONTROL_HEIGHT - toggle::HEIGHT) / 2.;
+        [
+            at(VOLUME_LEFT, ROW_TOP).child(volume),
+            at(PAN_LEFT, ROW_TOP).child(pan),
+            at(PAN_LEFT, toggle_top).child(mute),
+        ]
     }
 }
 
@@ -646,85 +638,81 @@ impl Focusable for TrackPanel {
     }
 }
 
+/// The fade at the right edge of the rack, while cards go past it. It reads the scroll while it
+/// paints, after the rack was laid out in the same frame, so it is right after a card came or
+/// went and after a resize, not a frame late.
+fn fade(scroll: ScrollHandle, color: gpui::Hsla) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds: Bounds<gpui::Pixels>, (), window, _| {
+            let (scrolled, most) = (-scroll.offset().x, scroll.max_offset().x);
+            if most - scrolled < px(1.) {
+                return;
+            }
+            let gradient = linear_gradient(
+                90.,
+                linear_color_stop(color.opacity(0.), 0.),
+                linear_color_stop(color, 1.),
+            );
+            window.paint_quad(fill(bounds, gradient));
+        },
+    )
+    .absolute()
+    .top_0()
+    .right_0()
+    .w(px(FADE_WIDTH))
+    .h_full()
+}
+
 impl Render for TrackPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Gone: the view that holds the panel closes it after the same event. Read once,
-        // because the mixer section needs the record while it makes its controls.
+        // because the mixer strip needs the record while it makes its controls.
         let track = self.session.read(cx).project().state(&self.track).cloned();
         let theme = cx.theme();
         let (background, hairline, text, muted) = (
             theme.gray_100,
             theme.alpha_at(0.05),
-            theme.gray_900,
-            theme.gray_700,
+            theme.gray_950,
+            theme.gray_800,
         );
         let (name, dot) = track.as_ref().map_or_else(
             || (String::new(), theme.blue),
             |track| (track.name.clone(), accent(track.colour, theme)),
         );
 
-        // Every card begins with its picker, which says what is in the slot and is how the
-        // composer puts something else there. The card holds no other title: one name each.
-        // An effect card has the control that takes it off the track next to its name.
+        // The view of a device draws its whole card. A slot whose tool has no card gets one
+        // from the panel, with the same frame: the picker and the close icon.
         let cards: Vec<_> = self
             .devices
             .iter()
-            .map(|device| {
-                let mut title = div().flex().items_center().gap(px(4.)).ml(px(-8.));
-                title = title.child(device.picker.clone());
-                if device.kind == Slot::Effect {
-                    let slot = device.slot.clone();
-                    // The name of the slot, because every card of the rack is drawn by this
-                    // one view: two controls of one id would be one control to GPUI, and the
-                    // second effect of a track would not be the one that goes.
-                    let name = remove_control(&device.slot);
-                    let remove = Button::icon_only(name.clone(), "x")
-                        .debug_selector(move || name.to_string())
-                        // Quiet until it is wanted, like the close control of the panel.
-                        .opacity(0.6)
-                        .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Xs)
-                        .focus_handle(&device.remove_focus)
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            panel.remove_effect(&slot, cx);
-                        }));
-                    title = title.child(remove);
-                }
-                let card = Card::new()
-                    .flex_none()
-                    .gap(px(12.))
-                    // The trigger is 32 px tall and brings its own padding, so the card gives
-                    // it 8 px less on the top and the left and its text lands where a card
-                    // title is.
-                    .pt(px(8.))
-                    .child(title);
-                let empty = match device.kind {
-                    Slot::Instrument => "This track is silent.",
-                    Slot::Effect => "This slot has no record.",
-                };
-                match (&device.view, device.tool) {
-                    (Some(view), _) => card.child(view.clone()),
-                    (None, tool) => card.child(
-                        div()
-                            .text_size(px(12.))
-                            .line_height(px(16.))
-                            .text_color(muted)
-                            .child(match tool {
-                                Some(_) => "This tool has no view.",
-                                None => empty,
-                            }),
-                    ),
+            .map(|device| match &device.view {
+                Some(view) => view.clone().into_any_element(),
+                None => {
+                    let says = match (device.tool, device.kind) {
+                        (Some(_), _) => "This tool has no view.",
+                        (None, Slot::Instrument) => "This track is silent.",
+                        (None, Slot::Effect) => "This slot has no record.",
+                    };
+                    let line = div()
+                        .text_size(px(12.))
+                        .line_height(px(14.))
+                        .text_color(muted)
+                        .child(says);
+                    let card = device.frame.card().w(px(PLAIN_CARD_WIDTH));
+                    card.child(line).into_any_element()
                 }
             })
             .collect();
 
-        // The control that adds an effect, at the end of the rack: the same picker pattern,
-        // with what declares itself an effect in it. It is not a card: nothing is in it yet.
+        // The control that adds an effect, at the end of the rack, on the line of the card
+        // titles: the same picker pattern, with what declares itself an effect in it. It is
+        // not a card: nothing is in it yet.
         let add_effect = div()
             .flex_none()
             .flex()
             .items_center()
-            .h(px(32.))
+            .h(px(HEADER_HEIGHT))
             .child(self.add_effect.clone());
 
         let close = Button::icon_only("close-track-panel", "x")
@@ -734,8 +722,13 @@ impl Render for TrackPanel {
             .size(ButtonSize::Xs)
             .focus_handle(&self.close_focus)
             .on_click(cx.listener(|_, _, _, cx| cx.emit(TrackPanelEvent::Close)));
-        // The header is that of the note editor: the dot and the name of the track in a row
-        // as high as a ruler, where the track headers are above, then the close control.
+        let strip = track
+            .as_ref()
+            .map(|track| self.mixer_strip(track, cx))
+            .into_iter()
+            .flatten();
+        // The header column: the dot and the name of the track on the line of the card
+        // titles, the close icon at its right, and the mixer strip on the rows of the cards.
         let header = div()
             .relative()
             .flex_none()
@@ -747,7 +740,7 @@ impl Render for TrackPanel {
                 div()
                     .absolute()
                     .left(px(24.))
-                    .top(px(RULER_HEIGHT / 2. - 4.))
+                    .top(px(TITLE_MIDDLE - 4.))
                     .size(px(8.))
                     .rounded_full()
                     .bg(dot),
@@ -756,7 +749,7 @@ impl Render for TrackPanel {
                 div()
                     .absolute()
                     .left(px(44.))
-                    .top(px(RULER_HEIGHT / 2. - 10.))
+                    .top(px(TITLE_MIDDLE - 10.))
                     .w(px(HEADER_WIDTH - 44. - 40.))
                     .truncate()
                     .line_height(px(20.))
@@ -767,11 +760,13 @@ impl Render for TrackPanel {
             .child(
                 div()
                     .absolute()
-                    .top(px(4.))
+                    .top(px(TITLE_MIDDLE - 12.))
                     .left(px(HEADER_WIDTH - 8. - 24.))
                     .child(close),
-            );
+            )
+            .children(strip);
 
+        let scroll = self.rack_scroll.clone();
         div()
             .size_full()
             .relative()
@@ -790,24 +785,29 @@ impl Render for TrackPanel {
                     .bg(hairline),
             )
             .child(header)
-            // The rack. The transport floats over the bottom of the panel, so the cards are at
-            // the top, clear of it. It scrolls sideways: a card is as wide as its controls,
-            // and a narrow window must not cut the last ones off.
+            // The rack. Two-finger scroll moves it sideways, and no control in it takes that
+            // gesture, so scrolling past a knob never changes a sound.
             .child(
                 div()
-                    .id("rack")
+                    .relative()
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .overflow_x_scroll()
-                    .flex()
-                    .items_start()
-                    .gap(px(16.))
-                    .p(px(24.))
-                    .children(cards)
-                    .child(add_effect),
+                    .child(
+                        div()
+                            .id("rack")
+                            .track_scroll(&self.rack_scroll)
+                            .size_full()
+                            .overflow_x_scroll()
+                            .flex()
+                            .items_start()
+                            .gap(px(CARD_GAP))
+                            .pt(px(RACK_TOP))
+                            .px(px(RACK_LEFT))
+                            .children(cards)
+                            .child(add_effect),
+                    )
+                    .child(fade(scroll, background)),
             )
-            // The mixer of the track, at the right end and outside what scrolls.
-            .children(track.map(|track| self.mixer(&track, cx)))
     }
 }

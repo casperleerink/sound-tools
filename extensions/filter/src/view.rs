@@ -1,18 +1,18 @@
-//! The card body of the filter: the response curve with its handle and the type at its top,
-//! then Cutoff, Resonance, Drive and Mix, and behind expand the slope and the LFO. Whatever
-//! hosts the view gives it the card: the track panel puts it into a device card whose header
-//! is the picker of the slot, with expand and close.
+//! The card of the filter: the response curve with its handle and the type at its top, then
+//! Cutoff, Resonance, Drive and Mix, and behind expand the slope and the LFO. The rack gives the
+//! view a [`CardFrame`]: the picker of the slot as the title, and the close icon.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one
 //! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges and
 //! the defaults come from the [`Parameter`]s of the crate. What is only about the interface is
-//! here: the label, the unit, the travel of a knob and the name of the undo step.
+//! here: the label, the unit, the travel of a knob, the name of the undo step and whether the
+//! card is expanded.
 
 use gpui::{App, Context, Entity, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::cell::Cell;
-use sound_ui::components::device_card::{self, Column};
+use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
@@ -43,8 +43,7 @@ const CURVE_POINTS: usize = 96;
 
 /// Registers the view of the `filter` tool and what a rack calls one.
 pub fn register(views: &mut Views, devices: &mut Devices) {
-    views.register(FilterView::new);
-    devices.expands::<FilterState>();
+    views.register_card(FilterView::new);
     devices.describe::<FilterState>(|_| DeviceLabel {
         key: FilterState::TOOL.into(),
         name: NAME.into(),
@@ -183,14 +182,18 @@ fn decades() -> Vec<f32> {
 pub struct FilterView {
     session: Entity<Session>,
     filter: Instance<FilterState>,
+    frame: CardFrame,
     /// The gesture of a drag of a knob or of the handle.
     edit: ControlEdit,
+    /// Whether the card shows the slope and the LFO. Interface state: not saved.
+    expanded: bool,
 }
 
 impl FilterView {
     pub fn new(
         session: Entity<Session>,
         filter: Instance<FilterState>,
+        frame: CardFrame,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -205,17 +208,22 @@ impl FilterView {
             _ => {}
         })
         .detach();
-        // Whether the card is expanded is interface state of the session, and the rack sets
-        // it. The session notifies once per group of events, so this costs little.
-        cx.observe(&session, |_, _, cx| cx.notify()).detach();
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
         Self {
             session,
             filter,
+            frame,
             edit: ControlEdit::default(),
+            expanded: false,
         }
+    }
+
+    /// Shows or hides the slope and the LFO, as the expand icon does.
+    pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        self.expanded = expanded;
+        cx.notify();
     }
 
     /// A callback of a control. It holds the view weakly, as `cx.listener` does, so the
@@ -319,29 +327,37 @@ impl FilterView {
 impl Render for FilterView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let session = self.session.read(cx);
-        let Some(state) = session.project().state(&self.filter).copied() else {
-            return div();
+        let Some(state) = self.session.read(cx).project().state(&self.filter).copied() else {
+            return div().into_any_element();
         };
-        let expanded = session.is_expanded(self.filter.id());
-        let shown = [
+        let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
+        let columns = [
             Column::new()
-                .top(self.knob(&CUTOFF_KNOB, &state, cx))
-                .bottom(self.knob(&DRIVE_KNOB, &state, cx)),
+                .top(knob(&CUTOFF_KNOB, cx))
+                .bottom(knob(&DRIVE_KNOB, cx)),
             Column::new()
-                .top(self.knob(&RESONANCE_KNOB, &state, cx))
-                .bottom(self.knob(&MIX_KNOB, &state, cx)),
+                .top(knob(&RESONANCE_KNOB, cx))
+                .bottom(knob(&MIX_KNOB, cx)),
         ];
-        let hidden = expanded.then(|| {
-            [
-                Column::new().top(self.slope(&state, cx)),
-                Column::new()
-                    .top(self.knob(&RATE_KNOB, &state, cx))
-                    .bottom(self.knob(&DEPTH_KNOB, &state, cx)),
-            ]
-        });
-        let display = Some(self.display(&state, cx));
-        device_card::body(display, shown, hidden.into_iter().flatten(), cx)
+        let hidden = [
+            Column::new().top(self.slope(&state, cx)),
+            Column::new()
+                .top(knob(&RATE_KNOB, cx))
+                .bottom(knob(&DEPTH_KNOB, cx)),
+        ];
+        let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
+        let card = self
+            .frame
+            .card()
+            .expand(self.expanded, expand)
+            .display(self.display(&state, cx));
+        let card = columns
+            .into_iter()
+            .fold(card, |card, column| card.column(column));
+        let card = hidden
+            .into_iter()
+            .fold(card, |card, column| card.hidden_column(column));
+        card.into_any_element()
     }
 }
 
