@@ -18,7 +18,7 @@ use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem, Trigger};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
-use sound_ui::components::meter::{GainReduction, Level};
+use sound_ui::components::meter::{GainReduction, Level, Meter};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::volume::Volume;
@@ -350,6 +350,33 @@ fn volumes(state: &Entity<RackState>, cx: &App) -> AnyElement {
                 cx,
                 Volume::new("volume-off", -6.).disabled(true),
             ),
+        ],
+    )
+}
+
+/// The master meter of the transport pill: the same colours, lying down.
+fn master_meter(state: &Entity<RackState>, cx: &App) -> AnyElement {
+    let levels = state.read(cx).levels;
+    let meter = |index: usize| {
+        let state = state.clone();
+        Meter::new(("master", index), levels[index])
+            .horizontal()
+            .on_clear_clip(move |_, cx| {
+                state.update(cx, |s, cx| {
+                    s.levels[index].clipped = false;
+                    cx.notify();
+                })
+            })
+    };
+    block(
+        "Master meter",
+        cx,
+        [
+            sample("quiet", cx, meter(0)),
+            sample("normal", cx, meter(1)),
+            sample("hot", cx, meter(2)),
+            sample("clipped", cx, meter(3)),
+            sample("silent", cx, meter(4)),
         ],
     )
 }
@@ -779,6 +806,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .gap(px(48.))
         .child(knobs(&state, cx))
         .child(volumes(&state, cx))
+        .child(master_meter(&state, cx))
         .child(gain_reduction(cx))
         .child(choices(&state, cx))
         .child(cards(&state, cx))

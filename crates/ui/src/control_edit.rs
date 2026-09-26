@@ -41,7 +41,9 @@ impl ControlEdit {
                 }
                 let begun = std::mem::replace(&mut self.dragging, true);
                 session.update(cx, |session, cx| {
-                    if !begun {
+                    // Also when the gesture is gone: a control that went away during its drag
+                    // sent no end, and another view or the session may have closed it since.
+                    if !begun || !session.gesture_open() {
                         session.begin_gesture(label, cx);
                     }
                     session.gesture(cx, |project, edit| {

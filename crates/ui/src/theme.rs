@@ -147,6 +147,10 @@ mod tests {
             let ratio = contrast(text, background);
             assert!(ratio >= 4.5, "{what}: {ratio:.2} : 1");
         }
+        // An icon needs 3 : 1 (WCAG 1.4.11). The power icon of a card that is off is `gray_700`.
+        let ratio = contrast(theme.gray_700, card);
+        assert!(ratio >= 3., "an off icon on a card: {ratio:.2} : 1");
+        assert!(contrast(theme.gray_600, card) < 3.);
         // Why labels are not `gray_700`: on a card it is under the line.
         assert!(contrast(theme.gray_700, card) < 4.5);
     }

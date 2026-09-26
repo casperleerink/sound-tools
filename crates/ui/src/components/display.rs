@@ -14,6 +14,7 @@
 //! handles with their values, and hears what a handle moves.
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, Bounds, ContentMask, CursorStyle, Div, ElementId, Hsla, KeyDownEvent,
@@ -262,18 +263,25 @@ fn moved(axis: Axis, travel: &mut Travel, pointer: f32, fine: bool) -> f32 {
 
 /// The element of one handle, a dot in a larger target centred on its place.
 fn handle_element(
+    display: &ElementId,
     handle: Handle,
     (width, height): (f32, f32),
     (dot, ring): (Hsla, Hsla),
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement + use<> {
-    let state = window.use_keyed_state(handle.id.clone(), cx, |_, cx| GestureState::new(cx));
+    // Under the id of the display, so that two displays with handles of one name, such as two
+    // filters in a rack, keep a drag and a focus each. A display draws before its element
+    // pushes its id, so the key names the display itself.
+    let key = ElementId::NamedChild(Arc::new(display.clone()), handle.id.to_string().into());
+    let state = window.use_keyed_state(key, cx, |_, cx| GestureState::new(cx));
     let focus_handle = state.read(cx).focus_handle.clone();
     let (x, y) = (handle.x, handle.y);
     let place = point(x.position(), y.position());
     let value = point(x.value, y.value);
-    let reset = point(x.default, y.default);
+    // A double click resets what the handle moves, and leaves an axis it does not move alone.
+    let reset_of = |axis: Axis| if axis.drags { axis.default } else { axis.value };
+    let reset = point(reset_of(x), reset_of(y));
     let cursor = match (x.drags, y.drags) {
         (true, false) => CursorStyle::ResizeLeftRight,
         (false, true) => CursorStyle::ResizeUpDown,
@@ -305,8 +313,8 @@ fn handle_element(
         .when_some(handle.on_change, |d, on_change| {
             let on_mouse_down = {
                 let (state, on_change) = (state.clone(), on_change.clone());
+                let press_focus = focus_handle.clone();
                 move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
-                    cx.stop_propagation();
                     let pointer = event.position;
                     let (px_x, px_y) = (f32::from(pointer.x), -f32::from(pointer.y));
                     let mut across = Travel::new(px_x, place.x, width);
@@ -318,17 +326,23 @@ fn handle_element(
                         )
                     };
                     let reset = Some(reset);
-                    gesture::press(
+                    let took = gesture::press(
                         &state, event, value, reset, value_at, &on_change, window, cx,
                     );
+                    // A press that opened a drag or reset is the handle's, not the card's. Stopping
+                    // it also stops GPUI giving the handle the focus, which escape needs, so the
+                    // handle takes it itself.
+                    if took {
+                        window.focus(&press_focus, cx);
+                        cx.stop_propagation();
+                    }
                 }
             };
             // Only escape: the keys of a value are those of its knob.
             let on_key_down = {
                 let (state, on_change) = (state.clone(), on_change.clone());
                 move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
-                    let step = |_, _| None;
-                    gesture::key_down(&state, event, step, None, &on_change, window, cx);
+                    gesture::key_down(&state, event, None, None, &on_change, window, cx);
                 }
             };
             d.cursor(cursor)
@@ -364,7 +378,7 @@ impl RenderOnce for Display {
         let handles: Vec<_> = self
             .handles
             .into_iter()
-            .map(|handle| handle_element(handle, area, handle_colors, window, cx))
+            .map(|handle| handle_element(&self.id, handle, area, handle_colors, window, cx))
             .collect();
 
         self.base

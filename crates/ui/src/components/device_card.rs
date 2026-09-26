@@ -231,7 +231,8 @@ impl RenderOnce for DeviceCard {
             theme.gray_950,
             theme.alpha_at(0.06),
         );
-        let (glyph, glyph_off) = (theme.gray_950, theme.gray_600);
+        // Off is `gray-700`, the nearest grey with 3 : 1 on a card for an icon.
+        let (glyph, glyph_off) = (theme.gray_950, theme.gray_700);
         let on = self.power.as_ref().is_none_or(|(on, _)| *on);
         let expanded = self.expand.as_ref().is_some_and(|(expanded, _)| *expanded);
 
@@ -295,7 +296,10 @@ impl RenderOnce for DeviceCard {
             .children(hidden)
             .children(self.children);
 
+        // The id scopes what the controls in the card keep, so two cards with controls of one
+        // name, such as two filters, keep a focus and a drag each.
         self.base
+            .id(self.id)
             .flex_none()
             .flex()
             .flex_col()

@@ -29,7 +29,7 @@ use crate::theme::ActiveTheme;
 /// The arc runs from -135 to +135 degrees, like a hardware pot.
 const SWEEP: f32 = 270.;
 /// Points of pointer travel for the whole travel.
-pub const TRAVEL: f32 = 200.;
+pub(crate) const TRAVEL: f32 = 200.;
 /// What one arrow key moves, as a part of the travel. With shift it is a tenth of this.
 const KEY_STEP: f32 = 0.02;
 const FINE_KEY_STEP: f32 = KEY_STEP * gesture::FINE;
@@ -317,7 +317,7 @@ impl RenderOnce for Knob {
                         gesture::key_down(
                             &state,
                             event,
-                            step,
+                            Some(&step),
                             default_value,
                             &on_change,
                             window,

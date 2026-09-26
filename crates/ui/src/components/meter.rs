@@ -28,27 +28,61 @@ const HOT_DB: f32 = -6.;
 /// decibels room and reaches the bottom at -inf.
 const DECADE: f32 = 61.94;
 
-/// The place of a level on the scale, 0 at -inf and 1 at +6 dB.
+/// Under this a level is silence: the bars and the peak line come to rest.
+pub const FLOOR_DB: f32 = -96.;
+
+/// The place of a level on the scale, 0 at -inf and 1 at +6 dB. Not a number is silence.
 pub fn position_of(db: f32) -> f32 {
+    if db.is_nan() {
+        return 0.;
+    }
     (UNITY * 10_f32.powf(db / DECADE)).clamp(0., 1.)
 }
 
-/// The level at a place on the scale, `-inf` at 0.
+/// The level at a place on the scale: `-inf` at 0, and for anything that is not above 0.
 pub fn db_at(position: f32) -> f32 {
-    if position <= 0. {
+    if position.is_nan() || position <= 0. {
         return f32::NEG_INFINITY;
     }
     (DECADE * (position / UNITY).log10()).min(MAX_DB)
 }
 
-/// Bars of a meter and the room between them.
+/// Bars of a vertical meter and the room between them.
 pub const BAR_WIDTH: f32 = 5.;
 pub const BAR_GAP: f32 = 2.;
-/// The clip light above the bars, and the room under it.
+/// Bars of a horizontal meter, the master meter in the transport pill.
+const THIN_BAR: f32 = 3.;
+/// The length of the bars of a horizontal meter.
+const HORIZONTAL_LENGTH: f32 = 40.;
+/// The clip light at the loud end of the bars, and the room before it.
 const LIGHT: f32 = 3.;
 const LIGHT_GAP: f32 = 2.;
 /// Where the scale of a vertical meter starts, from its top: under the clip light.
 pub const SCALE_TOP: f32 = LIGHT + LIGHT_GAP;
+
+/// Which way the bars of a meter run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Orientation {
+    /// Up, 5 pt bars with the clip light on top: the meter under the volume.
+    #[default]
+    Vertical,
+    /// To the right, 40 x 3 pt bars with the clip light at the right end: the master meter.
+    Horizontal,
+}
+
+impl Orientation {
+    fn bar(self) -> f32 {
+        match self {
+            Self::Vertical => BAR_WIDTH,
+            Self::Horizontal => THIN_BAR,
+        }
+    }
+
+    /// Across the two bars.
+    fn thickness(self) -> f32 {
+        self.bar() * 2. + BAR_GAP
+    }
+}
 
 /// What a meter shows, in dBFS, left and right. `-inf` is silence.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -105,6 +139,12 @@ impl Ballistics {
                 level.peak[channel] = lowered.max(level.now[channel]);
             }
             level.clipped |= peak > 0.;
+            // Rest: a level this low is no sound, and a line at the bottom would stay forever.
+            for value in [&mut level.now[channel], &mut level.peak[channel]] {
+                if value.is_nan() || *value < FLOOR_DB {
+                    *value = f32::NEG_INFINITY;
+                }
+            }
         }
         self.level
     }
@@ -140,48 +180,70 @@ impl MeterColors {
     }
 }
 
-/// Paints the bars of a vertical meter in `bounds`, the clip light at its top.
-fn paint_vertical(bounds: Bounds<Pixels>, level: Level, colors: MeterColors, window: &mut Window) {
-    let left = bounds.origin.x;
-    let top = bounds.origin.y + px(SCALE_TOP);
-    let bottom = bounds.bottom();
-    let length = f32::from(bottom - top);
-    let y_of = |position: f32| bottom - px(position * length);
-    for channel in 0..2 {
-        let x = left + px(channel as f32 * (BAR_WIDTH + BAR_GAP));
-        let span = |from: f32, to: f32| {
-            let (low, high) = (y_of(from), y_of(to));
-            Bounds::new(point(x, high), size(px(BAR_WIDTH), low - high))
+/// Paints the bars of a meter in `bounds`, and the clip light at their loud end.
+fn paint(
+    bounds: Bounds<Pixels>,
+    orientation: Orientation,
+    level: Level,
+    colors: MeterColors,
+    window: &mut Window,
+) {
+    let vertical = orientation == Orientation::Vertical;
+    let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    let length = if vertical { height } else { width } - SCALE_TOP;
+    let bar = orientation.bar();
+    // A span of one bar from one place on the scale to another, and across from `offset`.
+    let span = |offset: f32, from: f32, to: f32, thickness: f32| {
+        let (from, to) = (from * length, to * length);
+        let (origin, size) = match vertical {
+            true => (
+                point(offset, height - to),
+                size(px(thickness), px(to - from)),
+            ),
+            false => (point(from, offset), size(px(to - from), px(thickness))),
         };
-        window.paint_quad(fill(span(0., 1.), colors.empty));
+        Bounds::new(bounds.origin + point(px(origin.x), px(origin.y)), size)
+    };
+    let hot = position_of(HOT_DB);
+    for channel in 0..2 {
+        let offset = channel as f32 * (bar + BAR_GAP);
+        window.paint_quad(fill(span(offset, 0., 1., bar), colors.empty));
         let now = position_of(level.now[channel]);
-        let hot = position_of(HOT_DB);
         if now > 0. {
-            window.paint_quad(fill(span(0., now.min(hot)), colors.green));
+            window.paint_quad(fill(span(offset, 0., now.min(hot), bar), colors.green));
         }
         if now > hot {
-            window.paint_quad(fill(span(hot, now), colors.yellow));
+            window.paint_quad(fill(span(offset, hot, now, bar), colors.yellow));
         }
         let peak = position_of(level.peak[channel]);
         if peak > 0. {
-            let line = Bounds::new(point(x, y_of(peak)), size(px(BAR_WIDTH), px(1.)));
+            let one = 1. / length;
+            let line = span(offset, (peak - one).max(0.), peak.max(one), bar);
             window.paint_quad(fill(line, colors.peak));
         }
     }
     if level.clipped {
-        let width = px(BAR_WIDTH * 2. + BAR_GAP);
-        let light = Bounds::new(bounds.origin, size(width, px(LIGHT)));
+        let thickness = orientation.thickness();
+        let light = match vertical {
+            true => Bounds::new(bounds.origin, size(px(thickness), px(LIGHT))),
+            false => Bounds::new(
+                bounds.origin + point(px(width - LIGHT), px(0.)),
+                size(px(LIGHT), px(thickness)),
+            ),
+        };
         window.paint_quad(fill(light, colors.red).corner_radii(px(1.)));
     }
 }
 
-/// A vertical stereo meter: two bars, and the clip light above them.
+/// A stereo meter: two bars, and the clip light at their loud end.
 #[derive(IntoElement)]
 pub struct Meter {
     base: Div,
     id: ElementId,
     level: Level,
-    height: f32,
+    orientation: Orientation,
+    /// Along the bars, with the clip light.
+    length: Option<f32>,
     on_clear_clip: Option<ClearHandler>,
 }
 
@@ -191,13 +253,21 @@ impl Meter {
             base: div(),
             id: id.into(),
             level,
-            height: 118.,
+            orientation: Orientation::Vertical,
+            length: None,
             on_clear_clip: None,
         }
     }
 
-    pub fn height(mut self, height: f32) -> Self {
-        self.height = height;
+    /// The master meter: 40 x 3 pt bars that run to the right.
+    pub fn horizontal(mut self) -> Self {
+        self.orientation = Orientation::Horizontal;
+        self
+    }
+
+    /// The extent along the bars, the clip light included. 118 pt up, 45 pt across.
+    pub fn length(mut self, length: f32) -> Self {
+        self.length = Some(length);
         self
     }
 
@@ -216,37 +286,49 @@ impl Styled for Meter {
 
 impl RenderOnce for Meter {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let (level, colors) = (self.level, MeterColors::of(cx));
+        let (level, orientation, colors) = (self.level, self.orientation, MeterColors::of(cx));
         let bars = canvas(
             |_, _, _| {},
-            move |bounds, (), window, _| paint_vertical(bounds, level, colors, window),
+            move |bounds, (), window, _| paint(bounds, orientation, level, colors, window),
         )
         .size_full();
-        let width = BAR_WIDTH * 2. + BAR_GAP;
+        let thickness = orientation.thickness();
+        let (width, height) = match orientation {
+            Orientation::Vertical => (thickness, self.length.unwrap_or(118.)),
+            Orientation::Horizontal => {
+                let length = self.length.unwrap_or(HORIZONTAL_LENGTH + SCALE_TOP);
+                (length, thickness)
+            }
+        };
         self.base
             .id(self.id)
             .relative()
             .flex_none()
             .w(px(width))
-            .h(px(self.height))
+            .h(px(height))
             .child(bars)
             .when_some(
                 self.on_clear_clip.filter(|_| level.clipped),
                 |meter, clear| {
-                    // The light is small, so the target is the top of the meter.
-                    meter.child(
-                        div()
-                            .id("clip-light")
-                            .absolute()
+                    // The light is small, so the target is the loud end of the meter.
+                    let target = div().id("clip-light").absolute().cursor_pointer();
+                    let target = match orientation {
+                        Orientation::Vertical => target
                             .top(px(-4.))
                             .left(px(-4.))
-                            .w(px(width + 8.))
-                            .h(px(SCALE_TOP + 8.))
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                                cx.stop_propagation();
-                                clear(window, cx);
-                            }),
+                            .w(px(thickness + 8.))
+                            .h(px(SCALE_TOP + 8.)),
+                        Orientation::Horizontal => target
+                            .top(px(-4.))
+                            .right(px(-4.))
+                            .w(px(SCALE_TOP + 8.))
+                            .h(px(thickness + 8.)),
+                    };
+                    meter.child(
+                        target.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            cx.stop_propagation();
+                            clear(window, cx);
+                        }),
                     )
                 },
             )
@@ -353,6 +435,32 @@ mod tests {
         meter.read([0., 0.], 0.1);
         let level = meter.read([-1., -1.], 3.);
         assert_eq!(level.peak, level.now);
+    }
+
+    #[test]
+    fn after_the_sound_the_meter_comes_to_rest() {
+        let mut meter = Ballistics::default();
+        meter.read([-3., 0.5], 0.1);
+        let quiet = [f32::NEG_INFINITY; 2];
+        let mut level = Level::SILENT;
+        for _ in 0..600 {
+            level = meter.read(quiet, 1. / 60.);
+        }
+        assert_eq!(level.now, [f32::NEG_INFINITY; 2]);
+        assert_eq!(level.peak, [f32::NEG_INFINITY; 2]);
+        // The clip light is the one thing that waits for the composer.
+        assert!(level.clipped);
+    }
+
+    #[test]
+    fn not_a_number_is_silence_and_never_the_top() {
+        assert_eq!(position_of(f32::NAN), 0.);
+        assert_eq!(db_at(f32::NAN), f32::NEG_INFINITY);
+        assert_eq!(db_at(-0.1), f32::NEG_INFINITY);
+        let mut meter = Ballistics::default();
+        let level = meter.read([f32::NAN, -12.], 0.1);
+        assert_eq!(level.now[0], f32::NEG_INFINITY);
+        assert!(!level.clipped);
     }
 
     #[test]

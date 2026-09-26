@@ -61,8 +61,17 @@ fn db_at(position: f32) -> f32 {
     }
 }
 
+/// A level the fader can show: not a number is the bottom, and nothing is over the top.
+fn sane(db: f32) -> f32 {
+    if db.is_nan() {
+        return f32::NEG_INFINITY;
+    }
+    db.min(meter::MAX_DB)
+}
+
 /// One arrow step from `db`, or `None` where there is no further to go.
 fn step(db: f32, up: bool, fine: bool) -> Option<f32> {
+    let db = sane(db);
     let size = if fine { FINE_KEY_STEP_DB } else { KEY_STEP_DB };
     let next = match (up, db == f32::NEG_INFINITY) {
         (true, true) => FLOOR_DB,
@@ -93,11 +102,12 @@ pub struct Volume {
 }
 
 impl Volume {
+    /// `db` is the gain. Not a number shows as `-inf`, and over +6 dB as +6 dB.
     pub fn new(id: impl Into<ElementId>, db: f32) -> Self {
         Self {
             base: div(),
             id: id.into(),
-            db,
+            db: sane(db),
             level: Level::SILENT,
             height: 118.,
             disabled: false,
@@ -255,7 +265,15 @@ impl RenderOnce for Volume {
                     let (state, on_change) = (state.clone(), on_change.clone());
                     move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
                         let step = |up, fine| step(db, up, fine);
-                        gesture::key_down(&state, event, step, Some(0.), &on_change, window, cx);
+                        gesture::key_down(
+                            &state,
+                            event,
+                            Some(&step),
+                            Some(0.),
+                            &on_change,
+                            window,
+                            cx,
+                        );
                     }
                 };
                 d.cursor(CursorStyle::ResizeUpDown)
@@ -266,7 +284,7 @@ impl RenderOnce for Volume {
             })
             .child(
                 Meter::new("meter", self.level)
-                    .height(height)
+                    .length(height)
                     .when_some(self.on_clear_clip, |meter, clear| {
                         meter.on_clear_clip(move |window, cx| clear(window, cx))
                     }),
@@ -321,15 +339,15 @@ mod tests {
     }
 
     #[test]
-    fn the_fader_follows_the_pointer_over_the_height_of_the_meter() {
-        // A press on the thumb at 0 dB and a drag down by a fifth of the scale.
-        let length = 113.;
-        let mut travel = Travel::new(-100., meter::UNITY, length);
-        let down = travel.position(-100. - length * 0.2, false);
-        assert!(down.is_some_and(|position| (position - 0.6).abs() < 1e-5));
-        // Anywhere on the meter: the press is where the thumb is, not where the pointer is.
-        let mut travel = Travel::new(-10., meter::UNITY, length);
-        assert_eq!(travel.position(-10., false), None);
+    fn not_a_number_is_the_bottom_and_never_the_top() {
+        assert_eq!(sane(f32::NAN), f32::NEG_INFINITY);
+        assert_eq!(sane(12.), meter::MAX_DB);
+        assert_eq!(Volume::new("volume", f32::NAN).db, f32::NEG_INFINITY);
+        assert_eq!(Volume::new("volume", 9.).db, meter::MAX_DB);
+        // A step from not a number starts at the bottom and not at +6 dB.
+        assert_eq!(step(f32::NAN, true, false), Some(FLOOR_DB));
+        assert_eq!(step(f32::NAN, false, false), None);
+        assert_eq!(db_at(f32::NAN), f32::NEG_INFINITY);
     }
 
     #[test]

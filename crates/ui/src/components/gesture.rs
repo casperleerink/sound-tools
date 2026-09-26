@@ -28,7 +28,7 @@ use gpui::{
 use crate::focus::KeyboardFocus;
 
 /// How much finer a drag or a key step is with shift.
-pub const FINE: f32 = 0.1;
+pub(crate) const FINE: f32 = 0.1;
 
 /// What a control that drags a value asks of its owner. `V` is what it moves: one number, or two
 /// for a handle that moves sideways and up and down.
@@ -49,7 +49,7 @@ pub enum ValueChange<V = f32> {
 /// `pointer` is in points and grows in the direction that raises the value: the negative `y` for
 /// a drag up, the `x` for a drag to the right.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Travel {
+pub(crate) struct Travel {
     /// Where the pointer was when the speed was last set: at the press, or at the move before
     /// shift changed.
     anchor: f32,
@@ -65,7 +65,7 @@ pub struct Travel {
 }
 
 impl Travel {
-    pub fn new(pointer: f32, position: f32, span: f32) -> Self {
+    pub(crate) fn new(pointer: f32, position: f32, span: f32) -> Self {
         Self {
             anchor: pointer,
             anchor_position: position,
@@ -78,7 +78,7 @@ impl Travel {
 
     /// The place on the travel for the pointer now, or `None` when it is exactly the place of
     /// the press: the owner then keeps the value of the press as it was.
-    pub fn position(&mut self, pointer: f32, fine: bool) -> Option<f32> {
+    pub(crate) fn position(&mut self, pointer: f32, fine: bool) -> Option<f32> {
         if fine != self.fine {
             self.anchor_position = self.unclamped(self.last);
             self.anchor = self.last;
@@ -97,7 +97,7 @@ impl Travel {
 
 /// What a key does to a focused control.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ValueKey {
+pub(crate) enum ValueKey {
     /// Up or right raise the value, down or left lower it. With shift the step is fine.
     Step { up: bool, fine: bool },
     /// Backspace or delete: the default value.
@@ -109,7 +109,7 @@ pub enum ValueKey {
 impl ValueKey {
     /// `None` for any other key, and for a key with control, alt or command, which belongs to
     /// something else.
-    pub fn of(keystroke: &Keystroke) -> Option<Self> {
+    pub(crate) fn of(keystroke: &Keystroke) -> Option<Self> {
         let modifiers = keystroke.modifiers;
         if modifiers.control || modifiers.alt || modifiers.platform {
             return None;
@@ -157,7 +157,7 @@ impl<V: Copy + PartialEq + 'static> GestureState<V> {
 
 /// A mouse press on the control. A double click reports `reset` when it is another value, any
 /// other press opens a drag from `value`. The press also gives the control the focus: GPUI does
-/// that for a tracked handle.
+/// that for a tracked handle. Whether the press did something: opened a drag or reset.
 pub(crate) fn press<V: Copy + PartialEq + 'static>(
     state: &Entity<GestureState<V>>,
     event: &MouseDownEvent,
@@ -167,7 +167,7 @@ pub(crate) fn press<V: Copy + PartialEq + 'static>(
     on_change: &ChangeHandler<V>,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> bool {
     let double = event.click_count == 2;
     state.update(cx, |state, cx| {
         state.keyboard_focus.pressed(cx);
@@ -177,18 +177,24 @@ pub(crate) fn press<V: Copy + PartialEq + 'static>(
             changed: false,
         });
     });
-    if let Some(reset) = reset.filter(|reset| double && *reset != value) {
-        on_change(ValueChange::Set(reset), window, cx);
+    match reset.filter(|reset| double && *reset != value) {
+        Some(reset) => {
+            on_change(ValueChange::Set(reset), window, cx);
+            true
+        }
+        None => !double,
     }
 }
 
 /// A key on the focused control. `step(up, fine)` gives the value one step on, or `None` at an
-/// end; `reset` is the default. Escape cancels a drag. Every key of a drag is taken and does
-/// nothing else: the mouse has the control, and a key would fight the next mouse move.
+/// end, for a control that has steps; `reset` is the default. Escape cancels a drag. Every key
+/// of a drag is taken and does nothing else: the mouse has the control, and a key would fight
+/// the next mouse move. Out of a drag the control takes only the keys it has: an arrow at the
+/// end of a knob is still the knob's, but a handle, which has no steps, lets the arrows go.
 pub(crate) fn key_down<V: Copy + PartialEq + 'static>(
     state: &Entity<GestureState<V>>,
     event: &KeyDownEvent,
-    step: impl Fn(bool, bool) -> Option<V>,
+    step: Option<&dyn Fn(bool, bool) -> Option<V>>,
     reset: Option<V>,
     on_change: &ChangeHandler<V>,
     window: &mut Window,
@@ -198,6 +204,14 @@ pub(crate) fn key_down<V: Copy + PartialEq + 'static>(
         return;
     };
     let dragging = state.read(cx).drag.is_some();
+    let takes = match key {
+        ValueKey::Step { .. } => step.is_some(),
+        ValueKey::Reset => reset.is_some(),
+        ValueKey::Cancel => dragging,
+    };
+    if !dragging && !takes {
+        return;
+    }
     let change = match key {
         ValueKey::Cancel if dragging => {
             let drag = state.update(cx, |state, _| state.drag.take());
@@ -207,7 +221,7 @@ pub(crate) fn key_down<V: Copy + PartialEq + 'static>(
         // Escape without a drag belongs to what holds the control, such as a panel it closes.
         ValueKey::Cancel => return,
         _ if dragging => None,
-        ValueKey::Step { up, fine } => step(up, fine).map(ValueChange::Set),
+        ValueKey::Step { up, fine } => step.and_then(|step| step(up, fine)).map(ValueChange::Set),
         ValueKey::Reset => reset.map(ValueChange::Set),
     };
     cx.stop_propagation();
