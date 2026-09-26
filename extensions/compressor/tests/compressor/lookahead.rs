@@ -1,7 +1,7 @@
 //! The lookahead: it is the latency the compressor reports, the sound comes out that much later
 //! and otherwise untouched, and the reduction is in place when a peak arrives.
 
-use compressor::{Compressor, CompressorState, Lookahead};
+use compressor::{Compressor, CompressorState, Lookahead, Meters};
 use sound_core::Processor;
 
 use crate::support::{Rig, SAMPLE_RATE, sine, step};
@@ -17,7 +17,7 @@ fn the_latency_is_the_lookahead_in_frames() {
             lookahead,
             ..CompressorState::default()
         };
-        assert_eq!(Compressor::new(state).latency(), frames);
+        assert_eq!(Compressor::new(state, Meters::default()).latency(), frames);
     }
 }
 

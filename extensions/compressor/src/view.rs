@@ -10,7 +10,7 @@
 //! here: the label, the unit, the travel of a knob, the name of the undo step and whether the
 //! card is expanded.
 
-use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*, px};
+use gpui::{Context, Entity, Point, SharedString, Task, Window, div, point, prelude::*, px};
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
@@ -19,11 +19,13 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::meter::GainReduction;
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ActiveTheme, ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
+use sound_ui::{
+    ActiveTheme, ControlEdit, DeviceLabel, Devices, POLL_INTERVAL, Session, Views, weak_callback,
+};
 
 use crate::{
-    ATTACK, CompressorState, KNEE, Lookahead, MAKEUP, MIX, Parameter, RATIO, RELEASE, THRESHOLD,
-    reduction_db,
+    ATTACK, CompressorState, KNEE, Lookahead, MAKEUP, MIX, Meters, Parameter, RATIO, RELEASE,
+    THRESHOLD, reduction_db,
 };
 
 /// The name the rack puts on the card of a compressor.
@@ -196,6 +198,25 @@ struct Reading {
     reduction_db: f32,
 }
 
+impl Reading {
+    /// A reading of the amplitude of the level and the reduction in dB, to a quarter of a point
+    /// of the display and a tenth of a dB, so that a card whose sound holds still asks for no
+    /// frame. Silence has no level.
+    fn new(level: f32, reduction_db: f32) -> Self {
+        let (bottom, top) = LEVELS_DB;
+        let quarter_point = (top - bottom) / INSET_HEIGHT / 4.;
+        let level_db = match level > 0. {
+            true => (20. * level.log10() / quarter_point).round() * quarter_point,
+            false => f32::NEG_INFINITY,
+        };
+        let reduction_db = (reduction_db * 10.).round() / 10.;
+        Self {
+            level_db,
+            reduction_db,
+        }
+    }
+}
+
 impl Default for Reading {
     fn default() -> Self {
         Self {
@@ -214,6 +235,7 @@ pub struct CompressorView {
     /// Whether the card shows knee, makeup, mix and lookahead. Interface state: not saved.
     expanded: bool,
     reading: Reading,
+    _metering: Task<()>,
 }
 
 impl CompressorView {
@@ -238,6 +260,15 @@ impl CompressorView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
+        // The clock of the meters: as often as the session looks at the project.
+        let metering = cx.spawn(async move |view, cx| {
+            loop {
+                cx.background_executor().timer(POLL_INTERVAL).await;
+                if view.update(cx, |view, cx| view.read_meters(cx)).is_err() {
+                    break;
+                }
+            }
+        });
         Self {
             session,
             compressor,
@@ -245,6 +276,19 @@ impl CompressorView {
             edit: ControlEdit::default(),
             expanded: false,
             reading: Reading::default(),
+            _metering: metering,
+        }
+    }
+
+    /// Takes what the compressor heard and did since the last look, and draws again when that
+    /// changes what the card shows. Called once per poll of the session.
+    pub fn read_meters(&mut self, cx: &mut Context<Self>) {
+        let (project, id) = (self.session.read(cx).project(), self.compressor.id());
+        let take = |name| project.peaks(id, name).map_or(0., |peaks| peaks.take()[0]);
+        let reading = Reading::new(take(Meters::LEVEL), take(Meters::REDUCTION));
+        if reading != self.reading {
+            self.reading = reading;
+            cx.notify();
         }
     }
 
@@ -336,6 +380,7 @@ impl CompressorView {
         let level = (level_db > bottom).then(|| {
             let (x, y) = (across(level_db), up(level_db - reduction_db));
             div()
+                .debug_selector(|| "compressor-level".into())
                 .absolute()
                 .left(px(x * DISPLAY_WIDTH - LEVEL_DOT / 2.))
                 .top(px((1. - y) * INSET_HEIGHT - LEVEL_DOT / 2.))
@@ -439,6 +484,15 @@ mod tests {
         assert_eq!(reduction_readout(0.0), "GR 0 dB");
         assert_eq!(reduction_readout(0.04), "GR 0 dB");
         assert_eq!(reduction_readout(6.83), "GR -6.8 dB");
+    }
+
+    #[test]
+    fn a_reading_of_silence_has_no_level_and_a_steady_one_does_not_move() {
+        assert_eq!(Reading::new(0., 0.), Reading::default());
+        let reading = Reading::new(0.5, 6.83);
+        assert!((reading.level_db + 6.02).abs() < 0.2, "{reading:?}");
+        assert_eq!(reading.reduction_db, 6.8);
+        assert_eq!(Reading::new(0.5001, 6.8301), reading);
     }
 
     /// The defaults and both ends of every range, through the travel of its knob and back.

@@ -6,6 +6,7 @@
 
 mod glides;
 mod lookahead;
+mod meters;
 mod performance;
 mod stability;
 mod static_gain;

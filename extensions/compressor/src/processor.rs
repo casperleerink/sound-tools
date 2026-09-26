@@ -13,7 +13,8 @@
 use std::f32::consts::LN_10;
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
+    AudioInput, AudioOutput, CHANNELS, Peaks, Ports, PrepareConfig, ProcessContext, Processor,
+    Smoothed,
 };
 
 use crate::{CompressorState, Lookahead};
@@ -155,8 +156,23 @@ fn held(sample: f32) -> f32 {
     sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
+/// What the compressor shows on its card, from the audio thread: the largest level of each
+/// block as an amplitude, and the largest reduction of each block in dB, both on channel 0.
+#[derive(Clone, Debug, Default)]
+pub struct Meters {
+    pub level: Peaks,
+    pub reduction: Peaks,
+}
+
+impl Meters {
+    /// The names the behaviour keeps them under, for [`sound_core::Project::peaks`].
+    pub const LEVEL: &str = "level";
+    pub const REDUCTION: &str = "reduction";
+}
+
 pub struct Compressor {
     sample_rate: f32,
+    meters: Meters,
     /// The last record, to aim again when the sample rate is known.
     state: CompressorState,
     /// The frames a change takes.
@@ -192,11 +208,12 @@ impl Compressor {
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
 
     /// Starts at these values, so a compressor that is added or opened does not glide in.
-    pub fn new(state: CompressorState) -> Self {
+    pub fn new(state: CompressorState, meters: Meters) -> Self {
         let sample_rate = 48_000.0;
         let lookahead = state.lookahead.frames(sample_rate);
         let mut compressor = Self {
             sample_rate,
+            meters,
             state,
             ramp_frames: 1.0,
             threshold: Smoothed::new(0.0),
@@ -319,6 +336,7 @@ impl Processor for Compressor {
             return;
         }
         let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
+        let (mut loudest, mut most) = (0.0_f32, 0.0_f64);
         let frames = left_in
             .iter()
             .zip(right_in)
@@ -332,6 +350,7 @@ impl Processor for Compressor {
             };
             self.delay[self.write] = input;
             let level = self.detector.next(input[0].abs().max(input[1].abs()));
+            loudest = loudest.max(level);
             let level_db = 20.0 * level.max(FLOOR).log10();
             let threshold = self.threshold.advance(1);
             let slope = self.slope.advance(1);
@@ -345,6 +364,7 @@ impl Processor for Compressor {
             if (self.reduction - target).abs() < ARRIVED_DB {
                 self.reduction = target;
             }
+            most = most.max(self.reduction);
             let gain = decibels_to_gain(self.makeup.advance(1) - self.reduction as f32);
             let gain = 1.0 + self.mix.advance(1) * (gain - 1.0);
             let fade = self.fade.advance(1);
@@ -353,6 +373,8 @@ impl Processor for Compressor {
             *right_out = (from[1] + fade * (to[1] - from[1])) * gain;
             self.write = (self.write + 1) % self.delay.len();
         }
+        self.meters.level.record(0, loudest);
+        self.meters.reduction.record(0, most as f32);
     }
 }
 

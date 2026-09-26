@@ -2,7 +2,7 @@
 
 use std::f64::consts::TAU;
 
-use compressor::{Compressor, CompressorState};
+use compressor::{Compressor, CompressorState, Meters};
 use sound_core::{
     AudioOutput, Connection, Engine, EngineConfig, EngineControl, Node, Ports, PrepareConfig,
     ProcessContext, Processor,
@@ -85,6 +85,8 @@ pub struct Rig {
     pub control: EngineControl,
     pub engine: Engine,
     pub compressor: Node<Compressor>,
+    /// What the card of this compressor would read.
+    pub meters: Meters,
 }
 
 impl Rig {
@@ -92,9 +94,10 @@ impl Rig {
         let (mut control, engine) =
             Engine::new(EngineConfig::new(SAMPLE_RATE, 2).rendering_offline());
         let mut edit = control.edit();
+        let meters = Meters::default();
         let source = edit.add_processor("source", Source::new(signal)).unwrap();
         let compressor = edit
-            .add_processor("compressor", Compressor::new(state))
+            .add_processor("compressor", Compressor::new(state, meters.clone()))
             .unwrap();
         edit.connect(Connection::new(
             source.id(),
@@ -114,6 +117,7 @@ impl Rig {
             control,
             engine,
             compressor,
+            meters,
         }
     }
 

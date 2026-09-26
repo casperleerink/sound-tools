@@ -4,8 +4,9 @@
 use compressor::view::CompressorView;
 use compressor::{CompressorState, Lookahead};
 use gpui::{TestAppContext, point, px};
+use sound_ui::POLL_INTERVAL;
 
-use crate::support::{self, Opened, id};
+use crate::support::{self, Opened, clip, id, note};
 
 const COMPRESSOR: &str = "arrangement/track-1/compressor";
 const COMPRESSOR_FILE: &str = "state/arrangement/track-1/compressor.json";
@@ -178,4 +179,56 @@ fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
     let one = opened.control("segment-1");
     opened.click(one);
     assert_eq!(opened.undo_label(), label);
+}
+
+/// While the track plays, the card shows the level it hears as a dot on the curve; at rest
+/// there is none. The level and the reduction come from the audio thread.
+#[gpui::test]
+fn the_level_shows_on_the_curve_while_the_track_plays(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let chord = vec![note(0, 3840, 48), note(0, 3840, 55), note(0, 3840, 64)];
+        let mut changes = sound_core::Changes::new();
+        changes.create(id("arrangement/track-1/chord"), clip(0, 3840, chord));
+        project.commit("Add chord", changes).unwrap();
+        project.clear_history();
+    });
+    let header = opened.track_header(0);
+    opened.click(header);
+    let trigger = opened.control("add-effect");
+    opened.click(trigger);
+    let row = opened.control("menu-compressor");
+    opened.click(row);
+    let file = "state/arrangement/track-1/compressor.json";
+    let path = opened.path(file);
+    std::fs::write(
+        &path,
+        r#"{"tool": "compressor", "state": {"threshold_db": -60.0}}"#,
+    )
+    .unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[path]).map(|_| ()));
+    opened.settle();
+    assert_eq!(opened.find("compressor-level"), None);
+
+    opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, _| session.engine().play());
+    });
+    opened.settle();
+    opened.render(12_000);
+    opened.cx.executor().advance_clock(POLL_INTERVAL);
+    opened.cx.run_until_parked();
+    assert!(opened.find("compressor-level").is_some());
+
+    // Stopped, the sound ends and the dot goes with it.
+    opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, _| session.engine().stop());
+    });
+    opened.settle();
+    opened.render(48_000);
+    for _ in 0..3 {
+        opened.cx.executor().advance_clock(POLL_INTERVAL);
+        opened.cx.run_until_parked();
+    }
+    assert_eq!(opened.find("compressor-level"), None);
 }

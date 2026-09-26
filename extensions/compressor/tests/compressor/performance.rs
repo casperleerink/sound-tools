@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use compressor::{Compressor, CompressorState, Lookahead};
+use compressor::{Compressor, CompressorState, Lookahead, Meters};
 use sound_core::{Connection, Engine, EngineConfig};
 
 use crate::support::{SAMPLE_RATE, Source, noise};
@@ -26,7 +26,10 @@ fn realtime_ratio_of_one_hundred_compressors() {
             ..CompressorState::default()
         };
         let compressor = edit
-            .add_processor(&format!("compressor-{index}"), Compressor::new(state))
+            .add_processor(
+                &format!("compressor-{index}"),
+                Compressor::new(state, Meters::default()),
+            )
             .unwrap();
         edit.connect(Connection::new(
             source.id(),

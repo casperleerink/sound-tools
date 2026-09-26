@@ -34,7 +34,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
-pub use processor::{Compressor, HOLD_SECONDS, reduction_db, static_gain_db};
+pub use processor::{Compressor, HOLD_SECONDS, Meters, reduction_db, static_gain_db};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "compressor";
@@ -228,7 +228,11 @@ fn apply(
     state: &CompressorState,
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
-    let compressor = context.processor("compressor", || Compressor::new(*state))?;
+    let meters = Meters {
+        level: context.peaks(Meters::LEVEL),
+        reduction: context.peaks(Meters::REDUCTION),
+    };
+    let compressor = context.processor("compressor", || Compressor::new(*state, meters))?;
     context.update(compressor, *state)?;
     context.input(
         AUDIO_INPUT,
