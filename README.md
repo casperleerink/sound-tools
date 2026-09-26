@@ -30,7 +30,7 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 7. Plug in a MIDI keyboard and play. It sounds through the instrument of the selected track, with or without playback. Press the red record button, or `r`, to record what you play onto that track from the playhead, and press it again to end the take. The take becomes a clip, with the sustain pedal, as one undo step, and the performance as you played it is kept under `assets/takes/`, which nothing ever changes.
 8. Click the name of a track on the left. Its panel opens below with the synth, and at the right end the mixer of the track: gain, pan and mute. Drag a knob up or down while it plays, and double click a knob to reset it.
 9. Click `Synth` at the top of that card to pick another instrument: the built-in synth, or any CLAP or VST 3 instrument this Mac has. The card gets `Open window`, which opens the plugin's own window beside this one. Change a sound there and it is saved with the piece. Picking an instrument is one undo step. The app looks for the plugins of this Mac on a thread of its own, so a project always opens at once; the picker says so while it is still looking, and a track whose plugin has not turned up yet is quiet for a moment and then plays.
-10. Click **Add effect** at the end of that rack and pick `Filter`, the built-in filter, or an effect plugin. It lands after the instrument, and the track plays through it. Add another and it lands after the first. The small `x` on a card takes that effect off. Both are one undo step. To change the order, edit `effects` in the track's `instance.json`, which an agent can do for you; the rack follows at once.
+10. Click **Add effect** at the end of that rack and pick `Filter` or `Compressor`, the built-in effects, or an effect plugin. It lands after the instrument, and the track plays through it. Add another and it lands after the first. The small `x` on a card takes that effect off. Both are one undo step. To change the order, edit `effects` in the track's `instance.json`, which an agent can do for you; the rack follows at once.
 11. Record a take with the click off, click the clip, then click the project name and pick **Fit tempo to take**. The tempo map now follows what you played: the bar lines land on your beats and the take sounds exactly as it did. A `steady` number appears in the transport next to the tempo; drag it up to pull the tempo towards one steady one, and back to 0 for the playing as it was. If the grid runs at twice or half the speed of the music, or the bar lines are in the wrong place, ask an agent: "the grid runs twice as fast as the music, fix the fit". It is one field in `state/fit-tempo.json`.
 12. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
 13. Press cmd-q to quit. Run the same command again and the piece is back.
@@ -48,6 +48,7 @@ It opens and plays as it did, and nothing is rewritten. Some things need one edi
 - `plugin-host` for CLAP and VST 3 plugins. Without it the picker shows every plugin greyed out with that line under it.
 - `fit-tempo` for **Fit tempo to take**. Without it the menu item is greyed out with that line under it.
 - `filter` for the built-in Filter effect. Without it `Add effect` shows it greyed out.
+- `compressor` for the built-in Compressor effect. Without it `Add effect` shows it greyed out.
 
 One thing is reported: a project of the first milestone connects a track once per device channel, and audio is stereo now, so one connection carries both channels. `problems.txt` names the second line and says to remove it. The project sounds as it did in the meantime.
 
@@ -130,7 +131,7 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [docs/milestone-3.md](docs/milestone-3.md): the plan of the third milestone: mixer, built-in effects, reliable plugins and a better window. Not started.
 - [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
 - [SDK_SKETCH.md](SDK_SKETCH.md): an early sketch of the extension SDK.
-- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [filter](extensions/filter/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md), [fit-tempo](extensions/fit-tempo/README.md).
+- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [filter](extensions/filter/README.md), [compressor](extensions/compressor/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md), [fit-tempo](extensions/fit-tempo/README.md).
 
 ## License
 

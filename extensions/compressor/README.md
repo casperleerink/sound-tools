@@ -47,6 +47,8 @@ The rack gives the view a `CardFrame`, the picker of the slot as the title and t
 - Threshold and Attack, Ratio and Release, as knobs in two columns.
 - Behind expand: Knee and Makeup, then Mix and Lookahead as segments `0 · 1 · 10`.
 
+The level and the reduction come from the audio thread without a lock or an allocation: the processor records the largest of each block in two `sound_core::Peaks` (`Meters`), which the behaviour declares as `level` and `reduction`. The view takes them once per poll of the session (`Project::peaks`) and draws again only when the reading moves by a quarter point or a tenth of a dB, so a card at rest asks for no frame.
+
 Editing, the same rules as every control on saved state (`sound_ui::ControlEdit`):
 
 - A drag of a knob or a handle is one gesture and one undo step: "Change threshold", "Change ratio", "Change attack", "Change release", "Change knee", "Change makeup", "Change mix". The file is written once, at the end. Escape cancels.
@@ -62,3 +64,9 @@ cargo nextest run -p runtime --test projects compressor                      # i
 cargo nextest run -p runtime --test window compressor                        # the card, with a simulated mouse and keys
 cargo nextest run -p compressor --run-ignored only realtime_ratio --no-capture   # speed of 100 compressors
 ```
+
+Measured September 26, 2026 on an Apple Silicon laptop, dev profile with `opt-level = 3`, 48 kHz, offline, while other builds ran:
+
+- The gain of a steady sine is the static gain within 0.0000 dB (printed to four places) for every threshold, ratio and knee of the test, from -60 to +6 dBFS in, at 50 Hz to 15 kHz. By hand: threshold -20 dB, 4:1, hard knee gives 0, -3, -9 and -15 dB at -20, -16, -8 and 0 dBFS in.
+- A step from -60 to 0 dBFS reaches 63 % of its reduction in `attack_ms` plus at most one frame, for 0.1 to 300 ms. Back down, the reduction holds 10.00 ms and then reaches 63 % of the way in `release_ms` plus at most one frame, for 1 ms to 3 s.
+- 100 compressors, each fed by its own noise source, with 1 ms of lookahead, render 6.7 times faster than realtime.
