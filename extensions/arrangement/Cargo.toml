@@ -11,9 +11,11 @@ workspace = true
 gpui.workspace = true
 serde.workspace = true
 sound-core.workspace = true
+sound-media.workspace = true
 sound-notes.workspace = true
 sound-ui.workspace = true
 
 [dev-dependencies]
+hound.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

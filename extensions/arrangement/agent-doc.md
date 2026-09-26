@@ -2,6 +2,8 @@
 
 The piece is one arrangement that owns tracks. A track owns its clips and one instrument, and it plays into the master of the arrangement by itself, which plays to the main output through a limiter. Adding music never needs a `project.json` edit.
 
+This doc is about instrument tracks, which play notes. An audio track plays audio files instead and has no instrument: open `agent-docs/audio.md` for it and its clips. Everything here about `gain_db`, `pan`, `mute`, `solo` and `effects` holds for both.
+
 ```text
 state/arrangement/instance.json              the arrangement
 state/arrangement/<track>/instance.json      a track

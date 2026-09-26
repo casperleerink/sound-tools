@@ -5,7 +5,7 @@
 //! the window puts the two together here, as it does for views.
 
 use anyhow::Result;
-use arrangement::TrackState;
+use arrangement::{TrackKind, TrackState};
 use midi::Take;
 use sound_core::{InputEndpoint, Instance, InstanceId, Project, ProjectError};
 use sound_notes::NOTES_INPUT;
@@ -19,18 +19,23 @@ pub const LABEL: &str = "Record";
 const CLIP_NAME: &str = "take";
 
 /// The track a keyboard plays into and a recording is written to: the selected track, or the
-/// first track of the arrangement when nothing is selected, so a keyboard always sounds.
+/// first track of the arrangement when nothing is selected, so a keyboard always sounds. An
+/// audio track plays no notes, so it is never the one: with one selected, nothing is.
 pub fn target_track(
     project: &Project,
     selected: Option<&InstanceId>,
 ) -> Option<Instance<TrackState>> {
-    let selected = selected.and_then(|id| project.resolve::<TrackState>(id));
-    if selected.is_some() {
-        return selected;
+    let plays_notes = |track: &Instance<TrackState>| {
+        let state = project.state(track);
+        state.is_some_and(|state| state.kind == TrackKind::Instrument)
+    };
+    if let Some(selected) = selected.and_then(|id| project.resolve::<TrackState>(id)) {
+        return plays_notes(&selected).then_some(selected);
     }
     let arrangement = main_arrangement(project)?;
     let tracks = arrangement::tracks(project, arrangement.id());
-    tracks.into_iter().next().map(|(track, _)| track)
+    let mut tracks = tracks.into_iter().map(|(track, _)| track);
+    tracks.find(plays_notes)
 }
 
 /// The `notes` port of the instrument of that track. `None` while the track has none, or while

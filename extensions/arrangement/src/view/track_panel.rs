@@ -567,11 +567,11 @@ impl TrackPanel {
         let mut kept: Vec<Device> = std::mem::take(&mut self.devices);
         self.devices = slots
             .into_iter()
-            .enumerate()
-            .map(|(index, slot)| {
-                let kind = match index {
-                    0 => Slot::Instrument,
-                    _ => Slot::Effect,
+            .map(|slot| {
+                // An audio track has no instrument, so its first slot is an effect.
+                let kind = match slot.name() == crate::INSTRUMENT {
+                    true => Slot::Instrument,
+                    false => Slot::Effect,
                 };
                 match kept.iter().position(|device| device.slot == slot) {
                     Some(had) => kept.remove(had),
@@ -924,16 +924,22 @@ impl Render for TrackPanel {
             .map(|(device, card)| (device.slot.clone(), device.kind, card))
             .collect();
         // Each card takes a dropped effect card: it goes where the card is, and on the
-        // instrument it goes first. The effects are after the instrument, so the place of an
-        // effect card among the effects is one less than its place in the rack.
+        // instrument it goes first. The effects are after the instrument, when the track has
+        // one, so the place of an effect card among the effects is its place in the rack less
+        // the instrument.
         let ring = theme.lavender;
+        let instruments = cards
+            .iter()
+            .filter(|(_, kind, _)| matches!(kind, Slot::Instrument))
+            .count();
         let cards: Vec<AnyElement> = cards
             .into_iter()
             .enumerate()
             .map(|(index, (slot, kind, card))| {
                 let name = SharedString::from(format!("rack-{}", slot.name()));
                 let effect = matches!(kind, Slot::Effect).then_some(slot);
-                self.drop_target(card, name, index.saturating_sub(1), effect, ring, cx)
+                let to = index.saturating_sub(instruments);
+                self.drop_target(card, name, to, effect, ring, cx)
             })
             .collect();
 

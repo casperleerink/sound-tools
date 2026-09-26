@@ -33,7 +33,9 @@ use super::layout::{
 use super::paint::{accent, paint_focus_ring, paint_ruler, paint_track_label, placed};
 use super::selection::Selection;
 use super::snap::{Grid, SharedSnap, Snap, snap, snapped_delta};
-use crate::{ArrangementState, FreeIds, TrackState, add_clip, add_clips, tracks, unnumbered};
+use crate::{
+    ArrangementState, FreeIds, TrackKind, TrackState, add_clip, add_clips, tracks, unnumbered,
+};
 
 struct TrackRow {
     y: f32,
@@ -1110,6 +1112,14 @@ impl Timeline {
         let Some(track) = row.and_then(|row| self.order.get(row)).cloned() else {
             return;
         };
+        // An audio track plays audio clips only, which come from a file and not from a click.
+        let project = self.session.read(cx).project();
+        if project
+            .state(&track)
+            .is_some_and(|state| state.kind == TrackKind::Audio)
+        {
+            return;
+        }
         let grid = self.grid(cx);
         let clip = new_clip(
             scene.viewport.tick_at(x),

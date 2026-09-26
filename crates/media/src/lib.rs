@@ -156,6 +156,13 @@ pub fn load(assets: &Assets, asset: &AudioAsset) -> Result<Arc<Audio>, MediaErro
     Ok(audio)
 }
 
+/// How many engine frames `file_frames` of a file play, at the file's own speed: every frame
+/// whose place in the file is still inside them.
+pub fn engine_frames(file_frames: u64, file_rate: u32, engine_rate: u32) -> u64 {
+    let frames = u128::from(file_frames) * u128::from(engine_rate.max(1));
+    u64::try_from(frames.div_ceil(u128::from(file_rate.max(1)))).unwrap_or(u64::MAX)
+}
+
 static RESAMPLERS: LazyLock<Mutex<HashMap<(u32, u32), Weak<Resampler>>>> =
     LazyLock::new(Mutex::default);
 
