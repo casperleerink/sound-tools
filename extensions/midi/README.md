@@ -9,7 +9,7 @@ This crate registers no tool and no record. It is a processor in the engine, a d
 - Every MIDI input port of the machine is open, all channels merged. There is no device picker, no input routing per track and no channel filter. A keyboard plugged in later works without a restart.
 - Note on, note off and the sustain pedal (controller 64) are used. Pitch bend, the mod wheel, aftertouch, program change, MIDI clock and every other message are left alone.
 - A message sounds at the start of the next audio block, whether the project plays or not.
-- While recording, every message the engine sounded is kept with the tick it sounded on and the time it arrived. When the take ends it becomes a [`Clip`](../../crates/notes/README.md) and a raw take file.
+- While recording, every message the engine sounded is kept with the tick the device played when it sounded (`Transport::heard_tick`) and the time it arrived. So a take lands where the player heard the other tracks, also through a track whose plugin has latency. When the take ends it becomes a [`Clip`](../../crates/notes/README.md) and a raw take file.
 
 ## The path from a key to sound
 
@@ -65,7 +65,7 @@ The caller writes the take before it makes the clip, and whatever happens to the
 
 ## Not built
 
-Overdub, merging takes, a count-in, punch in and out, loop recording, quantize, a MIDI monitor, a device picker, latency compensation, other controllers than the sustain pedal, MIDI output, MIDI files and MIDI clock.
+Overdub, merging takes, a count-in, punch in and out, loop recording, quantize, a MIDI monitor, a device picker, other controllers than the sustain pedal, MIDI output, MIDI files and MIDI clock.
 
 ## Checks
 
