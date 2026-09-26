@@ -37,15 +37,18 @@ pub struct PlacedAudio {
 
 impl PlacedAudio {
     /// The level of frame `frame` of the clip, heard in its part `from..to`: the gain, the
-    /// fades, and the ramp at each edge of that part.
-    fn level(&self, frame: u64, (from, to): (u64, u64), ramp: u64) -> f32 {
+    /// fades, and the ramp at each edge of that part. `entered` frames ago the sound came in
+    /// after a jump, which is one more edge with the same ramp. A clip that starts where the
+    /// sound comes in therefore gets one ramp and not two.
+    fn level(&self, frame: u64, (from, to): (u64, u64), ramp: u64, entered: u64) -> f32 {
         if frame < from || frame >= to {
             return 0.0;
         }
         let ramp = (ramp + 1) as f64;
         let rising = (frame - from + 1) as f64 / ramp;
         let falling = (to - frame) as f64 / ramp;
-        let mut level = rising.min(falling).min(1.0);
+        let entering = entered.saturating_add(1) as f64 / ramp;
+        let mut level = rising.min(falling).min(entering).min(1.0);
         if self.fade_in > 0 {
             level = level.min(frame as f64 / self.fade_in as f64);
         }
@@ -55,10 +58,11 @@ impl PlacedAudio {
         (level * f64::from(self.gain)) as f32
     }
 
-    /// Frames `first..` of the clip as heard in its part `part`, into `out`.
+    /// Frames `first..` of the clip as heard in its part `part`, into `out`. `entered` is
+    /// for `first`, see [`Self::level`].
     fn write(
         &self,
-        first: u64,
+        (first, entered): (u64, u64),
         part: (u64, u64),
         ramp: u64,
         out: &mut [[f32; 2]],
@@ -67,7 +71,8 @@ impl PlacedAudio {
         self.resampler
             .render(&self.audio, self.origin, first, out, scratch);
         for (index, frame) in out.iter_mut().enumerate() {
-            let level = self.level(first + index as u64, part, ramp);
+            let index = index as u64;
+            let level = self.level(first + index, part, ramp, entered.saturating_add(index));
             *frame = frame.map(|sample| sample * level);
         }
     }
@@ -136,8 +141,8 @@ pub struct AudioPlayer {
     tail: Box<[[f32; 2]]>,
     /// The next frame of `tail` to play: its length when it is done.
     tail_at: usize,
-    /// Frames of the fade-in after a jump done so far: `ramp` when it is done.
-    entry_at: u64,
+    /// Frames since the sound came in after the last jump.
+    entered: u64,
     last: Option<Sounding>,
     /// The project frame after the last block, when it played.
     played_to: Option<u64>,
@@ -157,7 +162,7 @@ impl AudioPlayer {
             piece: vec![[0.0; 2]; MAX_BLOCK].into_boxed_slice(),
             tail: Box::default(),
             tail_at: 0,
-            entry_at: 0,
+            entered: u64::MAX,
             last: None,
             played_to: None,
             changed: false,
@@ -171,7 +176,7 @@ impl AudioPlayer {
         };
         let whole = (0, clip.length);
         clip.write(
-            sounding.next,
+            (sounding.next, u64::MAX),
             whole,
             self.ramp,
             &mut self.tail,
@@ -236,7 +241,6 @@ impl Processor for AudioPlayer {
             .max(1.0) as u64;
         self.tail = vec![[0.0; 2]; self.ramp as usize].into_boxed_slice();
         self.tail_at = self.tail.len();
-        self.entry_at = self.ramp;
     }
 
     fn update(&mut self, update: &mut AudioUpdate) {
@@ -261,7 +265,7 @@ impl Processor for AudioPlayer {
             if let Some(sounding) = self.last.take() {
                 self.start_tail(sounding);
             }
-            self.entry_at = 0;
+            self.entered = 0;
         }
         self.changed = false;
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);
@@ -291,8 +295,9 @@ impl Processor for AudioPlayer {
                     let part = heard_part(&self.spans, owner, frame);
                     let count = (next - frame) as usize;
                     if let Some(piece) = self.piece.get_mut(..count) {
+                        let entered = self.entered.saturating_add(frame - range.start);
                         clip.write(
-                            frame - span.start,
+                            (frame - span.start, entered),
                             part,
                             self.ramp,
                             piece,
@@ -308,20 +313,7 @@ impl Processor for AudioPlayer {
                 }
                 frame = next;
             }
-            // After a jump the new sound comes in along the ramp.
-            let outputs = left
-                .iter_mut()
-                .zip(right.iter_mut())
-                .skip(offset(range.start));
-            for (left, right) in outputs {
-                if self.entry_at >= self.ramp {
-                    break;
-                }
-                let level = (self.entry_at + 1) as f32 / (self.ramp + 1) as f32;
-                *left *= level;
-                *right *= level;
-                self.entry_at += 1;
-            }
+            self.entered = self.entered.saturating_add(range.end - range.start);
             let (owner, _) = heard_at(&self.spans, range.end - 1, range.end);
             self.last = owner.and_then(|clip| {
                 let span = self.spans.get(clip)?;

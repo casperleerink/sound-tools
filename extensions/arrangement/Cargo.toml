@@ -14,6 +14,7 @@ sound-core.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
 sound-ui.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 hound.workspace = true

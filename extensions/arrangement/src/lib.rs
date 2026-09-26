@@ -606,6 +606,34 @@ pub fn add_audio_track(
     Ok(changes.create(id, state))
 }
 
+/// Why an audio file did not become a clip.
+#[derive(Debug, thiserror::Error)]
+pub enum AudioFileError {
+    #[error(transparent)]
+    Media(#[from] sound_media::MediaError),
+    #[error(transparent)]
+    Project(#[from] ProjectError),
+}
+
+/// Copies an audio file from anywhere into `assets/audio/` and adds a clip of all of it at
+/// `start` to a group of changes, on top of the other clips of the track. The clip is named
+/// after the file.
+///
+/// The copy is made now, whatever becomes of the group: an asset is not undone, and a file
+/// that nothing names is left alone. Everything else is the group, so it is one undo step.
+pub fn add_audio_file(
+    project: &Project,
+    changes: &mut Changes,
+    track: &Instance<TrackState>,
+    source: &std::path::Path,
+    start: Ticks,
+) -> Result<Instance<AudioClip>, AudioFileError> {
+    let asset = sound_media::import(project.assets(), source)?;
+    let name = asset.asset_name().name().to_string();
+    let clip = AudioClip::new(asset, start);
+    Ok(add_audio_clip(project, changes, track, &name, clip)?)
+}
+
 /// Adds an audio clip to a track, to a group of changes, over every clip the track has: its
 /// layer is one above theirs, so where it overlaps them it is heard. The id comes from `name`,
 /// as for a note clip.

@@ -98,6 +98,22 @@ fn a_clip_plays_its_file_sample_for_sample_from_the_frame_of_its_tick() {
 }
 
 #[test]
+fn a_clip_where_playback_starts_gets_one_ramp_and_not_two() {
+    let mut harness = audio_harness();
+    let file: Vec<[f32; 2]> = (0..1000).map(|_| [0.5, -0.5]).collect();
+    write_wav(&harness, "steady.wav", SAMPLE_RATE, &file);
+    add(&mut harness, "steady", clip("steady.wav", 0));
+    let output = play(&mut harness, 1_100);
+    for (index, played) in output[..1000].iter().enumerate() {
+        let expected = (0.5 * edges(index as u64, 1000)) as f32;
+        assert!(
+            (played[0] - expected).abs() <= 1e-6,
+            "frame {index}: {played:?}"
+        );
+    }
+}
+
+#[test]
 fn a_file_at_another_rate_plays_at_its_pitch_and_length() {
     let mut harness = audio_harness();
     let sine = |rate: f64, frame: usize| {
