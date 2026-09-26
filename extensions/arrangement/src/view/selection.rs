@@ -3,7 +3,8 @@
 //!
 //! The first one is what one thing at a time follows: the note editor shows the first selected
 //! clip, and enter opens it. A click selects one thing; shift-click and cmd-click add a thing
-//! or take it out again, as in the Finder.
+//! or take it out again, as in the Finder. The timeline keeps its clips in one, and the note
+//! editor can keep notes in another.
 
 use std::collections::BTreeSet;
 
@@ -45,12 +46,6 @@ impl<T: Ord + Clone> Selection<T> {
         self.items.is_empty()
     }
 
-    /// This one thing, or nothing.
-    pub fn select_only(&mut self, item: Option<T>) {
-        self.items = item.iter().cloned().collect();
-        self.primary = item;
-    }
-
     /// Shift-click and cmd-click: a thing that is not selected is added and comes first, one
     /// that is selected goes out.
     pub fn toggle(&mut self, item: T) {
@@ -61,15 +56,6 @@ impl<T: Ord + Clone> Selection<T> {
         } else {
             self.items.insert(item.clone());
             self.primary = Some(item);
-        }
-    }
-
-    /// Adds things and keeps what comes first, or makes the first of them first when nothing
-    /// was selected.
-    pub fn extend(&mut self, items: impl IntoIterator<Item = T>) {
-        self.items.extend(items);
-        if self.primary.is_none() {
-            self.primary = self.items.first().cloned();
         }
     }
 
@@ -96,9 +82,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_click_selects_one_and_shift_or_cmd_adds_and_takes_out() {
+    fn shift_or_cmd_click_adds_and_takes_out() {
         let mut selection = Selection::default();
-        selection.select_only(Some(3));
+        selection.set([3], Some(3));
         assert_eq!((selection.len(), selection.primary()), (1, Some(&3)));
         selection.toggle(1);
         selection.toggle(2);
@@ -108,7 +94,7 @@ mod tests {
         selection.toggle(2);
         assert_eq!(selection.primary(), Some(&1));
         assert!(!selection.contains(&2));
-        selection.select_only(None);
+        selection.set([], None);
         assert!(selection.is_empty());
         assert_eq!(selection.primary(), None);
     }
@@ -116,12 +102,10 @@ mod tests {
     #[test]
     fn what_comes_first_is_always_selected() {
         let mut selection = Selection::default();
-        selection.extend([5, 4]);
-        assert_eq!(selection.primary(), Some(&4));
-        selection.extend([1]);
+        selection.set([5, 4], None);
         assert_eq!(selection.primary(), Some(&4));
         assert!(selection.remove(&4));
-        assert_eq!(selection.primary(), Some(&1));
+        assert_eq!(selection.primary(), Some(&5));
         assert!(!selection.remove(&9));
         selection.set([7, 8], Some(9));
         assert_eq!(selection.primary(), Some(&7));
