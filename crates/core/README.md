@@ -286,7 +286,7 @@ fn apply_bank(state: &Bank, context: &mut BehaviourContext<'_>) -> Result<(), Be
 }
 ```
 
-For the arrangement this reads: a track owns clip records and one `instrument` child. Its behaviour builds one snapshot from `children::<Clip>()`, sends it to its one sequencer processor, connects the sequencer's event output to `child_input("instrument", "notes")` and the child's `audio` output through the track's mixer to the device. An agent adds a part by writing one clip file, and a whole track by writing one folder. Both arrive as one group: one snapshot, one batch. In `Processor::update`, swap the `Arc` with `std::mem::swap` and never drop it there.
+For the arrangement this reads: a track owns clip records and one `instrument` child. Its behaviour builds one snapshot from `children::<Clip>()`, sends it to its one sequencer processor, connects the sequencer's event output to `child_input("instrument", "notes")`, runs the child's `audio` output through its effects and names the end of that chain as its own `audio` output. The arrangement, its owner, runs the behaviour after its tracks: it finds each track's `audio` output with `child_output`, connects it through a mixer of that track to its master, and the master to the device. An agent adds a part by writing one clip file, and a whole track by writing one folder. Both arrive as one group: one snapshot, one batch. In `Processor::update`, swap the `Arc` with `std::mem::swap` and never drop it there.
 
 Rebuilding a snapshot of a hundred small records on every change is cheap, so do that. A behaviour gets no previous state and has nowhere to keep one. If a rebuild ever shows up in a profile, that is a change to make in the core.
 

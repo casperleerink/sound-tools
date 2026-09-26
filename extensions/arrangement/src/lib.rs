@@ -33,7 +33,8 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOOL, Velocity};
 
-pub use master::{LimiterState, Master, MasterSettings, MasterState};
+use master::Master;
+pub use master::{LimiterState, MasterState};
 pub use mixer::{ChannelGains, Mixer, RAMP_SECONDS, channel_gains};
 pub use sequencer::{HELD_CAPACITY, PREVIEW_SECONDS, Sequencer, SequencerUpdate, TrackSnapshot};
 pub use slot::EffectSlot;
@@ -333,26 +334,32 @@ fn apply_arrangement(
     arrangement: &ArrangementState,
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
-    let tracks: Vec<(String, TrackState)> = context
+    // Only what the mixers need, and no copy of a record: this runs on every edit below the
+    // arrangement, a mouse move of a clip drag included.
+    let soloing = context
         .children::<TrackState>()
-        .map(|(name, track)| (name.to_string(), track.clone()))
+        .any(|(_, track)| track.solo);
+    let tracks: Vec<(String, ChannelGains)> = context
+        .children::<TrackState>()
+        .map(|(name, track)| {
+            let gains = match soloing && !track.solo {
+                true => [0.0; sound_core::CHANNELS],
+                false => channel_gains(track),
+            };
+            (name.to_string(), gains)
+        })
         .collect();
-    let soloing = tracks.iter().any(|(_, track)| track.solo);
 
     let settings = arrangement.master.settings();
     let (peaks, reduction) = (context.peaks(MASTER_PEAKS), context.peaks(REDUCTION_PEAKS));
     let master = context.processor(MASTER, || Master::new(settings, peaks, reduction))?;
     context.update(master, settings)?;
 
-    for (name, track) in &tracks {
-        let gains = match soloing && !track.solo {
-            true => [0.0; sound_core::CHANNELS],
-            false => channel_gains(track),
-        };
+    for (name, gains) in tracks {
         let peaks = context.peaks(&format!("{TRACK_PEAKS}{name}"));
         let mixer = context.processor(&format!("{MIXER}{name}"), || Mixer::new(gains, peaks))?;
         context.update(mixer, gains)?;
-        if let Some(sound) = context.child_output(name, AUDIO_OUTPUT) {
+        if let Some(sound) = context.child_output(&name, AUDIO_OUTPUT) {
             context.connect(sound.to(InputEndpoint::new(mixer, Mixer::INPUT)))?;
         }
         let into_master = InputEndpoint::new(master, Master::INPUT);

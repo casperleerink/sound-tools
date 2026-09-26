@@ -10,7 +10,10 @@
 //! the default, it adds no latency: nothing played live waits for it.
 //!
 //! Under the ceiling the gain is exactly 1, so the output is the input, sample for sample, one
-//! lookahead later. A last clamp at the ceiling catches what rounding might leave over it.
+//! lookahead later. A last clamp at the ceiling catches what rounding might leave over it, and
+//! what was planned for a higher ceiling while the ceiling came down. With no lookahead, the
+//! rising edge of the first peak over the ceiling is flattened there: that is a hard clip of the
+//! edge, and the release then turns the next peaks down whole.
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
@@ -125,7 +128,7 @@ impl MasterState {
 
 /// What the master processor is sent: every value as a factor or in seconds.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct MasterSettings {
+pub(crate) struct MasterSettings {
     pub volume: f32,
     pub bypass: bool,
     pub gain: f32,
@@ -140,7 +143,7 @@ fn capacity(sample_rate: f32) -> usize {
 }
 
 /// The one processor of the master: volume, limiter, and the peaks of what it sends out.
-pub struct Master {
+pub(crate) struct Master {
     settings: MasterSettings,
     volume: Smoothed,
     gain: Smoothed,

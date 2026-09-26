@@ -274,7 +274,9 @@ The limiter:
 - The gain drops at once to what a sample needs and comes back along the release, and a last clamp at the ceiling catches float rounding. So no output sample is ever above the ceiling. Under the ceiling the gain is exactly 1.0 and the output is the input, bit for bit.
 - The default ceiling is full scale, not the -0.3 dB of the mockup: then "a render that never went over full scale is unchanged, sample for sample" holds exactly, and the master still never clips. Inter-sample peaks are not measured; a composer who wants room for them lowers the ceiling.
 - The default lookahead is 0. A lookahead is a latency for every track, so it delays a keyboard played live and a preview note as much, and it moves where a render's blocks fall. With a lookahead the limiter holds the sound back and lowers the gain along a straight line over it (a minimum over the window, then a moving average), so the gain is down when the peak arrives and the top of the wave keeps its shape. It reports the lookahead through `Processor::latency`, so latency compensation leads every track by it and they stay aligned. Changing it is a latency change: the tracks see one jump, as for a plugin.
-- A bypassed limiter keeps its lookahead as a pure delay, so switching it never moves the tracks in time.
+- A bypassed limiter keeps its lookahead as a pure delay, so switching it never moves the tracks in time. Its gain goes on working while it is bypassed, so the frames in the delay come out with the gain they need when it is switched on again.
+- Where the limiter clips the shape of the wave, which no test can hear: with no lookahead the gain drops on the frame that needs it, so the rising edge of the first peak over the ceiling is flattened at the ceiling until the peak, a hard clip of that edge; after it the release holds the gain down and the next peaks are turned down whole. With a lookahead, for up to one lookahead after the ceiling is lowered while the project plays, the frames already in the delay were planned for the old ceiling, and the last clamp flattens what is over the new one. Neither goes over the ceiling.
+- The gain works in f64 and goes the rest of the way to its target within 0.001 dB. In f32 a release step near 1 was less than half of its last bit, and the gain stopped just under 1 for good (0.99986 at 48 kHz and 100 ms), which scaled every sample after the first peak. Samples that are not a number or infinite come out as 0: they are no sound, and the clamp would have turned them into full scale.
 
 Volume and silence:
 
@@ -303,7 +305,7 @@ In the window:
 - The master row is 40 pt, pinned under the tracks, with a ring where a track has its dot. A click, or enter when tab has reached it, opens the master panel in the place of the track panel: the master volume on its meter in the header column, and the Limiter card with expand and power and no close. Tab goes from the timeline to the master row, then to the panel below. There is no "Add effect" on the master: effects on the master are not built.
 - S sits right of M in the mixer strip, yellow when on. `Solo track`, `Unsolo track`.
 
-Not built: effects on the master, a limiter or meter for what goes around the master, inter-sample peak detection, M and S in the arrangement header, a meter per track in the arrangement, a delay that keeps the latency of a bypassed effect, and a crossfade when an effect is switched.
+Not built: effects on the master, a limiter or meter for what goes around the master, taking a bypassed plugin's latency out of the wait after a play (a processor whose output reaches nothing still counts toward it, see "Latency compensation"), inter-sample peak detection, M and S in the arrangement header, a meter per track in the arrangement, a delay that keeps the latency of a bypassed effect, and a crossfade when an effect is switched.
 
 #### The click, the tempo in the transport and following the playhead, decided September 20, 2026 with step 2
 

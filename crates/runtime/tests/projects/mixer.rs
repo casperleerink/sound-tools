@@ -150,3 +150,48 @@ fn a_project_that_clipped_renders_under_the_ceiling_and_the_meter_says_so() {
     let output = limited.project.engine().output_peaks().take();
     assert_eq!(output, [peak(&left), peak(&right)]);
 }
+
+/// A project of before the master: its arrangement record says nothing, as every record of
+/// the first two milestones did. It opens with the limiter on, and no file is written for it.
+#[test]
+fn a_project_from_before_the_master_opens_unchanged_and_renders_under_the_ceiling() {
+    let folder = tempfile::tempdir().unwrap();
+    let old = [
+        (
+            "project.json",
+            r#"{"format": 1, "extensions": ["arrangement", "instrument"], "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}, "connections": []}"#.to_string(),
+        ),
+        (
+            "state/arrangement/instance.json",
+            r#"{"tool": "arrangement", "state": {}}"#.to_string(),
+        ),
+        (
+            "state/arrangement/piano/instance.json",
+            r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1}}"#.to_string(),
+        ),
+        ("state/arrangement/piano/instrument.json", crate::support::synth(1.0)),
+        (
+            "state/arrangement/piano/chords.json",
+            clip(0, 15360, &[(0, 15360, 48), (0, 15360, 55), (0, 15360, 64), (0, 15360, 67)]),
+        ),
+    ];
+    for (path, body) in &old {
+        crate::support::write(folder.path(), path, body);
+    }
+    let before = files(folder.path());
+    let mut harness = Harness::open(folder);
+    assert_eq!(harness.project.problems(), []);
+    let render = harness.play(2 * BAR);
+    let (left, right) = split(&render);
+    // The chord at full gain is over full scale, and the limiter holds it.
+    assert!(peak(&left) <= 1.0 && peak(&right) <= 1.0, "{}", peak(&left));
+    assert!(peak(&left) > 0.99, "{}", peak(&left));
+    // Opening, playing and closing wrote no record: every one of them is byte for byte what it
+    // was. Only the generated files are new.
+    let reopened = harness.reopen();
+    let after = files(reopened.project.root());
+    for (path, bytes) in &before {
+        let now = after.iter().find(|(other, _)| other == path);
+        assert_eq!(now.map(|(_, now)| now), Some(bytes), "{}", path.display());
+    }
+}
