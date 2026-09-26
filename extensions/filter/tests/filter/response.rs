@@ -42,6 +42,7 @@ fn butterworth_db(kind: FilterType, slope: Slope, ratio: f64) -> f64 {
 
 #[test]
 fn every_type_and_slope_measures_as_its_exact_response_at_every_octave() {
+    let mut worst = 0.0_f64;
     for kind in FilterType::ALL {
         for slope in Slope::ALL {
             for resonance in [0.0, 0.5, 1.0] {
@@ -52,6 +53,7 @@ fn every_type_and_slope_measures_as_its_exact_response_at_every_octave() {
                         continue;
                     }
                     let measured = measured_db(state, hz);
+                    worst = worst.max((measured - exact).abs());
                     assert!(
                         (measured - exact).abs() < 0.02,
                         "{kind:?} {slope:?} resonance {resonance} at {hz} Hz: measured {measured:.3} dB, exact {exact:.3} dB"
@@ -60,6 +62,7 @@ fn every_type_and_slope_measures_as_its_exact_response_at_every_octave() {
             }
         }
     }
+    println!("largest difference from the exact response: {worst:.4} dB");
 }
 
 #[test]
@@ -70,6 +73,9 @@ fn low_and_high_pass_at_resonance_zero_are_butterworth_filters() {
             for hz in [250.0, 500.0, 1_000.0, 2_000.0] {
                 let measured = measured_db(state, hz);
                 let expected = butterworth_db(kind, slope, hz / 1_000.0);
+                println!(
+                    "{kind:?} {slope:?} at {hz} Hz: {measured:.2} dB, Butterworth {expected:.2} dB"
+                );
                 assert!(
                     (measured - expected).abs() < 0.2,
                     "{kind:?} {slope:?} at {hz} Hz: measured {measured:.3} dB, Butterworth {expected:.3} dB"
@@ -114,6 +120,9 @@ fn resonance_raises_the_gain_at_the_cutoff_in_equal_steps_of_db() {
             let state = state(FilterType::LowPass, slope, resonance as f32, 1_000.0);
             let measured = measured_db(state, 1_000.0);
             let expected = expected(slope, resonance);
+            println!(
+                "{slope:?} resonance {resonance}: {measured:.2} dB at the cutoff, expected {expected:.2} dB"
+            );
             assert!(
                 (measured - expected).abs() < 0.02,
                 "{slope:?} resonance {resonance}: {measured:.3} dB, expected {expected:.3} dB"

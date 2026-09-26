@@ -64,3 +64,5 @@ cargo nextest run -p runtime --test projects filter                      # in a 
 cargo nextest run -p runtime --test window filter                        # the card, with a simulated mouse and keys
 cargo nextest run -p filter --run-ignored only realtime_ratio --no-capture   # speed of 100 filters
 ```
+
+Measured September 26, 2026 on an Apple Silicon laptop, dev profile with `opt-level = 3`, 48 kHz, offline, while other builds ran: 100 filters at 24 dB per octave, each fed by its own noise source, render 7.7 times faster than realtime, and 7.2 times with the LFO of every one moving. The measured response is within 0.0014 dB of `response` at every octave from 125 Hz to 8 kHz for every type, slope and resonance of the test.
