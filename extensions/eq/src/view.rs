@@ -132,19 +132,16 @@ const OUTPUT_KNOB: Control<EqState> = Control {
     unit: Unit::Decibels,
 };
 
-/// The value of each shape in the select and its label.
-const SHAPES: [(Shape, &str, &str); 6] = [
-    (Shape::LowCut, "low_cut", "Low cut"),
-    (Shape::LowShelf, "low_shelf", "Low shelf"),
-    (Shape::Bell, "bell", "Bell"),
-    (Shape::Notch, "notch", "Notch"),
-    (Shape::HighShelf, "high_shelf", "High shelf"),
-    (Shape::HighCut, "high_cut", "High cut"),
+/// The value of each shape in the select, its label and its icon. The select shows the icon,
+/// because no name of a shape but `Bell` fits in a cell, and the cell says the name under it.
+const SHAPES: [(Shape, &str, &str, &str); 6] = [
+    (Shape::LowCut, "low_cut", "Low cut", "eq-low-cut"),
+    (Shape::LowShelf, "low_shelf", "Low shelf", "eq-low-shelf"),
+    (Shape::Bell, "bell", "Bell", "eq-bell"),
+    (Shape::Notch, "notch", "Notch", "eq-notch"),
+    (Shape::HighShelf, "high_shelf", "High shelf", "eq-high-shelf"),
+    (Shape::HighCut, "high_cut", "High cut", "eq-high-cut"),
 ];
-
-fn shape_value(shape: Shape) -> &'static str {
-    SHAPES[shape.index()].1
-}
 
 /// A value with its unit, as a knob shows it: `632 Hz`, `1.2 kHz`, `-4.5 dB`, `0.71`.
 fn readout(unit: Unit, value: f32) -> String {
@@ -227,16 +224,16 @@ impl EqView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
-        let items = SHAPES.map(|(_, value, label)| MenuItem::new(value, label));
+        let items = SHAPES.map(|(_, value, label, icon)| MenuItem::new(value, label).icon(icon));
         let shapes = cx.new(|cx| {
             let entries = vec![MenuEntry::Group(MenuGroup::new().items(items))];
             DropdownMenu::new("Shape", entries, cx)
                 .trigger(Trigger::Select)
-                .width(140.)
+                .width(160.)
                 .debug_name("shape")
         });
         cx.subscribe(&shapes, |view, _, MenuPicked(value), cx| {
-            let picked = SHAPES.iter().find(|(_, name, _)| *name == value.as_ref());
+            let picked = SHAPES.iter().find(|(_, name, ..)| *name == value.as_ref());
             if let Some((shape, ..)) = picked {
                 let band = view.selected;
                 let set = move |state: &mut EqState, shape| state.bands[band].shape = shape;
@@ -387,7 +384,7 @@ impl Render for EqView {
         };
         let band = state.bands[self.selected];
         // The select shows the shape of the selected band, also after an outside edit.
-        let shape = shape_value(band.shape);
+        let (_, shape, shape_name, _) = SHAPES[band.shape.index()];
         if self.shapes.read(cx).value().map(SharedString::as_ref) != Some(shape) {
             self.shapes
                 .update(cx, |menu, cx| menu.set_selected(shape, cx));
@@ -397,16 +394,18 @@ impl Render for EqView {
             .band_knob(GAIN_KNOB, &state, cx)
             .disabled(!band.shape.has_gain());
         let q = self.band_knob(Q_KNOB, &state, cx);
-        let shape =
-            Cell::new(self.shapes.clone()).label(format!("Band {}", self.selected + 1));
+        let shape = Cell::new(self.shapes.clone())
+            .label(format!("Band {}", self.selected + 1))
+            .value(shape_name);
         let columns = [
             Column::new().top(frequency).bottom(q),
             Column::new().top(gain).bottom(shape),
         ];
         let switch = |band, cx: &mut Context<Self>| self.switch(band, &state, cx);
         let hidden = [
-            Column::new().top(switch(0, cx)).bottom(switch(1, cx)),
-            Column::new().top(switch(2, cx)).bottom(switch(3, cx)),
+            // Bands 1 and 2 on the first row, so they read in order across.
+            Column::new().top(switch(0, cx)).bottom(switch(2, cx)),
+            Column::new().top(switch(1, cx)).bottom(switch(3, cx)),
             Column::new().top(self.output_knob(&state, cx)),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));

@@ -25,6 +25,9 @@
 //!   the fade in the pixels.
 //! - `track-panel-filter.png`: the synth and the built-in filter after it.
 //! - `track-panel-filter-expanded.png`: the same with the filter expanded: slope and LFO.
+//! - `track-panel-eq.png`: the synth and the built-in EQ after it, band 3 selected.
+//! - `track-panel-eq-expanded.png`: the same with the EQ expanded: the bands on and off, and
+//!   the output.
 //! - `track-panel-empty.png`: the panel of a track whose instrument is a tool with no view.
 //! - `track-panel-plugin.png`: the panel of a track whose instrument is a CLAP plugin.
 //! - `track-panel-picker.png`: the same with the instrument picker open.
@@ -53,6 +56,8 @@ use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT, Viewpo
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor};
 use arrangement::{Colour, TrackState};
+use eq::view::EqView;
+use eq::{Band, EqState, Shape};
 use filter::FilterState;
 use filter::view::FilterView;
 use gpui::{
@@ -398,6 +403,36 @@ fn add_filter(project: &mut Project, track: &str) -> Result<()> {
     };
     changes.create(slot, sound);
     project.commit("Add Filter", changes)?;
+    Ok(())
+}
+
+/// Puts an EQ after the instrument of a track, as `Add effect` does, with the bands of the
+/// mockup.
+fn add_eq(project: &mut Project, track: &str) -> Result<()> {
+    let id = InstanceId::new(&format!("arrangement/{track}"))?;
+    let track = project
+        .resolve::<TrackState>(&id)
+        .context("the track is not there")?;
+    let mut changes = Changes::new();
+    let slot = arrangement::add_effect(project, &mut changes, &track, "EQ")?;
+    let band = |shape, frequency_hz, gain_db, q| Band {
+        on: true,
+        shape,
+        frequency_hz,
+        gain_db,
+        q,
+    };
+    let sound = EqState {
+        bands: [
+            band(Shape::LowCut, 60.0, 0.0, 0.71),
+            band(Shape::Bell, 250.0, 2.5, 1.0),
+            band(Shape::Bell, 900.0, -4.5, 2.0),
+            band(Shape::HighShelf, 6_000.0, 3.0, 0.71),
+        ],
+        output_gain_db: 0.0,
+    };
+    changes.create(slot, sound);
+    project.commit("Add EQ", changes)?;
     Ok(())
 }
 
@@ -821,6 +856,30 @@ fn main() -> Result<()> {
     cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "track-panel-filter-expanded")?;
+    drop(opened);
+
+    // The built-in EQ after the synth, with the bands of the mockup and band 3 selected, then
+    // expanded with the on and off of each band and the output.
+    let opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        add_eq(project, "bass")
+    })?;
+    opened.click_track_header(1., &mut cx)?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let card = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
+        let card = card.context("the EQ has no card")?;
+        card.downcast::<EqView>()
+            .map_err(|_| anyhow::anyhow!("the second card is not the EQ"))
+    })?;
+    cx.update(|cx| card.update(cx, |card, cx| card.select(2, cx)));
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-eq")?;
+    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-eq-expanded")?;
     drop(opened);
 
     // A track whose instrument is a tool that has no view: the tone.

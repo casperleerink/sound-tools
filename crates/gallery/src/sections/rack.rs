@@ -90,7 +90,8 @@ fn picker(name: &'static str, cx: &mut App) -> Entity<DropdownMenu> {
     })
 }
 
-/// The shape of an EQ band, the list a select is for.
+/// The shape of an EQ band, the list a select is for. Each has its icon, which the trigger
+/// shows.
 fn select(cx: &mut App) -> Entity<DropdownMenu> {
     let shapes = [
         "Bell",
@@ -100,7 +101,10 @@ fn select(cx: &mut App) -> Entity<DropdownMenu> {
         "High cut",
         "Notch",
     ]
-    .map(|shape| MenuItem::new(shape.to_lowercase(), shape));
+    .map(|shape| {
+        let value = shape.to_lowercase().replace(' ', "-");
+        MenuItem::new(value.clone(), shape).icon(format!("eq-{value}"))
+    });
     cx.new(|cx| {
         DropdownMenu::new(
             "Shape",
