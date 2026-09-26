@@ -43,7 +43,7 @@ Four bands, not eight: DESIGN.md draws four, a cut and two or three moves are wh
 
 `view::register(views, devices)` registers `EqView` as the card of `eq` (`Views::register_card`) and says the card of an EQ is called `EQ`. The runtime offers `EQ` in the control that adds an effect.
 
-The rack gives the view a `CardFrame`, the picker of the slot as the title and the close icon, and the view draws the whole card, 464 pt wide as DESIGN.md gives it, with its expand icon:
+The rack gives the view a `CardFrame`, the picker of the slot as the title, the power icon and the close icon, and the view draws the whole card, 464 pt wide as DESIGN.md gives it, with its expand icon:
 
 - The display, 312 pt: the summed curve from 20 Hz to 20 kHz, -18 to +18 dB, with the scale `100 · 1k · 10k` under it. A numbered handle per band: sideways is frequency, up and down is gain. A cut or a notch has no gain, so its handle sits on the 0 dB line and moves only sideways. The selected band has a full dot, the others a ring, and a band that is off is dimmed.
 - A press on a handle selects its band. The keys 1 to 4 do too, from any control of the card that has the focus.

@@ -159,7 +159,7 @@ Match what gpui 0.2.2 already pulls in (smol 2, async-task, log, parking_lot, sl
 | --- | --- | --- |
 | Device I/O | `cpal` 0.18 | 0.18 changed error kinds, made PipeWire the Linux default and renamed the realtime feature. The next major renames `play()` to `start()` and adds duplex streams. Keep our wrapper thin. |
 | Control ↔ audio queues | `rtrb` ≥0.4 | Lock-free SPSC. Versions before 0.3.5 have a soundness bug. |
-| Audio → UI snapshots | `triple_buffer` 9 | Meters, playhead, CPU load. Latest value wins. |
+| Audio → UI snapshots | `triple_buffer` 9 | Playhead, CPU load. Latest value wins. Meters use `sound_core::Peaks` since step 2 of the third milestone. |
 | Denormals | `no_denormals` 0.3 | Wraps the body of `Engine::process_block`. The function is `unsafe` since 0.3. |
 | Realtime checks | `rtsan-standalone` 0.3 | `Engine::process_block` is `#[nonblocking]`. It does nothing unless the build sets `RTSAN_ENABLE=1`; then it aborts on allocations, locks and syscalls. See section 3. |
 | Worker thread priority | `audio_thread_priority` 0.38 | Only for our own realtime threads. cpal's callback thread already has realtime priority on macOS. |

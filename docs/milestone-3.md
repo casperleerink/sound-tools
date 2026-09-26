@@ -1,5 +1,7 @@
 # Milestone 3: mixer, built-in effects, reliable plugins and a better window
 
+Done September 26, 2026: every step is merged, and the check of the milestone is in [ARCHITECTURE.md](../ARCHITECTURE.md), "Verified September 26, 2026", with "Known gaps after the third milestone" after it. The owner's checks below are still open.
+
 Drafted September 22, 2026. This is the plan an orchestrating agent works from. It holds goals, decisions and checks, no implementation. [ARCHITECTURE.md](../ARCHITECTURE.md) stays the source of truth. Each step records what it settles there. The starting point is "Known gaps after the second milestone" in the same file.
 
 ## Goal
@@ -53,19 +55,19 @@ Audio recording, the in-app agent and the outer application, AU, a plugin sandbo
 
 ## Steps, one pull request each
 
-| # | Step | Done when |
-| --- | --- | --- |
-| 0 | UI review and design direction | Screenshots of every view at laptop size, a list of what is wrong (alignment, spacing, mixed controls, no clear identity), and a proposed design language in DESIGN.md. The owner has approved it. |
-| 1 | Shared components and the track panel redone | Knob, fader, meter, toggle and device card live in `crates/ui` and the gallery. The synth, plugin cards, effect cards and mixer section all use them, aligned. One knob gesture helper. Snapshots before and after. |
-| 2 | Mixer: master limiter, volume fader and meter, solo | The master never goes over its ceiling on a project that clipped before. Solo and volume work from the window and from a file, live, each as one undo step. Old projects still open. |
-| 3 | Latency compensation | A test plugin with a known latency on one track and none on another: both reach the master sample-aligned, also after the latency changes during playback. Recording still lands where it was played. |
-| 4 | VST 3 reliability | Each item under "Plugins" above is done or has a stated reason not to be, with a test where CI allows and a check by hand where it does not. |
-| 5 | Filter | See "Verify the milestone". |
-| 6 | Compressor | See "Verify the milestone". |
-| 7 | EQ | See "Verify the milestone". |
-| 8 | Reverb | See "Verify the milestone". |
-| 9 | Editing in the window | Each action under "Editing in the window" works with the trackpad and keys, is one undo step, and a file edit of the same thing still applies live. |
-| 10 | Milestone check | Every check below has evidence, the README is current, and the known gaps are listed. |
+| # | Step | Done when | Done in |
+| --- | --- | --- | --- |
+| 0 | UI review and design direction | Screenshots of every view at laptop size, a list of what is wrong (alignment, spacing, mixed controls, no clear identity), and a proposed design language in DESIGN.md. The owner has approved it. | #28 |
+| 1 | Shared components and the track panel redone | Knob, fader, meter, toggle and device card live in `crates/ui` and the gallery. The synth, plugin cards, effect cards and mixer section all use them, aligned. One knob gesture helper. Snapshots before and after. | #30 (1a), #32 (1b) |
+| 2 | Mixer: master limiter, volume fader and meter, solo | The master never goes over its ceiling on a project that clipped before. Solo and volume work from the window and from a file, live, each as one undo step. Old projects still open. | #35 |
+| 3 | Latency compensation | A test plugin with a known latency on one track and none on another: both reach the master sample-aligned, also after the latency changes during playback. Recording still lands where it was played. | #29 |
+| 4 | VST 3 reliability | Each item under "Plugins" above is done or has a stated reason not to be, with a test where CI allows and a check by hand where it does not. | #31 (4a), #34 (4b) |
+| 5 | Filter | See "Verify the milestone". | #33 |
+| 6 | Compressor | See "Verify the milestone". | #37 |
+| 7 | EQ | See "Verify the milestone". | #38 |
+| 8 | Reverb | See "Verify the milestone". | #36 |
+| 9 | Editing in the window | Each action under "Editing in the window" works with the trackpad and keys, is one undo step, and a file edit of the same thing still applies live. | #39 (9a), #40 (9b) |
+| 10 | Milestone check | Every check below has evidence, the README is current, and the known gaps are listed. | #41 |
 
 Steps 0 and 1 go first, because the mixer and the effects build on the components. Steps 5 to 8 are independent of each other and may run in parallel once step 3 is merged. Steps 1, 4 and 9 may each split in two.
 

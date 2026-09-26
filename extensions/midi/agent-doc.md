@@ -19,7 +19,7 @@ Take names are `take-1`, `take-2` and so on, and a name is never used twice in o
 
 ## Do not edit or delete a take
 
-The app writes a take once, when the recording ends, and never opens the file again. Undo of the recording removes the clip and leaves the take. It is the only copy of what the composer played, in real time, and a later step fits the project tempo to it. Read it, copy it, quote numbers from it. Do not change it, move it or remove it. If you want to change the music, change the clip.
+The app writes a take once, when the recording ends, and never opens the file again. Undo of the recording removes the clip and leaves the take. It is the only copy of what the composer played, in real time, and **Fit tempo to take** fits the project tempo to it, see `agent-docs/fit-tempo.md`. Read it, copy it, quote numbers from it. Do not change it, move it or remove it. If you want to change the music, change the clip.
 
 ## The format
 

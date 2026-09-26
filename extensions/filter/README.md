@@ -43,7 +43,7 @@ The filter owns no children, so an instance is one file: `<name>.json` in a trac
 
 `view::register(views, devices)` registers `FilterView` as the card of `filter` (`Views::register_card`) and says the card of a filter is called `Filter`. The runtime offers `Filter` in the control that adds an effect.
 
-The rack gives the view a `CardFrame`, the picker of the slot as the title and the close icon, and the view draws the whole card, 352 pt wide as DESIGN.md gives it, with its expand icon:
+The rack gives the view a `CardFrame`, the picker of the slot as the title, the power icon and the close icon, and the view draws the whole card, 352 pt wide as DESIGN.md gives it, with its expand icon:
 
 - The display, 200 pt: the response curve from 20 Hz to 20 kHz, -36 to +18 dB, with the scale `100 · 1k · 10k` under it. The type as segments at its top. One handle at the cutoff: sideways is cutoff, up and down is resonance, placed so that it sits on the peak of a low or high pass.
 - Cutoff and Drive, Resonance and Mix, as knobs in two columns.

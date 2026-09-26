@@ -39,7 +39,9 @@ use gpui::{
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CONTROL_HEIGHT, ROW_HEIGHT};
-use sound_ui::components::device_card::{CARD_HEIGHT, CardFrame, HEADER_HEIGHT, PLAIN_CARD_WIDTH};
+use sound_ui::components::device_card::{
+    BORDER, CARD_HEIGHT, CardFrame, HEADER_HEIGHT, PLAIN_CARD_WIDTH,
+};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
@@ -67,10 +69,11 @@ const CARD_GAP: f32 = 12.;
 const DROP_RING: f32 = 2.;
 /// The fade at the right edge of the rack when cards go past it.
 const FADE_WIDTH: f32 = 48.;
-/// The middle of the title line of the cards, where the name of the track is too.
-pub(super) const TITLE_MIDDLE: f32 = RACK_TOP + HEADER_HEIGHT / 2.;
+/// The middle of the title line of the cards, where the name of the track is too. A card's
+/// header starts inside its border.
+pub(super) const TITLE_MIDDLE: f32 = RACK_TOP + BORDER + HEADER_HEIGHT / 2.;
 /// The top of the first row of cells, where the mixer strip starts.
-pub(super) const ROW_TOP: f32 = RACK_TOP + HEADER_HEIGHT;
+pub(super) const ROW_TOP: f32 = RACK_TOP + BORDER + HEADER_HEIGHT;
 /// The left of the volume in the header column, and of the column of pan and mute.
 pub(super) const VOLUME_LEFT: f32 = 8.;
 const PAN_LEFT: f32 = 84.;
