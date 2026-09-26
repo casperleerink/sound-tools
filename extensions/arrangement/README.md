@@ -48,7 +48,7 @@ The rules of the player:
 - Every edge of what is heard gets a linear ramp of `DECLICK_SECONDS` (2 ms). Where one clip hands over to another (a cut between clips that touch, a clip covered or uncovered) the outgoing clip plays on past the edge for the ramp, reading its file past its trim, while the incoming one ramps in: a crossfade, so a join does not dip. A free edge, and a hand-over whose outgoing file ends there, ramp inside the clip. The fades are straight lines from silence, and the level is the smallest of the ramps and the fades, times the gain. So a fade of 0 is the ramp alone and a fade longer than it covers it.
 - Where the sound would jump, after a seek, a stop, a pause, a tempo change or an edit of the track while it plays, what is heard goes on for one ramp and fades out (with what is left of an earlier jump's tail), and the new sound comes in along the same ramp. Measured in `tests/arrangement/audio.rs`: the largest step from one frame to the next is the level over 97, where a hard edge would step by the whole level.
 
-`add_audio_file` copies a file from anywhere into `assets/audio/` (`sound_media::import`) and adds a clip of all of it, named after the file. The copy is not undone; the clip is, with the rest of its group.
+`add_audio_file` copies a file from anywhere into `assets/audio/` (`sound_media::import`) and adds a clip of all of it, named after the file. The copy is not undone; the clip is, with the rest of its group. `add_audio_clips` adds several in one group, each over every clip of its track and a later one over an earlier one, and `top_layer(project, track, except)` is the layer a clip placed over the others goes one above.
 
 ## The sequencer
 
@@ -177,7 +177,9 @@ Edit notes with `project.update(&mut edit, &clip, |clip| ...)` on the `Clip` its
 - `view::layout`: `Viewport::x_of`, `tick_at`, `y_of`, `track_at`, `nearest_track`, `visible_ticks`, `visible_tracks`, `shows`, `following`, `zoomed`, `scrolled`, `clamped`, `clamped_to`, `clip_rect`, `ruler_bars`, `beat_lines`, `miniature`, `shifted`, and `rows_between`, the rows a rectangle touches. Its coordinates are those of the timeline area, right of the headers and below the ruler.
 - `view::snap`: the setting `Snap` (off, bar, beat, 1/8, 1/16, 1/32), `SharedSnap`, the one the timeline and the note editor share, and `Grid` with its `step` (what a drag moves by and a new shape starts on, one tick when off) and its `unit` (what an arrow moves by, the length of a new note and the shortest a drag makes a shape, a sixteenth when off). `Grid::free` is the grid with cmd held. `snap`, `snap_floor` and `snapped_delta` take a step.
 - `view::selection`: `Selection<T>`, a set with one first thing. `toggle` for shift-click and cmd-click, `set`, `remove`.
-- `view::clipboard`: `CopiedClips`, clips with their distances in time and rows, and where a paste puts them (`placed`); `CopiedNotes`, the same for notes in a clip; `Copied`, one of them; and `SharedClipboard`, the one clipboard of the window that the timeline and the note editor share.
+- `view::clips`: `AnyClip`, a note clip or an audio clip by value, which the timeline edits; `shown_end`, where an audio clip ends on the timeline, also when its file is missing; `trimmed_left`, `trimmed_right`, `with_file_start` and `with_file_end`, what an edge or the Start and End of the Clip card do; `fade_in`, `fade_out`, `gain_moved` and the labels.
+- `view::clip_card`: `ClipCard`, the first card of the rack of an audio track, see "Audio clips in the window".
+- `view::clipboard`: `CopiedClips`, clips of either kind with their distances in time and rows, and where a paste puts them (`placed`); `CopiedNotes`, the same for notes in a clip; `Copied`, one of them; and `SharedClipboard`, the one clipboard of the window that the timeline and the note editor share.
 - `view::gesture`: `zone_at` (body, left edge, right edge), `new_clip`, `resized_right`, `resized_left`, `nudged_track`.
 - `view::roll`: `y_of`, `pitch_at`, `nearest_pitch`, `transposed`, `visible_pitches`, `note_rect`, `note_at`, `notes_in` (what a rectangle touches), `opened` (the zoom and scroll of an editor that opens), `clamped`, `drawn_note`, `moved_note`, `moved_notes` (several as a whole), `resized_note`, and of the velocity lane `velocity_y`, `velocity_at`, `moved_velocity`, `velocity_bar`, `velocity_bars_at` and `velocity_bars_between`.
 
@@ -247,6 +249,21 @@ The note editor follows the rules of clips in "Several clips, copy and paste", w
 - The velocity lane: a press on a bar drags the velocity of its note, and of every selected note when its note is selected, by the same distance. Of a chord it takes the bar whose top is nearest the pointer. A press off the bars draws across the lane. Alt-up and alt-down step the selected velocities by 10. A velocity is 1 to 127.
 - An undo or a redo selects the notes it brought back, and an undo of a delete or cut of clips selects those clips again.
 
+### Audio clips in the window
+
+An audio clip is edited as a note clip is (select, move, copy, paste, duplicate, delete, undo), with the rules of "Several clips, copy and paste", and these:
+
+- It is drawn as it sounds: its waveform scaled by its gain and faded. The pointer on it, or selecting it, shows a fade handle at each top corner and the gain handle, hollow, in the middle. The overview of each file comes from `sound_ui::Waveforms`, made on a background thread; a clip draws without its waveform until it is there.
+- An edge trims the file and keeps the sound where it is: the left edge moves `start` and `file_start_seconds` together, in whole snap steps, and stops at the start of the file, at tick 0 and one unit before the other edge. The right edge moves `file_end_seconds`, and at the end of the file writes none. While an edge is dragged, the part of the file past it shows faint. "Trim clip".
+- A fade handle moves its fade by the time the pointer went, no snap: "Change fade in", "Change fade out". The gain handle moves 72 dB (-48 to +24) over 200 pt, shift ten times finer: "Change gain". Alt-up and alt-down step the gain of every selected audio clip by 1 dB, one step. Each writes only what it moves.
+- A note clip goes on instrument tracks only and an audio clip on audio tracks only. A drag keeps the last rows where every clip could go; up and down go to the nearest rows where they all can; a paste that would put a clip on the other kind is refused as a whole and the notice says why.
+- A move, a nudge, a paste, a duplicate and a drop put an audio clip on top of the clips of its track (`layer`), so the newest covers. Several keep their order among themselves.
+- A double click or enter on an audio clip opens the panel of its track, whose Clip card shows it. The open panel follows the selected audio clip to its track.
+- A clip whose file is missing keeps its place and says so, as long as its trim says or one bar.
+- Files dragged from the Finder show a ghost of each clip they make, from the snap step under the pointer and as long as the file, with a 2 pt lavender ring and the file name. On an audio track they become clips one after another; under the last track they make an audio track named after the first file; over an instrument track nothing, and the cursor says so. Each file is copied into `assets/audio/` on a background thread first. One undo step, "Add audio clip" or "Add audio clips"; the copies stay. A file that does not play is left out and the notice says why. `Timeline::drop_files(paths, DropTarget, cx)` does the drop with no platform drag.
+
+The Clip card is the first card of the rack of an audio track, where an instrument track has its instrument, with a hairline after it before the effects. It shows the first selected clip when that is an audio clip of the track: the file name, the whole file in the waveform display of `sound-ui` with the start and end lines that trim it, the gain line with a fade at each end and a green line where the playhead is. Its knobs Gain, Fade in and Fade out, and Start and End behind expand, are the keyboard path of every handle. With no clip of the track selected it says `Select a clip of this track.`
+
 ### Renaming a track
 
 A double click on a track header, or enter while a track and no clip is selected, opens a name field in the header with the name selected. Enter gives the name and a click anywhere else too, one undo step "Rename track"; escape leaves it as it was. An empty name is no name and the track keeps the one it had. The folder of the track keeps its name: the id of a track never changes. While the field is open the keys are the field's: space types a space and does not play. A track deleted from outside while its field is open closes the field.
@@ -272,8 +289,12 @@ Every tempo change after tick 0 has a mark in the ruler: a line at its tick and 
 | left, right | Move the selected clips by a unit of the grid |
 | up, down | Move the selected clips a track, or select the track above or below |
 | cmd-c, cmd-x, cmd-v, cmd-d | Copy, cut, paste at the playhead, duplicate after the selection |
-| enter | Open the note editor of the first selected clip, or edit the name of the selected track |
-| cmd-down | Open the note editor of the first selected clip, or the panel of the selected track |
+| enter | Open the note editor of the first selected clip, the panel of its track for an audio clip, or edit the name of the selected track |
+| cmd-down | Open the note editor of the first selected clip, the panel of its track for an audio clip, or the panel of the selected track |
+| double click on an audio clip | Open the panel of its track, with the clip in its Clip card |
+| drag an edge, a fade handle or the gain handle of an audio clip | Trim it, fade it, change its gain. Shift makes the gain finer |
+| alt-up, alt-down | The gain of the selected audio clips by 1 dB |
+| drop files from the Finder | Audio clips one after another, or a new audio track under the last one |
 | double click on a track header | Edit its name |
 | double click in the ruler, or `t` | Add a tempo change there, or at the playhead |
 | click a tempo mark | Select it and move the playhead onto it |
@@ -308,7 +329,8 @@ cargo nextest run -p arrangement --test arrangement mixer                       
 cargo nextest run -p arrangement --test arrangement effects                       # the chain and its order, with numbers
 cargo nextest run -p arrangement --test arrangement audio --no-capture            # audio clips: position, rate, trim, gain, fades, edges, overlap
 cargo nextest run -p runtime --test projects audio                                # audio in whole projects: by file, copied, reopened, missing
-cargo nextest run -p runtime --test window audio                                  # the window around an audio track
+cargo nextest run -p runtime --test window audio                                  # audio clips, the Clip card and drops in the window
+WINDOW_SNAPSHOT_ONLY=audio cargo test -p runtime --test snapshots                  # the audio states of the window as PNGs
 RTSAN_ENABLE=1 cargo nextest run -p arrangement                                   # with the realtime sanitizer
 cargo nextest run -p runtime --test window                                       # the views with a simulated mouse and keys
 cargo nextest run -p runtime --test window track_panel                           # the track panel and the synth view in it

@@ -26,6 +26,10 @@ Read: WAV with 8, 16, 24 or 32-bit integers or 32 or 64-bit floats, plain or `WA
 
 Measured in `tests/media.rs`, from 44.1 to 48, 48 to 44.1 and 96 to 48 kHz, sines from 100 Hz to 20 kHz: the level within 0.0001 dB, the worst difference from the ideal sine 102.5 dB down or more. Tones of 22.1 to 23.5 kHz in a 48 kHz file played at 44.1 kHz leave 102.6 dB down or more.
 
+## Waveforms
+
+`Overview::of(&audio)` is what a waveform draws: the loudest sample of every 64 frames, left and right together, and coarser levels of 8 times as many frames each. `overview.peak(from, to)` gives the loudest sample of any stretch in 8 to 64 lookups, and `columns(from_seconds, to_seconds, count)` the peaks of a waveform of `count` columns. It reads the whole file once, 35 ms for 10 minutes of stereo 24-bit in the dev profile, so it is made away from the thread that draws; `sound_ui::Waveforms` does that and keeps them. It is never written into the project folder.
+
 ## Checks
 
 ```sh
