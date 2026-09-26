@@ -25,11 +25,16 @@
 //!
 //! The panel is 216 pt: 12 above the cards, a card of 192, 12 below. The rack scrolls sideways
 //! with two fingers, and a fade at its right edge says when cards go past it.
+//!
+//! An effect card is moved by dragging its header onto another card: it takes the place of the
+//! card it is dropped on, and a drop on the instrument or on "Add effect" puts it first or last.
+//! Cmd-left and cmd-right move the effect whose card has the focus. The instrument stays first.
+//! Only the list of the track record changes, as one undo step.
 
 use gpui::{
-    AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    ScrollHandle, SharedString, Task, Window, canvas, div, fill, linear_color_stop,
-    linear_gradient, prelude::*, px,
+    AnyElement, AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, Focusable,
+    FontWeight, Hsla, KeyDownEvent, ScrollHandle, SharedString, Task, Window, canvas, div, fill,
+    linear_color_stop, linear_gradient, prelude::*, px,
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -58,6 +63,8 @@ pub(super) const RACK_TOP: f32 = 12.;
 /// From the header column to the first card.
 pub(super) const RACK_LEFT: f32 = 16.;
 const CARD_GAP: f32 = 12.;
+/// The ring around the card a dragged effect would take the place of.
+const DROP_RING: f32 = 2.;
 /// The fade at the right edge of the rack when cards go past it.
 const FADE_WIDTH: f32 = 48.;
 /// The middle of the title line of the cards, where the name of the track is too.
@@ -90,6 +97,37 @@ fn pan_readout(pan: f32) -> String {
 pub enum TrackPanelEvent {
     /// The close control.
     Close,
+}
+
+/// An effect card on its way to another place in the rack: what a drag of its header carries.
+#[derive(Clone)]
+pub struct DraggedEffect {
+    slot: InstanceId,
+    name: SharedString,
+}
+
+/// What follows the pointer while an effect card is dragged: its title on a small card.
+struct DragPreview {
+    name: SharedString,
+}
+
+impl Render for DragPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        div()
+            .h(px(HEADER_HEIGHT))
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .rounded(px(10.))
+            .bg(theme.gray_200)
+            .border_1()
+            .border_color(theme.alpha_at(0.10))
+            .opacity(0.9)
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(theme.gray_950)
+            .child(self.name.clone())
+    }
 }
 
 /// What a card says when its slot holds nothing.
@@ -187,6 +225,7 @@ impl Device {
         let offers = Devices::offered(kind, cx);
         let entries = offer_entries(&offers, kind, true, session, cx);
         let label = device_label(session, &slot, kind, cx);
+        let title = label.name.clone();
         let name = match kind {
             Slot::Instrument => SharedString::from("instrument-picker"),
             Slot::Effect => effect_picker(&slot),
@@ -210,6 +249,20 @@ impl Device {
         })
         .detach();
         let frame = CardFrame::new(card_id(&slot), picker.clone());
+        // The header of an effect card drags it to another place in the chain.
+        let frame = match kind {
+            Slot::Instrument => frame,
+            Slot::Effect => {
+                let dragged = DraggedEffect {
+                    slot: slot.clone(),
+                    name: title,
+                };
+                frame.draggable(dragged, |dragged: &DraggedEffect, _, cx| {
+                    let name = dragged.name.clone();
+                    cx.new(|_| DragPreview { name })
+                })
+            }
+        };
         // An effect comes off the track by the close icon of its card, and is bypassed by its
         // power icon. Both hold the panel weakly, as every callback of a control does. Whether
         // it is on is read from the track record when the card draws.
@@ -599,6 +652,94 @@ impl TrackPanel {
         self.edit.finish(&self.session, cx);
     }
 
+    /// Moves an effect to a place among the effects, 0 right after the instrument, as one undo
+    /// step named after it. The slot keeps its record and whether it is bypassed.
+    ///
+    /// A slot that is where it would go already, or that the track does not list, which a drop
+    /// from another track's panel would be, is no edit.
+    fn move_effect(&mut self, slot: &InstanceId, to: usize, cx: &mut Context<Self>) {
+        let name = device_label(&self.session, slot, Slot::Effect, cx).name;
+        let (track, slot) = (self.track.clone(), slot.clone());
+        let project = self.session.read(cx).project();
+        let mut changes = Changes::new();
+        match crate::move_effect(project, &mut changes, &track, &slot, to) {
+            Ok(true) => {}
+            Ok(false) | Err(_) => return,
+        }
+        self.end_drag(cx);
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                project.commit(&format!("Move {name}"), changes)
+            });
+        });
+    }
+
+    /// Cmd-left and cmd-right with the focus in an effect card: the effect one place to the
+    /// left or the right. It stays after the instrument. Whether the key was one of them.
+    fn on_card_key(
+        &mut self,
+        slot: &InstanceId,
+        event: &KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let modifiers = event.keystroke.modifiers;
+        if !modifiers.platform || modifiers.shift || modifiers.alt || modifiers.control {
+            return false;
+        }
+        let project = self.session.read(cx).project();
+        let Some(at) = project.state(&self.track).and_then(|track| {
+            track
+                .effects
+                .iter()
+                .position(|effect| effect.name == slot.name())
+        }) else {
+            return false;
+        };
+        let to = match event.keystroke.key.as_str() {
+            "left" => at.saturating_sub(1),
+            "right" => at + 1,
+            _ => return false,
+        };
+        self.move_effect(slot, to, cx);
+        true
+    }
+
+    /// A card of the rack in a frame that takes a dropped effect card, and for an effect the
+    /// keys that move it. `to` is the place among the effects that a drop there gives. The
+    /// frame is 2 pt around the card and takes that room from the gap, so nothing moves. Its id
+    /// names the slot and not the place, so what a card keeps, such as the focus of a knob,
+    /// goes with it when it moves.
+    fn drop_target(
+        &self,
+        card: AnyElement,
+        name: SharedString,
+        to: usize,
+        effect: Option<InstanceId>,
+        ring: Hsla,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let target = div()
+            .id(name)
+            .flex_none()
+            .m(px(-DROP_RING))
+            .border(px(DROP_RING))
+            .rounded(px(10. + DROP_RING))
+            .border_color(gpui::transparent_black())
+            .drag_over::<DraggedEffect>(move |style, _, _, _| style.border_color(ring))
+            .on_drop(cx.listener(move |panel, dragged: &DraggedEffect, _, cx| {
+                panel.move_effect(&dragged.slot, to, cx);
+            }));
+        let target = match effect {
+            Some(slot) => target.on_key_down(cx.listener(move |panel, event, _, cx| {
+                if panel.on_card_key(&slot, event, cx) {
+                    cx.stop_propagation();
+                }
+            })),
+            None => target,
+        };
+        target.child(card).into_any_element()
+    }
+
     /// Puts what the composer picked into the slot, as one undo step. It replaces the whole
     /// record, so undo brings the device that was there back as it was, and a plugin as it
     /// sounded: the host saves one on its way out.
@@ -761,7 +902,7 @@ impl Render for TrackPanel {
             .devices
             .iter()
             .map(|device| match &device.view {
-                Some(view) => view.clone().into_any_element(),
+                Some(view) => (device, view.clone().into_any_element()),
                 None => {
                     let says = match (device.tool, device.kind) {
                         (Some(_), _) => "This tool has no view.",
@@ -774,8 +915,22 @@ impl Render for TrackPanel {
                         .text_color(muted)
                         .child(says);
                     let card = device.frame.card().w(px(PLAIN_CARD_WIDTH));
-                    card.child(line).into_any_element()
+                    (device, card.child(line).into_any_element())
                 }
+            })
+            .map(|(device, card)| (device.slot.clone(), device.kind, card))
+            .collect();
+        // Each card takes a dropped effect card: it goes where the card is, and on the
+        // instrument it goes first. The effects are after the instrument, so the place of an
+        // effect card among the effects is one less than its place in the rack.
+        let ring = theme.lavender;
+        let cards: Vec<AnyElement> = cards
+            .into_iter()
+            .enumerate()
+            .map(|(index, (slot, kind, card))| {
+                let name = SharedString::from(format!("rack-{}", slot.name()));
+                let effect = matches!(kind, Slot::Effect).then_some(slot);
+                self.drop_target(card, name, index.saturating_sub(1), effect, ring, cx)
             })
             .collect();
 
@@ -788,6 +943,10 @@ impl Render for TrackPanel {
             .items_center()
             .h(px(HEADER_HEIGHT))
             .child(self.add_effect.clone());
+        // A drop on it puts the effect last.
+        let add_effect = add_effect.into_any_element();
+        let add_effect =
+            self.drop_target(add_effect, "rack-add".into(), usize::MAX, None, ring, cx);
 
         let close = Button::icon_only("close-track-panel", "x")
             // Quiet until it is wanted, as in the note editor.

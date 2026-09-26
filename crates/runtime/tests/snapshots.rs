@@ -18,6 +18,9 @@
 //! - `fit-recording.png`: the same while it records: tempo, steadiness and record together.
 //! - `editor.png`: the note editor open on the selected clip, one note selected.
 //! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
+//! - `editor-velocity.png`: the melody with velocities of its own in the lane, three notes
+//!   selected, whose bars are in the text colour.
+//! - `editor-marquee.png`: the same with a rectangle being dragged over the notes.
 //! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default,
 //!   playing, so the meter under the volume shows its level.
 //! - `track-panel-solo.png`: the same with S on.
@@ -47,6 +50,8 @@
 //! - `track-panel-effects.png`: the rack with an instrument and two effects, and the control
 //!   that adds one at the end of it.
 //! - `track-panel-bypass.png`: the same with the second effect bypassed from its power icon.
+//! - `track-panel-reorder.png`: the first effect dragged by its header over the second, the
+//!   button still down: its title under the pointer and a ring around where it would go.
 //! - `track-panel-effect-picker.png`: the same with that control open.
 //! - `track-panel-effect-missing.png`: an effect whose plugin this machine does not have.
 //! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the
@@ -341,6 +346,66 @@ impl Opened {
         })?;
         cx.run_until_parked();
         Ok(started.elapsed())
+    }
+
+    /// The left button down at `from` and moved to `to` in four moves, and not let go, for a
+    /// snapshot of a drag in progress.
+    fn press_and_move(
+        &self,
+        from: Point<Pixels>,
+        to: Point<Pixels>,
+        cx: &mut HeadlessAppContext,
+    ) -> Result<()> {
+        let modifiers = Modifiers::default();
+        self.mouse(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: from,
+                pressed_button: None,
+                modifiers,
+            }),
+            cx,
+        )?;
+        self.mouse(
+            PlatformInput::MouseDown(MouseDownEvent {
+                position: from,
+                modifiers,
+                button: MouseButton::Left,
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        )?;
+        for step in 1..=4 {
+            let part = step as f32 / 4.;
+            self.press_and_move_to(from + (to - from) * part, cx)?;
+        }
+        Ok(())
+    }
+
+    /// One move with the left button down.
+    fn press_and_move_to(&self, to: Point<Pixels>, cx: &mut HeadlessAppContext) -> Result<()> {
+        self.mouse(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: to,
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::default(),
+            }),
+            cx,
+        )?;
+        Ok(())
+    }
+
+    fn release(&self, at: Point<Pixels>, cx: &mut HeadlessAppContext) -> Result<()> {
+        self.mouse(
+            PlatformInput::MouseUp(MouseUpEvent {
+                position: at,
+                modifiers: Modifiers::default(),
+                button: MouseButton::Left,
+                click_count: 1,
+            }),
+            cx,
+        )?;
+        Ok(())
     }
 
     /// A drag with the left button from `from`, one mouse move per step of `step`, and the
@@ -921,9 +986,47 @@ fn main() -> Result<()> {
     let melody =
         InstanceId::new("arrangement/a-melody-with-a-name-too-long-for-its-header/clip-000")?;
     let editor = opened.open_editor(&melody, &mut cx)?;
-    cx.update(|cx| editor.update(cx, |editor, cx| editor.select_note(Some(5), cx)));
+    cx.update(|cx| editor.update(cx, |editor, cx| editor.select_notes(&[5], cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "editor")?;
+    // Velocities of its own, as a take has them, and three notes selected.
+    cx.update(|cx| {
+        opened.session.update(cx, |session, cx| {
+            let instance = session.project().resolve::<Clip>(&melody);
+            let instance = instance.context("no melody")?;
+            let mut state = session
+                .project()
+                .state(&instance)
+                .cloned()
+                .context("a clip")?;
+            for (index, note) in state.notes.iter_mut().enumerate() {
+                note.velocity = Velocity::nearest(40 + (index as i64 * 37) % 87);
+            }
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.set(&instance, state);
+                project.commit("Change velocities", changes)
+            });
+            anyhow::Ok(())
+        })
+    })?;
+    cx.update(|cx| editor.update(cx, |editor, cx| editor.select_notes(&[4, 5, 6], cx)));
+    cx.run_until_parked();
+    save(&mut cx, &opened, "editor-velocity")?;
+    // A rectangle on empty space, the button still down.
+    let viewport = cx.update(|cx| editor.read(cx).viewport());
+    let editor_top = WINDOW_HEIGHT - EDITOR_HEIGHT + RULER_HEIGHT;
+    let at = |tick: u64, pitch: u8| -> Result<Point<Pixels>> {
+        let y = roll::y_of(&viewport, Pitch::new(pitch)?) + KEY_HEIGHT / 2.;
+        Ok(point(
+            px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
+            px(editor_top + y),
+        ))
+    };
+    let (from, to) = (at(5 * BAR + 200, 82)?, at(6 * BAR + 1900, 70)?);
+    opened.press_and_move(from, to, &mut cx)?;
+    save(&mut cx, &opened, "editor-marquee")?;
+    opened.release(to, &mut cx)?;
     // The bass, low in the pitch range, as the editor looks after tab gave it the focus.
     let bass = InstanceId::new("arrangement/bass/clip-001")?;
     opened.open_editor(&bass, &mut cx)?;
@@ -1248,6 +1351,31 @@ fn main() -> Result<()> {
     })?;
     opened.click_track_header(0., &mut cx)?;
     save(&mut cx, &opened, "track-panel-effects")?;
+    // Warmth dragged by its header over Space, the button still down. Cards of a plugin are
+    // 200 pt, 12 apart, from 16 pt right of the header column; the grip is left of the power
+    // and close icons, on the line of the titles.
+    let title_line = WINDOW_HEIGHT - arrangement::view::track_panel::PANEL_HEIGHT + 12. + 16.;
+    let warmth_right = HEADER_WIDTH + 16. + 200. + 12. + 200.;
+    let grip = point(px(warmth_right - 8. - 24. - 4. - 24. - 12.), px(title_line));
+    let over_space = point(px(warmth_right + 12. + 100.), px(title_line));
+    let undo_label = |cx: &mut HeadlessAppContext| {
+        cx.update(|cx| {
+            opened
+                .session
+                .read(cx)
+                .project()
+                .undo_label()
+                .map(str::to_string)
+        })
+    };
+    let before = undo_label(&mut cx);
+    opened.press_and_move(grip, over_space, &mut cx)?;
+    save(&mut cx, &opened, "track-panel-reorder")?;
+    // Let go where it came from: a drop on its own card moves nothing.
+    opened.press_and_move_to(grip, &mut cx)?;
+    opened.release(grip, &mut cx)?;
+    let after = undo_label(&mut cx);
+    anyhow::ensure!(before == after, "the drop moved something: {after:?}");
     // Space bypassed: its power icon, title and body go quiet, and the sound goes past it.
     // The click on the icon is in the window tests.
     let track = InstanceId::new("arrangement/track-1")?;

@@ -67,6 +67,18 @@ impl<T: Ord + Clone> Selection<T> {
             .or_else(|| self.items.first().cloned());
     }
 
+    /// Keeps only the things for which `keep` holds, for example those the project still has.
+    pub fn retain(&mut self, keep: impl FnMut(&T) -> bool) {
+        self.items.retain(keep);
+        if self
+            .primary
+            .as_ref()
+            .is_some_and(|primary| !self.items.contains(primary))
+        {
+            self.primary = self.items.first().cloned();
+        }
+    }
+
     /// Takes a thing out, for example because it was deleted. Whether it was selected.
     pub fn remove(&mut self, item: &T) -> bool {
         let removed = self.items.remove(item);
@@ -111,5 +123,8 @@ mod tests {
         assert_eq!(selection.primary(), Some(&7));
         selection.set([7, 8], Some(8));
         assert_eq!(selection.primary(), Some(&8));
+        selection.retain(|item| *item != 8);
+        assert_eq!(selection.primary(), Some(&7));
+        assert_eq!(selection.len(), 1);
     }
 }

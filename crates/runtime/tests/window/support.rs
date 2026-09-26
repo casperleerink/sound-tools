@@ -485,6 +485,26 @@ impl Opened<'_> {
         self.cx.read(|cx| editor.read(cx).selected_note(cx))
     }
 
+    /// Every selected note of the open editor, as indices of its clip.
+    pub fn selected_notes(&mut self) -> Vec<usize> {
+        let Some(editor) = self.editor() else {
+            return Vec::new();
+        };
+        self.cx.read(|cx| editor.read(cx).selected_notes(cx))
+    }
+
+    /// The place in the velocity lane of the open editor where the bar of a note at a project
+    /// tick is, at the height of the top of a bar of `velocity`.
+    pub fn in_lane(&mut self, tick: u64, velocity: u8) -> Point<Pixels> {
+        let editor = self.editor().unwrap();
+        let viewport = self.cx.read(|cx| editor.read(cx).viewport());
+        let y = roll::velocity_y(Velocity::new(velocity).unwrap());
+        point(
+            px(HEADER_WIDTH + viewport.x_of(Ticks(tick)) + roll::VELOCITY_BAR_WIDTH / 2.),
+            px(self.editor_top() + RULER_HEIGHT + roll::ROLL_HEIGHT + y),
+        )
+    }
+
     fn editor_top(&mut self) -> f32 {
         let height = self.cx.update(|window, _| window.viewport_size().height);
         f32::from(height) - EDITOR_HEIGHT
@@ -702,9 +722,25 @@ impl Opened<'_> {
     }
 
     pub fn double_click(&mut self, position: Point<Pixels>) {
+        self.double_press(position);
+        self.release_times(position, 2);
+    }
+
+    /// A click and a second press that stays down, as a double click that goes on into a
+    /// drag: how a note is drawn in the note editor.
+    pub fn double_press(&mut self, position: Point<Pixels>) {
         self.click(position);
         self.press_times(position, 2);
-        self.release_times(position, 2);
+    }
+
+    /// Draws a note in the note editor: a double click on empty space whose second press
+    /// drags to `to`.
+    pub fn draw(&mut self, from: Point<Pixels>, to: Point<Pixels>) {
+        self.double_press(from);
+        let half = point((from.x + to.x) / 2., (from.y + to.y) / 2.);
+        self.drag_to(half);
+        self.drag_to(to);
+        self.release_times(to, 2);
     }
 }
 
@@ -738,4 +774,41 @@ pub fn files(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     )];
     walk(&root.join("state"), root, &mut found);
     found
+}
+
+/// The files and the last undo step before an action.
+pub struct Before {
+    pub files: Vec<(PathBuf, Vec<u8>)>,
+    pub undo_label: Option<String>,
+}
+
+/// Every record file and `project.json` with their bytes, and the undo step on top.
+pub fn mark(opened: &mut Opened<'_>) -> Before {
+    Before {
+        files: files(opened.folder.path()),
+        undo_label: opened.undo_label(),
+    }
+}
+
+/// The action was exactly one undo step with this label: one cmd-z gives the files of before
+/// back byte for byte and the step before on top, and shift-cmd-z does it again.
+pub fn one_undo_step(opened: &mut Opened<'_>, label: &str, before: &Before) {
+    assert_eq!(opened.undo_label().as_deref(), Some(label));
+    let after = files(opened.folder.path());
+    opened.keys("cmd-z");
+    assert_eq!(opened.undo_label(), before.undo_label, "more than one step");
+    let now = files(opened.folder.path());
+    assert_eq!(now, before.files, "undo did not give the files back");
+    opened.keys("shift-cmd-z");
+    let now = files(opened.folder.path());
+    assert_eq!(now, after, "redo did not do it again");
+}
+
+/// Writes a record from outside and applies it, as the watcher does.
+pub fn write_outside(opened: &mut Opened<'_>, relative: &str, contents: &str) {
+    let path = opened.path(relative);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, contents).unwrap();
+    opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
+    opened.settle();
 }

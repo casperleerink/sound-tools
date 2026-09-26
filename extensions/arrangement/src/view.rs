@@ -42,6 +42,7 @@ use sound_notes::Clip;
 use sound_ui::{ActiveTheme, KeyboardFocus, NoticeRoom, Session, Views};
 
 use crate::{ArrangementState, TrackState};
+use clipboard::SharedClipboard;
 use editor::EditorEvent;
 pub use editor::NoteEditor;
 use layout::HEADER_WIDTH;
@@ -96,6 +97,8 @@ pub struct ArrangementView {
     detail: Option<Detail>,
     /// The snap setting of the window, shared by the timeline and the note editor.
     snap: SharedSnap,
+    /// The clipboard of the window, shared by the timeline and the note editor.
+    clipboard: SharedClipboard,
     /// The master row is a tab stop after the timeline, and enter opens its panel.
     master_focus: FocusHandle,
     master_keyboard: KeyboardFocus,
@@ -109,9 +112,11 @@ impl ArrangementView {
         cx: &mut Context<Self>,
     ) -> Self {
         let playhead = session.read(cx).playhead().clone();
-        let snap = SharedSnap::default();
-        let timeline =
-            cx.new(|cx| Timeline::new(session.clone(), arrangement.clone(), snap.clone(), cx));
+        let (snap, clipboard) = (SharedSnap::default(), SharedClipboard::default());
+        let timeline = cx.new(|cx| {
+            let shared = (snap.clone(), clipboard.clone());
+            Timeline::new(session.clone(), arrangement.clone(), shared, cx)
+        });
         let painted = timeline.read(cx).painted();
         let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, painted, cx));
 
@@ -178,6 +183,7 @@ impl ArrangementView {
             playhead_line,
             detail: None,
             snap,
+            clipboard,
             master_focus: cx.focus_handle().tab_stop(true),
             master_keyboard: KeyboardFocus::default(),
         };
@@ -268,7 +274,8 @@ impl ArrangementView {
             self.close_detail(window, cx);
             let width = self.timeline.read(cx).painted_width();
             let (session, snap) = (self.session.clone(), self.snap.clone());
-            let editor = cx.new(|cx| NoteEditor::new(session, clip, width, snap, cx));
+            let clipboard = self.clipboard.clone();
+            let editor = cx.new(|cx| NoteEditor::new(session, clip, width, snap, clipboard, cx));
             let playhead = self.session.read(cx).playhead().clone();
             let painted = editor.read(cx).painted();
             let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &editor, painted, cx));
@@ -485,6 +492,12 @@ impl Render for ArrangementView {
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
                 let escape =
                     event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
+                // A card of the rack on its way to another place: escape lets go of it, and
+                // the button coming up drops nothing.
+                if escape && cx.stop_active_drag(window) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if escape && view.detail.is_some() {
                     view.close_detail(window, cx);
                     cx.stop_propagation();

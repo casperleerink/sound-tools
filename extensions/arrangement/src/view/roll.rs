@@ -5,6 +5,9 @@
 //! the same [`Viewport`] math as the arrangement, so bar numbers and the playhead mean the
 //! same in both. Pitch runs up: `y` 0 is the top of the row of pitch 127 when nothing is
 //! scrolled. The coordinates are those of the note area, right of the keys and below the ruler.
+//!
+//! The lowest 56 pt of the editor is the velocity lane: a bar at the start of each note, as tall
+//! as its velocity. Its coordinates start at the top of the lane.
 
 use std::ops::RangeInclusive;
 
@@ -12,7 +15,7 @@ use sound_core::{TICKS_PER_QUARTER, Ticks, TimeSignature};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 
 use super::gesture::{Zone, shortest, zone_at};
-use super::layout::{LEAD_IN, Rect, Viewport, shifted};
+use super::layout::{LEAD_IN, RULER_HEIGHT, Rect, Viewport, shifted};
 use super::snap::{Grid, snap, snap_floor};
 
 /// The height of the editor panel, ruler included.
@@ -21,7 +24,18 @@ pub const EDITOR_HEIGHT: f32 = 352.0;
 pub const KEY_HEIGHT: f32 = 12.0;
 /// The width of the key strip, at the right edge of the header column.
 pub const KEYS_WIDTH: f32 = 32.0;
-/// The velocity of a note that is drawn. There is no velocity lane yet.
+/// The height of the velocity lane at the bottom of the editor.
+pub const VELOCITY_HEIGHT: f32 = 56.0;
+/// The height of the pitch rows: the editor less its ruler and the velocity lane.
+pub const ROLL_HEIGHT: f32 = EDITOR_HEIGHT - RULER_HEIGHT - VELOCITY_HEIGHT;
+/// The width of a velocity bar.
+pub const VELOCITY_BAR_WIDTH: f32 = 3.0;
+/// Air in the lane above a bar of velocity 127, and under every bar.
+const VELOCITY_TOP: f32 = 8.0;
+const VELOCITY_BOTTOM: f32 = 4.0;
+/// How far beside a bar a press still takes it, so a trackpad hits a bar of 3 pt.
+const VELOCITY_REACH: f32 = 4.0;
+/// The velocity of a note that is drawn. The lane changes it afterwards.
 pub const DRAWN_VELOCITY: i64 = 100;
 /// The pitch in the middle of the editor of a clip without notes: middle C.
 const MIDDLE_PITCH: u8 = 60;
@@ -166,20 +180,112 @@ pub fn drawn_note(
     })
 }
 
+/// The latest start of a note in a clip: where its end meets the clip end. A note that already
+/// reaches past the clip end can go left and does not have to.
+fn latest_start(clip_length: Length, note: &Note) -> Ticks {
+    let room = clip_length.ticks().0.saturating_sub(note.length.ticks().0);
+    Ticks(room.max(note.start.0))
+}
+
 /// The note moved by a delta in time and in pitch. It stays whole inside the clip: it stops
 /// at the clip start, where its end meets the clip end, and at pitch 0 and 127.
 pub fn moved_note(clip_length: Length, origin: Note, delta: i64, semitones: i32) -> Note {
-    let room = clip_length
-        .ticks()
-        .0
-        .saturating_sub(origin.length.ticks().0);
-    // A note that already reaches past the clip end can go left and does not have to.
-    let latest = Ticks(room.max(origin.start.0));
     Note {
-        start: shifted(origin.start, delta).min(latest),
+        start: shifted(origin.start, delta).min(latest_start(clip_length, &origin)),
         pitch: transposed(origin.pitch, semitones),
         ..origin
     }
+}
+
+/// Several notes moved by one delta in time and in pitch, as a whole: the delta stops where the
+/// first of them meets the clip start, the clip end, pitch 0 or pitch 127, so they keep their
+/// distances to each other.
+pub fn moved_notes(clip_length: Length, origins: &[Note], delta: i64, semitones: i32) -> Vec<Note> {
+    let ticks = |ticks: Ticks| ticks.0 as i64;
+    let earliest = origins.iter().map(|note| ticks(note.start)).min();
+    let room = origins
+        .iter()
+        .map(|note| ticks(latest_start(clip_length, note)) - ticks(note.start))
+        .min();
+    let delta = delta.clamp(-earliest.unwrap_or(0), room.unwrap_or(0));
+    let pitches = origins.iter().map(|note| i32::from(note.pitch.number()));
+    let (lowest, highest) = (pitches.clone().min(), pitches.max());
+    let semitones = semitones.clamp(
+        -lowest.unwrap_or(0),
+        i32::from(PITCHES - 1) - highest.unwrap_or(0),
+    );
+    let moved = origins.iter();
+    moved
+        .map(|origin| moved_note(clip_length, *origin, delta, semitones))
+        .collect()
+}
+
+/// The notes whose rectangles a rectangle of the note area touches, as indices of the clip.
+pub fn notes_in(viewport: &Viewport, clip: &Clip, area: Rect) -> Vec<usize> {
+    let touches = |rect: Rect| {
+        rect.x < area.x + area.width
+            && area.x < rect.x + rect.width
+            && rect.y < area.y + area.height
+            && area.y < rect.y + rect.height
+    };
+    let notes = clip.notes.iter().enumerate();
+    notes
+        .filter(|(_, note)| touches(note_rect(viewport, clip, note)))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// The top of the bar of a velocity in the lane.
+pub fn velocity_y(velocity: Velocity) -> f32 {
+    let bottom = VELOCITY_HEIGHT - VELOCITY_BOTTOM;
+    bottom - (bottom - VELOCITY_TOP) * f32::from(velocity.value()) / 127.0
+}
+
+/// The velocity whose bar has its top at `y` in the lane. Above the lane it is 127, below 1.
+pub fn velocity_at(y: f32) -> Velocity {
+    let bottom = VELOCITY_HEIGHT - VELOCITY_BOTTOM;
+    let value = (bottom - y) / (bottom - VELOCITY_TOP) * 127.0;
+    Velocity::nearest(value.round() as i64)
+}
+
+/// A velocity moved as the pointer moves `dy` in the lane, so the top of its bar stays under
+/// the pointer: up is louder. It stops at 1 and at 127.
+pub fn moved_velocity(origin: Velocity, dy: f32) -> Velocity {
+    if dy == 0.0 {
+        return origin;
+    }
+    velocity_at(velocity_y(origin) + dy)
+}
+
+/// The bar of a note in the lane, at the start of the note.
+pub fn velocity_bar(viewport: &Viewport, clip: &Clip, note: &Note) -> Rect {
+    let y = velocity_y(note.velocity);
+    Rect {
+        x: viewport.x_of(clip.start + note.start),
+        y,
+        width: VELOCITY_BAR_WIDTH,
+        height: VELOCITY_HEIGHT - VELOCITY_BOTTOM - y,
+    }
+}
+
+/// The notes whose bars are within reach of `x`, as indices of the clip. Every note of a chord
+/// has its bar at the same place.
+pub fn velocity_bars_at(viewport: &Viewport, clip: &Clip, x: f32) -> Vec<usize> {
+    velocity_bars_between(viewport, clip, x - VELOCITY_REACH, x + VELOCITY_REACH)
+}
+
+/// The notes whose bars are between two places across, as indices of the clip: what a draw in
+/// the lane passes over between two mouse moves.
+pub fn velocity_bars_between(viewport: &Viewport, clip: &Clip, from: f32, to: f32) -> Vec<usize> {
+    let (left, right) = if from <= to { (from, to) } else { (to, from) };
+    let notes = clip.notes.iter().enumerate();
+    notes
+        .filter(|(_, note)| {
+            let bar = velocity_bar(viewport, clip, note);
+            bar.x + bar.width >= left && bar.x <= right
+        })
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// The note with its end moved by `delta`: at least `unit` long, or as short as it
@@ -435,6 +541,95 @@ mod tests {
             assert!(moved_note(length(BAR), origin, delta, 0).start < Ticks(BAR));
             assert!(moved_note(length(BAR), long, delta, 0).start < Ticks(BAR));
         }
+    }
+
+    #[test]
+    fn several_notes_move_as_a_whole_and_keep_their_distances() {
+        let origins = [note(480, 480, 60), note(960, 960, 72)];
+        assert_eq!(
+            moved_notes(length(BAR), &origins, 240, 2),
+            [note(720, 480, 62), note(1200, 960, 74)]
+        );
+        // The first stops at the clip start, the second at the clip end, and both keep their
+        // distance: 480 ticks and an octave.
+        assert_eq!(
+            moved_notes(length(BAR), &origins, -5000, 0),
+            [note(0, 480, 60), note(480, 960, 72)]
+        );
+        assert_eq!(
+            moved_notes(length(BAR), &origins, 5000, 0),
+            [note(BAR - 1440, 480, 60), note(BAR - 960, 960, 72)]
+        );
+        assert_eq!(
+            moved_notes(length(BAR), &origins, 0, 100),
+            [note(480, 480, 115), note(960, 960, 127)]
+        );
+        assert_eq!(
+            moved_notes(length(BAR), &origins, 0, -100),
+            [note(480, 480, 0), note(960, 960, 12)]
+        );
+        assert!(moved_notes(length(BAR), &[], 240, 1).is_empty());
+    }
+
+    #[test]
+    fn a_rectangle_touches_the_notes_it_overlaps() {
+        let viewport = Viewport {
+            pixels_per_quarter: 96.0,
+            ..Viewport::default()
+        };
+        let clip = clip(0, BAR, vec![note(0, 960, 127), note(1920, 960, 126)]);
+        let area = |x, y, width, height| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        // The first note is from x 8 to 103 on the top row, the second from 200 on the next.
+        assert_eq!(notes_in(&viewport, &clip, area(50.0, 0.0, 10.0, 5.0)), [0]);
+        assert_eq!(
+            notes_in(&viewport, &clip, area(50.0, 5.0, 200.0, 10.0)),
+            [0, 1]
+        );
+        assert!(notes_in(&viewport, &clip, area(110.0, 0.0, 50.0, 40.0)).is_empty());
+    }
+
+    #[test]
+    fn a_velocity_bar_is_as_tall_as_its_velocity_and_a_drag_keeps_its_top_under_the_pointer() {
+        let velocity = |value| Velocity::new(value).unwrap();
+        assert_eq!(velocity_y(velocity(127)), VELOCITY_TOP);
+        assert_eq!(velocity_at(VELOCITY_TOP), velocity(127));
+        assert_eq!(velocity_at(-100.0), velocity(127));
+        assert_eq!(velocity_at(VELOCITY_HEIGHT), velocity(1));
+        for value in [1, 40, 64, 100, 127] {
+            assert_eq!(velocity_at(velocity_y(velocity(value))), velocity(value));
+        }
+        assert_eq!(moved_velocity(velocity(100), 0.0), velocity(100));
+        assert!(moved_velocity(velocity(100), -5.0) > velocity(100));
+        assert!(moved_velocity(velocity(100), 5.0) < velocity(100));
+        assert_eq!(moved_velocity(velocity(100), -500.0), velocity(127));
+        assert_eq!(moved_velocity(velocity(100), 500.0), velocity(1));
+
+        let viewport = Viewport {
+            pixels_per_quarter: 96.0,
+            ..Viewport::default()
+        };
+        // A chord at the start and one note a beat later, at x 8 and 104.
+        let clip = clip(
+            0,
+            BAR,
+            vec![note(0, 480, 60), note(0, 480, 64), note(960, 480, 67)],
+        );
+        let bar = velocity_bar(&viewport, &clip, &clip.notes[2]);
+        assert_eq!((bar.x, bar.width), (104.0, VELOCITY_BAR_WIDTH));
+        assert_eq!(bar.y + bar.height, VELOCITY_HEIGHT - VELOCITY_BOTTOM);
+        assert_eq!(velocity_bars_at(&viewport, &clip, 9.0), [0, 1]);
+        assert_eq!(velocity_bars_at(&viewport, &clip, 110.0), [2]);
+        assert!(velocity_bars_at(&viewport, &clip, 60.0).is_empty());
+        assert_eq!(
+            velocity_bars_between(&viewport, &clip, 200.0, 0.0),
+            [0, 1, 2]
+        );
+        assert_eq!(velocity_bars_between(&viewport, &clip, 50.0, 105.0), [2]);
     }
 
     #[test]

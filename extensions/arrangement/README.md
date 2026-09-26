@@ -85,6 +85,9 @@ one record and one undo step, and the chain a file says is the chain that plays.
   the record and the name out together, so undo brings it back where it was.
 - `add_effect` reads the record of the project and not the group being built, like `free_id`.
   Two effects in one group need two groups.
+- `move_effect(project, changes, track, slot, to)` moves a slot to place `to` among the effects,
+  0 right after the instrument; a place past the last is the last. Only the list changes, so
+  the slot keeps its record and its bypass. It gives whether anything moved.
 
 The tail of an effect. An effect is a processor like any other: the engine runs it every block,
 whether the project plays or not, so a delay or a reverb rings out after a stop. Taking an
@@ -150,16 +153,16 @@ Edit notes with `project.update(&mut edit, &clip, |clip| ...)` on the `Clip` its
 - `ArrangementView` stacks the timeline over one detail panel. The panel shows one thing at a time (`Detail`): the note editor of a clip, the track panel of a track, or the master panel. Opening one takes the place of the other. The note editor is 352 pt and the two panels 216 pt, so a swap between the editor and a panel moves the lower edge of the timeline. Under the timeline, above the panel, is the master row. Each view is cached, and the timeline and the editor have a playhead line beside them, so that playback repaints the lines only. It opens the editor on `TimelineEvent::OpenEditor` and the track panel on `TimelineEvent::OpenTrack`, gives what is open the clip or the track that gets selected, and closes it on `EditorEvent::Close`, on `TrackPanelEvent::Close`, on escape, and when its clip or its track is deleted, from inside or outside. A drag to another track deletes the clip at its old id. The timeline has selected the new id by then, so the editor follows it.
 - The timeline listens to the arrangement, its tracks and their clips only. Another child of a track, such as the instrument, shows nowhere in it, so a knob drag in the track panel reads no clips again and paints no timeline.
 - `Timeline` (`view/timeline.rs`) holds the interface state: `Viewport` (zoom and scroll), the selected clips (`view::selection::Selection`, the first of them is what the note editor shows), the selected track, the selected tempo change, the clipboard, the snap setting, the name field of a track while it is open, the open drag and a focus handle. A click on a track header selects the track, clears the clip selection and asks for the track panel. The keys go to the selected clips first. With no clip selected, up and down select the track above or below, enter edits its name and cmd-down opens its panel. The keys are the timeline's only while it has the focus itself, not a control inside it such as the snap setting or the name field. Selecting a clip leaves the track selected, so the header keeps its quiet fill while a clip of the track is edited. Each paint builds a `Scene` from the project: the visible rows, bars and `ClipShape`s, each with its `Instance<Clip>` and its rect. The mouse listeners of that frame get the same scene, and `Scene::zone_at(x, y)` is the hit test: the clip on top with its body or an edge. It keeps the track order and the end of the last clip of each track between project events. An event that names a clip reads only the track of that clip again, so a mouse move of a drag does not walk every clip of the project.
-- `NoteEditor` shows one clip as a piano roll on the project timeline, with the same `Viewport` math across and pitch rows of `roll` up. It keeps no scene: it reads the clip when it paints and when a mouse event arrives, with the viewport that was painted. One note is selected, by its value and not by its index: the clip changes under the editor, by an agent, an undo or a clip resize, and an index would then name another note. The note is looked up when a key uses it, and the selection clears when the clip no longer has it.
+- `NoteEditor` shows one clip as a piano roll on the project timeline, with the same `Viewport` math across and pitch rows of `roll` up, and the velocity lane in its lowest 56 pt. It keeps no scene: it reads the clip when it paints and when a mouse event arrives, with the viewport that was painted. The selected notes are a `Selection<Note>`, by value and not by index: the clip changes under the editor, by an agent, an undo or a clip resize, and an index would then name another note. A note is looked up when a key uses it, and leaves the selection when the clip no longer has it. An undo or a redo selects the notes it brought (`Session::history_moves`).
 - The timeline follows the playhead. While the project plays it pages forward when the playhead passes the right edge, and the playhead lands back at the left edge. A jump, which is a seek or a stop, brings it back into view the same way. While the composer has scrolled the playhead off screen nothing pulls the view back, until the next jump: `set_viewport` decides from where the playhead lands whether the view keeps following. The rule itself is `Viewport::shows` and `Viewport::following`, both pure. The follow runs on every playhead change and notifies only when the view really moves, so the timeline is still not painted per frame. The note editor does not follow: it shows one clip.
 - The scroll room reaches at least to the playhead, so the view can follow past the end of the piece.
 - `TrackPanel` shows the devices of one track, see "The track panel" below.
 - `view::layout`: `Viewport::x_of`, `tick_at`, `y_of`, `track_at`, `nearest_track`, `visible_ticks`, `visible_tracks`, `shows`, `following`, `zoomed`, `scrolled`, `clamped`, `clamped_to`, `clip_rect`, `ruler_bars`, `beat_lines`, `miniature`, `shifted`, and `rows_between`, the rows a rectangle touches. Its coordinates are those of the timeline area, right of the headers and below the ruler.
-- `view::snap`: the setting `Snap` (off, bar, beat, 1/8, 1/16, 1/32), `SharedSnap`, the one the timeline and the note editor share, and `Grid` with its `step` (what a drag moves by and a new shape starts on, one tick when off) and its `unit` (what an arrow moves by and the shortest a drag makes a shape, a thirty-second when off). `Grid::free` is the grid with cmd held. `snap`, `snap_floor` and `snapped_delta` take a step.
+- `view::snap`: the setting `Snap` (off, bar, beat, 1/8, 1/16, 1/32), `SharedSnap`, the one the timeline and the note editor share, and `Grid` with its `step` (what a drag moves by and a new shape starts on, one tick when off) and its `unit` (what an arrow moves by, the length of a new note and the shortest a drag makes a shape, a sixteenth when off). `Grid::free` is the grid with cmd held. `snap`, `snap_floor` and `snapped_delta` take a step.
 - `view::selection`: `Selection<T>`, a set with one first thing. `toggle` for shift-click and cmd-click, `set`, `remove`.
-- `view::clipboard`: `CopiedClips`, clips with their distances in time and rows, and where a paste puts them (`placed`).
+- `view::clipboard`: `CopiedClips`, clips with their distances in time and rows, and where a paste puts them (`placed`); `CopiedNotes`, the same for notes in a clip; `Copied`, one of them; and `SharedClipboard`, the one clipboard of the window that the timeline and the note editor share.
 - `view::gesture`: `zone_at` (body, left edge, right edge), `new_clip`, `resized_right`, `resized_left`, `nudged_track`.
-- `view::roll`: `y_of`, `pitch_at`, `nearest_pitch`, `transposed`, `visible_pitches`, `note_rect`, `note_at`, `opened` (the zoom and scroll of an editor that opens), `clamped`, `drawn_note`, `moved_note`, `resized_note`.
+- `view::roll`: `y_of`, `pitch_at`, `nearest_pitch`, `transposed`, `visible_pitches`, `note_rect`, `note_at`, `notes_in` (what a rectangle touches), `opened` (the zoom and scroll of an editor that opens), `clamped`, `drawn_note`, `moved_note`, `moved_notes` (several as a whole), `resized_note`, and of the velocity lane `velocity_y`, `velocity_at`, `moved_velocity`, `velocity_bar`, `velocity_bars_at` and `velocity_bars_between`.
 
 ### The track panel
 
@@ -175,14 +178,15 @@ A track is not a synth. It owns clips and one child named `instrument`, and any 
   one path (`refill_menus`). A source of offers may learn more while the panel is open: the
   plugin host looks for the plugins of this Mac on a thread of its own, so a panel opened at
   the start of a session holds a part of the list and the quiet line that says so.
-- At the end of the rack, on the line of the card titles, is a control that adds an effect: the same picker pattern, with what declares itself an effect in it. Picking one is one undo step named after it (`Add Warmth`), and the close icon of an effect card takes it off the track, also one step (`Remove Warmth`). Reordering in the window is not built: an agent or a file edit reorders.
+- At the end of the rack, on the line of the card titles, is a control that adds an effect: the same picker pattern, with what declares itself an effect in it. Picking one is one undo step named after it (`Add Warmth`), and the close icon of an effect card takes it off the track, also one step (`Remove Warmth`).
+- The header of an effect card drags it (`CardFrame::draggable`): dropped on another card it takes that card's place, on the instrument it goes first, on `Add effect` last. Cmd-left and cmd-right move the effect whose card has the focus. Each is one undo step, `Move Warmth`, through `move_effect`; a move to where it is already is none. Escape during the drag lets go of the card, and a drop outside the rack moves nothing. The instrument has no grip and stays first. A card is wrapped in a frame whose id names its slot, so a card that moves keeps what it keeps, such as the focus of a knob.
 - The panel is 216 pt tall (`track_panel::PANEL_HEIGHT`): 12 above the cards, a card of 192, 12 below. The note editor keeps 352 pt, so a swap between the two moves the lower edge of the timeline. The rack starts 16 pt right of the header column, the cards are 12 pt apart, it scrolls sideways with two fingers, and a 48 pt fade to the window colour at its right edge says that cards go past it.
 - The mixer strip of the track is in the header column, on the rows of the cards: the volume, a fader on the meter, at the left from the top of the first row to the value line of the second, the pan knob right of it, and mute and solo on the knob line of the second row. The panel edits it itself, because those values are in the track record. A drag is one gesture and one undo step ("Change volume", "Change pan"), and mute and solo are one commit each ("Mute track", "Unmute track", "Solo track", "Unsolo track"). The bottom of the volume is `-inf`, which the record saves as `"-inf"`. The meter shows what the track sends to the master (`track_peaks`), read once per poll. The panel ends an open drag when it shows another track, when its track is deleted and when it is released, as the note editor does.
 - The power icon of an effect card bypasses its slot: one flag in the track record, one undo step, "Turn off <name>" and "Turn on <name>". The card reads whether the slot is on when it draws.
 - Apart from that strip the panel edits nothing and keeps no state of the project. The other edits are those of the device views, through the session. A knob drag that is open when the panel closes is finished by the device view when it is released.
 - The header column: accent dot and track name on the line of the card titles, the close control at its right, the mixer strip under them. The panel has a focus handle that is no tab stop. It only tells `ArrangementView` whether the focus is inside when the panel closes, so that the focus goes back to the timeline. Tab reaches the close control, the volume, the pan and mute, then the picker and the header icons of the first card and the controls of its device, column by column, and so on.
 
-Not in the rack: sends, buses, reordering with the mouse, and a wet and dry amount.
+Not in the rack: sends, buses, and a wet and dry amount.
 
 ### The master row and panel
 
@@ -190,17 +194,17 @@ The master row is 40 pt, pinned under the tracks of the timeline (`MASTER_ROW_HE
 
 ### Editing rules
 
-Every change goes through the session. A drag is one gesture: `begin_gesture` with the first mouse move that changes something, `gesture` per move, `finish_gesture` on mouse up, `cancel_gesture` on escape. So a plain click is no undo step, sound and every view follow each move, the file is written once, and undo and redo wait until the drag ends. A key is one `commit`. The undo labels are "Add clip", "Move clip", "Resize clip", "Delete clip", "Nudge clip", "Draw note", "Move note", "Resize note", "Delete note" and "Nudge note", with an `s` for several clips, and "Cut clip", "Paste clip", "Duplicate clip", "Rename track", "Add tempo change" and "Remove tempo change".
+Every change goes through the session. A drag is one gesture: `begin_gesture` with the first mouse move that changes something, `gesture` per move, `finish_gesture` on mouse up, `cancel_gesture` on escape. So a plain click is no undo step, sound and every view follow each move, the file is written once, and undo and redo wait until the drag ends. A key is one `commit`. The undo labels are "Add clip", "Move clip", "Resize clip", "Delete clip", "Nudge clip", "Draw note", "Move note", "Resize note", "Delete note", "Nudge note", "Cut note", "Paste note", "Duplicate note" and "Change velocity", with an `s` for several, and "Cut clip", "Paste clip", "Duplicate clip", "Draw velocities", "Rename track", "Add tempo change", "Remove tempo change" and "Move <effect>".
 
-- The snap is a setting in the corner above the track headers: off, bar, beat, 1/8, 1/16 or 1/32, a sixteenth when the window opens. It is interface state, like zoom and selection, and not saved: it is a way of working and not part of the piece, so it writes no file and makes no undo step. The timeline and the note editor share it. A drag moves by whole snap steps from where it began and does not snap the result. So a clip or a note that an agent wrote off the grid keeps its offset. Cmd held during a drag bypasses the snap: the drag moves by the pointer's own distance. A new clip and a drawn note start in the grid cell under the pointer. An arrow key moves by one step, and by a thirty-second when snap is off, because a tick is too small to see. A bar and a beat follow the time signature.
+- The snap is a setting in the corner above the track headers: off, bar, beat, 1/8, 1/16 or 1/32, a sixteenth when the window opens. It is interface state, like zoom and selection, and not saved: it is a way of working and not part of the piece, so it writes no file and makes no undo step. The timeline and the note editor share it. A drag moves by whole snap steps from where it began and does not snap the result. So a clip or a note that an agent wrote off the grid keeps its offset. Cmd held during a drag bypasses the snap: the drag moves by the pointer's own distance. A new clip and a drawn note start in the grid cell under the pointer. An arrow key moves by one step, and by a sixteenth when snap is off, because a tick is too small to see. A bar and a beat follow the time signature.
 - A double click on empty track space adds an empty clip of one bar, named `clip`, `clip-2` and so on.
 - A drag of a clip body moves it in time, not before tick 0, and to the track under the pointer. Another track means another id: `move_clip`, a delete and a create in one group. The selection and the open editor go with the clip. A drag that comes back to its first track takes the first id again, so there and back leaves the file where it was. Nothing is written during a drag, so the old file is still there then, and `free_id` would give `part-2`.
 - The right edge changes the length. `Clip::set_length` drops the notes that start outside, as the clip rule says. Every move applies to the clip as it was at mouse down, so going in and out again in one drag loses nothing. Undo brings dropped notes back.
 - The left edge changes the start and keeps the notes where they are in the project, so their starts change the other way. It drops no note: the edge stops at the first note. It also stops at tick 0 and one snap step before the right edge. This is the simplest correct rule. Cutting a clip inside its notes needs a rule for the cut notes, which comes with splitting clips.
-- A clip or a note does not get shorter than one snap step (a thirty-second when snap is off), or than it already was.
+- A clip or a note does not get shorter than one snap step (a sixteenth when snap is off), or than it already was.
 - Clips may overlap. There are no collision rules.
 - Notes stay inside their clip. A moved note stops where its end meets the clip end, a resized or drawn note ends with the clip at the latest, and a press outside the clip draws nothing. A note that an agent wrote past the clip end stays as it is until it is touched.
-- A drawn note has velocity 100. There is no velocity lane yet.
+- A drawn note has velocity 100. The velocity lane changes it, see "Several notes, copy and paste, velocity".
 - When a note edit ends, the notes of the clip are put in order by start and pitch, because the agent doc asks that of whoever writes a clip. The selection stays on its note.
 - A drag never leaves the gesture of the session open. The view that closes the editor ends its note drag first, `set_clip` does the same, and both views finish an open gesture when they are released, as a net under every other way to go.
 - A clip resize keeps the clip of mouse down and what it wrote last. When the live clip is not what it wrote, something else changed it: an undo under a press that did not move yet, or an agent. The resize then goes on from the live clip, and the grab moves by what the drag had done to its edge. So it never writes an old copy with old notes over a newer clip, and a press without a move changes nothing and keeps redo. A move writes only the start, so it keeps what else changed. Before its first move it takes the live start too.
@@ -215,6 +219,16 @@ Every change goes through the session. A drag is one gesture: `begin_gesture` wi
 - Cmd-c copies the selected clips into the clipboard of the window. It is in the app only, never on the system clipboard, and it goes with the session. Cmd-x copies and deletes, "Cut clips". Cmd-v pastes at the playhead, the top row of what was copied onto the track of the first selected clip, else onto the selected track, else onto the first track, "Paste clips". The clips keep their distances in time and in rows. A row that would fall below the last track lands on the last track, so nothing that was copied is lost; clips may overlap. Cmd-d puts a copy right after the selected clips on the same tracks and keeps the clipboard, "Duplicate clips". The copies are selected. Each of these is one undo step, and one clip has the name without the `s`.
 - Tracks are not copied. A track owns an instrument and effects of any tool, and a plugin with a state file, and the core creates a record only of a type the caller knows. A track is added with "Add track" and its devices picked in its panel.
 - A clip written, moved or deleted from outside is part of the selection, or leaves it, at once.
+
+### Several notes, copy and paste, velocity
+
+The note editor follows the rules of clips in "Several clips, copy and paste", with notes for clips.
+
+- A click selects one note, shift-click and cmd-click add one or take it out, a press on empty space drags a rectangle that selects every note it touches (with shift or cmd it adds them), and cmd-a selects every note of the clip. A double click on empty space inside the clip adds a note of one unit of the grid; its second press drags its length.
+- A drag of a selected note moves every selected note, and the arrows move every one, as a whole: the first to meet the clip start, the clip end, pitch 0 or 127 stops them all. A resize is of the note under the pointer. Delete deletes every selected note. "Move notes", "Nudge notes", "Delete notes".
+- Cmd-c copies the selected notes into the clipboard of the window, the one the timeline uses, and cmd-x cuts. Cmd-v pastes at the playhead when it is inside the clip, else right after the selected notes, else at the start of the clip; a note that would start past the end of the clip is left out. Cmd-d puts a copy right after the selected notes. The pasted notes are selected. Each is one undo step.
+- The velocity lane: a press on a bar drags the velocity of its note, and of every selected note when its note is selected, by the same distance. Of a chord it takes the bar whose top is nearest the pointer. A press off the bars draws across the lane. Alt-up and alt-down step the selected velocities by 10. A velocity is 1 to 127.
+- An undo or a redo selects the notes it brought back, and an undo of a delete or cut of clips selects those clips again.
 
 ### Renaming a track
 
@@ -248,6 +262,23 @@ Every tempo change after tick 0 has a mark in the ruler: a line at its tick and 
 | click a tempo mark | Select it and move the playhead onto it |
 | escape | Cancel a drag or a rectangle, else let go of a tempo change, else close the panel below |
 
+### Keys and mouse of the note editor
+
+| Keys or mouse | What they do |
+| --- | --- |
+| click, shift-click, cmd-click on a note | Select it, add it or take it out |
+| drag on empty space | Select the notes the rectangle touches, with shift or cmd add them |
+| double click on empty space in the clip | Add a note; the second press drags its length |
+| cmd-a | Select every note |
+| drag a selected note, or its end | Move every selected note, or resize this one. Cmd held bypasses the snap |
+| delete, backspace | Delete the selected notes |
+| left, right, up, down, shift-up, shift-down | Move the selected notes by a unit of the grid, a semitone, an octave |
+| cmd-c, cmd-x, cmd-v, cmd-d | Copy, cut, paste, duplicate after the selection |
+| drag a velocity bar, or across the lane | Change the velocity of its note and the selected ones, or draw |
+| alt-up, alt-down | The selected velocities by 10 |
+| click the ruler | Move the playhead there, where a paste goes |
+| escape | Cancel a drag or a rectangle, else close the editor |
+
 ## Summary
 
 The arrangement registers a summary (`ToolRegistration::summary`), which `runtime <folder> --inspect` prints: each track in order with name, colour, order and instrument tool, and each clip with its id, `bar:beat:tick` range, tick range, note count and pitch range.
@@ -262,6 +293,9 @@ RTSAN_ENABLE=1 cargo nextest run -p arrangement                                 
 cargo nextest run -p runtime --test window                                       # the views with a simulated mouse and keys
 cargo nextest run -p runtime --test window track_panel                           # the track panel and the synth view in it
 cargo nextest run -p runtime --test window editing                               # several clips, copy and paste, rename, tempo changes, snap
+cargo nextest run -p runtime --test window several_notes velocity                # several notes, copy and paste, the velocity lane
+cargo nextest run -p runtime --test window rack                                  # reordering the rack
+cargo nextest run -p runtime --test projects rack_order                          # a reorder renders as the written order
 cargo nextest run -p runtime --run-ignored only hundred_tracks --no-capture      # 100 tracks of 100 clips
 cargo test -p runtime --test snapshots                                           # the window as PNGs, with frame times
 ```

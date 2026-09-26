@@ -222,7 +222,8 @@ impl From<Length> for Ticks {
 }
 
 /// A saved note. `start` counts from the start of whatever holds the note, for example a clip.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Ordered by start, then length, pitch and velocity, so an interface can keep notes in a set.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Note {
     pub start: Ticks,

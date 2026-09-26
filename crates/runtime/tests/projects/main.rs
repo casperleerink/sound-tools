@@ -16,6 +16,7 @@ mod live;
 mod metronome;
 mod mixer;
 mod plugins;
+mod rack_order;
 mod recording;
 mod reverb;
 mod scale;

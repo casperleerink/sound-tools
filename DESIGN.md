@@ -178,6 +178,14 @@ Step 9a, September 26, 2026. The images are in `docs/reference/m3-step-9a/window
 - A rectangle on empty space is an `alpha/5` fill with an `alpha/20` border, 2 pt corners. Selected clips have the `gray-950` border of a selected clip.
 - The name field is the 28 pt text input of the design system over the header of the track, its text where the painted name is.
 
+Step 9b, September 26, 2026. The images are in `docs/reference/m3-step-9b/window/`.
+
+- The velocity lane is as drawn above: a hairline over it, the bar lines and the shade outside the clip go through it, and `Velocity` sits in the header column. Bars of selected notes are painted after the others, so a selected note of a chord shows on top. The cursor over a bar is the up-down resize cursor.
+- A rectangle in the note editor looks like the one of the timeline: an `alpha/5` fill with an `alpha/20` border, 2 pt corners. Selected notes are filled with `gray-950`, as the one selected note was.
+- A double click on empty space adds a note, and a press on empty space starts a rectangle, as for clips. Drawing by a drag on empty space is gone; a drag of the second press of the double click draws the length.
+- The header of an effect card is its grip. While it is dragged, its title rides under the pointer on a small card of 32 pt with the card colour at 90 %, and the card whose place it would take has a 2 pt lavender ring. The ring sits in the gap between cards, so nothing moves while dragging. The instrument card has no grip.
+- With snap off, a new note and an arrow key are a sixteenth, not a thirty-second: a note added by a double click with snap off was too short to hit.
+
 ### Devices
 
 Steps 5 to 8 build from these. "Shown" is on the card, "hidden" is behind expand. Every device keeps its parameters in its record, shown or hidden.
@@ -297,7 +305,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 - Track panel: the other thing the panel below the arrangement can show, in the same 384 px, so a swap between it and the note editor moves nothing. One at a time, like the clip view and the device view of Ableton. The header is that of the note editor: the accent dot, the name of the track and the quiet close icon, in the same places. Right of the header column is the rack: device cards from left to right, 24 px from the edges, at the top of the panel, so the transport pill never covers a control. The rack scrolls sideways when the window is narrower than its cards. There is no scrollbar. A card is the plain card of the design system with 16 px padding. No rack ears, screws or gradients. The rack holds the instrument of the track first, then its effects in the order the sound goes through them, then the control that adds one. This changes with the third milestone, see "Direction for the third milestone".
 - Instrument picker, September 20, 2026: the first row of every device card is a quiet dropdown menu with no border and no fill, whose label is the name of what is in the slot and which opens the list of what else could go there. It is the card's title as well, so no card has a title of its own. It sits where a card title sits: 8 px of card padding above it and 8 px left of it, because the trigger brings its own. The menu is 280 px wide with one group, `Instrument`, that scrolls past 320 px: `Synth` first, then every CLAP and VST 3 instrument of this Mac with `CLAP · <maker>` or `VST 3 · <maker>` as a muted second line, and, while a scan is still running or whenever a VST 3 plugin is offered, a quiet note under the list: "Still looking for the plugins of this Mac…" and Steinberg's trademark notice. What is already in the slot has a check. An instrument this project cannot load is at 40 % and cannot be picked, with why under it: `This project does not load plugins.` The file edit is for the agent docs since step 1b of the third milestone. A second line wraps rather than being cut, so it can be read. There is no search box and no favourites; a list of a few dozen is read, not searched. Picking one is one undo step, named `Choose <name>`; picking the one that is already there does nothing.
 - Effects in the rack, September 21, 2026: an effect is a card like any other, after the instrument, with the same picker as its title and one quiet 24 px close icon at 60 % right of that name, which takes the effect off the track. Its picker offers what this Mac declares an effect, in a group called `Effect`, and nothing else on the card changes: a plugin effect shows `Open window` like a plugin instrument. An effect whose plugin this Mac does not have is named by its id with the same muted line, and the sound passes through that card to the next one, so a missing effect is a card to fix and not a track that went quiet.
-- Add effect, September 21, 2026: at the end of the rack, after the last card and outside any card, a quiet dropdown menu that says `Add effect` and lists the same offers. It sits where a card title sits, so the row of names reads across the rack. Picking one puts that effect at the end of the chain, as one undo step named `Add <name>`; the close icon of a card removes one, as one step named `Remove <name>`. There is no way to reorder with the mouse: the order is the `effects` list of the track record, which an agent or a file edit writes.
+- Add effect, September 21, 2026: at the end of the rack, after the last card and outside any card, a quiet dropdown menu that says `Add effect` and lists the same offers. It sits where a card title sits, so the row of names reads across the rack. Picking one puts that effect at the end of the chain, as one undo step named `Add <name>`; the close icon of a card removes one, as one step named `Remove <name>`. The order is the `effects` list of the track record, which an agent or a file edit writes; since step 9b a drag of a card's header reorders it too.
 - Plugin card: the picker with the plugin's name, then one 28 px subtle button, `Open window` or `Close window`. Nothing else: a plugin's knobs are the plugin's own, in its own window. A plugin without a window of its own has the button at 40 % with one muted line under it, and a plugin that did not load has one line and no button. A VST 3 plugin is offered the button until it is asked once and turns out to have no window, which it then says in the quiet line bottom-left; asking a VST 3 plugin before that means building its whole interface, which is up to a second. A plugin this Mac does not have is named by its id in the picker, with one muted line saying so: the record stays as it is and the track is silent, and the quiet line bottom-left points at `problems.txt`. Since step 1b of the third milestone the card is the 200 pt device card, see "Settled when the window was built".
 - The plugin's window, September 20, 2026, for both formats since September 21: a window of its own beside the main one, with a normal title bar called `<plugin> — <project>`, as big as the plugin asks. A plugin that asks for another size gets it. Nothing of ours is drawn in it. Since September 26, step 4b of the third milestone: it floats above the main window and hides while another application is in front; the composer can drag its edge when the plugin allows it, and the window ends on the size the plugin takes; and it comes back where it was, open or closed, when the project opens again on the same Mac. A window that comes back by itself leaves the keyboard with the main window.
 - Mixer section, September 20, 2026: the right end of the track panel row, after the rack and outside what scrolls, so it is in the same place whatever a track holds. One hairline at `alpha/5` parts it from the rack, then 24 px of air, the title `Mixer` like a card title, and one row: the Gain knob, the Pan knob and the Mute button. The knobs are the knobs of the synth card, with their labels and readouts in the same places: `0 dB`, `-6 dB`, and `C`, `50L`, `100R` for the pan, whose arc starts at the top. Mute is a toggle in a cell of the row of the knobs, with no label under it because it says what it is: peach at 16 % when it is muted. Since step 1a of the third milestone the knobs are the 36 pt knobs in 56 pt cells. No meter, no fader, no solo. This changes with the third milestone, see "Direction for the third milestone".
@@ -345,7 +353,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Arrangement | drag a clip | Move it, and every other selected clip, in time and to another track |
 | Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note |
 | Arrangement | delete or backspace | Delete the selected clips |
-| Arrangement | left, right, up, down | Move the selected clips by a step of the snap (a thirty-second when it is off), or to the track above or below |
+| Arrangement | left, right, up, down | Move the selected clips by a step of the snap (a sixteenth when it is off), or to the track above or below |
 | Arrangement | double click on a clip, or enter | Open the note editor for it. It takes the place of the track panel |
 | Arrangement | click on a track header | Select the track and open its track panel. It takes the place of the note editor |
 | Arrangement | up, down, with a track and no clip selected | Select the track above or below. The open track panel follows |
@@ -372,14 +380,25 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Track panel | click the name on a card | Pick another instrument or effect for that card. One undo step |
 | Track panel | Add effect, at the end of the rack | Put an effect at the end of the chain. One undo step |
 | Track panel | the close icon in the header of an effect card | Take that effect off the track. One undo step, and undo brings it back as it sounded |
+| Track panel | drag the header of an effect card onto another card | Move the effect to that place in the chain. On the instrument it goes first, on `Add effect` last. One undo step. It keeps its bypass. Escape during the drag lets go |
+| Track panel | cmd-left, cmd-right, in an effect card | Move that effect one place. The instrument stays first |
 | Track panel | Open window, on the card of a plugin | The plugin's own window, above this one, where it was the last time. The same control closes it |
-| Note editor | drag on empty space inside the clip | Draw a note. It sounds |
+| Note editor | double click on empty space inside the clip | Add a note of one step of the snap. Keep the second press down and drag to draw its length. It sounds |
 | Note editor | click on a note | Select it. It sounds |
-| Note editor | drag a note | Move it in time and pitch. A new pitch sounds |
+| Note editor | shift-click or cmd-click on a note | Add it to the selection, or take it out |
+| Note editor | drag on empty space | Select the notes the rectangle touches. With shift or cmd add them |
+| Note editor | cmd-a | Select every note of the clip |
+| Note editor | drag a note | Move it, and every other selected note, in time and pitch. A new pitch sounds |
 | Note editor | drag the end of a note | Change its length |
-| Note editor | delete or backspace | Delete the selected note |
-| Note editor | left, right | Move the selected note by a step of the snap |
-| Note editor | up, down, with shift | Move it by a semitone, by an octave |
+| Note editor | delete or backspace | Delete the selected notes. Undo brings them back selected |
+| Note editor | left, right | Move the selected notes by a step of the snap |
+| Note editor | up, down, with shift | Move them by a semitone, by an octave |
+| Note editor | cmd-c, cmd-x | Copy, cut the selected notes. The clipboard is the one of the timeline: a copy of notes replaces copied clips |
+| Note editor | cmd-v | Paste at the playhead when it is in the clip, else right after the selected notes, else at the start of the clip. A note that would start past the clip end is left out |
+| Note editor | cmd-d | A copy of the selected notes right after them |
+| Note editor | drag a bar of the velocity lane up or down | Change the velocity of its note, and of every selected note with it |
+| Note editor | drag across the velocity lane from off a bar | Draw: every bar it passes gets the height of the pointer there. One undo step |
+| Note editor | alt-up, alt-down | The velocity of the selected notes up or down by 10 |
 | Note editor | click on a key of the strip | Hear that pitch |
 | Note editor | escape or the close icon | Close the editor |
 

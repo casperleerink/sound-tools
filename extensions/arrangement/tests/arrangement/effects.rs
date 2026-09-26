@@ -363,3 +363,68 @@ fn a_bypassed_effect_lets_the_sound_past_untouched_as_one_undo_step() {
     let file = std::fs::read_to_string(harness.path(TRACK_FILE)).unwrap();
     assert!(file.contains(r#""effects": ["trim", "echo"]"#), "{file}");
 }
+
+/// The helper the rack uses to reorder: only the list changes, bypass goes with its slot, and
+/// the chain plays in the new order. One undo step.
+#[test]
+fn moving_an_effect_reorders_the_chain_and_keeps_its_bypass() {
+    let (first, second) = (Trim::new(0.5, 1.0), Trim::new(0.5, 4.0));
+    let mut harness = playing();
+    add_effect(&mut harness, "a", first);
+    add_effect(&mut harness, "b", second);
+    let track = harness
+        .project
+        .resolve::<TrackState>(&id("arrangement/piano"))
+        .unwrap();
+    let a = id("arrangement/piano/a");
+    let mut changes = Changes::new();
+    assert!(arrangement::move_effect(&harness.project, &mut changes, &track, &a, 9).unwrap());
+    harness.project.commit("Move effect", changes).unwrap();
+    let b_then_a = (LEVEL * 0.5 + 4.0) * 0.5 + 1.0;
+    assert_eq!(steady(&mut harness, 2400), b_then_a);
+    let state = harness
+        .project
+        .state_json(&id("arrangement/piano"))
+        .unwrap();
+    assert!(state.contains(r#""effects":["b","a"]"#), "{state}");
+
+    // Where it is already: nothing to do. A slot the list does not name is an error.
+    let mut changes = Changes::new();
+    assert!(!arrangement::move_effect(&harness.project, &mut changes, &track, &a, 1).unwrap());
+    let other = id("arrangement/piano/c");
+    assert!(arrangement::move_effect(&harness.project, &mut changes, &track, &other, 0).is_err());
+
+    // A bypassed slot moves with its flag.
+    let mut state = harness.project.state(&track).unwrap().clone();
+    state.effects[0].bypass = true;
+    let mut changes = Changes::new();
+    changes.set(&track, state);
+    harness.project.commit("Turn off b", changes).unwrap();
+    assert_eq!(steady(&mut harness, 2400), LEVEL * 0.5 + 1.0);
+    let b = id("arrangement/piano/b");
+    let mut changes = Changes::new();
+    assert!(arrangement::move_effect(&harness.project, &mut changes, &track, &b, 1).unwrap());
+    harness.project.commit("Move effect", changes).unwrap();
+    let state = harness
+        .project
+        .state_json(&id("arrangement/piano"))
+        .unwrap();
+    assert!(
+        state.contains(r#""effects":["a",{"name":"b","bypass":true}]"#),
+        "{state}"
+    );
+    assert_eq!(steady(&mut harness, 2400), LEVEL * 0.5 + 1.0);
+
+    assert_eq!(
+        harness.project.undo().unwrap().as_deref(),
+        Some("Move effect")
+    );
+    let state = harness
+        .project
+        .state_json(&id("arrangement/piano"))
+        .unwrap();
+    assert!(
+        state.contains(r#""effects":[{"name":"b","bypass":true},"a"]"#),
+        "{state}"
+    );
+}

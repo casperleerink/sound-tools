@@ -4,14 +4,12 @@
 //! one undo step, and for undo giving the files back byte for byte. For each, the same thing
 //! written as a file from outside shows in the window at once.
 
-use std::path::PathBuf;
-
 use arrangement::TrackState;
 use arrangement::view::snap::Snap;
 use gpui::{Modifiers, TestAppContext, point, px};
 use sound_core::{Changes, InstanceId, Ticks};
 
-use crate::support::{self, BAR, Opened, STEP, clip, id, note};
+use crate::support::{self, BAR, Opened, STEP, clip, id, mark, note, one_undo_step, write_outside};
 
 const PART: &str = "arrangement/track-1/part";
 const HOOK: &str = "arrangement/track-2/hook";
@@ -56,43 +54,6 @@ fn ids(names: &[&str]) -> Vec<InstanceId> {
     let mut ids: Vec<_> = names.iter().map(|name| id(name)).collect();
     ids.sort();
     ids
-}
-
-/// The files and the last undo step before an action.
-struct Before {
-    files: Vec<(PathBuf, Vec<u8>)>,
-    undo_label: Option<String>,
-}
-
-/// Every record file and `project.json` with their bytes, and the undo step on top.
-fn mark(opened: &mut Opened<'_>) -> Before {
-    Before {
-        files: support::files(opened.folder.path()),
-        undo_label: opened.undo_label(),
-    }
-}
-
-/// The action was exactly one undo step with this label: one cmd-z gives the files of before
-/// back byte for byte and the step before on top, and shift-cmd-z does it again.
-fn one_undo_step(opened: &mut Opened<'_>, label: &str, before: &Before) {
-    assert_eq!(opened.undo_label().as_deref(), Some(label));
-    let after = support::files(opened.folder.path());
-    opened.keys("cmd-z");
-    assert_eq!(opened.undo_label(), before.undo_label, "more than one step");
-    let files = support::files(opened.folder.path());
-    assert_eq!(files, before.files, "undo did not give the files back");
-    opened.keys("shift-cmd-z");
-    let files = support::files(opened.folder.path());
-    assert_eq!(files, after, "redo did not do it again");
-}
-
-/// Writes a record from outside and applies it, as the watcher does.
-fn write_outside(opened: &mut Opened<'_>, relative: &str, contents: &str) {
-    let path = opened.path(relative);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, contents).unwrap();
-    opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
-    opened.settle();
 }
 
 fn track_name(opened: &mut Opened<'_>, track: &str) -> String {
@@ -553,7 +514,7 @@ fn the_snap_setting_is_the_grid_of_every_drag_and_cmd_bypasses_it(cx: &mut TestA
         "a free drag lands where the pointer is, not on a bar: {moved}"
     );
 
-    // Off: the same without cmd. The arrows then move by a thirty-second.
+    // Off: the same without cmd. The arrows then move by a sixteenth.
     pick_snap(&mut opened, "Off");
     let start = opened.clip(PART).unwrap().start.0;
     let from = opened.at(start + 960, 0);
@@ -562,14 +523,14 @@ fn the_snap_setting_is_the_grid_of_every_drag_and_cmd_bypasses_it(cx: &mut TestA
     let moved = opened.clip(PART).unwrap().start.0;
     assert!(moved.abs_diff(start + 350) < 50, "{moved}");
     opened.keys("right");
-    assert_eq!(opened.clip(PART).unwrap().start.0, moved + 120);
+    assert_eq!(opened.clip(PART).unwrap().start.0, moved + STEP);
 
     // The note editor takes the same grid.
     pick_snap(&mut opened, "1/8");
     let on_hook = opened.at(4 * BAR + 100, 1);
     opened.double_click(on_hook);
     let inside = opened.in_editor(4 * BAR + 2 * 960 + 300, 67);
-    opened.click(inside);
+    opened.double_click(inside);
     let drawn = opened.clip(HOOK).unwrap().notes;
     assert!(
         drawn.iter().any(|note| note.pitch.number() == 67
@@ -742,7 +703,7 @@ fn cmd_during_a_draw_keeps_the_start_of_the_note_on_the_grid(cx: &mut TestAppCon
     let on_hook = opened.at(4 * BAR + 100, 1);
     opened.double_click(on_hook);
     let press = opened.in_editor(4 * BAR + 960 + 100, 67);
-    opened.press(press);
+    opened.double_press(press);
     let to = opened.in_editor(4 * BAR + 2 * 960 + 130, 67);
     opened.drag_to_with(to, cmd());
     opened.release(to);

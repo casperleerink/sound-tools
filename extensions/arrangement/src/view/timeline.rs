@@ -25,7 +25,7 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::components::text_input::{InputSize, TextInput};
 use sound_ui::{ActiveTheme, KeyboardFocus, Playhead, Session, typography};
 
-use super::clipboard::CopiedClips;
+use super::clipboard::{Copied, CopiedClips, SharedClipboard};
 use super::gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
 use super::layout::{
     Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, TRACK_HEIGHT, Viewport, rows_between, shifted,
@@ -333,8 +333,12 @@ pub struct Timeline {
     reselects_later: bool,
     drag: Option<ClipDrag>,
     marquee: Option<Marquee>,
-    /// What cmd-c and cmd-x kept, for cmd-v. In the app only.
-    clipboard: Option<CopiedClips>,
+    /// What cmd-c and cmd-x kept, for cmd-v. In the app only, and shared with the note
+    /// editor.
+    clipboard: SharedClipboard,
+    /// The clips the last delete or cut of the timeline took away, so that they are selected
+    /// again when they come back, which is what undo does. The first of them first.
+    deleted: Vec<InstanceId>,
     rename: Option<Rename>,
     snap: SharedSnap,
     /// The snap setting, in the corner above the track headers.
@@ -352,7 +356,7 @@ impl Timeline {
     pub(super) fn new(
         session: Entity<Session>,
         arrangement: Instance<ArrangementState>,
-        snap: SharedSnap,
+        (snap, clipboard): (SharedSnap, SharedClipboard),
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle().tab_stop(true);
@@ -471,7 +475,8 @@ impl Timeline {
             reselects_later: false,
             drag: None,
             marquee: None,
-            clipboard: None,
+            clipboard,
+            deleted: Vec::new(),
             rename: None,
             snap,
             snap_menu,
@@ -618,14 +623,28 @@ impl Timeline {
     /// clips, each of them is selected again where the group created it. The same id first, and
     /// else a clip of the same name, its number left out, since a clip that goes back to its
     /// track takes the name it had there.
+    ///
+    /// A group that brings back the clips of the last delete or cut of the timeline, which is
+    /// what undo does, selects them.
     fn reselect(&mut self, cx: &mut Context<Self>) {
         let lost = std::mem::take(&mut self.lost_selection);
         let created = std::mem::take(&mut self.created_in_group);
+        let project = self.session.read(cx).project();
+        let is_clip = |id: &InstanceId| project.resolve::<Clip>(id).is_some();
+        let back: Vec<InstanceId> = self
+            .deleted
+            .iter()
+            .filter(|id| created.contains(id) && is_clip(id))
+            .cloned()
+            .collect();
+        if !back.is_empty() {
+            let first = back.first().cloned();
+            self.set_clips(back, first, cx);
+            return;
+        }
         if lost.is_empty() {
             return;
         }
-        let project = self.session.read(cx).project();
-        let is_clip = |id: &InstanceId| project.resolve::<Clip>(id).is_some();
         let (mut found, mut by_name) = (Vec::new(), Vec::new());
         for (id, first) in lost {
             match created.contains(&id) && is_clip(&id) {
@@ -1678,15 +1697,16 @@ impl Timeline {
         let Some(copied) = self.copied(cx) else {
             return false;
         };
-        self.clipboard = Some(copied);
+        *self.clipboard.borrow_mut() = Some(Copied::Clips(copied));
         true
     }
 
     /// Cmd-v: the copied clips at the playhead, the top one on the track of the first selected
     /// clip, else on the selected track, else on the first track. One undo step.
     fn paste(&mut self, cx: &mut Context<Self>) {
-        let Some(copied) = self.clipboard.clone() else {
-            return;
+        let copied = match self.clipboard.borrow().as_ref() {
+            Some(Copied::Clips(copied)) => copied.clone(),
+            _ => return,
         };
         self.refresh_order(cx);
         let track = match self.clips.primary() {
@@ -1742,7 +1762,7 @@ impl Timeline {
     fn delete_clips(&mut self, one: &'static str, several: &'static str, cx: &mut Context<Self>) {
         let selected: Vec<_> = self.clips.iter().cloned().collect();
         let label = plural(selected.len(), one, several);
-        self.session.update(cx, |session, cx| {
+        let deleted = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
                 for clip in &selected {
@@ -1751,6 +1771,12 @@ impl Timeline {
                 project.commit(label, changes)
             })
         });
+        if deleted.is_some() {
+            let first = self.clips.primary().cloned();
+            self.deleted = first.iter().cloned().collect();
+            self.deleted
+                .extend(selected.into_iter().filter(|id| Some(id) != first.as_ref()));
+        }
     }
 
     /// The arrows left and right: every selected clip by one unit of the grid, as one undo

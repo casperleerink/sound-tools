@@ -69,16 +69,17 @@ impl Snap {
         }
     }
 
-    /// What an arrow key moves by, and the shortest a clip or a note gets from a drag: the step,
-    /// and a thirty-second when snap is off, because a tick is too small to see or to press
-    /// a key for.
+    /// What an arrow key moves by, the length of a new note, and the shortest a clip or a note
+    /// gets from a drag: the step, and a sixteenth when snap is off, the grid a session starts
+    /// on. A tick is too small to see or to press a key for, and a thirty-second made a note
+    /// added with snap off too short to hit.
     pub fn unit(self, time_signature: TimeSignature) -> Ticks {
         match self {
             Self::Bar => Ticks(time_signature.ticks_per_bar()),
             Self::Beat => Ticks(time_signature.ticks_per_beat()),
             Self::Eighth => Ticks(TICKS_PER_QUARTER / 2),
-            Self::Sixteenth => Ticks(TICKS_PER_QUARTER / 4),
-            Self::ThirtySecond | Self::Off => Ticks(TICKS_PER_QUARTER / 8),
+            Self::Sixteenth | Self::Off => Ticks(TICKS_PER_QUARTER / 4),
+            Self::ThirtySecond => Ticks(TICKS_PER_QUARTER / 8),
         }
     }
 }
@@ -170,8 +171,9 @@ mod tests {
         assert_eq!(Snap::Sixteenth.step(four_four), Ticks(240));
         assert_eq!(Snap::ThirtySecond.step(four_four), Ticks(120));
         assert_eq!(Snap::Off.step(four_four), Ticks(1));
-        // A key moves by the step, and by a thirty-second when snap is off.
-        assert_eq!(Snap::Off.unit(four_four), Ticks(120));
+        // A key moves by the step, and by a sixteenth when snap is off.
+        assert_eq!(Snap::Off.unit(four_four), Ticks(240));
+        assert_eq!(Snap::ThirtySecond.unit(four_four), Ticks(120));
         assert_eq!(Snap::Bar.unit(four_four), Ticks(3840));
         assert_eq!(Snap::default(), Snap::Sixteenth);
         for snap in Snap::ALL {
