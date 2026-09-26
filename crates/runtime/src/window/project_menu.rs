@@ -9,7 +9,7 @@ use gpui::{Context, Entity, IntoElement, Render, SharedString, Window, prelude::
 use sound_core::{Changes, InstanceId};
 use sound_notes::Clip;
 use sound_ui::components::dropdown_menu::{
-    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked,
+    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::{Session, enable_extension, extension_is_enabled};
 
@@ -82,7 +82,7 @@ impl ProjectMenu {
         let menu = cx.new(|cx| {
             DropdownMenu::new(name, items, cx)
                 .selected(DEVICE)
-                .ghost(true)
+                .trigger(Trigger::Ghost)
                 .width(280.)
         });
         // Undo and redo say what they would do. A finished edit changes the label and sends no

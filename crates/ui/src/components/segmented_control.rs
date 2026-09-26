@@ -1,6 +1,7 @@
-//! Segmented control: a single-select pill group on an `alpha/5` track. Controlled — the caller
-//! owns the selected value and gets an `on_change(value)`. Unselected items sit at 40% opacity and
-//! come to 100% on hover.
+//! Segmented control: one choice of a few, 24 pt tall, on an `alpha/5` track with 6 pt corners.
+//! The chosen segment is white at 10 %, the others have muted text that lights on hover. It sits
+//! on the knob line of its cell or at the top of a display. Controlled: the caller owns the
+//! selected value and gets an `on_change(value)`.
 //!
 //! Tab reaches the group as one stop, and left and right select the option before or after.
 //! The ring shows only when the focus came from the keyboard. The focus handle is kept in
@@ -15,6 +16,9 @@ use gpui::{
 
 use crate::focus::KeyboardFocus;
 use crate::theme::ActiveTheme;
+
+/// A segment inside the track and its border.
+const SEGMENT_HEIGHT: f32 = 20.;
 
 type ChangeHandler = Rc<dyn Fn(SharedString, &mut Window, &mut App)>;
 
@@ -94,12 +98,11 @@ impl RenderOnce for SegmentedControl {
             .shows_ring(&focus_handle, window);
 
         let theme = cx.theme();
-        let (track, selected_bg, border, hover_bg, text, ring) = (
+        let (track, selected_bg, text, muted, ring) = (
             theme.alpha_at(0.05),
-            theme.gray_50,
             theme.alpha_at(0.10),
-            theme.alpha_at(0.05),
             theme.gray_950,
+            theme.gray_800,
             theme.lavender,
         );
         let value = self.value.clone();
@@ -144,20 +147,15 @@ impl RenderOnce for SegmentedControl {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .h(px(28.))
-                    .px(px(10.))
-                    .rounded_full()
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(text)
-                    .when(selected, |d| {
-                        d.bg(selected_bg).border_1().border_color(border)
-                    })
+                    .h(px(SEGMENT_HEIGHT))
+                    .px(px(8.))
+                    .rounded(px(4.))
+                    .text_size(px(12.))
+                    .line_height(px(14.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .when(selected, |d| d.bg(selected_bg).text_color(text))
                     .when(!selected, |d| {
-                        d.border_1()
-                            .border_color(gpui::Hsla::transparent_black())
-                            .opacity(0.4)
-                            .hover(|s| s.bg(hover_bg).opacity(1.))
+                        d.text_color(muted).hover(move |s| s.text_color(text))
                     })
                     .when(!disabled, |d| d.cursor_pointer())
                     .when_some(on_change, |d, f| {
@@ -171,16 +169,15 @@ impl RenderOnce for SegmentedControl {
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(2.))
-            // The border is there for the ring. With it the padding is 4 px, as designed.
-            .p(px(3.))
+            // The border is there for the ring: 1 + 1 + 20 + 1 + 1 is the 24 pt of a control.
+            .p(px(1.))
             .border_1()
             .border_color(if ring_shows {
                 ring
             } else {
                 Hsla::transparent_black()
             })
-            .rounded_full()
+            .rounded(px(6.))
             .bg(track)
             .when(disabled, |d| d.opacity(0.4).cursor_not_allowed())
             .when_some(on_key_down, |d, on_key_down| {

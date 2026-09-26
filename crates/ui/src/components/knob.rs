@@ -1,19 +1,13 @@
-//! Knob: a small round control with a dotted value arc and a pointer. Drag up and down to
-//! change. GPUI has no arc primitive, so the arc is a ring of dots.
+//! Knob: a 36 pt dial in a cell, with its label and value under it. A 270 degree track with the
+//! value arc on it and a pointer on the face. A bipolar knob, such as pan, draws its arc from
+//! the top. Drag up and down, 200 pt for the whole travel; the rest of the gesture is in
+//! [`gesture`](super::gesture), which the volume and the handles of a display share.
 //!
-//! Controlled: the caller owns the value, gives it on every render and hears a [`KnobChange`].
-//! So a knob on saved state keeps no copy of it, and a value that changes from outside shows
-//! at once, also during a drag. The knob keeps only its focus handle and the open drag, in
-//! element state under its id.
+//! Controlled: the caller owns the value, gives it on every render and hears a [`ValueChange`].
+//! So a knob on saved state keeps no copy of it, and a value that changes from outside shows at
+//! once, also during a drag. The knob keeps only its focus handle and the open drag, in element
+//! state under its id.
 //!
-//! - A drag works from the value at mouse down and the distance the pointer went, so a drag
-//!   there and back ends where it began, at exactly that value, also when it has more digits
-//!   than the knob gives. A press without a move up or down reports nothing.
-//! - A drag reports a value only when it is not the one it reported last. It does not look at
-//!   the value of the last render: several mouse moves may arrive between two frames.
-//! - Any new mouse press ends a drag that is still open, because its mouse up was lost.
-//! - Escape during a drag reports [`KnobChange::DragCancel`].
-//! - A double click reports the default value, when one is set.
 //! - The arrow keys step by a fiftieth of the travel, with shift by a five-hundredth.
 //! - The ring shows only when the focus came from the keyboard.
 //!
@@ -23,24 +17,28 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, CursorStyle, DispatchPhase, Div, ElementId, Entity, FocusHandle, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, StyleRefinement,
-    Window, canvas, div, prelude::*, px,
+    App, Bounds, CursorStyle, Div, ElementId, MouseButton, MouseDownEvent, Pixels, SharedString,
+    StyleRefinement, Window, canvas, div, prelude::*, px,
 };
 
-use crate::focus::KeyboardFocus;
+use crate::components::cell::{self, CONTROL_HEIGHT};
+use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
+use crate::components::paint;
 use crate::theme::ActiveTheme;
-use crate::typography;
 
 /// The arc runs from -135 to +135 degrees, like a hardware pot.
 const SWEEP: f32 = 270.;
-const DOTS: usize = 25;
-const DOT: f32 = 2.5;
-/// Pixels of vertical drag for the full range.
-const DRAG_RANGE: f32 = 160.;
+/// Points of pointer travel for the whole travel.
+pub const TRAVEL: f32 = 200.;
 /// What one arrow key moves, as a part of the travel. With shift it is a tenth of this.
 const KEY_STEP: f32 = 0.02;
-const FINE_KEY_STEP: f32 = 0.002;
+const FINE_KEY_STEP: f32 = KEY_STEP * gesture::FINE;
+
+const DIAL: f32 = CONTROL_HEIGHT;
+const TRACK_WIDTH: f32 = 2.5;
+const FACE: f32 = 21.;
+const POINTER_WIDTH: f32 = 2.;
+const RING_WIDTH: f32 = 2.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KnobScale {
@@ -114,51 +112,6 @@ fn three_digits(value: f32) -> f32 {
     ((value * unit).round() / unit) as f32
 }
 
-/// What a knob asks of its owner.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum KnobChange {
-    /// A mouse move of a drag gave another value. The first one of a drag begins it.
-    Drag(f32),
-    /// Mouse up, after at least one `Drag`.
-    DragEnd,
-    /// Escape, after at least one `Drag`: the value of mouse down is wanted back.
-    DragCancel,
-    /// A key step, or the default by a double click: one finished change.
-    Set(f32),
-}
-
-type ChangeHandler = Rc<dyn Fn(KnobChange, &mut Window, &mut App)>;
-
-#[derive(Clone, Copy)]
-struct KnobDrag {
-    start_y: f32,
-    start_value: f32,
-    start_position: f32,
-    /// The value that went out last. The value of the press before the first `Drag`.
-    sent: f32,
-    /// Whether a `Drag` went out, so that the end of the drag has something to end.
-    changed: bool,
-}
-
-impl KnobDrag {
-    /// The value for a pointer at `y`. Back at the height of the press it is the value of the
-    /// press itself, not that value in three digits: a press with a sideways move, or a drag
-    /// there and back, must not rewrite a value that was written by hand.
-    fn value_at(&self, y: f32, range: &KnobRange) -> f32 {
-        let travelled = self.start_y - y;
-        if travelled == 0. {
-            return self.start_value;
-        }
-        range.value(self.start_position + travelled / DRAG_RANGE)
-    }
-}
-
-struct KnobState {
-    focus_handle: FocusHandle,
-    keyboard_focus: KeyboardFocus,
-    drag: Option<KnobDrag>,
-}
-
 #[derive(IntoElement)]
 pub struct Knob {
     base: Div,
@@ -166,11 +119,11 @@ pub struct Knob {
     value: f32,
     range: KnobRange,
     default_value: Option<f32>,
-    size: f32,
+    bipolar: bool,
     label: Option<SharedString>,
     readout: Option<SharedString>,
     disabled: bool,
-    on_change: Option<ChangeHandler>,
+    on_change: Option<ChangeHandler<f32>>,
 }
 
 impl Knob {
@@ -181,7 +134,7 @@ impl Knob {
             value: 0.,
             range: KnobRange::linear(0., 1.),
             default_value: None,
-            size: 44.,
+            bipolar: false,
             label: None,
             readout: None,
             disabled: false,
@@ -199,15 +152,15 @@ impl Knob {
         self
     }
 
-    /// What a double click sets.
+    /// What a double click and backspace set.
     pub fn default_value(mut self, value: f32) -> Self {
         self.default_value = Some(value);
         self
     }
 
-    /// Diameter in pixels.
-    pub fn size(mut self, size: f32) -> Self {
-        self.size = size;
+    /// The arc starts at the top, for a value with a middle such as pan or a gain of an EQ band.
+    pub fn bipolar(mut self, bipolar: bool) -> Self {
+        self.bipolar = bipolar;
         self
     }
 
@@ -227,7 +180,10 @@ impl Knob {
         self
     }
 
-    pub fn on_change(mut self, f: impl Fn(KnobChange, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_change(
+        mut self,
+        f: impl Fn(ValueChange, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_change = Some(Rc::new(f));
         self
     }
@@ -239,37 +195,47 @@ impl Styled for Knob {
     }
 }
 
-/// Centre offset of a point on the arc at `fraction` of the sweep, at radius `r`.
-fn arc_point(fraction: f32, r: f32) -> (f32, f32) {
-    let angle = (-SWEEP / 2. + SWEEP * fraction).to_radians();
-    (r * angle.sin(), -r * angle.cos())
+/// The angle of a place on the travel, in degrees from the top.
+fn angle(position: f32) -> f32 {
+    -SWEEP / 2. + SWEEP * position
 }
 
-/// The end of a drag: mouse up, the button came up somewhere else, or a new press. Nothing
-/// that is drawn depends on the drag, so nobody is notified: these listeners hear every mouse
-/// up and every press of the window.
-fn end_drag(
-    state: &Entity<KnobState>,
-    on_change: &ChangeHandler,
+/// The colours of a dial.
+struct DialColors {
+    track: gpui::Hsla,
+    value: gpui::Hsla,
+    face: gpui::Hsla,
+    ring: Option<gpui::Hsla>,
+}
+
+fn paint_dial(
+    bounds: Bounds<Pixels>,
+    position: f32,
+    bipolar: bool,
+    colors: &DialColors,
     window: &mut Window,
-    cx: &mut App,
 ) {
-    if state.read(cx).drag.is_none() {
-        return;
+    let centre = bounds.center();
+    let radius = DIAL / 2. - TRACK_WIDTH / 2.;
+    let full = (angle(0.), angle(1.));
+    paint::arc(window, centre, radius, TRACK_WIDTH, full, colors.track, false);
+    let start = if bipolar { 0. } else { angle(0.) };
+    let value = (start, angle(position));
+    paint::arc(window, centre, radius, TRACK_WIDTH, value, colors.value, true);
+    paint::circle(window, centre, FACE / 2., colors.face);
+    if let Some(ring) = colors.ring {
+        paint::ring(window, centre, FACE / 2. + RING_WIDTH, RING_WIDTH, ring);
     }
-    let drag = state.update(cx, |state, _| state.drag.take());
-    if drag.is_some_and(|drag| drag.changed) {
-        on_change(KnobChange::DragEnd, window, cx);
-    }
+    let (inner, outer) = (
+        paint::on_circle(centre, 3.5, angle(position)),
+        paint::on_circle(centre, FACE / 2. - 2.5, angle(position)),
+    );
+    paint::line(window, inner, outer, POINTER_WIDTH, colors.value);
 }
 
 impl RenderOnce for Knob {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| KnobState {
-            focus_handle: cx.focus_handle(),
-            keyboard_focus: KeyboardFocus::default(),
-            drag: None,
-        });
+        let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| GestureState::new(cx));
         let disabled = self.disabled;
         let focus_handle = state.read(cx).focus_handle.clone().tab_stop(!disabled);
         let ring_shows = state
@@ -278,33 +244,19 @@ impl RenderOnce for Knob {
             .shows_ring(&focus_handle, window);
 
         let theme = cx.theme();
-        let (dim, lit, face, border, muted, text, ring) = (
-            theme.alpha_at(0.10),
-            theme.gray_950,
-            theme.alpha_at(0.05),
-            theme.alpha_at(0.10),
-            theme.gray_700,
-            theme.gray_950,
-            theme.lavender,
-        );
-        let (size, value, range) = (self.size, self.value, self.range);
+        let colors = DialColors {
+            track: theme.alpha_at(0.10),
+            value: theme.gray_950,
+            face: theme.gray_300,
+            ring: ring_shows.then_some(theme.lavender),
+        };
+        let (value, range, bipolar) = (self.value, self.range, self.bipolar);
         let position = range.position(value);
-        let centre = size / 2.;
-        let arc_r = centre - DOT / 2.;
-        let face_size = size - DOT * 2. - 4.;
-        let (pointer_x, pointer_y) = arc_point(position, face_size / 2. - 5.);
-
-        let dots = (0..DOTS).map(|ix| {
-            let f = ix as f32 / (DOTS - 1) as f32;
-            let (dx, dy) = arc_point(f, arc_r);
-            div()
-                .absolute()
-                .left(px(centre + dx - DOT / 2.))
-                .top(px(centre + dy - DOT / 2.))
-                .size(px(DOT))
-                .rounded_full()
-                .bg(if f <= position + 0.001 { lit } else { dim })
-        });
+        let dial = canvas(
+            |_, _, _| {},
+            move |bounds, (), window, _| paint_dial(bounds, position, bipolar, &colors, window),
+        )
+        .size_full();
 
         let on_change = self.on_change.filter(|_| !disabled);
         let default_value = self.default_value;
@@ -314,177 +266,68 @@ impl RenderOnce for Knob {
             .id(self.id)
             .debug_selector(move || format!("knob-{selector}"))
             .relative()
-            .size(px(size))
+            .size(px(DIAL))
             .when(disabled, |d| d.cursor_not_allowed())
             .when_some(on_change, |d, on_change| {
-                // The press also gives the knob the focus: GPUI does that for a tracked handle.
                 let on_mouse_down = {
                     let (state, on_change) = (state.clone(), on_change.clone());
                     move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
-                        let reset = event.click_count == 2;
-                        state.update(cx, |state, cx| {
-                            state.keyboard_focus.pressed(cx);
-                            state.drag = (!reset).then(|| KnobDrag {
-                                start_y: f32::from(event.position.y),
-                                start_value: value,
-                                start_position: position,
-                                sent: value,
-                                changed: false,
-                            });
-                        });
-                        let default_value = default_value.filter(|default| *default != value);
-                        if let Some(default_value) = default_value.filter(|_| reset) {
-                            on_change(KnobChange::Set(default_value), window, cx);
-                        }
+                        let y = -f32::from(event.position.y);
+                        let mut travel = Travel::new(y, position, TRAVEL);
+                        let value_at = move |pointer: gpui::Point<Pixels>, fine| {
+                            match travel.position(-f32::from(pointer.y), fine) {
+                                Some(position) => range.value(position),
+                                None => value,
+                            }
+                        };
+                        gesture::press(
+                            &state,
+                            event,
+                            value,
+                            default_value,
+                            value_at,
+                            &on_change,
+                            window,
+                            cx,
+                        );
                     }
                 };
                 let on_key_down = {
                     let (state, on_change) = (state.clone(), on_change.clone());
-                    move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
-                        let modifiers = event.keystroke.modifiers;
-                        if modifiers.control || modifiers.alt || modifiers.platform {
-                            return;
-                        }
-                        let dragging = state.read(cx).drag.is_some();
-                        let step = if modifiers.shift {
-                            FINE_KEY_STEP
-                        } else {
-                            KEY_STEP
+                    move |event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App| {
+                        let step = |up: bool, fine: bool| {
+                            let step = if fine { FINE_KEY_STEP } else { KEY_STEP };
+                            let step = if up { step } else { -step };
+                            let next = range.value(position + step);
+                            (next != value).then_some(next)
                         };
-                        let step = match event.keystroke.key.as_str() {
-                            "escape" if dragging => {
-                                cx.stop_propagation();
-                                let drag = state.update(cx, |state, _| state.drag.take());
-                                if drag.is_some_and(|drag| drag.changed) {
-                                    on_change(KnobChange::DragCancel, window, cx);
-                                }
-                                return;
-                            }
-                            "up" | "right" => step,
-                            "down" | "left" => -step,
-                            _ => return,
-                        };
-                        cx.stop_propagation();
-                        // The mouse has the knob: a key would fight the next mouse move.
-                        if dragging {
-                            return;
-                        }
-                        let next = range.value(position + step);
-                        if next != value {
-                            on_change(KnobChange::Set(next), window, cx);
-                        }
+                        gesture::key_down(
+                            &state,
+                            event,
+                            step,
+                            default_value,
+                            &on_change,
+                            window,
+                            cx,
+                        );
                     }
                 };
-                // A drag goes on wherever the pointer is, so these are not hit tested. They are
-                // there on every frame and look at the drag when an event arrives.
-                let listeners = canvas(
-                    |_, _, _| {},
-                    move |_, (), window, _| {
-                        window.on_mouse_event({
-                            let (state, on_change) = (state.clone(), on_change.clone());
-                            move |event: &MouseMoveEvent, phase, window, cx| {
-                                let Some(drag) = state.read(cx).drag else {
-                                    return;
-                                };
-                                if phase != DispatchPhase::Bubble {
-                                    return;
-                                }
-                                if !event.dragging() {
-                                    // The button came up somewhere that did not tell us.
-                                    return end_drag(&state, &on_change, window, cx);
-                                }
-                                let next = drag.value_at(f32::from(event.position.y), &range);
-                                if next == drag.sent {
-                                    return;
-                                }
-                                state.update(cx, |state, _| {
-                                    if let Some(drag) = &mut state.drag {
-                                        (drag.sent, drag.changed) = (next, true);
-                                    }
-                                });
-                                on_change(KnobChange::Drag(next), window, cx);
-                            }
-                        });
-                        window.on_mouse_event({
-                            let (state, on_change) = (state.clone(), on_change.clone());
-                            move |event: &MouseUpEvent, phase, window, cx| {
-                                let left = event.button == MouseButton::Left;
-                                if phase == DispatchPhase::Bubble && left {
-                                    end_drag(&state, &on_change, window, cx);
-                                }
-                            }
-                        });
-                        // A press while a drag is open: its mouse up went somewhere that did
-                        // not tell this window. Without this, the held button of the new press
-                        // would look like the old drag going on. Before the press of the knob
-                        // itself, which opens a new drag.
-                        window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
-                            if phase == DispatchPhase::Capture {
-                                end_drag(&state, &on_change, window, cx);
-                            }
-                        });
-                    },
-                );
                 d.cursor(CursorStyle::ResizeUpDown)
                     .track_focus(&focus_handle)
                     .on_key_down(on_key_down)
                     .on_mouse_down(MouseButton::Left, on_mouse_down)
-                    .child(listeners.absolute().size_0())
+                    .child(gesture::drag_listeners(state, on_change))
             })
-            .children(dots)
-            // Face.
-            .child(
-                div()
-                    .absolute()
-                    .left(px(centre - face_size / 2.))
-                    .top(px(centre - face_size / 2.))
-                    .size(px(face_size))
-                    .rounded_full()
-                    .bg(face)
-                    .map(|face| match ring_shows {
-                        true => face.border_2().border_color(ring),
-                        false => face.border_1().border_color(border),
-                    }),
-            )
-            // Pointer.
-            .child(
-                div()
-                    .absolute()
-                    .left(px(centre + pointer_x - 1.5))
-                    .top(px(centre + pointer_y - 1.5))
-                    .size(px(3.))
-                    .rounded_full()
-                    .bg(lit),
-            );
+            .child(dial);
 
-        self.base
-            .flex()
-            .flex_col()
-            .flex_none()
-            .items_center()
-            .when(disabled, |d| d.opacity(0.4))
-            .child(knob)
-            .when_some(self.label, |d, label| {
-                d.child(
-                    div()
-                        .mt(px(8.))
-                        .text_size(px(12.))
-                        .line_height(px(16.))
-                        .text_color(muted)
-                        .child(label),
-                )
-            })
-            .when_some(self.readout, |d, readout| {
-                d.child(
-                    div()
-                        .font(typography::tabular())
-                        .text_size(px(12.))
-                        .line_height(px(16.))
-                        .text_color(text)
-                        .whitespace_nowrap()
-                        .child(readout),
-                )
-            })
+        cell::frame(
+            self.base,
+            Some(knob.into_any_element()),
+            self.label,
+            self.readout,
+            cx,
+        )
+        .when(disabled, |d| d.opacity(0.4))
     }
 }
 
@@ -551,18 +394,16 @@ mod tests {
     }
 
     #[test]
-    fn a_drag_back_at_the_height_of_the_press_gives_the_value_of_the_press_exactly() {
+    fn a_drag_of_one_point_is_a_two_hundredth_of_the_travel() {
         let range = KnobRange::logarithmic(20., 20_000.);
-        let drag = KnobDrag {
-            start_y: 300.,
-            start_value: 1234.5,
-            start_position: range.position(1234.5),
-            sent: 1234.5,
-            changed: false,
-        };
-        assert_eq!(drag.value_at(300., &range), 1234.5);
-        assert_eq!(drag.value_at(299., &range), 1290.);
-        assert_eq!(drag.value_at(301., &range), 1180.);
+        // 1234.5 is at 0.5967 of the travel; one point up and down is 0.005 of it.
+        let mut travel = Travel::new(-300., range.position(1234.5), TRAVEL);
+        assert_eq!(travel.position(-300., false), None);
+        assert_eq!(travel.position(-299., false).map(|p| range.value(p)), Some(1280.));
+        assert_eq!(travel.position(-301., false).map(|p| range.value(p)), Some(1190.));
+        // With shift a tenth of that.
+        assert_eq!(travel.position(-301., true).map(|p| range.value(p)), Some(1190.));
+        assert_eq!(travel.position(-311., true).map(|p| range.value(p)), Some(1150.));
     }
 
     #[test]

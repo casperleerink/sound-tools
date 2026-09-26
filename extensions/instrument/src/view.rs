@@ -3,16 +3,17 @@
 //! own first row says "Synth" and is where another instrument is picked.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every
-//! change goes through the session: a knob drag is one gesture and one undo step, a key step,
-//! a reset or a waveform switch is one commit. The ranges and the defaults come from the
+//! change goes through the session, by [`ControlEdit`]: a knob drag is one gesture and one undo
+//! step, a key step, a reset or a waveform switch is one commit. The ranges and the defaults come from the
 //! [`Parameter`]s of the crate. What is only about the interface is here: the label, the
 //! unit, the travel of the knob and the name of the undo step.
 
 use gpui::{App, Context, Entity, SharedString, Window, div, prelude::*, px};
-use sound_core::{Changes, Instance, ProjectEvent, State};
-use sound_ui::components::knob::{Knob, KnobChange, KnobRange, KnobScale, short};
+use sound_core::{Instance, ProjectEvent, State};
+use sound_ui::components::gesture::ValueChange;
+use sound_ui::components::knob::{Knob, KnobRange, KnobScale, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ActiveTheme, DeviceLabel, Devices, Session, Views};
+use sound_ui::{ActiveTheme, ControlEdit, DeviceLabel, Devices, Session, Views};
 
 use crate::{
     ATTACK, CUTOFF, DECAY, GAIN, Parameter, RELEASE, RESONANCE, SUSTAIN, SynthState, Waveform,
@@ -109,15 +110,14 @@ fn readout(unit: Unit, value: f32) -> String {
     }
 }
 
-/// The room of one control. Every readout fits, so a changing value moves nothing.
-const CONTROL_WIDTH: f32 = 64.;
-const KNOB_SIZE: f32 = 44.;
+/// The height of a knob, where the waveform switch sits too.
+const KNOB_SIZE: f32 = 36.;
 
 pub struct SynthView {
     session: Entity<Session>,
     synth: Instance<SynthState>,
-    /// Whether a knob drag has the gesture of the session open.
-    dragging: bool,
+    /// The gesture of a knob drag.
+    edit: ControlEdit,
 }
 
 impl SynthView {
@@ -139,17 +139,12 @@ impl SynthView {
         })
         .detach();
         // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| {
-            if std::mem::take(&mut view.dragging) {
-                let session = view.session.clone();
-                session.update(cx, |session, cx| session.finish_gesture(cx));
-            }
-        })
+        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
         .detach();
         Self {
             session,
             synth,
-            dragging: false,
+            edit: ControlEdit::default(),
         }
     }
 
@@ -168,70 +163,18 @@ impl SynthView {
     }
 
     fn end_drag(&mut self, cx: &mut Context<Self>) {
-        if std::mem::take(&mut self.dragging) {
-            self.session
-                .update(cx, |session, cx| session.finish_gesture(cx));
-        }
+        self.edit.finish(&self.session, cx);
     }
 
-    /// One finished change of the record: a key step, a reset, a waveform.
-    fn commit(
-        &mut self,
-        label: &str,
-        change: impl FnOnce(&mut SynthState),
-        cx: &mut Context<Self>,
-    ) {
-        let synth = self.synth.clone();
-        self.session.update(cx, |session, cx| {
-            let Some(mut state) = session.project().state(&synth).copied() else {
-                return;
-            };
-            change(&mut state);
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                changes.set(&synth, state);
-                project.commit(label, changes)
-            });
-        });
-    }
-
-    fn on_knob(&mut self, control: &Control, change: KnobChange, cx: &mut Context<Self>) {
-        let set = control.parameter.set;
-        match change {
-            KnobChange::Drag(value) => {
-                let synth = self.synth.clone();
-                // A move may still arrive in the frame that lost the record.
-                if self.session.read(cx).project().state(&synth).is_none() {
-                    return;
-                }
-                let begun = std::mem::replace(&mut self.dragging, true);
-                self.session.update(cx, |session, cx| {
-                    if !begun {
-                        session.begin_gesture(control.undo_label, cx);
-                    }
-                    session.gesture(cx, |project, edit| {
-                        project.update(edit, &synth, |state| set(state, value))
-                    });
-                });
-            }
-            KnobChange::DragEnd => self.end_drag(cx),
-            KnobChange::DragCancel => {
-                if std::mem::take(&mut self.dragging) {
-                    self.session
-                        .update(cx, |session, cx| session.cancel_gesture(cx));
-                }
-            }
-            KnobChange::Set(value) => {
-                self.commit(control.undo_label, |state| set(state, value), cx);
-            }
-        }
+    fn on_knob(&mut self, control: &Control, change: ValueChange, cx: &mut Context<Self>) {
+        let (session, synth) = (&self.session, &self.synth);
+        let (label, set) = (control.undo_label, control.parameter.set);
+        self.edit.apply(session, synth, label, change, set, cx);
     }
 
     fn knob(&self, control: &'static Control, state: &SynthState, cx: &mut Context<Self>) -> Knob {
         let value = (control.parameter.get)(state);
         Knob::new(control.parameter.field)
-            .w(px(CONTROL_WIDTH))
-            .size(KNOB_SIZE)
             .range(control.range())
             .value(value)
             .default_value(control.parameter.default)
@@ -263,7 +206,11 @@ impl Render for SynthView {
                     .iter()
                     .find(|(_, name, _)| *name == value.as_ref());
                 if let Some((waveform, ..)) = picked {
-                    view.commit("Change waveform", |state| state.waveform = *waveform, cx);
+                    let change = ValueChange::Set(*waveform);
+                    let (session, synth) = (&view.session, &view.synth);
+                    let set = |state: &mut SynthState, waveform| state.waveform = waveform;
+                    view.edit
+                        .apply(session, synth, "Change waveform", change, set, cx);
                 }
             }));
         // The switch sits where the knobs are, and its label where theirs are.

@@ -42,6 +42,7 @@ icons!(
     "piano",
     "play",
     "plus",
+    "power",
     "redo-2",
     "search",
     "send",
