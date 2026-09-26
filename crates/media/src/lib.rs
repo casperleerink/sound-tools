@@ -226,27 +226,40 @@ pub fn import(assets: &Assets, source: &Path) -> Result<AudioAsset, MediaError> 
         .map_err(|source| io_error(&shown, source))?;
     drop(file);
 
+    let linked = link_under_a_free_name(assets, &temporary, &stem, &extension);
+    match fs::remove_file(&temporary) {
+        Ok(()) => {}
+        // Left behind, it harms nothing: a name that starts with a dot is never an asset, and
+        // the copy under its own name is complete either way.
+        Err(_) => {}
+    }
+    linked
+}
+
+/// Links `temporary` into `assets/audio/` as `<stem>.<extension>`, or `<stem>-2`, `-3` and on
+/// when that is taken. A hard link fails when the name is taken, so nothing is written over.
+fn link_under_a_free_name(
+    assets: &Assets,
+    temporary: &Path,
+    stem: &str,
+    extension: &str,
+) -> Result<AudioAsset, MediaError> {
     let mut number = 1_u32;
-    let result = loop {
+    loop {
         let name = match number {
-            1 => stem.clone(),
+            1 => stem.to_string(),
             _ => format!("{stem}-{number}"),
         };
-        let asset = AudioAsset(AssetName::new(AUDIO_FOLDER, &name, &extension).map_err(invalid)?);
-        // A hard link fails when the name is taken, so nothing is ever written over.
-        match fs::hard_link(&temporary, assets.path(asset.asset_name())) {
-            Ok(()) => break Ok(asset),
+        let asset = AudioAsset(AssetName::new(AUDIO_FOLDER, &name, extension).map_err(invalid)?);
+        match fs::hard_link(temporary, assets.path(asset.asset_name())) {
+            Ok(()) => return Ok(asset),
             Err(source) if source.kind() == io::ErrorKind::AlreadyExists => number += 1,
-            Err(source) => break Err(io_error(&asset.project_path(), source)),
-        }
-    };
-    if let Err(source) = fs::remove_file(&temporary) {
-        // The copy is in place; a temporary file left behind is harmless.
-        if result.is_err() {
-            return Err(io_error(&shown, source));
+            Err(source) => {
+                let path = asset.project_path();
+                return Err(MediaError::Io { path, source });
+            }
         }
     }
-    result
 }
 
 fn invalid(error: InvalidAssetName) -> MediaError {

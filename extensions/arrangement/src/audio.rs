@@ -39,8 +39,9 @@ pub struct AudioClip {
     #[serde(default)]
     pub fade_out_ms: f32,
     /// Where clips of one track overlap, the one with the higher layer is heard and the other
-    /// is not. Of equal layers the one that starts later, then the later id. A clip made in the
-    /// window gets a layer above every other clip of its track, so the newest covers.
+    /// is not. Of equal layers the one that starts later, then the later id.
+    /// [`crate::add_audio_clip`] gives a new clip a layer above every other clip of its track,
+    /// so the newest covers.
     #[serde(default)]
     pub layer: u32,
 }
