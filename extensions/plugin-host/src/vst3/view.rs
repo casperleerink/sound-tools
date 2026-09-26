@@ -45,7 +45,9 @@ use vst3::Steinberg::{
 use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
 use crate::PluginProblem;
-use crate::backend::PluginGui;
+use gpui::Keystroke;
+
+use crate::backend::{KeyDirection, PluginGui};
 use crate::processor::not_ours;
 use crate::window::WindowSize;
 
@@ -182,6 +184,69 @@ impl PluginGui for Vst3Gui {
         Ok(())
     }
 
+    fn can_resize(&mut self) -> bool {
+        let Some(view) = self.view.as_ref() else {
+            return false;
+        };
+        // SAFETY: the view came from the plugin and is alive.
+        let result = unsafe { not_ours(|| view.canResize()) };
+        result == kResultOk || result == kResultTrue
+    }
+
+    /// `checkSizeConstraint` makes a size the view takes of the one the composer dragged to,
+    /// and `onSize` gives it that size, unless it has it already. What the view says it is
+    /// afterwards is what the window ends on. A plugin that asks for another size from inside
+    /// `onSize` is answered by the frame as any request is.
+    fn resize(&mut self, wanted: WindowSize) -> Option<WindowSize> {
+        let view = self.view.as_ref()?;
+        let mut rect = ViewRect {
+            left: 0,
+            top: 0,
+            right: i32::try_from(wanted.width).ok()?,
+            bottom: i32::try_from(wanted.height).ok()?,
+        };
+        // SAFETY: the view came from the plugin and is alive, and `rect` outlives the call. A
+        // view that does not constrain leaves the rectangle as it was, which is then the size.
+        unsafe { not_ours(|| view.checkSizeConstraint(&mut rect)) };
+        let offered = window_size(&rect)?;
+        // The frame counts this as a request being answered, so a plugin that asks for another
+        // size from inside this `onSize` is refused, as a request from inside the answer to one
+        // of its own is: a nested `onSize` is what `editorhost.cpp` guards against. The view's
+        // own size afterwards is what the window ends on either way.
+        if self.frame.answering.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        // SAFETY: as above.
+        let size = unsafe {
+            let view = view.as_com_ref();
+            if PlugFrame::size_of(view) != Some(offered) {
+                not_ours(|| view.onSize(&mut rect));
+            }
+            PlugFrame::size_of(view)
+        };
+        self.frame.answering.store(false, Ordering::Release);
+        size
+    }
+
+    fn key(&mut self, keystroke: &Keystroke, direction: KeyDirection) -> bool {
+        let Some(view) = self.view.as_ref() else {
+            return false;
+        };
+        let Vst3Key {
+            character,
+            code,
+            modifiers,
+        } = vst3_key(keystroke);
+        // SAFETY: the view came from the plugin and is alive.
+        let result = unsafe {
+            not_ours(|| match direction {
+                KeyDirection::Down => view.onKeyDown(character, code, modifiers),
+                KeyDirection::Up => view.onKeyUp(character, code, modifiers),
+            })
+        };
+        result == kResultOk || result == kResultTrue
+    }
+
     /// The order is the one Steinberg's `editorhost.cpp` takes in `closePlugView`: the frame
     /// goes first, then `removed`, then the release. The frame first, because a plugin is
     /// allowed to ask for a resize from inside `removed` and there must be nothing of ours left
@@ -301,6 +366,86 @@ impl IPlugFrameTrait for PlugFrame {
         };
         self.wanted.store(pack(settled), Ordering::Release);
         kResultOk
+    }
+}
+
+/// A key as `IPlugView::onKeyDown` takes it, read from `pluginterfaces/gui/iplugview.h` and
+/// `keycodes.h`: the character the key types, a virtual key code for a key that types none,
+/// and the modifiers. A space is both, `' '` and `KEY_SPACE`, as `keycodes.h` converts it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Vst3Key {
+    character: u16,
+    code: i16,
+    modifiers: i16,
+}
+
+fn vst3_key(keystroke: &Keystroke) -> Vst3Key {
+    use vst3::Steinberg::KeyModifier_::{kAlternateKey, kCommandKey, kControlKey, kShiftKey};
+    use vst3::Steinberg::VirtualKeyCodes_::*;
+    let code = match keystroke.key.as_str() {
+        "backspace" => KEY_BACK,
+        "tab" => KEY_TAB,
+        "enter" => KEY_RETURN,
+        "escape" => KEY_ESCAPE,
+        "space" => KEY_SPACE,
+        "delete" => KEY_DELETE,
+        "insert" => KEY_INSERT,
+        "home" => KEY_HOME,
+        "end" => KEY_END,
+        "pageup" => KEY_PAGEUP,
+        "pagedown" => KEY_PAGEDOWN,
+        "left" => KEY_LEFT,
+        "right" => KEY_RIGHT,
+        "up" => KEY_UP,
+        "down" => KEY_DOWN,
+        "f1" => KEY_F1,
+        "f2" => KEY_F2,
+        "f3" => KEY_F3,
+        "f4" => KEY_F4,
+        "f5" => KEY_F5,
+        "f6" => KEY_F6,
+        "f7" => KEY_F7,
+        "f8" => KEY_F8,
+        "f9" => KEY_F9,
+        "f10" => KEY_F10,
+        "f11" => KEY_F11,
+        "f12" => KEY_F12,
+        _ => 0,
+    };
+    // The character typed, which has the shift in it already. A key held with the command
+    // key types nothing, so its own name is the character then. Only one UTF-16 unit fits.
+    let typed = keystroke
+        .key_char
+        .as_deref()
+        .filter(|typed| !typed.is_empty());
+    let text = match (code, typed) {
+        (KEY_SPACE, _) => " ",
+        (0, Some(typed)) => typed,
+        (0, None) => keystroke.key.as_str(),
+        _ => "",
+    };
+    let mut units = text.encode_utf16();
+    let character = match (units.next(), units.next()) {
+        (Some(unit), None) if !char::from_u32(u32::from(unit)).is_some_and(char::is_control) => {
+            unit
+        }
+        _ => 0,
+    };
+    let held = &keystroke.modifiers;
+    let modifiers = [
+        (held.shift, kShiftKey),
+        (held.alt, kAlternateKey),
+        // `keycodes.h`: `kCommandKey` is the Mac's command key, `kControlKey` its control key.
+        (held.platform, kCommandKey),
+        (held.control, kControlKey),
+    ]
+    .into_iter()
+    .filter(|(down, _)| *down)
+    .fold(0, |all, (_, modifier)| all | modifier);
+    Vst3Key {
+        character,
+        code: code as i16,
+        modifiers: modifiers as i16,
     }
 }
 
@@ -499,6 +644,43 @@ mod tests {
         );
         gui.destroy();
         tell_the_plugin(test_plugin_support::RESIZE_IN_ATTACHED_VARIABLE, None);
+    }
+
+    fn key(text: &str) -> Vst3Key {
+        vst3_key(&Keystroke::parse(text).expect("a keystroke"))
+    }
+
+    /// What the host tells a plugin about a key, in the words of `keycodes.h`: the character a
+    /// key types, a virtual code for one that types none, and the modifiers. A space is both.
+    #[test]
+    fn a_key_reaches_a_vst3_view_as_its_character_its_code_and_its_modifiers() {
+        use vst3::Steinberg::KeyModifier_::{kAlternateKey, kCommandKey, kControlKey, kShiftKey};
+        use vst3::Steinberg::VirtualKeyCodes_::{KEY_BACK, KEY_LEFT, KEY_RETURN, KEY_SPACE};
+        let plain = |character: char, code, modifiers| Vst3Key {
+            character: character as u16,
+            code: code as i16,
+            modifiers: modifiers as i16,
+        };
+        assert_eq!(key("a"), plain('a', 0, 0));
+        // `parse` gives no character for a shifted key; the window gives the one it typed.
+        let mut shifted = Keystroke::parse("shift-a").expect("a keystroke");
+        shifted.key_char = Some("A".to_string());
+        assert_eq!(vst3_key(&shifted), plain('A', 0, kShiftKey));
+        assert_eq!(key("cmd-c"), plain('c', 0, kCommandKey));
+        assert_eq!(
+            key("ctrl-alt-x"),
+            plain('x', 0, kControlKey | kAlternateKey)
+        );
+        assert_eq!(key("space"), plain(' ', KEY_SPACE, 0));
+        assert_eq!(key("enter"), plain('\0', KEY_RETURN, 0));
+        assert_eq!(key("backspace"), plain('\0', KEY_BACK, 0));
+        assert_eq!(key("shift-left"), plain('\0', KEY_LEFT, kShiftKey));
+        // A character outside the first plane does not fit in one UTF-16 unit.
+        let mut emoji = Keystroke::parse("a").expect("a keystroke");
+        emoji.key_char = Some("😀".to_string());
+        assert_eq!(vst3_key(&emoji), plain('\0', 0, 0));
+        // A named key that `keycodes.h` has no code for types nothing either.
+        assert_eq!(key("f20"), plain('\0', 0, 0));
     }
 
     #[test]
