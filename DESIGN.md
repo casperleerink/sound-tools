@@ -167,6 +167,16 @@ Step 2, September 26, 2026. The after images are in `docs/reference/m3-step-2/`.
 - S is right of M, 4 pt apart, yellow when on. A power icon is on every effect card, between expand and close, and switches the bypass of its slot.
 - The master meter at the right end of the transport shows the device output, and the meter of the master panel the output of the limiter. They differ by the click and anything connected to the device by hand.
 
+### Settled with editing in the window
+
+Step 9a, September 26, 2026. The images are in `docs/reference/m3-step-9a/window/`.
+
+- The snap setting is a select in the corner above the track headers, on the line of the ruler: `Snap` in 12 pt `gray-700` at the left, 24 pt in like a track name, and the 24 pt select with what is picked at the right. It is interface state and not saved, like zoom: it is how the composer works and not part of the piece, and a setting in a file would be one more thing an agent could change under the composer. It starts on 1/16 in every session. Tab reaches it after the timeline.
+- A tempo change after tick 0 is a mark in the ruler: a 1 pt `gray-700` line at its tick through the ruler, and a label of 20 pt with 6 pt corners, the number in `gray-950` and `bpm` in `gray-700`, on the window colour with an `alpha/10` border. On a bar line the label starts after the bar number, so the number stays; anywhere else it covers the bar numbers under it. The selected one has an `alpha/10` fill and a `gray-950` border, as a selected clip. The tempo at tick 0 has no mark: the transport shows it.
+- There is no number to drag on a mark. A click on it moves the playhead onto it, and the tempo of the transport is the one drag number for the tempo there is. One control per value, and the ruler stays quiet.
+- A rectangle on empty space is an `alpha/5` fill with an `alpha/20` border, 2 pt corners. Selected clips have the `gray-950` border of a selected clip.
+- The name field is the 28 pt text input of the design system over the header of the track, its text where the painted name is.
+
 ### Devices
 
 Steps 5 to 8 build from these. "Shown" is on the card, "hidden" is behind expand. Every device keeps its parameters in its record, shown or hidden.
@@ -271,7 +281,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 - `cargo test -p runtime --test snapshots` renders the window at 1470 x 920 points since September 22, 2026, the laptop the design is for. It was 1440 x 900.
 - One background, `gray-100`, for the whole window. No panels and no top bar: the title bar is transparent, the project name sits right of the traffic lights and the row around it drags the window.
 - Transport pill: play or pause in green, stop, record in red, the position as `bar.beat`, the time as `m:ss` muted, then the hairline seek strip and the duration when the project has an end, then the tempo and the click. Numbers are tabular and the pill sizes from its content, so it stays still while playing and grows by a digit at bar 100 or at ten minutes. Space toggles playback. Tab reaches the buttons, the strip, the tempo and the click, and left and right seek by a bar on the strip. This changes with the third milestone, see "Direction for the third milestone".
-- Tempo, September 20, 2026: the tempo in effect at the playhead as a plain number in `gray_950` with a muted 12 px `bpm` after it, no box and no fill. Up to three decimals with no zeros at the end, so `120`, `93.5`, `120.125`. Dragging up on the number makes it faster, half a bpm per pixel. It moves by whole bpm from the tempo it began on and does not round the result, so 93.5 goes to 94.5 and back to exactly 93.5; with shift it moves by tenths at a tenth of the speed. The arrows step by 1 bpm and with shift by 0.1. It shows a 1 px lavender border when the focus came from the keyboard, like the seek strip. There is no tempo lane and no way to add or remove a tempo change in the window: an edit changes the tempo change in effect at the playhead, and the rest is a file edit.
+- Tempo, September 20, 2026: the tempo in effect at the playhead as a plain number in `gray_950` with a muted 12 px `bpm` after it, no box and no fill. Up to three decimals with no zeros at the end, so `120`, `93.5`, `120.125`. Dragging up on the number makes it faster, half a bpm per pixel. It moves by whole bpm from the tempo it began on and does not round the result, so 93.5 goes to 94.5 and back to exactly 93.5; with shift it moves by tenths at a tenth of the speed. The arrows step by 1 bpm and with shift by 0.1. It shows a 1 px lavender border when the focus came from the keyboard, like the seek strip. There is no tempo lane: an edit changes the tempo change in effect at the playhead. Since step 9a of the third milestone the ruler adds and removes tempo changes, see "Settled with editing in the window".
 - Steadiness, September 21, 2026: right of the tempo, and only when the project has a fit, so a project that was never fitted has the pill it always had. The same shape as the tempo: a whole percent in tabular `gray_950` with a muted 12 px `steady` after it, no box and no fill. Dragging up makes it steadier, one percent per pixel, by whole percent from where it began, with shift by tenths at a tenth of the speed (fifths before step 1b of the third milestone). The arrows step by 5 and with shift by 1. It is in the transport and not on the clip because it is the same kind of thing as the tempo: one number about the time of the whole project.
 - Fit tempo to take, September 21, 2026: the second item of the project menu, under `Add track`, at 40 % when the selected clip was not recorded, and at 40 % with why under it for a project whose `extensions` does not list `fit-tempo`: `This project does not include the tempo fit.` It showed the file edit until step 1b of the third milestone; that is in `agent-docs/project-json.md` now. It is in the project menu and not on the clip because a fit is about the whole project: it rewrites the tempo map every other part follows. One undo step named `Fit tempo`. There is no control for the first downbeat and none for half and double; those are a file edit, and `agent-docs/fit-tempo.md` says which field to change.
 - Click, September 20, 2026: a 28 px icon button at the right end of the pill, the metronome icon. A muted glyph when it is off, white with a dark glyph when it sounds (a subtle fill before step 1b of the third milestone, which was hard to see): no colour, because the click is a reference and not part of the piece. No volume, no count-in and no sounds to choose from.
@@ -294,11 +304,11 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 - Synth card: the picker says `Synth`, then one row of controls. The waveform is a segmented control, then seven knobs, the 36 pt knob in a 56 pt cell since step 1a of the third milestone. Air makes the groups, 32 px between them and 8 px inside: oscillator, filter (cutoff, resonance), envelope (attack, decay, sustain, release), output (gain). No boxes and no group captions: the labels already say what a group is. Under each knob its label at 12 px in `gray-700` and its value at 12 px in `gray-950` with tabular numbers: `480 Hz`, `2 kHz`, `5 ms`, `1.5 s`, `40%`. Three significant digits at most, no zeros at the end, so a value at rest is short.
 - Focus: the arrangement and the note editor each show a 1 px lavender ring inside their edge, only when the focus came from the keyboard. A knob shows it as a 2 px lavender ring around its face, because 1 px on a 35 px circle was too weak to find, and a segmented control as its 1 px border, under the same rule. Tab goes from the project menu to the arrangement, then the note editor and its close icon, or the close icon of the track panel and its controls from left to right, which begins with the picker of the first card and ends with the control that adds an effect, then the transport: play, stop, record, the seek strip, the tempo and the click. Since step 1b of the third milestone the transport comes right after the project menu, see "Settled when the window was built".
 - Cursor: a left-right resize cursor over the edges of a clip and over the end of a note, 6 px wide or a quarter of a narrow shape. Nothing else changes on hover.
-- Scroll pans, pinch or cmd-scroll zooms in time about the pointer. A click on a ruler seeks to the nearest sixteenth. The rest is under "Using the app".
+- Scroll pans, pinch or cmd-scroll zooms in time about the pointer. A click on a ruler seeks to the nearest step of the snap setting (a sixteenth before step 9a of the third milestone). The rest is under "Using the app".
 
 ## Using the app
 
-`cargo run -p runtime -- <project-folder>` opens the window. Everything snaps to a sixteenth. Every drag and every key below is one undo step, and escape during a drag puts it back.
+`cargo run -p runtime -- <project-folder>` opens the window. Everything snaps to the snap setting in the corner above the track headers, a sixteenth when the window opens; cmd held during a drag bypasses it. Every drag and every key below that changes the piece is one undo step, and escape during a drag puts it back. The keys follow macOS: cmd-c, cmd-x, cmd-v, cmd-d, cmd-a, delete, shift-click and cmd-click, enter to rename.
 
 | Where | Mouse or key | What it does |
 | --- | --- | --- |
@@ -309,7 +319,12 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Project menu | Add track | A new track with a synth |
 | Project menu | Fit tempo to take | Fit the project tempo to the take of the selected clip. One undo step |
 | Project menu | Open terminal in project folder | The macOS Terminal in the folder, to start a coding agent there |
-| Ruler | click | Move the playhead there |
+| Ruler | click | Move the playhead there, on the grid |
+| Ruler | double click, or `t` in the arrangement | Add a tempo change there, or at the playhead. It keeps the tempo that played there until it is edited |
+| Ruler | click a tempo mark (`96 bpm`) | Select it and move the playhead onto it: the tempo of the transport is then its tempo, and a drag there edits it |
+| Arrangement | delete or backspace, with a tempo mark selected | Remove that tempo change. Escape lets go of it |
+| Arrangement | Snap, in the corner above the track headers | Off, Bar, Beat, 1/8, 1/16 or 1/32 for every drag, new clip, new note and arrow key. Not saved |
+| Arrangement or note editor | cmd while dragging | Bypass the snap. A cmd press on a clip that moves is a drag of the selection with it; one that does not move is a cmd-click |
 | Transport | drag the tempo up or down | Change the tempo at the playhead. Whole bpm from where it began, half a bpm per pixel. With shift tenths, at a tenth of the speed. Escape during the drag puts it back |
 | Transport | up or right, down or left on the focused tempo | One bpm. With shift a tenth |
 | Transport | drag the steadiness up or down | How steady the fitted tempo is, 0 as played to 100 one tempo. One percent per pixel, with shift tenths. Escape during the drag puts it back. It shows only when the project has a fit |
@@ -320,14 +335,21 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Arrangement or note editor | scroll, cmd-scroll or pinch | Pan, zoom in time |
 | Arrangement | double click on empty track space | Add a clip of one bar |
 | Arrangement | click on a clip | Select it |
-| Arrangement | drag a clip | Move it in time and to another track |
+| Arrangement | shift-click or cmd-click on a clip | Add it to the selection, or take it out |
+| Arrangement | drag on empty track space | Select the clips the rectangle touches. With shift or cmd add them |
+| Arrangement | cmd-a | Select every clip |
+| Arrangement | cmd-c, cmd-x | Copy, cut the selected clips. The clipboard is in the app only |
+| Arrangement | cmd-v | Paste at the playhead. The top row goes on the track of the first selected clip, else on the selected track, else on the first track. Rows below the last track land on the last track |
+| Arrangement | cmd-d | A copy of the selected clips right after them |
+| Arrangement | drag a clip | Move it, and every other selected clip, in time and to another track |
 | Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note |
-| Arrangement | delete or backspace | Delete the selected clip |
-| Arrangement | left, right, up, down | Move the selected clip by a sixteenth, or to the track above or below |
+| Arrangement | delete or backspace | Delete the selected clips |
+| Arrangement | left, right, up, down | Move the selected clips by a step of the snap (a thirty-second when it is off), or to the track above or below |
 | Arrangement | double click on a clip, or enter | Open the note editor for it. It takes the place of the track panel |
 | Arrangement | click on a track header | Select the track and open its track panel. It takes the place of the note editor |
 | Arrangement | up, down, with a track and no clip selected | Select the track above or below. The open track panel follows |
-| Arrangement | enter, with a track and no clip selected | Open the track panel |
+| Arrangement | enter, with a track and no clip selected, or a double click on a track header | Edit the name of the track. Enter or a click elsewhere keeps it, escape does not |
+| Arrangement | cmd-down, with a track and no clip selected | Open the track panel |
 | Arrangement or track panel | escape | Close the panel below |
 | Track panel | the close icon | Close the panel |
 | Track panel | drag a knob up or down | Change the value. The sound follows. Escape during the drag puts it back |
@@ -355,7 +377,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Note editor | drag a note | Move it in time and pitch. A new pitch sounds |
 | Note editor | drag the end of a note | Change its length |
 | Note editor | delete or backspace | Delete the selected note |
-| Note editor | left, right | Move the selected note by a sixteenth |
+| Note editor | left, right | Move the selected note by a step of the snap |
 | Note editor | up, down, with shift | Move it by a semitone, by an octave |
 | Note editor | click on a key of the strip | Hear that pitch |
 | Note editor | escape or the close icon | Close the editor |

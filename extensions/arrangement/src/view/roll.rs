@@ -12,7 +12,8 @@ use sound_core::{TICKS_PER_QUARTER, Ticks, TimeSignature};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 
 use super::gesture::{Zone, shortest, zone_at};
-use super::layout::{LEAD_IN, Rect, SNAP, Viewport, shifted, snap, snap_floor};
+use super::layout::{LEAD_IN, Rect, Viewport, shifted};
+use super::snap::{Grid, snap, snap_floor};
 
 /// The height of the editor panel, ruler included.
 pub const EDITOR_HEIGHT: f32 = 352.0;
@@ -138,17 +139,25 @@ pub fn clamped(
 }
 
 /// The note that a drag draws: it starts in the grid cell where the mouse went down, with the
-/// pitch of that row, and ends at the pointer, at least one snap step later and at most where
+/// pitch of that row, and ends at the pointer, at least one unit of the grid later and at most where
 /// the clip ends. `None` when the mouse went down outside the clip: a note must start inside.
 /// Both ticks are project positions.
-pub fn drawn_note(clip: &Clip, down: Ticks, pointer: Ticks, pitch: Pitch) -> Option<Note> {
+pub fn drawn_note(
+    clip: &Clip,
+    down: Ticks,
+    pointer: Ticks,
+    pitch: Pitch,
+    grid: Grid,
+) -> Option<Note> {
     if down < clip.start || down >= clip.end() {
         return None;
     }
     // The grid is that of the project. In a clip that starts off the grid, the first cell
     // starts with the clip.
-    let start = snap_floor(down).max(clip.start);
-    let end = snap(pointer).max(start + SNAP).min(clip.end());
+    let start = snap_floor(down, grid.step).max(clip.start);
+    let end = snap(pointer, grid.step)
+        .max(start + grid.unit)
+        .min(clip.end());
     Some(Note {
         start: Ticks(start.0 - clip.start.0),
         length: Length::at_least_one(Ticks(end.0 - start.0)),
@@ -173,15 +182,15 @@ pub fn moved_note(clip_length: Length, origin: Note, delta: i64, semitones: i32)
     }
 }
 
-/// The note with its end moved by `delta`: at least one snap step long, or as short as it
+/// The note with its end moved by `delta`: at least `unit` long, or as short as it
 /// was, and it ends at the clip end at the latest.
-pub fn resized_note(clip_length: Length, origin: Note, delta: i64) -> Note {
+pub fn resized_note(clip_length: Length, origin: Note, delta: i64, unit: Ticks) -> Note {
     if delta == 0 {
         return origin;
     }
     let room = clip_length.ticks().0.saturating_sub(origin.start.0);
     let length = shifted(origin.length.ticks(), delta).0;
-    let length = length.max(shortest(origin.length)).min(room);
+    let length = length.max(shortest(origin.length, unit)).min(room);
     Note {
         length: Length::at_least_one(Ticks(length)),
         ..origin
@@ -193,6 +202,11 @@ mod tests {
     use super::*;
 
     const BAR: u64 = 3840;
+    /// A sixteenth, the snap the window starts with.
+    const GRID: Grid = Grid {
+        step: Ticks(240),
+        unit: Ticks(240),
+    };
 
     fn pitch(number: u8) -> Pitch {
         Pitch::new(number).unwrap()
@@ -349,15 +363,15 @@ mod tests {
         let down = Ticks(BAR + 500);
         // A click without a move is one snap step.
         assert_eq!(
-            drawn_note(&clip, down, down, pitch(64)),
+            drawn_note(&clip, down, down, pitch(64), GRID),
             Some(note(480, 240, 64))
         );
-        let drawn = drawn_note(&clip, down, Ticks(BAR + 1450), pitch(64));
+        let drawn = drawn_note(&clip, down, Ticks(BAR + 1450), pitch(64), GRID);
         assert_eq!(drawn, Some(note(480, 960, 64)));
         // Back past the start: still one step. Past the clip end: it ends with the clip.
-        let back = drawn_note(&clip, down, Ticks(0), pitch(64));
+        let back = drawn_note(&clip, down, Ticks(0), pitch(64), GRID);
         assert_eq!(back, Some(note(480, 240, 64)));
-        let past = drawn_note(&clip, down, Ticks(9 * BAR), pitch(64));
+        let past = drawn_note(&clip, down, Ticks(9 * BAR), pitch(64), GRID);
         assert_eq!(past, Some(note(480, BAR - 480, 64)));
         assert_eq!(drawn.map(|note| note.velocity.value()), Some(100));
     }
@@ -366,24 +380,24 @@ mod tests {
     fn no_note_is_drawn_outside_the_clip() {
         let clip = clip(BAR, BAR, vec![]);
         assert_eq!(
-            drawn_note(&clip, Ticks(BAR - 1), Ticks(BAR + 960), pitch(60)),
+            drawn_note(&clip, Ticks(BAR - 1), Ticks(BAR + 960), pitch(60), GRID),
             None
         );
         assert_eq!(
-            drawn_note(&clip, Ticks(2 * BAR), Ticks(3 * BAR), pitch(60)),
+            drawn_note(&clip, Ticks(2 * BAR), Ticks(3 * BAR), pitch(60), GRID),
             None
         );
-        let last_cell = drawn_note(&clip, Ticks(2 * BAR - 1), Ticks(3 * BAR), pitch(60));
+        let last_cell = drawn_note(&clip, Ticks(2 * BAR - 1), Ticks(3 * BAR), pitch(60), GRID);
         assert_eq!(last_cell, Some(note(BAR - 240, 240, 60)));
 
         // A clip that starts off the grid: the first note starts with the clip.
         let off_grid = self::clip(100, BAR, vec![]);
-        let first = drawn_note(&off_grid, Ticks(150), Ticks(150), pitch(60));
+        let first = drawn_note(&off_grid, Ticks(150), Ticks(150), pitch(60), GRID);
         assert_eq!(first, Some(note(0, 240, 60)));
         // At tick 0 and at pitch 0 and 127.
         let at_zero = self::clip(0, BAR, vec![]);
         for number in [0, 127] {
-            let drawn = drawn_note(&at_zero, Ticks(0), Ticks(0), pitch(number));
+            let drawn = drawn_note(&at_zero, Ticks(0), Ticks(0), pitch(number), GRID);
             assert_eq!(drawn, Some(note(0, 240, number)));
         }
     }
@@ -426,23 +440,26 @@ mod tests {
     #[test]
     fn a_resized_note_keeps_a_snap_step_and_ends_with_the_clip_at_the_latest() {
         let origin = note(960, 480, 60);
-        assert_eq!(resized_note(length(BAR), origin, 0), origin);
-        assert_eq!(resized_note(length(BAR), origin, 480), note(960, 960, 60));
+        assert_eq!(resized_note(length(BAR), origin, 0, GRID.unit), origin);
         assert_eq!(
-            resized_note(length(BAR), origin, -10_000),
+            resized_note(length(BAR), origin, 480, GRID.unit),
+            note(960, 960, 60)
+        );
+        assert_eq!(
+            resized_note(length(BAR), origin, -10_000, GRID.unit),
             note(960, 240, 60)
         );
         assert_eq!(
-            resized_note(length(BAR), origin, 100_000),
+            resized_note(length(BAR), origin, 100_000, GRID.unit),
             note(960, BAR - 960, 60)
         );
         let tiny = note(0, 100, 60);
-        assert_eq!(resized_note(length(BAR), tiny, -240), tiny);
+        assert_eq!(resized_note(length(BAR), tiny, -240, GRID.unit), tiny);
         // Untouched, a note that reaches past the clip end stays as it is.
         let long = note(960, 2 * BAR, 60);
-        assert_eq!(resized_note(length(BAR), long, 0), long);
+        assert_eq!(resized_note(length(BAR), long, 0, GRID.unit), long);
         assert_eq!(
-            resized_note(length(BAR), long, -240),
+            resized_note(length(BAR), long, -240, GRID.unit),
             note(960, BAR - 960, 60)
         );
     }

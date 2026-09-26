@@ -19,9 +19,6 @@ pub const LEAD_IN: f32 = 8.0;
 pub const CLIP_INSET: f32 = 4.0;
 /// Scroll room after the last clip.
 pub const END_ROOM_BARS: u64 = 16;
-/// Everything snaps to a sixteenth note. Fixed for the first milestone.
-pub const SNAP: Ticks = Ticks(TICKS_PER_QUARTER / 4);
-
 const MIN_PIXELS_PER_QUARTER: f64 = 1.0;
 const MAX_PIXELS_PER_QUARTER: f64 = 384.0;
 /// Bar numbers in the ruler are at least this far apart.
@@ -33,28 +30,17 @@ const MIN_MINIATURE_WIDTH: f32 = 8.0;
 /// A miniature shows at least this many semitones, so two close pitches do not fill the clip.
 const MIN_MINIATURE_SEMITONES: f32 = 12.0;
 
-/// The nearest multiple of [`SNAP`].
-pub fn snap(tick: Ticks) -> Ticks {
-    Ticks((tick.0 + SNAP.0 / 2) / SNAP.0 * SNAP.0)
-}
-
-/// The multiple of [`SNAP`] at or before a tick: the grid cell that a pointer is in.
-pub fn snap_floor(tick: Ticks) -> Ticks {
-    Ticks(tick.0 / SNAP.0 * SNAP.0)
-}
-
-/// How far a drag went, from the tick under the pointer at mouse down to the tick under it now,
-/// as the nearest whole number of snap steps. A drag moves by this and does not snap the
-/// result, so what an agent wrote off the grid keeps its offset.
-pub fn snapped_delta(from: Ticks, to: Ticks) -> i64 {
-    let step = SNAP.0 as i64;
-    let delta = to.0 as i64 - from.0 as i64;
-    (delta + delta.signum() * step / 2) / step * step
-}
-
 /// A tick moved by a signed delta. It stops at tick 0.
 pub fn shifted(tick: Ticks, delta: i64) -> Ticks {
     Ticks(tick.0.saturating_add_signed(delta))
+}
+
+/// The track rows between two heights from the top of the first track, both rows included:
+/// what a rectangle drawn over the tracks touches. Only rows that exist.
+pub fn rows_between(a: f64, b: f64, tracks: usize) -> Range<usize> {
+    let row = |y: f64| (y / f64::from(TRACK_HEIGHT)).floor().max(0.0) as usize;
+    let (top, bottom) = if a <= b { (a, b) } else { (b, a) };
+    row(top).min(tracks)..(row(bottom) + 1).min(tracks)
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -382,33 +368,22 @@ mod tests {
     }
 
     #[test]
-    fn snap_goes_to_the_nearest_sixteenth() {
-        assert_eq!(snap(Ticks(0)), Ticks(0));
-        assert_eq!(snap(Ticks(119)), Ticks(0));
-        assert_eq!(snap(Ticks(120)), Ticks(240));
-        assert_eq!(snap(Ticks(359)), Ticks(240));
-        assert_eq!(snap(Ticks(3840 + 130)), Ticks(3840 + 240));
-    }
-
-    #[test]
-    fn a_drag_moves_by_whole_snap_steps_and_stops_at_tick_zero() {
-        assert_eq!(snap_floor(Ticks(239)), Ticks(0));
-        assert_eq!(snap_floor(Ticks(240)), Ticks(240));
-        assert_eq!(snap_floor(Ticks(3840 + 479)), Ticks(3840 + 240));
-
-        assert_eq!(snapped_delta(Ticks(1000), Ticks(1000)), 0);
-        assert_eq!(snapped_delta(Ticks(1000), Ticks(1119)), 0);
-        assert_eq!(snapped_delta(Ticks(1000), Ticks(1120)), 240);
-        assert_eq!(snapped_delta(Ticks(1000), Ticks(881)), 0);
-        assert_eq!(snapped_delta(Ticks(1000), Ticks(880)), -240);
-        assert_eq!(snapped_delta(Ticks(1000), Ticks(0)), -960);
-        assert_eq!(snapped_delta(Ticks(0), Ticks(3840)), 3840);
-
+    fn a_shift_stops_at_tick_zero() {
         // What is off the grid keeps its offset, and nothing goes before tick 0.
         assert_eq!(shifted(Ticks(250), 240), Ticks(490));
         assert_eq!(shifted(Ticks(250), -240), Ticks(10));
         assert_eq!(shifted(Ticks(250), -480), Ticks(0));
         assert_eq!(shifted(Ticks(0), -240), Ticks(0));
+    }
+
+    #[test]
+    fn a_rectangle_touches_the_rows_between_its_corners() {
+        assert_eq!(rows_between(10.0, 10.0, 5), 0..1);
+        assert_eq!(rows_between(100.0, 10.0, 5), 0..2);
+        assert_eq!(rows_between(-50.0, 64.0, 5), 0..2);
+        assert_eq!(rows_between(200.0, 5_000.0, 5), 3..5);
+        assert_eq!(rows_between(5_000.0, 6_000.0, 5), 5..5);
+        assert_eq!(rows_between(0.0, 100.0, 0), 0..0);
     }
 
     #[test]

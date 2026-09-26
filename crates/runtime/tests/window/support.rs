@@ -507,16 +507,81 @@ impl Opened<'_> {
     }
 
     fn press_times(&mut self, position: Point<Pixels>, click_count: usize) {
-        self.cx
-            .simulate_mouse_move(position, None, Modifiers::default());
+        self.press_with(position, click_count, Modifiers::default());
+    }
+
+    fn press_with(&mut self, position: Point<Pixels>, click_count: usize, modifiers: Modifiers) {
+        self.cx.simulate_mouse_move(position, None, modifiers);
         self.cx.simulate_event(MouseDownEvent {
             position,
-            modifiers: Modifiers::default(),
+            modifiers,
             button: MouseButton::Left,
             click_count,
             first_mouse: false,
         });
         self.cx.run_until_parked();
+    }
+
+    /// A click with keys held, such as shift or cmd.
+    pub fn click_with(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
+        self.press_with(position, 1, modifiers);
+        self.release(position);
+    }
+
+    /// Press, move in two steps, release, with keys held all the way, such as shift.
+    pub fn drag_with(&mut self, from: Point<Pixels>, to: Point<Pixels>, modifiers: Modifiers) {
+        self.press_with(from, 1, modifiers);
+        let half = point((from.x + to.x) / 2., (from.y + to.y) / 2.);
+        self.drag_to_with(half, modifiers);
+        self.drag_to_with(to, modifiers);
+        self.release(to);
+    }
+
+    /// A move of a drag with keys held, such as cmd.
+    pub fn drag_to_with(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
+        self.cx
+            .simulate_mouse_move(position, MouseButton::Left, modifiers);
+        self.cx.run_until_parked();
+    }
+
+    /// The place of a tick in the ruler of the arrangement.
+    pub fn ruler(&mut self, tick: u64) -> Point<Pixels> {
+        let x = self.at(tick, 0).x;
+        point(x, px(TOP_ROW + RULER_HEIGHT / 2.))
+    }
+
+    /// Every selected clip of the arrangement.
+    pub fn selected_clips(&mut self) -> Vec<InstanceId> {
+        let timeline = self.timeline.clone();
+        self.cx
+            .read(|cx| timeline.read(cx).selected_clips().cloned().collect())
+    }
+
+    /// Writes the tempo map into `project.json` from outside and applies it, as an agent's
+    /// edit arrives.
+    pub fn write_tempo_map(&mut self, tempo_map: &str) {
+        let path = self.path("project.json");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let start = text.find("\"tempo_map\"").unwrap();
+        let end = text[start..].find("\"connections\"").unwrap() + start;
+        let replaced = format!(
+            "{}\"tempo_map\": {tempo_map},\n  {}",
+            &text[..start],
+            &text[end..]
+        );
+        std::fs::write(&path, replaced).unwrap();
+        self.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
+        self.settle();
+    }
+
+    /// The tempo changes of the project, as ticks and bpm.
+    pub fn tempo_changes(&mut self) -> Vec<(u64, f64)> {
+        self.project(|project| {
+            let changes = project.project_file().tempo_map.tempo_changes().iter();
+            changes
+                .map(|change| (change.tick.0, change.bpm.bpm()))
+                .collect()
+        })
     }
 
     /// The button goes down where the pointer is, with no move before it: what arrives when
