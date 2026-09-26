@@ -5115,6 +5115,7 @@ dependencies = [
  "reverb",
  "serde_json",
  "sound-core",
+ "sound-media",
  "sound-notes",
  "sound-ui",
  "tempfile",

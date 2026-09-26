@@ -1,6 +1,6 @@
 # arrangement
 
-The bundled arrangement extension: tracks, clips and notes on the project timeline. This file is for extension and interface authors. The record formats, with a complete example of each, are in [agent-doc.md](agent-doc.md), which the runtime also writes into every project as `agent-docs/arrangement.md`, listed in the map `AGENTS.md`. That file is the single source for the formats; a test loads every example in it.
+The bundled arrangement extension: tracks, clips and notes on the project timeline, and audio tracks with clips of audio files. This file is for extension and interface authors. The record formats, with a complete example of each, are in [agent-doc.md](agent-doc.md) and [audio-agent-doc.md](audio-agent-doc.md), which the runtime also writes into every project as `agent-docs/arrangement.md` and `agent-docs/audio.md`, listed in the map `AGENTS.md`. Those files are the single source for the formats; a test loads every example in them.
 
 Enable it in `project.json` under `extensions` as `"arrangement"`.
 
@@ -9,8 +9,9 @@ Enable it in `project.json` under `extensions` as `"arrangement"`.
 | Tool | State | Form | Behaviour |
 | --- | --- | --- | --- |
 | `arrangement` | `ArrangementState`: `master` (`MasterState`: `gain_db`, `limiter`) | `<name>/instance.json` | one `Mixer` per track and one `Master`: every track, its mixer, the master, main output. It owns the tracks and gives the summary. |
-| `arrangement.track` | `TrackState`: `name`, `colour`, `order`, `gain_db`, `pan`, `mute`, `solo`, `effects` | `<name>/instance.json` | one `Sequencer`: sequencer, child `instrument`, the effects in order that are not bypassed, and out as its `audio` output |
-| `arrangement.clip` | `sound_notes::Clip`: `start`, `length`, `notes` | `<name>.json` | none, plain data for its track |
+| `arrangement.track` | `TrackState`: `name`, `kind`, `colour`, `order`, `gain_db`, `pan`, `mute`, `solo`, `effects` | `<name>/instance.json` | an instrument track: one `Sequencer`, child `instrument`, the effects in order that are not bypassed, and out as its `audio` output. An audio track: one `AudioPlayer` where the other has both, then the same |
+| `arrangement.clip` | `sound_notes::Clip`: `start`, `length`, `notes` | `<name>.json` | none, plain data for its instrument track |
+| `arrangement.audio_clip` | `AudioClip`: `asset`, `start`, `file_start_seconds`, `file_end_seconds`, `gain_db`, `fade_in_ms`, `fade_out_ms`, `layer` | `<name>.json` | none, plain data for its audio track |
 
 `Clip` lives in the contract crate `crates/notes`, because its saved form is what other extensions read. This crate does not depend on any instrument and on no effect. A track finds its instrument by the child name `instrument` (`INSTRUMENT`) and the port names `NOTES_INPUT` and `AUDIO_OUTPUT`, and each of its effects by the name the record lists and the port names `AUDIO_INPUT` and `AUDIO_OUTPUT`, so any tool with those ports fits either place. A track without an instrument loads and is silent.
 
@@ -32,6 +33,22 @@ A gain in decibels is saved as a number, or as the string `"-inf"` for silence, 
 - A seek or a stop silences what sounds. A note is never started in its middle: there is no chase.
 - A clip may hold the sustain pedal, which a recording writes. While the pedal is down a note goes on sounding after its own end, until the pedal comes up. The pedal of a clip ends with the clip, as a note that is longer than the rest of its clip ends there, so a clip that ends under the pedal does not sustain for the rest of the piece. Pedal moves of clips that overlap all play, in tick order, and the last one wins, including a lift at the end of a clip.
 - A clip may also name the raw take it was recorded from (`take`). The arrangement keeps the field through every edit and never reads it; see `extensions/midi`.
+
+## Audio tracks
+
+`kind` is `TrackKind::Instrument`, left out of the record, or `TrackKind::Audio`, `"audio"`. It is chosen when the track is made (`add_track`, `add_audio_track`). An audio track has no instrument: its rack starts with its first effect, and `device_slots` gives no instrument slot for it. Its mixer, effects, solo and meter are those of every track. A note clip in an audio track, an audio clip in an instrument track and an `instrument.json` in an audio track load and are reported, and are silent.
+
+An `AudioClip` names its file with a `sound_media::AudioAsset`, a file name under `assets/audio/`, so a record can never point outside the project. The file is read through `sound_media::load` on the control thread when the behaviour runs, kept in memory as its own bytes and shared by every clip that names it. A file that is not there or does not play is a problem on the track that names the clip; the clip keeps its record and its place, and the rest plays.
+
+The rules of the player:
+
+- A clip starts on the frame of its tick and plays at the speed of its file, so a tempo change moves its start and not its length in frames. There is no `length`: the part of the file (`file_start_seconds`, `file_end_seconds`, the end of the file when left out) decides it. `AudioClip::end` is its end in ticks under a clock.
+- A file at another rate than the engine plays through a `sound_media::Resampler`, at its own pitch and length. At the same rate a frame of the file is a frame of the engine, sample for sample.
+- Where clips overlap, the one with the highest `layer` is heard, then the one that starts later, then the later id. The others are not changed and play again where it ends. `add_audio_clip` puts a new clip one layer above every clip of its track, so the newest covers.
+- Every edge of what is heard gets a linear ramp of `DECLICK_SECONDS` (2 ms): the start and end of every clip, and where a clip is covered and uncovered. The fades are straight lines from silence, and the level is the smallest of the ramps and the fades, times the gain. So a fade of 0 is the ramp alone and a fade longer than it covers it.
+- Where the sound would jump, after a seek, a stop, a pause, a tempo change or an edit of the track while it plays, what sounded goes on for one ramp and fades out, and the new sound comes in along the same ramp. Measured in `tests/arrangement/audio.rs`: the largest step from one frame to the next is the level over 97, where a hard edge would step by the whole level.
+
+`add_audio_file` copies a file from anywhere into `assets/audio/` (`sound_media::import`) and adds a clip of all of it, named after the file. The copy is not undone; the clip is, with the rest of its group.
 
 ## The sequencer
 
@@ -289,6 +306,9 @@ The arrangement registers a summary (`ToolRegistration::summary`), which `runtim
 cargo nextest run -p arrangement -p runtime
 cargo nextest run -p arrangement --test arrangement mixer                         # gain, pan and mute with numbers
 cargo nextest run -p arrangement --test arrangement effects                       # the chain and its order, with numbers
+cargo nextest run -p arrangement --test arrangement audio --no-capture            # audio clips: position, rate, trim, gain, fades, edges, overlap
+cargo nextest run -p runtime --test projects audio                                # audio in whole projects: by file, copied, reopened, missing
+cargo nextest run -p runtime --test window audio                                  # the window around an audio track
 RTSAN_ENABLE=1 cargo nextest run -p arrangement                                   # with the realtime sanitizer
 cargo nextest run -p runtime --test window                                       # the views with a simulated mouse and keys
 cargo nextest run -p runtime --test window track_panel                           # the track panel and the synth view in it

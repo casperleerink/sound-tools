@@ -12,11 +12,13 @@
 //! - `fit`: fitting the tempo to a take, and the steadiness in the transport.
 //! - `transport`: the tempo, the click and the view following the playhead.
 //! - `piece`: a short piece made by hand from the default project, closed and opened again.
+//! - `audio`: the window around an audio track, whose clips it does not draw yet.
 
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them, and
 // it does not know `#[gpui::test]`.
 #![allow(clippy::unwrap_used)]
 
+mod audio;
 mod clips;
 mod compressor;
 mod editing;
