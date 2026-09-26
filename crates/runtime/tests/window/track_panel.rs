@@ -173,21 +173,21 @@ fn the_keys_select_a_track_open_its_panel_and_close_it(cx: &mut TestAppContext) 
     opened.keys("escape");
     assert!(opened.track_panel().is_none());
     assert_eq!(opened.selected_track(), Some(id(TRACK)));
-    // Down selects the next track. Enter opens its panel, and the panel follows up and down.
+    // Down selects the next track. Cmd-down opens its panel, and the panel follows up and down.
     opened.keys("down");
     assert_eq!(opened.selected_track(), Some(id("arrangement/track-2")));
     assert!(opened.track_panel().is_none());
-    opened.keys("enter");
+    opened.keys("cmd-down");
     assert_eq!(opened.panel_track(), Some(id("arrangement/track-2")));
     opened.keys("down");
     assert_eq!(opened.panel_track(), Some(id("arrangement/track-2")));
     opened.keys("up");
     assert_eq!(opened.panel_track(), Some(id(TRACK)));
 
-    // Tab goes past the master row into the panel: the close control, the volume, the pan,
-    // mute and solo of the track, the picker and the expand icon of the card, the waveform,
-    // then the first knob.
-    for _ in 0..9 {
+    // Tab goes past the snap setting and the master row into the panel: the close control,
+    // the volume, the pan, mute and solo of the track, the picker and the expand icon of the
+    // card, the waveform, then the first knob.
+    for _ in 0..10 {
         opened.keys("tab");
     }
     opened.keys("right");
@@ -1157,6 +1157,8 @@ fn tab_reaches_the_master_row_and_enter_opens_its_panel(cx: &mut TestAppContext)
     let mut opened = open(cx);
     let place = opened.at(BAR, 0);
     opened.click(place);
+    // Past the snap setting, which comes right after the timeline.
+    opened.keys("tab");
     opened.keys("tab");
     opened.press_enter();
     assert!(opened.master_panel().is_some());

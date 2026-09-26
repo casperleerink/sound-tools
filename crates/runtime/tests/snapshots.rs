@@ -53,6 +53,12 @@
 //!   plugin host, where every plugin says what the one edit is.
 //! - `fit-action-disabled.png`: the project menu of a project made before the fit existed,
 //!   where the fit says what the one edit is.
+//! - `arrangement-selection.png`: the piece with two tempo changes in the ruler and three clips
+//!   selected on two tracks.
+//! - `arrangement-tempo.png`: the same with the tempo change of bar 5 clicked: selected, and the
+//!   playhead and the transport on it.
+//! - `arrangement-snap.png`: the snap setting open in the corner above the track headers.
+//! - `arrangement-rename.png`: the name field open in the header of the bass.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -84,7 +90,9 @@ use reverb::ReverbState;
 use reverb::view::ReverbView;
 use runtime::window::Shell;
 use runtime::{OFFLINE, main_arrangement, open_or_create_with, views};
-use sound_core::{Changes, Engine, Instance, InstanceId, Project, Ticks};
+use sound_core::{
+    Changes, Engine, Instance, InstanceId, Project, Tempo, TempoChange, TempoMap, Ticks,
+};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{Assets, Session};
 use tempfile::TempDir;
@@ -757,6 +765,71 @@ fn main() -> Result<()> {
     cx.run_until_parked();
     save(&mut cx, &opened, "menu")?;
     drop(opened);
+
+    // Editing the arrangement: two tempo changes in the ruler, three clips selected, the snap
+    // setting, and the name field of a track.
+    let mut editing = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        let changes = [(0, 120.0), (4 * BAR, 96.0), (8 * BAR, 132.5)];
+        let changes = changes.map(|(tick, bpm)| {
+            anyhow::Ok(TempoChange {
+                tick: Ticks(tick),
+                bpm: Tempo::from_bpm(bpm)?,
+            })
+        });
+        let changes = changes.into_iter().collect::<Result<Vec<_>>>()?;
+        let mut edit = Changes::new();
+        edit.set_tempo_map(TempoMap::new("4/4".parse()?, changes)?);
+        project.commit("Tempo", edit)?;
+        Ok(())
+    })?;
+    let timeline = editing.timeline_view(&mut cx)?;
+    let selected = ["arrangement/bass/clip-001", "arrangement/bass/clip-002"];
+    let mut selected = selected
+        .into_iter()
+        .map(InstanceId::new)
+        .collect::<Result<Vec<_>, _>>()?;
+    selected.push(InstanceId::new(
+        "arrangement/a-melody-with-a-name-too-long-for-its-header/clip-000",
+    )?);
+    let primary = selected.first().cloned();
+    cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_clips(selected, primary, cx)));
+    cx.run_until_parked();
+    save(&mut cx, &editing, "arrangement-selection")?;
+
+    // A tempo mark clicked: it is selected and the playhead is on it, so the transport shows
+    // its tempo.
+    let mark = point(
+        px(HEADER_WIDTH + Viewport::default().x_of(Ticks(4 * BAR)) + 24.),
+        px(48. + RULER_HEIGHT / 2.),
+    );
+    editing.drag(mark, point(px(0.), px(0.)), 0, &mut cx)?;
+    editing.advance(64, &mut cx);
+    anyhow::ensure!(
+        cx.update(|cx| timeline.read(cx).selected_tempo()) == Some(Ticks(4 * BAR)),
+        "the tempo mark was not hit"
+    );
+    save(&mut cx, &editing, "arrangement-tempo")?;
+
+    // The snap setting open in the corner above the track headers.
+    let corner = point(px(HEADER_WIDTH - 40.), px(48. + RULER_HEIGHT / 2.));
+    editing.drag(corner, point(px(0.), px(0.)), 0, &mut cx)?;
+    save(&mut cx, &editing, "arrangement-snap")?;
+    editing.key("escape", &mut cx)?;
+
+    // The name field of the bass, open by a double click on its header.
+    let track = cx.update(|cx| {
+        let project = editing.session.read(cx).project();
+        project
+            .resolve::<TrackState>(&InstanceId::new("arrangement/bass")?)
+            .context("no bass")
+    })?;
+    cx.update_window(editing.window.into(), |_, window, cx| {
+        timeline.update(cx, |timeline, cx| timeline.start_rename(track, window, cx));
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &editing, "arrangement-rename")?;
+    drop(editing);
 
     // A recorded take: the project menu offers to fit the tempo to it once its clip is
     // selected, and the transport grows a steadiness control once the fit is there.

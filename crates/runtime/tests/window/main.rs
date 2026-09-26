@@ -17,6 +17,7 @@
 
 mod clips;
 mod compressor;
+mod editing;
 mod effects;
 mod eq;
 mod filter;

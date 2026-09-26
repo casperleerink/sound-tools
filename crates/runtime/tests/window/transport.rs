@@ -36,7 +36,7 @@ fn the_transport_shows_the_tempo_at_the_playhead(cx: &mut TestAppContext) {
 
     // A second tempo change at bar 3, written from outside as an agent would.
     let map = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 7680, "bpm": 60.0}]}"#;
-    write_tempo_map(&mut opened, map);
+    opened.write_tempo_map(map);
     assert_eq!(
         opened.shown_tempo(),
         120.0,
@@ -50,27 +50,11 @@ fn the_transport_shows_the_tempo_at_the_playhead(cx: &mut TestAppContext) {
     assert_eq!(opened.shown_tempo(), 60.0, "the playhead is past bar 3");
 }
 
-/// Writes a whole `project.json` with this tempo map and applies it as the watcher would.
-fn write_tempo_map(opened: &mut Opened<'_>, tempo_map: &str) {
-    let text = tempo_file(opened);
-    let start = text.find("\"tempo_map\"").unwrap();
-    let end = text[start..].find("\"connections\"").unwrap() + start;
-    let replaced = format!(
-        "{}\"tempo_map\": {tempo_map},\n  {}",
-        &text[..start],
-        &text[end..]
-    );
-    let path = opened.path("project.json");
-    std::fs::write(&path, replaced).unwrap();
-    opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
-    opened.settle();
-}
-
 #[gpui::test]
 fn an_outside_tempo_edit_shows_in_the_transport_at_once(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let map = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 93.5}]}"#;
-    write_tempo_map(&mut opened, map);
+    opened.write_tempo_map(map);
     assert_eq!(opened.shown_tempo(), 93.5);
     assert_eq!(opened.undo_label().as_deref(), Some("File change"));
 }
@@ -195,7 +179,7 @@ fn the_arrows_change_the_focused_tempo(cx: &mut TestAppContext) {
 fn a_tempo_edit_changes_the_tempo_change_at_the_playhead(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let map = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 7680, "bpm": 60.0}]}"#;
-    write_tempo_map(&mut opened, map);
+    opened.write_tempo_map(map);
     opened.session.update(opened.cx, |session, _| {
         session.engine().seek(Ticks(2 * BAR))
     });
@@ -329,7 +313,7 @@ fn shows_playhead(opened: &mut Opened<'_>) -> bool {
 /// does. The drag goes on after it.
 fn outside_during_drag(opened: &mut Opened<'_>, tempo_map: &str) {
     assert!(opened.gesture_open(), "the drag has not begun");
-    write_tempo_map(opened, tempo_map);
+    opened.write_tempo_map(tempo_map);
     assert!(opened.gesture_open(), "the file edit ended the drag");
 }
 
@@ -337,7 +321,7 @@ fn outside_during_drag(opened: &mut Opened<'_>, tempo_map: &str) {
 fn a_drag_keeps_an_outside_edit_of_another_tempo_change(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let two = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 7680, "bpm": 60.0}]}"#;
-    write_tempo_map(&mut opened, two);
+    opened.write_tempo_map(two);
 
     // A drag on the first tempo change, which is the one at the playhead.
     let from = tempo_control(&mut opened);
@@ -365,7 +349,7 @@ fn a_drag_keeps_an_outside_edit_of_another_tempo_change(cx: &mut TestAppContext)
 fn a_drag_keeps_its_tempo_change_when_an_earlier_one_is_inserted(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let two = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 7680, "bpm": 60.0}]}"#;
-    write_tempo_map(&mut opened, two);
+    opened.write_tempo_map(two);
     opened.session.update(opened.cx, |session, _| {
         session.engine().seek(Ticks(2 * BAR))
     });
@@ -399,7 +383,7 @@ fn a_drag_keeps_its_tempo_change_when_an_earlier_one_is_inserted(cx: &mut TestAp
 fn a_drag_ends_when_its_tempo_change_is_removed_from_outside(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let two = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 7680, "bpm": 60.0}]}"#;
-    write_tempo_map(&mut opened, two);
+    opened.write_tempo_map(two);
     opened.session.update(opened.cx, |session, _| {
         session.engine().seek(Ticks(2 * BAR))
     });
@@ -435,7 +419,7 @@ fn a_drag_ends_when_its_tempo_change_is_removed_from_outside(cx: &mut TestAppCon
 fn a_drag_there_and_back_keeps_a_fractional_tempo_and_is_no_undo_step(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let fractional = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 93.5}]}"#;
-    write_tempo_map(&mut opened, fractional);
+    opened.write_tempo_map(fractional);
     let before = tempo_in_file(&mut opened);
     let steps = opened.undo_label();
 
@@ -463,7 +447,7 @@ fn a_drag_there_and_back_keeps_a_fractional_tempo_and_is_no_undo_step(cx: &mut T
 fn the_arrows_keep_a_fractional_tempo(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let fractional = r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 93.5}]}"#;
-    write_tempo_map(&mut opened, fractional);
+    opened.write_tempo_map(fractional);
     let at = tempo_control(&mut opened);
     opened.click(at);
     opened.keys("up");
