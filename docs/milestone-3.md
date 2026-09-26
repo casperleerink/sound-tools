@@ -1,6 +1,6 @@
 # Milestone 3: mixer, built-in effects, reliable plugins and a better window
 
-Done September 26, 2026: every step is merged, and the check of the milestone is in [ARCHITECTURE.md](../ARCHITECTURE.md), "Verified September 26, 2026", with "Known gaps after the third milestone" after it. The owner's checks below are still open.
+Done September 26, 2026: every step is merged, and the check of the milestone is in [ARCHITECTURE.md](../ARCHITECTURE.md), "Verified September 26, 2026", with "Known gaps after the third milestone" after it. The owner checked it on September 26, 2026: it sounds good.
 
 Drafted September 22, 2026. This is the plan an orchestrating agent works from. It holds goals, decisions and checks, no implementation. [ARCHITECTURE.md](../ARCHITECTURE.md) stays the source of truth. Each step records what it settles there. The starting point is "Known gaps after the second milestone" in the same file.
 
