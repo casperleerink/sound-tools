@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/metronome", "extensions/midi", "extensions/plugin-host", "extensions/tone", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/core", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/metronome", "extensions/midi", "extensions/plugin-host", "extensions/reverb", "extensions/tone", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -19,6 +19,7 @@ instrument = { path = "extensions/instrument" }
 metronome = { path = "extensions/metronome" }
 midi = { path = "extensions/midi" }
 plugin-host = { path = "extensions/plugin-host" }
+reverb = { path = "extensions/reverb" }
 test-clap-plugin = { path = "tooling/test-clap-plugin" }
 test-plugin-support = { path = "tooling/test-plugin-support" }
 test-vst3-plugin = { path = "tooling/test-vst3-plugin" }
@@ -99,6 +100,7 @@ instrument = { opt-level = 3 }
 metronome = { opt-level = 3 }
 midi = { opt-level = 3 }
 plugin-host = { opt-level = 3 }
+reverb = { opt-level = 3 }
 runtime = { opt-level = 3 }
 sound-core = { opt-level = 3 }
 sound-notes = { opt-level = 3 }
