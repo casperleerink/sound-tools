@@ -357,6 +357,14 @@ fn handle_element(
                 .text_color(border)
                 .children(handle.label),
         )
+        // A handle that does not drag still hears its presses. One that drags hears them in
+        // its own listener, before the drag, which stops the press there.
+        .when_some(
+            on_press.clone().filter(|_| handle.on_change.is_none()),
+            |d, on_press| {
+                d.on_mouse_down(MouseButton::Left, move |_, window, cx| on_press(window, cx))
+            },
+        )
         .when_some(handle.on_change, |d, on_change| {
             let on_mouse_down = {
                 let (state, on_change) = (state.clone(), on_change.clone());

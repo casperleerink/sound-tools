@@ -59,6 +59,8 @@ struct Controls {
     handle: Followed<Point<f32>>,
     /// A handle whose second axis does not move.
     sideways: Followed<Point<f32>>,
+    /// The presses that `handle` and a handle that does not drag heard.
+    presses: [usize; 2],
 }
 
 /// A callback of a control into the view.
@@ -76,6 +78,14 @@ fn follow<V: Copy + 'static>(
     }
 }
 
+/// A callback of a press on a handle into the view: counts it.
+fn pressed(cx: &Context<Controls>, index: usize) -> impl Fn(&mut Window, &mut gpui::App) + 'static {
+    let view = cx.weak_entity();
+    move |_, cx| {
+        view.update(cx, |view, _| view.presses[index] += 1).unwrap();
+    }
+}
+
 impl Render for Controls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let handle = Handle::new(
@@ -83,7 +93,10 @@ impl Render for Controls {
             Axis::new(UNIT, self.handle.value.x, 0.2),
             Axis::new(UNIT, self.handle.value.y, 0.8),
         )
+        .on_press(pressed(cx, 0))
         .on_change(follow(cx, |view| &mut view.handle));
+        let still =
+            Handle::new("still", Axis::fixed(0.9), Axis::fixed(0.9)).on_press(pressed(cx, 1));
         // Drags sideways only. Its other axis has a default, which a reset must leave alone.
         let fixed = Axis {
             drags: false,
@@ -107,7 +120,8 @@ impl Render for Controls {
             .child(
                 Display::new("display", 200.)
                     .handle(handle)
-                    .handle(sideways),
+                    .handle(sideways)
+                    .handle(still),
             )
     }
 }
@@ -118,6 +132,7 @@ fn open(cx: &mut TestAppContext) -> (gpui::Entity<Controls>, &mut VisualTestCont
         volume: Followed::new(START_DB),
         handle: Followed::new(point(0.5, 0.5)),
         sideways: Followed::new(point(0.5, 0.3)),
+        presses: [0; 2],
     })
 }
 
@@ -361,4 +376,22 @@ fn two_cards_with_the_same_inner_ids_keep_a_focus_and_a_drag_each(cx: &mut TestA
         handles[0] == 0 || handles[1] == 0,
         "both handles moved: {handles:?}"
     );
+}
+
+/// `on_press` hears every press, a click with no drag as well, on a handle that drags and on
+/// one that does not. The click changes no value.
+#[gpui::test]
+fn a_press_on_a_handle_is_heard_whether_or_not_it_drags(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    for (selector, index) in [("handle-handle", 0), ("handle-still", 1)] {
+        let at = bounds(cx, selector).center();
+        press(cx, at, 1);
+        release(cx, at, 1);
+        assert_eq!(
+            view.read_with(cx, |view, _| view.presses[index]),
+            1,
+            "{selector}"
+        );
+    }
+    assert!(view.read_with(cx, |view, _| view.handle.changes.is_empty()));
 }
