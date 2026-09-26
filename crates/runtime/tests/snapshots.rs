@@ -18,8 +18,12 @@
 //! - `fit-recording.png`: the same while it records: tempo, steadiness and record together.
 //! - `editor.png`: the note editor open on the selected clip, one note selected.
 //! - `editor-focus.png`: the same with the focus from the keyboard, and the editor scrolled.
-//! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default.
+//! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default,
+//!   playing, so the meter under the volume shows its level.
+//! - `track-panel-solo.png`: the same with S on.
 //! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
+//! - `master-panel.png`: the master row clicked, and its panel: the volume on its meter and the
+//!   Limiter pushed 18 dB, with four seconds of output under the ceiling and the reduction.
 //! - `track-panel-synth-effects.png`: the synth with five effects after it, which is wider
 //!   than the rack has room for on this screen, so its right edge fades. The test checks
 //!   the fade in the pixels.
@@ -30,6 +34,7 @@
 //! - `track-panel-missing.png`: the panel of a track whose plugin this machine does not have.
 //! - `track-panel-effects.png`: the rack with an instrument and two effects, and the control
 //!   that adds one at the end of it.
+//! - `track-panel-bypass.png`: the same with the second effect bypassed from its power icon.
 //! - `track-panel-effect-picker.png`: the same with that control open.
 //! - `track-panel-effect-missing.png`: an effect whose plugin this machine does not have.
 //! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the

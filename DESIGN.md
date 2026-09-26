@@ -139,9 +139,9 @@ Step 1a, September 25, 2026. What the spec above left open, or what the build sh
 Step 1b, September 26, 2026. What the spec above left open, or what the build showed. The after images are in `docs/reference/m3-step-1b/`.
 
 - The view of a device draws its whole card. The rack gives it a `CardFrame` (the picker as title, and the close icon of an effect), and the tool registers its card with `Views::register_card`. The view owns the body and whether it is expanded, so the card could not be split between the rack and the view.
-- Power is left out until a device has a bypass: no device has one yet, and an icon that does nothing is noise. Decided by the orchestrator: bypass is saved on the effect slot of the track, not in each device record, so plugins and built-in effects share it. Step 2 builds it and adds `CardFrame::power`. The plugin card has no expand either, because it hides nothing. So a plugin effect has only close, and an instrument plugin no icon.
-- S is left out until step 2 brings solo. M sits where the spec puts M and S, at the left of the pan column, so S goes right of it.
-- The volume of a track edits `gain_db`, which keeps -60 to 6 dB. The bottom of the control, `-inf`, is -60 dB until step 2 decides how a record keeps silence, as the orchestrator decided. Its undo step is `Change volume`. Its meter and the master meter in the transport are at rest until step 2 feeds them.
+- Power is left out until a device has a bypass: no device has one yet, and an icon that does nothing is noise. Decided by the orchestrator: bypass is saved on the effect slot of the track, not in each device record, so plugins and built-in effects share it. Step 2 built it with `CardFrame::power`: every effect card has power now. The plugin card has no expand either, because it hides nothing. So a plugin effect has only close, and an instrument plugin no icon.
+- S is left out until step 2 brings solo. M sits where the spec puts M and S, at the left of the pan column, so S goes right of it. Step 2 put it there.
+- The volume of a track edits `gain_db`. Its undo step is `Change volume`. Since step 2 the bottom of the control, `-inf`, is saved as `"-inf"` and is silence, and the meter under it and the master meter in the transport show real levels.
 - The synth envelope: each time (attack, decay, release) has a zone of 28 % of the width on the travel of its knob, the sustain is held for 10 %, full level is at 88 % of the height and silence at 8 %. So any time from 1 ms to 10 s shows and the handle moves as its knob turns. The corner is one handle for decay and sustain, `Change decay and sustain`. The waveform is two segments with words, `Saw` and `Square`, as in the gallery.
 - The note editor is 352 pt now, its ruler included, and it opens with the middle of its notes in the middle of its area: nothing floats over it. The velocity lane of step 9 takes its lowest 56 pt. The arrangement has no room below its last track any more for the same reason.
 - The transport is 36 pt, in the middle of the room right of the project menu, and has no shadow: it floats over nothing. In a narrow window the air around it goes first, so it never covers the menu. Record while it records is solid red; the click while it sounds is white with a dark glyph, and a muted glyph when it is off. Tab goes through the title row first, in reading order: the project menu, then the transport, then the arrangement and the panel below it.
@@ -152,6 +152,17 @@ Step 1b, September 26, 2026. What the spec above left open, or what the build sh
 - A dropdown trigger gives way in a narrow place and ends its label in an ellipsis, so a long plugin name in a card title leaves room for the icons.
 - Tab goes through a card column by column, not row by row as "What this changes in the window" says: that is the order of the elements, and a tab index per cell was not worth it.
 - The real window opens at 1470 x 920, the size the design is for.
+
+### Settled with the mixer
+
+Step 2, September 26, 2026. The after images are in `docs/reference/m3-step-2/`.
+
+- The master row is drawn under the tracks and above the panel below, 40 pt, with a hairline above it. The playhead stops at its top edge, as in the mockup. Its header fill when its panel is open is the fill of a selected track header, and a focus from the keyboard shows a 1 pt lavender ring around that shape.
+- The master panel has no "Add effect": effects on the master are not built, and a control that adds nothing is noise. The Limiter's title is plain text, not a picker, because nothing else can go in its place.
+- The Limiter card is 352 pt: a display of 200 pt, Gain and Release in the first column, Ceiling in the second, Lookahead behind expand. The display's scale is the ceiling's, -24 to 0 dBFS from bottom to top. The ceiling is a line with its handle at the right end. Under it the last four seconds in 50 columns of 80 ms, green up to the loudest output of each, and the largest reduction of each as a thin `gray-950` bar hanging from the top, 24 dB for the whole height, a third of the width of a column so that it reads apart from the green it lies over. The line under the display: `Ceiling 0 dB · GR -4.1 dB`, the reduction of the last column.
+- The default ceiling is 0 dB, not the -0.3 dB the mockup shows, so a project that never went over full scale renders as it did, see ARCHITECTURE.md.
+- S is right of M, 4 pt apart, yellow when on. A power icon is on every effect card, between expand and close, and switches the bypass of its slot.
+- The master meter at the right end of the transport shows the device output, and the meter of the master panel the output of the limiter. They differ by the click and anything connected to the device by hand.
 
 ### Devices
 
@@ -320,6 +331,11 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Track panel | the volume, under the track name | The level of the track in decibels: drag the thumb or the meter, double click for 0 dB, arrows by 0.5 dB and with shift 0.1 dB |
 | Track panel | Pan | Where the track sits between the two channels |
 | Track panel | M | Silence the track, and click again to bring it back |
+| Track panel | S | Hear this track and the other soloed ones alone, and click again to hear all |
+| Track panel | the power icon of an effect card | Bypass the effect: the sound goes past it untouched. One undo step |
+| Arrangement | click the master row under the tracks, or tab to it and enter | Open the master panel: the master volume and the limiter |
+| Master panel | Gain, Ceiling, Release, and Lookahead behind expand | The limiter. The output never goes over the ceiling. Drag the handle of the ceiling line, or the knob |
+| Master panel | the power icon of the Limiter | Switch the limiter off, and the output may clip |
 | Track panel | drag a handle of a display | The value it moves, as its knob does. With shift ten times finer, double click resets. Escape during the drag puts it back |
 | Track panel | the expand icon of a card | Show the controls the card hides, such as the envelope knobs of the synth |
 | Track panel | double click on a knob, or backspace on the focused knob | Set its default |

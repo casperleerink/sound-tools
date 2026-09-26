@@ -1150,3 +1150,24 @@ fn the_master_panel_edits_the_volume_and_the_limiter_as_one_undo_step_each(
     opened.keys("escape");
     assert!(opened.master_panel().is_none());
 }
+
+/// The keys reach the master: tab from the timeline to the master row, and enter opens it.
+#[gpui::test]
+fn tab_reaches_the_master_row_and_enter_opens_its_panel(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let place = opened.at(BAR, 0);
+    opened.click(place);
+    opened.keys("tab");
+    opened.press_enter();
+    assert!(opened.master_panel().is_some());
+    // The volume of the master is the next stop after the close icon of the panel.
+    opened.keys("tab");
+    opened.keys("tab");
+    opened.keys("down");
+    let volume = opened.project(|project| {
+        let arrangement = project.resolve::<arrangement::ArrangementState>(&id("arrangement"));
+        project.state(&arrangement.unwrap()).unwrap().master.gain_db
+    });
+    assert_eq!(volume, -0.5);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change master volume"));
+}

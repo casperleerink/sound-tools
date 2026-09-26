@@ -99,6 +99,7 @@ pub struct ArrangementView {
     detail: Option<Detail>,
     /// The master row is a tab stop after the timeline, and enter opens its panel.
     master_focus: FocusHandle,
+    master_keyboard: KeyboardFocus,
 }
 
 impl ArrangementView {
@@ -176,6 +177,7 @@ impl ArrangementView {
             playhead_line,
             detail: None,
             master_focus: cx.focus_handle().tab_stop(true),
+            master_keyboard: KeyboardFocus::default(),
         };
         view.publish_notice_room(cx);
         view
@@ -366,7 +368,7 @@ impl ArrangementView {
 
     /// The master row: pinned under the tracks, with a ring where a track has its dot. A click,
     /// or enter when it has the focus, opens the panel of the master.
-    fn master_row(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn master_row(&self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = cx.theme();
         let (hairline, ring, text, selected, focus) = (
             theme.alpha_at(0.05),
@@ -376,6 +378,7 @@ impl ArrangementView {
             theme.lavender,
         );
         let open = self.master_panel().is_some();
+        let keyboard_ring = self.master_keyboard.shows_ring(&self.master_focus, window);
         let header = div()
             .id("master-row")
             .debug_selector(|| "master-row".to_string())
@@ -387,6 +390,10 @@ impl ArrangementView {
             .border_r_1()
             .border_color(hairline)
             .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|view, _, _, cx| view.master_keyboard.pressed(cx)),
+            )
             .on_click(cx.listener(|view, _, window, cx| view.open_master_panel(window, cx)))
             .child(
                 // The fill of a selected track header, in the same place.
@@ -398,9 +405,11 @@ impl ArrangementView {
                     .h(px(MASTER_ROW_HEIGHT - 8.))
                     .rounded(px(6.))
                     .border_1()
-                    .border_color(gpui::transparent_black())
-                    .when(open, |fill| fill.bg(selected))
-                    .focus_visible(move |style| style.border_color(focus)),
+                    .border_color(match keyboard_ring {
+                        true => focus,
+                        false => gpui::transparent_black(),
+                    })
+                    .when(open, |fill| fill.bg(selected)),
             )
             .child(
                 div()
@@ -434,7 +443,7 @@ impl ArrangementView {
 }
 
 impl Render for ArrangementView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let timeline = self.timeline.clone();
         let fill_parent = || StyleRefinement::default().size_full();
         // Notes need the room and devices do not, so the two details have heights of their
@@ -463,7 +472,7 @@ impl Render for ArrangementView {
                 }
             }
         });
-        let master_row = self.master_row(cx);
+        let master_row = self.master_row(window, cx);
         div()
             .size_full()
             .flex()

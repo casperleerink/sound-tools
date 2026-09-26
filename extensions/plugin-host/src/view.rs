@@ -5,7 +5,8 @@
 //! and the maker on the value line of the second row, `CLAP · <maker>`. There is no generic
 //! parameter view: what a plugin's knobs are is the plugin's business. The rack gives the
 //! frame of the card, whose title is the name of the plugin and where another one is picked.
-//! Nothing is hidden, so there is no expand, and there is no power: the rack has no bypass yet.
+//! Nothing is hidden, so there is no expand. The power and close icons of an effect come from
+//! the rack, in the frame, because the rack keeps whether a slot is on.
 //!
 //! A plugin this machine does not have shows what is wrong and the id the record names, so a
 //! composer can see which plugin to install and an agent can be asked to correct the record.
