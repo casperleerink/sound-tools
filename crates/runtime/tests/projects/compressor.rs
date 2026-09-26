@@ -164,6 +164,68 @@ fn the_lookahead_is_a_latency_the_project_makes_up_for() {
     assert!(heard.iter().any(|sample| sample.abs() > 0.01));
 }
 
+/// An agent turns the lookahead on while the track plays: the project learns the new latency
+/// at once, the sound fades to the delayed one without a jump, and from the next note on the
+/// track plays as if the lookahead had been there from the start.
+#[test]
+fn a_lookahead_turned_on_while_it_plays_is_in_time_without_a_jump() {
+    let with = |lookahead: u8| {
+        record(&format!(
+            r#"{{"threshold_db": -40.0, "attack_ms": 1.0, "release_ms": 10.0, "lookahead_ms": {lookahead}}}"#
+        ))
+    };
+    // Short notes on every beat, so there is a new one after the change.
+    let notes: Vec<(u64, u64, u8)> = (0..16).map(|beat| (beat * 960, 240, 60)).collect();
+    let track = |compressor: &str| {
+        let mut harness = piano_through(compressor);
+        harness.write_and_apply(&format!("{FOLDER}/chord.json"), &clip(0, 15360, &notes));
+        harness
+    };
+    let reference = track(&with(10)).play_from_the_start(2 * BAR);
+
+    // The change comes between two beats, while the last note still sounds.
+    let switch = 3 * BAR / 8;
+    let mut harness = track(&with(0));
+    let mut played = harness.play_from_the_start(switch);
+    assert_eq!(harness.project.engine().poll().unwrap().latency, 0);
+    assert_eq!(harness.write_and_apply(COMPRESSOR_FILE, &with(10)), 1);
+    played.extend(harness.play(BAR));
+    assert_eq!(harness.project.engine().poll().unwrap().latency, 480);
+
+    // No jump: around the change no step from one sample to the next is larger than the
+    // largest of the beat before it.
+    let steps = |from: usize, to: usize| {
+        frames(&played, from, to)
+            .chunks(2)
+            .map(|frame| frame[0])
+            .collect::<Vec<f32>>()
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0.0, f32::max)
+    };
+    let (before, around) = (
+        steps(switch - BAR / 4, switch),
+        steps(switch - 1, switch + 2_400),
+    );
+    println!("largest step around the change {around}, in the beat before {before}");
+    assert!(around <= before, "{around} over {before}");
+
+    // From 50 ms after the next beat on, the render of 10 ms from the start.
+    let next_beat = BAR / 2;
+    let settled = next_beat + 2_400;
+    let (heard, expected) = (
+        frames(&played, settled, switch + BAR),
+        frames(&reference, settled, switch + BAR),
+    );
+    let largest = heard
+        .iter()
+        .zip(expected)
+        .map(|(heard, expected)| (heard - expected).abs())
+        .fold(0.0, f32::max);
+    assert!(largest < 1e-5, "{largest}");
+    assert!(heard.iter().any(|sample| sample.abs() > 0.01));
+}
+
 #[test]
 fn a_compressor_record_out_of_range_is_reported_and_the_track_keeps_what_it_had() {
     let mut harness = piano_through(&record(r#"{"ratio": 2.0}"#));

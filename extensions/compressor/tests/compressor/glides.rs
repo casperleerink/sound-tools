@@ -91,3 +91,29 @@ fn no_edit_steps_the_sound() {
         assert!(ratio < 1.5, "{name}: {ratio}");
     }
 }
+
+/// Two changes of the lookahead 10 ms apart, while the first still fades: the second waits for
+/// the first to end, so neither jumps.
+#[test]
+fn a_lookahead_change_during_the_fade_of_another_does_not_step_the_sound() {
+    let base = CompressorState::default();
+    let mut rig = Rig::new(base, sine(HZ, AMPLITUDE));
+    let [settled, _] = rig.render(SAMPLE_RATE as usize);
+    let steady = largest_step(&settled[settled.len() - 4_800..]);
+    rig.update(CompressorState {
+        lookahead: Lookahead::Ten,
+        ..base
+    });
+    let [first, _] = rig.render(480);
+    rig.update(CompressorState {
+        lookahead: Lookahead::One,
+        ..base
+    });
+    let [second, _] = rig.render(SAMPLE_RATE as usize / 10);
+    let mut around = settled[settled.len() - 1..].to_vec();
+    around.extend(&first);
+    around.extend(&second);
+    let ratio = largest_step(&around) / steady;
+    println!("two lookahead changes 10 ms apart: largest step {ratio:.2} times the steady one");
+    assert!(ratio < 1.5, "{ratio}");
+}

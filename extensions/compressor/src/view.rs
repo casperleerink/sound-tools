@@ -22,7 +22,7 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::meter::GainReduction;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, Devices, POLL_INTERVAL, Session, Views, weak_callback,
+    ActiveTheme, ControlEdit, DeviceLabel, Devices, Session, Views, every_poll, weak_callback,
 };
 
 use crate::{
@@ -302,15 +302,16 @@ impl CompressorView {
             }
         })
         .detach();
-        // The clock of the meters: as often as the session looks at the project.
-        let metering = cx.spawn(async move |view, cx| {
-            loop {
-                cx.background_executor().timer(POLL_INTERVAL).await;
-                if view.update(cx, |view, cx| view.read_meters(cx)).is_err() {
-                    break;
-                }
+        // What the compressor did before this card was made, such as while its panel was
+        // closed, is not what it does now.
+        let project = session.read(cx).project();
+        for name in [Meters::LEVEL, Meters::REDUCTION] {
+            if let Some(peaks) = project.peaks(compressor.id(), name) {
+                peaks.take();
             }
-        });
+        }
+        // The clock of the meters: as often as the session looks at the project.
+        let metering = every_poll(cx, Self::read_meters);
         Self {
             session,
             compressor,

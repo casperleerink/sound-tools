@@ -134,6 +134,13 @@ impl Detector {
         level
     }
 
+    /// Starts a new stretch, for a detector that holds only silence. So where its stretches
+    /// begin depends only on when the sound came back, not on what played before the silence.
+    fn restart(&mut self) {
+        self.current = 0.0;
+        self.frames = 0;
+    }
+
     /// The frames after which a silence has left the detector.
     fn window_frames(&self) -> usize {
         (SEGMENTS + 1) * self.stretch_frames
@@ -199,6 +206,9 @@ pub struct Compressor {
     from_frames: usize,
     to_frames: usize,
     fade: Smoothed,
+    /// A lookahead that came while the fade to the one before still ran. It waits for that
+    /// fade to end: a new fade from the middle of one would jump.
+    pending: Option<usize>,
     /// Frames in a row of silent input, up to what a silence needs to leave everything.
     quiet: usize,
 }
@@ -230,6 +240,7 @@ impl Compressor {
             from_frames: lookahead,
             to_frames: lookahead,
             fade: Smoothed::new(1.0),
+            pending: None,
             quiet: 0,
         };
         compressor.start(sample_rate);
@@ -263,12 +274,19 @@ impl Compressor {
         self.attack = pole(state.attack_ms / 1_000.0, self.sample_rate);
         self.release = pole(state.release_ms / 1_000.0, self.sample_rate);
         let lookahead = state.lookahead.frames(self.sample_rate);
-        if lookahead != self.to_frames {
-            // A change during the fade of the one before starts from where that one goes.
+        self.pending = (lookahead != self.to_frames).then_some(lookahead);
+        if !self.fade.is_moving() {
+            self.fade_to_pending();
+        }
+    }
+
+    /// Starts the fade to the lookahead that waits, if one does.
+    fn fade_to_pending(&mut self) {
+        if let Some(lookahead) = self.pending.take() {
             self.from_frames = self.to_frames;
             self.to_frames = lookahead;
             self.fade = Smoothed::new(0.0);
-            self.fade.set_target(1.0, ramp);
+            self.fade.set_target(1.0, self.ramp_frames);
         }
     }
 
@@ -287,6 +305,9 @@ impl Compressor {
     /// for.
     fn snap(&mut self) {
         self.smoothers().into_iter().for_each(Smoothed::snap);
+        if let Some(lookahead) = self.pending.take() {
+            self.to_frames = lookahead;
+        }
         self.from_frames = self.to_frames;
     }
 
@@ -319,8 +340,10 @@ impl Processor for Compressor {
         self.aim(*update);
     }
 
+    /// Where the lookahead goes, also while it waits for a fade: that is the delay the sound
+    /// has once the change has arrived.
     fn latency(&self) -> u32 {
-        self.to_frames as u32
+        self.pending.unwrap_or(self.to_frames) as u32
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
@@ -331,8 +354,10 @@ impl Processor for Compressor {
             .all(|sample| held(*sample) == 0.0);
         if silent_input && self.is_resting() {
             // Nothing sounds, nothing is left in the lookahead and nothing is turned down: the
-            // output is silent already, and no glide can be heard.
+            // output is silent already, and no glide can be heard. What comes next is then
+            // treated the same whatever played before the silence.
             self.snap();
+            self.detector.restart();
             return;
         }
         let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
@@ -369,6 +394,9 @@ impl Processor for Compressor {
             let gain = 1.0 + self.mix.advance(1) * (gain - 1.0);
             let fade = self.fade.advance(1);
             let (from, to) = (self.tap(self.from_frames), self.tap(self.to_frames));
+            if !self.fade.is_moving() {
+                self.fade_to_pending();
+            }
             *left_out = (from[0] + fade * (to[0] - from[0])) * gain;
             *right_out = (from[1] + fade * (to[1] - from[1])) * gain;
             self.write = (self.write + 1) % self.delay.len();

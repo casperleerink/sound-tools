@@ -314,3 +314,45 @@ fn the_power_icon_bypasses_the_compressor_as_one_undo_step(cx: &mut TestAppConte
     opened.click(power);
     assert_eq!(opened.undo_label().as_deref(), Some("Turn on Compressor"));
 }
+
+/// A card that opens after its compressor played with nobody looking shows what it does now,
+/// not the loudest of what it did then.
+#[gpui::test]
+fn a_card_that_opens_later_does_not_show_what_played_before(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let chord = vec![note(0, 3840, 48), note(0, 3840, 55), note(0, 3840, 64)];
+        let mut changes = sound_core::Changes::new();
+        changes.create(id("arrangement/track-1/chord"), clip(0, 3840, chord));
+        let track = project
+            .resolve::<arrangement::TrackState>(&id("arrangement/track-1"))
+            .unwrap();
+        let slot = arrangement::add_effect(project, &mut changes, &track, "Compressor").unwrap();
+        let sound = CompressorState {
+            threshold_db: -60.0,
+            ..CompressorState::default()
+        };
+        changes.create(slot, sound);
+        project.commit("Add chord and compressor", changes).unwrap();
+        project.clear_history();
+    });
+    // It plays and stops with its panel closed.
+    opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, _| session.engine().play());
+    });
+    opened.settle();
+    opened.render(12_000);
+    opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, _| session.engine().stop());
+    });
+    opened.settle();
+    opened.render(48_000);
+
+    let header = opened.track_header(0);
+    opened.click(header);
+    assert!(opened.find("knob-threshold_db").is_some());
+    opened.cx.executor().advance_clock(POLL_INTERVAL);
+    opened.cx.run_until_parked();
+    assert_eq!(opened.find("compressor-level"), None);
+}

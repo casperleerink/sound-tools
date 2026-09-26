@@ -152,3 +152,46 @@ fn other_frequencies_measure_as_the_static_gain() {
         println!("{hz} Hz: largest difference {worst:.4} dB");
     }
 }
+
+/// Under 50 Hz a stretch of 10 ms can fall between two peaks of the wave, so the level dips
+/// and the gain moves with the wave: the compressor adds harmonics. How much, for a sine at
+/// -6 dBFS into threshold -20 dB, 4:1, attack 1 ms.
+#[test]
+fn under_fifty_hz_a_short_release_adds_harmonics() {
+    let harmonics_db = |hz: f64, release_ms: f32| {
+        let state = CompressorState {
+            threshold_db: -20.0,
+            ratio: 4.0,
+            attack_ms: 1.0,
+            release_ms,
+            ..CompressorState::default()
+        };
+        let amplitude = 0.5;
+        let mut rig = crate::support::Rig::new(state, crate::support::sine(hz, amplitude));
+        let settle = 2 * crate::support::SAMPLE_RATE as usize;
+        rig.render(settle);
+        let window = crate::support::SAMPLE_RATE as usize;
+        let [left, _] = rig.render(window);
+        let at = |harmonic: f64| crate::support::amplitude_at(&left, settle, hz * harmonic);
+        let fundamental = at(1.0);
+        let rest = (2..=5)
+            .map(|h| at(f64::from(h)).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        20.0 * (rest / fundamental).log10()
+    };
+    // Measured: -35.3 and -53.8 dB at 25 Hz, -66.9 and -87.2 dB at 40 Hz, and nothing a
+    // float can show from 50 Hz up. The docs give these numbers.
+    for (hz, release_ms, at_most) in [
+        (25.0, 10.0, -33.0),
+        (25.0, 120.0, -50.0),
+        (40.0, 10.0, -63.0),
+        (40.0, 120.0, -83.0),
+        (50.0, 10.0, -120.0),
+        (100.0, 10.0, -120.0),
+    ] {
+        let db = harmonics_db(hz, release_ms);
+        println!("{hz} Hz, release {release_ms} ms: harmonics {db:.1} dB under the tone");
+        assert!(db < at_most, "{hz} Hz, release {release_ms} ms: {db:.1} dB");
+    }
+}
