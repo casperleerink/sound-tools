@@ -24,8 +24,8 @@ use gpui::{
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::card::Card;
 use sound_ui::components::cell::Cell;
+use sound_ui::components::device_card::DeviceCard;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
@@ -104,10 +104,16 @@ const EMPTY_EFFECT_SLOT: &str = "No effect";
 /// What the control at the end of the rack says.
 const ADD_EFFECT: &str = "Add effect";
 
-/// What the control that takes an effect off the track is called, and what a test finds it by.
-/// It names the slot, because one view draws every card of the rack.
+/// The id of the card of a slot. It names the slot, because one view draws every card of the
+/// rack, and the card scopes what its controls keep: two filters keep a drag each.
+pub fn card_id(slot: &InstanceId) -> SharedString {
+    format!("device-{}", slot.name()).into()
+}
+
+/// What the control that takes an effect off the track is called, and what a test finds it by:
+/// the close icon of its card.
 pub fn remove_control(slot: &InstanceId) -> SharedString {
-    format!("remove-{}", slot.name()).into()
+    format!("{}-close", card_id(slot)).into()
 }
 
 /// The same for the picker of an effect card.
@@ -167,8 +173,6 @@ struct Device {
     picker: Entity<DropdownMenu>,
     /// What the picker offers, so that choosing needs no second walk over the registry.
     offers: Vec<DeviceOffer>,
-    /// The remove control of an effect card takes one to be a tab stop and show a ring.
-    remove_focus: FocusHandle,
 }
 
 impl Device {
@@ -213,7 +217,6 @@ impl Device {
             kind,
             picker,
             offers,
-            remove_focus: cx.focus_handle().tab_stop(true),
         }
     }
 }
@@ -665,39 +668,33 @@ impl Render for TrackPanel {
 
         // Every card begins with its picker, which says what is in the slot and is how the
         // composer puts something else there. The card holds no other title: one name each.
-        // An effect card has the control that takes it off the track next to its name.
+        // The header is the rack's and the body is the view's, so the rack knows no device:
+        // expand when the view hides controls, close on an effect.
         let cards: Vec<_> = self
             .devices
             .iter()
             .map(|device| {
-                let mut title = div().flex().items_center().gap(px(4.)).ml(px(-8.));
-                title = title.child(device.picker.clone());
+                let title = div().ml(px(-8.)).child(device.picker.clone());
+                let mut card = DeviceCard::new(card_id(&device.slot), title);
+                if Devices::has_hidden(&self.session, &device.slot, cx) {
+                    let expanded = self.session.read(cx).is_expanded(&device.slot);
+                    let slot = device.slot.clone();
+                    card = card.expand(
+                        expanded,
+                        cx.listener(move |panel, _, _, cx| {
+                            let slot = slot.clone();
+                            panel.session.update(cx, |session, cx| {
+                                session.set_expanded(slot, !expanded, cx)
+                            });
+                        }),
+                    );
+                }
                 if device.kind == Slot::Effect {
                     let slot = device.slot.clone();
-                    // The name of the slot, because every card of the rack is drawn by this
-                    // one view: two controls of one id would be one control to GPUI, and the
-                    // second effect of a track would not be the one that goes.
-                    let name = remove_control(&device.slot);
-                    let remove = Button::icon_only(name.clone(), "x")
-                        .debug_selector(move || name.to_string())
-                        // Quiet until it is wanted, like the close control of the panel.
-                        .opacity(0.6)
-                        .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Xs)
-                        .focus_handle(&device.remove_focus)
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            panel.remove_effect(&slot, cx);
-                        }));
-                    title = title.child(remove);
+                    card = card.close(cx.listener(move |panel, _, _, cx| {
+                        panel.remove_effect(&slot, cx);
+                    }));
                 }
-                let card = Card::new()
-                    .flex_none()
-                    .gap(px(12.))
-                    // The trigger is 32 px tall and brings its own padding, so the card gives
-                    // it 8 px less on the top and the left and its text lands where a card
-                    // title is.
-                    .pt(px(8.))
-                    .child(title);
                 let empty = match device.kind {
                     Slot::Instrument => "This track is silent.",
                     Slot::Effect => "This slot has no record.",

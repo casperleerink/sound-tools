@@ -5,6 +5,7 @@
 //! the entity and typed `Instance<S>` handles, read the current state in `render`, and keep
 //! no copy of saved state. `README.md` in this crate is the guide for view authors.
 
+use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::time::Duration;
 
@@ -50,6 +51,8 @@ pub struct Session {
     selected: Option<InstanceId>,
     /// The clip the composer is working on, see [`Self::select_clip`].
     selected_clip: Option<InstanceId>,
+    /// The devices whose card shows what it hides, see [`Self::is_expanded`].
+    expanded: BTreeSet<InstanceId>,
     /// A stopped engine fails every poll. It is reported once.
     engine_stopped: bool,
     _polling: Task<()>,
@@ -80,6 +83,7 @@ impl Session {
             gesture: None,
             selected: None,
             selected_clip: None,
+            expanded: BTreeSet::new(),
             engine_stopped: false,
             _polling: polling,
         }
@@ -125,6 +129,24 @@ impl Session {
     pub fn select_clip(&mut self, clip: Option<InstanceId>, cx: &mut Context<Self>) {
         if self.selected_clip != clip {
             self.selected_clip = clip;
+            cx.notify();
+        }
+    }
+
+    /// Whether the card of a device shows the controls it hides. Interface state, like the
+    /// selection: nothing is saved and there is no undo step. It is here because two views
+    /// draw one card: the rack draws the header with the expand icon, and the view of the
+    /// device draws the body with the hidden columns.
+    pub fn is_expanded(&self, device: &InstanceId) -> bool {
+        self.expanded.contains(device)
+    }
+
+    pub fn set_expanded(&mut self, device: InstanceId, expanded: bool, cx: &mut Context<Self>) {
+        let changed = match expanded {
+            true => self.expanded.insert(device),
+            false => self.expanded.remove(&device),
+        };
+        if changed {
             cx.notify();
         }
     }

@@ -69,48 +69,24 @@ pub struct SynthState {
     pub gain: f32,
 }
 
-/// One number of the saved state: its field, its range and its default. The range and the
-/// default of a field are written here and nowhere else. `validate`, `Default`, the knobs of
-/// the view and a test of the docs all read them.
-pub struct Parameter {
-    pub field: &'static str,
-    pub min: f32,
-    pub max: f32,
-    pub default: f32,
-    pub get: fn(&SynthState) -> f32,
-    pub set: fn(&mut SynthState, f32),
-}
+/// One number of the saved state, with its range and its default. See [`sound_core::Parameter`].
+pub type Parameter = sound_core::Parameter<SynthState>;
 
-impl Parameter {
-    /// An envelope time. The lower end keeps every stage long enough not to click.
-    const fn time(
-        field: &'static str,
-        default: f32,
-        get: fn(&SynthState) -> f32,
-        set: fn(&mut SynthState, f32),
-    ) -> Self {
-        let (min, max) = (0.001, 10.0);
-        Self {
-            field,
-            min,
-            max,
-            default,
-            get,
-            set,
-        }
-    }
-
-    fn check(&self, state: &SynthState) -> Result<(), String> {
-        let (
-            Self {
-                field, min, max, ..
-            },
-            value,
-        ) = (self, (self.get)(state));
-        if (*min..=*max).contains(&value) {
-            return Ok(());
-        }
-        Err(format!("{field} must be from {min} to {max}, not {value}"))
+/// An envelope time. The lower end keeps every stage long enough not to click.
+const fn time(
+    field: &'static str,
+    default: f32,
+    get: fn(&SynthState) -> f32,
+    set: fn(&mut SynthState, f32),
+) -> Parameter {
+    let (min, max) = (0.001, 10.0);
+    Parameter {
+        field,
+        min,
+        max,
+        default,
+        get,
+        set,
     }
 }
 
@@ -130,13 +106,13 @@ pub const RESONANCE: Parameter = Parameter {
     get: |state| state.resonance,
     set: |state, value| state.resonance = value,
 };
-pub const ATTACK: Parameter = Parameter::time(
+pub const ATTACK: Parameter = time(
     "attack_seconds",
     0.005,
     |state| state.attack_seconds,
     |state, value| state.attack_seconds = value,
 );
-pub const DECAY: Parameter = Parameter::time(
+pub const DECAY: Parameter = time(
     "decay_seconds",
     0.2,
     |state| state.decay_seconds,
@@ -150,7 +126,7 @@ pub const SUSTAIN: Parameter = Parameter {
     get: |state| state.sustain,
     set: |state, value| state.sustain = value,
 };
-pub const RELEASE: Parameter = Parameter::time(
+pub const RELEASE: Parameter = time(
     "release_seconds",
     0.3,
     |state| state.release_seconds,
