@@ -10,15 +10,17 @@
 //! here: the label, the unit, the travel of a knob, the name of the undo step and whether the
 //! card is expanded.
 
-use gpui::{Context, Entity, Point, SharedString, Task, Window, div, point, prelude::*, px};
+use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*, px};
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle, INSET_HEIGHT};
+use sound_ui::components::dropdown_menu::{
+    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
+};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::meter::GainReduction;
-use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{
     ActiveTheme, ControlEdit, DeviceLabel, Devices, POLL_INTERVAL, Session, Views, weak_callback,
 };
@@ -123,12 +125,23 @@ const KNOBS: [&Control; 7] = [
     &MIX_KNOB,
 ];
 
-/// The value of a segment for each lookahead.
+/// The value of a row of the lookahead select for each lookahead. The select says the number
+/// and its cell says `ms`: `10 ms` does not fit in a cell.
 const LOOKAHEADS: [(Lookahead, &str); 3] = [
     (Lookahead::Off, "0"),
     (Lookahead::One, "1"),
     (Lookahead::Ten, "10"),
 ];
+
+fn lookahead_value(lookahead: Lookahead) -> &'static str {
+    LOOKAHEADS
+        .iter()
+        .find(|(value, _)| *value == lookahead)
+        .map_or("", |(_, label)| label)
+}
+
+/// The width of the open list of the lookahead select.
+const LOOKAHEAD_MENU_WIDTH: f32 = 96.;
 
 /// A value with its unit, as a knob shows it: `-18 dB`, `4:1`, `10 ms`, `1.2 s`, `30%`.
 fn readout(unit: Unit, value: f32) -> String {
@@ -234,6 +247,9 @@ pub struct CompressorView {
     edit: ControlEdit,
     /// Whether the card shows knee, makeup, mix and lookahead. Interface state: not saved.
     expanded: bool,
+    /// The select of the lookahead. It is a view of its own because it opens a list; it shows
+    /// what the record says, see [`Self::show_lookahead`].
+    lookahead: Entity<DropdownMenu>,
     reading: Reading,
     _metering: Task<()>,
 }
@@ -247,7 +263,10 @@ impl CompressorView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.compressor.id() => cx.notify(),
+            ProjectEvent::Changed(id) if id == view.compressor.id() => {
+                view.show_lookahead(cx);
+                cx.notify();
+            }
             // Deleted under a drag, from outside. The delete was the last write, so the
             // gesture finishes and does not cancel: a cancel would bring the record back.
             ProjectEvent::Deleted(id) if id == view.compressor.id() => {
@@ -260,6 +279,29 @@ impl CompressorView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
+        let lookahead = cx.new(|cx| {
+            let rows = LOOKAHEADS.map(|(_, label)| MenuItem::new(label, label));
+            let rows = vec![MenuEntry::Group(
+                MenuGroup::new().label("Lookahead, ms").items(rows),
+            )];
+            let shown = session.read(cx).project().state(&compressor);
+            let shown = shown.map_or(Lookahead::Off, |state| state.lookahead);
+            DropdownMenu::new("Lookahead", rows, cx)
+                .selected(lookahead_value(shown))
+                .trigger(Trigger::Select)
+                .width(LOOKAHEAD_MENU_WIDTH)
+                .debug_name("lookahead")
+        });
+        cx.subscribe(&lookahead, |view, _, MenuPicked(value), cx| {
+            let picked = LOOKAHEADS
+                .iter()
+                .find(|(_, label)| *label == value.as_ref());
+            if let Some((lookahead, _)) = picked {
+                let set = |state: &mut CompressorState, lookahead| state.lookahead = lookahead;
+                view.change("Change lookahead", ValueChange::Set(*lookahead), set, cx);
+            }
+        })
+        .detach();
         // The clock of the meters: as often as the session looks at the project.
         let metering = cx.spawn(async move |view, cx| {
             loop {
@@ -275,9 +317,24 @@ impl CompressorView {
             frame,
             edit: ControlEdit::default(),
             expanded: false,
+            lookahead,
             reading: Reading::default(),
             _metering: metering,
         }
+    }
+
+    /// Puts the lookahead of the record in its select, after any change of the record: a pick,
+    /// an undo or an outside edit.
+    fn show_lookahead(&mut self, cx: &mut Context<Self>) {
+        let state = self.session.read(cx).project().state(&self.compressor);
+        let Some(shown) = state.map(|state| lookahead_value(state.lookahead)) else {
+            return;
+        };
+        self.lookahead.update(cx, |select, cx| {
+            if select.value().map(AsRef::as_ref) != Some(shown) {
+                select.set_selected(shown, cx);
+            }
+        });
     }
 
     /// Takes what the compressor heard and did since the last look, and draws again when that
@@ -388,11 +445,12 @@ impl CompressorView {
                 .rounded_full()
                 .bg(theme.green)
         });
-        let bar = GainReduction::new(reduction_db)
+        // In a place of its own: the bar positions itself relative to its own box.
+        let bar = div()
             .absolute()
             .top(px(BAR_INSET))
             .right(px(BAR_INSET))
-            .h(px(INSET_HEIGHT - 2. * BAR_INSET));
+            .child(GainReduction::new(reduction_db).h(px(INSET_HEIGHT - 2. * BAR_INSET)));
         Display::new("display", DISPLAY_WIDTH)
             .curve(curve(state))
             .grid(vec![across(state.threshold_db)], Vec::new())
@@ -401,25 +459,6 @@ impl CompressorView {
             .caption(reduction_readout(reduction_db))
             .children(level)
             .child(bar)
-    }
-
-    fn lookahead(&self, state: &CompressorState, cx: &mut Context<Self>) -> Cell {
-        let selected = LOOKAHEADS
-            .iter()
-            .find(|(value, _)| *value == state.lookahead);
-        let selected = selected.map_or("", |(_, label)| label);
-        let segments = SegmentedControl::new("lookahead", selected)
-            .options(LOOKAHEADS.map(|(_, label)| (label, label)))
-            .on_change(weak_callback(cx, |view, value: SharedString, cx| {
-                let picked = LOOKAHEADS
-                    .iter()
-                    .find(|(_, label)| *label == value.as_ref());
-                if let Some((lookahead, _)) = picked {
-                    let set = |state: &mut CompressorState, lookahead| state.lookahead = lookahead;
-                    view.change("Change lookahead", ValueChange::Set(*lookahead), set, cx);
-                }
-            }));
-        Cell::new(segments).label("Lookahead").value("ms")
     }
 }
 
@@ -448,9 +487,11 @@ impl Render for CompressorView {
             Column::new()
                 .top(knob(&KNEE_KNOB, cx))
                 .bottom(knob(&MAKEUP_KNOB, cx)),
-            Column::new()
-                .top(knob(&MIX_KNOB, cx))
-                .bottom(self.lookahead(&state, cx)),
+            Column::new().top(knob(&MIX_KNOB, cx)).bottom(
+                Cell::new(self.lookahead.clone())
+                    .label("Lookahead")
+                    .value("ms"),
+            ),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self

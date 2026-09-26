@@ -63,7 +63,7 @@ fn add_effect_puts_a_compressor_with_its_card_on_the_track(cx: &mut TestAppConte
     ] {
         assert!(opened.find(shown).is_some(), "{shown}");
     }
-    for hidden in ["knob-knee_db", "knob-makeup_db", "knob-mix", "segment-10"] {
+    for hidden in ["knob-knee_db", "knob-makeup_db", "knob-mix", "lookahead"] {
         assert_eq!(opened.find(hidden), None, "{hidden}");
     }
 
@@ -141,10 +141,12 @@ fn expand_shows_knee_makeup_mix_and_lookahead(cx: &mut TestAppContext) {
     let expand = opened.control("card-compressor-expand");
     opened.click(expand);
     assert_eq!(opened.undo_label().as_deref(), Some("Add Compressor"));
-    for hidden in ["knob-knee_db", "knob-makeup_db", "knob-mix", "segment-10"] {
+    for hidden in ["knob-knee_db", "knob-makeup_db", "knob-mix", "lookahead"] {
         assert!(opened.find(hidden).is_some(), "{hidden}");
     }
-    let ten = opened.control("segment-10");
+    let select = opened.control("lookahead");
+    opened.click(select);
+    let ten = opened.control("menu-10");
     opened.click(ten);
     assert_eq!(state(&mut opened).lookahead, Lookahead::Ten);
     assert_eq!(opened.undo_label().as_deref(), Some("Change lookahead"));
@@ -174,11 +176,23 @@ fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
     .unwrap();
     opened.edit(|project| project.apply_outside_changes(&[path]).map(|_| ()));
     assert_eq!(state(&mut opened).lookahead, Lookahead::One);
-    // The selected segment is the one the file names: clicking it again is no edit.
+    // The select shows what the file names: picking it again is no edit.
     let label = opened.undo_label();
-    let one = opened.control("segment-1");
+    let select = opened.control("lookahead");
+    opened.click(select);
+    let one = opened.control("menu-1");
     opened.click(one);
     assert_eq!(opened.undo_label(), label);
+    // And a pick of another is one.
+    let select = opened.control("lookahead");
+    opened.click(select);
+    let off = opened.control("menu-0");
+    opened.click(off);
+    assert_eq!(state(&mut opened).lookahead, Lookahead::Off);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change lookahead"));
+    // Undo puts the file's value back, in the record and in the select.
+    opened.edit(|project| project.undo().map(|_| ()));
+    assert_eq!(state(&mut opened).lookahead, Lookahead::One);
 }
 
 /// While the track plays, the card shows the level it hears as a dot on the curve; at rest

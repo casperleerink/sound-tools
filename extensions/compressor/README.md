@@ -45,14 +45,14 @@ The rack gives the view a `CardFrame`, the picker of the slot as the title and t
 
 - The display, 136 pt: the transfer curve, input across and output up, both -60 to 0 dBFS, square so that a ratio of 1 is the diagonal. It is the reduction only; makeup and mix are not in it. A line at the threshold. A handle on the curve at the threshold: sideways is threshold. A hollow handle at its right end, at 0 dBFS in: up and down is ratio. The level now as a green dot on the curve, and the gain reduction as a bar from the top at the right edge, 0 to 24 dB. The line under it: the gain reduction now, `GR -6.8 dB`.
 - Threshold and Attack, Ratio and Release, as knobs in two columns.
-- Behind expand: Knee and Makeup, then Mix and Lookahead as segments `0 · 1 · 10`.
+- Behind expand: Knee and Makeup, then Mix and Lookahead as a select of `0`, `1` and `10`, with `ms` on its value line. Three segments are 75 pt wide and do not fit in a 56 pt cell; a select is what DESIGN.md gives a list that does not fit as segments.
 
 The level and the reduction come from the audio thread without a lock or an allocation: the processor records the largest of each block in two `sound_core::Peaks` (`Meters`), which the behaviour declares as `level` and `reduction`. The view takes them once per poll of the session (`Project::peaks`) and draws again only when the reading moves by a quarter point or a tenth of a dB, so a card at rest asks for no frame.
 
 Editing, the same rules as every control on saved state (`sound_ui::ControlEdit`):
 
 - A drag of a knob or a handle is one gesture and one undo step: "Change threshold", "Change ratio", "Change attack", "Change release", "Change knee", "Change makeup", "Change mix". The file is written once, at the end. Escape cancels.
-- A click on a lookahead is one step, "Change lookahead". A double click or backspace on a knob sets its default, a double click on a handle sets its value's.
+- A pick in the lookahead select is one step, "Change lookahead". A double click or backspace on a knob sets its default, a double click on a handle sets its value's.
 - The view keeps no copy of the state, so an outside edit shows at once, also during a drag. Whether the card is expanded is the view's own interface state and is not saved.
 
 ## Checks

@@ -150,7 +150,7 @@ fn pole(seconds: f32, sample_rate: f32) -> f64 {
 /// A sample as the compressor takes it: held to [`INPUT_LIMIT`], and silence for anything that
 /// is not a number or is too small to matter.
 fn held(sample: f32) -> f32 {
-    if !(sample.abs() >= TINY) {
+    if sample.is_nan() || sample.abs() < TINY {
         return 0.0;
     }
     sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
