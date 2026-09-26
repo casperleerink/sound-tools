@@ -1,12 +1,14 @@
 //! The measured curve matches the band settings: a quiet sine at stated frequencies through the
 //! EQ, once it has settled, against the exact response of `eq::response`, against the analog
-//! shapes, and for several bands at once against the bands measured one by one.
+//! shapes, and for several bands at once against the bands measured one by one. `response`
+//! shares its factors with the processor, so it is also held to the textbook analog shapes of
+//! the RBJ cookbook at every Q, written here from the cookbook.
 //!
 //! Tolerances: measured against `response`, 0.02 dB wherever the gain is above -80 dB. Against
 //! the analog shapes, which the EQ bends near the top of the scale: 0.02 dB for the gain of a
 //! bell at its frequency and of a shelf at its frequency and far on its side; 0.2 dB for the
 //! Butterworth cut from a quarter to twice its frequency at 1 kHz. Several bands against the
-//! sum in dB of each band alone: 0.05 dB.
+//! sum in dB of each band alone: 0.05 dB. `response` against the cookbook: 0.001 dB.
 
 use eq::{Band, EqState, Shape, response};
 
@@ -259,4 +261,96 @@ fn the_default_eq_is_the_input_exactly() {
         assert_eq!([*left, *right], source(), "frame {frame}");
     }
     assert!(exact_db(&EqState::default(), 1_000.0).abs() < 1e-9);
+}
+
+/// A complex number, for the analog shapes below.
+#[derive(Clone, Copy)]
+struct Complex(f64, f64);
+
+impl Complex {
+    fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0, self.1 + other.1)
+    }
+
+    fn times(self, other: Self) -> Self {
+        Self(
+            self.0 * other.0 - self.1 * other.1,
+            self.0 * other.1 + self.1 * other.0,
+        )
+    }
+
+    fn scale(self, factor: f64) -> Self {
+        Self(self.0 * factor, self.1 * factor)
+    }
+
+    fn size(self) -> f64 {
+        self.0.hypot(self.1)
+    }
+}
+
+/// `a s² + b s + c`.
+fn quadratic(s: Complex, [a, b, c]: [f64; 3]) -> Complex {
+    s.times(s).scale(a).add(s.scale(b)).add(Complex(c, 0.0))
+}
+
+/// The gain in dB of one band from its textbook analog shape (Bristow-Johnson, "Cookbook
+/// formulae for audio EQ biquad filter coefficients"), with the frequency bent by the same
+/// `tan` as the processor's: `s = j tan(π f / rate) / tan(π f0 / rate)` and `A = 10^(gain /
+/// 40)`. Written from the cookbook, not from the processor, so a wrong factor in either shows.
+/// A shelf uses Q up to `SHELF_MAX_Q`, as decided.
+fn cookbook_db(band: &Band, hz: f64, sample_rate: f64) -> f64 {
+    let bend = |hz: f64| (std::f64::consts::PI * hz / sample_rate).tan();
+    let s = Complex(0.0, bend(hz) / bend(f64::from(band.frequency_hz)));
+    let a = 10_f64.powf(f64::from(band.gain_db) / 40.0);
+    let q = f64::from(band.q);
+    let shelf_q = q.min(f64::from(eq::SHELF_MAX_Q));
+    let root = a.sqrt();
+    let (numerator, denominator) = match band.shape {
+        Shape::LowCut => ([1.0, 0.0, 0.0], [1.0, 1.0 / q, 1.0]),
+        Shape::HighCut => ([0.0, 0.0, 1.0], [1.0, 1.0 / q, 1.0]),
+        Shape::Notch => ([1.0, 0.0, 1.0], [1.0, 1.0 / q, 1.0]),
+        Shape::Bell => ([1.0, a / q, 1.0], [1.0, 1.0 / (a * q), 1.0]),
+        Shape::LowShelf => ([a, a * root / shelf_q, a * a], [a, root / shelf_q, 1.0]),
+        Shape::HighShelf => ([a * a, a * root / shelf_q, a], [1.0, root / shelf_q, a]),
+    };
+    let gain = quadratic(s, numerator).size() / quadratic(s, denominator).size();
+    20.0 * gain.log10()
+}
+
+/// `response` against the cookbook, across each band, for every shape at Q 0.3, 2 and 18 and
+/// at two places. Both are exact, so they agree to a thousandth of a dB wherever the gain is
+/// above -80 dB. A bell whose damping were `a/q` instead of `1/(q a)`, or a shelf with the
+/// wrong corner, fails here.
+#[test]
+fn the_exact_response_is_the_cookbook_shape_of_every_band() {
+    let mut worst = 0.0_f64;
+    for shape in Shape::ALL {
+        let gains: &[f32] = if shape.has_gain() {
+            &[-9.0, 9.0]
+        } else {
+            &[0.0]
+        };
+        for frequency_hz in [1_000.0, 5_000.0] {
+            for gain_db in gains {
+                for q in [0.3, 2.0, 18.0] {
+                    let one = band(shape, frequency_hz, *gain_db, q);
+                    let state = with_bands(&[one]);
+                    for step in -12..=8 {
+                        let hz = f64::from(frequency_hz) * 2_f64.powf(f64::from(step) / 4.0);
+                        let cookbook = cookbook_db(&one, hz, f64::from(SAMPLE_RATE));
+                        if cookbook < -80.0 {
+                            continue;
+                        }
+                        let exact = exact_db(&state, hz);
+                        worst = worst.max((exact - cookbook).abs());
+                        assert!(
+                            (exact - cookbook).abs() < 0.001,
+                            "{shape:?} at {frequency_hz} Hz, {gain_db} dB, Q {q}, at {hz:.0} Hz: response {exact:.4} dB, cookbook {cookbook:.4} dB"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    println!("largest difference from the cookbook: {worst:.5} dB");
 }

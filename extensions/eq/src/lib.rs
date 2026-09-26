@@ -32,7 +32,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
-pub use processor::{Eq, band_response, response};
+pub use processor::{Eq, SHELF_MAX_Q, band_response, response};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "eq";

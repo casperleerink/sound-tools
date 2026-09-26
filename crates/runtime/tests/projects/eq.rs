@@ -33,8 +33,9 @@ fn frames(samples: &[f32], from: usize, to: usize) -> &[f32] {
     &samples[2 * from..2 * to]
 }
 
-/// An agent writes only the band it changes, as its doc allows: a cut of the lows and a bell
-/// in band 2. It is heard after its glide, and one undo takes it back.
+/// An agent writes bands 1 and 2 only: a cut of the lows and a bell. Bands 3 and 4, left out,
+/// are reset to their defaults, as the doc says. The edit is heard after its glide, and one
+/// undo takes it back.
 #[test]
 fn an_outside_edit_of_the_eq_while_it_plays_is_heard_and_undone_in_one_step() {
     let flat = record("{}");
@@ -73,7 +74,7 @@ fn an_outside_edit_of_the_eq_while_it_plays_is_heard_and_undone_in_one_step() {
     assert!(largest < 1e-5, "{largest}");
     assert!(difference(heard, frames(&flat_all, settled, BAR + BAR / 2)).is_some());
 
-    // The runtime keeps what the agent left out as the defaults of those bands.
+    // What the agent left out is the default of its band, not what the file had before.
     let id = InstanceId::new("arrangement/piano/tone").unwrap();
     let eq = harness.project.resolve::<EqState>(&id).unwrap();
     let state = *harness.project.state(&eq).unwrap();

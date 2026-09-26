@@ -10,10 +10,10 @@
 //! | Shape | `g` | `k` | input, band, low |
 //! | --- | --- | --- | --- |
 //! | Low cut | `t` | `1/q` | `1, -k, -1` |
-//! | Low shelf | `t/√a` | `1/q` | `1, k (a - 1), a² - 1` |
+//! | Low shelf | `t/√a` | `1/min(q, 1.5)` | `1, k (a - 1), a² - 1` |
 //! | Bell | `t` | `1/(q a)` | `1, k (a² - 1), 0` |
 //! | Notch | `t` | `1/q` | `1, -k, 0` |
-//! | High shelf | `t √a` | `1/q` | `a², k (1 - a) a, 1 - a²` |
+//! | High shelf | `t √a` | `1/min(q, 1.5)` | `a², k (1 - a) a, 1 - a²` |
 //! | High cut | `t` | `1/q` | `0, 0, 1` |
 //!
 //! with `t = tan(π f / sample rate)` and `a = 10^(gain / 40)`. So a band at 0 dB, or off, is
@@ -40,6 +40,12 @@ const RAMP_SECONDS: f32 = 0.02;
 const LOWEST_HZ: f32 = 20.0;
 const HIGHEST_HZ: f32 = 20_000.0;
 const HIGHEST_PART: f32 = 0.45;
+
+/// The highest Q a shelf uses. Above 0.71 a shelf gets a bump at its frequency and a dip on its
+/// other side, and the bump grows fast: at Q 18 a shelf of +15 dB would peak at +38 dB. At 1.5
+/// the bump is at most 3.2 dB past the gain. A cut keeps the whole range of Q, because a
+/// resonant cut is a normal tool. The saved `q` is not changed: only the shelf uses less.
+pub const SHELF_MAX_Q: f32 = 1.5;
 
 /// While something moves, the factors are worked out again this often, as in the Filter.
 const FACTOR_FRAMES: usize = 16;
@@ -77,6 +83,7 @@ fn shaped(shape: Shape, hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> Shap
     let g = (PI * usable_hz(hz, sample_rate) / sample_rate).tan();
     let a = 10_f32.powf(gain_db / 40.0);
     let k = 1.0 / q;
+    let shelf_k = 1.0 / q.min(SHELF_MAX_Q);
     match shape {
         Shape::LowCut => Shaped {
             g,
@@ -85,8 +92,8 @@ fn shaped(shape: Shape, hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> Shap
         },
         Shape::LowShelf => Shaped {
             g: g / a.sqrt(),
-            k,
-            mix: [1.0, k * (a - 1.0), a * a - 1.0],
+            k: shelf_k,
+            mix: [1.0, shelf_k * (a - 1.0), a * a - 1.0],
         },
         Shape::Bell => {
             let k = 1.0 / (q * a);
@@ -103,8 +110,8 @@ fn shaped(shape: Shape, hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> Shap
         },
         Shape::HighShelf => Shaped {
             g: g * a.sqrt(),
-            k,
-            mix: [a * a, k * (1.0 - a) * a, 1.0 - a * a],
+            k: shelf_k,
+            mix: [a * a, shelf_k * (1.0 - a) * a, 1.0 - a * a],
         },
         Shape::HighCut => Shaped {
             g,
@@ -483,6 +490,28 @@ mod tests {
             q,
         };
         state
+    }
+
+    /// A shelf uses Q up to 1.5, so for every gain and Q its peak is at most 3.2 dB past its
+    /// gain, or past 0 dB for a cut, on either side.
+    #[test]
+    fn a_shelf_never_peaks_more_than_three_db_past_its_gain() {
+        let mut worst = f32::MIN;
+        for shape in [Shape::LowShelf, Shape::HighShelf] {
+            for gain_db in [-15.0, -9.0, -3.0, -0.5, 0.5, 3.0, 9.0, 15.0] {
+                for q in [0.1, 0.71, 1.0, 1.5, 2.0, 4.0, 18.0] {
+                    let state = one_band(shape, gain_db, q);
+                    let peak = (0..=4_000)
+                        .map(|step| 20.0 * 1_000_f32.powf(step as f32 / 4_000.0))
+                        .map(|hz| db(&state, hz))
+                        .fold(f32::MIN, f32::max);
+                    let over = peak - gain_db.max(0.0);
+                    worst = worst.max(over);
+                    assert!(over <= 3.2, "{shape:?} {gain_db} dB Q {q}: peak {peak} dB");
+                }
+            }
+        }
+        println!("the largest peak of a shelf past its gain: {worst:.2} dB");
     }
 
     #[test]

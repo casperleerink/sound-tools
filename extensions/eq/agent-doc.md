@@ -36,7 +36,7 @@ Like every effect it is two lines: the record in the track folder, and its file 
 
 It takes away the rumble under 100 Hz, makes the vocal a little less boxy at 400 Hz, brings it forward at 3 kHz and adds air above 10 kHz.
 
-`bands` is a list of at most four bands: band 1 first, as the card numbers them. A band you leave out, or a field you leave out of a band, takes its default, so `"state": {}` is the default EQ, which leaves the sound exactly as it is. To change one band, write the whole list as it is in the file and change that band.
+`bands` is a list of at most four bands: band 1 first, as the card numbers them. Write the whole list every time: to change one band, copy all four from the file and change that one. A band you leave out is reset to its default, not kept, and so is a field you leave out of a band. So `"state": {}` is the default EQ, which leaves the sound exactly as it is.
 
 | Field | Meaning | Values | Default |
 | --- | --- | --- | --- |
@@ -44,7 +44,7 @@ It takes away the rumble under 100 Hz, makes the vocal a little less boxy at 400
 | `shape` | What the band does, see below. | `"low_cut"`, `"low_shelf"`, `"bell"`, `"notch"`, `"high_shelf"`, `"high_cut"` | `"low_shelf"`, `"bell"`, `"bell"`, `"high_shelf"` |
 | `frequency_hz` | Where the band works. | 20 to 20000 | 100, 400, 2000, 8000 |
 | `gain_db` | How much a shelf or a bell raises (above 0) or lowers (below 0). A cut and a notch have no gain. | -15 to 15 | 0 |
-| `q` | How narrow a bell or a notch is: 0.5 is wide, 4 is narrow, 18 very narrow. For a cut or a shelf, above 0.71 adds a bump at the frequency, which grows fast: keep it under 2 there. | 0.1 to 18 | 0.71 |
+| `q` | How narrow a bell or a notch is: 0.5 is wide, 4 is narrow, 18 very narrow. For a cut, above 0.71 adds a peak at the frequency, as high as the Q: 4 is +12 dB. A shelf uses at most 1.5 of it, for a small bump at the frequency and a dip on the other side; a higher `q` is kept in the file and sounds as 1.5. | 0.1 to 18 | 0.71 |
 | `output_gain_db` | A gain after all the bands, on `state` and not on a band. | -12 to 12 | 0 |
 
 The shapes:
