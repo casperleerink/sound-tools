@@ -58,6 +58,9 @@ pub trait Started: Send {
     /// gets the notes and not the pedal, and its record says so.
     fn takes_pedal(&self) -> bool;
 
+    /// How many frames late the plugin plays, as it said when it was activated.
+    fn latency(&self) -> u32;
+
     /// A new block: everything the last one carried is forgotten.
     fn begin_block(&mut self);
 
@@ -188,6 +191,13 @@ impl Processor for HostedPlugin {
         }
     }
 
+    /// The plugin's own latency. A slot with no plugin passes its input through and has none.
+    /// A plugin that is started again after its latency changed arrives in an update, which is
+    /// when the engine reads this.
+    fn latency(&self) -> u32 {
+        self.plugin.as_deref().map_or(0, Started::latency)
+    }
+
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let events = context.event_inputs.get(Self::NOTES);
         let input = context.audio_inputs.get(Self::INPUT);
@@ -291,6 +301,10 @@ mod tests {
     impl Started for Full {
         fn takes_pedal(&self) -> bool {
             true
+        }
+
+        fn latency(&self) -> u32 {
+            0
         }
 
         fn begin_block(&mut self) {

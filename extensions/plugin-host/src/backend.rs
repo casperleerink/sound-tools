@@ -8,6 +8,8 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
+use sound_core::PrepareConfig;
+
 use crate::PluginProblem;
 use crate::processor::Started;
 use crate::window::WindowSize;
@@ -28,14 +30,28 @@ pub trait LoadedPlugin {
     /// not, and the caller keeps the plugin and asks again at the next poll. Dropping a plugin
     /// whose audio side is still in the engine would leave the two ends in different hands.
     fn released(&mut self) -> bool;
+
+    /// Deactivates the plugin and activates it again, and gives the new audio side, which
+    /// knows the plugin's latency as it is now. It is how both formats let a plugin change its
+    /// latency: CLAP's `request_restart`, VST 3's `kLatencyChanged`.
+    ///
+    /// Only once the engine has given the audio side back, as [`Self::released`]: `None` says
+    /// it has not, and the caller asks again at the next poll. An error leaves the plugin
+    /// inactive, and it plays nothing until its record changes.
+    fn restart(&mut self, config: PrepareConfig)
+    -> Option<Result<Box<dyn Started>, PluginProblem>>;
 }
 
 /// What a plugin asked for since the last poll. All of it may be asked for from another
 /// thread, so a backend only notes it and the poll on the main thread acts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Requests {
-    /// The plugin asked to be deactivated and activated again. This build does not.
+    /// The plugin asked to be deactivated and activated again, which this host does, and then
+    /// reads its latency again: CLAP's `request_restart`, and VST 3's `kLatencyChanged`.
     pub restart: bool,
+    /// A VST 3 plugin asked for a restart this build does not do: `kReloadComponent`,
+    /// `kIoChanged` or `kPrefetchableSupportChanged`. The composer is told.
+    pub restart_not_done: bool,
     /// The plugin says its own state changed and the host should save it.
     pub state_is_dirty: bool,
     /// The plugin moved the mapping from a MIDI controller to one of its parameters, which is

@@ -9,7 +9,7 @@
 //! arrived, in what order and on which thread. Like the real plugins this was written against,
 //! it offers an embedded window and not a floating one.
 
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 use test_plugin_support as support;
 
@@ -20,6 +20,7 @@ use clack_extensions::audio_ports::{
 use clack_extensions::gui::{
     GuiConfiguration, GuiSize, HostGui, PluginGui, PluginGuiImpl, Window as GuiWindow,
 };
+use clack_extensions::latency::{HostLatency, PluginLatency, PluginLatencyImpl};
 use clack_extensions::note_ports::{
     NoteDialect, NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePorts,
     PluginNotePortsImpl,
@@ -50,7 +51,8 @@ impl Plugin for TestTone {
             .register::<PluginNotePorts>()
             .register::<PluginGui>()
             .register::<PluginRender>()
-            .register::<PluginState>();
+            .register::<PluginState>()
+            .register::<PluginLatency>();
     }
 }
 
@@ -83,6 +85,8 @@ impl DefaultPluginFactory for TestTone {
             semitones: AtomicI32::new(0),
             offset: AtomicI32::new(0),
             state_is_dirty: AtomicBool::new(false),
+            latency: AtomicU32::new(0),
+            wanted_latency: AtomicU32::new(NO_LATENCY_WANTED),
             close_the_window: AtomicBool::new(false),
             answered: AtomicBool::new(!support::told_to(support::NEEDS_HOST_VARIABLE)),
         })
@@ -102,6 +106,11 @@ pub struct TestToneShared {
     semitones: AtomicI32,
     offset: AtomicI32,
     state_is_dirty: AtomicBool,
+    /// The latency the plugin reports and plays with, in frames.
+    latency: AtomicU32,
+    /// A latency a note asked for, which the plugin takes the next time it is activated.
+    /// [`NO_LATENCY_WANTED`] when none was.
+    wanted_latency: AtomicU32,
     close_the_window: AtomicBool,
     /// Whether the host has answered the callback this plugin asked for. Until it has, a plugin
     /// that was told to wait for one is silent, as a sampler waiting for its samples is.
@@ -109,6 +118,27 @@ pub struct TestToneShared {
 }
 
 impl PluginShared<'_> for TestToneShared {}
+
+/// What [`TestToneShared::wanted_latency`] holds when no note asked for one.
+const NO_LATENCY_WANTED: u32 = u32::MAX;
+
+impl TestToneShared {
+    /// The latency the plugin will have once it is activated again: the one a note asked for,
+    /// or else the one it has.
+    fn next_latency(&self) -> u32 {
+        match self.wanted_latency.load(Ordering::Acquire) {
+            NO_LATENCY_WANTED => self.latency.load(Ordering::Acquire),
+            wanted => wanted,
+        }
+    }
+}
+
+/// What the host reads after it activated the plugin, and after every restart.
+impl PluginLatencyImpl for TestToneMainThread<'_> {
+    fn get(&self) -> u32 {
+        self.shared.latency.load(Ordering::Acquire)
+    }
+}
 
 pub struct TestToneMainThread<'a> {
     host: HostMainThreadHandle<'a>,
@@ -251,6 +281,7 @@ impl PluginStateImpl for TestToneMainThread<'_> {
             semitones: self.shared.semitones.load(Ordering::Acquire),
             edit_level: support::FULL_EDIT_LEVEL,
             offset: self.shared.offset.load(Ordering::Acquire),
+            latency: self.shared.next_latency() as i32,
         };
         output.write_all(&support::save_state(state))?;
         Ok(())
@@ -269,6 +300,13 @@ impl PluginStateImpl for TestToneMainThread<'_> {
             .semitones
             .store(state.semitones, Ordering::Release);
         self.shared.offset.store(state.offset, Ordering::Release);
+        let latency = u32::try_from(state.latency).unwrap_or_default();
+        self.shared
+            .latency
+            .store(latency.min(support::MAX_LATENCY), Ordering::Release);
+        self.shared
+            .wanted_latency
+            .store(NO_LATENCY_WANTED, Ordering::Release);
         Ok(())
     }
 }
@@ -349,7 +387,7 @@ pub struct TestToneAudio<'a> {
 impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for TestToneAudio<'a> {
     fn activate(
         host: HostAudioProcessorHandle<'a>,
-        _main_thread: &TestToneMainThread<'a>,
+        main_thread: &TestToneMainThread<'a>,
         shared: &'a TestToneShared,
         audio_config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {
@@ -358,6 +396,18 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
         let mut tone = support::Tone::new(audio_config.sample_rate as f32);
         tone.set_semitones(shared.semitones.load(Ordering::Acquire));
         tone.set_offset(shared.offset.load(Ordering::Acquire));
+        // The one moment CLAP lets a latency change: a note asked for it, and the host has
+        // deactivated the plugin and is activating it again because the plugin asked.
+        let wanted = shared
+            .wanted_latency
+            .swap(NO_LATENCY_WANTED, Ordering::AcqRel);
+        if wanted != NO_LATENCY_WANTED {
+            shared.latency.store(wanted, Ordering::Release);
+            if let Some(latency) = main_thread.host.shared().get_extension::<HostLatency>() {
+                latency.changed(&main_thread.host);
+            }
+        }
+        tone.set_latency(shared.latency.load(Ordering::Acquire));
         let block = audio_config.max_frames_count as usize;
         Ok(Self {
             shared,
@@ -442,7 +492,7 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
             match event.as_core_event() {
                 Some(CoreEventSpace::NoteOn(note)) => {
                     if let Some(key) = note.key().into_specific() {
-                        self.tone.note_on(key as u8, note.velocity() as f32);
+                        self.note_on(key as u8, note.velocity() as f32);
                     }
                 }
                 Some(CoreEventSpace::NoteOff(note)) => {
@@ -466,6 +516,8 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
             self.shared.state_is_dirty.store(true, Ordering::Release);
             self.host.request_callback();
         }
+        // Last, so that everything it plays comes out as late as it says.
+        self.tone.delay(left, right);
         self.processed += 1;
         // A plugin that sends more than a host kept room for. Whatever the host does with them,
         // it must not grow a buffer on this thread.
@@ -483,6 +535,23 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
 }
 
 impl TestToneAudio<'_> {
+    /// A note on, or a new latency asked for with the key that asks for one. The latency can
+    /// only change while the host activates the plugin, so the plugin asks for that, and says
+    /// its state changed, which holds the latency.
+    fn note_on(&mut self, key: u8, velocity: f32) {
+        let Some(latency) = support::asked_latency(key, velocity) else {
+            self.tone.note_on(key, velocity);
+            return;
+        };
+        log("latency_asked", self.plugin, self.processed);
+        self.shared
+            .wanted_latency
+            .store(latency.min(support::MAX_LATENCY), Ordering::Release);
+        self.shared.state_is_dirty.store(true, Ordering::Release);
+        self.host.request_restart();
+        self.host.request_callback();
+    }
+
     /// Raw MIDI. Only controller 64, the sustain pedal, means anything here.
     fn midi(&mut self, data: [u8; 3]) {
         let is_controller = data[0] & 0xF0 == 0xB0;

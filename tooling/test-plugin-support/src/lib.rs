@@ -30,6 +30,12 @@
 //! is `x / 4 + offset_a / 2 + offset_b`, and the other way round the last two swap. And it
 //! learns: the loudest input sample it has heard from [`LEARN_LEVEL`] up becomes the offset and
 //! the plugin says its state changed, which is what the pedal is for the instrument half.
+//!
+//! It has a latency a test can set and change: everything it plays comes out `latency` frames
+//! late, and it reports exactly that to its host. The saved state holds it, so a test sets it
+//! by writing the state asset. A note on [`LATENCY_KEY`] is not played: it asks for a new
+//! latency of its velocity, 1 to 127, times [`LATENCY_STEP`], and the plugin asks its host to
+//! start it again, which is the only moment either format lets a plugin's latency change.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -221,6 +227,24 @@ pub const DESCENDANT_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_DESCENDANT";
 /// How long the helper holds the pipe when nobody stops it, in twentieths of a second.
 const DESCENDANT_LIMIT: u32 = 600;
 
+/// The key whose note on asks for another latency instead of being played. The lowest MIDI
+/// key, which no test plays for its sound.
+pub const LATENCY_KEY: u8 = 0;
+
+/// What one step of velocity on [`LATENCY_KEY`] asks for, in frames.
+pub const LATENCY_STEP: u32 = 10;
+
+/// The longest latency the plugin can have, in frames, and so the length of its delay line.
+/// More is taken as this.
+pub const MAX_LATENCY: u32 = 4000;
+
+/// The latency a note asks for, when it is a note on [`LATENCY_KEY`]. `velocity` is from 0 to
+/// 1, as both formats give it.
+pub fn asked_latency(key: u8, velocity: f32) -> Option<u32> {
+    let steps = (velocity * 127.0).round() as u32;
+    (key == LATENCY_KEY).then_some(steps * LATENCY_STEP)
+}
+
 /// The first four bytes of the saved state, so a wrong file is refused instead of read.
 const STATE_MAGIC: [u8; 4] = *b"STT1";
 
@@ -365,6 +389,12 @@ pub struct Tone {
     semitones: i32,
     /// What the effect half adds to every sample, in hundredths. Part of the saved state.
     offset: i32,
+    /// How many frames late everything comes out. Part of the saved state.
+    latency: usize,
+    /// The last [`MAX_LATENCY`] frames of both channels, for the delay.
+    delayed: [Vec<f32>; 2],
+    /// Frames written into `delayed` so far.
+    written: usize,
 }
 
 impl Tone {
@@ -375,7 +405,36 @@ impl Tone {
             pedal: 0,
             semitones: 0,
             offset: 0,
+            latency: 0,
+            delayed: std::array::from_fn(|_| vec![0.0; MAX_LATENCY as usize + 1]),
+            written: 0,
         }
+    }
+
+    pub fn latency(&self) -> u32 {
+        self.latency as u32
+    }
+
+    /// Changes the latency and empties the delay line. The main thread, while the plugin is
+    /// not processing: a plugin's latency only changes while its host starts it again.
+    pub fn set_latency(&mut self, frames: u32) {
+        self.latency = frames.min(MAX_LATENCY) as usize;
+        self.delayed.iter_mut().for_each(|line| line.fill(0.0));
+    }
+
+    /// Delays both channels by the latency, in place. Call it last in a block. Nothing here
+    /// allocates.
+    pub fn delay(&mut self, left: &mut [f32], right: &mut [f32]) {
+        let length = MAX_LATENCY as usize + 1;
+        let frames = left.len();
+        for (line, samples) in self.delayed.iter_mut().zip([left, right]) {
+            for (frame, sample) in samples.iter_mut().enumerate() {
+                let at = self.written + frame;
+                line[at % length] = *sample;
+                *sample = line[(at + length - self.latency) % length];
+            }
+        }
+        self.written += frames;
     }
 
     pub fn semitones(&self) -> i32 {
@@ -508,6 +567,8 @@ pub struct SavedState {
     pub edit_level: i32,
     /// What the effect half adds to every sample, in hundredths, which a loud input sets.
     pub offset: i32,
+    /// How many frames late the plugin plays, and says it does.
+    pub latency: i32,
 }
 
 impl Default for SavedState {
@@ -516,17 +577,22 @@ impl Default for SavedState {
             semitones: 0,
             edit_level: FULL_EDIT_LEVEL,
             offset: 0,
+            latency: 0,
         }
     }
 }
 
-/// The saved state of a test plugin: a magic number and the three numbers of [`SavedState`].
+/// The saved state of a test plugin: a magic number and the numbers of [`SavedState`]. A
+/// latency of 0 is left out, so a state from before the latency existed is written as it was.
 pub fn save_state(state: SavedState) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(16);
+    let mut bytes = Vec::with_capacity(20);
     bytes.extend_from_slice(&STATE_MAGIC);
     bytes.extend_from_slice(&state.semitones.to_le_bytes());
     bytes.extend_from_slice(&state.edit_level.to_le_bytes());
     bytes.extend_from_slice(&state.offset.to_le_bytes());
+    if state.latency != 0 {
+        bytes.extend_from_slice(&state.latency.to_le_bytes());
+    }
     bytes
 }
 
@@ -543,6 +609,7 @@ pub fn load_state(bytes: &[u8]) -> Option<SavedState> {
         semitones: number(0, default.semitones)?,
         edit_level: number(4, default.edit_level)?,
         offset: number(8, default.offset)?,
+        latency: number(12, default.latency)?,
     })
 }
 

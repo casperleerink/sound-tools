@@ -262,6 +262,11 @@ impl Opened<'_> {
         let scanned = std::mem::replace(&mut self.scanned, plugins.scan_generation());
         let changed = self.cx.update(|_, cx| {
             plugins.poll(session.read(cx).project());
+            if plugins.restarts_pending() {
+                session.update(cx, |session, cx| {
+                    session.edit(cx, |project| Ok(plugins.send_restarts(project)))
+                });
+            }
             plugins.settle_windows(cx);
             plugins.take_window_change()
         });

@@ -22,7 +22,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, c_char, c_void};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 use test_plugin_support as support;
 use vst3::Steinberg::Vst::{
@@ -68,6 +68,15 @@ const LEVEL: ParamID = 2;
 /// a host hears that a plugin changed its own state.
 const OFFSET: ParamID = 3;
 
+/// The latency a note asked for. The processor reports it when a note on the key that asks
+/// for a latency arrives, so that the host gives it to the controller on the main thread, and
+/// the controller asks the host there to start the plugin again with `kLatencyChanged`. That
+/// is the way round a VST 3 plugin has to go: `restartComponent` belongs to the main thread.
+const LATENCY: ParamID = 4;
+
+/// What [`TestTone::wanted_latency`] holds when no note asked for one.
+const NO_LATENCY_WANTED: u32 = u32::MAX;
+
 /// How many semitones the transpose parameter covers, so that a normalized value is exact.
 const TRANSPOSE_RANGE: f64 = 63.0;
 
@@ -103,6 +112,11 @@ pub struct TestTone {
     /// Whether this plugin has already moved its sustain pedal to another parameter, which it
     /// does once, after the host has looked the mapping up. See [`IMidiMappingTrait`].
     pedal_moved: Cell<bool>,
+    /// The latency the plugin reports and plays with, in frames. Saved in the component's
+    /// state.
+    latency: AtomicU32,
+    /// A latency a note asked for, which the plugin takes the next time it is activated.
+    wanted_latency: AtomicU32,
     /// Which plugin of this library this is, for the log.
     plugin: u64,
 }
@@ -150,7 +164,18 @@ impl TestTone {
             answered: AtomicBool::new(!support::told_to(support::NEEDS_HOST_VARIABLE)),
             edit_level: AtomicI32::new(support::FULL_EDIT_LEVEL),
             pedal_moved: Cell::new(false),
+            latency: AtomicU32::new(0),
+            wanted_latency: AtomicU32::new(NO_LATENCY_WANTED),
             plugin: support::next_plugin(),
+        }
+    }
+
+    /// The latency the plugin will have once it is activated again: the one a note asked for,
+    /// or else the one it has.
+    fn next_latency(&self) -> u32 {
+        match self.wanted_latency.load(Ordering::Acquire) {
+            NO_LATENCY_WANTED => self.latency.load(Ordering::Acquire),
+            wanted => wanted,
         }
     }
 
@@ -277,6 +302,18 @@ impl IComponentTrait for TestTone {
             if let Ok(mut audio) = self.audio.try_borrow_mut() {
                 audio.tone.reset();
             }
+            return kResultOk;
+        }
+        // The one moment the latency may change: the host is activating the plugin again,
+        // after `kLatencyChanged`, and reads the latency afterwards.
+        let wanted = self
+            .wanted_latency
+            .swap(NO_LATENCY_WANTED, Ordering::AcqRel);
+        if wanted != NO_LATENCY_WANTED {
+            self.latency.store(wanted, Ordering::Release);
+        }
+        if let Ok(mut audio) = self.audio.try_borrow_mut() {
+            audio.tone.set_latency(self.latency.load(Ordering::Acquire));
         }
         kResultOk
     }
@@ -292,6 +329,11 @@ impl IComponentTrait for TestTone {
         self.semitones.store(saved.semitones, Ordering::Release);
         self.edit_level.store(saved.edit_level, Ordering::Release);
         self.offset.store(saved.offset, Ordering::Release);
+        let latency = u32::try_from(saved.latency).unwrap_or_default();
+        self.latency
+            .store(latency.min(support::MAX_LATENCY), Ordering::Release);
+        self.wanted_latency
+            .store(NO_LATENCY_WANTED, Ordering::Release);
         if let Ok(mut audio) = self.audio.try_borrow_mut() {
             audio.tone.set_semitones(saved.semitones);
             audio.tone.set_offset(saved.offset);
@@ -304,6 +346,7 @@ impl IComponentTrait for TestTone {
             semitones: self.semitones.load(Ordering::Acquire),
             edit_level: self.edit_level.load(Ordering::Acquire),
             offset: self.offset.load(Ordering::Acquire),
+            latency: self.next_latency() as i32,
         });
         // A plugin that writes its payload first and fills the header in afterwards, which is
         // what a plugin with a chunk length in its header does. The first four bytes are the
@@ -378,7 +421,7 @@ impl IAudioProcessorTrait for TestTone {
     }
 
     unsafe fn getLatencySamples(&self) -> uint32 {
-        0
+        self.latency.load(Ordering::Acquire)
     }
 
     unsafe fn setupProcessing(&self, setup: *mut ProcessSetup) -> tresult {
@@ -523,6 +566,7 @@ impl IAudioProcessorTrait for TestTone {
             let event_count = events.map_or(0, |events| events.getEventCount());
             let (mut next_event, mut next_pedal, mut played) = (0, 0, 0);
             let mut transposed = false;
+            let mut latency_asked = None;
             loop {
                 let event_at = (next_event < event_count)
                     .then(|| {
@@ -556,9 +600,11 @@ impl IAudioProcessorTrait for TestTone {
                 next_event += 1;
                 if event.r#type == EventTypes_::kNoteOnEvent as u16 {
                     let note = event.__field0.noteOn;
-                    audio
-                        .tone
-                        .note_on(note.pitch.clamp(0, 127) as u8, note.velocity);
+                    let key = note.pitch.clamp(0, 127) as u8;
+                    match support::asked_latency(key, note.velocity) {
+                        Some(latency) => latency_asked = Some(latency.min(support::MAX_LATENCY)),
+                        None => audio.tone.note_on(key, note.velocity),
+                    }
                 } else if event.r#type == EventTypes_::kNoteOffEvent as u16 {
                     let note = event.__field0.noteOff;
                     audio.tone.note_off(Some(note.pitch.clamp(0, 127) as u8));
@@ -606,6 +652,12 @@ impl IAudioProcessorTrait for TestTone {
                 // reports, which is what it does for the transpose.
                 self.offset.store(audio.tone.offset(), Ordering::Release);
             }
+            if let Some(latency) = latency_asked {
+                support::log("latency_asked", self.plugin, audio.processed);
+                self.wanted_latency.store(latency, Ordering::Release);
+            }
+            // Last, so that everything it plays comes out as late as it says.
+            audio.tone.delay(left, right);
             audio.processed += 1;
 
             // What a host is told about: the transpose the plugin changed by itself, and as
@@ -626,6 +678,12 @@ impl IAudioProcessorTrait for TestTone {
                 }
                 if learned {
                     report(OFFSET, f64::from(audio.tone.offset()) / 100.0);
+                }
+                if let Some(latency) = latency_asked {
+                    report(
+                        LATENCY,
+                        f64::from(latency) / f64::from(support::MAX_LATENCY),
+                    );
                 }
                 for extra in 0..reports {
                     report(TRANSPOSE + 2 + extra, 0.5);
@@ -758,6 +816,17 @@ impl IEditControllerTrait for TestTone {
             support::log("setParamNormalized", self.plugin, 0);
             self.answered.store(true, Ordering::Release);
             let _ = value;
+        }
+        // A latency a note asked for, on the main thread at last, which is where a plugin may
+        // ask its host to start it again.
+        if id == LATENCY && self.wanted_latency.load(Ordering::Acquire) != NO_LATENCY_WANTED {
+            let handler = self.handler.borrow().clone();
+            if let Some(handler) = handler {
+                support::log("latency_changed", self.plugin, 0);
+                // SAFETY: the handler came from the host and the host keeps it alive until it
+                // takes it back with a null `setComponentHandler`.
+                unsafe { handler.restartComponent(RestartFlags_::kLatencyChanged as int32) };
+            }
         }
         kResultOk
     }

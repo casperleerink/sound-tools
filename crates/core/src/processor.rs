@@ -59,6 +59,18 @@ pub trait Processor: Send + 'static {
     /// control thread. It is for something that must be let go of on the audio thread, such as
     /// a hosted plugin, which CLAP wants stopped there before anyone else touches it.
     fn leaving(&mut self) {}
+
+    /// How many frames this processor's audio output lags what it is given: a lookahead, or a
+    /// hosted plugin that says it has latency. Zero for almost everything.
+    ///
+    /// The engine reads it when the processor arrives and after each of its updates, so change
+    /// it in `update` and nowhere else. The engine delays nothing to make up for it: everything
+    /// before this processor runs that much earlier on the timeline instead, so its output
+    /// reaches the device in time with everything else. See ARCHITECTURE.md, "Latency
+    /// compensation".
+    fn latency(&self) -> u32 {
+        0
+    }
 }
 
 /// One block of work for one processor. The engine builds it.
@@ -67,7 +79,8 @@ pub struct ProcessContext<'a> {
     pub frames: usize,
     /// Engine time of the first frame of this block.
     pub start_frame: u64,
-    /// Whether the project plays and which part of the project timeline this block covers.
+    /// Whether the project plays and which part of the project timeline this block covers,
+    /// ahead of the device by the latency of everything after this processor.
     pub transport: Transport<'a>,
     pub audio_inputs: AudioInputs<'a>,
     pub audio_outputs: AudioOutputs<'a>,

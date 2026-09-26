@@ -384,8 +384,16 @@ pub fn run(folder: &Path) -> Result<()> {
                         else {
                             break;
                         };
-                        let problems =
+                        let mut problems =
                             session.read_with(cx, |session, _| plugins.poll(session.project()));
+                        // A plugin that is started again is handed to the engine through the
+                        // one editing path, and only while one waits for it.
+                        if plugins.restarts_pending() {
+                            let sent = session.update(cx, |session, cx| {
+                                session.edit(cx, |project| Ok(plugins.send_restarts(project)))
+                            });
+                            problems.extend(sent.into_iter().flatten());
+                        }
                         for problem in problems {
                             session.update(cx, |session, cx| session.report(problem, cx));
                         }

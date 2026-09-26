@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 use gpui::WindowHandle;
 use sound_core::{AssetName, Assets, InstanceId, PrepareConfig, Project};
 
+use crate::processor::{HostedPlugin, HostedUpdate};
+
 use crate::backend::LoadedPlugin;
 use crate::scan::{Scan, ScanCache, ScanCommand, ScannedPlugin, scan_folders};
 use crate::window::{PluginFrame, PluginWindow, Prepared, WindowOwner};
@@ -60,6 +62,10 @@ pub enum PluginProblem {
     StillScanning { plugin_id: String },
     #[error("the plugin {plugin_id:?} did not load: {message}")]
     DidNotLoad { plugin_id: String, message: String },
+    #[error(
+        "the plugin {plugin_id:?} asked to be started again, to change its latency, and did not start: {message}. Nothing plays through it until its record changes"
+    )]
+    DidNotRestart { plugin_id: String, message: String },
     #[error("the state of the plugin {plugin_id:?} could not be read: {message}")]
     StateNotRead { plugin_id: String, message: String },
     #[error("the state of the plugin {plugin_id:?} could not be saved: {message}")]
@@ -117,6 +123,21 @@ struct Hosted {
     has_window: bool,
     /// The plugin's own window, while it is open.
     window: PluginWindow,
+    /// What the engine's processors were prepared with, for starting the plugin again.
+    config: PrepareConfig,
+    /// Where a restart the plugin asked for stands, see [`Plugins::restarts`].
+    restart: Restart,
+}
+
+/// A plugin that asked to be started again, which is how both formats let a latency change.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Restart {
+    Idle,
+    /// The plugin asked. The engine is to give its audio side back.
+    Asked,
+    /// The engine was told to give the audio side back. The first poll that finds it back
+    /// starts the plugin again and hands it over.
+    Waiting,
 }
 
 impl Hosted {
@@ -543,6 +564,8 @@ impl Plugins {
                 pending_save: false,
                 has_window,
                 window: PluginWindow::default(),
+                config,
+                restart: Restart::Idle,
             },
         );
         Ok(Opened {
@@ -790,7 +813,8 @@ impl Plugins {
     }
 
     /// Main-thread work for every plugin this host holds: the callbacks they asked for, the
-    /// state they said changed, and letting go of the ones no record names any more.
+    /// state they said changed, and letting go of the ones no record names any more. A plugin
+    /// that asked to be started again is noted here and started by [`Self::send_restarts`].
     ///
     /// Call it as often as the project is polled.
     pub fn poll(&self, project: &Project) -> Vec<PluginProblem> {
@@ -799,6 +823,75 @@ impl Plugins {
 
     /// [`Self::poll`] with the time given, so a test can move it.
     pub fn poll_at(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
+        self.serve(project, now)
+    }
+
+    /// Whether a plugin is waiting for [`Self::send_restarts`]. Cheap, so a caller that has to
+    /// ask for the project mutably only does so while this is true.
+    pub fn restarts_pending(&self) -> bool {
+        let table = self.0.table.borrow();
+        let mut loaded = table.loaded.values();
+        loaded.any(|hosted| hosted.restart != Restart::Idle)
+    }
+
+    /// Moves every restart a plugin asked for one step on, see [`Self::restarts`]. Call it
+    /// after [`Self::poll`] while [`Self::restarts_pending`] says so. It needs the project
+    /// mutably only to hand the engine the plugin's audio side, which is not an edit: nothing
+    /// is written and there is no undo step.
+    pub fn send_restarts(&self, project: &mut Project) -> Vec<PluginProblem> {
+        let mut problems = Vec::new();
+        // Outside the borrow of the table: the engine is the project's.
+        for (id, plugin_id, update) in self.restarts(&mut problems) {
+            if let Err(error) = project.send::<HostedPlugin>(&id, crate::PROCESSOR, update) {
+                problems.push(PluginProblem::DidNotRestart {
+                    plugin_id,
+                    message: error.to_string(),
+                });
+            }
+        }
+        problems
+    }
+
+    /// A plugin that asked to be started again goes in two steps, one poll or more apart.
+    /// First the engine is told to give its audio side back, which stops it on the audio
+    /// thread. Once the engine has, the plugin is deactivated, activated again and handed back
+    /// with the latency it says it has now, and the engine compensates that from the block it
+    /// arrives in. In between the slot plays what an empty one does: silence for an
+    /// instrument, the sound going through unchanged for an effect.
+    ///
+    /// Gives what to send the engine, for which instance.
+    fn restarts(
+        &self,
+        problems: &mut Vec<PluginProblem>,
+    ) -> Vec<(InstanceId, String, HostedUpdate)> {
+        let mut table = self.0.table.borrow_mut();
+        let mut updates = Vec::new();
+        for (id, hosted) in &mut table.loaded {
+            match hosted.restart {
+                Restart::Idle => {}
+                Restart::Asked => {
+                    hosted.restart = Restart::Waiting;
+                    updates.push((id.clone(), hosted.plugin_id.clone(), None));
+                }
+                Restart::Waiting => match hosted.plugin.restart(hosted.config) {
+                    // The engine has not given it back yet.
+                    None => {}
+                    Some(started) => {
+                        hosted.restart = Restart::Idle;
+                        match started {
+                            Ok(started) => {
+                                updates.push((id.clone(), hosted.plugin_id.clone(), Some(started)))
+                            }
+                            Err(problem) => problems.push(problem),
+                        }
+                    }
+                },
+            }
+        }
+        updates
+    }
+
+    fn serve(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
         self.note_what_the_scan_found(project);
         let mut table = self.0.table.borrow_mut();
@@ -852,9 +945,15 @@ impl Plugins {
                 finished_windows.push(handle);
                 *window_changed = true;
             }
-            // A plugin that asks to be deactivated and activated again. This build does not,
-            // so the composer is told instead of being left with a plugin that stopped.
-            if requests.restart {
+            // A plugin that asks to be deactivated and activated again, which is how its
+            // latency changes. A retired plugin is marked as well, but only loaded ones are
+            // started again, see `Self::restarts`.
+            if requests.restart && hosted.restart == Restart::Idle {
+                hosted.restart = Restart::Asked;
+            }
+            // A VST 3 restart this build does not do, so the composer is told instead of being
+            // left with a plugin that stopped.
+            if requests.restart_not_done {
                 problems.push(PluginProblem::AskedForRestart {
                     plugin_id: hosted.plugin_id.clone(),
                 });

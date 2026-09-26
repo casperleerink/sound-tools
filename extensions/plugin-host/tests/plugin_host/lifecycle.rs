@@ -125,18 +125,19 @@ impl Audio {
 /// back what the plugin wrote down. The project and the engine both go before the log is read,
 /// so the log holds the whole life of every plugin.
 fn run(format: PluginFormat, steps: impl FnOnce(&mut Parts<'_>, &Audio)) -> Life {
-    run_with(format, false, steps)
+    run_with(format, false, played(), steps)
 }
 
 /// The same with a second plugin in the effect slot of the rack, after the instrument. One
 /// wrapper serves both slots, so the thread rules must hold for the effect as well.
 fn run_with_an_effect(format: PluginFormat, steps: impl FnOnce(&mut Parts<'_>, &Audio)) -> Life {
-    run_with(format, true, steps)
+    run_with(format, true, played(), steps)
 }
 
 fn run_with(
     format: PluginFormat,
     with_effect: bool,
+    played: Vec<Played>,
     steps: impl FnOnce(&mut Parts<'_>, &Audio),
 ) -> Life {
     let folder = tempfile::tempdir().expect("a temporary folder");
@@ -147,7 +148,7 @@ fn run_with(
     // Only this format's test plugin is in the folder, so the log holds one plugin's life.
     let search = vec![plugin_folder_of(folder.path(), format)];
     let mut harness = Harness::open_with_paths(folder, search, true);
-    harness.add_track(record(format, "piano"), played());
+    harness.add_track(record(format, "piano"), played);
     if with_effect {
         harness.add_effect(record(format, "trim"));
     }
@@ -431,4 +432,61 @@ fn deleting_an_effect_keeps_the_thread_rules(format: PluginFormat) {
             > life.of("stop_processing", effect).processed,
         "the instrument played no block after the effect went: {names:?}"
     );
+}
+
+/// A plugin whose latency changes asks to be started again, and the host does it by the same
+/// rules as any other time a plugin stops and starts: processing stops on the audio thread,
+/// the plugin is deactivated and activated again on the main thread, and processing starts
+/// again on the audio thread. The test plugin asks when it gets a note on its latency key.
+#[test]
+fn a_latency_change_starts_the_plugin_again_by_the_thread_rules() {
+    for format in FORMATS {
+        a_latency_change_keeps_the_thread_rules(format);
+    }
+}
+
+fn a_latency_change_keeps_the_thread_rules(format: PluginFormat) {
+    let mut played = played();
+    played.push(Played::On {
+        frame: 1_000,
+        pitch: test_plugin_support::LATENCY_KEY,
+        velocity: 40,
+    });
+    played.sort_by_key(|played| played.frame());
+    let life = run_with(format, false, played, |harness, audio| {
+        for _ in 0..4 {
+            audio.render(2);
+            harness.project.engine().poll().expect("the engine polls");
+            let problems = harness.plugins.poll(harness.project);
+            assert_eq!(problems, [], "{format:?}");
+            let problems = harness.plugins.send_restarts(harness.project);
+            assert_eq!(problems, [], "{format:?}");
+        }
+    });
+
+    let first = life.plugins()[0];
+    let audio_thread = life.of("process", first).thread.clone();
+    let asked = life.position("latency_asked", first);
+    let after: Vec<&crate::support::LoggedCall> = life.calls[asked..]
+        .iter()
+        .filter(|call| LIFECYCLE.contains(&call.call.as_str()))
+        .collect();
+    let names: Vec<&str> = after.iter().map(|call| call.call.as_str()).collect();
+    // Until the project closes, which stops and deactivates it once more.
+    assert_eq!(
+        names[..4],
+        [
+            "stop_processing",
+            "deactivate",
+            "activate",
+            "start_processing"
+        ],
+        "{format:?} {:?}",
+        life.names()
+    );
+    assert_eq!(after[0].thread, audio_thread, "{format:?}");
+    assert_ne!(after[1].thread, audio_thread, "{format:?}");
+    assert_ne!(after[2].thread, audio_thread, "{format:?}");
+    assert_eq!(after[3].thread, audio_thread, "{format:?}");
+    assert_eq!(after[1].processed, after[0].processed, "{format:?}");
 }
