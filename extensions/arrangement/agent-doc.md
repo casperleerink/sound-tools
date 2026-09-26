@@ -106,7 +106,7 @@ The sound of a track goes through its instrument, then through each effect in `e
 }
 ```
 
-An effect is any tool with an `audio` input and an `audio` output. Today that is the built-in `filter`, whose record is in `agent-docs/filter.md`, and the `plugin` tool, which is the same record as an instrument; `agent-docs/plugins.md` says where the ids come from. The file name is yours: lowercase letters, digits, `-` and `_`, and not `instrument`.
+An effect is any tool with an `audio` input and an `audio` output. Today that is the built-in `filter` and `eq`, whose records are in `agent-docs/filter.md` and `agent-docs/eq.md`, and the `plugin` tool, which is the same record as an instrument; `agent-docs/plugins.md` says where the ids come from. The file name is yours: lowercase letters, digits, `-` and `_`, and not `instrument`.
 
 How to:
 

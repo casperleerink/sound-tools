@@ -153,6 +153,7 @@ Step 1b, September 26, 2026. What the spec above left open, or what the build sh
 - Tab goes through a card column by column, not row by row as "What this changes in the window" says: that is the order of the elements, and a tab index per cell was not worth it.
 - The real window opens at 1470 x 920, the size the design is for.
 - The Filter, step 5 of the third milestone: the display spans 20 Hz to 20 kHz across and -36 to +18 dB up, so the +11.5 dB peak of full resonance fits. The handle sits on the peak of a low or high pass: its travel up and down is resonance stretched so that the dot is where the curve is, and it stops at 0 and 1. The slope is a segmented `12 · 24` with the label `Slope` and `dB / oct` on its value line; it is 8 pt wider than its cell and takes that from the air around it. The hidden columns are the slope, then LFO rate over LFO depth. No power icon: bypass is saved on the track's effect slot, which step 2 builds.
+- The EQ, step 7 of the third milestone: four bands. The display is 312 pt, 20 Hz to 20 kHz across and -18 to +18 dB up. A numbered handle is a 16 pt dot with its number in 10 pt medium; the selected band's dot is full, the others are rings, a band that is off is at 40 %. A cut or a notch has no gain, so its handle sits on the 0 dB line and moves only sideways, and the Gain knob is dimmed. The select of the shape shows an icon of the shape (`eq-*`, drawn like the lucide icons), with the band on the label line and the name of the shape on the value line: no name but `Bell` fits in a cell. The keys 1 to 4 select a band from any control of the card. The hidden columns are the on and off of bands 1 and 2 over those of 3 and 4, then Output.
 
 ### Devices
 
@@ -322,6 +323,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Track panel | Pan | Where the track sits between the two channels |
 | Track panel | M | Silence the track, and click again to bring it back |
 | Track panel | drag a handle of a display | The value it moves, as its knob does. With shift ten times finer, double click resets. Escape during the drag puts it back |
+| Track panel | click a numbered handle of the EQ, or 1 to 4 on a focused control of its card | Select that band: its knobs and shape show on the card. No undo step |
 | Track panel | the expand icon of a card | Show the controls the card hides, such as the envelope knobs of the synth |
 | Track panel | double click on a knob, or backspace on the focused knob | Set its default |
 | Track panel | shift while dragging a knob | Ten times finer, from where the value is |
