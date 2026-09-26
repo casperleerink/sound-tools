@@ -62,12 +62,6 @@ pub const HANG_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_HANG";
 /// test can see what a picker holds before the scan has found anything.
 pub const SLOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SLOW";
 
-/// Makes a VST 3 plugin move the parameter its sustain pedal is mapped to, right after the
-/// host has looked that mapping up, and tell the host with `kMidiCCAssignmentChanged`. That is
-/// what a MIDI learn or a newly loaded preset does. `nowhere` moves it to no parameter at all.
-/// VST 3 only: CLAP sends the pedal as a MIDI message, so no mapping stands between the two.
-pub const MOVE_PEDAL_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_MOVE_PEDAL";
-
 /// A gate the plugin waits at while its bundle is listed: it goes on when `<path>.go` is
 /// there, and the test owns that path.
 ///
@@ -259,6 +253,28 @@ pub const MONO_KEY: u8 = 2;
 /// A note on this key makes the VST 3 plugin ask to be unloaded and loaded again, with
 /// `kReloadComponent`. VST 3 only: the CLAP plugin plays the key.
 pub const RELOAD_KEY: u8 = 3;
+
+/// A note on this key makes the VST 3 plugin move its sustain pedal to another parameter and
+/// say so with `kMidiCCAssignmentChanged`, which is what a MIDI learn or a loaded preset does.
+/// From then on it hears the pedal on the new parameter only, and logs any point that still
+/// comes on the old one (`unmapped_pedal[<value>]`). VST 3 only: the CLAP plugin plays the key.
+pub const MOVE_PEDAL_KEY: u8 = 4;
+
+/// The same as [`MOVE_PEDAL_KEY`], moving the pedal to no parameter at all.
+pub const DROP_PEDAL_KEY: u8 = 5;
+
+/// A note on this key makes the VST 3 plugin list its `Level` parameter, which it hides until
+/// then when [`LATE_LEVEL_VARIABLE`] is set, and say so with `kParamIDMappingChanged`. VST 3
+/// only: the CLAP plugin plays the key.
+pub const LIST_LEVEL_KEY: u8 = 6;
+
+/// Makes the VST 3 plugin hide its `Level` parameter until [`LIST_LEVEL_KEY`].
+pub const LATE_LEVEL_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_LATE_LEVEL";
+
+/// Makes the VST 3 plugin ask to be loaded again and started again every time its controller
+/// is given the component's state, which a host does while it loads the plugin. A host that
+/// acts on what a plugin asks for while it sets it up loads it for ever.
+pub const RELOAD_ON_STATE_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_RELOAD_ON_STATE";
 
 /// The level the controller of the VST 3 plugin shows after the preset of [`PRESET_KEY`], in
 /// hundredths.

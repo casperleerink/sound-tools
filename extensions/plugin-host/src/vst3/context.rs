@@ -318,6 +318,8 @@ pub struct Handler {
     values_changed: AtomicBool,
     /// The plugin moved its MIDI controller mapping, which is where the sustain pedal goes.
     midi_mapping_changed: AtomicBool,
+    /// The plugin changed which parameters it has, so the host lists them again.
+    ids_changed: AtomicBool,
     /// How many edits are open (`beginEdit` without `endEdit`). Only for the log of the test
     /// plugin and to keep the pair balanced; nothing of the host depends on it.
     open_edits: AtomicI32,
@@ -362,6 +364,20 @@ impl Handler {
     /// Whether the plugin has moved its MIDI controller mapping since the last call.
     pub fn take_midi_mapping_changed(&self) -> bool {
         self.midi_mapping_changed.swap(false, Ordering::AcqRel)
+    }
+
+    /// Whether the plugin has changed which parameters it has since the last call.
+    pub fn take_ids_changed(&self) -> bool {
+        self.ids_changed.swap(false, Ordering::AcqRel)
+    }
+
+    /// Forgets a restart or a reload the plugin asked for so far. The host calls it once it has
+    /// just loaded or started the plugin: whatever the plugin asked while that went on, its
+    /// latency and buses are read after it, and a plugin that asks every time it is set up
+    /// would otherwise be started again for ever.
+    pub fn forget_restarts(&self) {
+        self.restart_wanted.store(false, Ordering::Release);
+        self.reload_wanted.store(false, Ordering::Release);
     }
 
     /// Every parameter edit that is waiting for the processor, newest value each, and nothing
@@ -427,14 +443,15 @@ impl IComponentHandlerTrait for Handler {
     ///   saved as well, because it changed.
     /// - `kMidiCCAssignmentChanged`, "The host has to rebuild the MIDI-CC => parameter
     ///   mapping": the sustain pedal's parameter is looked up again.
+    /// - `kParamIDMappingChanged`: the host lists the parameters again, so the values it
+    ///   compares for `kParamValuesChanged` are the plugin's parameters as they are now.
     /// - Nothing for the rest. `kPrefetchableSupportChanged` asks for a deactivate so that the
     ///   host can read `getPrefetchableSupport`, and this host never processes in prefetch mode.
     ///   `kParamTitlesChanged`, `kNoteExpressionChanged`, `kIoTitlesChanged`,
-    ///   `kRoutingInfoChanged`, `kKeyswitchChanged` and `kParamIDMappingChanged` are each about
+    ///   `kRoutingInfoChanged` and `kKeyswitchChanged` are each about
     ///   a cache a host with a parameter view, a note expression display, bus titles, a routing
-    ///   view, a key switch display or parameter automation would drop. This host keeps none of
-    ///   those. Splice INSTRUMENT sends `kParamTitlesChanged` and `kParamIDMappingChanged`
-    ///   while a composer opens its window.
+    ///   view or a key switch display would drop. This host keeps none of those. Splice
+    ///   INSTRUMENT sends `kParamTitlesChanged` while a composer opens its window.
     unsafe fn restartComponent(&self, flags: int32) -> tresult {
         let asks = |flag: RestartFlags| flags & flag != 0;
         if asks(RestartFlags_::kParamValuesChanged) {
@@ -443,6 +460,9 @@ impl IComponentHandlerTrait for Handler {
         }
         if asks(RestartFlags_::kMidiCCAssignmentChanged) {
             self.midi_mapping_changed.store(true, Ordering::Release);
+        }
+        if asks(RestartFlags_::kParamIDMappingChanged) {
+            self.ids_changed.store(true, Ordering::Release);
         }
         if flags & RESTART != 0 {
             self.restart_wanted.store(true, Ordering::Release);
@@ -546,21 +566,23 @@ mod tests {
     }
 
     /// What the handler noted for one call of `restartComponent`, taken the way a poll takes
-    /// it: restart, reload, values changed, state to be saved, pedal mapping moved.
-    fn taken(handler: &Handler) -> [bool; 5] {
+    /// it: restart, reload, values changed, state to be saved, pedal mapping moved, parameters
+    /// listed again.
+    fn taken(handler: &Handler) -> [bool; 6] {
         [
             handler.take_restart_wanted(),
             handler.take_reload_wanted(),
             handler.take_values_changed(),
             handler.take_state_is_dirty(),
             handler.take_midi_mapping_changed(),
+            handler.take_ids_changed(),
         ]
     }
 
     /// What Splice INSTRUMENT really sends: the values changed, the titles and the id mapping,
-    /// and a `restartComponent(0)` that asks for nothing. Only the values are acted on.
+    /// and a `restartComponent(0)` that asks for nothing. The values and the list are acted on.
     #[test]
-    fn the_flags_splice_instrument_sends_only_ask_for_the_values_again() {
+    fn the_flags_splice_instrument_sends_ask_for_the_values_and_the_list_again() {
         let handler = Handler::default();
         // SAFETY: a plain call of a method that touches nothing but this handler.
         unsafe {
@@ -570,7 +592,7 @@ mod tests {
             );
             handler.restartComponent(0);
         }
-        assert_eq!(taken(&handler), [false, false, true, true, false]);
+        assert_eq!(taken(&handler), [false, false, true, true, false, true]);
     }
 
     /// Every flag of the format, each with what ARCHITECTURE.md says this host does about it.
@@ -578,28 +600,28 @@ mod tests {
     /// `ivsteditcontroller.h`.
     #[test]
     fn every_restart_flag_is_noted_as_the_table_says() {
-        // Restart, reload, values changed, state to be saved, pedal mapping moved.
-        let nothing = [false; 5];
-        let flags: [(RestartFlags, [bool; 5]); 12] = [
+        // Restart, reload, values changed, state to be saved, pedal mapping moved, listed again.
+        let nothing = [false; 6];
+        let flags: [(RestartFlags, [bool; 6]); 12] = [
             (
                 RestartFlags_::kReloadComponent,
-                [false, true, false, false, false],
+                [false, true, false, false, false, false],
             ),
             (
                 RestartFlags_::kIoChanged,
-                [true, false, false, false, false],
+                [true, false, false, false, false, false],
             ),
             (
                 RestartFlags_::kLatencyChanged,
-                [true, false, false, false, false],
+                [true, false, false, false, false, false],
             ),
             (
                 RestartFlags_::kParamValuesChanged,
-                [false, false, true, true, false],
+                [false, false, true, true, false, false],
             ),
             (
                 RestartFlags_::kMidiCCAssignmentChanged,
-                [false, false, false, false, true],
+                [false, false, false, false, true, false],
             ),
             (RestartFlags_::kPrefetchableSupportChanged, nothing),
             (RestartFlags_::kParamTitlesChanged, nothing),
@@ -607,7 +629,10 @@ mod tests {
             (RestartFlags_::kIoTitlesChanged, nothing),
             (RestartFlags_::kRoutingInfoChanged, nothing),
             (RestartFlags_::kKeyswitchChanged, nothing),
-            (RestartFlags_::kParamIDMappingChanged, nothing),
+            (
+                RestartFlags_::kParamIDMappingChanged,
+                [false, false, false, false, false, true],
+            ),
         ];
         let mut seen = 0_i32;
         for (flag, noted) in flags {
@@ -622,6 +647,23 @@ mod tests {
         assert_eq!(seen, (1 << 12) - 1);
     }
 
+    /// What a plugin asks for while it is being set up is forgotten once it is: the host reads
+    /// what changed after that anyway.
+    #[test]
+    fn a_restart_asked_for_during_the_set_up_is_forgotten() {
+        let handler = Handler::default();
+        // SAFETY: as above.
+        unsafe {
+            handler.restartComponent(
+                RestartFlags_::kReloadComponent
+                    | RestartFlags_::kIoChanged
+                    | RestartFlags_::kParamValuesChanged,
+            );
+        }
+        handler.forget_restarts();
+        assert_eq!(taken(&handler), [false, false, true, true, false, false]);
+    }
+
     /// One flag of a combination is enough, whichever it is.
     #[test]
     fn a_combination_is_read_flag_by_flag() {
@@ -632,7 +674,7 @@ mod tests {
             | RestartFlags_::kParamValuesChanged;
         // SAFETY: as above.
         unsafe { handler.restartComponent(flags) };
-        assert_eq!(taken(&handler), [true, true, true, true, false]);
+        assert_eq!(taken(&handler), [true, true, true, true, false, false]);
     }
 
     #[test]

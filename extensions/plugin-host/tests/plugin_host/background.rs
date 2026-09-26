@@ -270,3 +270,26 @@ fn a_record_whose_plugin_is_installed_while_the_app_runs_plays() {
     }
     assert!(harness.play(2048).first_sound().is_some());
 }
+
+/// A cache that cannot be written costs the next start a scan and nothing else, and the
+/// composer is told, as every other error of work in the background is.
+#[test]
+fn a_cache_that_cannot_be_written_is_told() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let folder = tempfile::tempdir().unwrap();
+    let search = vec![plugin_folder_of(folder.path(), PluginFormat::Clap)];
+    let locked = folder.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let cache = ScanCache::at(locked.join("plugins.json"));
+
+    let plugins = Plugins::new(search, scanner(), cache);
+    assert_eq!(plugins.scan().plugins.len(), 1);
+    let notices = plugins.take_notices();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(
+        notices[0].contains("the plugin cache") && notices[0].contains("was not written"),
+        "{notices:?}"
+    );
+}

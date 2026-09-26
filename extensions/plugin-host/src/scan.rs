@@ -116,6 +116,9 @@ pub struct Scan {
     /// Whether every bundle has been looked at. While this is false the picker says a scan is
     /// running, and a plugin that is not in `plugins` yet may still turn up.
     pub finished: bool,
+    /// Why the cache of this machine could not be written or tidied, when it could not. It
+    /// costs the next start a scan and nothing else, and the composer is told.
+    pub cache_error: Option<String>,
 }
 
 impl Scan {
@@ -445,25 +448,69 @@ impl ScanCache {
         serde_json::from_str(&text).unwrap_or_default()
     }
 
-    fn write(&self, bundles: &[CachedBundle]) {
+    fn write(&self, bundles: &[CachedBundle]) -> Result<(), String> {
         let Some(path) = &self.path else {
             if let Ok(mut kept) = self.kept.lock() {
                 *kept = bundles.to_vec();
             }
-            return;
+            return Ok(());
         };
-        let Ok(text) = serde_json::to_string_pretty(bundles) else {
-            return;
-        };
-        // A cache that cannot be written costs the next start a scan and nothing else.
-        if let Err(error) = write_whole(path, text.as_bytes()) {
-            eprintln!(
+        let failed = |error: String| {
+            format!(
                 "the plugin cache {} was not written: {error}",
                 path.display()
-            );
+            )
+        };
+        let text =
+            serde_json::to_string_pretty(bundles).map_err(|error| failed(error.to_string()))?;
+        write_whole(path, text.as_bytes()).map_err(failed)
+    }
+
+    /// Removes what a writer left behind when it ended between writing its own file and
+    /// renaming it, which only a crash does. A file younger than [`STALE_AFTER`] may be the one
+    /// another runtime is writing right now, so it stays.
+    fn tidy(&self) -> Result<(), String> {
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
+        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+            return Ok(());
+        };
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            // No folder yet, so nothing was left in it.
+            return Ok(());
+        };
+        let prefix = format!("{}.", name.to_string_lossy());
+        let mut errors = Vec::new();
+        for entry in entries.flatten() {
+            let file = entry.file_name().to_string_lossy().into_owned();
+            if !file.starts_with(&prefix) || !file.ends_with(".tmp") {
+                continue;
+            }
+            let age = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok());
+            if age.is_some_and(|age| age >= STALE_AFTER)
+                && let Err(error) = std::fs::remove_file(entry.path())
+            {
+                errors.push(format!("{}: {error}", entry.path().display()));
+            }
+        }
+        match errors.is_empty() {
+            true => Ok(()),
+            false => Err(format!(
+                "what an earlier write of the plugin cache left could not be removed: {}",
+                errors.join(", ")
+            )),
         }
     }
 }
+
+/// How old a file a writer of the cache left behind must be before it is taken for one whose
+/// writer ended. A write takes milliseconds.
+const STALE_AFTER: Duration = Duration::from_secs(60);
 
 /// Writes `bytes` as the whole of `path`, or leaves what is there.
 ///
@@ -473,11 +520,11 @@ impl ScanCache {
 /// its process and a count, and renames it over the cache, which the system does in one step: a
 /// reader sees one whole file or the other, and the last rename wins. Both are what one scan
 /// found, so either is right.
-fn write_whole(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static WRITES: AtomicU64 = AtomicU64::new(0);
     if let Some(folder) = path.parent() {
-        std::fs::create_dir_all(folder)?;
+        std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
     }
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     let count = WRITES.fetch_add(1, Ordering::Relaxed);
@@ -485,11 +532,18 @@ fn write_whole(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let temporary = path.with_file_name(name);
     let written =
         std::fs::write(&temporary, bytes).and_then(|()| std::fs::rename(&temporary, path));
-    if written.is_err() {
-        // Nothing else will ever remove a file only this writer knows the name of.
-        let _gone = std::fs::remove_file(&temporary);
+    let Err(error) = written else {
+        return Ok(());
+    };
+    // The file of this writer, if it was made, goes with the failure. One that cannot be
+    // removed is taken away by `ScanCache::tidy` at a later start, and said here.
+    match std::fs::remove_file(&temporary) {
+        Err(left) if left.kind() != std::io::ErrorKind::NotFound => Err(format!(
+            "{error}, and {} was left behind: {left}",
+            temporary.display()
+        )),
+        _ => Err(error.to_string()),
     }
-    written
 }
 
 /// One bundle as the cache remembers it.
@@ -530,8 +584,12 @@ struct Stamp {
 /// The stamp of `bundle` on this host. `None` says the bundle is gone.
 fn stamp(bundle: &Path) -> Option<Stamp> {
     use std::os::unix::fs::MetadataExt as _;
+    // A link that leads nowhere is stamped by the link itself, so it is remembered as the
+    // bundle that failed and is not looked at again by every scan.
     let changed = |path: &Path| {
-        let metadata = std::fs::metadata(path).ok()?;
+        let metadata = std::fs::metadata(path)
+            .or_else(|_| std::fs::symlink_metadata(path))
+            .ok()?;
         Some(i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()))
     };
     let binaries = bundle.join("Contents/MacOS");
@@ -568,6 +626,7 @@ pub fn scan_folders(
 
     let bundles = bundles(folders);
     let remembered = cache.read();
+    let tidied = cache.tidy();
     let mut scan = Scan {
         bundles: bundles.len(),
         ..Scan::default()
@@ -618,9 +677,11 @@ pub fn scan_folders(
     scan.finished = true;
     // A scan that found what was remembered writes nothing, so looking again while the app
     // runs costs no write.
-    if to_remember != remembered {
-        cache.write(&to_remember);
-    }
+    let written = match to_remember != remembered {
+        true => cache.write(&to_remember),
+        false => Ok(()),
+    };
+    scan.cache_error = written.and(tidied).err();
     progress(&scan);
     scan
 }
@@ -713,7 +774,7 @@ mod tests {
             "aarch64" => "x86_64",
             _ => "aarch64",
         };
-        cache.write(&remembered(other));
+        cache.write(&remembered(other)).unwrap();
         let found = scan(&cache);
         assert_eq!(found.plugins, []);
         assert_eq!(
@@ -722,7 +783,7 @@ mod tests {
             "the bundle was not looked at again"
         );
 
-        cache.write(&remembered(std::env::consts::ARCH));
+        cache.write(&remembered(std::env::consts::ARCH)).unwrap();
         let found = scan(&cache);
         assert_eq!(found.failures, []);
         assert_eq!(found.plugins.len(), 1);
@@ -751,7 +812,7 @@ mod tests {
                 let bundles = vec![entry.clone(); count];
                 std::thread::spawn(move || {
                     for _ in 0..300 {
-                        cache.write(&bundles);
+                        cache.write(&bundles).unwrap();
                     }
                 })
             })
@@ -777,5 +838,46 @@ mod tests {
             .flatten()
             .collect();
         assert_eq!(left.len(), 1, "{left:?}");
+    }
+
+    /// A plugin folder may hold a link to a bundle that was taken away. It is remembered like
+    /// any bundle that failed, so a look again does not start a child for it every time.
+    #[test]
+    fn a_link_that_leads_nowhere_is_stamped_and_remembered() {
+        let folder = tempfile::tempdir().unwrap();
+        let link = folder.path().join("gone.vst3");
+        std::os::unix::fs::symlink(folder.path().join("nowhere"), &link).unwrap();
+        assert!(stamp(&link).is_some());
+    }
+
+    /// A writer that ended between its own file and the rename, which only a crash does, left
+    /// that file behind. The next scan removes it, and leaves a file that may be another
+    /// runtime's write in progress.
+    #[test]
+    fn what_a_writer_that_ended_left_behind_is_removed() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("plugins.json");
+        let old = folder.path().join("plugins.json.999-0.tmp");
+        let young = folder.path().join("plugins.json.999-1.tmp");
+        let other = folder.path().join("other.tmp");
+        for file in [&old, &young, &other] {
+            std::fs::write(file, "{").unwrap();
+        }
+        let an_hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+        for file in [&old, &other] {
+            let file = std::fs::File::options().write(true).open(file).unwrap();
+            file.set_modified(an_hour_ago).unwrap();
+        }
+        let scan = scan_folders(
+            &[folder.path().join("plugins")],
+            &ScanCommand::new("/definitely/not/a/program", []),
+            &ScanCache::at(&path),
+            &AtomicBool::new(false),
+            |_| {},
+        );
+        assert_eq!(scan.cache_error, None);
+        assert!(!old.exists());
+        assert!(young.exists());
+        assert!(other.exists());
     }
 }

@@ -284,6 +284,9 @@ fn list_plugins() -> Result<()> {
     for failure in &scan.failures {
         println!("{}: {}", failure.path.display(), failure.message);
     }
+    if let Some(error) = &scan.cache_error {
+        println!("error: {error}");
+    }
     println!(
         "{} bundles, {} plugins, {} failed, in {took:?}",
         scan.bundles,

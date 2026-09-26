@@ -195,8 +195,11 @@ So:
   the executable.
 - The cache is written to a file of its own and renamed into place, so two runtimes that
   finish a scan at once never leave half a file: the last one wins, and both are right. A scan
-  that found what was remembered writes nothing. A cache with no file, which every test has,
-  keeps the last scan in memory instead. A bundle that crashed or hung is
+  that found what was remembered writes nothing. A write that fails is a notice of the scan
+  (`Plugins::take_notices`), and every scan removes what a crashed writer left behind once it
+  is a minute old. A link in a plugin folder that leads nowhere is stamped by the link, so it
+  is remembered like a bundle that failed. A cache with no file, which every test has, keeps
+  the last scan in memory instead. A bundle that crashed or hung is
   remembered as such and is not tried again on every start. `runtime --plugins` looks at
   everything again and writes the result, which is how one that was fixed comes back.
 - A record whose plugin the scan has not found yet is reported as such, the track is silent, and
@@ -481,7 +484,11 @@ The other VST 3 flags, each acted on in `Vst3Plugin::poll`:
   the controller now shows differently, like an edit. After a state is read, which is when real
   plugins send it, nothing differs and nothing is sent.
 - `kMidiCCAssignmentChanged`: the pedal's parameter is looked up again and handed to the audio
-  side through an atomic.
+  side through an atomic, and the parameter it leaves gets a pedal up.
+- `kParamIDMappingChanged`: the parameters are listed again, so the values compared for
+  `kParamValuesChanged` are the plugin's parameters as they are now.
+- A restart or a reload asked for while the plugin is loaded or started again is forgotten
+  once that is done, because everything is read afterwards anyway.
 - Nothing for the rest, and ARCHITECTURE.md has the table of every flag with the reason.
   `tests/plugin_host/restarts.rs` makes the repository's VST 3 plugin send each flag the host
   acts on, with a note on a key it does not play (`test_plugin_support::PRESET_KEY` and the two

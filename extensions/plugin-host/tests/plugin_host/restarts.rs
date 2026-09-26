@@ -3,17 +3,28 @@
 //! do something, each made to happen by the repository's own VST 3 plugin. `kLatencyChanged`
 //! is in `lifecycle.rs` and in the latency tests of the runtime.
 //!
-//! The plugin is told by a note on a key it does not play (`PRESET_KEY`, `MONO_KEY`,
-//! `RELOAD_KEY`), as it is told to change its latency: its processor reports the key and its
-//! controller acts on the main thread, where `restartComponent` belongs.
+//! The plugin is told by a note on a key it does not play (`PRESET_KEY` and the keys after it
+//! in `test_plugin_support`), as it is told to change its latency: its processor reports the
+//! key and its controller acts on the main thread, where `restartComponent` belongs.
 
 use plugin_host::PluginFormat;
-use test_plugin_support::{LATENCY_KEY, MONO_KEY, PRESET_KEY, RELOAD_KEY};
+use test_plugin_support::{
+    DROP_PEDAL_KEY, LATENCY_KEY, LIST_LEVEL_KEY, MONO_KEY, MOVE_PEDAL_KEY, PRESET_KEY, RELOAD_KEY,
+};
 
 use crate::support::{
     Harness, Played, id, lifecycle, peak, record, saved_transpose, state_asset, tell_the_plugin,
-    tell_the_plugin_to_edit_as_it_restarts, tell_the_plugin_to_move_its_pedal,
+    tell_the_plugin_to_ask_for_a_reload_as_it_loads, tell_the_plugin_to_edit_as_it_restarts,
+    tell_the_plugin_to_list_its_level_late,
 };
+
+/// How many times the plugin's log has `call`.
+fn count(log: &std::path::Path, call: &str) -> usize {
+    lifecycle(log)
+        .iter()
+        .filter(|line| line.call == call)
+        .count()
+}
 
 fn on(frame: u64, pitch: u8) -> Played {
     Played::On {
@@ -84,52 +95,6 @@ fn a_plugin_whose_output_goes_mono_is_started_again_and_heard_on_both_sides() {
         .filter(|call| ["deactivate", "activate"].contains(call))
         .collect();
     assert_eq!(after[..2], ["deactivate", "activate"], "{calls:?}");
-}
-
-/// `kMidiCCAssignmentChanged`, "The host has to rebuild the MIDI-CC => parameter mapping." The
-/// plugin moves its sustain pedal to another parameter right after the host looked the mapping
-/// up, as a MIDI learn or a loaded preset does. The host looks it up again at the next poll, and
-/// the pedal reaches the plugin where it listens now. Nothing is reported: nothing is wrong.
-#[test]
-fn a_plugin_that_moves_its_pedal_gets_the_pedal_on_its_new_parameter() {
-    tell_the_plugin(None, None);
-    tell_the_plugin_to_move_its_pedal("elsewhere");
-    let mut harness = Harness::new();
-    harness.add_track(
-        record(PluginFormat::Vst3, "piano"),
-        vec![
-            on(0, 60),
-            Played::Pedal {
-                frame: 2048,
-                value: 100,
-            },
-        ],
-    );
-    assert_eq!(harness.plugins.poll(&harness.project), Vec::new());
-    let right = harness.play(4096).right();
-    // The plugin writes the pedal it hears into its right channel.
-    assert_eq!(right[2048], 100.0 / 127.0);
-    assert_eq!(right[4095], 100.0 / 127.0);
-    assert_eq!(harness.problems(), Vec::<String>::new());
-}
-
-/// The same, when the plugin moves its pedal to no parameter at all. The pedal cannot reach it
-/// any more, and the composer is told once, with the line a plugin gets that never mapped one.
-#[test]
-fn a_plugin_that_moves_its_pedal_to_nothing_says_so_once() {
-    tell_the_plugin(None, None);
-    tell_the_plugin_to_move_its_pedal("nowhere");
-    let mut harness = Harness::new();
-    harness.add_track(record(PluginFormat::Vst3, "piano"), vec![on(0, 60)]);
-    let reported = harness.plugins.poll(&harness.project);
-    assert_eq!(reported.len(), 1, "{reported:?}");
-    assert!(
-        reported[0]
-            .to_string()
-            .contains("offers the host no way to send the sustain pedal"),
-        "{reported:?}"
-    );
-    assert_eq!(harness.plugins.poll(&harness.project), Vec::new());
 }
 
 /// `kReloadComponent`, "The host has to unload completely the plug-in (controller/processor)
@@ -220,4 +185,116 @@ fn an_edit_made_while_the_plugin_is_started_again_is_not_lost() {
         "the plugin plays at {after} of {before} after it was started again, which is not the quarter the edit asked for"
     );
     assert_eq!(harness.problems(), Vec::<String>::new());
+}
+
+/// `kMidiCCAssignmentChanged`, "The host has to rebuild the MIDI-CC => parameter mapping." The
+/// plugin moves its sustain pedal to another parameter while the pedal is down, as a MIDI learn
+/// or a loaded preset does. The host looks the mapping up again, so the next pedal move reaches
+/// the plugin where it listens now, and it lets go of the old parameter, which would otherwise
+/// stay down for good. Nothing is reported: nothing is wrong.
+#[test]
+fn a_plugin_that_moves_its_pedal_gets_the_pedal_on_its_new_parameter() {
+    let log = tempfile::NamedTempFile::new().unwrap();
+    tell_the_plugin(Some(log.path()), None);
+    let mut harness = Harness::new();
+    harness.add_track(
+        record(PluginFormat::Vst3, "piano"),
+        vec![
+            on(0, 60),
+            Played::Pedal {
+                frame: 1024,
+                value: 100,
+            },
+            on(2048, MOVE_PEDAL_KEY),
+            Played::Pedal {
+                frame: 6144,
+                value: 90,
+            },
+        ],
+    );
+    let right = harness.play(8192).right();
+    // The plugin writes the pedal it hears into its right channel.
+    assert_eq!(right[1024], 100.0 / 127.0);
+    assert_eq!(right[8191], 90.0 / 127.0);
+    assert_eq!(harness.problems(), Vec::<String>::new());
+    // The old parameter was let go of, and the new pedal did not go there.
+    assert_eq!(
+        count(log.path(), "unmapped_pedal[0]"),
+        1,
+        "{:?}",
+        lifecycle(log.path())
+    );
+    assert_eq!(count(log.path(), "unmapped_pedal[90]"), 0);
+}
+
+/// The same, when the plugin moves its pedal to no parameter at all. The pedal cannot reach it
+/// any more, and the composer is told once, with the line a plugin gets that never mapped one.
+#[test]
+fn a_plugin_that_moves_its_pedal_to_nothing_says_so_once() {
+    tell_the_plugin(None, None);
+    let mut harness = Harness::new();
+    harness.add_track(
+        record(PluginFormat::Vst3, "piano"),
+        vec![on(0, 60), on(512, DROP_PEDAL_KEY)],
+    );
+    harness.project.engine().play();
+    let mut reported = Vec::new();
+    for _ in 0..4 {
+        harness.render_without_polling(512);
+        reported.extend(harness.plugins.poll(&harness.project));
+    }
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(
+        reported[0]
+            .to_string()
+            .contains("offers the host no way to send the sustain pedal"),
+        "{reported:?}"
+    );
+}
+
+/// A plugin that asks to be loaded again and started again while the host sets it up, from
+/// inside `setComponentState`. The host reads everything after that anyway, so it does neither:
+/// acting on it would set the plugin up again, which asks again, for ever.
+#[test]
+fn a_plugin_that_asks_for_a_reload_while_it_loads_is_loaded_once() {
+    let log = tempfile::NamedTempFile::new().unwrap();
+    tell_the_plugin(Some(log.path()), None);
+    tell_the_plugin_to_ask_for_a_reload_as_it_loads();
+    let mut harness = Harness::new();
+    // A saved state, so that the host gives it to the plugin's controller as it loads.
+    harness.write_offset(PluginFormat::Vst3, "piano", 0);
+    harness.add_track(record(PluginFormat::Vst3, "piano"), vec![on(0, 60)]);
+    // Three buffers, each with the poll of a live session.
+    harness.play(1536);
+    assert!(
+        count(log.path(), "reload_asked") >= 1,
+        "the plugin never asked"
+    );
+    assert_eq!(harness.plugins.take_retries(), []);
+    assert_eq!(count(log.path(), "initialize"), 1);
+    assert_eq!(count(log.path(), "activate"), 1);
+    assert_eq!(harness.problems(), Vec::<String>::new());
+}
+
+/// `kParamIDMappingChanged`: the plugin has other parameters now. It lists `Level` only once a
+/// key asks, and then loads a preset of its own that shows `Level` at a half. The host listed
+/// the parameters again when it was told, so it compares `Level` too and the processor plays at
+/// half its level.
+#[test]
+fn a_parameter_the_plugin_lists_later_follows_its_preset() {
+    tell_the_plugin(None, None);
+    tell_the_plugin_to_list_its_level_late();
+    let mut harness = Harness::new();
+    harness.add_track(
+        record(PluginFormat::Vst3, "piano"),
+        vec![on(0, 60), on(1024, LIST_LEVEL_KEY), on(3072, PRESET_KEY)],
+    );
+    let left = harness.play(8192).left();
+    let before = peak(&left[..1024]);
+    let after = peak(&left[5120..]);
+    assert!(before > 0.0);
+    assert!(
+        (after - before / 2.0).abs() < before / 100.0,
+        "the plugin plays at {after} of {before} after its preset, which is not the half the controller shows"
+    );
 }

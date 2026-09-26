@@ -1160,6 +1160,7 @@ fn publish_again(scanned: &Arc<Mutex<Scanning>>, scan: Scan) {
             ));
         }
     }
+    held.notices.extend(scan.cache_error.clone());
     held.scan = scan;
     held.generation += 1;
 }
@@ -1178,6 +1179,8 @@ fn publish(scanned: &Arc<Mutex<Scanning>>, scan: &Scan) {
             failure.message
         ));
     }
+    // Said once, when the scan is over: only the last call carries it.
+    held.notices.extend(scan.cache_error.clone());
     held.scan = scan.clone();
     held.generation += 1;
 }

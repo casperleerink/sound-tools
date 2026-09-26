@@ -310,13 +310,19 @@ pub fn tell_the_plugin_to_go_silent() {
     unsafe { std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_SILENT", "1") };
 }
 
-/// Makes the VST 3 test plugin move the parameter its sustain pedal is mapped to, once, right
-/// after the host has looked that mapping up, and tell the host about it: to another
-/// parameter, or with `nowhere` to none at all. Same rules as [`tell_the_plugin`].
-pub fn tell_the_plugin_to_move_its_pedal(to: &str) {
+/// Makes the VST 3 test plugin ask to be loaded and started again every time it is given its
+/// state while it loads. Same rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_ask_for_a_reload_as_it_loads() {
     // SAFETY: nextest runs one test per process and this is called before any thread but this
     // one exists, so no other thread can be reading the environment.
-    unsafe { std::env::set_var(test_plugin_support::MOVE_PEDAL_VARIABLE, to) };
+    unsafe { std::env::set_var(test_plugin_support::RELOAD_ON_STATE_VARIABLE, "1") };
+}
+
+/// Makes the VST 3 test plugin hide its `Level` parameter until a note on `LIST_LEVEL_KEY`.
+/// Same rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_list_its_level_late() {
+    // SAFETY: as above.
+    unsafe { std::env::set_var(test_plugin_support::LATE_LEVEL_VARIABLE, "1") };
 }
 
 /// Makes the VST 3 test plugin's controller edit its `Level` to a quarter in the same moment it

@@ -161,7 +161,7 @@ pub fn load(
         // shows once the state is read. `kParamValuesChanged` is answered against these.
         let values = controller
             .as_ref()
-            .map(parameter_values)
+            .map(|controller| parameter_values(controller, &BTreeMap::new()))
             .unwrap_or_default();
         // The window side, made here so that nothing but a load ever asks the plugin for a
         // view. A plugin with no edit controller has no window at all.
@@ -186,6 +186,10 @@ pub fn load(
             }],
             _ => Vec::new(),
         };
+        // A plugin may ask for a restart or a reload while its state is read or while it is
+        // activated. It has just been set up and everything is read after that, so asking
+        // again would only start it again, for ever if it asks every time.
+        joined.handler.forget_restarts();
         Opening {
             started: Box::new(started),
             plugin: Box::new(Vst3Plugin {
@@ -330,16 +334,10 @@ impl Vst3Plugin {
         let Some(controller) = &self.joined.controller else {
             return;
         };
-        for (id, known) in &mut self.values {
-            // SAFETY: the controller came from the plugin and is alive.
-            let now = unsafe { controller.getParamNormalized(*id) };
-            if now != *known {
-                *known = now;
-                self.joined.handler.keep_edit(ParameterChange {
-                    id: *id,
-                    value: now,
-                });
-            }
+        // SAFETY: the controller came from the plugin and is alive.
+        let now = |id| unsafe { controller.getParamNormalized(id) };
+        for change in differences(&mut self.values, now) {
+            self.joined.handler.keep_edit(change);
         }
     }
 }
@@ -347,6 +345,13 @@ impl Vst3Plugin {
 impl LoadedPlugin for Vst3Plugin {
     fn poll(&mut self) -> Requests {
         self.take_reports();
+        // `kParamIDMappingChanged`: the plugin has other parameters now. They are listed again
+        // before any values are compared, so a parameter that is new is compared from here on.
+        if self.joined.handler.take_ids_changed()
+            && let Some(controller) = &self.joined.controller
+        {
+            self.values = parameter_values(controller, &self.values);
+        }
         if self.joined.handler.take_values_changed() {
             self.follow_the_controller();
         }
@@ -357,8 +362,19 @@ impl LoadedPlugin for Vst3Plugin {
         if self.joined.handler.take_midi_mapping_changed() {
             // SAFETY: the controller came from the plugin and is alive.
             let now = unsafe { pedal_parameter(self.joined.controller.as_ref()) };
-            pedal_unmapped = self.takes_notes && now.is_none() && self.pedal.get().is_some();
+            let before = self.pedal.get();
+            pedal_unmapped = self.takes_notes && now.is_none() && before.is_some();
             self.pedal.set(now);
+            // A pedal held on the parameter it leaves would stay down there for good, so that
+            // parameter is let go of, the way an edit is.
+            if let Some(before) = before
+                && now != Some(before)
+            {
+                self.joined.handler.keep_edit(ParameterChange {
+                    id: before,
+                    value: 0.0,
+                });
+            }
         }
         // The other way: what the composer changed in the plugin's own window goes to the
         // processor, which is the half that makes the sound. `ivsteditcontroller.h` says that
@@ -467,6 +483,8 @@ impl LoadedPlugin for Vst3Plugin {
         self.takes_notes = buses.takes_notes;
         // SAFETY: as above.
         let latency = unsafe { not_ours(|| self.processor.getLatencySamples()) };
+        // What the plugin asked for while it was started again, as after a load.
+        self.joined.handler.forget_restarts();
         // New rings: their other ends went with the audio side that came back. An edit that
         // was on its way there went back to the handler as that side was dropped, and goes to
         // this one at the next poll.
@@ -587,9 +605,14 @@ unsafe fn prepare_buses(
     }
 }
 
-/// The value of every parameter a host may send, as the controller shows it. A read-only
-/// parameter, such as a meter, is the plugin's to set and never the host's.
-fn parameter_values(controller: &ComPtr<IEditController>) -> BTreeMap<ParamID, ParamValue> {
+/// Every parameter a host may send, with the value the processor holds as far as the host
+/// knows: the one in `known` for a parameter the host already knew, and the one the controller
+/// shows for a parameter it did not. A read-only parameter, such as a meter, is the plugin's to
+/// set and never the host's.
+fn parameter_values(
+    controller: &ComPtr<IEditController>,
+    known: &BTreeMap<ParamID, ParamValue>,
+) -> BTreeMap<ParamID, ParamValue> {
     let mut values = BTreeMap::new();
     // SAFETY: the controller came from the plugin and is alive. `info` is written by the plugin
     // before it is read, and a call that fails leaves it untouched, which is why it starts
@@ -603,10 +626,35 @@ fn parameter_values(controller: &ComPtr<IEditController>) -> BTreeMap<ParamID, P
             if info.flags & ParameterFlags_::kIsReadOnly as int32 != 0 {
                 continue;
             }
-            values.insert(info.id, controller.getParamNormalized(info.id));
+            let value = match known.get(&info.id) {
+                Some(value) => *value,
+                None => controller.getParamNormalized(info.id),
+            };
+            values.insert(info.id, value);
         }
     }
     values
+}
+
+/// Every parameter whose value `now` gives differently from `known`, as an edit, with `known`
+/// brought up to date. Compared bit for bit, so a value that is not a number, which never
+/// equals itself, is sent once and not every time.
+fn differences(
+    known: &mut BTreeMap<ParamID, ParamValue>,
+    now: impl Fn(ParamID) -> ParamValue,
+) -> Vec<ParameterChange> {
+    let mut changes = Vec::new();
+    for (id, value) in known {
+        let shown = now(*id);
+        if shown.to_bits() != value.to_bits() {
+            *value = shown;
+            changes.push(ParameterChange {
+                id: *id,
+                value: shown,
+            });
+        }
+    }
+    changes
 }
 
 /// How many channels each audio bus of one direction has.
@@ -872,6 +920,21 @@ mod tests {
         assert!(error.contains("left as it is"), "{error}");
         let error = write_state(b"component", &long).expect_err("a controller state is too");
         assert!(error.contains("controller"), "{error}");
+    }
+
+    /// A value that is not a number never equals itself. Compared as a number it would be sent
+    /// at every `kParamValuesChanged`; it is sent once.
+    #[test]
+    fn a_value_that_is_not_a_number_is_sent_once() {
+        let mut known = BTreeMap::from([(1, 0.5), (2, 0.25)]);
+        let shown = |id| match id {
+            1 => f64::NAN,
+            _ => 0.25,
+        };
+        let first = differences(&mut known, shown);
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].id, 1);
+        assert!(differences(&mut known, shown).is_empty());
     }
 
     #[test]
