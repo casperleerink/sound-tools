@@ -271,11 +271,12 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 }
 
 /// The map is what an agent reads on every task. One doc more adds one line to it, not a
-/// section: the whole agent doc was 2030 words before the split, the map is about 960.
+/// section: the whole agent doc was 2030 words before the split, the map was about 960. Each
+/// built-in effect adds its line of about 15 words, so the bound grew with them.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1100, "the map has {words} words");
+    assert!(words < 1150, "the map has {words} words");
 }
