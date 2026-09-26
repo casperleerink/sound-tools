@@ -59,7 +59,9 @@ impl Transport<'_> {
             return None;
         }
         let frame = i128::from(self.clock.frame_of(tick).0);
-        usize::try_from(frame - self.block_start).ok()
+        // A tick before the block only after a tempo map change, for a processor ahead of the
+        // device: it plays at once, late, rather than never.
+        usize::try_from((frame - self.block_start).max(0)).ok()
     }
 }
 
@@ -177,9 +179,35 @@ impl TransportState {
         self.heard_tick = self.clock.tick_at(self.position);
     }
 
+    /// Whether the project plays.
+    pub(crate) fn playing(&self) -> bool {
+        self.playing
+    }
+
+    /// The first tick the next block of a processor `lead` frames ahead would start on with
+    /// the clock as it is. Read before a tempo map change, see [`Self::view`].
+    pub(crate) fn next_tick(&self, lead: u64) -> Ticks {
+        let past_preroll = lead.saturating_sub(self.preroll);
+        self.clock
+            .tick_at(Frames(self.position.0.saturating_add(past_preroll)))
+    }
+
     /// The view for the next block of `frames` frames of a processor `lead` frames ahead of
     /// the device. `moved` says its lead changed since its last block, which it sees as a jump.
-    pub(crate) fn view(&self, frames: usize, lead: u64, moved: bool) -> Transport<'_> {
+    ///
+    /// `resume_from` is the tick after the last one this processor was given, when a tempo map
+    /// change moved where its blocks are. The clock keeps the tick the device plays, not the
+    /// ticks of a processor ahead of it, so without this such a processor would skip ticks
+    /// after a faster tempo and get some twice after a slower one. Its range starts there
+    /// instead: ticks it would have skipped land at offset 0, late by less than its lead, and
+    /// after a slower tempo it gets an empty range until the clock has caught up.
+    pub(crate) fn view(
+        &self,
+        frames: usize,
+        lead: u64,
+        moved: bool,
+        resume_from: Option<Ticks>,
+    ) -> Transport<'_> {
         let advance = if self.playing { frames as u64 } else { 0 };
         // What the device has not caught up with yet comes off the front, so no range starts
         // before `position`: nothing earlier than where playback starts is played.
@@ -189,13 +217,18 @@ impl TransportState {
         };
         let start = ahead(lead);
         let end = ahead(lead.saturating_add(advance));
+        let jumped = self.jumped || self.resumed || moved;
+        // Both ends come from the same function, so the end of this block is the start of the
+        // next, whatever the block sizes and tempo changes are.
+        let mut tick_range = self.clock.tick_at(start)..self.clock.tick_at(end);
+        if let Some(from) = resume_from.filter(|_| !jumped) {
+            tick_range = from..tick_range.end.max(from);
+        }
         Transport {
             playing: self.playing,
             stopped_playing: self.was_playing && !self.playing,
-            jumped: self.jumped || self.resumed || moved,
-            // Both ends come from the same function, so the end of this block is the start of
-            // the next, whatever the block sizes and tempo changes are.
-            tick_range: self.clock.tick_at(start)..self.clock.tick_at(end),
+            jumped,
+            tick_range,
             frame_range: start..end,
             heard_tick: self.heard_tick,
             clock: &self.clock,

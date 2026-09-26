@@ -54,6 +54,9 @@ pub(crate) struct Slot {
     lead: Option<u64>,
     /// The lead changed since this processor's last block. It sees that as a jump.
     moved: bool,
+    /// Where this processor's next range starts after a tempo map change, see
+    /// `TransportState::view`.
+    resume_from: Option<Ticks>,
 }
 
 /// One step of an edit. The audio thread applies it by swapping, so the value it replaces
@@ -236,6 +239,7 @@ impl Engine {
                             // A new processor has no block to jump from.
                             current.lead = None;
                             current.moved = false;
+                            current.resume_from = None;
                             // The one that came out gets its last call here, on this thread,
                             // before it rides back with the batch.
                             if let Some(leaving) = processor {
@@ -252,7 +256,20 @@ impl Engine {
                         std::mem::swap(schedule, &mut self.schedule);
                     }
                     Command::Transport(command) => self.transport.apply(*command),
-                    Command::SetClock(clock) => self.transport.swap_clock(clock),
+                    Command::SetClock(clock) => {
+                        // The clock keeps the tick the device plays. A processor ahead of it
+                        // goes on from the tick after its last block instead.
+                        if self.transport.playing() {
+                            for slot in self.slots.iter_mut() {
+                                if let Some(lead) = slot.lead.filter(|lead| *lead > 0) {
+                                    let next = self.transport.next_tick(lead);
+                                    let from = slot.resume_from.map_or(next, |from| from.max(next));
+                                    slot.resume_from = Some(from);
+                                }
+                            }
+                        }
+                        self.transport.swap_clock(clock);
+                    }
                 }
             }
             self.status.batches_applied += 1;
@@ -340,7 +357,7 @@ impl Engine {
         self.transport.begin_block();
         // What the device plays in this block. Every processor with no latency after it sees
         // exactly this, so a project without latency builds it once per block, as it always did.
-        let heard = self.transport.view(frames, 0, false);
+        let heard = self.transport.view(frames, 0, false, None);
         let port_misuses = Cell::new(0);
         let dropped_events = Cell::new(0);
         for step in steps.iter() {
@@ -382,14 +399,20 @@ impl Engine {
                 processor: Some(processor),
                 lead,
                 moved,
+                resume_from,
             }) = self.slots.get_mut(step.slot)
             {
                 let lead = lead.unwrap_or_default();
-                let transport = match (lead, *moved) {
-                    (0, false) => heard.clone(),
-                    _ => self.transport.view(frames, lead, *moved),
+                let transport = match (lead, *moved, *resume_from) {
+                    (0, false, None) => heard.clone(),
+                    _ => self.transport.view(frames, lead, *moved, *resume_from),
                 };
                 *moved = false;
+                if let Some(from) = *resume_from
+                    && (transport.jumped || transport.tick_range.end > from)
+                {
+                    *resume_from = None;
+                }
                 processor.process(&mut ProcessContext {
                     frames,
                     start_frame: self.status.frames,

@@ -404,3 +404,44 @@ fn a_play_from_rest_with_latency_counts_no_jump() {
     chains.render(512);
     assert_eq!(chains.control.poll().unwrap().jumps, 1);
 }
+
+/// A tempo map change while playing keeps the tick the device plays. A chain ahead of the
+/// device by 3000 frames, 120 ticks at 120 bpm, would land 240 ticks ahead at 240 bpm and
+/// skip beats, or 60 ticks ahead at 60 bpm and play some twice. Every beat plays once, on
+/// both chains. After the faster tempo the beats the chain ahead would have skipped come at
+/// once, late, and add up on one frame, so the delayed chain is checked by its sum.
+#[test]
+fn a_tempo_change_while_playing_plays_every_beat_once_on_a_chain_ahead() {
+    for bpm in [240.0, 60.0] {
+        let mut chains = Chains::new(3000);
+        chains.control.play();
+        chains.render(3000 + 5000);
+        let changes = vec![sound_core::TempoChange {
+            tick: Ticks(0),
+            bpm: sound_core::Tempo::from_bpm(bpm).unwrap(),
+        }];
+        let map = sound_core::TempoMap::new(sound_core::TimeSignature::default(), changes);
+        chains.control.set_tempo_map(map.unwrap());
+        chains.render(40_000);
+        let beats = |samples: &[f32]| -> Vec<u64> {
+            impulses(samples)
+                .iter()
+                .map(|(_, value)| *value as u64)
+                .collect()
+        };
+        // The chain without latency: every beat once, in order.
+        let plain = beats(&chains.plain);
+        let in_order: Vec<u64> = (1..=plain.len() as u64).collect();
+        assert_eq!(plain, in_order, "{bpm} bpm, plain");
+        assert!(plain.len() > 10, "{bpm} bpm: {plain:?}");
+        // The chain ahead: beats 1 to its last one, each exactly once.
+        let delayed = beats(&chains.delayed);
+        let last = *delayed.last().unwrap();
+        let total: u64 = delayed.iter().sum();
+        assert_eq!(total, last * (last + 1) / 2, "{bpm} bpm: {delayed:?}");
+        assert!(
+            last + 1 >= plain.len() as u64,
+            "{bpm} bpm: {delayed:?} {plain:?}"
+        );
+    }
+}
