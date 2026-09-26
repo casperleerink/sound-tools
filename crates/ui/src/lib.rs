@@ -6,15 +6,17 @@ pub mod components;
 pub mod control_edit;
 pub mod devices;
 pub mod focus;
+pub mod metering;
 pub mod session;
 pub mod theme;
 pub mod typography;
 pub mod views;
 
 pub use assets::Assets;
-pub use control_edit::{ControlEdit, weak_callback};
+pub use control_edit::{ControlEdit, weak_action, weak_callback};
 pub use devices::{DeviceLabel, DeviceOffer, Devices, Needs, Slot, extension_is_enabled};
 pub use focus::KeyboardFocus;
+pub use metering::{Metering, every_poll};
 pub use session::{NoticeRoom, POLL_INTERVAL, Playhead, Session};
 pub use theme::{ActiveTheme, Theme};
 pub use views::Views;

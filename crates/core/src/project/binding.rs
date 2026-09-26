@@ -14,6 +14,7 @@ use super::registry::Registry;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
 use crate::graph::{Connection, Destination, GraphError, NodeId};
+use crate::peaks::Peaks;
 use crate::processor::{CHANNELS, InputPort, OutputPort, Ports, PrepareConfig, Processor};
 
 /// Why a behaviour could not apply a state. It rejects the whole edit group.
@@ -84,6 +85,8 @@ struct Binding {
     connections: BTreeSet<Connection>,
     outputs: BTreeMap<String, OutputEndpoint>,
     inputs: BTreeMap<String, InputEndpoint>,
+    /// The levels its processors show, by the name the behaviour chose.
+    peaks: BTreeMap<String, Peaks>,
     /// What the behaviour said is not live about its instance, see [`BehaviourContext::problem`].
     problems: Vec<String>,
 }
@@ -215,6 +218,17 @@ impl BehaviourContext<'_> {
             .nodes
             .insert(name.to_string(), (id, TypeId::of::<P>()));
         Ok(Node::from_id(id))
+    }
+
+    /// The peaks this instance keeps under `name`, for a processor that shows a level: give
+    /// a clone to the processor when it is made, record every block, and an interface reads
+    /// them with [`Project::peaks`](super::Project::peaks). The same peaks every run, as long
+    /// as the name is declared, so a processor made in an earlier run keeps showing.
+    pub fn peaks(&mut self, name: &str) -> Peaks {
+        let previous = self.previous.and_then(|previous| previous.peaks.get(name));
+        let peaks = previous.cloned().unwrap_or_default();
+        self.next.peaks.insert(name.to_string(), peaks.clone());
+        peaks
     }
 
     /// Sends parameters or an `Arc` snapshot. It applies in the same block as the rest of the
@@ -418,6 +432,11 @@ impl Bindings {
     pub fn node<P: Processor>(&self, instance: &InstanceId, name: &str) -> Option<Node<P>> {
         let (node, processor_type) = self.by_instance.get(instance)?.nodes.get(name)?;
         (*processor_type == TypeId::of::<P>()).then(|| Node::from_id(*node))
+    }
+
+    /// The peaks that the behaviour of `instance` keeps under `name`.
+    pub fn peaks(&self, instance: &InstanceId, name: &str) -> Option<&Peaks> {
+        self.by_instance.get(instance)?.peaks.get(name)
     }
 
     /// The input port that the behaviour of `instance` named, as `project.json` connections

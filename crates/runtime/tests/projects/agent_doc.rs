@@ -151,7 +151,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .iter()
             .flat_map(|(_, text)| json_examples(text))
             .collect();
-        assert_eq!(all.len(), 18, "{time_signature}");
+        assert_eq!(all.len(), 19, "{time_signature}");
 
         // The raw take of a recording is not a record: it is an asset the runtime writes once
         // and never reads back. Its example is checked as the file it is.
@@ -201,6 +201,17 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         for (problem, expected) in problems.iter().zip(expected) {
             assert!(problem.starts_with(expected), "{problems:?}");
         }
+        // The piano is written twice, the second time silenced with `"-inf"` and its warmth
+        // bypassed, and that is what loaded.
+        let piano = copy
+            .project
+            .resolve::<arrangement::TrackState>(
+                &sound_core::InstanceId::new("arrangement/piano").unwrap(),
+            )
+            .unwrap();
+        let piano = copy.project.state(&piano).unwrap();
+        assert_eq!(piano.gain_db, f32::NEG_INFINITY);
+        assert_eq!(piano.bypassed("warmth"), Some(true));
         let instances: Vec<String> = copy
             .project
             .instances()
@@ -246,7 +257,10 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
                 .exists()
         );
         copy.project.undo().unwrap();
-        for (path, body) in &examples {
+        // A file two examples write, as the piano with its warmth bypassed, holds the last.
+        let last: std::collections::BTreeMap<&String, &String> =
+            examples.iter().map(|(path, body)| (path, body)).collect();
+        for (path, body) in last {
             let written = std::fs::read_to_string(copy.path(path)).unwrap();
             assert_eq!(&written, body, "{path} in {time_signature}");
         }

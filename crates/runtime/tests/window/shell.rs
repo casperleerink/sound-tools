@@ -290,10 +290,10 @@ fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
     opened.cx.run_until_parked();
 
     // The menu, play, stop, record, the seek strip, the tempo, the click, the arrangement,
-    // then the notice.
+    // the master row, then the notice.
     opened
         .cx
-        .simulate_keystrokes("tab tab tab tab tab tab tab tab tab");
+        .simulate_keystrokes("tab tab tab tab tab tab tab tab tab tab");
     opened.press_enter();
     opened
         .cx
