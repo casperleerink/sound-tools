@@ -254,7 +254,7 @@ fn choose_file_opens_the_file_panel_and_loads_what_is_chosen(cx: &mut TestAppCon
 fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
     let mut opened = open_with(cx, with_sample("pluck.wav"), Some("pluck.wav"));
     let before = state(&mut opened);
-    let mut drag = |opened: &mut Opened<'_>, handle: &str, by: Point<Pixels>, label: &str| {
+    let drag = |opened: &mut Opened<'_>, handle: &str, by: Point<Pixels>, label: &str| {
         let from = opened.control(handle);
         opened.drag(from, from + by);
         assert_eq!(opened.undo_label().as_deref(), Some(label), "{handle}");
