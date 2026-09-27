@@ -215,14 +215,15 @@ impl Viewport {
         }
     }
 
-    /// Where a clip is drawn on its track row. It may reach outside the timeline area.
-    pub fn clip_rect(&self, track: usize, clip: &Clip) -> Rect {
-        let x = self.x_of(clip.start);
+    /// Where a clip from `start` to `end` is drawn on its track row. It may reach outside the
+    /// timeline area.
+    pub fn clip_rect(&self, track: usize, start: Ticks, end: Ticks) -> Rect {
+        let x = self.x_of(start);
         Rect {
             x,
             y: self.y_of(track) + CLIP_INSET,
             // At least a pixel, so a short clip far zoomed out is still there.
-            width: (self.x_of(clip.end()) - x).max(1.0),
+            width: (self.x_of(end) - x).max(1.0),
             height: TRACK_HEIGHT - 2.0 * CLIP_INSET,
         }
     }
@@ -538,7 +539,7 @@ mod tests {
             scroll_y: 32.0,
             ..Viewport::default()
         };
-        let rect = viewport.clip_rect(2, &clip(BAR, 2 * BAR, &[]));
+        let rect = viewport.clip_rect(2, Ticks(BAR), Ticks(3 * BAR));
         assert_eq!(
             rect,
             Rect {
@@ -556,7 +557,7 @@ mod tests {
             pixels_per_quarter: 1.0,
             ..Viewport::default()
         };
-        assert_eq!(far_out.clip_rect(0, &clip(0, 120, &[])).width, 1.0);
+        assert_eq!(far_out.clip_rect(0, Ticks(0), Ticks(120)).width, 1.0);
     }
 
     #[test]
@@ -588,7 +589,7 @@ mod tests {
     fn a_miniature_places_notes_by_time_and_pitch() {
         let viewport = Viewport::default();
         let clip = clip(BAR, BAR, &[(0, 960, 60), (960, 960, 72), (2880, 9600, 60)]);
-        let rect = viewport.clip_rect(0, &clip);
+        let rect = viewport.clip_rect(0, clip.start, clip.end());
         let notes: Vec<_> = viewport.miniature(&clip, rect).collect();
         assert_eq!(notes.len(), 3);
 
@@ -607,7 +608,7 @@ mod tests {
 
         // One pitch sits in the middle.
         let single = self::clip(0, BAR, &[(0, 960, 64)]);
-        let rect = viewport.clip_rect(0, &single);
+        let rect = viewport.clip_rect(0, single.start, single.end());
         let note = viewport.miniature(&single, rect).next().unwrap();
         assert_eq!(note.y + note.height / 2.0, rect.y + rect.height / 2.0);
 
@@ -616,7 +617,7 @@ mod tests {
             pixels_per_quarter: 1.0,
             ..Viewport::default()
         };
-        let rect = far_out.clip_rect(0, &clip);
+        let rect = far_out.clip_rect(0, clip.start, clip.end());
         assert_eq!(far_out.miniature(&clip, rect).count(), 0);
     }
 }

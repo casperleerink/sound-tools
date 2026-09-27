@@ -2103,6 +2103,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "image",
+ "sound-media",
  "sound-ui",
 ]
 
@@ -5644,6 +5645,7 @@ dependencies = [
  "gpui",
  "serde",
  "sound-core",
+ "sound-media",
  "tempfile",
 ]
 

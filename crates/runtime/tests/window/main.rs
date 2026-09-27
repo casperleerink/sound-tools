@@ -12,7 +12,8 @@
 //! - `fit`: fitting the tempo to a take, and the steadiness in the transport.
 //! - `transport`: the tempo, the click and the view following the playhead.
 //! - `piece`: a short piece made by hand from the default project, closed and opened again.
-//! - `audio`: the window around an audio track, whose clips it does not draw yet.
+//! - `audio`: audio clips moved, trimmed, faded and turned up or down, copied and pasted, the
+//!   Clip card, files dropped from the Finder, and adding an audio track.
 
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them, and
 // it does not know `#[gpui::test]`.

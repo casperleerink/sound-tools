@@ -192,7 +192,7 @@ fn click(
 }
 
 /// One component: a title and its samples.
-fn block(
+pub(crate) fn block(
     title: &'static str,
     cx: &App,
     samples: impl IntoIterator<Item = AnyElement>,
@@ -221,7 +221,7 @@ fn block(
 }
 
 /// A sample with the name of its state under it.
-fn sample(state: &'static str, cx: &App, element: impl IntoElement) -> AnyElement {
+pub(crate) fn sample(state: &'static str, cx: &App, element: impl IntoElement) -> AnyElement {
     let muted = cx.theme().gray_700;
     div()
         .flex()
@@ -663,34 +663,11 @@ fn synth_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
 
 /// The sideways value of a change of a handle.
 fn x_of(change: ValueChange<Point<f32>>) -> ValueChange<f32> {
-    map(change, |point| point.x)
+    change.map(|point| point.x)
 }
 
 fn y_of(change: ValueChange<Point<f32>>) -> ValueChange<f32> {
-    map(change, |point| point.y)
-}
-
-fn map(change: ValueChange<Point<f32>>, f: fn(Point<f32>) -> f32) -> ValueChange<f32> {
-    match change {
-        ValueChange::Drag(point) => ValueChange::Drag(f(point)),
-        ValueChange::Set(point) => ValueChange::Set(f(point)),
-        ValueChange::DragEnd => ValueChange::DragEnd,
-        ValueChange::DragCancel => ValueChange::DragCancel,
-    }
-}
-
-trait MapValue {
-    fn map(self, f: impl Fn(f32) -> f32) -> Self;
-}
-
-impl MapValue for ValueChange<f32> {
-    fn map(self, f: impl Fn(f32) -> f32) -> Self {
-        match self {
-            ValueChange::Drag(value) => ValueChange::Drag(f(value)),
-            ValueChange::Set(value) => ValueChange::Set(f(value)),
-            other => other,
-        }
-    }
+    change.map(|point| point.y)
 }
 
 fn reverb_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {

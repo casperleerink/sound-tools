@@ -26,6 +26,10 @@
 //! The panel is 216 pt: 12 above the cards, a card of 192, 12 below. The rack scrolls sideways
 //! with two fingers, and a fade at its right edge says when cards go past it.
 //!
+//! An audio track has no instrument. Its rack starts with the Clip card, which shows the
+//! selected clip of the track, then a hairline, then the effects: the card acts on one clip and
+//! the effects on the whole track, so the rack reads as two groups.
+//!
 //! An effect card is moved by dragging its header onto another card: it takes the place of the
 //! card it is dropped on, and a drop on the instrument or on "Add effect" puts it first or last.
 //! Cmd-left and cmd-right move the effect whose card has the focus. The instrument stays first.
@@ -54,9 +58,10 @@ use sound_ui::{
     every_poll, weak_action, weak_callback,
 };
 
+use super::clip_card::ClipCard;
 use super::layout::HEADER_WIDTH;
 use super::paint::accent;
-use crate::TrackState;
+use crate::{TrackKind, TrackState};
 
 /// The height of the panel: the cards and 12 pt above and below them.
 pub const PANEL_HEIGHT: f32 = CARD_HEIGHT + 2. * RACK_TOP;
@@ -65,6 +70,8 @@ pub(super) const RACK_TOP: f32 = 12.;
 /// From the header column to the first card.
 pub(super) const RACK_LEFT: f32 = 16.;
 const CARD_GAP: f32 = 12.;
+/// The hairline between the Clip card and the effects of an audio track.
+const DIVIDER_WIDTH: f32 = 1.;
 /// The ring around the card a dragged effect would take the place of.
 const DROP_RING: f32 = 2.;
 /// The fade at the right edge of the rack when cards go past it.
@@ -339,6 +346,8 @@ fn device_label(session: &Entity<Session>, slot: &InstanceId, kind: Slot, cx: &A
 pub struct TrackPanel {
     session: Entity<Session>,
     track: Instance<TrackState>,
+    /// The first card of the rack of an audio track.
+    clip_card: Option<Entity<ClipCard>>,
     devices: Vec<Device>,
     /// The control at the end of the rack that adds an effect. It is made once, with what the
     /// registry offers when the panel opens, like the picker of a card.
@@ -448,6 +457,7 @@ impl TrackPanel {
         let mut panel = Self {
             session,
             track: track.clone(),
+            clip_card: None,
             devices: Vec::new(),
             add_effect,
             offers,
@@ -464,6 +474,11 @@ impl TrackPanel {
 
     pub fn track(&self) -> &Instance<TrackState> {
         &self.track
+    }
+
+    /// The Clip card, when the track is an audio track.
+    pub fn clip_card(&self) -> Option<&Entity<ClipCard>> {
+        self.clip_card.as_ref()
     }
 
     /// One poll of the meter of the volume. Its timer calls it; a snapshot calls it to skip
@@ -511,6 +526,14 @@ impl TrackPanel {
         self.track = track;
         self.metering.reset();
         self.devices.clear();
+        let project = self.session.read(cx).project();
+        let audio = project
+            .state(&self.track)
+            .is_some_and(|state| state.kind == TrackKind::Audio);
+        self.clip_card = audio.then(|| {
+            let (session, track) = (self.session.clone(), self.track.clone());
+            cx.new(|cx| ClipCard::new(session, track, cx))
+        });
         self.set_slots(window, cx);
         cx.notify();
     }
@@ -888,11 +911,12 @@ impl Render for TrackPanel {
         // because the mixer strip needs the record while it makes its controls.
         let track = self.session.read(cx).project().state(&self.track).cloned();
         let theme = cx.theme();
-        let (background, hairline, text, muted) = (
+        let (background, hairline, text, muted, divider) = (
             theme.gray_100,
             theme.alpha_at(0.05),
             theme.gray_950,
             theme.gray_800,
+            theme.alpha_at(0.06),
         );
         let (name, dot) = track.as_ref().map_or_else(
             || (String::new(), theme.blue),
@@ -956,6 +980,18 @@ impl Render for TrackPanel {
         let add_effect = add_effect.into_any_element();
         let add_effect =
             self.drop_target(add_effect, "rack-add".into(), usize::MAX, None, ring, cx);
+        // The Clip card of an audio track and the hairline after it. A drop of an effect on
+        // the card puts the effect first, as on an instrument.
+        let clip_card = self.clip_card.clone().map(|card| {
+            let card = card.into_any_element();
+            let card = self.drop_target(card, "rack-clip".into(), 0, None, ring, cx);
+            let divider = div()
+                .flex_none()
+                .w(px(DIVIDER_WIDTH))
+                .h(px(CARD_HEIGHT))
+                .bg(divider);
+            [card, divider.into_any_element()]
+        });
 
         let close = Button::icon_only("close-track-panel", "x")
             // Quiet until it is wanted, as in the note editor.
@@ -1046,6 +1082,7 @@ impl Render for TrackPanel {
                             .gap(px(CARD_GAP))
                             .pt(px(RACK_TOP))
                             .px(px(RACK_LEFT))
+                            .children(clip_card.into_iter().flatten())
                             .children(cards)
                             .child(add_effect),
                     )

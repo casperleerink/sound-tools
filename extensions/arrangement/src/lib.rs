@@ -630,9 +630,9 @@ pub fn add_audio_file(
     source: &std::path::Path,
     start: Ticks,
 ) -> Result<Instance<AudioClip>, AudioFileError> {
-    let asset = sound_media::import(project.assets(), source)?;
-    let name = asset.asset_name().name().to_string();
-    let clip = AudioClip::new(asset, start);
+    let imported = sound_media::import(project.assets(), source)?;
+    let name = imported.asset.asset_name().name().to_string();
+    let clip = AudioClip::new(imported.asset, start);
     Ok(add_audio_clip(project, changes, track, &name, clip)?)
 }
 
@@ -644,15 +644,48 @@ pub fn add_audio_clip(
     changes: &mut Changes,
     track: &Instance<TrackState>,
     name: &str,
-    mut clip: AudioClip,
+    clip: AudioClip,
 ) -> Result<Instance<AudioClip>, ProjectError> {
-    let top = audio_clips(project, track.id())
-        .iter()
-        .map(|(_, other)| other.layer)
-        .max();
-    clip.layer = top.map_or(0, |layer| layer.saturating_add(1));
-    let id = project.free_id(&track.id().child(&id_name(name, "clip"))?)?;
-    Ok(changes.create(id, clip))
+    let mut added = add_audio_clips(project, changes, [(track, name, clip)])?;
+    added
+        .pop()
+        .ok_or_else(|| ProjectError::MissingInstance(track.id().clone()))
+}
+
+/// Adds audio clips to tracks in one group of changes, for a drop of several files, a paste or
+/// a duplicate: one undo step. Each goes over every clip its track has, and a later one over an
+/// earlier one of the same track, so the newest covers. Each id is its name, or the next free
+/// one after it: `strum-2`, then `strum-2-2`. A paste gives names without their number, as
+/// [`add_clips`] makes them.
+pub fn add_audio_clips<'a>(
+    project: &Project,
+    changes: &mut Changes,
+    clips: impl IntoIterator<Item = (&'a Instance<TrackState>, &'a str, AudioClip)>,
+) -> Result<Vec<Instance<AudioClip>>, ProjectError> {
+    let mut free = FreeIds::default();
+    let mut layers: BTreeMap<InstanceId, u32> = BTreeMap::new();
+    let mut added = Vec::new();
+    for (track, name, mut clip) in clips {
+        let layer = layers.entry(track.id().clone()).or_insert_with(|| {
+            top_layer(project, track.id(), &[]).map_or(0, |top| top.saturating_add(1))
+        });
+        clip.layer = *layer;
+        *layer = layer.saturating_add(1);
+        let name = id_name(name, "clip");
+        let id = free.take(project, &track.id().child(&name)?)?;
+        added.push(changes.create(id, clip));
+    }
+    Ok(added)
+}
+
+/// The highest layer of the audio clips of a track, leaving out `except`: what a clip placed
+/// over them goes one above. `None` when there are none.
+pub fn top_layer(project: &Project, track: &InstanceId, except: &[InstanceId]) -> Option<u32> {
+    let clips = project.children::<AudioClip>(track);
+    clips
+        .filter(|(clip, _)| !except.contains(clip.id()))
+        .map(|(_, clip)| clip.layer)
+        .max()
 }
 
 /// The slots of a track in the order the sound goes through them: the instrument of an

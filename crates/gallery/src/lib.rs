@@ -10,7 +10,14 @@ use sound_ui::{ActiveTheme, typography};
 
 /// `focus` shows one of each control that the keyboard reaches: tab gives each the focus in
 /// turn, and one window has one focus, so its snapshot is taken once per tab.
-pub const SECTIONS: [&str; 5] = ["foundation", "rack", "focus", "overlays", "composed"];
+pub const SECTIONS: [&str; 6] = [
+    "foundation",
+    "rack",
+    "focus",
+    "audio",
+    "overlays",
+    "composed",
+];
 
 actions!(gallery, [FocusNext, FocusPrevious]);
 
@@ -74,6 +81,9 @@ impl Render for Gallery {
             })
             .when(show("focus"), |d| {
                 d.child(sections::rack::focus_section(window, cx))
+            })
+            .when(show("audio"), |d| {
+                d.child(sections::audio::section(window, cx))
             })
             .when(show("overlays"), |d| {
                 d.child(sections::overlays::section(window, cx))

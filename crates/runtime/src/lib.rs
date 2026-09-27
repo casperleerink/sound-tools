@@ -303,6 +303,20 @@ pub fn add_track(
     project.commit("Add track", changes)
 }
 
+/// Adds an audio track `Track <n>`, empty, as one undo step, in the next colour of the palette
+/// as [`add_track`] does.
+pub fn add_audio_track(
+    project: &mut Project,
+    arrangement: &Instance<ArrangementState>,
+) -> Result<(), ProjectError> {
+    let count = arrangement::tracks(project, arrangement.id()).len();
+    let colour = Colour::ALL[count % Colour::ALL.len()];
+    let name = format!("Track {}", count + 1);
+    let mut changes = Changes::new();
+    arrangement::add_audio_track(project, &mut changes, arrangement.id(), &name, colour)?;
+    project.commit("Add audio track", changes)
+}
+
 /// Opens the project with its lock, scanning for plugins on this thread the first time a
 /// record needs one. `--headless` may block; the window uses [`open_or_create_with`] with a
 /// host of its own that scans on a thread.

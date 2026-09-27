@@ -1350,15 +1350,8 @@ fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx
     let name_width = HEADER_WIDTH - 44. - 40.;
     let name = scene.track_name.clone();
     let top = bounds.origin;
-    paint_track_label(
-        name,
-        scene.accent,
-        top,
-        RULER_HEIGHT,
-        name_width,
-        window,
-        cx,
-    );
+    let label_size = (RULER_HEIGHT, name_width);
+    paint_track_label(name, scene.accent, top, label_size, false, window, cx);
 
     window.with_content_mask(Some(ContentMask { bounds: area }), |window| {
         for pitch in pitches.clone().filter(|pitch| is_black_key(*pitch)) {

@@ -130,17 +130,22 @@ pub(super) fn paint_ruler(
 }
 
 /// The accent dot and the name of a track, as in a track header. `top` is the top left of a
-/// row of `row_height`, and the name ends in an ellipsis at `name_width`.
+/// row of `row_height`, and the name ends in an ellipsis at `name_width`. A muted track has
+/// both at 40 %.
 pub(super) fn paint_track_label(
     name: SharedString,
     accent: Hsla,
     top: Point<Pixels>,
-    row_height: f32,
-    name_width: f32,
+    (row_height, name_width): (f32, f32),
+    muted: bool,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let text = cx.theme().gray_900;
+    let opacity = if muted { 0.4 } else { 1. };
+    let (text, accent) = (
+        cx.theme().gray_900.opacity(opacity),
+        accent.opacity(opacity),
+    );
     let dot = Bounds::new(
         top + point(px(24.), px(row_height / 2. - 4.)),
         size(px(8.), px(8.)),
