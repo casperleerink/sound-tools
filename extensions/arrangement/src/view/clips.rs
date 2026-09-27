@@ -13,6 +13,7 @@
 use sound_core::{Changes, Clock, InstanceId, Project, Ticks};
 use sound_media::{Cached, Info};
 use sound_notes::Clip;
+use sound_ui::components::waveform_display::{clamped_end, clamped_start, latest_start};
 
 use super::layout::shifted;
 use crate::{AudioClip, TrackKind};
@@ -183,9 +184,6 @@ pub fn fitted(clip: AudioClip, file: &Info) -> AudioClip {
     }
 }
 
-/// The shortest part of a file the Start and End of the Clip card leave a clip, in seconds.
-pub const SHORTEST_SECONDS: f64 = 0.01;
-
 /// The clip playing its file from `seconds` on, as the start line of the Clip card and its
 /// Start knob set it. As the left edge on the timeline, it keeps the sound where it is in time:
 /// the clip starts that much later or earlier. It stops at tick 0 and short of the end.
@@ -199,8 +197,8 @@ pub fn with_file_start(origin: &AudioClip, file: &Info, clock: &Clock, seconds: 
     let place = clock.seconds_of(origin.start) - origin.file_start_seconds;
     // The earliest the file can start and still begin at tick 0 or after.
     let earliest = (-place).max(0.0);
-    let latest = (end - SHORTEST_SECONDS).max(earliest);
-    let seconds = seconds.clamp(earliest, latest);
+    let latest = latest_start(earliest, end);
+    let seconds = clamped_start(seconds, earliest, end);
     let at = |tick: Ticks| clock.seconds_of(tick) - place;
     let mut start = clock.tick_at_seconds(place + seconds);
     // The tick is the first at or after the time, so it may be just past the latest start.
@@ -218,9 +216,7 @@ pub fn with_file_start(origin: &AudioClip, file: &Info, clock: &Clock, seconds: 
 /// The clip playing its file up to `seconds`, as the end line and the End knob set it. The end
 /// of the file, or within a frame of it, is written as the end of the file.
 pub fn with_file_end(clip: &AudioClip, file: &Info, seconds: f64) -> AudioClip {
-    let seconds = seconds.max(clip.file_start_seconds + SHORTEST_SECONDS);
-    let frame = 1.0 / f64::from(file.sample_rate.max(1));
-    let file_end_seconds = (seconds < file.seconds() - frame).then_some(seconds);
+    let file_end_seconds = clamped_end(seconds, clip.file_start_seconds, file);
     let trimmed = AudioClip {
         file_end_seconds,
         ..clip.clone()

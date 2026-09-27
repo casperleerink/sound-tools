@@ -27,7 +27,9 @@ use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, KnobScale, short};
-use sound_ui::components::waveform_display::{FileDrop, NoFile, WaveformDisplay, place};
+use sound_ui::components::waveform_display::{
+    FileDrop, NoFile, WaveformDisplay, clamped_end, clamped_start, place,
+};
 use sound_ui::{
     ControlEdit, DeviceLabel, Devices, Session, Views, Waveforms, every_poll, weak_callback,
 };
@@ -46,9 +48,6 @@ pub const DROP_TO_LOAD: &str = "Drop to load the file";
 pub const DROP_TO_REPLACE: &str = "Drop to replace the file";
 /// The undo step of a file dropped or chosen.
 pub const LOAD_LABEL: &str = "Load sample";
-/// The shortest part of a file that plays: start and end stay this far apart, as the trim of a
-/// clip does.
-pub const SHORTEST_SECONDS: f64 = 0.01;
 
 /// Registers the card of the `sampler` tool and what a rack calls one.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -155,18 +154,15 @@ fn readout(unit: Unit, value: f32) -> String {
 /// be taken, and silence at the bottom, where the start line has its handle.
 const TOP: f32 = 0.88;
 
-/// A start, clamped so that at least [`SHORTEST_SECONDS`] of the file plays before `end`.
+/// A start, with the shortest part of a clip left before the end.
 fn with_start(state: &mut SamplerState, seconds: f64, file_seconds: f64) {
     let end = state.end_seconds.unwrap_or(file_seconds);
-    state.start_seconds = seconds.clamp(0.0, (end - SHORTEST_SECONDS).max(0.0));
+    state.start_seconds = clamped_start(seconds, 0.0, end);
 }
 
-/// An end, clamped after the start. The end of the file, within a frame, is written as no end.
+/// An end after the start, with no end at the end of the file, as for a clip.
 fn with_end(state: &mut SamplerState, seconds: f64, file: &Info) {
-    let length = file.seconds();
-    let end = seconds.clamp(state.start_seconds + SHORTEST_SECONDS, length);
-    let frame = 1.0 / f64::from(file.sample_rate);
-    state.end_seconds = (end < length - frame).then_some(end);
+    state.end_seconds = clamped_end(seconds.min(file.seconds()), state.start_seconds, file);
 }
 
 pub struct SamplerView {
@@ -657,7 +653,10 @@ mod tests {
         with_start(&mut state, -1.0, 1.0);
         assert_eq!(state.start_seconds, 0.0);
         with_end(&mut state, 0.001, &file);
-        assert_eq!(state.end_seconds, Some(SHORTEST_SECONDS));
+        assert_eq!(
+            state.end_seconds,
+            Some(sound_ui::components::waveform_display::SHORTEST_SECONDS)
+        );
         with_end(&mut state, 0.99999, &file);
         assert_eq!(state.end_seconds, None);
         with_end(&mut state, 0.8, &file);

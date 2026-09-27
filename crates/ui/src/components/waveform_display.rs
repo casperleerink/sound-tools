@@ -19,7 +19,7 @@ use std::sync::Arc;
 use gpui::{
     AnyElement, App, ElementId, ExternalPaths, Point, SharedString, Window, div, prelude::*, px,
 };
-use sound_media::Overview;
+use sound_media::{Info, Overview};
 
 use crate::components::display::{Axis, Display, Handle, INSET_HEIGHT};
 use crate::components::gesture::{ChangeHandler, ValueChange};
@@ -311,6 +311,28 @@ impl RenderOnce for NoFile {
     }
 }
 
+/// The shortest part of a file that a start and an end leave to play, in seconds: the start
+/// and end lines and their knobs keep this much between them, for a clip and a sampler alike.
+pub const SHORTEST_SECONDS: f64 = 0.01;
+
+/// The latest start of a file that plays up to `end`, and never before `earliest`.
+pub fn latest_start(earliest: f64, end: f64) -> f64 {
+    (end - SHORTEST_SECONDS).max(earliest)
+}
+
+/// A start in seconds of the file, from `earliest` to the latest before `end`.
+pub fn clamped_start(seconds: f64, earliest: f64, end: f64) -> f64 {
+    seconds.clamp(earliest, latest_start(earliest, end))
+}
+
+/// An end as a record keeps it: at least [`SHORTEST_SECONDS`] after `start`, and `None`, the
+/// end of the file, at the end of the file or within one frame of it.
+pub fn clamped_end(seconds: f64, start: f64, file: &Info) -> Option<f64> {
+    let seconds = seconds.max(start + SHORTEST_SECONDS);
+    let frame = 1.0 / f64::from(file.sample_rate.max(1));
+    (seconds < file.seconds() - frame).then_some(seconds)
+}
+
 /// Where a time of a file of `file_seconds` is across the display, from 0 to 1, so an owner
 /// puts its curve where the waveform is.
 pub fn place(seconds: f32, file_seconds: f32) -> f32 {
@@ -323,6 +345,23 @@ pub fn place(seconds: f32, file_seconds: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_start_and_an_end_keep_the_shortest_part_between_them_and_the_end_of_the_file_is_none() {
+        let file = Info {
+            frames: 48_000,
+            channels: 1,
+            sample_rate: 48_000,
+            container: sound_media::Container::Wav,
+        };
+        assert_eq!(clamped_start(0.7, 0., 0.5), 0.49);
+        assert_eq!(clamped_start(-1., 0., 0.5), 0.);
+        assert_eq!(clamped_start(0.3, 0.4, 0.405), 0.4);
+        assert_eq!(clamped_end(0.001, 0., &file), Some(SHORTEST_SECONDS));
+        assert_eq!(clamped_end(0.99999, 0., &file), None);
+        assert_eq!(clamped_end(2., 0., &file), None);
+        assert_eq!(clamped_end(0.8, 0., &file), Some(0.8));
+    }
 
     #[test]
     fn a_time_of_the_file_is_its_part_of_the_width() {
