@@ -52,10 +52,12 @@ pub fn live_notes_input(project: &Project, selected: Option<&InstanceId>) -> Opt
     notes_input(project, &track)
 }
 
-/// Adds the clip of a finished take to the track, as one undo step. `take_name` is the raw
-/// take the clip came from, which is already on disk, or `None` when writing it failed.
+/// Adds the clip of a finished MIDI take to its track, to a group of changes. `take_name` is
+/// the raw take the clip came from, which is already on disk, or `None` when writing it failed.
+/// Gives the id of the clip; a take with no notes adds nothing.
 pub fn add_take_clip(
-    project: &mut Project,
+    project: &Project,
+    changes: &mut Changes,
     track: &Instance<TrackState>,
     take: &Take,
     take_name: Option<String>,
@@ -65,11 +67,8 @@ pub fn add_take_clip(
     };
     // A clip never names a take that is not there: a failed write leaves the field out.
     clip.take = take_name;
-    let mut changes = sound_core::Changes::new();
-    let clip = arrangement::add_clip(project, &mut changes, track, CLIP_NAME, clip)?;
-    let id = clip.id().clone();
-    project.commit(LABEL, changes)?;
-    Ok(Some(id))
+    let clip = arrangement::add_clip(project, changes, track, CLIP_NAME, clip)?;
+    Ok(Some(clip.id().clone()))
 }
 
 /// Writes the raw take under a name of its own and gives that name, for the clip to keep.

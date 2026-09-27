@@ -716,7 +716,11 @@ fn the_whole_path_on_this_machine() {
     let take = keyboard.finish_recording(at).expect("a take");
     assert!(!take.is_empty(), "nothing was played into the port");
     let name = runtime::window::recording::write_take(&project, &take).expect("the take");
-    runtime::window::recording::add_take_clip(&mut project, &track, &take, Some(name))
+    let mut changes = sound_core::Changes::new();
+    runtime::window::recording::add_take_clip(&project, &mut changes, &track, &take, Some(name))
+        .expect("the clip");
+    project
+        .commit(runtime::window::recording::LABEL, changes)
         .expect("the clip");
     let clip = clip_of_track(&project, &track);
     println!(

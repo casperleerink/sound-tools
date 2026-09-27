@@ -41,7 +41,7 @@ pub enum RecorderCommand {
 
 /// A take file of a running recording, for its waveform while it grows.
 #[derive(Clone, Debug)]
-pub struct GrowingTake {
+pub struct StartedTake {
     pub track: InstanceId,
     pub asset: AudioAsset,
     pub overview: TakeOverview,
@@ -54,7 +54,7 @@ pub enum RecorderReport {
     /// file of it was captured, on the clock of [`sound_core::monotonic_nanos`].
     Started {
         first_nanos: u64,
-        takes: Vec<GrowingTake>,
+        takes: Vec<StartedTake>,
     },
     /// A recording ended: each take that has a file, in memory as an import gives it. The
     /// first frame of each was captured at `first_nanos`, `None` when no frame ever came.
@@ -213,7 +213,7 @@ impl Recorder {
             recording.first_nanos = Some(first_nanos);
             let growing = recording.takes.iter().filter_map(|take| {
                 let file = take.file.as_ref()?;
-                Some(GrowingTake {
+                Some(StartedTake {
                     track: take.track.clone(),
                     asset: file.asset().clone(),
                     overview: file.overview(),

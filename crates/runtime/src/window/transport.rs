@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use arrangement::TrackState;
+use arrangement::{TrackKind, TrackState};
 use fit_tempo::FitState;
 use gpui::{
     App, BorderStyle, Bounds, Context, DispatchPhase, Entity, FocusHandle, Hitbox, HitboxBehavior,
@@ -24,16 +24,55 @@ use gpui::{
 };
 use metronome::Click;
 use midi::{Input, Keyboard, Latency, Lost};
-use sound_core::{Changes, Instance, Peaks, ProjectEvent, StreamTiming, Tempo, TempoChange, Ticks};
+use sound_core::{
+    Changes, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo, TempoChange, Ticks,
+};
+use sound_media::Imported;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::meter::Meter;
 use sound_ui::{
-    ActiveTheme, Metering, Playhead, Session, every_poll, typography, weak_action, weak_callback,
+    ActiveTheme, LiveSound, LiveTake, Metering, Playhead, Recording, Session, every_poll,
+    typography, weak_action, weak_callback,
 };
 
+use super::audio_input::{AudioInput, OpenInput};
 use super::{recording, steadiness, tempo};
+use crate::recorder::{
+    Placement, RecorderCommand, RecorderReport, StartedTake, TakeRequest, take_seconds_at,
+};
+
+/// Polls a finished recording waits for its audio files to hold what was heard up to its end,
+/// about two seconds, before it closes them with what they have.
+const FINISH_POLLS: u32 = 120;
+
+/// A recording of the record control, from its start to its clips.
+struct Take {
+    /// The playhead it began at.
+    start: Ticks,
+    /// The track the MIDI input records onto: the one it began on, whatever the composer
+    /// selects while it runs.
+    midi_track: Option<Instance<TrackState>>,
+    /// The armed audio tracks it records, when there are any.
+    audio: Option<AudioTake>,
+    /// It ended, and waits for its audio files.
+    ended: Option<Ended>,
+}
+
+struct AudioTake {
+    placement: Placement,
+    started: Vec<StartedTake>,
+    /// The waveforms of the takes are lined up with the timeline.
+    shown: bool,
+}
+
+struct Ended {
+    end: Ticks,
+    /// The raw MIDI take, already on disk, and its name, for the clip.
+    midi: Option<(Instance<TrackState>, midi::Take, Option<String>)>,
+    polls: u32,
+}
 
 /// The height of the pill, in the 48 pt title row.
 pub const HEIGHT: f32 = 36.;
@@ -87,9 +126,11 @@ pub struct TransportPill {
     /// The playhead the last poll saw: where a recording ends when a stop or a seek ends it,
     /// because the playhead has already moved by then.
     seen: Playhead,
-    /// The track the take that is running began on. A take goes there, whatever the composer
-    /// selects while it runs.
-    recording_track: Option<Instance<TrackState>>,
+    /// The recording of the record control, from its start until its clips are made.
+    take: Option<Take>,
+    /// The audio input, open while a track is armed, and its recorder.
+    audio: AudioInput,
+    recording: Entity<Recording>,
     tempo_drag: Option<TempoDrag>,
     /// Whether a drag of the steadiness has the gesture of the session open.
     steadiness_drag: bool,
@@ -108,14 +149,15 @@ pub struct TransportPill {
 
 impl TransportPill {
     pub fn new(session: Entity<Session>, cx: &mut Context<Self>) -> Self {
-        Self::with_device(session, None, cx)
+        Self::with_device(session, None, None, cx)
     }
 
     /// The pill of the real window, which has a device and can therefore say how long a key
-    /// press takes to reach the speakers.
+    /// press takes to reach the speakers, and an input it opens while a track is armed.
     pub fn with_device(
         session: Entity<Session>,
         timing: Option<Arc<StreamTiming>>,
+        open_input: Option<OpenInput>,
         cx: &mut Context<Self>,
     ) -> Self {
         let playhead = session.read(cx).playhead().clone();
@@ -139,8 +181,27 @@ impl TransportPill {
                 pill.end_is_stale = true;
                 cx.notify();
             }
+            // A deleted track is no longer armed.
+            if matches!(event, ProjectEvent::Deleted(_)) {
+                let project = pill.session.read(cx).project();
+                let exists: Vec<InstanceId> = pill
+                    .recording
+                    .read(cx)
+                    .armed()
+                    .filter(|track| project.resolve::<TrackState>(track).is_some())
+                    .cloned()
+                    .collect();
+                pill.recording.update(cx, |recording, cx| {
+                    recording.retain_armed(|track| exists.contains(track), cx);
+                });
+            }
         })
         .detach();
+        // The input is open while a track is armed: that is how a composer sees the level
+        // before a take.
+        let recording = session.read(cx).recording().clone();
+        cx.observe(&recording, |pill, _, cx| pill.follow_arming(cx))
+            .detach();
         // The end is not read during a drag, see `refresh`. The end of a gesture sends no
         // event, and the session notifies after it.
         cx.observe(&session, |pill, _, cx| {
@@ -186,7 +247,9 @@ impl TransportPill {
             fit: fit_tempo::fit_of(session.read(cx).project()),
             end_is_stale: false,
             seen: *session.read(cx).playhead().read(cx),
-            recording_track: None,
+            take: None,
+            audio: AudioInput::new(open_input),
+            recording,
             session,
             playhead,
             scrubbing: false,
@@ -217,7 +280,8 @@ impl TransportPill {
         let project = session.read(cx).project();
         let destination = recording::live_notes_input(project, selected.as_ref());
         let timing = self.timing.clone();
-        let recording_track = self.recording_track.clone();
+        let recording_track = self.take.as_ref().map(|take| take.midi_track.clone());
+        self.poll_audio(cx);
         let Some(keyboard) = self.keyboard.as_mut() else {
             return;
         };
@@ -269,12 +333,17 @@ impl TransportPill {
             .unwrap_or_default()
     }
 
+    /// Whether a recording runs: from the record control until it is pressed again, or a
+    /// stop, a pause or a seek ends it.
     pub fn is_recording(&self) -> bool {
-        self.keyboard.as_ref().is_some_and(Keyboard::is_recording)
+        self.take.as_ref().is_some_and(|take| take.ended.is_none())
     }
 
     /// The record control and the `r` key: start recording from the playhead, or end the take.
     ///
+    /// A recording takes every armed audio track, and the MIDI input records onto the selected
+    /// track when it is an instrument track, or the first one when nothing is selected, as it
+    /// always did. With nothing armed and an audio track selected, that track is armed first.
     /// Starting also starts playback: the playhead has to move for a take to have any length.
     /// Ending leaves playback as it is, so a composer can go on listening.
     pub fn toggle_recording(&mut self, cx: &mut Context<Self>) {
@@ -283,64 +352,368 @@ impl TransportPill {
             self.finish_recording(tick, cx);
             return;
         }
+        // The last one is still being written: its clips come first.
+        if self.take.is_some() {
+            return;
+        }
         let session = self.session.clone();
         let selected = session.read(cx).selected().cloned();
-        let track = recording::target_track(session.read(cx).project(), selected.as_ref());
-        let Some(keyboard) = self.keyboard.as_mut() else {
-            return;
+        let midi_track = recording::target_track(session.read(cx).project(), selected.as_ref());
+        let audio_tracks = self.tracks_to_record(selected.as_ref(), cx);
+        let audio = match audio_tracks.is_empty() {
+            true => None,
+            false => self.start_audio(audio_tracks, tick, cx),
         };
-        keyboard.start_recording(tick);
-        self.recording_track = track;
+        if let Some(keyboard) = self.keyboard.as_mut() {
+            keyboard.start_recording(tick);
+        }
+        self.take = Some(Take {
+            start: tick,
+            midi_track,
+            audio,
+            ended: None,
+        });
         if !playing {
             session.update(cx, |session, _| session.engine().play());
         }
         cx.notify();
     }
 
-    /// Ends the take at `until`: the clip is one undo step, and the raw take is written next
-    /// to it and never touched again.
+    /// The armed audio tracks, in the order of their ids. With none armed and an audio track
+    /// selected, it arms that one.
+    fn tracks_to_record(
+        &mut self,
+        selected: Option<&InstanceId>,
+        cx: &mut Context<Self>,
+    ) -> Vec<Instance<TrackState>> {
+        let project = self.session.read(cx).project();
+        let audio_track = |id: &InstanceId| {
+            let track = project.resolve::<TrackState>(id)?;
+            let state = project.state(&track)?;
+            (state.kind == TrackKind::Audio).then_some(track)
+        };
+        let armed: Vec<_> = self.recording.read(cx).armed().filter_map(audio_track).collect();
+        if !armed.is_empty() {
+            return armed;
+        }
+        let Some(track) = selected.and_then(audio_track) else {
+            return Vec::new();
+        };
+        let id = track.id().clone();
+        self.recording
+            .update(cx, |recording, cx| recording.set_armed(id, true, cx));
+        vec![track]
+    }
+
+    /// Starts a take on each of these audio tracks, each from the channels its record names.
+    /// `None` when the input cannot be opened, which the notice says.
+    fn start_audio(
+        &mut self,
+        tracks: Vec<Instance<TrackState>>,
+        start: Ticks,
+        cx: &mut Context<Self>,
+    ) -> Option<AudioTake> {
+        if let Err(error) = self.open_input(cx) {
+            self.session.update(cx, |session, cx| session.report(error, cx));
+            return None;
+        }
+        let project = self.session.read(cx).project();
+        let requests: Vec<_> = tracks
+            .iter()
+            .filter_map(|track| {
+                let state = project.state(track)?;
+                Some(TakeRequest {
+                    track: track.id().clone(),
+                    name: format!("{}-take", state.name),
+                    channels: state.input.device_channels(),
+                })
+            })
+            .collect();
+        let live = requests.iter().map(|request| LiveTake {
+            track: request.track.clone(),
+            start,
+            sound: None,
+        });
+        let live = live.collect();
+        self.recording
+            .update(cx, |recording, cx| recording.set_takes(live, cx));
+        self.audio.send(RecorderCommand::Start(requests));
+        Some(AudioTake {
+            placement: Placement::new(start),
+            started: Vec::new(),
+            shown: false,
+        })
+    }
+
+    /// Ends the take at `until`. The raw MIDI take is written at once and never touched again;
+    /// the clips, of MIDI and audio alike, are one undo step once the audio files hold what was
+    /// heard up to `until`, which the input brings a little later.
     fn finish_recording(&mut self, until: Ticks, cx: &mut Context<Self>) {
         let session = self.session.clone();
         let timing = self.timing.clone();
-        let Some(keyboard) = self.keyboard.as_mut() else {
+        let input_rate = self.audio.sample_rate();
+        let Some(take) = self.take.as_mut().filter(|take| take.ended.is_none()) else {
             return;
         };
-        // The last block of the take is still in the ring.
-        let polled = session.update(cx, |session, _| {
-            keyboard.poll(session.engine(), timing.as_deref())
-        });
-        let take = keyboard.finish_recording(until);
-        if let Err(error) = polled {
-            session.update(cx, |session, cx| session.report(error, cx));
-        }
-        let Some(take) = take else {
-            return;
-        };
-        cx.notify();
-        // The track the take began on, not the one that is selected now.
-        let track = self.recording_track.take();
-        if take.is_empty() {
-            // Nothing was played: no clip and no file.
-            return;
-        }
-        // The performance first, and whatever happens to the clip. It is the only copy of what
-        // the composer played, and a clip can fail to be made: its track may be gone.
-        let written = recording::write_take(session.read(cx).project(), &take);
-        let name = match written {
-            Ok(name) => Some(name),
-            Err(error) => {
+        let mut midi = None;
+        if let Some(keyboard) = self.keyboard.as_mut() {
+            // The last block of the take is still in the ring.
+            let polled = session.update(cx, |session, _| {
+                keyboard.poll(session.engine(), timing.as_deref())
+            });
+            if let Err(error) = polled {
                 session.update(cx, |session, cx| session.report(error, cx));
-                None
             }
-        };
-        let Some(track) = track else {
+            // Nothing was played: no clip and no file.
+            if let Some(played) = keyboard.finish_recording(until).filter(|take| !take.is_empty()) {
+                // The performance first, and whatever happens to the clip. It is the only copy
+                // of what the composer played, and a clip can fail to be made: its track may be
+                // gone.
+                let written = recording::write_take(session.read(cx).project(), &played);
+                let name = match written {
+                    Ok(name) => Some(name),
+                    Err(error) => {
+                        session.update(cx, |session, cx| session.report(error, cx));
+                        None
+                    }
+                };
+                midi = take.midi_track.clone().map(|track| (track, played, name));
+            }
+        }
+        if let Some(audio) = &take.audio {
+            let project = session.read(cx).project();
+            let frames = input_rate.and_then(|rate| {
+                let placement = &audio.placement;
+                placement.input_frames_until(until, timing.as_deref(), project.clock(), rate)
+            });
+            self.audio.send(RecorderCommand::Finish { frames });
+        }
+        let waits = take.audio.is_some();
+        take.ended = Some(Ended {
+            end: until,
+            midi,
+            polls: 0,
+        });
+        cx.notify();
+        if !waits {
+            self.make_clips(Vec::new(), cx);
+        }
+    }
+
+    /// The clips of the ended take, of MIDI and of audio, as one undo step. The files of the
+    /// audio are held in memory until then, so the tracks read nothing.
+    fn make_clips(&mut self, audio_takes: Vec<(InstanceId, Imported)>, cx: &mut Context<Self>) {
+        let Some(Take { audio, ended, .. }) = self.take.take() else {
             return;
         };
-        session.update(cx, |session, cx| {
-            session.edit(cx, |project| {
-                recording::add_take_clip(project, &track, &take, name)
-            })
+        self.recording
+            .update(cx, |recording, cx| recording.set_takes(Vec::new(), cx));
+        let Some(Ended { end, midi, .. }) = ended else {
+            return;
+        };
+        let timing = self.timing.clone();
+        let project = self.session.read(cx).project();
+        let clips = match &audio {
+            Some(audio) => {
+                let placement = &audio.placement;
+                placement.clips(&audio_takes, end, timing.as_deref(), project.clock())
+            }
+            None => Vec::new(),
+        };
+        if clips.len() < audio_takes.len() {
+            let missing = audio_takes.len() - clips.len();
+            let notice = format!(
+                "{missing} of the takes held nothing heard while the project played, and became no clip. Their files are in assets/audio/."
+            );
+            self.session
+                .update(cx, |session, cx| session.report(notice, cx));
+        }
+        if midi.is_some() || !clips.is_empty() {
+            self.session.update(cx, |session, cx| {
+                session.edit(cx, |project| {
+                    let mut changes = Changes::new();
+                    if let Some((track, played, name)) = &midi {
+                        recording::add_take_clip(project, &mut changes, track, played, name.clone())?;
+                    }
+                    recording::add_audio_take_clips(project, &mut changes, clips)?;
+                    project.commit(recording::LABEL, changes)
+                })
+            });
+        }
+        drop(audio_takes);
+        self.follow_arming(cx);
+    }
+
+    /// Opens the input when it is not open, and says how many channels it has.
+    fn open_input(&mut self, cx: &mut Context<Self>) -> Result<(), sound_core::DeviceError> {
+        if self.audio.is_open() {
+            return Ok(());
+        }
+        let assets = self.session.read(cx).project().assets().clone();
+        let channels = self.audio.open(&assets)?;
+        self.recording.update(cx, |recording, cx| {
+            recording.set_input_channels(Some(channels), cx)
         });
+        Ok(())
+    }
+
+    /// The input is open while a track is armed or audio records, and closed otherwise, so the
+    /// device is not held and macOS shows no microphone in use.
+    fn follow_arming(&mut self, cx: &mut Context<Self>) {
+        let armed = self.recording.read(cx).armed().next().is_some();
+        let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
+        if armed && !self.audio.is_open() {
+            if let Err(error) = self.open_input(cx) {
+                self.session.update(cx, |session, cx| session.report(error, cx));
+                // Armed with no input would show a level that never moves.
+                self.recording
+                    .update(cx, |recording, cx| recording.retain_armed(|_| false, cx));
+            }
+        } else if !armed && !records && self.audio.is_open() {
+            self.audio.close();
+            self.recording
+                .update(cx, |recording, cx| recording.set_input_channels(None, cx));
+        }
+    }
+
+    /// One poll of the audio input: the level, a device that went away, what ties a take to
+    /// the timeline, and a run of the recorder on the background executor.
+    fn poll_audio(&mut self, cx: &mut Context<Self>) {
+        if let Some(levels) = self.audio.take_levels() {
+            self.recording
+                .update(cx, |recording, cx| recording.set_levels(levels, cx));
+        }
+        if self.audio.is_gone() {
+            self.input_gone(cx);
+        }
+        let status = self.session.read(cx).engine_status();
+        if let Some(take) = &mut self.take {
+            if let Some(audio) = &mut take.audio {
+                audio.placement.observe(status);
+            }
+            // The input never brought the end: the files close with what they have.
+            if let Some(ended) = &mut take.ended {
+                ended.polls += 1;
+                if ended.polls == FINISH_POLLS {
+                    self.audio.send(RecorderCommand::Finish { frames: None });
+                }
+            }
+        }
+        self.show_takes(cx);
+        self.run_recorder(cx);
+    }
+
+    /// The input went away, such as an interface that was unplugged. A take that records ends
+    /// here and keeps what was recorded, and every track is disarmed: arming again opens the
+    /// default input that macOS has then.
+    fn input_gone(&mut self, cx: &mut Context<Self>) {
+        let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
+        if self.is_recording() && records {
+            let tick = self.playhead.read(cx).tick;
+            self.finish_recording(tick, cx);
+        }
+        let notice = match records {
+            true => "The audio input went away. The take ends here and keeps what was recorded.",
+            false => "The audio input went away.",
+        };
+        self.session
+            .update(cx, |session, cx| session.report(notice, cx));
+        self.recording
+            .update(cx, |recording, cx| recording.retain_armed(|_| false, cx));
+        // The recorder writes the last of the take first; the input closes once it is done.
+        if !records {
+            self.follow_arming(cx);
+        }
+    }
+
+    /// Lines the waveforms of the takes up with the timeline, once the first frames came and
+    /// the recording is tied to it.
+    fn show_takes(&mut self, cx: &mut Context<Self>) {
+        let timing = self.timing.clone();
+        let Some(take) = &mut self.take else {
+            return;
+        };
+        let Some(audio) = take.audio.as_mut().filter(|audio| !audio.shown) else {
+            return;
+        };
+        let clock = self.session.read(cx).project().clock().clone();
+        let Some(head) = audio.placement.head(timing.as_deref(), &clock) else {
+            return;
+        };
+        if audio.started.is_empty() {
+            return;
+        }
+        audio.shown = true;
+        let start_seconds = take_seconds_at(head, clock.frame_of(take.start), &clock);
+        let live = audio.started.iter().map(|started| LiveTake {
+            track: started.track.clone(),
+            start: take.start,
+            sound: Some(LiveSound {
+                overview: started.overview.clone(),
+                start_seconds,
+            }),
+        });
+        let live = live.collect();
+        self.recording
+            .update(cx, |recording, cx| recording.set_takes(live, cx));
+    }
+
+    /// Runs the recorder once on the background executor, when it is here: it takes what the
+    /// input captured, writes the takes and says what came of it.
+    fn run_recorder(&mut self, cx: &mut Context<Self>) {
+        let Some(run) = self.audio.start_run() else {
+            return;
+        };
+        let work = cx.background_spawn(async move { run.run() });
+        cx.spawn(async move |pill, cx| {
+            let (recorder, reports, generation) = work.await;
+            // A window that went away takes the recorder with it, and its files close.
+            let _gone = pill.update(cx, |pill, cx| {
+                pill.audio.end_run(recorder, generation);
+                pill.on_reports(reports, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn on_reports(&mut self, reports: Vec<RecorderReport>, cx: &mut Context<Self>) {
+        for report in reports {
+            match report {
+                RecorderReport::Started { first_nanos, takes } => {
+                    if let Some(audio) = self.take.as_mut().and_then(|take| take.audio.as_mut()) {
+                        audio.placement.first_nanos = Some(first_nanos);
+                        audio.started = takes;
+                    }
+                }
+                RecorderReport::Failed { track, error } => {
+                    let project = self.session.read(cx).project();
+                    let name = project
+                        .resolve::<TrackState>(&track)
+                        .and_then(|track| Some(project.state(&track)?.name.clone()))
+                        .unwrap_or_else(|| track.to_string());
+                    let notice = format!("The take of {name} stops: {error}");
+                    self.session
+                        .update(cx, |session, cx| session.report(notice, cx));
+                }
+                RecorderReport::Behind { frames } => {
+                    let notice = format!(
+                        "Recording fell behind the input and lost {frames} frames. The take ends here."
+                    );
+                    self.session
+                        .update(cx, |session, cx| session.report(notice, cx));
+                    let tick = self.playhead.read(cx).tick;
+                    self.finish_recording(tick, cx);
+                }
+                RecorderReport::Finished { first_nanos, takes } => {
+                    if let Some(audio) = self.take.as_mut().and_then(|take| take.audio.as_mut())
+                        && first_nanos.is_some()
+                    {
+                        audio.placement.first_nanos = first_nanos;
+                    }
+                    self.make_clips(takes, cx);
+                }
+            }
+        }
     }
 
     /// Whether a press on the tempo is held, from the press to its end. For tests.
@@ -752,7 +1125,7 @@ impl Render for TransportPill {
         let click_on = self.click_is_on();
         let has_click = self.click.is_some();
         let recording = self.is_recording();
-        let has_keyboard = self.keyboard.is_some();
+        let can_record = self.keyboard.is_some() || self.audio.can_open();
         let session = self.session.clone();
 
         div()
@@ -814,7 +1187,7 @@ impl Render for TransportPill {
                             })
                             .size(ButtonSize::Sm)
                             .rounded(true)
-                            .disabled(!has_keyboard)
+                            .disabled(!can_record)
                             .debug_selector(|| "record".to_string())
                             .focus_handle(&self.record_focus)
                             .on_click(cx.listener(|pill, _, _, cx| pill.toggle_recording(cx))),
