@@ -427,11 +427,15 @@ fn a_take_that_cannot_be_written_on_keeps_what_was_written() {
         return;
     }
     // 500 blocks, of 512 or 1024 bytes as the shell counts them: 1.3 to 2.7 s of a mono take
-    // of 32-bit floats at 48 kHz.
-    let script = "trap '' XFSZ; ulimit -f 500; exec \"$0\" --exact recording_audio::record_past_the_file_size_limit --ignored";
+    // of 32-bit floats at 48 kHz. macOS leaves the `DYLD_` variables out when it starts the shell, and a test built with
+    // the realtime sanitizer finds its library through them, so they go through by hand.
+    let script = "trap '' XFSZ; ulimit -f 500; if [ -n \"$1\" ]; then export DYLD_LIBRARY_PATH=\"$1\"; fi; if [ -n \"$2\" ]; then export DYLD_FALLBACK_LIBRARY_PATH=\"$2\"; fi; exec \"$0\" --exact recording_audio::record_past_the_file_size_limit --ignored";
+    let variable = |name: &str| std::env::var_os(name).unwrap_or_default();
     let output = std::process::Command::new("sh")
         .args(["-c", script])
         .arg(std::env::current_exe().unwrap())
+        .arg(variable("DYLD_LIBRARY_PATH"))
+        .arg(variable("DYLD_FALLBACK_LIBRARY_PATH"))
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
