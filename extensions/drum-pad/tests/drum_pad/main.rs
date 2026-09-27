@@ -7,6 +7,7 @@
 
 mod choke;
 mod listen;
+mod performance;
 mod playing;
 mod samples;
 mod support;

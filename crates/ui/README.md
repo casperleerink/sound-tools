@@ -226,7 +226,7 @@ The gesture is one for all three controls, in `components/gesture.rs`: a drag fr
 
 A number without a dial, such as the tempo of the transport, is a `DragNumber`: the same gesture, and a drag in whole steps from the value it began on that does not round the result, so a value written by hand keeps its fraction. The owner gives the text as children and hears `ValueChange<f64>`.
 
-A device card is built from `DeviceCard`, `Column`, `Cell` and `Display`, see the rack section of the gallery (`crates/gallery/src/sections/rack.rs`). The meter shows a `Level`; where it comes from is the owner's business, and `meter::Ballistics` makes one from a peak per frame.
+A device card is built from `DeviceCard`, `Column`, `Cell` and `Display`, see the rack section of the gallery (`crates/gallery/src/sections/rack.rs`). The meter shows a `Level`; where it comes from is the owner's business, and `meter::Ballistics` makes one from a peak per frame. A cell may span two columns (`Cell::span(2)`), for a control that needs the room, such as a select with a `trigger_width`.
 
 A meter of a level on the audio thread: the processor records `sound_core::Peaks` every block, and the view keeps a `Metering` and reads the peaks once per poll of the session with `sound_ui::every_poll`. It notifies only when what the meter shows changed, so a meter at rest costs no frame.
 
@@ -273,4 +273,5 @@ The track panel does this for the track, the master panel for the master and the
 `Waveforms::overview(assets, asset, cx)` gives the `sound_media::Overview` of an audio file of a project, or `None` until it is made: the first ask starts a task of the background executor, and `Waveforms::entity(cx)` notifies when one is ready, so a view that draws waveforms observes it. The thread that draws never reads a file for a waveform. One cache for the application, kept in memory only.
 
 - `components::waveform_display::WaveformDisplay`: a whole file in the display inset, the part outside its start and end shaded, the start and end lines with hollow handles 8 pt above the bottom that drag sideways, a green line where the sound plays, and a curve with handles over it as on any `Display`. The Clip card of the arrangement and the Sampler share it. `Display` itself has `waveform`, `kept` and `signal_line` for it.
+- `components::pad::Pad`: one pad of a drum pad, 72 x 32, in every state: selected, sounding (green fading with a level from 0 to 1), a sample or a missing file (its glyph), and the lavender ring of a drop target, which it shows by itself while files from the Finder are over it when it has `on_drop_files`. A pad is no tab stop; its owner makes the grid one. The Drum pad is its user.
 - `components::audio_clip`: `paint_audio_clip(&AudioClipLook, window, cx)` paints an audio clip of the timeline in any of its states, and `ClipHandles` says where its three handles are for a hit test. It is a painter, because the timeline paints every clip on one canvas.

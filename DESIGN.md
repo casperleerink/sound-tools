@@ -93,6 +93,19 @@ Step 1b, September 26, 2026. What the direction left open, or what the build sho
 - `Add track` is a group label in the project menu with `Instrument track` and `Audio track` under it, then a separator, then `Fit tempo to take`.
 - Differences from the mockups, found side by side: no arm toggle yet (above, deferred to step 2); the voice and guitar of the snapshots are made by a formula, so their waveforms are more regular than the drawn ones; the window of `audio-window.png` has a track more than `window-audio.png` (the snapshot piece has no drums), and the meter above the volume of the voice shows the peak line of the snapshot's playback. Otherwise the clip shape, the handles, the fade lines, the labels, the Clip card with its divider, the empty card and the drop ghost match in place and size.
 
+### Settled with the Drum pad
+
+Step 4, September 26, 2026. The after images are in `docs/reference/m4-step-4/`: `window/` from `cargo test -p runtime --test snapshots` (the `drums-*` states), `gallery/drums.png` from the gallery. Compared with `drum-pad.png` and `drop-file.png` side by side.
+
+- A pad whose sample file is missing has the `triangle-alert` glyph in peach where a sample pad has its waveform glyph: peach is "files not live". The mockups had no such state.
+- The waveform glyph is lucide's `audio-lines`, 12 pt, in the text colour.
+- The Sound select is 104 pt, two cells less 4 pt each side, its label at the left and its chevron at the right; its list is 200 pt and opens where the popover has room, above the card in the window. The pad's own file is a group of its own between the sounds and `Choose file…`.
+- The value line under the Sound select says `Synthesized` or `Sample`; the Choke toggle says `On` or `Off`.
+- The ring of the grid with the focus from the keyboard is the lavender 1 pt ring of every control, 3 pt outside the grid with 9 pt corners.
+- A sounding pad is green at up to 24 %, in 24 steps of how loud it is against its hit, so a card whose pads hold still asks for no frame.
+- A sample pad is named by its file name without the extension, lowercase as `assets/audio/` holds it: `shaker`, where the mockup wrote `Shaker`.
+- Differences from the mockups, found side by side: the name of a sample pad (above); the meters of the Drums track are empty in the snapshot, which reads them on the timer of the real window. Otherwise the grid, the pads in every state, the knobs, the expanded card, the list and the drop ring match in place and size.
+
 ## Direction for the third milestone
 
 **Decided by the owner on September 25, 2026:** our own palette (see "Colour"), the transport in the title row, and the mixer strip in the header column. The owner also asked for a shorter panel, one volume control on the meter, a power icon in the card header and a look of its own for each device. The sizes, components and devices below are this step's answer to that, drawn in the mockups. Where this section differs from the sections after it, this section holds.
@@ -473,6 +486,9 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Track panel | the close icon in the header of an effect card | Take that effect off the track. One undo step, and undo brings it back as it sounded |
 | Track panel | drag the header of an effect card onto another card | Move the effect to that place in the chain. On the instrument it goes first, on `Add effect` last. One undo step. It keeps its bypass. Escape during the drag lets go |
 | Track panel | cmd-left, cmd-right, in an effect card | Move that effect one place. The instrument stays first |
+| Drum pad card | press a pad | Select it and play it. No undo step |
+| Drum pad card | tab to the grid, then the arrows, enter | The grid is one stop: the arrows move the selection, enter plays the selected pad |
+| Drum pad card | drop a file from the Finder on a pad | Copy it into `assets/audio/` and make that pad play it. One undo step. `Choose file…` in the Sound list does the same with the file panel |
 | Track panel | Open window, on the card of a plugin | The plugin's own window, above this one, where it was the last time. The same control closes it |
 | Note editor | double click on empty space inside the clip | Add a note of one step of the snap. Keep the second press down and drag to draw its length. It sounds |
 | Note editor | click on a note | Select it. It sounds |
