@@ -8,6 +8,7 @@ You build one step of a milestone. An orchestrator reviews your pull request and
 - Never use bare `git stash`. Use a WIP commit if you must set work aside.
 - The Cargo target directory is shared (`.cargo/config.toml`). Never change rustflags or the target directory.
 - Leave no process running when you finish. Temporary projects go under `/private/tmp`.
+- Never send mouse or keyboard events to the Mac or drive its screen. The owner may be using it. Checks that need a hand in the running app go in your report for the owner.
 
 ## Read first
 

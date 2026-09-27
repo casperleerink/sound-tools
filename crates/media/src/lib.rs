@@ -108,8 +108,11 @@ pub enum MediaError {
 /// A file that plays is shared by everything that plays it and let go of when the last of
 /// them lets go: the cache holds no file alive, but it keeps what the file is, its [`Info`],
 /// so asking how long it is costs one look at its size and time. A file that does not play
-/// is kept as its error, so asking again reads nothing. A file whose size or modification time
-/// changed is read again.
+/// is kept as its error, so asking again reads nothing, and a file that was not there as that.
+/// A file whose size or modification time changed is read again.
+///
+/// The lock is held only to look up and to put in, never while a file is read, so a look from
+/// the thread that draws ([`cached`]) never waits for a read.
 struct Known {
     length: u64,
     modified: Option<SystemTime>,
@@ -120,22 +123,34 @@ enum Outcome {
     Plays {
         info: Info,
         audio: Weak<Audio>,
-        /// A file [`import`] just read, held until the first [`load`] takes it, so that load
-        /// reads it no second time.
-        imported: Option<Arc<Audio>>,
     },
     DoesNotPlay(FormatError),
+    /// The file was not there when it was last looked for.
+    Missing,
 }
 
 static KNOWN: LazyLock<Mutex<HashMap<PathBuf, Known>>> = LazyLock::new(Mutex::default);
 
-/// The size and modification time of a file, or why there are none.
+fn known() -> std::sync::MutexGuard<'static, HashMap<PathBuf, Known>> {
+    KNOWN.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The size and modification time of a file, or why there are none. A file that is not there
+/// is remembered as that, for [`cached`].
 fn stat(path: &Path, shown: &str) -> Result<(u64, Option<SystemTime>), MediaError> {
     match fs::metadata(path) {
         Ok(metadata) => Ok((metadata.len(), metadata.modified().ok())),
-        Err(source) if source.kind() == io::ErrorKind::NotFound => Err(MediaError::Missing {
-            path: shown.to_string(),
-        }),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            let missing = Known {
+                length: 0,
+                modified: None,
+                outcome: Outcome::Missing,
+            };
+            known().insert(path.to_path_buf(), missing);
+            Err(MediaError::Missing {
+                path: shown.to_string(),
+            })
+        }
         Err(source) => Err(MediaError::Io {
             path: shown.to_string(),
             source,
@@ -143,9 +158,15 @@ fn stat(path: &Path, shown: &str) -> Result<(u64, Option<SystemTime>), MediaErro
     }
 }
 
-/// Reads and parses a file, and keeps what came of it.
+fn format_error(shown: &str, source: FormatError) -> MediaError {
+    MediaError::Format {
+        path: shown.to_string(),
+        source,
+    }
+}
+
+/// Reads and parses a whole file, with no lock held, and keeps what came of it.
 fn read(
-    known: &mut HashMap<PathBuf, Known>,
     path: &Path,
     shown: &str,
     (length, modified): (u64, Option<SystemTime>),
@@ -161,24 +182,20 @@ fn read(
             let outcome = Outcome::Plays {
                 info: audio.info(),
                 audio: Arc::downgrade(&audio),
-                imported: None,
             };
             (outcome, Ok(audio))
         }
-        Err(error) => {
-            let result = Err(MediaError::Format {
-                path: shown.to_string(),
-                source: error.clone(),
-            });
-            (Outcome::DoesNotPlay(error), result)
-        }
+        Err(error) => (
+            Outcome::DoesNotPlay(error.clone()),
+            Err(format_error(shown, error)),
+        ),
     };
     let entry = Known {
         length,
         modified,
         outcome,
     };
-    known.insert(path.to_path_buf(), entry);
+    known().insert(path.to_path_buf(), entry);
     result
 }
 
@@ -190,49 +207,98 @@ pub fn load(assets: &Assets, asset: &AudioAsset) -> Result<Arc<Audio>, MediaErro
     let path = assets.path(asset.asset_name());
     let shown = asset.project_path();
     let stamp = stat(&path, &shown)?;
-    let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(entry) = known.get_mut(&path)
+    if let Some(entry) = known().get(&path)
         && (entry.length, entry.modified) == stamp
     {
-        match &mut entry.outcome {
-            Outcome::Plays {
-                audio, imported, ..
-            } => {
-                if let Some(audio) = imported.take().or_else(|| audio.upgrade()) {
+        match &entry.outcome {
+            Outcome::Plays { audio, .. } => {
+                if let Some(audio) = audio.upgrade() {
                     return Ok(audio);
                 }
             }
-            Outcome::DoesNotPlay(error) => {
-                let source = error.clone();
-                return Err(MediaError::Format {
-                    path: shown,
-                    source,
-                });
-            }
+            Outcome::DoesNotPlay(error) => return Err(format_error(&shown, error.clone())),
+            Outcome::Missing => {}
         }
     }
-    read(&mut known, &path, &shown, stamp)
+    read(&path, &shown, stamp)
 }
 
-/// What the file a record names is: how many frames at what rate. After the first time it
-/// costs one look at the size and time of the file, whether anything holds the file or not.
+/// What the file a record names is: how many frames at what rate. It reads the header of the
+/// file the first time, never the samples, and after that costs one look at the size and time
+/// of the file, whether anything holds the file or not.
 pub fn info(assets: &Assets, asset: &AudioAsset) -> Result<Info, MediaError> {
     let path = assets.path(asset.asset_name());
     let shown = asset.project_path();
     let stamp = stat(&path, &shown)?;
-    let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(entry) = known.get(&path)
+    if let Some(entry) = known().get(&path)
         && (entry.length, entry.modified) == stamp
     {
-        return match &entry.outcome {
-            Outcome::Plays { info, .. } => Ok(*info),
-            Outcome::DoesNotPlay(error) => Err(MediaError::Format {
-                path: shown,
-                source: error.clone(),
-            }),
-        };
+        match &entry.outcome {
+            Outcome::Plays { info, .. } => return Ok(*info),
+            Outcome::DoesNotPlay(error) => return Err(format_error(&shown, error.clone())),
+            Outcome::Missing => {}
+        }
     }
-    read(&mut known, &path, &shown, stamp).map(|audio| audio.info())
+    let probed = file::probe(&path).map_err(|error| match error {
+        file::ProbeError::Io(source) => MediaError::Io {
+            path: shown.clone(),
+            source,
+        },
+        file::ProbeError::Format(source) => format_error(&shown, source),
+    });
+    let outcome = match &probed {
+        Ok(info) => Outcome::Plays {
+            info: *info,
+            audio: Weak::new(),
+        },
+        Err(MediaError::Format { source, .. }) => Outcome::DoesNotPlay(source.clone()),
+        // A file that cannot be read now may be read later, as one that is still copied.
+        Err(_) => return probed,
+    };
+    let entry = Known {
+        length: stamp.0,
+        modified: stamp.1,
+        outcome,
+    };
+    known().insert(path, entry);
+    probed
+}
+
+/// What is known of a file a record names, from memory only: no look at the disk at all, for
+/// the thread that draws. [`Cached::Unknown`] until [`info`] or [`load`] has looked at it,
+/// which the control side does when a clip names the file, and a view can ask a background
+/// thread to do.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Cached {
+    Plays(Info),
+    DoesNotPlay(FormatError),
+    Missing,
+    Unknown,
+}
+
+pub fn cached(assets: &Assets, asset: &AudioAsset) -> Cached {
+    let path = assets.path(asset.asset_name());
+    match known().get(&path).map(|entry| &entry.outcome) {
+        Some(Outcome::Plays { info, .. }) => Cached::Plays(*info),
+        Some(Outcome::DoesNotPlay(error)) => Cached::DoesNotPlay(error.clone()),
+        Some(Outcome::Missing) => Cached::Missing,
+        None => Cached::Unknown,
+    }
+}
+
+/// What a file anywhere is, from its header alone: how long a drop of it would be.
+pub fn probe(path: &Path) -> Result<Info, MediaError> {
+    let shown = path.display().to_string();
+    file::probe(path).map_err(|error| match error {
+        file::ProbeError::Io(source) if source.kind() == io::ErrorKind::NotFound => {
+            MediaError::Missing { path: shown }
+        }
+        file::ProbeError::Io(source) => MediaError::Io {
+            path: shown,
+            source,
+        },
+        file::ProbeError::Format(source) => format_error(&shown, source),
+    })
 }
 
 /// How many engine frames `file_frames` of a file play, at the file's own speed: every frame
@@ -268,8 +334,10 @@ pub fn resampler(file_rate: u32, engine_rate: u32) -> Arc<Resampler> {
 /// file never has the name, and it works on every file system, FAT and network shares too.
 /// Nothing is left behind when it fails.
 ///
-/// The file it read is kept for the first [`load`] of it, which then reads nothing.
-pub fn import(assets: &Assets, source: &Path) -> Result<AudioAsset, MediaError> {
+/// What it read comes back with the name, as the file in memory. While the caller holds it,
+/// the first [`load`] of it reads nothing; the cache itself holds it weakly, so a copy that
+/// never becomes a clip does not stay in memory.
+pub fn import(assets: &Assets, source: &Path) -> Result<Imported, MediaError> {
     let shown = source.display().to_string();
     let bytes = fs::read(source).map_err(|source| match source.kind() {
         io::ErrorKind::NotFound => MediaError::Missing {
@@ -329,21 +397,27 @@ pub fn import(assets: &Assets, source: &Path) -> Result<AudioAsset, MediaError> 
         return Err(io_error(&asset.project_path(), source));
     }
 
+    let audio = Arc::new(audio);
     if let Ok(stamp) = stat(&target, &asset.project_path()) {
-        let audio = Arc::new(audio);
         let entry = Known {
             length: stamp.0,
             modified: stamp.1,
             outcome: Outcome::Plays {
                 info: audio.info(),
                 audio: Arc::downgrade(&audio),
-                imported: Some(audio),
             },
         };
-        let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
-        known.insert(target, entry);
+        known().insert(target, entry);
     }
-    Ok(asset)
+    Ok(Imported { asset, audio })
+}
+
+/// A file copied into `assets/audio/`: the name a record gives it, and the file in memory.
+/// Hold it until the clip that names it is added, so the track that plays it reads nothing.
+#[derive(Debug)]
+pub struct Imported {
+    pub asset: AudioAsset,
+    pub audio: Arc<Audio>,
 }
 
 /// Removes a file this module made, on the way out of a failure that is already reported.

@@ -14,22 +14,28 @@ use std::sync::Arc;
 
 use gpui::{App, AppContext, Entity, Global};
 use sound_core::Assets;
-use sound_media::{AudioAsset, Info, Overview};
+use sound_media::{AudioAsset, Cached, Info, Overview};
 
-/// What is known of the waveform of one file.
-enum Known {
+/// Where the waveform of one file is.
+enum State {
     /// It is being made on a background thread.
     Making,
     Ready(Arc<Overview>),
-    /// The file could not be read. The next change of the file tries again.
+    /// The file could not be read. It is tried again when the file changes.
     Failed,
 }
 
-/// The overviews, by path and by what the file is, so a file replaced by another of another
-/// length gets a new one.
+/// The waveform of one file, and what the file was when it was made: a file replaced by
+/// another of another length gets a new one, which takes the place of the old one.
+struct Entry {
+    info: Option<Info>,
+    state: State,
+}
+
+/// The overviews, one per file.
 #[derive(Default)]
 pub struct Waveforms {
-    known: HashMap<(PathBuf, Info), Known>,
+    known: HashMap<PathBuf, Entry>,
     /// How many overviews were made, for a test that waits for one.
     made: u64,
 }
@@ -56,41 +62,57 @@ impl Waveforms {
 
     /// How many overviews are being made now.
     pub fn making(&self) -> usize {
-        let making = self.known.values();
-        making
-            .filter(|known| matches!(known, Known::Making))
+        let entries = self.known.values();
+        entries
+            .filter(|entry| matches!(entry.state, State::Making))
             .count()
     }
 
-    /// The overview of a file of a project, when it is made. The first time it is asked for it
-    /// is made on a background thread, and this returns `None` until then, as it does for a
-    /// file that is not there or does not play. It costs one look at the size and time of the
-    /// file, see [`sound_media::info`].
+    /// The overview of a file of a project, when it is made. It never touches the disk: what
+    /// the file is comes from [`sound_media::cached`]. The first time it is asked for, and after
+    /// the file changed, the file is looked at, read and its overview made on a background
+    /// thread, and this returns `None` until then, as it does for a file that is not there or
+    /// does not play. The cache notifies its observers when an overview is ready, and what the
+    /// background thread learned of the file is then in [`sound_media::cached`] too.
     pub fn overview(assets: &Assets, asset: &AudioAsset, cx: &mut App) -> Option<Arc<Overview>> {
-        let info = sound_media::info(assets, asset).ok()?;
-        let key = (assets.path(asset.asset_name()), info);
+        let info = match sound_media::cached(assets, asset) {
+            Cached::Plays(info) => Some(info),
+            Cached::Unknown => None,
+            Cached::DoesNotPlay(_) | Cached::Missing => return None,
+        };
+        let path = assets.path(asset.asset_name());
         let entity = Self::entity(cx);
-        match entity.read(cx).known.get(&key) {
-            Some(Known::Ready(overview)) => return Some(overview.clone()),
-            Some(Known::Making | Known::Failed) => return None,
-            None => {}
+        if let Some(entry) = entity.read(cx).known.get(&path) {
+            let same = entry.info == info || (info.is_none() && entry.info.is_some());
+            match &entry.state {
+                State::Ready(overview) if same => return Some(overview.clone()),
+                State::Making => return None,
+                State::Failed if same => return None,
+                State::Ready(_) | State::Failed => {}
+            }
         }
+        let making = Entry {
+            info,
+            state: State::Making,
+        };
         entity.update(cx, |waveforms, _| {
-            waveforms.known.insert(key.clone(), Known::Making)
+            waveforms.known.insert(path.clone(), making)
         });
         let (assets, asset) = (assets.clone(), asset.clone());
-        let making = cx.background_spawn(async move {
-            let audio = sound_media::load(&assets, &asset).ok()?;
-            Some(Arc::new(Overview::of(&audio)))
+        let work = cx.background_spawn(async move {
+            // What the file is, for the cache of sound-media, then the file and its overview.
+            let info = sound_media::info(&assets, &asset).ok();
+            let audio = sound_media::load(&assets, &asset).ok();
+            (info, audio.map(|audio| Arc::new(Overview::of(&audio))))
         });
         cx.spawn(async move |cx| {
-            let made = making.await;
+            let (info, overview) = work.await;
             entity.update(cx, |waveforms, cx| {
-                let known = match made {
-                    Some(overview) => Known::Ready(overview),
-                    None => Known::Failed,
+                let state = match overview {
+                    Some(overview) => State::Ready(overview),
+                    None => State::Failed,
                 };
-                waveforms.known.insert(key, known);
+                waveforms.known.insert(path, Entry { info, state });
                 waveforms.made += 1;
                 cx.notify();
             });
@@ -161,12 +183,33 @@ mod tests {
             .unwrap();
         assert_eq!(overview.frames(), 480_000);
         assert_eq!(overview.peak(0, 480_000), 0.5);
-        // A file that is not there has none, and asks for nothing.
+        // A file that is not there has none: the background thread finds it missing, and it
+        // is not asked for again.
         let missing = AudioAsset::new("gone.wav").unwrap();
         assert!(
             cx.update(|cx| Waveforms::overview(&assets, &missing, cx))
                 .is_none()
         );
-        assert_eq!(counts(cx), (0, 1));
+        cx.run_until_parked();
+        assert!(
+            cx.update(|cx| Waveforms::overview(&assets, &missing, cx))
+                .is_none()
+        );
+        assert_eq!(counts(cx), (0, 2));
+
+        // The same file replaced by a longer one gets a new overview, in the place of the old.
+        std::fs::write(&path, wav(12, 8_192)).unwrap();
+        sound_media::info(&assets, &asset).unwrap();
+        assert!(
+            cx.update(|cx| Waveforms::overview(&assets, &asset, cx))
+                .is_none()
+        );
+        cx.run_until_parked();
+        let overview = cx
+            .update(|cx| Waveforms::overview(&assets, &asset, cx))
+            .unwrap();
+        assert_eq!(overview.frames(), 576_000);
+        let entries = cx.update(|cx| Waveforms::entity(cx).read(cx).known.len());
+        assert_eq!(entries, 2);
     }
 }

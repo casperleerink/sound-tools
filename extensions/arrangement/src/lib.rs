@@ -630,9 +630,9 @@ pub fn add_audio_file(
     source: &std::path::Path,
     start: Ticks,
 ) -> Result<Instance<AudioClip>, AudioFileError> {
-    let asset = sound_media::import(project.assets(), source)?;
-    let name = asset.asset_name().name().to_string();
-    let clip = AudioClip::new(asset, start);
+    let imported = sound_media::import(project.assets(), source)?;
+    let name = imported.asset.asset_name().name().to_string();
+    let clip = AudioClip::new(imported.asset, start);
     Ok(add_audio_clip(project, changes, track, &name, clip)?)
 }
 

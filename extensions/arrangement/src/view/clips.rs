@@ -11,7 +11,7 @@
 //! record, dragged from their handles and turned with their knobs.
 
 use sound_core::{Changes, Clock, InstanceId, Project, Ticks};
-use sound_media::Info;
+use sound_media::{Cached, Info};
 use sound_notes::Clip;
 
 use super::layout::shifted;
@@ -80,10 +80,11 @@ impl AnyClip {
 /// Where an audio clip ends on the timeline. It plays at the speed of its file, so this depends
 /// on the file and the tempo. When the file is not there the clip still needs a place to be seen,
 /// selected and deleted: as long as its trim says, or one bar when it plays to the end of a file
-/// nobody can measure.
+/// nobody can measure. The same while nothing knows yet what the file is: this never looks at
+/// the disk, because the thread that draws calls it, see [`sound_media::cached`].
 pub fn shown_end(project: &Project, clip: &AudioClip) -> Ticks {
     let clock = project.clock();
-    if let Ok(file) = sound_media::info(project.assets(), &clip.asset) {
+    if let Cached::Plays(file) = sound_media::cached(project.assets(), &clip.asset) {
         return clip.end(Some(&file), clock).max(clip.start + Ticks(1));
     }
     match clip.file_end_seconds {
@@ -131,11 +132,12 @@ pub fn trimmed_left(
     let start =
         shifted(origin.start, delta).clamp(earliest.min(origin.start), latest.max(origin.start));
     let moved = seconds(clock, start) - seconds(clock, origin.start);
-    AudioClip {
+    let trimmed = AudioClip {
         start,
         file_start_seconds: (origin.file_start_seconds + moved).max(0.0),
         ..origin.clone()
-    }
+    };
+    fitted(trimmed, file)
 }
 
 /// The clip with its right edge moved by `delta` ticks: where the file stops playing. It stops
@@ -158,12 +160,26 @@ pub fn trimmed_right(
     let earliest = origin.start + Ticks(shortest(length, unit));
     let next = shifted(end, delta).clamp(earliest.min(end), latest.max(end));
     if next >= latest {
-        return whole;
+        return fitted(whole, file);
     }
     let played = seconds(clock, next) - seconds(clock, origin.start);
-    AudioClip {
+    let trimmed = AudioClip {
         file_end_seconds: Some(origin.file_start_seconds + played),
         ..origin.clone()
+    };
+    fitted(trimmed, file)
+}
+
+/// The clip with its fades inside what it plays after a trim, by the rule of the fade limits:
+/// the fade in no longer than the clip, the fade out no longer than what the fade in leaves.
+pub fn fitted(clip: AudioClip, file: &Info) -> AudioClip {
+    let played = played_ms(&clip, file);
+    let fade_in_ms = clip.fade_in_ms.min(played);
+    let fade_out_ms = clip.fade_out_ms.min(played - fade_in_ms);
+    AudioClip {
+        fade_in_ms,
+        fade_out_ms,
+        ..clip
     }
 }
 
@@ -173,28 +189,43 @@ pub const SHORTEST_SECONDS: f64 = 0.01;
 /// The clip playing its file from `seconds` on, as the start line of the Clip card and its
 /// Start knob set it. As the left edge on the timeline, it keeps the sound where it is in time:
 /// the clip starts that much later or earlier. It stops at tick 0 and short of the end.
-pub fn with_file_start(clip: &AudioClip, file: &Info, clock: &Clock, seconds: f64) -> AudioClip {
-    let end = clip.file_end_seconds.unwrap_or_else(|| file.seconds());
+///
+/// The clip starts on a tick, so the tick is found first and the start in the file follows
+/// from it, as for the left edge: the sound stays exactly in place. Every move of a drag gives
+/// `origin`, the clip as it was when the drag began, so nothing adds up over the moves.
+pub fn with_file_start(origin: &AudioClip, file: &Info, clock: &Clock, seconds: f64) -> AudioClip {
+    let end = origin.file_end_seconds.unwrap_or_else(|| file.seconds());
+    // Where the start of the file is on the timeline, which a trim does not move.
+    let place = clock.seconds_of(origin.start) - origin.file_start_seconds;
     // The earliest the file can start and still begin at tick 0 or after.
-    let earliest = (clip.file_start_seconds - clock.seconds_of(clip.start)).max(0.0);
-    let seconds = seconds.clamp(earliest, (end - SHORTEST_SECONDS).max(earliest));
-    let start = clock.seconds_of(clip.start) + (seconds - clip.file_start_seconds);
-    AudioClip {
-        start: clock.tick_at_seconds(start),
-        file_start_seconds: seconds,
-        ..clip.clone()
+    let earliest = (-place).max(0.0);
+    let latest = (end - SHORTEST_SECONDS).max(earliest);
+    let seconds = seconds.clamp(earliest, latest);
+    let at = |tick: Ticks| clock.seconds_of(tick) - place;
+    let mut start = clock.tick_at_seconds(place + seconds);
+    // The tick is the first at or after the time, so it may be just past the latest start.
+    while start > Ticks(0) && at(start) > latest {
+        start = Ticks(start.0 - 1);
     }
+    let trimmed = AudioClip {
+        start,
+        file_start_seconds: at(start).max(0.0),
+        ..origin.clone()
+    };
+    fitted(trimmed, file)
 }
 
 /// The clip playing its file up to `seconds`, as the end line and the End knob set it. The end
-/// of the file is written as the end of the file.
+/// of the file, or within a frame of it, is written as the end of the file.
 pub fn with_file_end(clip: &AudioClip, file: &Info, seconds: f64) -> AudioClip {
     let seconds = seconds.max(clip.file_start_seconds + SHORTEST_SECONDS);
-    let file_end_seconds = (seconds < file.seconds()).then_some(seconds);
-    AudioClip {
+    let frame = 1.0 / f64::from(file.sample_rate.max(1));
+    let file_end_seconds = (seconds < file.seconds() - frame).then_some(seconds);
+    let trimmed = AudioClip {
         file_end_seconds,
         ..clip.clone()
-    }
+    };
+    fitted(trimmed, file)
 }
 
 /// How long a clip plays, in milliseconds.
@@ -223,9 +254,13 @@ pub const GAIN_KEY_STEP_DB: f32 = 1.0;
 /// Points of a drag of the gain handle for the whole range, as a knob has.
 pub const GAIN_TRAVEL: f32 = 200.0;
 
-/// A gain moved by `db` from `from`, to a tenth of a decibel and inside [`GAIN_DB`].
+/// A gain moved by `db` from `from`, to a tenth of a decibel and inside [`GAIN_DB`]. A gain
+/// under the range, such as `-inf`, stays where it is when it is moved down.
 pub fn gain_moved(from: f32, db: f32) -> f32 {
     let (bottom, top) = GAIN_DB;
+    if from < bottom && db <= 0.0 {
+        return from;
+    }
     let from = from.max(bottom);
     ((from + db) * 10.0)
         .round()
@@ -370,6 +405,54 @@ mod tests {
         );
     }
 
+    /// A drag of the start line of a hundred moves, each from the clip of the press as the card
+    /// gives it, leaves the sound where it was within a frame, wherever it stops.
+    #[test]
+    fn the_start_of_the_card_keeps_the_sound_in_place_over_a_long_drag() {
+        let (clock, file) = (clock(), file());
+        let origin = clip(3840, 1.0, None);
+        let place = |clip: &AudioClip| clock.seconds_of(clip.start) - clip.file_start_seconds;
+        let frame = 1.0 / f64::from(RATE);
+        for step in 0..=100 {
+            let seconds = 0.3 + 0.0137 * f64::from(step);
+            let trimmed = with_file_start(&origin, &file, &clock, seconds);
+            assert!(
+                (place(&trimmed) - place(&origin)).abs() < frame,
+                "{step}: {trimmed:?}"
+            );
+            assert!(
+                (trimmed.file_start_seconds - seconds).abs() < 0.001,
+                "{step}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_trim_keeps_the_fades_inside_the_clip() {
+        let (clock, file) = (clock(), file());
+        // Four seconds with a fade in of 3 s and a fade out of 1 s.
+        let origin = AudioClip {
+            fade_in_ms: 3000.0,
+            fade_out_ms: 1000.0,
+            ..clip(0, 0.0, None)
+        };
+        // The end in to 2 s: the fade in takes it all.
+        let short = trimmed_right(&origin, &file, &clock, -3840, UNIT);
+        assert_eq!((short.fade_in_ms, short.fade_out_ms), (2000.0, 0.0));
+        let short = with_file_end(&origin, &file, 2.5);
+        assert_eq!((short.fade_in_ms, short.fade_out_ms), (2500.0, 0.0));
+        let late = trimmed_left(&origin, &file, &clock, 3840, UNIT);
+        assert_eq!((late.fade_in_ms, late.fade_out_ms), (2000.0, 0.0));
+        let late = with_file_start(&origin, &file, &clock, 3.5);
+        assert!(
+            late.fade_in_ms <= 500.0 && late.fade_out_ms == 0.0,
+            "{late:?}"
+        );
+        // The end of the file within a frame is the end of the file.
+        let almost = with_file_end(&origin, &file, 4.0 - 0.5 / f64::from(RATE));
+        assert_eq!(almost.file_end_seconds, None);
+    }
+
     #[test]
     fn fades_leave_room_for_each_other_and_gain_stays_in_its_range() {
         let file = file();
@@ -384,6 +467,8 @@ mod tests {
         assert_eq!(gain_moved(0.0, -6.04), -6.0);
         assert_eq!(gain_moved(20.0, 10.0), 24.0);
         assert_eq!(gain_moved(f32::NEG_INFINITY, 1.0), -47.0);
+        assert_eq!(gain_moved(f32::NEG_INFINITY, -1.0), f32::NEG_INFINITY);
+        assert_eq!(gain_moved(-60.0, -1.0), -60.0);
         assert_eq!(gain_label(-6.0), "-6 dB");
         assert_eq!(gain_label(3.5), "+3.5 dB");
         assert_eq!(gain_label(0.0), "0 dB");

@@ -15,7 +15,7 @@
 
 use gpui::{
     App, BorderStyle, Bounds, Hsla, PathBuilder, Pixels, Point, SharedString, TextAlign, TextRun,
-    TruncateFrom, Window, fill, point, px, quad, size,
+    TruncateFrom, Window, point, px, quad, size,
 };
 
 use crate::components::paint;
@@ -168,16 +168,18 @@ fn paint_columns(
     level: impl Fn(f32) -> f32,
     window: &mut Window,
 ) {
-    for (index, peak) in columns.peaks.iter().enumerate() {
-        let x = f32::from(columns.left) + index as f32;
-        // At least a hairline, so a quiet part of the file still shows where it is.
-        let reach = ((peak * level(x + 0.5)).min(1.) * WAVEFORM_REACH).max(0.5);
-        let area = Bounds::new(
-            point(px(x), middle - px(reach)),
-            size(px(1.), px(reach * 2.)),
-        );
-        window.paint_quad(fill(area, color));
-    }
+    let left = f32::from(columns.left);
+    let reaches: Vec<f32> = columns
+        .peaks
+        .iter()
+        .enumerate()
+        .map(|(index, peak)| {
+            let x = left + index as f32 + 0.5;
+            // At least a hairline, so a quiet part of the file still shows where it is.
+            ((peak * level(x)).min(1.) * WAVEFORM_REACH).max(0.5)
+        })
+        .collect();
+    paint::mirrored_waveform(window, (left, f32::from(middle)), 1., &reaches, color);
 }
 
 /// Paints one audio clip.

@@ -361,6 +361,14 @@ fn an_outside_edit_of_an_audio_clip_shows_in_the_window(cx: &mut TestAppContext)
     assert_eq!(opened.selected_clip(), None);
 }
 
+/// Where the start of the file of a clip is on the timeline, in seconds at 120 bpm: what a
+/// trim of its start must not move.
+fn sound_place(clip: &AudioClip) -> f64 {
+    clip.start.0 as f64 / SECOND as f64 - clip.file_start_seconds
+}
+
+const ONE_FRAME: f64 = 1. / 48_000.;
+
 // The Clip card.
 
 fn clip_card(opened: &mut Opened<'_>) -> Option<Entity<ClipCard>> {
@@ -415,9 +423,11 @@ fn the_clip_card_shows_the_selected_clip_of_its_track_and_its_controls_edit_it(
     let knob = opened.control("knob-start");
     opened.click(knob);
     opened.keys("up");
+    // A fiftieth of four seconds is 0.08 s: the clip starts on the tick at or after that, and
+    // the start in the file follows from the tick, so the sound is where it was.
     let long = audio_clip(&mut opened, LONG).unwrap();
-    assert_eq!(long.file_start_seconds, 0.08_f32 as f64);
     assert_eq!(long.start, Ticks(BAR + 154));
+    assert!((sound_place(&long) - 2.0).abs() < ONE_FRAME, "{long:?}");
     one_undo_step(&mut opened, "Trim clip", &before);
 
     // The gain handle of the display, dragged up.
@@ -433,6 +443,31 @@ fn the_clip_card_shows_the_selected_clip_of_its_track_and_its_controls_edit_it(
         .cx
         .read(|cx| card.read(cx).clip().map(|clip| clip.id().clone()));
     assert_eq!(shown, Some(id(STEADY)));
+}
+
+/// A hundred moves of the start line of the display, a point at a time: the clip starts later
+/// on the grid of ticks and the sound stays where it was within one frame, and the drag is one
+/// step.
+#[gpui::test]
+fn a_long_drag_of_the_start_line_keeps_the_sound_in_place(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let long = opened.at(BAR + BAR / 2, 1);
+    opened.double_click(long);
+    let before = mark(&mut opened);
+    let handle = opened.control("handle-start");
+    opened.press(handle);
+    let moves: Vec<_> = (1..=100)
+        .map(|step| right(handle, step as f32 * 0.5))
+        .collect();
+    for position in &moves {
+        opened.drag_to(*position);
+    }
+    let last = *moves.last().unwrap();
+    opened.release(last);
+    let long = audio_clip(&mut opened, LONG).unwrap();
+    assert!(long.file_start_seconds > 0.5, "{long:?}");
+    assert!((sound_place(&long) - 2.0).abs() < ONE_FRAME, "{long:?}");
+    one_undo_step(&mut opened, "Trim clip", &before);
 }
 
 // Dropping files from the Finder.
@@ -529,6 +564,32 @@ fn files_dropped_over_an_instrument_track_go_nowhere(cx: &mut TestAppContext) {
     drop_files(&mut opened, &paths, at);
     assert_eq!(opened.undo_label(), None);
     assert!(!opened.path("assets/audio/strum-2.wav").exists());
+}
+
+/// The files go where they are let go of, also when the last move of the drag was elsewhere.
+#[gpui::test]
+fn a_drop_goes_where_the_files_are_let_go_of(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let (_folder, paths) = files();
+    let over_voice = opened.at(8 * BAR, 1);
+    let over_guitar = opened.at(4 * BAR, 2);
+    let paths = ExternalPaths(paths[..1].iter().cloned().collect());
+    opened.cx.simulate_event(FileDropEvent::Entered {
+        position: over_voice,
+        paths,
+    });
+    opened.cx.update(|window, _| window.refresh());
+    opened.cx.run_until_parked();
+    opened.cx.simulate_event(FileDropEvent::Pending {
+        position: over_voice,
+    });
+    opened.cx.simulate_event(FileDropEvent::Submit {
+        position: over_guitar,
+    });
+    opened.cx.run_until_parked();
+    let clip = audio_clip(&mut opened, "arrangement/guitar/strum-2").unwrap();
+    assert_eq!(clip.start, Ticks(4 * BAR));
+    assert!(audio_clip(&mut opened, "arrangement/voice/strum-2").is_none());
 }
 
 /// The drop handler on its own, with no platform drag at all.

@@ -340,7 +340,7 @@ fn an_import_copies_the_file_in_under_a_free_name_and_never_writes_over_one() {
     );
 
     let first = sound_media::import(&assets, &source).unwrap();
-    assert_eq!(first.to_string(), "my-take-2.wav");
+    assert_eq!(first.asset.to_string(), "my-take-2.wav");
     let copied = project.path().join("assets/audio/my-take-2.wav");
     assert_eq!(
         std::fs::read(&copied).unwrap(),
@@ -348,7 +348,7 @@ fn an_import_copies_the_file_in_under_a_free_name_and_never_writes_over_one() {
     );
 
     let second = sound_media::import(&assets, &source).unwrap();
-    assert_eq!(second.to_string(), "my-take-2-2.wav");
+    assert_eq!(second.asset.to_string(), "my-take-2-2.wav");
     // Nothing else is left in the folder.
     let mut names: Vec<String> = std::fs::read_dir(project.path().join("assets/audio"))
         .unwrap()
@@ -464,12 +464,59 @@ fn an_imported_file_is_read_once() {
         (24, hound::SampleFormat::Int),
         &frames(),
     );
-    let asset = sound_media::import(&assets, &source).unwrap();
+    let imported = sound_media::import(&assets, &source).unwrap();
     let copied = project.path().join("assets/audio/riff.wav");
     lock(&copied, true);
-    let loaded = sound_media::load(&assets, &asset);
+    let loaded = sound_media::load(&assets, &imported.asset);
     lock(&copied, false);
     assert_eq!(loaded.unwrap().frames(), 5);
+}
+
+/// A copy that never becomes a clip does not stay in memory: the cache holds it weakly, and
+/// what `import` gave back is the only strong hold.
+#[test]
+fn an_imported_file_nobody_holds_leaves_memory() {
+    let project = tempfile::tempdir().unwrap();
+    let assets = Assets::new(project.path());
+    let outside = tempfile::tempdir().unwrap();
+    let source = outside.path().join("riff.wav");
+    wav(
+        &source,
+        48_000,
+        2,
+        (16, hound::SampleFormat::Int),
+        &frames(),
+    );
+    let imported = sound_media::import(&assets, &source).unwrap();
+    let held = std::sync::Arc::downgrade(&imported.audio);
+    drop(imported);
+    assert!(held.upgrade().is_none());
+}
+
+/// What a file is comes from its header, whatever the file holds after it, and a header that
+/// is cut short is no audio.
+#[test]
+fn the_header_says_how_long_a_file_is() {
+    let outside = tempfile::tempdir().unwrap();
+    let source = outside.path().join("long.wav");
+    let long: Vec<[f64; 2]> = (0..200_000).map(|_| [0.25, -0.25]).collect();
+    wav(&source, 44_100, 2, (24, hound::SampleFormat::Int), &long);
+    let info = sound_media::probe(&source).unwrap();
+    assert_eq!(
+        (info.frames, info.sample_rate, info.channels),
+        (200_000, 44_100, 2)
+    );
+    let text = outside.path().join("notes.wav");
+    std::fs::write(&text, "not audio").unwrap();
+    assert!(matches!(
+        sound_media::probe(&text),
+        Err(MediaError::Format { .. })
+    ));
+    let gone = outside.path().join("gone.wav");
+    assert!(matches!(
+        sound_media::probe(&gone),
+        Err(MediaError::Missing { .. })
+    ));
 }
 
 #[test]

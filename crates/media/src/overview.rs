@@ -77,44 +77,59 @@ impl Overview {
         self.frames as f64 / f64::from(self.sample_rate.max(1))
     }
 
-    /// The loudest sample from frame `from` up to `to`, 0 to 1. A stretch shorter than the finest
-    /// resolution gives the peak of the stretch it falls in, so a waveform zoomed far in is not
-    /// empty between its peaks. Outside the file is silence.
-    pub fn peak(&self, from: u64, to: u64) -> f32 {
+    /// The resolution for stretches of `length` frames: the coarsest whose peaks are no longer
+    /// than that, so a stretch reads 1 to 8 of them. Its size in frames with it.
+    fn level_for(&self, length: u64) -> (usize, u64) {
+        let (mut level, mut size) = (0, FINEST_FRAMES);
+        while level + 1 < self.levels.len() && size * COARSER as u64 <= length {
+            level += 1;
+            size *= COARSER as u64;
+        }
+        (level, size)
+    }
+
+    /// The loudest sample from frame `from` up to `to` at one resolution. Each peak counts for
+    /// the stretch its first frame is in, so stretches next to each other share none and miss
+    /// none. A stretch that holds no first frame gives the peak it lies in, so a waveform zoomed
+    /// far in has no gaps.
+    fn peak_at(&self, (level, size): (usize, u64), from: u64, to: u64) -> f32 {
+        let Some(peaks) = self.levels.get(level) else {
+            return 0.0;
+        };
         let to = to.min(self.frames);
         if from >= to {
             return 0.0;
         }
-        let length = to - from;
-        // The coarsest resolution with at least eight of its peaks in the stretch, so a column
-        // reads 8 to 64 peaks whatever its width.
-        let mut level = 0;
-        let mut size = FINEST_FRAMES;
-        while level + 1 < self.levels.len() && size * (COARSER * COARSER) as u64 <= length {
-            level += 1;
-            size *= COARSER as u64;
-        }
-        // Each peak counts for the stretch its first frame is in, so two columns next to each
-        // other never both show one loud sample.
+        let index = |frame: u64| usize::try_from(frame).unwrap_or(usize::MAX);
         let (first, last) = (from.div_ceil(size), to.div_ceil(size));
         if first >= last {
-            let finest = self.levels.first().and_then(|peaks| {
-                let index = usize::try_from(from / FINEST_FRAMES).ok()?;
-                peaks.get(index).copied()
-            });
-            return finest.unwrap_or(0.0);
+            return peaks.get(index(from / size)).copied().unwrap_or(0.0);
         }
-        let Some(peaks) = self.levels.get(level) else {
-            return 0.0;
+        let range = index(first)..index(last).min(peaks.len());
+        let peaks = peaks.get(range).unwrap_or_default();
+        peaks.iter().copied().fold(0.0, f32::max)
+    }
+
+    /// The loudest sample from frame `from` up to `to`, 0 to 1. Outside the file is silence.
+    pub fn peak(&self, from: u64, to: u64) -> f32 {
+        let level = self.level_for(to.saturating_sub(from));
+        self.peak_at(level, from, to)
+    }
+
+    /// The peaks of the columns between `edges`, frames of the file from left to right, each
+    /// column from one edge up to the next. All at one resolution, the one for their average
+    /// width, so together they cover every frame and a single loud sample shows in a column at
+    /// every zoom.
+    pub fn peaks(&self, edges: &[u64]) -> Vec<f32> {
+        let (Some(first), Some(last)) = (edges.first(), edges.last()) else {
+            return Vec::new();
         };
-        let range = usize::try_from(first).unwrap_or(usize::MAX)
-            ..usize::try_from(last).unwrap_or(usize::MAX).min(peaks.len());
-        peaks
-            .get(range)
-            .unwrap_or_default()
-            .iter()
-            .copied()
-            .fold(0.0, f32::max)
+        let columns = edges.len().saturating_sub(1).max(1) as u64;
+        let level = self.level_for(last.saturating_sub(*first) / columns);
+        let peaks = edges
+            .windows(2)
+            .map(|edge| self.peak_at(level, edge[0], edge[1]));
+        peaks.collect()
     }
 
     /// The peaks of `count` columns of equal width over the file, from second `from` to second
@@ -122,13 +137,10 @@ impl Overview {
     pub fn columns(&self, from: f64, to: f64, count: usize) -> Vec<f32> {
         let rate = f64::from(self.sample_rate);
         let step = (to - from) / count.max(1) as f64;
-        (0..count)
-            .map(|column| {
-                let start = from + step * column as f64;
-                let frame = |seconds: f64| (seconds * rate).max(0.0) as u64;
-                self.peak(frame(start), frame(start + step).max(frame(start) + 1))
-            })
-            .collect()
+        let edges: Vec<u64> = (0..=count)
+            .map(|edge| ((from + step * edge as f64) * rate).max(0.0) as u64)
+            .collect();
+        self.peaks(&edges)
     }
 }
 
@@ -168,7 +180,7 @@ mod tests {
         assert_eq!(overview.frames(), 200_000);
         assert_eq!(overview.peak(0, 200_000), 0.5);
         assert_eq!(overview.peak(14_000, 16_000), 0.5);
-        assert_eq!(overview.peak(20_000, 100_000), 0.0);
+        assert_eq!(overview.peak(20_000, 90_000), 0.0);
         assert_eq!(overview.peak(104_990, 105_010), 0.25);
         assert_eq!(overview.peak(20_000, 200_000), 0.25);
         // Past the end, and nothing asked for.
@@ -179,6 +191,37 @@ mod tests {
         assert_eq!(columns[1], 0.5);
         assert_eq!(columns[10], 0.25);
         assert_eq!(columns.iter().filter(|peak| **peak > 0.0).count(), 2);
+    }
+
+    /// One loud sample shows in a column at every width of column, from a frame to the whole
+    /// file, wherever the columns start.
+    #[test]
+    fn a_single_sample_click_shows_at_every_zoom() {
+        let frames = 1_000_000_u64;
+        let click = 654_321_u64;
+        let mut samples = vec![0_i16; frames as usize];
+        samples[click as usize] = 32_000;
+        let overview = Overview::of(&wav(&samples));
+        let mut width = 1_u64;
+        while width <= frames {
+            for offset in [0, width / 3, width / 2] {
+                let edges: Vec<u64> = (0..)
+                    .map(|column| offset + column * width)
+                    .take_while(|edge| *edge <= frames + width)
+                    .collect();
+                let peaks = overview.peaks(&edges);
+                let shown = peaks.iter().filter(|peak| **peak > 0.9).count();
+                assert!(
+                    shown >= 1,
+                    "width {width}, offset {offset}: the click is lost"
+                );
+                // Wider than a finest peak, it shows in one column only.
+                if width >= FINEST_FRAMES * 2 {
+                    assert_eq!(shown, 1, "width {width}, offset {offset}");
+                }
+            }
+            width = width * 3 + 1;
+        }
     }
 
     #[test]

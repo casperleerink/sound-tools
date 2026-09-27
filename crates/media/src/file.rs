@@ -153,26 +153,8 @@ impl fmt::Debug for Audio {
 impl Audio {
     /// Reads the layout of a WAV or AIFF file from its bytes and keeps them.
     pub fn parse(bytes: Vec<u8>) -> Result<Self, FormatError> {
-        let layout = match bytes.get(..4) {
-            Some(b"RIFF") => wav(&bytes)?,
-            Some(b"FORM") => aiff(&bytes)?,
-            Some(b"RF64") => return Err(FormatError::Unsupported("RF64".to_string())),
-            _ => return Err(FormatError::NotAudio),
-        };
-        let (min, max) = SAMPLE_RATES;
-        if !(min..=max).contains(&layout.sample_rate) {
-            return Err(FormatError::SampleRate(layout.sample_rate));
-        }
-        if layout.channels == 0 {
-            return Err(FormatError::Damaged("it says it has no channels"));
-        }
-        let frame_size = layout.encoding.size() * usize::from(layout.channels);
-        let available = bytes.len().saturating_sub(layout.data);
-        // A header may say more than the file holds, for example after a recording that was
-        // cut off, and a writer that streams may leave the length at its largest. What is
-        // there is what plays.
-        let length = layout.length.unwrap_or(available).min(available);
-        let frames = (length / frame_size) as u64;
+        let layout = checked_layout(&bytes)?;
+        let frames = frames_of(&layout, bytes.len());
         Ok(Self {
             bytes,
             data: layout.data,
@@ -310,6 +292,74 @@ fn decode<const SIZE: usize>(
     };
     for (frame, out) in bytes.chunks_exact(frame_size).zip(out) {
         *out = [at(frame, 0), at(frame, right)];
+    }
+}
+
+/// The layout of a file from its first bytes, with what this reads checked: the one place
+/// that decides whether a file plays, for [`Audio::parse`] and [`probe`] alike.
+fn checked_layout(bytes: &[u8]) -> Result<Layout, FormatError> {
+    let layout = match bytes.get(..4) {
+        Some(b"RIFF") => wav(bytes)?,
+        Some(b"FORM") => aiff(bytes)?,
+        Some(b"RF64") => return Err(FormatError::Unsupported("RF64".to_string())),
+        _ => return Err(FormatError::NotAudio),
+    };
+    let (min, max) = SAMPLE_RATES;
+    if !(min..=max).contains(&layout.sample_rate) {
+        return Err(FormatError::SampleRate(layout.sample_rate));
+    }
+    if layout.channels == 0 {
+        return Err(FormatError::Damaged("it says it has no channels"));
+    }
+    Ok(layout)
+}
+
+/// How many whole frames a file of `size` bytes holds.
+fn frames_of(layout: &Layout, size: usize) -> u64 {
+    let frame_size = layout.encoding.size() * usize::from(layout.channels);
+    let available = size.saturating_sub(layout.data);
+    // A header may say more than the file holds, for example after a recording that was
+    // cut off, and a writer that streams may leave the length at its largest. What is
+    // there is what plays.
+    let length = layout.length.unwrap_or(available).min(available);
+    (length / frame_size.max(1)) as u64
+}
+
+/// Why the header of a file could not be read.
+pub(crate) enum ProbeError {
+    Io(std::io::Error),
+    Format(FormatError),
+}
+
+/// What a file is, from its header: the start of the file, and more of it only while its
+/// chunks go on past what was read. Never its samples, so a long file costs no more than a
+/// short one.
+pub(crate) fn probe(path: &std::path::Path) -> Result<Info, ProbeError> {
+    use std::io::{Read, Seek};
+    let mut file = std::fs::File::open(path).map_err(ProbeError::Io)?;
+    let size = file.metadata().map_err(ProbeError::Io)?.len();
+    let mut wanted = 64 * 1024_u64;
+    loop {
+        file.rewind().map_err(ProbeError::Io)?;
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(wanted)
+            .read_to_end(&mut bytes)
+            .map_err(ProbeError::Io)?;
+        match checked_layout(&bytes) {
+            Ok(layout) => {
+                let frames = frames_of(&layout, usize::try_from(size).unwrap_or(usize::MAX));
+                return Ok(Info {
+                    frames,
+                    channels: layout.channels,
+                    sample_rate: layout.sample_rate,
+                    container: layout.container,
+                });
+            }
+            // A chunk it needs may lie further on, after a long one it does not.
+            Err(FormatError::Damaged(_)) if (bytes.len() as u64) < size => wanted *= 8,
+            Err(error) => return Err(ProbeError::Format(error)),
+        }
     }
 }
 

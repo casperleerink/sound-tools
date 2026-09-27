@@ -32,6 +32,7 @@ use gpui::{
 
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::knob::KnobRange;
+use crate::components::paint;
 use crate::theme::ActiveTheme;
 use crate::typography;
 
@@ -393,13 +394,14 @@ fn paint_waveform(bounds: Bounds<Pixels>, waveform: &Waveform, ink: Ink, window:
     let count = waveform.peaks.len();
     if count > 0 {
         let column = width / count as f32;
-        for (index, peak) in waveform.peaks.iter().enumerate() {
-            // At least a hairline, so silence still shows where the file is.
-            let half = (peak.clamp(0., 1.) * (middle - WAVEFORM_MARGIN)).max(0.5);
-            let origin = bounds.origin + point(px(index as f32 * column), px(middle - half));
-            let area = Bounds::new(origin, size(px(column.max(1.)), px(half * 2.)));
-            window.paint_quad(fill(area, ink.waveform));
-        }
+        // At least a hairline, so silence still shows where the file is.
+        let reaches: Vec<f32> = waveform
+            .peaks
+            .iter()
+            .map(|peak| (peak.clamp(0., 1.) * (middle - WAVEFORM_MARGIN)).max(0.5))
+            .collect();
+        let origin = (f32::from(bounds.left()), f32::from(bounds.top()) + middle);
+        paint::mirrored_waveform(window, origin, column, &reaches, ink.waveform);
     }
     if let Some((from, to)) = waveform.kept {
         let (left, right) = (from.clamp(0., 1.) * width, to.clamp(0., 1.) * width);

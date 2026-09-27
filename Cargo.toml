@@ -96,6 +96,10 @@ serde_derive = { opt-level = 3 }
 gpui_macros = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
+# The shapes of waveforms and curves are tessellated on every paint of them.
+lyon_tessellation = { opt-level = 3 }
+lyon_path = { opt-level = 3 }
+lyon_geom = { opt-level = 3 }
 arrangement = { opt-level = 3 }
 compressor = { opt-level = 3 }
 eq = { opt-level = 3 }

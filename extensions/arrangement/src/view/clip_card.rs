@@ -15,7 +15,7 @@ use gpui::{
     px,
 };
 use sound_core::{Instance, ProjectEvent};
-use sound_media::Info;
+use sound_media::{Cached, Info};
 use sound_ui::components::device_card::{Column, DeviceCard, PLAIN_CARD_WIDTH};
 use sound_ui::components::display::{Axis, Handle};
 use sound_ui::components::gesture::ValueChange;
@@ -59,6 +59,9 @@ pub struct ClipCard {
     expanded: bool,
     /// Where the green line is, in seconds of the file, while the playhead is inside the clip.
     playing_at: Option<f32>,
+    /// The clip as it was when a drag of its start began: every move of the drag is worked
+    /// out from it, so the rounding of one move never adds up over the next.
+    start_origin: Option<AudioClip>,
 }
 
 impl ClipCard {
@@ -99,6 +102,7 @@ impl ClipCard {
             edit: ControlEdit::default(),
             expanded: false,
             playing_at: None,
+            start_origin: None,
         };
         card.follow_selection(cx);
         card
@@ -148,7 +152,9 @@ impl ClipCard {
         let session = self.session.read(cx);
         let project = session.project();
         let state = project.state(clip)?;
-        let file = sound_media::info(project.assets(), &state.asset).ok()?;
+        let Cached::Plays(file) = sound_media::cached(project.assets(), &state.asset) else {
+            return None;
+        };
         let tick = session.playhead().read(cx).tick;
         let clock = project.clock();
         if tick < state.start || tick >= state.end(Some(&file), clock) {
@@ -158,6 +164,38 @@ impl ClipCard {
             clock.seconds_of(tick) - clock.seconds_of(state.start) + state.file_start_seconds;
         let step = file.seconds() / f64::from(DISPLAY_WIDTH);
         Some(((seconds / step).round() * step) as f32)
+    }
+
+    /// A change of the start, from its line or its knob. A drag works from the clip of its
+    /// first move; a key step or a reset from the clip as it is.
+    fn change_start(
+        &mut self,
+        change: ValueChange,
+        file: Info,
+        clock: &sound_core::Clock,
+        cx: &mut Context<Self>,
+    ) {
+        let live = self.clip.as_ref().and_then(|clip| {
+            let project = self.session.read(cx).project();
+            project.state(clip).cloned()
+        });
+        let origin = match change {
+            ValueChange::Drag(_) => {
+                if self.start_origin.is_none() {
+                    self.start_origin = live;
+                }
+                self.start_origin.clone()
+            }
+            ValueChange::Set(_) | ValueChange::DragEnd | ValueChange::DragCancel => {
+                self.start_origin = None;
+                None
+            }
+        };
+        let set = move |clip: &mut AudioClip, seconds: f32| {
+            let from = origin.as_ref().unwrap_or(clip);
+            *clip = with_file_start(from, &file, clock, f64::from(seconds));
+        };
+        self.change(TRIM_LABEL, change, set, cx);
     }
 
     fn change<V>(
@@ -262,10 +300,7 @@ impl ClipCard {
         let display = WaveformDisplay::new("clip-display", DISPLAY_WIDTH, overview, length as f32)
             .trim(state.file_start_seconds as f32, end as f32)
             .on_start(weak_callback(cx, move |card, change: ValueChange, cx| {
-                let set = |clip: &mut AudioClip, seconds: f32| {
-                    *clip = with_file_start(clip, &file, &clock, f64::from(seconds));
-                };
-                card.change(TRIM_LABEL, change, set, cx);
+                card.change_start(change, file, &clock, cx);
             }))
             .on_end(weak_callback(cx, move |card, change: ValueChange, cx| {
                 let set = |clip: &mut AudioClip, seconds: f32| {
@@ -323,10 +358,7 @@ impl ClipCard {
             .label("Start")
             .readout(seconds_label(state.file_start_seconds))
             .on_change(weak_callback(cx, move |card, change, cx| {
-                let set = |clip: &mut AudioClip, seconds: f32| {
-                    *clip = with_file_start(clip, &file_trim, &clock, f64::from(seconds));
-                };
-                card.change(TRIM_LABEL, change, set, cx);
+                card.change_start(change, file_trim, &clock, cx);
             }));
         let end_knob = Knob::new("end")
             .range(KnobRange::linear(0., length))
@@ -359,7 +391,7 @@ impl Render for ClipCard {
         let project = self.session.read(cx).project();
         let shown = self.clip.as_ref().and_then(|clip| {
             let state = project.state(clip)?.clone();
-            let file = sound_media::info(project.assets(), &state.asset).ok();
+            let file = sound_media::cached(project.assets(), &state.asset);
             Some((state, file))
         });
         let muted = cx.theme().gray_800;
@@ -377,12 +409,28 @@ impl Render for ClipCard {
                 .into_any_element();
         };
         let name = state.asset.to_string();
-        // A clip whose file is missing keeps its place, and says so here as on the timeline.
-        let Some(file) = file else {
-            return DeviceCard::new(CARD_ID, title(name.clone()))
-                .w(px(PLAIN_CARD_WIDTH))
-                .child(quiet(format!("{name} is missing")))
-                .into_any_element();
+        // A clip whose file is missing or does not play keeps its place, and says so here as
+        // on the timeline. Its file is known from memory only; until then the card waits.
+        let says = match file {
+            Cached::Plays(file) => Ok(file),
+            Cached::Missing => Err(format!("{name} is missing")),
+            Cached::DoesNotPlay(_) => Err(format!("{name} does not play")),
+            // Asking for the waveform asks a background thread what the file is, and the
+            // cache of waveforms tells this card when it knows.
+            Cached::Unknown => {
+                let assets = self.session.read(cx).project().assets().clone();
+                Waveforms::overview(&assets, &state.asset, cx);
+                Err(String::new())
+            }
+        };
+        let file = match says {
+            Ok(file) => file,
+            Err(says) => {
+                return DeviceCard::new(CARD_ID, title(name))
+                    .w(px(PLAIN_CARD_WIDTH))
+                    .child(quiet(says))
+                    .into_any_element();
+            }
         };
         let display = self.display(&state, &file, cx);
         let [gain, fade_in_knob, fade_out_knob, start, end] = self.knobs(&state, &file, cx);

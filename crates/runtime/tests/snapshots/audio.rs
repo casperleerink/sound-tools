@@ -242,6 +242,58 @@ fn drag_files(
     Ok(())
 }
 
+/// Nine tracks of audio, every one full of clips of one file of two seconds, on the screen at
+/// once: the most audio a window of this size shows.
+fn audio_tracks(project: &mut Project) -> Result<()> {
+    let audio = project.root().join("assets/audio");
+    write_wav(&audio.join("phrase.wav"), 2., voice)?;
+    for track in 0..9 {
+        let clips: Vec<_> = (0..24)
+            .map(|index| ("phrase.wav", f64::from(index), 0., None, 0., (20., 40.)))
+            .collect();
+        let colour = Colour::ALL[track % Colour::ALL.len()];
+        add_audio_track(project, &format!("Take {track}"), colour, &clips)?;
+    }
+    Ok(())
+}
+
+/// Frame times with audio clips on screen, as the scale project measures them with notes: one
+/// update and the frame it causes, while playing and while scrolling, and one mouse move of a
+/// drag of an audio clip.
+fn frame_times(cx: &mut HeadlessAppContext) -> Result<()> {
+    let mut opened = Opened::new(cx, audio_tracks)?;
+    wait_for_waveforms(cx, &opened)?;
+    let timeline = opened.timeline_view(cx)?;
+    let clips = cx.update(|cx| {
+        let project = opened.session.read(cx).project();
+        let arrangement = InstanceId::new("arrangement")?;
+        let tracks = project.children::<TrackState>(&arrangement);
+        let clips = tracks.map(|(track, _)| project.children::<AudioClip>(track.id()).count());
+        anyhow::Ok(clips.sum::<usize>())
+    })?;
+    println!("audio frame times: {clips} audio clips on 9 tracks, 126 of them on screen");
+    opened.play_from(Ticks(0), cx)?;
+    let mut playing = Vec::new();
+    for _ in 0..200 {
+        playing.push(opened.advance(800, cx));
+    }
+    let start = arrangement::view::layout::Viewport::default();
+    let mut scrolling = Vec::new();
+    for step in 0..200 {
+        let viewport = start.scrolled(-((step % 40) as f32) * 7.0, 0.0);
+        let started = std::time::Instant::now();
+        cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_viewport(viewport, cx)));
+        cx.run_until_parked();
+        scrolling.push(started.elapsed());
+    }
+    let from = at(4.5 * BAR as f64, 2.);
+    let moves = opened.drag(from, point(px(3.), px(0.)), 100, cx)?;
+    super::print_times("audio clips: frame while playing", playing);
+    super::print_times("audio clips: frame while scrolling", scrolling);
+    super::print_times("audio clips: clip drag in time, per mouse move", moves);
+    Ok(())
+}
+
 pub fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
@@ -347,6 +399,8 @@ pub fn snapshots(
     drag_files(&opened, &[strum_2, shaker], at(9. * BAR as f64, 4.), cx)?;
     save(cx, &opened, "audio-drop-track")?;
     opened.mouse(PlatformInput::FileDrop(FileDropEvent::Exited), cx)?;
+
+    frame_times(cx)?;
 
     // The project menu, open.
     let menu = cx.update(|cx| {

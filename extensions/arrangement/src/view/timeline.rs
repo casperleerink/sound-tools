@@ -22,7 +22,7 @@ use sound_core::{
     Assets, Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks,
     TimeSignature,
 };
-use sound_media::{AudioAsset, Info};
+use sound_media::{AudioAsset, Cached, Info};
 use sound_notes::Clip;
 use sound_ui::components::audio_clip::{
     AudioClipLook, ClipHandle, ClipHandles, Columns, paint_audio_clip,
@@ -35,8 +35,8 @@ use sound_ui::{ActiveTheme, KeyboardFocus, Playhead, Session, Waveforms, typogra
 
 use super::clipboard::{Copied, CopiedClips, SharedClipboard};
 use super::clips::{
-    AnyClip, GAIN_DB, GAIN_KEY_STEP_DB, GAIN_TRAVEL, fade_in, fade_out, gain_label, gain_moved,
-    shown_end, time_label, trimmed_left, trimmed_right,
+    AnyClip, GAIN_DB, GAIN_KEY_STEP_DB, GAIN_TRAVEL, fade_in, fade_out, fitted, gain_label,
+    gain_moved, shown_end, time_label, trimmed_left, trimmed_right,
 };
 use super::gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
 use super::layout::{
@@ -449,6 +449,15 @@ fn put_on_top(project: &Project, moves: &mut [ClipMove]) {
     }
 }
 
+/// What the file of an audio clip is, from memory only: a press on the thread that draws does
+/// not read the disk. `None` for a file that is missing, does not play, or is not known yet.
+fn known_file(project: &Project, asset: &AudioAsset) -> Option<Info> {
+    match sound_media::cached(project.assets(), asset) {
+        Cached::Plays(file) => Some(file),
+        Cached::DoesNotPlay(_) | Cached::Missing | Cached::Unknown => None,
+    }
+}
+
 /// Whether an id is a clip of either kind.
 fn is_clip_tool(project: &Project, id: &InstanceId) -> bool {
     project
@@ -529,6 +538,9 @@ pub struct Timeline {
     painted: Rc<Cell<Viewport>>,
     /// The size of the timeline area at the last paint, which the scroll limits depend on.
     painted_size: Rc<Cell<(f32, f32)>>,
+    /// Where the whole timeline was painted in the window, for a drop, which says only where
+    /// the pointer is.
+    painted_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// Whether the view follows the playhead. It does while the playhead is on screen, and it
     /// stops when the composer scrolls it off screen, until the next jump brings it back.
     follows_playhead: bool,
@@ -694,6 +706,7 @@ impl Timeline {
             viewport: Viewport::default(),
             painted: Rc::default(),
             painted_size: Rc::default(),
+            painted_bounds: Rc::default(),
             follows_playhead: true,
             seen_jumps,
             order: Vec::new(),
@@ -1164,7 +1177,7 @@ impl Timeline {
         project: &Project,
     ) -> AudioShape {
         let clock = project.clock();
-        let file = sound_media::info(project.assets(), &clip.asset);
+        let file = sound_media::cached(project.assets(), &clip.asset);
         let start = clock.seconds_of(clip.start);
         // The time of the file at a place across: the clip plays at the speed of its file.
         let file_time =
@@ -1212,11 +1225,9 @@ impl Timeline {
             Some(ClipDragKind::Move { .. } | ClipDragKind::Resize { .. }) | None => {}
         }
         let missing = match file {
-            Err(sound_media::MediaError::Missing { .. }) => {
-                Some(format!("{} is missing", clip.asset))
-            }
-            Err(_) => Some(format!("{} does not play", clip.asset)),
-            Ok(_) => None,
+            Cached::Missing => Some(format!("{} is missing", clip.asset)),
+            Cached::DoesNotPlay(_) => Some(format!("{} does not play", clip.asset)),
+            Cached::Plays(_) | Cached::Unknown => None,
         };
         AudioShape {
             asset: clip.asset.clone(),
@@ -1403,7 +1414,7 @@ impl Timeline {
         let clip = project.resolve::<AudioClip>(id)?;
         let origin = project.state(&clip)?.clone();
         // A clip whose file is missing has nothing to trim.
-        let file = sound_media::info(project.assets(), &origin.asset).ok()?;
+        let file = known_file(project, &origin.asset)?;
         Some(ClipDragKind::Trim {
             clip,
             edge,
@@ -1426,7 +1437,7 @@ impl Timeline {
         let project = self.session.read(cx).project();
         let clip = project.resolve::<AudioClip>(id)?;
         let origin = project.state(&clip)?.clone();
-        let file = sound_media::info(project.assets(), &origin.asset).ok()?;
+        let file = known_file(project, &origin.asset)?;
         Some(match handle {
             ClipHandle::FadeIn => ClipDragKind::Fade {
                 clip,
@@ -1861,6 +1872,8 @@ impl Timeline {
                 }
             }
         };
+        // The fades of the live clip, inside what it plays now.
+        let next = fitted(next, file);
         let clip = clip.clone();
         self.publish_audio(drag, clip, next, cx);
     }
@@ -2648,11 +2661,9 @@ impl Timeline {
                 files: vec![None; count],
                 target: None,
             });
+            // The header of each file only, on a background thread.
             let reading = cx.background_spawn(async move {
-                let read = |path: &PathBuf| {
-                    let bytes = std::fs::read(path).ok()?;
-                    Some(sound_media::Audio::parse(bytes).ok()?.info())
-                };
+                let read = |path: &PathBuf| sound_media::probe(path).ok();
                 paths.iter().map(read).collect::<Vec<_>>()
             });
             cx.spawn(async move |timeline, cx| {
@@ -2722,7 +2733,10 @@ impl Timeline {
     /// The clips of files that were copied in, as one undo step, selected.
     fn add_dropped(
         &mut self,
-        imported: Vec<(String, Result<AudioAsset, sound_media::MediaError>)>,
+        imported: Vec<(
+            String,
+            Result<sound_media::Imported, sound_media::MediaError>,
+        )>,
         target: DropTarget,
         cx: &mut Context<Self>,
     ) {
@@ -2767,14 +2781,15 @@ impl Timeline {
                     }
                 };
                 // One after another: each starts where the one before it ends.
+                // The files are in memory here, so this reads nothing, and the track that plays
+                // them reads nothing either while they are held.
                 let clock = project.clock();
                 let mut at = start;
                 let mut clips = Vec::new();
-                for (_, asset) in &files {
-                    let clip = AudioClip::new(asset.clone(), at);
-                    let file = sound_media::info(project.assets(), asset).ok();
-                    at = clip.end(file.as_ref(), clock);
-                    clips.push((asset.asset_name().name().to_string(), clip));
+                for (_, imported) in &files {
+                    let clip = AudioClip::new(imported.asset.clone(), at);
+                    at = clip.end(Some(&imported.audio.info()), clock);
+                    clips.push((imported.asset.asset_name().name().to_string(), clip));
                 }
                 let clips = clips
                     .iter()
@@ -2890,6 +2905,7 @@ impl Render for Timeline {
                 let mut scene = timeline.read(cx).scene(width, height, cx);
                 timeline.read(cx).painted.set(scene.viewport);
                 timeline.read(cx).painted_size.set((width, height));
+                timeline.read(cx).painted_bounds.set(bounds);
                 paint_scene(&mut scene, bounds, window, cx);
                 let keyboard_focus = &timeline.read(cx).keyboard_focus;
                 if keyboard_focus.shows_ring(&focus_handle, window) {
@@ -2917,8 +2933,11 @@ impl Render for Timeline {
                 }
                 style
             })
-            .on_drop(cx.listener(|timeline, paths: &ExternalPaths, _, cx| {
-                let target = timeline.incoming_target().cloned();
+            .on_drop(cx.listener(|timeline, paths: &ExternalPaths, window, cx| {
+                // Where the files are let go of, not where the last move of the drag was.
+                let bounds = timeline.painted_bounds.get();
+                let (x, y) = Timeline::timeline_position(bounds, window.mouse_position());
+                let target = timeline.drop_target_at(x, y, cx);
                 timeline.forget_files(cx);
                 if let Some(target) = target {
                     timeline.drop_files(paths.paths().to_vec(), target, cx);
@@ -3250,13 +3269,17 @@ fn audio_look(
         return look;
     };
     let rate = f64::from(overview.sample_rate());
-    let frame = |seconds: f64| (seconds * rate).max(0.) as u64;
-    let columns = |first: f32, edges: &[f64]| Columns {
-        left: origin.x + px(first),
-        peaks: edges
-            .windows(2)
-            .map(|edge| overview.peak(frame(edge[0]), frame(edge[1]).max(frame(edge[0]) + 1)))
-            .collect(),
+    // Every column of one draw at one resolution, from one frame of the file to the next, so
+    // together they cover every frame and no click falls between two of them.
+    let columns = |first: f32, edges: &[f64]| {
+        let frames: Vec<u64> = edges
+            .iter()
+            .map(|seconds| (seconds * rate).max(0.) as u64)
+            .collect();
+        Columns {
+            left: origin.x + px(first),
+            peaks: overview.peaks(&frames),
+        }
     };
     look.waveform = columns(audio.first, &audio.edges);
     look.hidden = audio
