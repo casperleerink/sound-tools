@@ -593,6 +593,21 @@ pub fn render_range(
     Ok(problems)
 }
 
+/// The time `clips` cover together, from the first start to the last end, which is what the
+/// window exports as the selection. `None` when none of them is a clip.
+pub fn clips_span(project: &Project, clips: &[InstanceId]) -> Option<(Ticks, Ticks)> {
+    let spans = clips.iter().filter_map(|id| {
+        if let Some(clip) = project.resolve::<sound_notes::Clip>(id) {
+            let clip = project.state(&clip)?;
+            return Some((clip.start, clip.end()));
+        }
+        let clip = project.resolve::<arrangement::AudioClip>(id)?;
+        let clip = project.state(&clip)?;
+        Some((clip.start, arrangement::audio_clip_end(project, clip)))
+    });
+    spans.reduce(|(start, end), (from, to)| (start.min(from), end.max(to)))
+}
+
 /// Where a render of the whole project ends: the end of the last clip of the main
 /// arrangement, before the tail. `None` when it has no clips.
 pub fn project_end(project: &Project) -> Option<Ticks> {

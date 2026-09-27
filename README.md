@@ -110,7 +110,7 @@ What the agent uses:
 
 ```sh
 cargo run -p runtime -- ~/Music/my-piece --inspect
-cargo run -p runtime -- ~/Music/my-piece --render /tmp/my-piece.wav --seconds 16
+cargo run -p runtime -- ~/Music/my-piece --render /tmp/my-piece.wav
 cargo run -p runtime -- ~/Music/my-piece --headless
 cargo run -p runtime -- --plugins
 cargo run -p runtime -- --version
@@ -119,7 +119,7 @@ cargo run -p runtime -- --version
 With the command line tool installed, `sound-tools` takes the place of `cargo run -p runtime --` in all of these.
 
 - `--inspect` prints a summary and changes nothing. It loads no plugin.
-- `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float.
+- `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float. By default it plays to the end of the last clip, then keeps going until reverbs and releases are silent for half a second, at most 10 s more. `--from <ticks> --to <ticks>` renders a range the same way. `--seconds <n>` renders exactly the first n seconds. **Export audio…** and **Export selection…** in the project menu run the same render. Export selection covers the time from the first selected clip to the last one, with all tracks playing.
 - `--headless` plays the project live without a window and reads commands from stdin: `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status`, `quit`. It prints every change that arrives from the folder. Only one app can have a project open live. `--inspect` and `--render` work next to it.
 - `--plugins` prints the installed CLAP and VST 3 plugins with their ids and kind (instrument, effect or both). It scans every plugin again, so it also retries one that failed before.
 - `--version` prints the version.

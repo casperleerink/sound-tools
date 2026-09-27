@@ -65,8 +65,8 @@ pub struct Session {
     gesture: Option<ProjectEdit>,
     /// What the composer is working on, see [`Self::select`].
     selected: Option<InstanceId>,
-    /// The clip the composer is working on, see [`Self::select_clip`].
-    selected_clip: Option<InstanceId>,
+    /// The clips the composer is working on, see [`Self::select_clips`].
+    selected_clips: Vec<InstanceId>,
     /// A stopped engine fails every poll. It is reported once.
     engine_stopped: bool,
     /// See [`Self::history_moves`].
@@ -101,7 +101,7 @@ impl Session {
             gesture: None,
             selected: None,
             notice_room: NoticeRoom::default(),
-            selected_clip: None,
+            selected_clips: Vec::new(),
             engine_stopped: false,
             history_moves: 0,
             _polling: polling,
@@ -161,19 +161,25 @@ impl Session {
         }
     }
 
-    /// The clip the composer has selected, next to [`Self::selected`], which is a track. It is
-    /// interface state too, and the view that owns the selection publishes it here.
+    /// The first of the clips the composer has selected, next to [`Self::selected`], which is
+    /// a track. It is interface state too, and the view that owns the selection publishes it
+    /// here.
     ///
     /// Two fields and not one, because the two are read for different things and both are
     /// wanted at once: a keyboard plays into the instrument of the selected track while the
     /// project menu offers to fit the tempo to the take of the selected clip.
     pub fn selected_clip(&self) -> Option<&InstanceId> {
-        self.selected_clip.as_ref()
+        self.selected_clips.first()
     }
 
-    pub fn select_clip(&mut self, clip: Option<InstanceId>, cx: &mut Context<Self>) {
-        if self.selected_clip != clip {
-            self.selected_clip = clip;
+    /// Every selected clip, the first one first. The project menu exports the time they cover.
+    pub fn selected_clips(&self) -> &[InstanceId] {
+        &self.selected_clips
+    }
+
+    pub fn select_clips(&mut self, clips: Vec<InstanceId>, cx: &mut Context<Self>) {
+        if self.selected_clips != clips {
+            self.selected_clips = clips;
             cx.notify();
         }
     }

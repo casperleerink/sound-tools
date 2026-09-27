@@ -998,15 +998,17 @@ impl Timeline {
         }
     }
 
-    /// The first selected clip goes to the session too, as the selected track does: the window
-    /// offers to fit the project tempo to the take of the selected clip, and the arrangement
-    /// knows nothing of takes or of fitting.
+    /// The selected clips go to the session too, the first one first, as the selected track
+    /// does: the window offers to fit the project tempo to the take of the selected clip and to
+    /// export the time the selected clips cover, and the arrangement knows nothing of takes,
+    /// fitting or exports.
     fn publish_selection(&self, cx: &mut Context<Self>) {
-        let primary = self.clips.primary().cloned();
-        let published = self.session.read(cx).selected_clip().cloned();
-        if primary != published {
+        let primary = self.clips.primary();
+        let others = self.clips.iter().filter(|id| Some(*id) != primary);
+        let clips: Vec<_> = primary.into_iter().chain(others).cloned().collect();
+        if self.session.read(cx).selected_clips() != clips {
             self.session
-                .update(cx, |session, cx| session.select_clip(primary, cx));
+                .update(cx, |session, cx| session.select_clips(clips, cx));
         }
     }
 
