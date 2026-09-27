@@ -10,6 +10,8 @@
 //! - [`load`] gives the file in memory, [`Audio`], shared by everything that plays it, and
 //!   [`info`] what it is, how long and at what rate.
 //! - [`Resampler`] plays it at another sample rate than the engine's.
+//! - [`Varispeed`] plays it at any speed, for an instrument that plays a sample at the pitch of
+//!   a key.
 //! - [`Overview`] is what a waveform of it draws, made from the file and never saved.
 //!
 //! `README.md` in this crate is the guide.
@@ -17,6 +19,7 @@
 mod file;
 mod overview;
 mod resample;
+mod varispeed;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -33,6 +36,7 @@ use sound_core::{ASSETS_FOLDER, AssetName, Assets, InvalidAssetName};
 pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES};
 pub use overview::{FINEST_FRAMES, Overview};
 pub use resample::{Resampler, SCRATCH_FRAMES};
+pub use varispeed::{MAX_STEP, Varispeed, varispeed};
 
 /// The folder of audio files, under `assets/`.
 pub const AUDIO_FOLDER: &str = "audio";

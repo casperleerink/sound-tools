@@ -112,6 +112,8 @@ use tempfile::TempDir;
 mod audio;
 #[path = "projects/generated_take.rs"]
 mod generated_take;
+#[path = "snapshots/sampler.rs"]
+mod sampler;
 
 const BAR: u64 = 3840;
 /// The window in points.
@@ -880,8 +882,15 @@ fn main() -> Result<()> {
     save(&mut cx, &opened, "default")?;
 
     // Audio tracks and clips first, so a run that only looks at them does not wait for the rest.
-    audio::snapshots(&mut cx, &save)?;
-    if std::env::var("WINDOW_SNAPSHOT_ONLY").is_ok_and(|only| only == "audio") {
+    // `WINDOW_SNAPSHOT_ONLY=audio` or `=sampler` renders the default project and those alone.
+    let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
+    if only.as_deref() != Some("sampler") {
+        audio::snapshots(&mut cx, &save)?;
+    }
+    if only.as_deref() != Some("audio") {
+        sampler::snapshots(&mut cx, &save)?;
+    }
+    if only.is_some() {
         return Ok(());
     }
 

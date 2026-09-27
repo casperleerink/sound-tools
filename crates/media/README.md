@@ -22,6 +22,14 @@ Read: WAV with 8, 16, 24 or 32-bit integers or 32 or 64-bit floats, plain or `WA
 
 `Resampler::new(file_rate, engine_rate)` is a windowed sinc filter (Kaiser window, 100 dB), designed for the pair of rates: flat up to 20 kHz, or to 95 % of the lower Nyquist frequency when that is lower, and stopping from the lower Nyquist frequency, so nothing folds back. From 44.1 to 48 kHz that is 184 taps, worked out once into a table of 1024 phases. `resampler(file_rate, engine_rate)` gives a shared one. `render(audio, origin, first, out, scratch)` gives engine frames `first..` of a stream that starts at file frame `origin`: frame `n` reads the file at `origin + n * file_rate / engine_rate`, worked out exactly in integers. It keeps no state, so any block can be rendered on its own from any place in the file and a render gives the same bytes every time. That is why this is not a block resampler such as `rubato`: those keep a filter state that must run in from the start, and a clip is heard from wherever the playhead is. At the same rate it is a plain read, sample for sample.
 
+## Playing at the pitch of a key
+
+`varispeed()` is the one `Varispeed`, which reads a file at any place: `render(audio, position, step, out, scratch)` gives the file at `position`, `position + step`, `position + 2 * step` and so on, in frames of the file, in `f64`. An instrument that plays a sample at the pitch of a key gives `step = 2^(semitones / 12) * file_rate / engine_rate` and moves its place on by `step` per frame; it keeps no state of its own. The Sampler uses it, and the Drum pad can for its pitch. Make it on the control side (call `varispeed()` when the processor is made): the first call makes its table.
+
+It is an interpolating windowed sinc of 32 taps (Kaiser, beta 8) from a table of 256 phases with a straight line between two, whose cutoff is the Nyquist frequency of the file. So a whole place gives its sample exactly, and a file played at its own rate and speed comes out sample for sample. Measured in `tests/media.rs`, the pitch of a sine of 440 Hz from files at 44.1, 48 and 96 kHz into 48 kHz, four octaves down to four up: within 0.0041 cents and 0.002 dB.
+
+Above a step of 1 the file goes by faster than the engine plays it, so the kernel is stretched by `step / 0.85`, read from a fine table of it, with `2 * ceil(16 * step / 0.85)` taps and the weights of each frame summed to 1. Its cutoff then follows the output: flat to 16 kHz within 0.05 dB, -4 dB at 20 kHz, and what would fold back is down 80.6 dB or more. Measured (`sound-media media::varispeed_folds_nothing_back_above_a_step_of_one`), what lands above the output's Nyquist frequency at 48 kHz: at step 1.06, 24.5 kHz -80.6 dB and 25 kHz -95.4 dB; at step 2, 25, 30 and 40 kHz -103.7, -91.3 and -104.9 dB; at step 4, 25 to 80 kHz -99.2 dB or less; a 96 kHz file at its root (step 2), 25, 30 and 40 kHz in the file -103.7, -91.3 and -104.9 dB. The stretch stops at a step of 8 (`MAX_STEP`, 302 taps); above it what a file holds above `8 / step` of the output's Nyquist frequency folds back. A voice costs, in the dev profile (the Sampler's `performance::`, run by hand, on a busy laptop): 0.14 % of a core at step 1, 0.35 % at 1.06, 0.60 % at 2, 1.21 % at 4, 2.28 % at 8. The `Resampler` above is exact for one pair of rates, which a key is not.
+
 `engine_frames(file_frames, file_rate, engine_rate)` is how many engine frames a stretch of a file plays at its own speed.
 
 Measured in `tests/media.rs`, from 44.1 to 48, 48 to 44.1 and 96 to 48 kHz, sines from 100 Hz to 20 kHz: the level within 0.0001 dB, the worst difference from the ideal sine 102.5 dB down or more. Tones of 22.1 to 23.5 kHz in a 48 kHz file played at 44.1 kHz leave 102.6 dB down or more.
@@ -34,5 +42,5 @@ Measured in `tests/media.rs`, from 44.1 to 48, 48 to 44.1 and 96 to 48 kHz, sine
 
 ```sh
 cargo nextest run -p sound-media --no-capture
-RTSAN_ENABLE=1 cargo nextest run -p sound-media     # reading and resampling inside process_block
+RTSAN_ENABLE=1 cargo nextest run -p sound-media     # reading, resampling and the varispeed inside process_block
 ```

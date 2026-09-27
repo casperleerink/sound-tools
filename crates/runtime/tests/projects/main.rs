@@ -20,6 +20,7 @@ mod plugins;
 mod rack_order;
 mod recording;
 mod reverb;
+mod sampler;
 mod scale;
 mod summary;
 mod support;

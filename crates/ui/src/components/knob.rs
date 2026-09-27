@@ -123,6 +123,8 @@ pub struct Knob {
     label: Option<SharedString>,
     readout: Option<SharedString>,
     disabled: bool,
+    /// Values in whole steps of this, and an arrow key moves one step.
+    step: Option<f32>,
     on_change: Option<ChangeHandler<f32>>,
 }
 
@@ -138,8 +140,16 @@ impl Knob {
             label: None,
             readout: None,
             disabled: false,
+            step: None,
             on_change: None,
         }
+    }
+
+    /// Values in whole steps of `step` from 0, such as a note number: a drag gives the step
+    /// nearest the pointer, and an arrow key moves one step, with shift too.
+    pub fn step(mut self, step: f32) -> Self {
+        self.step = Some(step);
+        self
     }
 
     pub fn range(mut self, range: KnobRange) -> Self {
@@ -272,6 +282,12 @@ impl RenderOnce for Knob {
         .size_full();
 
         let on_change = self.on_change.filter(|_| !disabled);
+        let whole_step = self.step;
+        // A value on a whole step, inside the range.
+        let stepped = move |value: f32| match whole_step {
+            Some(step) => ((value / step).round() * step).clamp(range.min, range.max),
+            None => value,
+        };
         let default_value = self.default_value;
         // For tests, which find the knob by its id: `knob-<id>`. Nothing in a normal build.
         let selector = self.id.clone();
@@ -290,7 +306,7 @@ impl RenderOnce for Knob {
                         let value_at = move |pointer: gpui::Point<Pixels>, fine| match travel
                             .position(-f32::from(pointer.y), fine)
                         {
-                            Some(position) => range.value(position),
+                            Some(position) => stepped(range.value(position)),
                             None => value,
                         };
                         gesture::press(
@@ -309,9 +325,17 @@ impl RenderOnce for Knob {
                     let (state, on_change) = (state.clone(), on_change.clone());
                     move |event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App| {
                         let step = |up: bool, fine: bool| {
-                            let step = if fine { FINE_KEY_STEP } else { KEY_STEP };
-                            let step = if up { step } else { -step };
-                            let next = range.value(position + step);
+                            let next = match whole_step {
+                                Some(whole) => {
+                                    let whole = if up { whole } else { -whole };
+                                    stepped(value + whole)
+                                }
+                                None => {
+                                    let step = if fine { FINE_KEY_STEP } else { KEY_STEP };
+                                    let step = if up { step } else { -step };
+                                    range.value(position + step)
+                                }
+                            };
                             (next != value).then_some(next)
                         };
                         gesture::key_down(

@@ -33,6 +33,7 @@ mod piece;
 mod rack;
 mod recording;
 mod reverb;
+mod sampler;
 mod several_notes;
 mod shell;
 mod support;
