@@ -69,6 +69,7 @@
 //! - `arrangement-snap.png`: the snap setting open in the corner above the track headers.
 //! - `arrangement-rename.png`: the name field open in the header of the bass.
 //! - `audio-*.png`: audio tracks and clips, see `snapshots/audio.rs`.
+//! - `drums-*.png`: the Drum pad, see `snapshots/drums.rs`.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -110,6 +111,8 @@ use tempfile::TempDir;
 
 #[path = "snapshots/audio.rs"]
 mod audio;
+#[path = "snapshots/drums.rs"]
+mod drums;
 #[path = "projects/generated_take.rs"]
 mod generated_take;
 #[path = "snapshots/sampler.rs"]
@@ -237,6 +240,9 @@ impl Opened {
     /// timer do in the real window. Returns how long the poll and the frame it caused took:
     /// with test support GPUI draws a window as soon as an update leaves it dirty.
     fn advance(&mut self, frames: usize, cx: &mut HeadlessAppContext) -> Duration {
+        // What the poll of the window does for the sounds of the Drum pads.
+        drum_pad::wait_for_sounds();
+        cx.update(|cx| runtime::window::take_drum_sounds(&self.session, cx));
         let mut buffer = vec![0.0_f32; frames * OFFLINE.channels];
         self.engine.process_block(&mut buffer);
         let started = Instant::now();
@@ -892,14 +898,19 @@ fn main() -> Result<()> {
     let opened = Opened::new(&mut cx, |_| Ok(()))?;
     save(&mut cx, &opened, "default")?;
 
-    // Audio tracks and clips first, so a run that only looks at them does not wait for the rest.
-    // `WINDOW_SNAPSHOT_ONLY=audio` or `=sampler` renders the default project and those alone.
+    // Audio tracks and clips, the Sampler and the Drum pad first, so a run that only looks at
+    // one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=audio`, `=sampler` or
+    // `=drums` renders the default project and those alone.
     let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
-    if only.as_deref() != Some("sampler") {
+    let runs = |name: &str| only.as_deref().is_none_or(|only| only == name);
+    if runs("audio") {
         audio::snapshots(&mut cx, &save)?;
     }
-    if only.as_deref() != Some("audio") {
+    if runs("sampler") {
         sampler::snapshots(&mut cx, &save)?;
+    }
+    if runs("drums") {
+        drums::snapshots(&mut cx, &save)?;
     }
     if only.is_some() {
         return Ok(());

@@ -164,6 +164,9 @@ fn run(folder: &Path) -> Result<()> {
                 println!("error: {error}");
             }
         }
+        if let Err(error) = runtime::take_drum_sounds(&mut project) {
+            println!("error: {error}");
+        }
         print_events(&mut project);
         match lines.try_recv() {
             Ok(line) => match run_command(&line, &mut project, &status) {

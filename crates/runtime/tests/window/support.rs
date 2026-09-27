@@ -333,6 +333,12 @@ fn open_project_with_input(
 impl Opened<'_> {
     /// Lets the engine take what was sent to it and the poll timer see the result.
     pub fn settle(&mut self) {
+        // The sounds of a Drum pad are made on a thread of their own; the window takes them
+        // once per poll.
+        drum_pad::wait_for_sounds();
+        let session = self.session.clone();
+        self.cx
+            .update(|_, cx| runtime::window::take_drum_sounds(&session, cx));
         self.render(64);
         self.cx.executor().advance_clock(POLL_INTERVAL);
         self.cx.run_until_parked();

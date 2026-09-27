@@ -30,7 +30,7 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 7. Plug in a MIDI keyboard and play. It sounds through the instrument of the selected track, with or without playback. Press the red record button, or `r`, to record what you play onto that track from the playhead, and press it again to end the take. The take becomes a clip, with the sustain pedal, as one undo step, and the performance as you played it is kept under `assets/takes/`, which nothing ever changes.
    To record audio, add an audio track (project name, **Add track**, **Audio track**) and click the circle in its header to arm it: it turns red and shows the level of the default input of macOS. In its panel, `In 1` picks the channel, or a pair for stereo. `r` then records every armed track, and the take lands where you heard it, as a file in `assets/audio/` and a clip. With nothing armed and an audio track selected, `r` arms it first.
 8. Click the name of a track on the left. Its panel opens below with the synth, and on the left, under the track name, the mixer of the track: the volume fader with its meter, pan, `M` to mute and `S` to solo. Drag a knob up or down while it plays, and double click a knob to reset it. Click **Master** under the tracks for the master panel: the master volume and the limiter, which is on in every project and keeps the output under its ceiling.
-9. Click `Synth` at the top of that card to pick another instrument: the built-in synth, or any CLAP or VST 3 instrument this Mac has. The card gets `Open window`, which opens the plugin's own window, above this one. Change a sound there and it is saved with the piece. Picking an instrument is one undo step. The app looks for the plugins of this Mac on a thread of its own, so a project always opens at once; the picker says so while it is still looking, and a track whose plugin has not turned up yet is quiet for a moment and then plays.
+9. Click `Synth` at the top of that card to pick another instrument: the built-in synth, the Sampler, the Drum pad, or any CLAP or VST 3 instrument this Mac has. The Drum pad plays notes 36 to 51 on its 16 pads with a kit made by synthesis: click a pad to hear it, drop an audio file from the Finder on a pad to make it a sample pad. The card gets `Open window`, which opens the plugin's own window, above this one. Change a sound there and it is saved with the piece. Picking an instrument is one undo step. The app looks for the plugins of this Mac on a thread of its own, so a project always opens at once; the picker says so while it is still looking, and a track whose plugin has not turned up yet is quiet for a moment and then plays.
 10. Click **Add effect** at the end of that rack and pick `Filter`, `Compressor`, `EQ` or `Reverb`, the built-in effects, or an effect plugin. It lands after the instrument, and the track plays through it. Add another and it lands after the first. The small `x` on a card takes that effect off, and the power icon bypasses it. Each is one undo step. Drag a card by its title bar onto another to change the order, or press cmd-left and cmd-right in a card. An agent can do the same by editing `effects` in the track's `instance.json`; the rack follows at once.
 11. Record a take with the click off, click the clip, then click the project name and pick **Fit tempo to take**. The tempo map now follows what you played: the bar lines land on your beats and the take sounds exactly as it did. A `steady` number appears in the transport next to the tempo; drag it up to pull the tempo towards one steady one, and back to 0 for the playing as it was. If the grid runs at twice or half the speed of the music, or the bar lines are in the wrong place, ask an agent: "the grid runs twice as fast as the music, fix the fit". It is one field in `state/fit-tempo.json`.
 12. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
@@ -43,11 +43,12 @@ Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 It opens and plays as it did, and nothing is rewritten. Some things need one edit of `project.json` before the new parts of the app are within reach. Add them to `extensions` and open the project again:
 
 ```json
-"extensions": ["arrangement", "compressor", "eq", "filter", "fit-tempo", "instrument", "plugin-host", "reverb", "sampler", "tone"]
+"extensions": ["arrangement", "compressor", "drum-pad", "eq", "filter", "fit-tempo", "instrument", "plugin-host", "reverb", "sampler", "tone"]
 ```
 
 - `plugin-host` for CLAP and VST 3 plugins. Without it the picker shows every plugin greyed out with that line under it.
 - `fit-tempo` for **Fit tempo to take**. Without it the menu item is greyed out with that line under it.
+- `drum-pad` for the Drum pad. Without it the instrument picker shows it greyed out.
 - `filter` for the built-in Filter effect. Without it `Add effect` shows it greyed out.
 - `compressor` for the built-in Compressor effect. Without it `Add effect` shows it greyed out.
 - `eq` for the built-in EQ effect, the same way.
@@ -58,11 +59,12 @@ One thing is reported: a project of the first milestone connects a track once pe
 
 ## What to check by ear
 
-Nobody who built this can hear. Three things need the owner, and each takes a few minutes. The third milestone adds checks of its own: the limiter, solo and the faders, each effect next to the Ableton effect it is modelled on, your VST 3 plugins, and editing a piece only in the window. They are in [docs/milestone-3.md](docs/milestone-3.md), "What the owner checks".
+Nobody who built this can hear. Four things need the owner, and each takes a few minutes. The third milestone adds checks of its own: the limiter, solo and the faders, each effect next to the Ableton effect it is modelled on, your VST 3 plugins, and editing a piece only in the window. They are in [docs/milestone-3.md](docs/milestone-3.md), "What the owner checks".
 
 1. **Latency.** Plug in your keyboard, click a track name, play. Does it feel like an instrument, or is there a wait? The numbers say 20 ms from key to sound on the built-in speakers; a wired interface should be faster.
 2. **Your pianos.** Put each piano plugin you use on a track (click `Synth` at the top of its card), open its window, load a sound, play. Does it sound the way it does in your other DAW, and does its window work?
 3. **A free take fitted.** Turn the click off, press `r`, play something with rubato, press `r` again. Click the clip, then the project name, then **Fit tempo to take**. Are the bar lines where you hear the beats? Drag `steady` up and back to 0. Does the take still sound as you played it?
+4. **The drum kit.** Click `Synth` on a track and pick `Drum pad`, press every pad, then build a beat. Does it sound good enough to keep?
 
 ## Work with an agent
 
@@ -81,6 +83,7 @@ The agent is any coding agent that can edit files. The app must be running on th
    - `Make the bass sound darker`
    - `Turn the piano down a few dB and put the bass a little to the left`
    - `Put the reverb before the delay on the piano track`
+   - `Add a drum track with a four-bar beat that ends in a fill`
    - `The grid runs twice as fast as the music. Fix the fit`
 4. The part shows up and plays while the agent still writes. One cmd-z in the app takes the whole request back.
 
@@ -133,10 +136,10 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [ENGINEERING.md](ENGINEERING.md): how to build: dependencies, the audio engine, testing, rules for agents.
 - [docs/milestone-2.md](docs/milestone-2.md): the plan of the second milestone, done September 21, 2026. [docs/agent-brief.md](docs/agent-brief.md) is the shared brief for the agents that built it.
 - [docs/milestone-3.md](docs/milestone-3.md): the plan of the third milestone: mixer, built-in effects, reliable plugins and a better window. Done September 26, 2026.
-- [docs/milestone-4.md](docs/milestone-4.md): the plan of the fourth milestone: audio tracks, recording, a sampler and drums. In progress: audio tracks play audio clips from files since step 1a, which an agent adds by file (`agent-docs/audio.md`), the window edits them since step 1b, armed audio tracks record from the default input since step 2, and the Sampler plays one file across the keyboard since step 3 (`agent-docs/sampler.md`).
+- [docs/milestone-4.md](docs/milestone-4.md): the plan of the fourth milestone: audio tracks, recording, a sampler and drums. In progress: audio tracks play audio clips from files since step 1a, which an agent adds by file (`agent-docs/audio.md`), the window edits them since step 1b, armed audio tracks record from the default input since step 2, and the Sampler plays one file across the keyboard since step 3 (`agent-docs/sampler.md`), and the Drum pad and its default kit since step 4 (`agent-docs/drums.md`).
 - [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
 - [SDK_SKETCH.md](SDK_SKETCH.md): an early sketch of the extension SDK.
-- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [media](crates/media/README.md) for audio files, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [filter](extensions/filter/README.md), [compressor](extensions/compressor/README.md), [eq](extensions/eq/README.md), [reverb](extensions/reverb/README.md), [sampler](extensions/sampler/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md), [fit-tempo](extensions/fit-tempo/README.md).
+- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [media](crates/media/README.md) for audio files, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [filter](extensions/filter/README.md), [compressor](extensions/compressor/README.md), [eq](extensions/eq/README.md), [reverb](extensions/reverb/README.md), [drum-pad](extensions/drum-pad/README.md), [sampler](extensions/sampler/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md), [fit-tempo](extensions/fit-tempo/README.md).
 
 ## License
 

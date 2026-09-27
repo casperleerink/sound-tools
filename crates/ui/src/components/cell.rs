@@ -3,7 +3,9 @@
 //! knob's centre. Under it the label line at 38 and the value line at 54, 14 pt each, in 12 pt
 //! type. A control with no value leaves its value line empty, so every row of a card lines up.
 //!
-//! The knob is a cell of its own. `Cell` puts any other control into the same frame.
+//! The knob is a cell of its own. `Cell` puts any other control into the same frame. A cell may
+//! span two columns for a control that needs the room, such as the `Sound` select of the Drum
+//! pad; its lines are centred on the whole width.
 
 use gpui::{
     AnyElement, App, Div, Hsla, SharedString, StyleRefinement, Window, div, prelude::*, px,
@@ -28,6 +30,7 @@ pub struct Cell {
     control: Option<AnyElement>,
     label: Option<SharedString>,
     value: Option<SharedString>,
+    columns: usize,
 }
 
 impl Cell {
@@ -37,7 +40,14 @@ impl Cell {
             control: Some(control.into_any_element()),
             label: None,
             value: None,
+            columns: 1,
         }
+    }
+
+    /// How many columns of cells it takes, from 1.
+    pub fn span(mut self, columns: usize) -> Self {
+        self.columns = columns.max(1);
+        self
     }
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
@@ -59,7 +69,8 @@ impl Styled for Cell {
 
 impl RenderOnce for Cell {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        frame(self.base, self.control, self.label, self.value, cx)
+        let width = CELL_WIDTH * self.columns as f32;
+        frame(self.base, self.control, self.label, self.value, width, cx)
     }
 }
 
@@ -69,13 +80,14 @@ pub(crate) fn frame(
     control: Option<AnyElement>,
     label: Option<SharedString>,
     value: Option<SharedString>,
+    width: f32,
     cx: &App,
 ) -> Div {
     let theme = cx.theme();
     let (label_color, value_color) = (theme.gray_800, theme.gray_950);
     base.relative()
         .flex_none()
-        .w(px(CELL_WIDTH))
+        .w(px(width))
         .h(px(ROW_HEIGHT))
         .child(
             div()
@@ -89,18 +101,18 @@ pub(crate) fn frame(
                 .justify_center()
                 .children(control),
         )
-        .children(label.map(|label| line(LINE_TOP, label_color, false).child(label)))
-        .children(value.map(|value| line(VALUE_LINE, value_color, true).child(value)))
+        .children(label.map(|label| line(LINE_TOP, width, label_color, false).child(label)))
+        .children(value.map(|value| line(VALUE_LINE, width, value_color, true).child(value)))
 }
 
 /// One line of 12 pt text, centred on the cell. It may be wider than the cell: a long label
 /// such as `Resonance` runs into the air next to it rather than being cut.
-fn line(top: f32, color: Hsla, tabular: bool) -> Div {
+fn line(top: f32, width: f32, color: Hsla, tabular: bool) -> Div {
     div()
         .absolute()
         .top(px(top))
         .left(px(-12.))
-        .w(px(CELL_WIDTH + 24.))
+        .w(px(width + 24.))
         .flex()
         .justify_center()
         .h(px(LINE_HEIGHT))

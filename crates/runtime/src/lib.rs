@@ -11,6 +11,7 @@ use std::path::Path;
 use anyhow::Result;
 use arrangement::{ArrangementState, Colour};
 use compressor::CompressorState;
+use drum_pad::DrumPadState;
 use eq::EqState;
 use filter::FilterState;
 use instrument::SynthState;
@@ -107,6 +108,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
     arrangement::register(&mut registry)?;
     compressor::register(&mut registry)?;
+    drum_pad::register(&mut registry)?;
     eq::register(&mut registry)?;
     filter::register(&mut registry)?;
     fit_tempo::register(&mut registry)?;
@@ -133,6 +135,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut devices = Devices::new();
     arrangement::view::register(&mut views);
     instrument::view::register(&mut views, &mut devices);
+    drum_pad::view::register(&mut views, &mut devices);
     filter::view::register(&mut views, &mut devices);
     compressor::view::register(&mut views, &mut devices);
     eq::view::register(&mut views, &mut devices);
@@ -164,6 +167,18 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             .needs(
                 sampler::EXTENSION,
                 "This project does not load the sampler.",
+            ),
+            DeviceOffer::new(
+                DrumPadState::TOOL,
+                drum_pad::view::NAME,
+                |_, slot, changes| {
+                    changes.create(slot.clone(), DrumPadState::default());
+                    Ok(())
+                },
+            )
+            .needs(
+                drum_pad::EXTENSION,
+                "This project does not load the Drum pad.",
             ),
         ]
     });
@@ -463,6 +478,10 @@ pub fn render_block(
     plugins: &Plugins,
     output: &mut [f32],
 ) -> Result<Vec<plugin_host::PluginProblem>> {
+    // A render plays what the records say from its first block: the sounds of the Drum pads
+    // that were asked for are waited for and put in their kits first.
+    drum_pad::wait_for_sounds();
+    take_drum_sounds(project)?;
     engine.process_block(output);
     project.engine().poll()?;
     let mut problems = plugins.poll(project);
@@ -472,6 +491,16 @@ pub fn render_block(
         project.rebind(&instance)?;
     }
     Ok(problems)
+}
+
+/// Runs the behaviour of every Drum pad whose sounds were made since the last call, which puts
+/// them in its kit. What every loop of a session calls, as it polls the plugin host.
+pub fn take_drum_sounds(project: &mut Project) -> Result<(), ProjectError> {
+    // Held until the behaviour has put them in the kit, see `drum_pad::take_ready`.
+    for (instance, _sounds) in drum_pad::take_ready(project.assets()) {
+        project.rebind(&instance)?;
+    }
+    Ok(())
 }
 
 /// Renders `frames` frames in device buffers of 512 frames, interleaved by channel. See

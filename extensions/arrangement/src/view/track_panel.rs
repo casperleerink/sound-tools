@@ -51,7 +51,7 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{Knob, KnobRange, pan_readout};
 use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::components::volume::Volume;
 use sound_ui::{
@@ -96,18 +96,6 @@ const INPUT_LABEL: &str = "Change input";
 const INPUT_TOP: f32 = ROW_TOP + ROW_HEIGHT + VALUE_LINE + 14. - 24.;
 /// How many channels the input select offers while the input has not been opened.
 const CHANNELS_BEFORE_OPENING: usize = 2;
-
-/// The pan as people read it: `C` in the middle, else how far to a side in percent.
-fn pan_readout(pan: f32) -> String {
-    let percent = short(pan.abs() * 100.);
-    if pan < 0. {
-        format!("{percent}L")
-    } else if pan > 0. {
-        format!("{percent}R")
-    } else {
-        "C".to_string()
-    }
-}
 
 /// What the panel asks of the view that holds it.
 pub enum TrackPanelEvent {

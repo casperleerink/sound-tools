@@ -87,6 +87,18 @@ impl KnobRange {
     }
 }
 
+/// A pan as a knob shows it, from -1 (left) to 1 (right): `C`, `25L`, `100R`.
+pub fn pan_readout(pan: f32) -> String {
+    let percent = short(pan.abs() * 100.);
+    if pan < 0. {
+        format!("{percent}L")
+    } else if pan > 0. {
+        format!("{percent}R")
+    } else {
+        "C".to_string()
+    }
+}
+
 /// A number with three significant digits and no zeros at its end: `2`, `15.5`, `632`. What a
 /// readout next to a knob shows, so a value at rest is short and a moving one does not jump
 /// between widths.
@@ -362,6 +374,7 @@ impl RenderOnce for Knob {
             Some(knob.into_any_element()),
             self.label,
             self.readout,
+            cell::CELL_WIDTH,
             cx,
         )
         .when(disabled, |d| d.opacity(0.4))
