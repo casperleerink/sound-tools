@@ -30,12 +30,9 @@ use sound_ui::components::audio_clip::{
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::meter::Meter;
 use sound_ui::components::text_input::{InputSize, TextInput};
-use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::{
-    ActiveTheme, InputLevels, KeyboardFocus, LiveTake, Metering, Playhead, Recording, Session,
-    Waveforms, typography,
+    ActiveTheme, KeyboardFocus, LiveTake, Playhead, Recording, Session, Waveforms, typography,
 };
 
 use super::clipboard::{Copied, CopiedClips, SharedClipboard};
@@ -161,8 +158,6 @@ pub struct Scene {
     marquee: Option<Rect>,
     /// Where dropped files would go.
     ghosts: Option<Ghosts>,
-    /// The takes while they record, over the clips. They are no clips: nothing presses them.
-    takes: Vec<ClipShape>,
     /// The folder of the files the audio clips name, for their waveforms.
     assets: Assets,
 }
@@ -548,8 +543,6 @@ pub struct Timeline {
     playhead: Entity<Playhead>,
     /// The armed tracks and the takes while they record.
     recording: Entity<Recording>,
-    /// The meter of the input in the header of each armed track.
-    input_meters: BTreeMap<InstanceId, Metering>,
     arrangement: Instance<ArrangementState>,
     /// Zoom and scroll, kept inside the content by [`Self::set_viewport`]. Scroll and pinch go
     /// on from here, not from what was painted: several events may arrive between two frames.
@@ -630,21 +623,11 @@ impl Timeline {
         // is still not painted per frame.
         cx.observe(&playhead, |timeline, _, cx| timeline.follow_playhead(cx))
             .detach();
-        // Arming shows in the headers, and a take grows with the playhead while it records.
+        // An armed track has a shorter name. The level and the growing takes are drawn over
+        // the timeline by `RecordingOverlay`, which is not the timeline, so they paint nothing
+        // here.
         let recording = session.read(cx).recording().clone();
-        cx.observe(&recording, |timeline, recording, cx| {
-            let recording = recording.read(cx);
-            let meters = &mut timeline.input_meters;
-            meters.retain(|track, _| recording.is_armed(track));
-            cx.notify();
-        })
-        .detach();
-        cx.subscribe(&recording, |timeline, _, _: &InputLevels, cx| {
-            if timeline.read_input_meters(cx) {
-                cx.notify();
-            }
-        })
-        .detach();
+        cx.observe(&recording, |_, _, cx| cx.notify()).detach();
         // A waveform whose overview was being made is drawn when it is ready.
         let waveforms = Waveforms::entity(cx);
         cx.observe(&waveforms, |_, _, cx| cx.notify()).detach();
@@ -740,7 +723,6 @@ impl Timeline {
             session,
             playhead,
             recording,
-            input_meters: BTreeMap::new(),
             arrangement,
             viewport: Viewport::default(),
             painted: Rc::default(),
@@ -818,10 +800,6 @@ impl Timeline {
     /// Nothing pulls the view back while the composer has scrolled the playhead off screen:
     /// the next stop or seek does that.
     fn follow_playhead(&mut self, cx: &mut Context<Self>) {
-        // A take that records ends at the playhead, so it grows with every move of it.
-        if !self.recording.read(cx).takes().is_empty() {
-            cx.notify();
-        }
         let playhead = *self.playhead.read(cx);
         let jumped = playhead.jumps != self.seen_jumps;
         self.seen_jumps = playhead.jumps;
@@ -1142,11 +1120,9 @@ impl Timeline {
             tempo_zones: Vec::new(),
             marquee,
             ghosts: self.ghosts(&viewport, project),
-            takes: Vec::new(),
             assets: project.assets().clone(),
         };
         let recording = self.recording.read(cx);
-        let playhead = self.playhead.read(cx).tick;
         let visible =
             |start: Ticks, end: Ticks| start < visible_ticks.end && end > visible_ticks.start;
         for index in viewport.visible_tracks(height, self.order.len()) {
@@ -1207,20 +1183,53 @@ impl Timeline {
                     .clips
                     .push(shape(clip.id(), rect, Body::Audio(Box::new(body))));
             }
-            // The take of this track while it records, from where the recording began to the
-            // playhead.
-            if let Some(take) = recording.take_of(track.id())
-                && visible(take.start, playhead)
-            {
-                let end = playhead.max(take.start + Ticks(1));
-                let rect = viewport.clip_rect(index, take.start, end);
-                let body = live_shape(take, rect, &viewport, width, project);
-                let mut shape = shape(track.id(), rect, Body::Audio(Box::new(body)));
-                shape.selected = false;
-                scene.takes.push(shape);
-            }
         }
         scene
+    }
+
+    /// The takes while they record, from where the recording began to the playhead, in the
+    /// viewport painted last. `RecordingOverlay` paints them over the timeline every frame while
+    /// they grow, so the timeline itself is not painted again for them.
+    pub(super) fn take_shapes(&self, width: f32, cx: &App) -> Vec<ClipShape> {
+        let project = self.session.read(cx).project();
+        let recording = self.recording.read(cx);
+        let playhead = self.playhead.read(cx).tick;
+        let viewport = self.painted.get();
+        let theme = cx.theme();
+        let mut shapes = Vec::new();
+        for take in recording.takes() {
+            let Some(index) = self.row_of(&take.track) else {
+                continue;
+            };
+            let Some(state) = self.order.get(index).and_then(|track| project.state(track)) else {
+                continue;
+            };
+            let end = playhead.max(take.start + Ticks(1));
+            let rect = viewport.clip_rect(index, take.start, end);
+            let body = live_shape(take, rect, &viewport, width, project);
+            shapes.push(ClipShape {
+                id: take.track.clone(),
+                rect,
+                body: Body::Audio(Box::new(body)),
+                accent: accent(state.colour, theme),
+                selected: false,
+                muted: state.mute,
+            });
+        }
+        shapes
+    }
+
+    /// Where each audio track is in the header column, from the top of the first row, and
+    /// whether it is armed: where the overlay puts its arm toggle and its input meter.
+    pub(super) fn audio_rows(&self, cx: &App) -> Vec<(f32, Instance<TrackState>)> {
+        let project = self.session.read(cx).project();
+        let rows = self.order.iter().enumerate().filter(|(_, track)| {
+            project
+                .state(*track)
+                .is_some_and(|state| state.kind == TrackKind::Audio)
+        });
+        rows.map(|(index, track)| (self.viewport.y_of(index), track.clone()))
+            .collect()
     }
 
     /// What an audio clip shows: the times of its file under each column on screen, its fades
@@ -2874,89 +2883,6 @@ impl Timeline {
         self.set_viewport(self.viewport.zoomed(factor, x.max(0.0)), cx);
     }
 
-    /// One reading of the input for the meter of each armed audio track, from the channels
-    /// its record names. Whether any meter shows something else now.
-    fn read_input_meters(&mut self, cx: &mut Context<Self>) -> bool {
-        let project = self.session.read(cx).project();
-        let recording = self.recording.read(cx);
-        let mut changed = false;
-        for track in recording.armed() {
-            let Some(state) = project
-                .resolve::<TrackState>(track)
-                .and_then(|track| project.state(&track))
-            else {
-                continue;
-            };
-            let level = recording.level(state.input.device_channels());
-            let meter = self.input_meters.entry(track.clone()).or_default();
-            changed |= meter.read_amplitudes(level);
-        }
-        changed
-    }
-
-    /// The arm toggle in the header of every audio track on screen, at 140 pt, and the meter of
-    /// the input of an armed one, from 88 to 133 pt. Elements over the painted headers, so the
-    /// toggle is a control that the keyboard reaches and a test presses.
-    fn arm_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (width, height) = self.painted_size.get();
-        let viewport = self.clamped(self.viewport, width, height, cx);
-        let project = self.session.read(cx).project();
-        let recording = self.recording.read(cx);
-        let red = cx.theme().red;
-        let mut controls = Vec::new();
-        for index in viewport.visible_tracks(height, self.order.len()) {
-            let Some(track) = self.order.get(index) else {
-                break;
-            };
-            if project
-                .state(track)
-                .is_none_or(|state| state.kind != TrackKind::Audio)
-            {
-                continue;
-            }
-            let top = viewport.y_of(index);
-            let armed = recording.is_armed(track.id());
-            let id = track.id().clone();
-            let session = self.session.clone();
-            let arm = Toggle::dot(SharedString::from(format!("arm-{}", id.name())), armed)
-                .color(red)
-                .on_change(move |on, _, cx| {
-                    let recording = session.read(cx).recording().clone();
-                    let id = id.clone();
-                    recording.update(cx, |recording, cx| recording.set_armed(id, on, cx));
-                });
-            let at = |left: f32, top: f32| div().absolute().left(px(left)).top(px(top));
-            controls.push(
-                at(ARM_LEFT, top + (TRACK_HEIGHT - toggle::HEIGHT) / 2.)
-                    .occlude()
-                    .child(arm)
-                    .into_any_element(),
-            );
-            if let Some(meter) = self.input_meters.get(track.id()).filter(|_| armed) {
-                let meter = Meter::new(
-                    SharedString::from(format!("input-{}", track.id().name())),
-                    meter.level(),
-                )
-                .horizontal();
-                let meter_top = top + (TRACK_HEIGHT - ARMED_METER_HEIGHT) / 2.;
-                controls.push(
-                    at(ARMED_METER_LEFT, meter_top)
-                        .child(meter)
-                        .into_any_element(),
-                );
-            }
-        }
-        // Clipped to the header column under the ruler, as the painted headers are.
-        div()
-            .absolute()
-            .top(px(RULER_HEIGHT))
-            .left_0()
-            .w(px(HEADER_WIDTH - 1.))
-            .h(px(height))
-            .overflow_hidden()
-            .children(controls)
-    }
-
     /// The name field over the header of the track being renamed, where the name is painted.
     fn rename_field(&self) -> Option<gpui::AnyElement> {
         let rename = self.rename.as_ref()?;
@@ -2997,11 +2923,11 @@ impl Timeline {
 
 /// Where the arm toggle of an audio track starts in its header. The name of an audio track
 /// ends before it.
-const ARM_LEFT: f32 = 140.;
+pub(super) const ARM_LEFT: f32 = 140.;
 /// Where the meter of the input of an armed track starts in its header: 45 pt, to 133.
-const ARMED_METER_LEFT: f32 = 88.;
+pub(super) const ARMED_METER_LEFT: f32 = 88.;
 /// The meter is the master meter of the transport, 45 x 8.
-const ARMED_METER_HEIGHT: f32 = 8.;
+pub(super) const ARMED_METER_HEIGHT: f32 = 8.;
 /// What the header of the track a drop would make says.
 const NEW_AUDIO_TRACK: &str = "New audio track";
 
@@ -3084,12 +3010,7 @@ impl Render for Timeline {
                 let height = f32::from(bounds.size.height) - RULER_HEIGHT;
                 let mut scene = timeline.read(cx).scene(width, height, cx);
                 timeline.read(cx).painted.set(scene.viewport);
-                // The controls over the headers are laid out from this size, so the first
-                // paint, and one at another size, lays them out again.
-                let resized = timeline.read(cx).painted_size.replace((width, height));
-                if resized != (width, height) {
-                    timeline.update(cx, |_, cx| cx.notify());
-                }
+                timeline.read(cx).painted_size.set((width, height));
                 timeline.read(cx).painted_bounds.set(bounds);
                 paint_scene(&mut scene, bounds, window, cx);
                 let keyboard_focus = &timeline.read(cx).keyboard_focus;
@@ -3135,7 +3056,6 @@ impl Render for Timeline {
             }))
             .child(surface.size_full())
             .child(self.snap_corner(cx))
-            .child(self.arm_controls(cx))
             .children(self.rename_field())
     }
 }
@@ -3250,6 +3170,33 @@ fn listen(
         if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
             let (x, _) = Timeline::timeline_position(bounds, event.position);
             timeline.update(cx, |timeline, cx| timeline.on_pinch(event, x, cx));
+        }
+    });
+}
+
+/// Paints the takes of [`Timeline::take_shapes`] over a timeline painted at `bounds`, inside
+/// its area right of the headers and under the ruler.
+pub(super) fn paint_takes(
+    shapes: &[ClipShape],
+    bounds: Bounds<Pixels>,
+    assets: &Assets,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let timeline = Bounds::new(
+        bounds.origin + point(px(HEADER_WIDTH), px(RULER_HEIGHT)),
+        size(
+            bounds.size.width - px(HEADER_WIDTH),
+            bounds.size.height - px(RULER_HEIGHT),
+        ),
+    );
+    window.with_content_mask(Some(ContentMask { bounds: timeline }), |window| {
+        for shape in shapes {
+            if let Body::Audio(audio) = &shape.body {
+                let body = placed(shape.rect, timeline.origin);
+                let look = audio_look(shape, audio, body, timeline.origin, assets, cx);
+                paint_audio_clip(&look, window, cx);
+            }
         }
     });
 }
@@ -3391,13 +3338,7 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
                 }
             }
         }
-        for shape in &scene.takes {
-            if let Body::Audio(audio) = &shape.body {
-                let body = placed(shape.rect, timeline.origin);
-                let look = audio_look(shape, audio, body, timeline.origin, &assets, cx);
-                paint_audio_clip(&look, window, cx);
-            }
-        }
+
         if let Some(ghosts) = &scene.ghosts {
             for (rect, name) in &ghosts.clips {
                 let area = placed(*rect, timeline.origin);

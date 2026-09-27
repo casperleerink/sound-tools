@@ -29,6 +29,7 @@ pub mod gesture;
 pub mod layout;
 pub mod master_panel;
 mod paint;
+mod recording_overlay;
 pub mod roll;
 pub mod selection;
 pub mod snap;
@@ -51,6 +52,7 @@ use layout::HEADER_WIDTH;
 pub use master_panel::MasterPanel;
 use master_panel::{MASTER_NAME, MasterPanelEvent};
 use paint::PlayheadLine;
+use recording_overlay::RecordingOverlay;
 use roll::EDITOR_HEIGHT;
 use snap::SharedSnap;
 use timeline::scrolled_or_zoomed;
@@ -96,6 +98,8 @@ pub struct ArrangementView {
     arrangement: Instance<ArrangementState>,
     timeline: Entity<Timeline>,
     playhead_line: Entity<PlayheadLine>,
+    /// The arm toggles, input meters and growing takes over the timeline.
+    recording_overlay: Entity<RecordingOverlay>,
     detail: Option<Detail>,
     /// The snap setting of the window, shared by the timeline and the note editor.
     snap: SharedSnap,
@@ -121,6 +125,8 @@ impl ArrangementView {
         });
         let painted = timeline.read(cx).painted();
         let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, painted, cx));
+        let recording_overlay =
+            cx.new(|cx| RecordingOverlay::new(session.clone(), timeline.clone(), cx));
 
         cx.subscribe_in(
             &timeline,
@@ -183,6 +189,7 @@ impl ArrangementView {
             arrangement,
             timeline,
             playhead_line,
+            recording_overlay,
             detail: None,
             snap,
             clipboard,
@@ -518,6 +525,7 @@ impl Render for ArrangementView {
                     .relative()
                     // Cached: a frame that only moves the playhead reuses what was painted.
                     .child(timeline.cached(fill_parent()))
+                    .child(self.recording_overlay.clone())
                     .child(self.playhead_line.clone()),
             )
             .child(master_row)
