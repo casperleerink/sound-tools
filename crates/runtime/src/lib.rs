@@ -3,6 +3,7 @@
 //! the application window. Tests of whole projects, with every bundled extension, use this
 //! crate.
 
+pub mod app;
 pub mod recorder;
 pub mod window;
 
@@ -50,10 +51,10 @@ const INSPECT_DOC: AgentDoc = AgentDoc {
 When you can run commands, the Sound Tools runtime prints the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems. It works while the project is open and changes nothing.
 
 ```sh
-runtime . --inspect
+sound-tools . --inspect
 ```
 
-`runtime` is the program that has this project open. When it is not on your `PATH`, ask the composer where it is, or skip this step: `problems.txt` tells you whether your files loaded.",
+`sound-tools` is the command line tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
 };
 
 /// The plugin host of one session: it scans this machine, keeps the plugins a project loads

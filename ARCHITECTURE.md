@@ -75,6 +75,15 @@ The proposed build structure separates the engine, SDK and application UI, with 
 
 Compile enabled extensions into the project runtime executable. The composer can keep using the current runtime while the agent edits source and builds. After a successful build, the outer application automatically stops playback, waits for the runtime to finish writing the project folder, then restarts the runtime and reopens the project with playback stopped. A failed build reports errors and retains the previous working executable. Changes using already compiled functionality need no compilation. Validate build and restart behaviour with a prototype.
 
+### The macOS app, September 27, 2026
+
+`Sound Tools.app` is the runtime binary and nothing else: `tooling/bundle-macos.sh` makes a release build, copies it in as `Contents/MacOS/sound-tools`, adds `Info.plist` and the icon, and signs it ad hoc. Every extension, font, icon and agent doc is compiled into the binary, so the bundle needs no other files. The plugin scan starts the same program again as its child, so it works in the bundle as in a checkout.
+
+- Started with no folder, as the Finder starts it, the runtime opens the last project (`~/Library/Application Support/Sound Tools/last-project`), or the macOS folder panel when that folder is gone. The window form writes that file; `--headless`, `--inspect` and `--render` never do.
+- **Open project…** quits the way cmd-q does and starts the program again at the very end of the quit, when the project, its plugins and its lock are gone. Switching inside one process would mean taking down the device, the plugins and their windows by hand; a new process gets that right for free.
+- **Install command line tool** links `sound-tools` to the program inside the app, in `/usr/local/bin` or else `~/.local/bin`, with no administrator prompt. The agent docs say `sound-tools . --inspect`.
+- Custom extensions built by an agent stay parked with the outer application. When they come back, the app would build a runtime per project with the composer's own `rustup` into `~/Library/Application Support/Sound Tools`, and fall back to the bundled binary while there is none or a build fails.
+
 ### Build-loop experiment, September 9, 2026
 
 A throwaway workspace with one GPUI runtime crate and one statically compiled extension measured the loop on a development Mac. A one-line extension edit reached the replacement runtime's first frame in a median 2.2 seconds, with 1.3 seconds of that in the incremental build and link. A failed build kept the old process alive and the executable unchanged. An agent wrote a two-instance custom GPUI view that compiled on its first attempt from public docs.
@@ -1102,7 +1111,7 @@ Decided September 19, 2026, the edit API and undo, built in `crates/core/src/pro
 
 Built in `crates/ui` (the bridge), `extensions/arrangement/src/view.rs` and `crates/runtime/src/window.rs`. The guide for view authors is [crates/ui/README.md](crates/ui/README.md).
 
-- One process, one window, one project. `runtime <folder>` opens the window. `--headless`, `--inspect` and `--render` start no GPUI.
+- One process, one window, one project. `runtime <folder>` opens the window, and so does `Sound Tools.app` with the last project, see "The macOS app". `--headless`, `--inspect` and `--render` start no GPUI.
 - The bridge is one GPUI entity, `Session`, in the UI SDK. It owns the `Project` on the main thread, polls the engine and the watcher every 16 ms from a timer, emits every `ProjectEvent` and notifies once per group. The UI SDK therefore depends on the core. The core stays free of GPUI.
 - The playhead is an entity of its own. It changes on every frame during playback, and only what shows the position observes it. GPUI renders a notified view and every view above it, so the arrangement keeps its playhead line beside its timeline, not inside it, and the timeline is a cached view. While playing, a frame does not run the timeline code at all.
 - Views hold the session and typed instances, read state when they render and keep no copy of saved state. The one exception is what costs a walk over many records: the arrangement keeps its track order and its end, and the transport the end of the project, between the project events that can change them, and reads them again once per group of events. Every edit goes through `Session::edit`, which puts an error into one notice that the window shows as a quiet line. Files that are not live show as a second line that names `problems.txt`.

@@ -1,12 +1,15 @@
 //! The project menu: the project name top-left as a quiet menu. Add an instrument track or an
-//! audio track, undo and redo with
-//! what they would do, the output device by name, and the project folder in the Finder or in
-//! a terminal. The terminal is where the composer starts a coding agent on the project.
+//! audio track, undo and redo with what they would do, the output device by name, another
+//! project, the project folder in the Finder or in a terminal, and the command line tool. The
+//! terminal is where the composer starts a coding agent on the project, and the tool is what
+//! that agent runs to read the whole piece.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use gpui::{Context, Entity, IntoElement, Render, SharedString, Window, prelude::*};
+use gpui::{
+    App, Context, Entity, IntoElement, PromptLevel, Render, SharedString, Window, prelude::*,
+};
 use sound_core::{Changes, InstanceId};
 use sound_notes::Clip;
 use sound_ui::components::dropdown_menu::{
@@ -14,6 +17,7 @@ use sound_ui::components::dropdown_menu::{
 };
 use sound_ui::{Session, extension_is_enabled};
 
+use crate::app::{self, Installed};
 use crate::{add_audio_track, add_track, main_arrangement};
 
 const ADD_TRACK: &str = "add-track";
@@ -22,8 +26,10 @@ const FIT_TEMPO: &str = "fit-tempo";
 const UNDO: &str = "undo";
 const REDO: &str = "redo";
 const DEVICE: &str = "device";
+const OPEN_PROJECT: &str = "open-project";
 const REVEAL: &str = "reveal";
 const TERMINAL: &str = "terminal";
+const INSTALL_TOOL: &str = "install-tool";
 
 pub struct ProjectMenu {
     session: Entity<Session>,
@@ -75,6 +81,7 @@ impl ProjectMenu {
     pub fn new(
         session: Entity<Session>,
         device_name: SharedString,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let project = session.read(cx).project();
@@ -101,7 +108,7 @@ impl ProjectMenu {
             }
         })
         .detach();
-        cx.subscribe(&menu, Self::on_picked).detach();
+        cx.subscribe_in(&menu, window, Self::on_picked).detach();
         Self {
             session,
             device_name,
@@ -114,7 +121,17 @@ impl ProjectMenu {
         &self.menu
     }
 
-    fn on_picked(&mut self, _: Entity<DropdownMenu>, picked: &MenuPicked, cx: &mut Context<Self>) {
+    fn on_picked(
+        &mut self,
+        _: &Entity<DropdownMenu>,
+        picked: &MenuPicked,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if picked.0.as_ref() == INSTALL_TOOL {
+            install_command_line_tool(self.session.clone(), window, cx);
+            return;
+        }
         // An error from any of these shows as the notice of the session.
         self.session
             .update(cx, |session, cx| match picked.0.as_ref() {
@@ -131,6 +148,7 @@ impl ProjectMenu {
                 FIT_TEMPO => fit_tempo_to_take(session, cx),
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
+                OPEN_PROJECT => open_another_project(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
                 TERMINAL => open_terminal(session.project().root().to_path_buf(), cx),
                 // Switching the device is not built yet. The menu only names it.
@@ -188,6 +206,101 @@ fn open_terminal(folder: PathBuf, cx: &mut Context<Session>) {
     .detach();
 }
 
+/// Picks another project folder in the macOS panel and opens it. The app starts again on it:
+/// this process quits the way cmd-q quits, which saves the state of every plugin and frees the
+/// project, and the new one opens the folder as the last project.
+fn open_another_project(cx: &mut Context<Session>) {
+    let picked = cx.prompt_for_paths(super::start::folder_prompt());
+    cx.spawn(async move |session, cx| {
+        let folder = match super::start::picked_folder(picked.await.ok()) {
+            Ok(Some(folder)) => folder,
+            Ok(None) => return,
+            Err(error) => {
+                report(&session, error, cx);
+                return;
+            }
+        };
+        let remembered = cx
+            .background_spawn(async move {
+                app::check_project_folder(&folder)?;
+                app::remember_project(&folder)
+            })
+            .await;
+        match remembered {
+            Ok(()) => cx.update(|cx| start_again(cx)),
+            Err(error) => report(&session, format!("{error:#}"), cx),
+        }
+    })
+    .detach();
+}
+
+/// Quits, and starts this program again once the project is closed. The project goes with the
+/// window, before the last step of a quit, which is where the new process starts.
+fn start_again(cx: &mut App) {
+    cx.on_app_quit(|_| async {
+        if let Err(error) = app::start_again() {
+            eprintln!("error: {error:#}");
+        }
+    })
+    .detach();
+    cx.quit();
+}
+
+fn report(session: &gpui::WeakEntity<Session>, message: String, cx: &mut gpui::AsyncApp) {
+    // The window is gone when this fails, and there is nobody left to tell.
+    if let Some(session) = session.upgrade() {
+        session.update(cx, |session, cx| session.report(message, cx));
+    }
+}
+
+/// Links `sound-tools` to this program, off the UI thread, and says where in a dialog: when
+/// it went to `~/.local/bin`, a terminal may not find it yet.
+fn install_command_line_tool(
+    session: Entity<Session>,
+    window: &mut Window,
+    cx: &mut Context<ProjectMenu>,
+) {
+    cx.spawn_in(window, async move |_, cx| {
+        let installed = cx
+            .background_spawn(async move { app::install_command_line_tool() })
+            .await;
+        match installed {
+            Ok(installed) => {
+                let (message, detail) = installed_message(&installed);
+                let answer = cx.update(|window, cx| {
+                    window.prompt(PromptLevel::Info, &message, Some(&detail), &["OK"], cx)
+                });
+                if let Ok(answer) = answer {
+                    // Only one answer, so which one does not matter.
+                    match answer.await {
+                        Ok(_) | Err(_) => {}
+                    }
+                }
+            }
+            Err(error) => {
+                let message = format!("{error:#}");
+                session.update(cx, |session, cx| session.report(message, cx));
+            }
+        }
+    })
+    .detach();
+}
+
+fn installed_message(installed: &Installed) -> (String, String) {
+    let link = installed.link.display();
+    let message = format!("Installed {}", app::TOOL_NAME);
+    let mut detail = format!(
+        "{link} runs this app. An agent in a project folder runs “{} . --inspect” to read the whole piece.",
+        app::TOOL_NAME
+    );
+    if !installed.on_default_path {
+        detail.push_str(
+            "\n\nIf a terminal says “command not found”, add ~/.local/bin to your PATH: add the line export PATH=\"$HOME/.local/bin:$PATH\" to ~/.zshrc and open a new terminal.",
+        );
+    }
+    (message, detail)
+}
+
 fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
     let command =
         |value: &'static str, label: String| MenuItem::new(value, label).selectable(false);
@@ -237,11 +350,14 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
     ]
 }
 
-/// The last group: the project folder in the Finder, and a terminal in it for a coding agent.
+/// The last group: another project, the project folder in the Finder, a terminal in it for a
+/// coding agent, and the command that agent runs.
 fn folder_items() -> Vec<MenuItem> {
     [
+        (OPEN_PROJECT, "Open project…"),
         (REVEAL, "Reveal project folder"),
         (TERMINAL, "Open terminal in project folder"),
+        (INSTALL_TOOL, "Install command line tool"),
     ]
     .map(|(value, label)| MenuItem::new(value, label).selectable(false))
     .to_vec()
@@ -266,6 +382,23 @@ mod tests {
     }
 
     #[test]
+    fn the_install_message_says_how_to_reach_a_folder_off_the_path() {
+        let (message, detail) = installed_message(&Installed {
+            link: "/usr/local/bin/sound-tools".into(),
+            on_default_path: true,
+        });
+        assert_eq!(message, "Installed sound-tools");
+        assert!(detail.starts_with("/usr/local/bin/sound-tools runs this app."));
+        assert!(!detail.contains("PATH"));
+
+        let (_, detail) = installed_message(&Installed {
+            link: "/Users/someone/.local/bin/sound-tools".into(),
+            on_default_path: false,
+        });
+        assert!(detail.contains("export PATH=\"$HOME/.local/bin:$PATH\""));
+    }
+
+    #[test]
     fn the_menu_offers_the_terminal_next_to_the_finder() {
         let items: Vec<(SharedString, SharedString)> = folder_items()
             .iter()
@@ -274,8 +407,10 @@ mod tests {
         assert_eq!(
             items,
             [
+                (OPEN_PROJECT.into(), "Open project…".into()),
                 (REVEAL.into(), "Reveal project folder".into()),
                 (TERMINAL.into(), "Open terminal in project folder".into()),
+                (INSTALL_TOOL.into(), "Install command line tool".into()),
             ]
         );
     }

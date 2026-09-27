@@ -2,6 +2,7 @@
 //! output device, in a window or headless.
 //!
 //! ```text
+//! runtime                                                  the app: the last project, or a folder panel
 //! runtime <project-folder>                                 run live in the window
 //! runtime <project-folder> --headless                      run live, commands from stdin
 //! runtime <project-folder> --inspect                       print a summary, open no device
@@ -9,7 +10,8 @@
 //! runtime --plugins                                        list the plugins of this machine
 //! ```
 //!
-//! Only the first form starts GPUI. Tests, CI and agents use the others.
+//! Only the first two forms start GPUI. Tests, CI and agents use the others. In
+//! `Sound Tools.app` and as the command line tool this program is called `sound-tools`.
 //!
 //! Headless, it reads one command per line from stdin: `play`, `pause`, `stop`,
 //! `seek <ticks>`, `undo`, `redo`, `status`, `quit`. The end of stdin also quits. This is
@@ -324,6 +326,11 @@ fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match arguments.as_slice() {
+        // What a double click in the Finder starts.
+        [] => {
+            runtime::window::run_app();
+            Ok(())
+        }
         ["--plugins"] => list_plugins(),
         [folder] => runtime::window::run(Path::new(folder)),
         [folder, "--headless"] => run(Path::new(folder)),
@@ -336,7 +343,7 @@ fn main() -> Result<()> {
             render(Path::new(folder), Path::new(wav), seconds)
         }
         _ => bail!(
-            "usage: runtime <project-folder> [--headless | --inspect | --render <wav> --seconds <n>]\n       runtime --plugins"
+            "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> --seconds <n>]]\n       sound-tools --plugins"
         ),
     }
 }

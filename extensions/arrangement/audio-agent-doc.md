@@ -74,7 +74,7 @@ This clip starts on bar 5 and plays four seconds of `assets/audio/voice-take-1.w
 - **Louder, quieter, fades**: `gain_db`, `fade_in_ms`, `fade_out_ms`. They apply while the project plays.
 - **Delete a clip**: remove its file. The audio file stays in `assets/audio/`.
 - **A recorded take** is a file such as `assets/audio/voice-take-1.wav` and a clip of it where the composer heard it. Its `file_start_seconds` skips what the file holds from before the recording began, so leave it as it is unless you mean to trim.
-- **Find how long a file is**: `runtime . --inspect` prints each audio clip with its file and how long that file is, see `agent-docs/inspect.md`.
+- **Find how long a file is**: `sound-tools . --inspect` prints each audio clip with its file and how long that file is, see `agent-docs/inspect.md`.
 
 What `problems.txt` says, and what to do:
 

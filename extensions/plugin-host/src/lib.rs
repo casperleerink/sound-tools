@@ -220,7 +220,7 @@ impl State for PluginRecord {
         // agent that writes anything else is told here and not by a plugin that is not found.
         if self.format == PluginFormat::Vst3 && vst3::class_id_of(&self.plugin_id).is_none() {
             return Err(format!(
-                "a vst3 plugin_id is the class id as thirty-two hex digits, not {:?}. `runtime --plugins` prints them",
+                "a vst3 plugin_id is the class id as thirty-two hex digits, not {:?}. `sound-tools --plugins` prints them",
                 self.plugin_id
             ));
         }

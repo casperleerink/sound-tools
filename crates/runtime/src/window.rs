@@ -8,6 +8,7 @@
 pub mod audio_input;
 mod project_menu;
 pub mod recording;
+mod start;
 pub mod steadiness;
 pub mod tempo;
 pub mod transport;
@@ -17,15 +18,17 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use gpui::{
     AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
     MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions,
     div, point, prelude::*, px, size,
 };
 use midi::{Latency, Lost};
+use plugin_host::WeakPlugins;
 use sound_core::{
-    Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, ProjectEvent, StreamTiming,
+    Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, Project, ProjectEvent,
+    StreamTiming,
 };
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::notice::{Notice, NoticeTone};
@@ -123,7 +126,7 @@ impl Shell {
         })
         .detach();
         let mut shell = Self {
-            project_menu: cx.new(|cx| ProjectMenu::new(session.clone(), device_name, cx)),
+            project_menu: cx.new(|cx| ProjectMenu::new(session.clone(), device_name, window, cx)),
             transport: cx
                 .new(|cx| TransportPill::with_device(session.clone(), timing, open_input, cx)),
             session,
@@ -337,240 +340,294 @@ fn print_midi_report(latency: Latency, lost: Lost) {
     }
 }
 
-/// Opens the project, starts the device and runs the window until it closes.
+/// Opens the project, starts the device and runs the window until it closes. An error comes
+/// back before any window, for the terminal that started it.
 pub fn run(folder: &Path) -> Result<()> {
-    let device = OutputDevice::default_output()?;
-    let device_name = device.name()?;
-    let config = EngineConfig::new(device.sample_rate(), device.channels());
-    let (control, engine) = Engine::new(config);
-    // The scan of this machine runs on a thread of its own from here, so no plugin is ever
-    // looked at on the thread that draws. A project that names a plugin the scan has not
-    // reached yet opens and plays everything else, and the plugin comes in when it turns up:
-    // `take_retries` below runs its behaviour again.
-    let plugins = crate::plugins(false)?;
-    plugins.start_scanning();
-    let mut project = open_or_create_with(folder, control, plugins.clone())?;
-    project.watch()?;
-    // From here only the project holds the plugins, so that dropping the project ends them and
-    // saves the state of every one. A handle kept here would outlive the project: this
-    // function returns after the application has quit.
-    let weak_plugins = plugins.downgrade();
-    drop(plugins);
-    let stream = Rc::new(device.start(engine)?);
-    let timing = stream.timing().clone();
-    let title = project
-        .root()
-        .file_name()
-        .context("the project folder has no name")?
-        .to_string_lossy()
-        .into_owned();
-    println!("device: {device_name}, {} Hz", config.sample_rate);
-
+    let opened = Opened::open(folder)?;
     gpui_platform::application()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
-            sound_ui::init(cx);
-            let session = cx.new(|cx| Session::new(project, cx));
-            bind_keys(cx);
+            init(cx);
+            opened.show(cx);
+        });
+    Ok(())
+}
 
-            // A lost device must reach the composer. The stream reports it on its own thread.
-            cx.spawn({
-                let (session, stream) = (session.downgrade(), stream.clone());
-                async move |cx| {
-                    loop {
-                        cx.background_executor().timer(Duration::from_secs(1)).await;
-                        let Some(session) = session.upgrade() else {
-                            break;
-                        };
-                        for error in stream.take_errors() {
-                            session.update(cx, |session, cx| session.report(error, cx));
-                        }
+/// The app with no folder, as the Finder starts it: the last project, or the folder panel
+/// when there is none. See [`start`].
+pub fn run_app() {
+    gpui_platform::application()
+        .with_assets(Assets)
+        .run(|cx: &mut App| {
+            init(cx);
+            match crate::app::last_project() {
+                Some(folder) => start::open_or_explain(&folder, cx),
+                None => start::choose_project(cx),
+            }
+        });
+}
+
+fn init(cx: &mut App) {
+    sound_ui::init(cx);
+    bind_keys(cx);
+}
+
+/// A project that is open and plays on the default output, ready for its window.
+struct Opened {
+    project: Project,
+    plugins: WeakPlugins,
+    stream: OutputStream,
+    device_name: String,
+}
+
+impl Opened {
+    fn open(folder: &Path) -> Result<Self> {
+        let device = OutputDevice::default_output()?;
+        let device_name = device.name()?;
+        let config = EngineConfig::new(device.sample_rate(), device.channels());
+        let (control, engine) = Engine::new(config);
+        // The scan of this machine runs on a thread of its own from here, so no plugin is ever
+        // looked at on the thread that draws. A project that names a plugin the scan has not
+        // reached yet opens and plays everything else, and the plugin comes in when it turns
+        // up: `take_retries` below runs its behaviour again.
+        let plugins = crate::plugins(false)?;
+        plugins.start_scanning();
+        let mut project = open_or_create_with(folder, control, plugins.clone())?;
+        project.watch()?;
+        // From here only the project holds the plugins, so that dropping the project ends them
+        // and saves the state of every one. A handle kept here would outlive the project: the
+        // application keeps this until it quits.
+        let weak_plugins = plugins.downgrade();
+        drop(plugins);
+        let stream = device.start(engine)?;
+        println!("device: {device_name}, {} Hz", config.sample_rate);
+        // What the Finder opens next time. Not being able to remember it costs nothing now.
+        if let Err(error) = crate::app::remember_project(project.root()) {
+            eprintln!("error: {error:#}");
+        }
+        Ok(Self {
+            project,
+            plugins: weak_plugins,
+            stream,
+            device_name,
+        })
+    }
+
+    /// Opens the window of the project, and ends the application with it.
+    fn show(self, cx: &mut App) {
+        let Self {
+            project,
+            plugins: weak_plugins,
+            stream,
+            device_name,
+        } = self;
+        let title = project
+            .root()
+            .file_name()
+            .unwrap_or(project.root().as_os_str())
+            .to_string_lossy()
+            .into_owned();
+        let stream = Rc::new(stream);
+        let timing = stream.timing().clone();
+        let session = cx.new(|cx| Session::new(project, cx));
+
+        // A lost device must reach the composer. The stream reports it on its own thread.
+        cx.spawn({
+            let (session, stream) = (session.downgrade(), stream.clone());
+            async move |cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
+                    let Some(session) = session.upgrade() else {
+                        break;
+                    };
+                    for error in stream.take_errors() {
+                        session.update(cx, |session, cx| session.report(error, cx));
                     }
+                }
+            }
+        })
+        .detach();
+        // The sounds of the Drum pads, made on a thread of their own: each Drum pad whose
+        // sounds are ready runs its behaviour again, which puts them in its kit. It is not an
+        // edit. One look per session poll.
+        cx.spawn({
+            let session = session.downgrade();
+            async move |cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(sound_ui::POLL_INTERVAL)
+                        .await;
+                    let Some(session) = session.upgrade() else {
+                        break;
+                    };
+                    cx.update(|cx| take_drum_sounds(&session, cx));
+                }
+            }
+        })
+        .detach();
+        // The plugins of the project: the main-thread callbacks they ask for, and the
+        // state they say changed, written into the project. One poll per session poll.
+        cx.spawn({
+            // Nothing strong is held: the plugins must go when the project goes, because
+            // that is what saves the state of every one of them.
+            let (session, plugins) = (session.downgrade(), weak_plugins.clone());
+            async move |cx| {
+                // What the scan had found the last time a frame was asked for.
+                let mut scanned = 0;
+                loop {
+                    cx.background_executor()
+                        .timer(sound_ui::POLL_INTERVAL)
+                        .await;
+                    let (Some(session), Some(plugins)) = (session.upgrade(), plugins.upgrade())
+                    else {
+                        break;
+                    };
+                    let mut problems =
+                        session.read_with(cx, |session, _| plugins.poll(session.project()));
+                    // A plugin that is started again is handed to the engine through the
+                    // one editing path, and only while one waits for it.
+                    if plugins.restarts_pending() {
+                        let sent = session.update(cx, |session, cx| {
+                            session.edit(cx, |project| Ok(plugins.send_restarts(project)))
+                        });
+                        problems.extend(sent.into_iter().flatten());
+                    }
+                    for problem in problems {
+                        session.update(cx, |session, cx| session.report(problem, cx));
+                    }
+                    // A bundle the scan could not read. It arrives while the scan runs, on
+                    // its own thread, so it is taken here and not once before the window.
+                    for notice in plugins.take_notices() {
+                        let notice = format!("plugin scan: {notice}");
+                        println!("{notice}");
+                        session.update(cx, |session, cx| session.report(notice, cx));
+                    }
+                    // Records that were waiting for a plugin the scan had not reached,
+                    // and plugins that asked to be loaded again. Running their behaviour
+                    // again is what makes them play and takes their problem away. It is
+                    // not an edit and is never undone.
+                    let retries = plugins.take_retries();
+                    if !retries.is_empty() {
+                        session.update(cx, |session, cx| session.rebind(&retries, cx));
+                    }
+                    // The picker shows what is known and says so quietly while a scan
+                    // runs, so a frame is drawn again while one does, and once more on
+                    // the poll that sees the scan learn something or end: that is when a
+                    // menu filled while it ran is filled again.
+                    let generation = plugins.scan_generation();
+                    if plugins.scan_is_running() || generation != scanned {
+                        scanned = generation;
+                        session.update(cx, |_, cx| cx.notify());
+                    }
+                    // The window work that needs the application: the windows of plugins
+                    // that have gone, and a window whose plugin asked for another size.
+                    cx.update(|cx| plugins.settle_windows(cx));
+                    // A plugin's window that opened or closed, which includes one the
+                    // plugin itself closed. The card that offers it is drawn again.
+                    if plugins.take_window_change() {
+                        session.update(cx, |_, cx| cx.notify());
+                    }
+                }
+            }
+        })
+        .detach();
+        // The state of every plugin reaches the project when the project is dropped, which
+        // GPUI does with the views before any of this runs. See the plugin host.
+        cx.on_app_quit({
+            let plugins = weak_plugins.clone();
+            move |cx| {
+                // Before anything of the application is torn down: a plugin must not be
+                // left holding the view of a window that is going.
+                if let Some(plugins) = plugins.upgrade() {
+                    plugins.close_all_windows(cx);
+                }
+                print_device_report(&stream);
+                async {}
+            }
+        })
+        .detach();
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)),
+                cx,
+            ))),
+            window_min_size: Some(size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))),
+            titlebar: Some(TitlebarOptions {
+                title: Some(title.into()),
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(16.), px(16.))),
+            }),
+            ..Default::default()
+        };
+        let opened = cx.open_window(options, |window, cx| {
+            cx.new(|cx| {
+                let registries = views(weak_plugins.clone());
+                let name = device_name.into();
+                let input: OpenInput = Arc::new(audio_input::default_input);
+                let device = (Some(timing), Some(input));
+                Shell::with_device(session.clone(), registries, name, device, window, cx)
+            })
+        });
+        // The application ends with the main window, not with the last one: a plugin's own
+        // window is a window of this application too, and one that is open when the
+        // composer closes the project must not keep the process alive behind it.
+        if let Ok(shell) = &opened {
+            let main = shell.window_id();
+            cx.on_window_closed(move |cx, closed| {
+                if closed == main {
+                    cx.quit();
                 }
             })
             .detach();
-            // The sounds of the Drum pads, made on a thread of their own: each Drum pad whose
-            // sounds are ready runs its behaviour again, which puts them in its kit. It is not an
-            // edit. One look per session poll.
+        }
+        let shell = match opened {
+            Ok(window) => {
+                cx.activate(true);
+                window
+            }
+            Err(error) => {
+                eprintln!("error: the window did not open: {error}");
+                cx.quit();
+                return;
+            }
+        };
+        // Every MIDI input port of the machine, read into the engine. The list is looked
+        // at again every second, so a keyboard plugged in later works without a restart.
+        let input = shell
+            .read(cx)
+            .ok()
+            .and_then(|shell| shell.transport().read(cx).midi_input());
+        if let Some(input) = input {
             cx.spawn({
                 let session = session.downgrade();
                 async move |cx| {
+                    let mut ports = midi::Ports::new(input);
                     loop {
-                        cx.background_executor()
-                            .timer(sound_ui::POLL_INTERVAL)
-                            .await;
+                        // Nothing strong is held across the wait: a handle to the session
+                        // that outlived the window would keep the project open, and its
+                        // lock and `problems.txt` with it.
                         let Some(session) = session.upgrade() else {
                             break;
                         };
-                        cx.update(|cx| take_drum_sounds(&session, cx));
-                    }
-                }
-            })
-            .detach();
-            // The plugins of the project: the main-thread callbacks they ask for, and the
-            // state they say changed, written into the project. One poll per session poll.
-            cx.spawn({
-                // Nothing strong is held: the plugins must go when the project goes, because
-                // that is what saves the state of every one of them.
-                let (session, plugins) = (session.downgrade(), weak_plugins.clone());
-                async move |cx| {
-                    // What the scan had found the last time a frame was asked for.
-                    let mut scanned = 0;
-                    loop {
-                        cx.background_executor()
-                            .timer(sound_ui::POLL_INTERVAL)
-                            .await;
-                        let (Some(session), Some(plugins)) = (session.upgrade(), plugins.upgrade())
-                        else {
-                            break;
-                        };
-                        let mut problems =
-                            session.read_with(cx, |session, _| plugins.poll(session.project()));
-                        // A plugin that is started again is handed to the engine through the
-                        // one editing path, and only while one waits for it.
-                        if plugins.restarts_pending() {
-                            let sent = session.update(cx, |session, cx| {
-                                session.edit(cx, |project| Ok(plugins.send_restarts(project)))
-                            });
-                            problems.extend(sent.into_iter().flatten());
-                        }
-                        for problem in problems {
-                            session.update(cx, |session, cx| session.report(problem, cx));
-                        }
-                        // A bundle the scan could not read. It arrives while the scan runs, on
-                        // its own thread, so it is taken here and not once before the window.
-                        for notice in plugins.take_notices() {
-                            let notice = format!("plugin scan: {notice}");
-                            println!("{notice}");
-                            session.update(cx, |session, cx| session.report(notice, cx));
-                        }
-                        // Records that were waiting for a plugin the scan had not reached,
-                        // and plugins that asked to be loaded again. Running their behaviour
-                        // again is what makes them play and takes their problem away. It is
-                        // not an edit and is never undone.
-                        let retries = plugins.take_retries();
-                        if !retries.is_empty() {
-                            session.update(cx, |session, cx| session.rebind(&retries, cx));
-                        }
-                        // The picker shows what is known and says so quietly while a scan
-                        // runs, so a frame is drawn again while one does, and once more on
-                        // the poll that sees the scan learn something or end: that is when a
-                        // menu filled while it ran is filled again.
-                        let generation = plugins.scan_generation();
-                        if plugins.scan_is_running() || generation != scanned {
-                            scanned = generation;
-                            session.update(cx, |_, cx| cx.notify());
-                        }
-                        // The window work that needs the application: the windows of plugins
-                        // that have gone, and a window whose plugin asked for another size.
-                        cx.update(|cx| plugins.settle_windows(cx));
-                        // A plugin's window that opened or closed, which includes one the
-                        // plugin itself closed. The card that offers it is drawn again.
-                        if plugins.take_window_change() {
-                            session.update(cx, |_, cx| cx.notify());
-                        }
-                    }
-                }
-            })
-            .detach();
-            // The state of every plugin reaches the project when the project is dropped, which
-            // GPUI does with the views before any of this runs. See the plugin host.
-            cx.on_app_quit({
-                let plugins = weak_plugins.clone();
-                move |cx| {
-                    // Before anything of the application is torn down: a plugin must not be
-                    // left holding the view of a window that is going.
-                    if let Some(plugins) = plugins.upgrade() {
-                        plugins.close_all_windows(cx);
-                    }
-                    print_device_report(&stream);
-                    async {}
-                }
-            })
-            .detach();
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)),
-                    cx,
-                ))),
-                window_min_size: Some(size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(title.into()),
-                    appears_transparent: true,
-                    traffic_light_position: Some(point(px(16.), px(16.))),
-                }),
-                ..Default::default()
-            };
-            let opened = cx.open_window(options, |window, cx| {
-                cx.new(|cx| {
-                    let registries = views(weak_plugins.clone());
-                    let name = device_name.into();
-                    let input: OpenInput = Arc::new(audio_input::default_input);
-                    let device = (Some(timing), Some(input));
-                    Shell::with_device(session.clone(), registries, name, device, window, cx)
-                })
-            });
-            // The application ends with the main window, not with the last one: a plugin's own
-            // window is a window of this application too, and one that is open when the
-            // composer closes the project must not keep the process alive behind it.
-            if let Ok(shell) = &opened {
-                let main = shell.window_id();
-                cx.on_window_closed(move |cx, closed| {
-                    if closed == main {
-                        cx.quit();
-                    }
-                })
-                .detach();
-            }
-            let shell = match opened {
-                Ok(window) => {
-                    cx.activate(true);
-                    window
-                }
-                Err(error) => {
-                    eprintln!("error: the window did not open: {error}");
-                    cx.quit();
-                    return;
-                }
-            };
-            // Every MIDI input port of the machine, read into the engine. The list is looked
-            // at again every second, so a keyboard plugged in later works without a restart.
-            let input = shell
-                .read(cx)
-                .ok()
-                .and_then(|shell| shell.transport().read(cx).midi_input());
-            if let Some(input) = input {
-                cx.spawn({
-                    let session = session.downgrade();
-                    async move |cx| {
-                        let mut ports = midi::Ports::new(input);
-                        loop {
-                            // Nothing strong is held across the wait: a handle to the session
-                            // that outlived the window would keep the project open, and its
-                            // lock and `problems.txt` with it.
-                            let Some(session) = session.upgrade() else {
-                                break;
-                            };
-                            match ports.refresh() {
-                                Ok(opened) => {
-                                    for name in opened {
-                                        println!("midi in: {name}");
-                                    }
-                                }
-                                Err(error) => {
-                                    session.update(cx, |session, cx| session.report(error, cx));
+                        match ports.refresh() {
+                            Ok(opened) => {
+                                for name in opened {
+                                    println!("midi in: {name}");
                                 }
                             }
-                            drop(session);
-                            cx.background_executor().timer(Duration::from_secs(1)).await;
+                            Err(error) => {
+                                session.update(cx, |session, cx| session.report(error, cx));
+                            }
                         }
+                        drop(session);
+                        cx.background_executor().timer(Duration::from_secs(1)).await;
                     }
-                })
-                .detach();
-            }
-        });
-    Ok(())
+                }
+            })
+            .detach();
+        }
+    }
 }
 
 /// Runs the behaviour of every Drum pad whose sounds were made since the last look, which puts
