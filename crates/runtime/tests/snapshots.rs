@@ -135,6 +135,16 @@ impl Opened {
         cx: &mut HeadlessAppContext,
         fill: impl FnOnce(&mut Project) -> Result<()>,
     ) -> Result<Self> {
+        Self::with_input(cx, fill, None)
+    }
+
+    /// The same, with an audio input the window opens as its default input, see
+    /// `audio::SimulatedInput`.
+    fn with_input(
+        cx: &mut HeadlessAppContext,
+        fill: impl FnOnce(&mut Project) -> Result<()>,
+        input: Option<runtime::window::audio_input::OpenInput>,
+    ) -> Result<Self> {
         // The folder name is the project name in the window.
         let folder = tempfile::tempdir()?;
         let (control, engine) = Engine::new(OFFLINE);
@@ -150,7 +160,8 @@ impl Opened {
             let (session, plugins) = (session.clone(), plugins.clone());
             cx.new(|cx| {
                 let name = "MacBook Pro Speakers".into();
-                Shell::new(session, views(plugins), name, window, cx)
+                let device = (None, input);
+                Shell::with_device(session, views(plugins), name, device, window, cx)
             })
         })?;
         cx.run_until_parked();

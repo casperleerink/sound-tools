@@ -5,9 +5,9 @@
 //! the window puts the two together here, as it does for views.
 
 use anyhow::Result;
-use arrangement::{TrackKind, TrackState};
+use arrangement::{AudioClip, TrackKind, TrackState};
 use midi::Take;
-use sound_core::{InputEndpoint, Instance, InstanceId, Project, ProjectError};
+use sound_core::{Changes, Clock, InputEndpoint, Instance, InstanceId, Project, ProjectError};
 use sound_notes::NOTES_INPUT;
 
 use crate::main_arrangement;
@@ -52,24 +52,25 @@ pub fn live_notes_input(project: &Project, selected: Option<&InstanceId>) -> Opt
     notes_input(project, &track)
 }
 
-/// Adds the clip of a finished take to the track, as one undo step. `take_name` is the raw
-/// take the clip came from, which is already on disk, or `None` when writing it failed.
+/// Adds the clip of a finished MIDI take to its track, to a group of changes. `take_name` is
+/// the raw take the clip came from, which is already on disk, or `None` when writing it failed.
+/// Gives the id of the clip; a take with no notes adds nothing.
+/// `clock` is the one the take was played under: a change of the tempo map ends a take, so its
+/// clip is placed under the tempo it was heard at.
 pub fn add_take_clip(
-    project: &mut Project,
+    project: &Project,
+    changes: &mut Changes,
     track: &Instance<TrackState>,
-    take: &Take,
-    take_name: Option<String>,
+    (take, take_name): (&Take, Option<String>),
+    clock: &Clock,
 ) -> Result<Option<InstanceId>, ProjectError> {
-    let Some(mut clip) = take.clip(project.clock()) else {
+    let Some(mut clip) = take.clip(clock) else {
         return Ok(None);
     };
     // A clip never names a take that is not there: a failed write leaves the field out.
     clip.take = take_name;
-    let mut changes = sound_core::Changes::new();
-    let clip = arrangement::add_clip(project, &mut changes, track, CLIP_NAME, clip)?;
-    let id = clip.id().clone();
-    project.commit(LABEL, changes)?;
-    Ok(Some(id))
+    let clip = arrangement::add_clip(project, changes, track, CLIP_NAME, clip)?;
+    Ok(Some(clip.id().clone()))
 }
 
 /// Writes the raw take under a name of its own and gives that name, for the clip to keep.
@@ -79,4 +80,27 @@ pub fn add_take_clip(
 /// file is created and never opened again, so no take can be written over.
 pub fn write_take(project: &Project, take: &Take) -> Result<String> {
     Ok(take.raw(project.clock()).write(project.assets())?)
+}
+
+/// Adds the clip of each audio take to its track, to a group of changes, over every clip the
+/// track has. The clip is named after its file. A track that went away while it recorded gets
+/// nothing: its file stays in `assets/audio/`, as every asset does.
+pub fn add_audio_take_clips(
+    project: &Project,
+    changes: &mut Changes,
+    clips: Vec<(InstanceId, AudioClip)>,
+) -> Result<(), ProjectError> {
+    let placed: Vec<_> = clips
+        .into_iter()
+        .filter_map(|(track, clip)| {
+            let track = project.resolve::<TrackState>(&track)?;
+            let name = clip.asset.asset_name().name().to_string();
+            Some((track, name, clip))
+        })
+        .collect();
+    let placed = placed
+        .iter()
+        .map(|(track, name, clip)| (track, name.as_str(), clip.clone()));
+    arrangement::add_audio_clips(project, changes, placed)?;
+    Ok(())
 }

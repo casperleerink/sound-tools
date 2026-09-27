@@ -26,7 +26,9 @@ pub fn monotonic_nanos() -> u64 {
 pub enum DeviceError {
     #[error("no default audio output device")]
     NoOutputDevice,
-    #[error("the output device wants {0} samples, only f32 is supported")]
+    #[error("no default audio input device: set one in the Sound settings of macOS")]
+    NoInputDevice,
+    #[error("the device wants {0} samples, only f32 is supported")]
     UnsupportedSampleFormat(cpal::SampleFormat),
     #[error("the output device runs at {0} Hz, the clock needs {MIN_EXACT_SAMPLE_RATE} Hz or more")]
     SampleRateTooLow(u32),
@@ -159,6 +161,20 @@ pub struct StreamTiming {
 }
 
 impl StreamTiming {
+    /// The timing of a device whose engine frame 0 started to sound at `frame_zero_nanos` on
+    /// the clock of [`monotonic_nanos`], and that adds `output_delay` after a callback. For an
+    /// engine a test runs by hand, which plays the part of a device.
+    pub fn simulated(sample_rate: u32, frame_zero_nanos: u64, output_delay: Duration) -> Self {
+        let timing = Self::new(sample_rate);
+        timing
+            .frame_zero_nanos
+            .store(frame_zero_nanos, Ordering::Relaxed);
+        let delay = u64::try_from(output_delay.as_nanos()).unwrap_or(u64::MAX);
+        timing.output_delay_nanos.store(delay, Ordering::Relaxed);
+        timing.callbacks.store(1, Ordering::Relaxed);
+        timing
+    }
+
     fn new(sample_rate: u32) -> Self {
         Self {
             sample_rate: u64::from(sample_rate.max(1)),
@@ -205,6 +221,25 @@ impl StreamTiming {
                 .saturating_add(self.nanos_of(frame))
                 .saturating_add(delay),
         )
+    }
+}
+
+impl StreamTiming {
+    /// The engine frame whose sound started at the device at `nanos`, the inverse of
+    /// [`Self::sound_time_nanos`], to the nearest frame: what a player heard at that moment.
+    /// Below zero for a moment before the engine began. `None` before the first callback.
+    pub fn frame_sounding_at(&self, nanos: u64) -> Option<i64> {
+        if self.callbacks.load(Ordering::Relaxed) == 0 {
+            return None;
+        }
+        let start = self.frame_zero_nanos.load(Ordering::Relaxed);
+        let delay = self.output_delay_nanos.load(Ordering::Relaxed);
+        let since = i128::from(nanos) - i128::from(start) - i128::from(delay);
+        let rate = i128::from(self.sample_rate);
+        // Rounded to the nearest frame, so a moment from `sound_time_nanos`, which rounds a
+        // frame down to whole nanoseconds, gives its frame back.
+        let frame = (since * rate + since.signum() * 500_000_000) / 1_000_000_000;
+        i64::try_from(frame).ok()
     }
 }
 
@@ -255,5 +290,26 @@ impl OutputStream {
     /// Stream errors other than xruns since the last call, for example a lost device.
     pub fn take_errors(&self) -> Vec<DeviceError> {
         self.errors.try_iter().map(DeviceError::from).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_frame_sounding_at_a_moment_is_the_inverse_of_when_a_frame_sounds() {
+        let delay = Duration::from_micros(7_300);
+        let timing = StreamTiming::simulated(48_000, 3_000_000_000, delay);
+        for frame in [0, 1, 47_999, 48_000, 12_345_678] {
+            let nanos = timing.sound_time_nanos(frame).unwrap();
+            assert_eq!(timing.frame_sounding_at(nanos), Some(frame as i64));
+        }
+        // Before the engine began, and a moment between two frames.
+        assert_eq!(timing.frame_sounding_at(3_007_300_000 - 20_834), Some(-1));
+        assert_eq!(timing.frame_sounding_at(3_007_300_000 + 10_000), Some(0));
+        assert_eq!(timing.frame_sounding_at(3_007_300_000 + 11_000), Some(1));
+        let offline = StreamTiming::new(48_000);
+        assert_eq!(offline.frame_sounding_at(0), None);
     }
 }

@@ -3,6 +3,7 @@
 //! the application window. Tests of whole projects, with every bundled extension, use this
 //! crate.
 
+pub mod recorder;
 pub mod window;
 
 use std::path::Path;

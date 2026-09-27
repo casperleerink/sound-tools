@@ -2,6 +2,8 @@
 //! and releases at the place of a tick, a track or a pitch, and the keys.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
@@ -12,9 +14,10 @@ use gpui::{
     TestAppContext, VisualTestContext, point, px,
 };
 use plugin_host::WeakPlugins;
+use runtime::window::audio_input::{OpenInput, OpenedInput};
 use runtime::window::{Shell, TransportPill, bind_keys};
 use runtime::{OFFLINE, open_or_create, views};
-use sound_core::{Engine, InstanceId, Project, Ticks};
+use sound_core::{CaptureWriter, Engine, InstanceId, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{POLL_INTERVAL, Playhead, Session};
 use tempfile::TempDir;
@@ -217,12 +220,96 @@ pub fn open_project(
     engine: Engine,
     plugins: WeakPlugins,
 ) -> Opened<'_> {
+    open_project_with_input(cx, folder, project, engine, plugins, None)
+}
+
+/// An audio input the window opens as its default input, with no device: two channels at
+/// 48 kHz, into which the test writes what a device would have captured. With no device the
+/// window has no timing either, so engine frame `n` sounds at `n / 48000` s, and an input frame
+/// written at that moment was played while the composer heard that frame.
+#[derive(Clone, Default)]
+pub struct SimulatedInput {
+    writer: Arc<Mutex<Option<CaptureWriter>>>,
+    /// Input frames written so far.
+    written: Arc<AtomicU64>,
+    /// Times the window opened it.
+    pub openings: Arc<AtomicU32>,
+}
+
+impl SimulatedInput {
+    pub fn opener(&self) -> OpenInput {
+        let input = self.clone();
+        Arc::new(move || {
+            let (writer, reader) = sound_core::capture(48_000, 2);
+            *input.writer.lock().unwrap() = Some(writer);
+            input.written.store(0, Ordering::Relaxed);
+            input.openings.fetch_add(1, Ordering::Relaxed);
+            Ok(OpenedInput {
+                stream: None,
+                reader,
+            })
+        })
+    }
+
+    pub fn openings(&self) -> u32 {
+        self.openings.load(Ordering::Relaxed)
+    }
+
+    /// Writes the input up to engine frame `until`: each frame from `sample(frame)`, left and
+    /// right, captured at the moment that engine frame sounds.
+    pub fn write_until(&self, until: u64, sample: impl Fn(u64) -> [f32; 2]) {
+        let mut writer = self.writer.lock().unwrap();
+        let Some(writer) = writer.as_mut() else {
+            return;
+        };
+        let first = self.written.load(Ordering::Relaxed);
+        if until <= first {
+            return;
+        }
+        let samples: Vec<f32> = (first..until).flat_map(sample).collect();
+        let nanos = |frame: u64| frame * 1_000_000_000 / 48_000;
+        writer.write(&samples, nanos(first), 0);
+        self.written.store(until, Ordering::Relaxed);
+    }
+
+    /// The device goes away, as an interface that is unplugged.
+    pub fn unplug(&self) {
+        self.writer.lock().unwrap().take();
+    }
+}
+
+/// The same, with a simulated audio input as the default input.
+pub fn open_with_input(
+    cx: &mut TestAppContext,
+    fill: impl FnOnce(&mut Project),
+) -> (Opened<'_>, SimulatedInput) {
+    let folder = tempfile::tempdir().unwrap();
+    let (control, engine) = Engine::new(OFFLINE);
+    let (mut project, plugins) = open_or_create(folder.path(), control).unwrap();
+    fill(&mut project);
+    let input = SimulatedInput::default();
+    let opener = Some(input.opener());
+    let opened = open_project_with_input(cx, folder, project, engine, plugins.downgrade(), opener);
+    (opened, input)
+}
+
+fn open_project_with_input(
+    cx: &mut TestAppContext,
+    folder: TempDir,
+    project: Project,
+    engine: Engine,
+    plugins: WeakPlugins,
+    input: Option<OpenInput>,
+) -> Opened<'_> {
     cx.update(sound_ui::init);
     let session = cx.new(|cx| Session::new(project, cx));
     cx.update(bind_keys);
     let (shell, cx) = cx.add_window_view({
         let (session, plugins) = (session.clone(), plugins.clone());
-        move |window, cx| Shell::new(session, views(plugins), "Test device".into(), window, cx)
+        move |window, cx| {
+            let name = "Test device".into();
+            Shell::with_device(session, views(plugins), name, (None, input), window, cx)
+        }
     });
     cx.run_until_parked();
     let main = shell

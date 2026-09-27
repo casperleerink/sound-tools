@@ -9,6 +9,8 @@ use std::fmt::Display;
 use std::time::Duration;
 
 use gpui::{Context, Entity, EventEmitter, SharedString, Task, prelude::*};
+
+use crate::recording::Recording;
 use sound_core::{
     EngineControl, EngineStatus, InstanceId, Project, ProjectEdit, ProjectError, ProjectEvent,
     Ticks,
@@ -54,6 +56,10 @@ pub struct Session {
     /// See [`NoticeRoom`]. The main view publishes it.
     notice_room: NoticeRoom,
     playhead: Entity<Playhead>,
+    /// See [`Self::recording`].
+    recording: Entity<Recording>,
+    /// The engine status of the last poll, see [`Self::engine_status`].
+    status: EngineStatus,
     notice: Option<(NoticeSource, SharedString)>,
     /// The open gesture, see [`Self::begin_gesture`].
     gesture: Option<ProjectEdit>,
@@ -89,6 +95,8 @@ impl Session {
         Self {
             project,
             playhead: cx.new(|_| Playhead::default()),
+            recording: cx.new(|_| Recording::default()),
+            status: EngineStatus::default(),
             notice: None,
             gesture: None,
             selected: None,
@@ -107,6 +115,18 @@ impl Session {
 
     pub fn playhead(&self) -> &Entity<Playhead> {
         &self.playhead
+    }
+
+    /// Recording audio as the views see it: the armed tracks, the input level and the takes
+    /// while they grow. Its own entity, like the playhead, because the level changes every poll.
+    pub fn recording(&self) -> &Entity<Recording> {
+        &self.recording
+    }
+
+    /// What the engine said at the last poll: the playhead and more, such as the engine frame
+    /// it was at, which a recording needs to tie what it captured to the timeline.
+    pub fn engine_status(&self) -> EngineStatus {
+        self.status
     }
 
     /// The instance the composer is working on, such as the track whose header was clicked
@@ -320,6 +340,7 @@ impl Session {
     }
 
     fn follow(&mut self, status: &EngineStatus, cx: &mut Context<Self>) {
+        self.status = *status;
         let now = Playhead {
             playing: status.playing,
             tick: status.playhead_tick,

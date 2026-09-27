@@ -444,7 +444,11 @@ Each call is a message to the audio thread. It applies at the start of the next 
 
 `monotonic_nanos()` is one clock for the whole process: nanoseconds since the first call. `OutputStream::timing()` gives a `StreamTiming`, which the device callback fills in with two numbers per buffer and nothing computed on the audio thread. `timing.sound_time_nanos(frame)` is then the moment the sound of an engine frame starts at the device, on that same clock, and `timing.output_latency()` is what the device says it adds after a callback rendered.
 
-Whoever measures the way from an input to its sound stamps the input with `monotonic_nanos()` and subtracts. MIDI input does this, see `extensions/midi`. Never call `monotonic_nanos()` on the audio thread.
+Whoever measures the way from an input to its sound stamps the input with `monotonic_nanos()` and subtracts. MIDI input does this, see `extensions/midi`. Never call `monotonic_nanos()` on the audio thread. `timing.frame_sounding_at(nanos)` goes the other way: the engine frame whose sound started at a moment, which is what a player heard then. `StreamTiming::simulated` is the timing of an engine a test runs by hand.
+
+## Audio input
+
+`InputDevice::default_input()` is the default input of the system, f32 only; `start()` gives an `InputStream`, which stops the device when dropped, and a `CaptureReader`. Nothing of the input goes through the engine. The device callback writes each buffer into a lock-free ring with `CaptureWriter::write(samples, callback_nanos, latency_nanos)`, realtime safe: the capture time of its first frame is the callback time less the latency the device reports. The reader, on an ordinary thread, takes whole frames with `read`, numbered from the first one, and `nanos_of(frame)` says when a frame was captured. `lost_frames()` counts what a reader that fell more than `CAPTURE_SECONDS` behind lost; it reads those frames as silence in their place, so every frame keeps its number. `status()` gives a `CaptureStatus` for another thread: `take_levels()`, the loudest sample of each channel since the last take, and `is_gone()`, true once the device reported itself gone or the writer was dropped. `capture(sample_rate, channels)` makes the ring alone, for a test that writes what a device would have captured.
 
 ## The musical clock
 

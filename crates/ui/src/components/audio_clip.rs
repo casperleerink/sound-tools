@@ -9,6 +9,9 @@
 //! a fade or the gain is dragged its value shows on a label: `Fade in 420 ms`, `-6 dB`. While an
 //! edge is dragged, the part of the file the clip hides shows past that edge at 25 %.
 //!
+//! A take while it records has a red border and covers what it lies over, as the clip it
+//! becomes will: its right edge is the playhead, and its waveform shows as it arrives.
+//!
 //! This is a painter, not an element: the timeline paints every clip on one canvas and hit
 //! tests them itself, with [`ClipHandles`] for where the handles are. The gallery paints it on a
 //! canvas of its own.
@@ -126,6 +129,8 @@ pub struct AudioClipLook {
     /// The file is not there: the clip says so and shows no waveform.
     pub missing: Option<SharedString>,
     pub muted: bool,
+    /// A take while it records: a red border, over whatever it lies on.
+    pub recording: bool,
 }
 
 impl AudioClipLook {
@@ -144,6 +149,7 @@ impl AudioClipLook {
             label: None,
             missing: None,
             muted: false,
+            recording: false,
         }
     }
 
@@ -207,8 +213,16 @@ pub fn paint_audio_clip(look: &AudioClipLook, window: &mut Window, cx: &mut App)
         paint_columns(hidden, middle, color, |_| 1., window);
     }
     let radius = px(6.).min(bounds.size.width / 2.);
-    let edge = if look.selected { selection } else { border };
+    let edge = match (look.recording, look.selected) {
+        (true, _) => theme.red.opacity(dim),
+        (false, true) => selection,
+        (false, false) => border,
+    };
     let solid = BorderStyle::Solid;
+    if look.recording {
+        let (window_fill, clear) = (theme.gray_100, Hsla::transparent_black());
+        window.paint_quad(quad(bounds, radius, window_fill, px(0.), clear, solid));
+    }
     window.paint_quad(quad(bounds, radius, fill_color, px(1.), edge, solid));
 
     if let Some(missing) = &look.missing {

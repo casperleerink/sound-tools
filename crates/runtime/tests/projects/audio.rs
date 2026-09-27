@@ -341,3 +341,36 @@ fn an_audio_track_and_a_file_from_outside_are_one_undo_step() {
     );
     assert!(!harness.path("state/arrangement/vocal").exists());
 }
+
+/// A clip at tick 0 while another track has a latency of 48 frames: after play, the project
+/// waits 48 frames and the first block of the clip's track starts before frame 0 of the
+/// project. It plays, and in time: the render is the one without that latency, sample for
+/// sample. Found by step 2 of the fourth milestone, where the player took the start of that
+/// block below zero and panicked.
+#[test]
+fn a_clip_at_the_start_plays_in_time_while_another_track_has_latency() {
+    let render = |effect: &str| {
+        let mut harness = Harness::new();
+        write_wav(&harness, "voice.wav", 48_000, 1.0, 220.0);
+        let other = format!(
+            r#"{{"tool": "arrangement.track", "state": {{"name": "Other", "kind": "audio", "order": 2{effect}}}}}"#
+        );
+        let paths = [
+            harness.write(TRACK, &audio_track_record(1)),
+            harness.write(CLIP, &audio_clip_record("voice.wav", 0, "")),
+            harness.write("state/arrangement/other/instance.json", &other),
+            harness.write(
+                "state/arrangement/other/compressor.json",
+                r#"{"tool": "compressor", "state": {"lookahead_ms": 1}}"#,
+            ),
+        ];
+        harness.apply(&paths);
+        let render = harness.play(BAR);
+        let latency = harness.project.engine().poll().unwrap().latency;
+        (render, latency)
+    };
+    let (ahead, latency) = render(r#", "effects": [{"name": "compressor"}]"#);
+    assert_eq!(latency, 48);
+    assert!(ahead.iter().any(|sample| sample.abs() > 0.1));
+    assert_eq!(bits(&ahead), bits(&render("").0));
+}

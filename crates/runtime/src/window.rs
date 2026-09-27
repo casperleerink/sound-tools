@@ -5,6 +5,7 @@
 //! The window is the project runtime. It names no extension type: the main area shows whatever
 //! view the installed [`Views`] has for the first instance at the top of the project.
 
+pub mod audio_input;
 mod project_menu;
 pub mod recording;
 pub mod steadiness;
@@ -30,6 +31,7 @@ use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::{ActiveTheme, Assets, Devices, Session, Views, typography};
 
+use audio_input::OpenInput;
 use project_menu::ProjectMenu;
 pub use transport::TransportPill;
 
@@ -84,16 +86,17 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::with_device(session, registries, device_name, None, window, cx)
+        Self::with_device(session, registries, device_name, (None, None), window, cx)
     }
 
-    /// The window of the real runtime, which has a device. Everything else passes `None` for
-    /// the timing and measures no latency.
+    /// The window of the real runtime, which has a device: its timing, for the latency and for
+    /// where a take lands, and how it opens the audio input. A window without them measures no
+    /// latency and cannot record audio; a test gives a simulated input.
     pub fn with_device(
         session: Entity<Session>,
         registries: (Views, Devices),
         device_name: SharedString,
-        timing: Option<Arc<StreamTiming>>,
+        (timing, open_input): (Option<Arc<StreamTiming>>, Option<OpenInput>),
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -121,7 +124,8 @@ impl Shell {
         .detach();
         let mut shell = Self {
             project_menu: cx.new(|cx| ProjectMenu::new(session.clone(), device_name, cx)),
-            transport: cx.new(|cx| TransportPill::with_device(session.clone(), timing, cx)),
+            transport: cx
+                .new(|cx| TransportPill::with_device(session.clone(), timing, open_input, cx)),
             session,
             main: None,
             focus_handle,
@@ -502,7 +506,9 @@ pub fn run(folder: &Path) -> Result<()> {
                 cx.new(|cx| {
                     let registries = views(weak_plugins.clone());
                     let name = device_name.into();
-                    Shell::with_device(session.clone(), registries, name, Some(timing), window, cx)
+                    let input: OpenInput = Arc::new(audio_input::default_input);
+                    let device = (Some(timing), Some(input));
+                    Shell::with_device(session.clone(), registries, name, device, window, cx)
                 })
             });
             // The application ends with the main window, not with the last one: a plugin's own

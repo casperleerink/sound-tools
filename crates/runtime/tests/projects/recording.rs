@@ -104,14 +104,21 @@ impl Recorder {
         let name = runtime::window::recording::write_take(&self.harness.project, take).unwrap();
         let track = InstanceId::new(TRACK).unwrap();
         let track = self.harness.project.resolve(&track).unwrap();
-        runtime::window::recording::add_take_clip(
-            &mut self.harness.project,
+        let mut changes = sound_core::Changes::new();
+        let project = &mut self.harness.project;
+        let clock = project.clock().clone();
+        let clip = runtime::window::recording::add_take_clip(
+            project,
+            &mut changes,
             &track,
-            take,
-            Some(name),
-        )
-        .unwrap()
-        .unwrap()
+            (take, Some(name)),
+            &clock,
+        );
+        let clip = clip.unwrap().unwrap();
+        project
+            .commit(runtime::window::recording::LABEL, changes)
+            .unwrap();
+        clip
     }
 
     fn take_file(&self) -> PathBuf {

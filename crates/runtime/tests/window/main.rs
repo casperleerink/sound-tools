@@ -15,6 +15,8 @@
 //! - `piece`: a short piece made by hand from the default project, closed and opened again.
 //! - `audio`: audio clips moved, trimmed, faded and turned up or down, copied and pasted, the
 //!   Clip card, files dropped from the Finder, and adding an audio track.
+//! - `recording_audio`: arming audio tracks, the input select and recording them from a
+//!   simulated input.
 
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them, and
 // it does not know `#[gpui::test]`.
@@ -34,6 +36,7 @@ mod notes;
 mod piece;
 mod rack;
 mod recording;
+mod recording_audio;
 mod reverb;
 mod sampler;
 mod several_notes;

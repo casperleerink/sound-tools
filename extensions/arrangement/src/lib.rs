@@ -23,6 +23,7 @@
 
 mod audio;
 pub mod decibels;
+mod input;
 mod master;
 mod mixer;
 mod player;
@@ -42,6 +43,7 @@ use sound_core::{
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOOL, Velocity};
 
 pub use audio::AudioClip;
+pub use input::InputChannels;
 use master::Master;
 pub use master::{LimiterState, MasterState};
 pub use mixer::{ChannelGains, Mixer, RAMP_SECONDS, channel_gains};
@@ -197,6 +199,11 @@ pub struct TrackState {
     /// before effects existed loads unchanged and gives the same bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<EffectSlot>,
+    /// The channels of the default input an audio track records. Channel 1 alone when left
+    /// out, and a record that leaves it out is written back without it. An instrument track
+    /// records notes, not audio, and does nothing with it.
+    #[serde(default, skip_serializing_if = "InputChannels::is_default")]
+    pub input: InputChannels,
 }
 
 impl TrackState {
@@ -218,6 +225,7 @@ impl TrackState {
             mute: false,
             solo: false,
             effects: Vec::new(),
+            input: InputChannels::FIRST,
         }
     }
 
