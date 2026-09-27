@@ -12,8 +12,8 @@
 use std::sync::Arc;
 
 use sound_core::{
-    AudioOutput, EventInput, MAX_BLOCK, Peaks, Ports, PrepareConfig, ProcessContext, Processor,
-    Smoothed,
+    AudioOutput, Envelope, EnvelopeState, EventInput, MAX_BLOCK, Peaks, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed,
 };
 use sound_media::{Audio, SCRATCH_FRAMES, Varispeed, varispeed};
 use sound_notes::{NoteEvent, Pedal, Pitch, Velocity};
@@ -40,14 +40,6 @@ const EDGE_SECONDS: f64 = 0.002;
 
 /// How long the gain takes to reach a new value: the glide of every built-in device.
 const GLIDE_SECONDS: f32 = 0.02;
-
-/// How far past full level the attack aims. It shapes the attack curve, and lets it reach full
-/// level in exactly the attack time. As in the synth.
-const ATTACK_OVERSHOOT: f64 = 0.3;
-
-/// -60 dB. The release aims this far below silence, and so reaches silence in exactly the
-/// release time. The decay is within this of the sustain level after the decay time.
-const ENVELOPE_FLOOR: f64 = 0.001;
 
 /// What the processor plays from: the numbers of the record and the sample, read on the control
 /// side. The sample is swapped in, and what it held before goes back to the control side.
@@ -97,47 +89,15 @@ struct Settings {
     gain: f32,
 }
 
-/// The envelope of every voice, as per-frame factors. Each stage is `level * coefficient +
-/// base`: a curve toward a point a little past the target. The synth's envelope, measured the
-/// same way. In `f64`: over a decay of seconds, `f32` came out 9 frames late in 19200.
-#[derive(Default)]
-struct Envelope {
-    attack_coefficient: f64,
-    attack_base: f64,
-    decay_coefficient: f64,
-    sustain: f64,
-    release_coefficient: f64,
-    release_base: f64,
-}
-
-impl Envelope {
-    fn new(settings: &Settings, sample_rate: f32) -> Self {
-        // The factor that covers a distance of 1 in `seconds`, when the curve aims `overshoot`
-        // past the end of that distance.
-        let coefficient = |seconds: f32, overshoot: f64| {
-            let frames = (f64::from(seconds) * f64::from(sample_rate)).max(1.0);
-            (-((1.0 + overshoot) / overshoot).ln() / frames).exp()
-        };
-        let attack_coefficient = coefficient(settings.attack_seconds, ATTACK_OVERSHOOT);
-        let release_coefficient = coefficient(settings.release_seconds, ENVELOPE_FLOOR);
-        Self {
-            attack_coefficient,
-            attack_base: (1.0 + ATTACK_OVERSHOOT) * (1.0 - attack_coefficient),
-            decay_coefficient: coefficient(settings.decay_seconds, ENVELOPE_FLOOR),
-            sustain: f64::from(settings.sustain),
-            release_coefficient,
-            release_base: -ENVELOPE_FLOOR * (1.0 - release_coefficient),
-        }
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Stage {
-    Idle,
-    Attack,
-    /// Decay, and the sustain it ends in. One stage, so a sustain edit on a held note glides.
-    Decay,
-    Release,
+/// The envelope of the record: the synth's, from `sound_core`.
+fn envelope(settings: &Settings, sample_rate: f32) -> Envelope {
+    Envelope::new(
+        settings.attack_seconds,
+        settings.decay_seconds,
+        settings.sustain,
+        settings.release_seconds,
+        sample_rate,
+    )
 }
 
 /// Which sample a voice plays.
@@ -150,7 +110,6 @@ enum Source {
 
 #[derive(Copy, Clone)]
 struct Voice {
-    stage: Stage,
     /// The key of this note is up and only the sustain pedal keeps it sounding.
     sustained: bool,
     pitch: Option<Pitch>,
@@ -165,8 +124,7 @@ struct Voice {
     end: f64,
     /// From the velocity.
     amplitude: f32,
-    /// The envelope, from 0 to 1.
-    level: f64,
+    envelope: EnvelopeState,
     /// From 1 down to 0 while the voice fades out, 1 otherwise.
     fade: f32,
     fading: bool,
@@ -174,7 +132,6 @@ struct Voice {
 
 impl Voice {
     const IDLE: Self = Self {
-        stage: Stage::Idle,
         sustained: false,
         pitch: None,
         started: 0,
@@ -183,13 +140,13 @@ impl Voice {
         step: 1.0,
         end: 0.0,
         amplitude: 0.0,
-        level: 0.0,
+        envelope: EnvelopeState::IDLE,
         fade: 1.0,
         fading: false,
     };
 
     fn is_idle(&self) -> bool {
-        self.stage == Stage::Idle
+        self.envelope.is_idle()
     }
 
     /// A voice that counts against the 16: it sounds and is not fading out.
@@ -198,18 +155,16 @@ impl Voice {
     }
 
     fn is_held(&self) -> bool {
-        matches!(self.stage, Stage::Attack | Stage::Decay)
+        self.envelope.is_held()
     }
 
     fn loudness(&self) -> f32 {
-        self.level as f32 * self.amplitude * self.fade
+        self.envelope.level as f32 * self.amplitude * self.fade
     }
 
     fn release(&mut self) {
         self.sustained = false;
-        if self.is_held() {
-            self.stage = Stage::Release;
-        }
+        self.envelope.release();
     }
 
     /// The key came up. With the pedal down the note sounds on until the pedal comes up.
@@ -250,44 +205,22 @@ impl Voice {
             // Engine frames from this one to the end of the part that plays.
             let to_end = (self.end - (self.position + self.step * index as f64)) / self.step;
             if to_end <= 0.0 {
-                self.stage = Stage::Idle;
+                self.envelope = EnvelopeState::IDLE;
                 break;
             }
-            match self.stage {
-                Stage::Attack => {
-                    self.level = self.level * envelope.attack_coefficient + envelope.attack_base;
-                    if self.level >= 1.0 {
-                        self.level = 1.0;
-                        self.stage = Stage::Decay;
-                    }
-                }
-                Stage::Decay => {
-                    let above = self.level - envelope.sustain;
-                    self.level = envelope.sustain + above * envelope.decay_coefficient;
-                    // A pluck: with no sustain a held note ends here, and not at its note off.
-                    if self.level < ENVELOPE_FLOOR && envelope.sustain < ENVELOPE_FLOOR {
-                        self.stage = Stage::Idle;
-                        break;
-                    }
-                }
-                Stage::Release => {
-                    self.level = self.level * envelope.release_coefficient + envelope.release_base;
-                    if self.level <= 0.0 {
-                        self.stage = Stage::Idle;
-                        break;
-                    }
-                }
-                Stage::Idle => break,
+            let level = self.envelope.next(envelope) as f32;
+            if self.envelope.is_idle() {
+                break;
             }
             if self.fading {
                 self.fade -= fade_step;
                 if self.fade <= 0.0 {
-                    self.stage = Stage::Idle;
+                    self.envelope = EnvelopeState::IDLE;
                     break;
                 }
             }
             let edge = (to_end / edge_frames).min(1.0) as f32;
-            let gain = self.level as f32 * self.amplitude * self.fade * edge;
+            let gain = level * self.amplitude * self.fade * edge;
             *left += frame[0] * gain;
             *right += frame[1] * gain;
         }
@@ -390,7 +323,6 @@ impl Sampler {
         let played = f64::from(velocity.value()) / 127.0;
         let amount = settings.velocity_to_volume;
         self.voices[slot] = Voice {
-            stage: Stage::Attack,
             sustained: false,
             pitch: Some(pitch),
             started: self.notes_started,
@@ -399,7 +331,10 @@ impl Sampler {
             step: (semitones / 12.0).exp2() * rates,
             end: settings.end,
             amplitude: 1.0 - amount + amount * (played * played) as f32,
-            level: 0.0,
+            envelope: EnvelopeState {
+                stage: sound_core::EnvelopeStage::Attack,
+                level: 0.0,
+            },
             fade: 1.0,
             fading: false,
         };
@@ -491,12 +426,12 @@ impl Processor for Sampler {
 
     fn prepare(&mut self, config: &PrepareConfig) {
         self.sample_rate = config.sample_rate as f32;
-        self.envelope = Envelope::new(&self.settings, self.sample_rate);
+        self.envelope = envelope(&self.settings, self.sample_rate);
     }
 
     fn update(&mut self, update: &mut SamplerUpdate) {
         self.settings = update.settings;
-        self.envelope = Envelope::new(&self.settings, self.sample_rate);
+        self.envelope = envelope(&self.settings, self.sample_rate);
         self.gain
             .set_target(self.settings.gain, GLIDE_SECONDS * self.sample_rate);
         if !self.any_voice() {

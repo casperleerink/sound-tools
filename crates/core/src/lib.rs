@@ -8,6 +8,7 @@ mod clock;
 mod control;
 mod device;
 mod engine;
+mod envelope;
 mod graph;
 mod parameter;
 mod peaks;
@@ -24,6 +25,7 @@ pub use device::{
     DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming, monotonic_nanos,
 };
 pub use engine::{Engine, EngineStatus};
+pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeStage, EnvelopeState};
 pub use graph::{Connection, Destination, GraphError, NodeId};
 pub use parameter::Parameter;
 pub use peaks::Peaks;
