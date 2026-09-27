@@ -5114,6 +5114,7 @@ dependencies = [
  "midi",
  "plugin-host",
  "reverb",
+ "sampler",
  "serde_json",
  "sound-core",
  "sound-media",

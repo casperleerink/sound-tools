@@ -174,6 +174,7 @@ pub struct Display {
     handles: Vec<Handle>,
     caption: Option<SharedString>,
     children: Vec<AnyElement>,
+    overlays: Vec<AnyElement>,
 }
 
 impl Display {
@@ -191,7 +192,15 @@ impl Display {
             handles: Vec::new(),
             caption: None,
             children: Vec::new(),
+            overlays: Vec::new(),
         }
+    }
+
+    /// An element over the whole inset, above the handles, with no padding: such as the ring and
+    /// the words of a file dragged over it. Place it absolutely, at the top left, full size.
+    pub fn overlay(mut self, overlay: impl IntoElement) -> Self {
+        self.overlays.push(overlay.into_any_element());
+        self
     }
 
     /// The curve, as points from left to right with `x` and `y` from 0 to 1, `y` up. It is
@@ -622,7 +631,8 @@ impl RenderOnce for Display {
                             .items_start()
                             .children(self.children),
                     )
-                    .children(handles),
+                    .children(handles)
+                    .children(self.overlays),
             )
             .child(
                 div()

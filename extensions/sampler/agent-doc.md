@@ -9,14 +9,7 @@ A new track that plays a sample: copy the file in, write the track, then its ins
 ```json state/arrangement/kalimba/instance.json
 {
   "tool": "arrangement.track",
-  "state": {
-    "name": "Kalimba",
-    "colour": "teal",
-    "order": 7,
-    "gain_db": 0.0,
-    "pan": 0.0,
-    "mute": false
-  }
+  "state": {"name": "Kalimba", "colour": "teal", "order": 7, "gain_db": 0.0, "pan": 0.0, "mute": false}
 }
 ```
 

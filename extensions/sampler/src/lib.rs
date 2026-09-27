@@ -197,7 +197,7 @@ impl State for SamplerState {
 /// The doc of the sampler record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "sampler",
-    when: "You play an audio file across the keyboard: a track whose instrument is a sample",
+    when: "A track plays an audio file across the keyboard",
     markdown: include_str!("../agent-doc.md"),
 };
 

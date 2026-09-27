@@ -67,6 +67,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "agent-docs/instrument.md",
             "agent-docs/plugins.md",
             "agent-docs/reverb.md",
+            "agent-docs/sampler.md",
             "agent-docs/tone.md",
             "agent-docs/inspect.md",
             "agent-docs/takes.md",
@@ -98,7 +99,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             );
         }
     }
-    let inspect = &files[12].1;
+    let inspect = &files[13].1;
     assert!(inspect.contains("```sh\nruntime . --inspect\n```"));
     assert_eq!(
         std::fs::read_to_string(harness.path("CLAUDE.md")).unwrap(),
@@ -154,7 +155,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .iter()
             .flat_map(|(_, text)| json_examples(text))
             .collect();
-        assert_eq!(all.len(), 25, "{time_signature}");
+        assert_eq!(all.len(), 27, "{time_signature}");
 
         // The raw take of a recording is not a record: it is an asset the runtime writes once
         // and never reads back. Its example is checked as the file it is.
@@ -186,19 +187,22 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         }
         // The file the audio clip of its doc plays, which an agent copies in before it writes
         // the clip. Five seconds, as the clip plays up to 4.5 s of it.
-        let audio = folder.path().join("assets/audio/voice-take-1.wav");
-        std::fs::create_dir_all(audio.parent().unwrap()).unwrap();
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: 48_000,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        };
-        let mut writer = hound::WavWriter::create(&audio, spec).unwrap();
-        for _ in 0..5 * 48_000 {
-            writer.write_sample(0_i16).unwrap();
+        // And the file of the Sampler of its doc.
+        for name in ["voice-take-1.wav", "kalimba.wav"] {
+            let audio = folder.path().join("assets/audio").join(name);
+            std::fs::create_dir_all(audio.parent().unwrap()).unwrap();
+            let spec = hound::WavSpec {
+                channels: 1,
+                sample_rate: 48_000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            };
+            let mut writer = hound::WavWriter::create(&audio, spec).unwrap();
+            for _ in 0..5 * 48_000 {
+                writer.write_sample(0_i16).unwrap();
+            }
+            writer.finalize().unwrap();
         }
-        writer.finalize().unwrap();
         let mut copy = Harness::open(folder);
         // The plugin doc names a plugin no machine is expected to have. That is the case its
         // doc describes: the record loads, the track is silent and the problem names the id.
@@ -243,6 +247,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
                 "arrangement/bass/dark",
                 "arrangement/drums",
                 "arrangement/drums/glue",
+                "arrangement/kalimba",
+                "arrangement/kalimba/instrument",
                 "arrangement/keys",
                 "arrangement/keys/room",
                 "arrangement/piano",
@@ -294,11 +300,12 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 /// The map is what an agent reads on every task. One doc more adds one line to it, not a
 /// section: the whole agent doc was 2030 words before the split, the map was about 960. Each
 /// built-in effect adds a line of about 20 words: with the Filter, the EQ, the Reverb and the
-/// Compressor it is about 1130, and with the doc of audio about 1150.
+/// Compressor it is about 1130, with the doc of audio about 1150, and with the Sampler about
+/// 1170.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1170, "the map has {words} words");
+    assert!(words < 1190, "the map has {words} words");
 }
