@@ -21,7 +21,8 @@
 //! The mixer strip of the track (volume, pan, mute and solo) is not a device. It is in the
 //! header column under the name of the track, on the rows of the cards, and the panel edits it
 //! itself: those values are in the track record. The meter of the volume shows what the track
-//! sends to the master.
+//! sends to the master, and the input of an armed audio track. An audio track also has the
+//! input select under mute and solo: which channels of the input it records.
 //!
 //! The panel is 216 pt: 12 above the cards, a card of 192, 12 below. The rack scrolls sideways
 //! with two fingers, and a fade at its right edge says when cards go past it.
@@ -42,7 +43,7 @@ use gpui::{
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::cell::{CONTROL_HEIGHT, ROW_HEIGHT};
+use sound_ui::components::cell::{CONTROL_HEIGHT, ROW_HEIGHT, VALUE_LINE};
 use sound_ui::components::device_card::{
     BORDER, CARD_HEIGHT, CardFrame, HEADER_HEIGHT, PLAIN_CARD_WIDTH,
 };
@@ -54,14 +55,14 @@ use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::components::volume::Volume;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, Metering, Session, Slot, Views,
-    every_poll, weak_action, weak_callback,
+    ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, InputLevels, Metering, Recording,
+    Session, Slot, Views, every_poll, weak_action, weak_callback,
 };
 
 use super::clip_card::ClipCard;
 use super::layout::HEADER_WIDTH;
 use super::paint::accent;
-use crate::{TrackKind, TrackState};
+use crate::{InputChannels, TrackKind, TrackState};
 
 /// The height of the panel: the cards and 12 pt above and below them.
 pub const PANEL_HEIGHT: f32 = CARD_HEIGHT + 2. * RACK_TOP;
@@ -90,6 +91,11 @@ const SOLO_LEFT: f32 = PAN_LEFT + toggle::LETTER_WIDTH + 4.;
 /// What an undo step of the volume is called.
 pub(super) const VOLUME_LABEL: &str = "Change volume";
 const PAN_LABEL: &str = "Change pan";
+const INPUT_LABEL: &str = "Change input";
+/// The input select under mute and solo ends on the value line of the second row.
+const INPUT_TOP: f32 = ROW_TOP + ROW_HEIGHT + VALUE_LINE + 14. - 24.;
+/// How many channels the input select offers while the input has not been opened.
+const CHANNELS_BEFORE_OPENING: usize = 2;
 
 /// The pan as people read it: `C` in the middle, else how far to a side in percent.
 fn pan_readout(pan: f32) -> String {
@@ -366,9 +372,15 @@ pub struct TrackPanel {
     close_focus: FocusHandle,
     /// Where the rack is scrolled, and how far it can go, for the fade at its right edge.
     rack_scroll: ScrollHandle,
-    /// The meter of the volume: what the track sends to the master.
+    /// The meter of the volume: what the track sends to the master, or its input while it is
+    /// armed.
     metering: Metering,
     _metering: Task<()>,
+    recording: Entity<Recording>,
+    /// Whether the meter shows the input, which it does while the track is armed.
+    meters_input: bool,
+    /// The input select of an audio track.
+    input_select: Option<Entity<DropdownMenu>>,
 }
 
 impl EventEmitter<TrackPanelEvent> for TrackPanel {}
@@ -395,8 +407,9 @@ impl TrackPanel {
                 }
                 // The record says which effects the track has and in what order, so a change
                 // of it may add, remove or move a slot. The rebuild keeps the card of every
-                // slot that stays.
+                // slot that stays. It also says which channels the track records.
                 panel.set_slots(window, cx);
+                panel.refill_input_select(cx);
                 cx.notify();
             }
             // A record inside the track came or went and has no card: an effect record that
@@ -453,6 +466,17 @@ impl TrackPanel {
             panel.add_effect(&picked.0, cx);
         })
         .detach();
+        // The armed state and the channels of the input, for the meter and the input select.
+        let recording = session.read(cx).recording().clone();
+        cx.observe(&recording, |panel, _, cx| {
+            panel.refill_input_select(cx);
+            cx.notify();
+        })
+        .detach();
+        cx.subscribe(&recording, |panel, _, _: &InputLevels, cx| {
+            panel.read_input_meter(cx)
+        })
+        .detach();
         let offers = Devices::offers_generation(cx);
         let mut panel = Self {
             session,
@@ -467,6 +491,9 @@ impl TrackPanel {
             rack_scroll: ScrollHandle::new(),
             metering: Metering::default(),
             _metering: every_poll(cx, Self::read_meter),
+            recording,
+            meters_input: false,
+            input_select: None,
         };
         panel.set_track(track, window, cx);
         panel
@@ -484,11 +511,96 @@ impl TrackPanel {
     /// One poll of the meter of the volume. Its timer calls it; a snapshot calls it to skip
     /// the wait.
     pub fn read_meter(&mut self, cx: &mut Context<Self>) {
+        if self.follow_arming(cx) {
+            return;
+        }
         let project = self.session.read(cx).project();
         let peaks = crate::track_peaks(project, self.track.id());
         if self.metering.read(peaks.as_ref()) {
             cx.notify();
         }
+    }
+
+    /// Whether the meter shows the input now: the track is armed. The meter starts at rest
+    /// when it changes what it shows.
+    fn follow_arming(&mut self, cx: &mut Context<Self>) -> bool {
+        let armed = self.recording.read(cx).is_armed(self.track.id());
+        if armed != self.meters_input {
+            self.meters_input = armed;
+            self.metering.reset();
+            cx.notify();
+        }
+        armed
+    }
+
+    /// One reading of the input, for the meter of an armed track: the channels its record
+    /// names. The input brings one per poll of the window while it is open.
+    fn read_input_meter(&mut self, cx: &mut Context<Self>) {
+        if !self.follow_arming(cx) {
+            return;
+        }
+        let project = self.session.read(cx).project();
+        let Some(state) = project.state(&self.track) else {
+            return;
+        };
+        let level = self.recording.read(cx).level(state.input.device_channels());
+        if self.metering.read_amplitudes(level) {
+            cx.notify();
+        }
+    }
+
+    /// The input select of an audio track: the channels of the input, each alone, then pairs,
+    /// with the one the record names picked.
+    pub fn input_select(&self) -> Option<&Entity<DropdownMenu>> {
+        self.input_select.as_ref()
+    }
+
+    /// Fills the input select again from the record and from the channels of the input, which
+    /// the window learns when it opens it.
+    fn refill_input_select(&mut self, cx: &mut Context<Self>) {
+        let Some(select) = self.input_select.clone() else {
+            return;
+        };
+        let (entries, picked) = self.input_entries(cx);
+        select.update(cx, |select, cx| {
+            select.set_entries(entries, cx);
+            select.set_label(picked.clone(), cx);
+            select.set_selected(picked, cx);
+        });
+    }
+
+    /// The items of the input select, and the one the record names.
+    fn input_entries(&self, cx: &App) -> (Vec<MenuEntry>, SharedString) {
+        let channels = self.recording.read(cx).input_channels();
+        let offered = InputChannels::offered(channels.unwrap_or(CHANNELS_BEFORE_OPENING));
+        let items = offered.iter().map(|input| {
+            let label = SharedString::from(input.to_string());
+            MenuItem::new(label.clone(), label)
+        });
+        let entries = vec![MenuEntry::Group(
+            MenuGroup::new().label("Input").items(items),
+        )];
+        let project = self.session.read(cx).project();
+        let picked = project.state(&self.track).map(|state| state.input);
+        let picked = picked.unwrap_or_default().to_string().into();
+        (entries, picked)
+    }
+
+    /// The composer picked other channels in the input select: one undo step.
+    fn choose_input(&mut self, picked: &SharedString, cx: &mut Context<Self>) {
+        let channels = self.recording.read(cx).input_channels();
+        let offered = InputChannels::offered(channels.unwrap_or(CHANNELS_BEFORE_OPENING));
+        let Some(input) = offered
+            .into_iter()
+            .find(|input| input.to_string() == **picked)
+        else {
+            return;
+        };
+        let (session, track) = (&self.session, &self.track);
+        let change = ValueChange::Set(input);
+        let set = |track: &mut TrackState, input| track.input = input;
+        self.edit
+            .apply(session, track, INPUT_LABEL, change, set, cx);
     }
 
     /// The view in each card of the rack, left to right. `None` for a card without one.
@@ -533,6 +645,22 @@ impl TrackPanel {
         self.clip_card = audio.then(|| {
             let (session, track) = (self.session.clone(), self.track.clone());
             cx.new(|cx| ClipCard::new(session, track, cx))
+        });
+        self.meters_input = false;
+        self.input_select = audio.then(|| {
+            let (entries, picked) = self.input_entries(cx);
+            let select = cx.new(|cx| {
+                DropdownMenu::new(picked.clone(), entries, cx)
+                    .debug_name("input")
+                    .trigger(Trigger::Select)
+                    .width(160.)
+                    .selected(picked)
+            });
+            cx.subscribe(&select, |panel: &mut Self, _, picked: &MenuPicked, cx| {
+                panel.choose_input(&picked.0, cx);
+            })
+            .detach();
+            select
         });
         self.set_slots(window, cx);
         cx.notify();
@@ -806,7 +934,7 @@ impl TrackPanel {
     /// The mixer strip, in the header column on the rows of the cards: the volume at the left
     /// from the top of the first row to the value line of the second, the pan in the first row
     /// right of it, and mute and solo on the knob line of the second.
-    fn mixer_strip(&self, track: &TrackState, cx: &mut Context<Self>) -> [Div; 4] {
+    fn mixer_strip(&self, track: &TrackState, cx: &mut Context<Self>) -> Vec<Div> {
         let (peach, yellow) = (cx.theme().peach, cx.theme().yellow);
         let volume = Volume::new("gain_db", track.gain_db)
             .level(self.metering.level())
@@ -855,12 +983,19 @@ impl TrackPanel {
         let at = |left: f32, top: f32| div().absolute().left(px(left)).top(px(top));
         // A toggle sits on the line of the middle of a knob.
         let toggle_top = ROW_TOP + ROW_HEIGHT + (CONTROL_HEIGHT - toggle::HEIGHT) / 2.;
+        let input = self
+            .input_select
+            .clone()
+            .map(|select| at(PAN_LEFT, INPUT_TOP).child(select));
         [
             at(VOLUME_LEFT, ROW_TOP).child(volume),
             at(PAN_LEFT, ROW_TOP).child(pan),
             at(PAN_LEFT, toggle_top).child(mute),
             at(SOLO_LEFT, toggle_top).child(solo),
         ]
+        .into_iter()
+        .chain(input)
+        .collect()
     }
 }
 

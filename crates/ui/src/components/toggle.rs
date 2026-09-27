@@ -1,5 +1,6 @@
 //! Toggle: a 24 pt button that is on or off, such as M and S of a track or `Freeze` of a reverb.
-//! 28 pt wide for a letter and as wide as its word otherwise. Off it is `alpha/5` with muted
+//! 28 pt wide for a letter or a glyph and as wide as its word otherwise. The arm toggle of an
+//! audio track is a 10 pt circle, hollow while off and filled while on ([`Toggle::dot`]). Off it is `alpha/5` with muted
 //! text. On it is white at 10 %, or its colour at 16 % with that colour as text: mute is peach
 //! and solo yellow, the one place a control fills with colour.
 //!
@@ -20,6 +21,8 @@ use crate::theme::ActiveTheme;
 
 pub const HEIGHT: f32 = 24.;
 pub const LETTER_WIDTH: f32 = 28.;
+/// The circle of [`Toggle::dot`].
+const DOT: f32 = 10.;
 
 type ChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 
@@ -32,7 +35,8 @@ struct ToggleState {
 pub struct Toggle {
     base: Div,
     id: ElementId,
-    label: SharedString,
+    /// `None` for the circle of [`Toggle::dot`].
+    label: Option<SharedString>,
     on: bool,
     color: Option<Hsla>,
     disabled: bool,
@@ -44,11 +48,20 @@ impl Toggle {
         Self {
             base: div(),
             id: id.into(),
-            label: label.into(),
+            label: Some(label.into()),
             on,
             color: None,
             disabled: false,
             on_change: None,
+        }
+    }
+
+    /// A toggle whose face is a circle, hollow while off and filled while on: the arm toggle
+    /// of an audio track, red when on.
+    pub fn dot(id: impl Into<ElementId>, on: bool) -> Self {
+        Self {
+            label: None,
+            ..Self::new(id, "", on)
         }
     }
 
@@ -96,7 +109,10 @@ impl RenderOnce for Toggle {
             (true, Some(color)) => (color.opacity(0.16), color),
         };
         let ring = theme.lavender;
-        let letter = self.label.chars().count() == 1;
+        let letter = self
+            .label
+            .as_ref()
+            .is_none_or(|label| label.chars().count() == 1);
         let on = self.on;
         let on_change = self.on_change.filter(|_| !disabled);
         // For tests, which find a toggle by its id: `toggle-<id>`. Nothing in a normal build.
@@ -134,6 +150,15 @@ impl RenderOnce for Toggle {
                     })
                     .on_click(move |_: &ClickEvent, window, cx| on_change(!on, window, cx))
             })
-            .child(self.label)
+            .map(|toggle| match self.label {
+                Some(label) => toggle.child(label),
+                None => {
+                    let dot = div().size(px(DOT)).rounded_full();
+                    toggle.child(match on {
+                        true => dot.bg(text),
+                        false => dot.border_1().border_color(text),
+                    })
+                }
+            })
     }
 }

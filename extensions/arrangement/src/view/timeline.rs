@@ -22,7 +22,7 @@ use sound_core::{
     Assets, Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks,
     TimeSignature,
 };
-use sound_media::{AudioAsset, Cached, Info};
+use sound_media::{AudioAsset, Cached, Info, TakeOverview};
 use sound_notes::Clip;
 use sound_ui::components::audio_clip::{
     AudioClipLook, ClipHandle, ClipHandles, Columns, paint_audio_clip,
@@ -31,7 +31,9 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::text_input::{InputSize, TextInput};
-use sound_ui::{ActiveTheme, KeyboardFocus, Playhead, Session, Waveforms, typography};
+use sound_ui::{
+    ActiveTheme, KeyboardFocus, LiveTake, Playhead, Recording, Session, Waveforms, typography,
+};
 
 use super::clipboard::{Copied, CopiedClips, SharedClipboard};
 use super::clips::{
@@ -62,6 +64,9 @@ struct TrackRow {
     muted: bool,
     /// The name is being edited: the field of the timeline shows it, not the paint.
     renaming: bool,
+    /// An armed audio track shows the level of its input in its header, and its name is
+    /// shorter.
+    armed: bool,
 }
 
 /// What a clip shows: the notes of a note clip, or the waveform of an audio clip.
@@ -70,10 +75,18 @@ enum Body {
     Audio(Box<AudioShape>),
 }
 
+/// Where the waveform of an audio shape comes from.
+enum Sound {
+    /// The file of a clip, whose overview is asked for while painting.
+    File(AudioAsset),
+    /// A take while it records: what its file holds so far, once it is lined up.
+    Take(Option<TakeOverview>),
+}
+
 /// An audio clip as one paint shows it. The waveform needs the overview of its file, which is
 /// asked for while painting, so here are the times of the file each column of the clip covers.
 struct AudioShape {
-    asset: AudioAsset,
+    sound: Sound,
     /// The first column on screen, and the time in the file at each column edge from there.
     first: f32,
     edges: Vec<f64>,
@@ -528,6 +541,8 @@ pub enum TimelineEvent {
 pub struct Timeline {
     session: Entity<Session>,
     playhead: Entity<Playhead>,
+    /// The armed tracks and the takes while they record.
+    recording: Entity<Recording>,
     arrangement: Instance<ArrangementState>,
     /// Zoom and scroll, kept inside the content by [`Self::set_viewport`]. Scroll and pinch go
     /// on from here, not from what was painted: several events may arrive between two frames.
@@ -608,6 +623,11 @@ impl Timeline {
         // is still not painted per frame.
         cx.observe(&playhead, |timeline, _, cx| timeline.follow_playhead(cx))
             .detach();
+        // An armed track has a shorter name. The level and the growing takes are drawn over
+        // the timeline by `RecordingOverlay`, which is not the timeline, so they paint nothing
+        // here.
+        let recording = session.read(cx).recording().clone();
+        cx.observe(&recording, |_, _, cx| cx.notify()).detach();
         // A waveform whose overview was being made is drawn when it is ready.
         let waveforms = Waveforms::entity(cx);
         cx.observe(&waveforms, |_, _, cx| cx.notify()).detach();
@@ -702,6 +722,7 @@ impl Timeline {
         Self {
             session,
             playhead,
+            recording,
             arrangement,
             viewport: Viewport::default(),
             painted: Rc::default(),
@@ -1101,6 +1122,7 @@ impl Timeline {
             ghosts: self.ghosts(&viewport, project),
             assets: project.assets().clone(),
         };
+        let recording = self.recording.read(cx);
         let visible =
             |start: Ticks, end: Ticks| start < visible_ticks.end && end > visible_ticks.start;
         for index in viewport.visible_tracks(height, self.order.len()) {
@@ -1120,6 +1142,7 @@ impl Timeline {
                 selected: self.selected_track.as_ref() == Some(track.id()),
                 muted: state.mute,
                 renaming: renaming == Some(track.id()),
+                armed: state.kind == TrackKind::Audio && recording.is_armed(track.id()),
             });
             let shape = |id: &InstanceId, rect: Rect, body: Body| ClipShape {
                 id: id.clone(),
@@ -1162,6 +1185,51 @@ impl Timeline {
             }
         }
         scene
+    }
+
+    /// The takes while they record, from where the recording began to the playhead, in the
+    /// viewport painted last. `RecordingOverlay` paints them over the timeline every frame while
+    /// they grow, so the timeline itself is not painted again for them.
+    pub(super) fn take_shapes(&self, width: f32, cx: &App) -> Vec<ClipShape> {
+        let project = self.session.read(cx).project();
+        let recording = self.recording.read(cx);
+        let playhead = self.playhead.read(cx).tick;
+        let viewport = self.painted.get();
+        let theme = cx.theme();
+        let mut shapes = Vec::new();
+        for take in recording.takes() {
+            let Some(index) = self.row_of(&take.track) else {
+                continue;
+            };
+            let Some(state) = self.order.get(index).and_then(|track| project.state(track)) else {
+                continue;
+            };
+            let end = playhead.max(take.start + Ticks(1));
+            let rect = viewport.clip_rect(index, take.start, end);
+            let body = live_shape(take, rect, &viewport, width, project);
+            shapes.push(ClipShape {
+                id: take.track.clone(),
+                rect,
+                body: Body::Audio(Box::new(body)),
+                accent: accent(state.colour, theme),
+                selected: false,
+                muted: state.mute,
+            });
+        }
+        shapes
+    }
+
+    /// Where each audio track is in the header column, from the top of the first row, and
+    /// whether it is armed: where the overlay puts its arm toggle and its input meter.
+    pub(super) fn audio_rows(&self, cx: &App) -> Vec<(f32, Instance<TrackState>)> {
+        let project = self.session.read(cx).project();
+        let rows = self.order.iter().enumerate().filter(|(_, track)| {
+            project
+                .state(*track)
+                .is_some_and(|state| state.kind == TrackKind::Audio)
+        });
+        rows.map(|(index, track)| (self.viewport.y_of(index), track.clone()))
+            .collect()
     }
 
     /// What an audio clip shows: the times of its file under each column on screen, its fades
@@ -1230,7 +1298,7 @@ impl Timeline {
             Cached::Plays(_) | Cached::Unknown => None,
         };
         AudioShape {
-            asset: clip.asset.clone(),
+            sound: Sound::File(clip.asset.clone()),
             first,
             edges: edges_inside,
             gain: crate::decibels::amplitude(clip.gain_db),
@@ -2853,9 +2921,13 @@ impl Timeline {
     }
 }
 
-/// Where the arm toggle of an audio track starts in its header, which recording brings. The
-/// name of an audio track ends before it.
-const ARM_LEFT: f32 = 140.;
+/// Where the arm toggle of an audio track starts in its header. The name of an audio track
+/// ends before it.
+pub(super) const ARM_LEFT: f32 = 140.;
+/// Where the meter of the input of an armed track starts in its header: 45 pt, to 133.
+pub(super) const ARMED_METER_LEFT: f32 = 88.;
+/// The meter is the master meter of the transport, 45 x 8.
+pub(super) const ARMED_METER_HEIGHT: f32 = 8.;
 /// What the header of the track a drop would make says.
 const NEW_AUDIO_TRACK: &str = "New audio track";
 
@@ -2866,6 +2938,40 @@ const TEMPO_LABEL_ROOM: f32 = 80.;
 const RENAME_HEIGHT: f32 = 28.;
 /// Its left edge, so that its text starts where the painted name does, 44 pt in.
 const RENAME_LEFT: f32 = 44. - 8.;
+
+/// What a take shows while it records: the times of its file under each column on screen,
+/// lined up where the composer heard them, and no handles.
+fn live_shape(
+    take: &LiveTake,
+    rect: Rect,
+    viewport: &Viewport,
+    width: f32,
+    project: &Project,
+) -> AudioShape {
+    let clock = project.clock();
+    let start = clock.seconds_of(take.start);
+    let start_seconds = take.sound.as_ref().map_or(0., |sound| sound.start_seconds);
+    let (from, to) = (
+        rect.x.max(0.).floor(),
+        (rect.x + rect.width).min(width).ceil(),
+    );
+    let columns = (to - from).max(0.) as usize;
+    let edges = (0..=columns).map(|column| {
+        clock.seconds_of(viewport.tick_at(from + column as f32)) - start + start_seconds
+    });
+    AudioShape {
+        sound: Sound::Take(take.sound.as_ref().map(|sound| sound.overview.clone())),
+        first: from,
+        edges: edges.collect(),
+        gain: 1.,
+        fade_in: 0.,
+        fade_out: 0.,
+        hidden: None,
+        label: None,
+        missing: None,
+        handles: false,
+    }
+}
 
 /// Two values, the smaller first.
 fn ordered<T: PartialOrd>(a: T, b: T) -> (T, T) {
@@ -3068,6 +3174,33 @@ fn listen(
     });
 }
 
+/// Paints the takes of [`Timeline::take_shapes`] over a timeline painted at `bounds`, inside
+/// its area right of the headers and under the ruler.
+pub(super) fn paint_takes(
+    shapes: &[ClipShape],
+    bounds: Bounds<Pixels>,
+    assets: &Assets,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let timeline = Bounds::new(
+        bounds.origin + point(px(HEADER_WIDTH), px(RULER_HEIGHT)),
+        size(
+            bounds.size.width - px(HEADER_WIDTH),
+            bounds.size.height - px(RULER_HEIGHT),
+        ),
+    );
+    window.with_content_mask(Some(ContentMask { bounds: timeline }), |window| {
+        for shape in shapes {
+            if let Body::Audio(audio) = &shape.body {
+                let body = placed(shape.rect, timeline.origin);
+                let look = audio_look(shape, audio, body, timeline.origin, assets, cx);
+                paint_audio_clip(&look, window, cx);
+            }
+        }
+    });
+}
+
 fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let theme = cx.theme();
     let (hairline, clip_fill, clip_border) = (
@@ -3119,11 +3252,12 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
                     BorderStyle::Solid,
                 ));
             }
-            // An audio track keeps the room of its arm toggle, from 140 pt, which recording
-            // brings: its name ends 8 pt before it.
-            let name_width = match row.kind {
-                TrackKind::Instrument => HEADER_WIDTH - 44. - 16.,
-                TrackKind::Audio => ARM_LEFT - 8. - 44.,
+            // An audio track keeps the room of its arm toggle, from 140 pt: its name ends 8 pt
+            // before it, and before the meter of its input, from 88 pt, while it is armed.
+            let name_width = match (row.kind, row.armed) {
+                (TrackKind::Instrument, _) => HEADER_WIDTH - 44. - 16.,
+                (TrackKind::Audio, false) => ARM_LEFT - 8. - 44.,
+                (TrackKind::Audio, true) => ARMED_METER_LEFT - 8. - 44.,
             };
             // The field over the header shows the name that is being edited.
             let name = match row.renaming {
@@ -3204,6 +3338,7 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
                 }
             }
         }
+
         if let Some(ghosts) = &scene.ghosts {
             for (rect, name) in &ghosts.clips {
                 let area = placed(*rect, timeline.origin);
@@ -3265,20 +3400,36 @@ fn audio_look(
     if audio.missing.is_some() {
         return look;
     }
-    let Some(overview) = Waveforms::overview(assets, &audio.asset, cx) else {
-        return look;
+    let overview = match &audio.sound {
+        Sound::File(asset) => match Waveforms::overview(assets, asset, cx) {
+            Some(overview) => Overview::File(overview),
+            None => return look,
+        },
+        Sound::Take(take) => {
+            look.recording = true;
+            match take {
+                Some(take) => Overview::Take(take.clone()),
+                None => return look,
+            }
+        }
     };
-    let rate = f64::from(overview.sample_rate());
     // Every column of one draw at one resolution, from one frame of the file to the next, so
     // together they cover every frame and no click falls between two of them.
     let columns = |first: f32, edges: &[f64]| {
-        let frames: Vec<u64> = edges
-            .iter()
-            .map(|seconds| (seconds * rate).max(0.) as u64)
-            .collect();
+        let peaks = |overview: &sound_media::Overview| {
+            let rate = f64::from(overview.sample_rate());
+            let frames: Vec<u64> = edges
+                .iter()
+                .map(|seconds| (seconds * rate).max(0.) as u64)
+                .collect();
+            overview.peaks(&frames)
+        };
         Columns {
             left: origin.x + px(first),
-            peaks: overview.peaks(&frames),
+            peaks: match &overview {
+                Overview::File(overview) => peaks(overview),
+                Overview::Take(take) => take.read(peaks),
+            },
         }
     };
     look.waveform = columns(audio.first, &audio.edges);
@@ -3287,6 +3438,12 @@ fn audio_look(
         .as_ref()
         .map(|(first, edges)| columns(*first, edges));
     look
+}
+
+/// The overview a waveform is drawn from.
+enum Overview {
+    File(std::sync::Arc<sound_media::Overview>),
+    Take(TakeOverview),
 }
 
 /// The tempo changes after tick 0 in the ruler: a line at the tick and a label, `140 bpm`, in

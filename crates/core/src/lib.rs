@@ -10,6 +10,7 @@ mod device;
 mod engine;
 mod envelope;
 mod graph;
+mod input;
 mod parameter;
 mod peaks;
 mod processor;
@@ -27,6 +28,9 @@ pub use device::{
 pub use engine::{Engine, EngineStatus};
 pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeStage, EnvelopeState};
 pub use graph::{Connection, Destination, GraphError, NodeId};
+pub use input::{
+    CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputStream, capture,
+};
 pub use parameter::Parameter;
 pub use peaks::Peaks;
 pub use processor::{

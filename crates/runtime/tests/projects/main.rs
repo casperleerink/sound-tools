@@ -19,6 +19,7 @@ mod mixer;
 mod plugins;
 mod rack_order;
 mod recording;
+mod recording_audio;
 mod reverb;
 mod sampler;
 mod scale;

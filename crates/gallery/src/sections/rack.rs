@@ -441,6 +441,8 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
                 cx,
                 Toggle::new("toggle-off", "M", false).disabled(true),
             ),
+            sample("arm", cx, Toggle::dot("arm-off", false).color(theme.red)),
+            sample("armed", cx, Toggle::dot("arm-on", true).color(theme.red)),
             sample(
                 "segmented",
                 cx,

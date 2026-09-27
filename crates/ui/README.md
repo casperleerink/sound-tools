@@ -13,6 +13,9 @@ A view gets two things from it:
 - `session.read(cx).project()`: the project, to read state while rendering.
 - `session.read(cx).playhead()`: an `Entity<Playhead>` with `playing`, `tick` and `jumps`. It is an entity of its own, because it changes on every frame during playback. Observe it only in the small view that shows the position, or in a view that follows it. `jumps` counts seeks and stops: keep the last value to tell a jump from the position moving with playback, which the tick alone cannot say. The arrangement uses it to bring the playhead back into view.
 
+- `session.read(cx).recording()`: an `Entity<Recording>`, recording audio as views see it: which audio tracks are armed (`is_armed`, `set_armed`), how many channels the input has once the window opened it, the level of the input (`level(channels)`, a new reading with each `InputLevels` event), and each take while it records (`takes()`, a `LiveTake` with its start and, once placed, its `LiveSound`). Interface state: nothing is saved and arming is no undo step. The window owns the input and records; the arrangement arms tracks and draws.
+- `session.read(cx).engine_status()`: the `EngineStatus` of the last poll, for a view or the window that needs more than the playhead, such as the engine frame.
+
 What the session tells its observers:
 
 - It emits every `ProjectEvent` (`Created`, `Changed`, `Deleted`, `ProjectFileChanged`, `ProblemsChanged`). Interface edits, file edits by an agent, undo and redo all arrive this way. Subscribe and refresh only for the ids you show.

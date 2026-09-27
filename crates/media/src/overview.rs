@@ -63,6 +63,48 @@ impl Overview {
         }
     }
 
+    /// The overview of a file that is still being written, with nothing in it yet: a take
+    /// while it records. [`Self::push`] adds to it as the file grows.
+    pub fn growing(sample_rate: u32) -> Self {
+        Self {
+            frames: 0,
+            sample_rate,
+            levels: vec![Vec::new()],
+        }
+    }
+
+    /// Adds the peak of the next stretch of the file: [`FINEST_FRAMES`] frames, or fewer for
+    /// the last one. Each coarser resolution takes it into its last peak, or starts a new one.
+    pub fn push(&mut self, peak: f32, frames: u64) {
+        let mut peak = peak.min(1.0);
+        self.frames += frames;
+        let mut level = 0;
+        loop {
+            let top = level + 1 == self.levels.len();
+            let Some(peaks) = self.levels.get_mut(level) else {
+                break;
+            };
+            peaks.push(peak);
+            // The peak this one belongs to one resolution up, and what it covers so far.
+            let index = (peaks.len() - 1) / COARSER;
+            let covered = peaks.get(index * COARSER..).unwrap_or_default();
+            peak = covered.iter().copied().fold(0.0, f32::max);
+            if top && peaks.len() <= 1 {
+                break;
+            }
+            if top {
+                self.levels.push(Vec::new());
+            }
+            let Some(above) = self.levels.get_mut(level + 1) else {
+                break;
+            };
+            if index < above.len() {
+                above.truncate(index);
+            }
+            level += 1;
+        }
+    }
+
     /// How many frames the file has.
     pub fn frames(&self) -> u64 {
         self.frames
@@ -222,6 +264,25 @@ mod tests {
             }
             width = width * 3 + 1;
         }
+    }
+
+    /// A take drawn while it records shows what the file will show once it is written.
+    #[test]
+    fn an_overview_that_grows_is_the_overview_of_the_whole_file() {
+        let samples: Vec<i16> = (0..100_000_i32)
+            .map(|frame| ((frame * 7_919) % 65_536 - 32_768) as i16 / (1 + (frame % 5) as i16))
+            .collect();
+        let whole = Overview::of(&wav(&samples));
+        let mut growing = Overview::growing(48_000);
+        for stretch in samples.chunks(FINEST_FRAMES as usize) {
+            let peak = stretch
+                .iter()
+                .map(|sample| f32::from(*sample).abs() / 32_768.0)
+                .fold(0.0, f32::max);
+            growing.push(peak, stretch.len() as u64);
+        }
+        assert_eq!(growing, whole);
+        assert_eq!(Overview::growing(48_000).peak(0, 100), 0.0);
     }
 
     #[test]

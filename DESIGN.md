@@ -81,7 +81,7 @@ The meanings of "Colour" stay. These are the new uses, each an exception written
 
 Step 1b, September 26, 2026. What the direction left open, or what the build showed. The after images are in `docs/reference/m4-step-1b/`: `window/` from `cargo test -p runtime --test snapshots` (the `audio-*` states), `gallery/audio.png` from the gallery. Compared with the mockups side by side, the differences are listed last.
 
-- The arm toggle is deferred to step 2, not dropped: the owner decided it stays, and recording brings arming. Until then it is left out, as power was left out until bypass, because a toggle that does nothing is noise. The header of an audio track keeps its room, so its name ends at 132 pt, 8 pt before where the toggle goes. So until step 2 an audio track is told from an instrument track by its clips and its panel, not by its header.
+- The arm toggle is deferred to step 2, not dropped: the owner decided it stays, and recording brings arming. Until then it is left out, as power was left out until bypass, because a toggle that does nothing is noise. Step 2 built it, see "Settled with recording". The header of an audio track keeps its room, so its name ends at 132 pt, 8 pt before where the toggle goes. So until step 2 an audio track is told from an instrument track by its clips and its panel, not by its header.
 - The waveform of a clip is one column of 1 pt per point, mirrored about the middle, the peak of what the column covers times the gain and the fades at that place, up to 22 pt each way, drawn as one shape through the middles of the columns. A quiet part is a hairline, so the middle line of the mockup shows through silence. While the overview of a file is made, or while nothing knows yet how long its file is, the clip shows its shape, one bar long when its trim does not say, and no waveform.
 - The handles show on the clip under the pointer and on every selected clip. Their targets are 18 pt, and a clip narrower than 54 pt shows none: it keeps its body and edges to be pressed. The gain handle is pressed before the fade handles when they meet.
 - The labels of a drag sit under the handle they belong to, into the clip: right of the fade in and the gain, left of the fade out. They are the label of a tempo mark: 20 pt, 6 pt corners, the window colour with an `alpha/10` border, 12 pt tabular text.
@@ -92,6 +92,16 @@ Step 1b, September 26, 2026. What the direction left open, or what the build sho
 - The Clip card's title is the file name in 14 pt medium, plain. Its second column has Fade out on the second row and nothing on the first, as drawn. The line under the display gives seconds with three digits: `2.1 s to 10.1 s of 14.6 s`. Its empty state and a clip whose file is missing are 200 pt cards with one quiet line. A drop of an effect card on the Clip card puts the effect first, as a drop on an instrument does.
 - `Add track` is a group label in the project menu with `Instrument track` and `Audio track` under it, then a separator, then `Fit tempo to take`.
 - Differences from the mockups, found side by side: no arm toggle yet (above, deferred to step 2); the voice and guitar of the snapshots are made by a formula, so their waveforms are more regular than the drawn ones; the window of `audio-window.png` has a track more than `window-audio.png` (the snapshot piece has no drums), and the meter above the volume of the voice shows the peak line of the snapshot's playback. Otherwise the clip shape, the handles, the fade lines, the labels, the Clip card with its divider, the empty card and the drop ghost match in place and size.
+
+### Settled with recording
+
+Step 2, September 26, 2026. The after images are in `docs/reference/m4-step-2/`: `window/` from `cargo test -p runtime --test snapshots` (`audio-armed`, `audio-input-select`, `audio-recording`), `gallery/` with the arm toggle (`rack.png`) and a take while it records (`audio.png`).
+
+- The arm toggle is the toggle of M and S with a 10 pt circle for its face, 1 pt ring while off, filled while on, red at 16 % when on (`Toggle::dot`). It sits at 140 pt in the header of every audio track, as drawn, and is an element over the painted header, so tab reaches it.
+- Armed, the meter of the input is the master meter, 45 x 8, at 88 pt, and the name ends at 80 pt with an ellipsis. The meter of the volume in the panel of an armed track shows the input, as drawn.
+- The input select is the select of the design system at 84 pt, under M and S, its bottom on the value line of the second row. Its label is the channels: `In 1`, `In 1 + 2`. Before the input was first opened it offers two channels.
+- A take while it records covers what it lies over, as the ghost of a drop does, since the clip it becomes covers: the window colour under the clip fill, a 1 pt red border, no handles. It starts where the recording began and its right edge is the playhead. Its waveform shows once the first frames are placed, a poll or two after the start.
+- Differences from the mockups, side by side: the input select opens its list above itself when there is no room below, and its check is on the right, as in every menu of the app; the voice and guitar of the snapshots are made by a formula; the transport shows the record control filled red while it records, as in the second milestone. Otherwise the header, the meter, the toggle, the takes and the panel match in place and size.
 
 ### Settled with the Sampler
 
@@ -445,6 +455,8 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Transport | up or right, down or left on the focused steadiness | Five percent. With shift one |
 | Transport | the metronome button | The click on or off. It is not an undo step and changes no file |
 | Transport | the record button | The same as `r` |
+| Arrangement | the circle in the header of an audio track | Arm or disarm it: an armed track shows the level of its input and records on `r`. Not saved and no undo step |
+| Track panel | the input select of an audio track, `In 1` | Which channels of the default input of macOS it records: one alone, or a pair for a stereo take. One undo step |
 | A MIDI keyboard | any key, and the sustain pedal | Plays the instrument of the selected track, whether the project plays or not |
 | Arrangement or note editor | scroll, cmd-scroll or pinch | Pan, zoom in time |
 | Arrangement | double click on empty track space | Add a clip of one bar |
