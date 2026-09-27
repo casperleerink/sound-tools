@@ -125,6 +125,25 @@ fn drag_over_display(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<()>
     Ok(())
 }
 
+/// While a file is over the display its handles hide: the dots of the start line and the
+/// attack peak, which reach 5 pt past the left edge of the display, leave the card there as it
+/// is 8 pt further left. Measured in the pixels of the window, 2 per point.
+fn handles_hide_under_the_drag(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<()> {
+    let image = cx.capture_screenshot(opened.window.into())?;
+    let left = DISPLAY_MIDDLE.0 - 312. / 2.;
+    let top = DISPLAY_MIDDLE.1 - 59.;
+    let pixel = |x: f32, y: f32| image.get_pixel((x * 2.) as u32, (y * 2.) as u32).0;
+    // The foot of the start line, 8 pt above the bottom, and the attack peak, at 88 % up.
+    for y in [top + 118. - 8., top + 118. * 0.12] {
+        let (beside, card) = (pixel(left - 1.5, y), pixel(left - 9.5, y));
+        anyhow::ensure!(
+            beside == card,
+            "a handle shows past the ring at {y} pt: {beside:?} where the card is {card:?}"
+        );
+    }
+    Ok(())
+}
+
 pub fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
@@ -156,6 +175,7 @@ pub fn snapshots(
     cx.run_until_parked();
     drag_over_display(&opened, cx)?;
     save(cx, &opened, "sampler-drop-replace")?;
+    handles_hide_under_the_drag(&opened, cx)?;
     opened.mouse(PlatformInput::FileDrop(FileDropEvent::Exited), cx)?;
     drop(opened);
 

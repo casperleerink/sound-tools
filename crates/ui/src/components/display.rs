@@ -25,9 +25,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Bounds, ContentMask, CursorStyle, Div, ElementId, Hsla, KeyDownEvent,
-    MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, SharedString, Window, canvas, div,
-    fill, point, prelude::*, px, size,
+    AnyElement, App, Bounds, ContentMask, CursorStyle, Div, ElementId, ExternalPaths, Hsla,
+    KeyDownEvent, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, SharedString, Window,
+    canvas, div, fill, point, prelude::*, px, size,
 };
 
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
@@ -52,6 +52,8 @@ const HANDLE_RING: f32 = 1.5;
 const HANDLE_TARGET: f32 = 18.;
 /// A full-scale waveform stops this far from the top and the bottom of the display.
 const WAVEFORM_MARGIN: f32 = 6.;
+/// The group of the inset of a display that takes files, which its handles hide under.
+const INSET_GROUP: &str = "display-inset";
 
 /// One value a handle moves: where it is on a range, and what a double click sets.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -175,6 +177,7 @@ pub struct Display {
     caption: Option<SharedString>,
     children: Vec<AnyElement>,
     overlays: Vec<AnyElement>,
+    takes_files: bool,
 }
 
 impl Display {
@@ -193,7 +196,15 @@ impl Display {
             caption: None,
             children: Vec::new(),
             overlays: Vec::new(),
+            takes_files: false,
         }
+    }
+
+    /// A display that takes a file dropped from the Finder: while a file is dragged over it,
+    /// its handles hide, so none shows past the ring of the drop.
+    pub fn takes_files(mut self, takes_files: bool) -> Self {
+        self.takes_files = takes_files;
+        self
     }
 
     /// An element over the whole inset, above the handles, with no padding: such as the ring and
@@ -452,6 +463,7 @@ fn moved(axis: Axis, travel: &mut Travel, pointer: f32, fine: bool) -> f32 {
 fn handle_element(
     display: &ElementId,
     handle: Handle,
+    hides_under_files: bool,
     (width, height): (f32, f32),
     (dot, ring): (Hsla, Hsla),
     window: &mut Window,
@@ -495,6 +507,9 @@ fn handle_element(
         .items_center()
         .justify_center()
         .when(handle.dimmed, |d| d.opacity(0.4))
+        .when(hides_under_files, |d| {
+            d.group_drag_over::<ExternalPaths>(INSET_GROUP, |style| style.opacity(0.))
+        })
         .child(
             div()
                 .size(px(dot))
@@ -604,7 +619,10 @@ impl RenderOnce for Display {
         let handles: Vec<_> = self
             .handles
             .into_iter()
-            .map(|handle| handle_element(&self.id, handle, area, handle_colors, window, cx))
+            .map(|handle| {
+                let hides = self.takes_files;
+                handle_element(&self.id, handle, hides, area, handle_colors, window, cx)
+            })
             .collect();
 
         self.base
@@ -615,6 +633,7 @@ impl RenderOnce for Display {
             .w(px(self.width))
             .child(
                 div()
+                    .when(self.takes_files, |d| d.group(INSET_GROUP))
                     .relative()
                     .h(px(INSET_HEIGHT))
                     .rounded(px(6.))

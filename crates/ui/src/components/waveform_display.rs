@@ -173,17 +173,20 @@ impl RenderOnce for WaveformDisplay {
             .kept(start, end)
             .signal_line(signal)
             .curve(self.curve);
+        // A drop shown for a gallery hides the handles, as a file dragged over it does.
+        let shown = self.drop.as_ref().is_some_and(|drop| drop.shown);
         let display = self
             .handles
             .into_iter()
             .chain(handles)
+            .filter(|_| !shown)
             .fold(display, Display::handle);
         let display = match self.caption {
             Some(caption) => display.caption(caption),
             None => display,
         };
         let display = match self.drop {
-            Some(drop) => display.overlay(drop),
+            Some(drop) => display.takes_files(true).overlay(drop),
             None => display,
         };
         display.children(self.children)
