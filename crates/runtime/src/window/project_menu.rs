@@ -308,9 +308,15 @@ fn installed_message(installed: &Installed) -> (String, String) {
         app::TOOL_NAME
     );
     if !installed.on_default_path {
-        detail.push_str(
-            "\n\nIf a terminal says “command not found”, add ~/.local/bin to your PATH: add the line export PATH=\"$HOME/.local/bin:$PATH\" to ~/.zshrc and open a new terminal.",
-        );
+        // The shell a new account starts with: zsh on a Mac, bash on most Linux systems.
+        let startup = if cfg!(target_os = "macos") {
+            "~/.zshrc"
+        } else {
+            "~/.bashrc"
+        };
+        detail.push_str(&format!(
+            "\n\nIf a terminal says “command not found”, add ~/.local/bin to your PATH: add the line export PATH=\"$HOME/.local/bin:$PATH\" to {startup} and open a new terminal."
+        ));
     }
     (message, detail)
 }

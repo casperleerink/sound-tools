@@ -1,4 +1,4 @@
-//! The app on this Mac, apart from its window: the last project it had open, a start of the
+//! The app on this machine, apart from its window: the last project it had open, a start of the
 //! app again on another project, and the command line tool for agents.
 //!
 //! Only the window uses these. `--inspect`, `--render`, `--headless` and the tests never
@@ -14,8 +14,6 @@ use anyhow::{Context as _, Result, bail};
 /// The name of the command line tool, and of the program inside `Sound Tools.app`.
 pub const TOOL_NAME: &str = "sound-tools";
 
-/// Where the app keeps what it remembers between two launches, under the home folder.
-const SUPPORT_FOLDER: &str = "Library/Application Support/Sound Tools";
 /// One line: the folder of the last project the window had open.
 const LAST_PROJECT_FILE: &str = "last-project";
 
@@ -25,17 +23,28 @@ fn home() -> Result<PathBuf> {
         .context("HOME is not set, so the app has nowhere to keep the last project")
 }
 
-fn last_project_file(home: &Path) -> PathBuf {
-    home.join(SUPPORT_FOLDER).join(LAST_PROJECT_FILE)
+/// Where the app keeps what it remembers between two launches:
+/// `~/Library/Application Support/Sound Tools` on macOS, and on Linux `sound-tools` in
+/// `XDG_CONFIG_HOME`, which is `~/.config` when it is not set.
+fn support_folder() -> Result<PathBuf> {
+    let home = home()?;
+    if cfg!(target_os = "macos") {
+        return Ok(home.join("Library/Application Support/Sound Tools"));
+    }
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|config| config.is_absolute())
+        .unwrap_or_else(|| home.join(".config"));
+    Ok(config.join("sound-tools"))
 }
 
 /// The project the window had open last, when its folder is still there.
 pub fn last_project() -> Option<PathBuf> {
-    last_project_in(&home().ok()?)
+    last_project_in(&support_folder().ok()?)
 }
 
-fn last_project_in(home: &Path) -> Option<PathBuf> {
-    let bytes = std::fs::read(last_project_file(home)).ok()?;
+fn last_project_in(support: &Path) -> Option<PathBuf> {
+    let bytes = std::fs::read(support.join(LAST_PROJECT_FILE)).ok()?;
     let bytes = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
     let folder = PathBuf::from(OsStr::from_bytes(bytes));
     folder.is_dir().then_some(folder)
@@ -44,14 +53,14 @@ fn last_project_in(home: &Path) -> Option<PathBuf> {
 /// Remembers `folder` as the project to open when the app starts with no folder, which is
 /// what a double click in the Finder does.
 pub fn remember_project(folder: &Path) -> Result<()> {
-    remember_project_in(&home()?, folder)
+    remember_project_in(&support_folder()?, folder)
 }
 
-fn remember_project_in(home: &Path, folder: &Path) -> Result<()> {
+fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
     let folder = folder
         .canonicalize()
         .with_context(|| format!("{} is not there", folder.display()))?;
-    let file = last_project_file(home);
+    let file = support.join(LAST_PROJECT_FILE);
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("could not make {}", parent.display()))?;
@@ -101,17 +110,20 @@ pub fn start_again() -> Result<()> {
 /// Where the command line tool went, for the message the window shows.
 pub struct Installed {
     pub link: PathBuf,
-    /// Whether the folder of the link is one that a new Mac has on its `PATH`.
+    /// Whether a terminal finds the link without a change to its `PATH`.
     pub on_default_path: bool,
 }
 
-/// The first of these that works gets the link. `/usr/local/bin` is on the `PATH` of every
-/// Mac but needs an administrator on many; `~/.local/bin` never does.
-fn link_candidates(home: &Path) -> [PathBuf; 2] {
-    [
-        PathBuf::from("/usr/local/bin").join(TOOL_NAME),
-        home.join(".local/bin").join(TOOL_NAME),
-    ]
+/// The first of these that works gets the link. On macOS `/usr/local/bin` is on the `PATH` of
+/// every Mac but needs an administrator on many; `~/.local/bin` never does. On Linux the link
+/// goes to `~/.local/bin` only, which the common distributions put on the `PATH`.
+fn link_candidates(home: &Path) -> Vec<PathBuf> {
+    let local = home.join(".local/bin").join(TOOL_NAME);
+    if cfg!(target_os = "macos") {
+        vec![PathBuf::from("/usr/local/bin").join(TOOL_NAME), local]
+    } else {
+        vec![local]
+    }
 }
 
 /// Links `sound-tools` to this program, so an agent runs `sound-tools . --inspect` in a
@@ -121,7 +133,15 @@ pub fn install_command_line_tool() -> Result<Installed> {
     let program = program.canonicalize().unwrap_or(program);
     let candidates = link_candidates(&home()?);
     let link = install_link(&program, &candidates)?;
-    let on_default_path = candidates.first() == Some(&link);
+    // An app started from the Finder has the short `PATH` of macOS, so the first choice is
+    // the one known to be on it. On Linux the `PATH` of the app is the one of the session.
+    let on_default_path = if cfg!(target_os = "macos") {
+        candidates.first() == Some(&link)
+    } else {
+        let folder = link.parent();
+        std::env::var_os("PATH")
+            .is_some_and(|path| std::env::split_paths(&path).any(|on| Some(on.as_path()) == folder))
+    };
     Ok(Installed {
         link,
         on_default_path,
@@ -164,25 +184,21 @@ mod tests {
 
     #[test]
     fn the_last_project_is_remembered_and_forgotten_when_its_folder_goes() {
-        let home = tempfile::tempdir().unwrap();
+        let support = tempfile::tempdir().unwrap();
         let projects = tempfile::tempdir().unwrap();
         let piece = projects.path().join("my piece");
         std::fs::create_dir(&piece).unwrap();
 
-        assert_eq!(last_project_in(home.path()), None);
-        remember_project_in(home.path(), &piece).unwrap();
+        assert_eq!(last_project_in(support.path()), None);
+        remember_project_in(support.path(), &piece).unwrap();
         assert_eq!(
-            last_project_in(home.path()),
+            last_project_in(support.path()),
             Some(piece.canonicalize().unwrap())
         );
-        assert!(
-            home.path()
-                .join("Library/Application Support/Sound Tools/last-project")
-                .is_file()
-        );
+        assert!(support.path().join("last-project").is_file());
 
         std::fs::remove_dir(&piece).unwrap();
-        assert_eq!(last_project_in(home.path()), None);
+        assert_eq!(last_project_in(support.path()), None);
     }
 
     #[test]
@@ -236,10 +252,24 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn the_first_choice_is_on_the_path_of_every_mac() {
-        let [first, second] = link_candidates(Path::new("/Users/someone"));
-        assert_eq!(first, Path::new("/usr/local/bin/sound-tools"));
-        assert_eq!(second, Path::new("/Users/someone/.local/bin/sound-tools"));
+        assert_eq!(
+            link_candidates(Path::new("/Users/someone")),
+            [
+                Path::new("/usr/local/bin/sound-tools"),
+                Path::new("/Users/someone/.local/bin/sound-tools")
+            ]
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn on_linux_the_tool_goes_to_the_local_bin_of_the_home_folder() {
+        assert_eq!(
+            link_candidates(Path::new("/home/someone")),
+            [Path::new("/home/someone/.local/bin/sound-tools")]
+        );
     }
 }
