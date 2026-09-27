@@ -21,7 +21,7 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 
 ## Two-minute tour
 
-1. Click the project name top-left and pick **Add track**.
+1. Click the project name top-left and pick **Add track**, **Instrument track**.
 2. Double click on empty space in a track row. That adds a clip of one bar.
 3. Double click the clip. The note editor opens below.
 4. Double click on empty space inside the clip to add a note, and keep the second press down to drag its length. It sounds. Drag a note to move it, drag its end to change its length, press delete to remove it. Shift-click or drag a rectangle to select several; cmd-c, cmd-x, cmd-v and cmd-d copy, cut, paste and duplicate them. The bars at the bottom are the velocities: drag one up or down, or drag across the lane to draw several.

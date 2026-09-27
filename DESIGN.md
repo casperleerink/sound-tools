@@ -473,7 +473,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Track panel | the input select of an audio track, `In 1` | Which channels of the default input of macOS it records: one alone, or a pair for a stereo take. One undo step |
 | A MIDI keyboard | any key, and the sustain pedal | Plays the instrument of the selected track, whether the project plays or not |
 | Arrangement or note editor | scroll, cmd-scroll or pinch | Pan, zoom in time |
-| Arrangement | double click on empty track space | Add a clip of one bar |
+| Arrangement | double click on empty space of an instrument track | Add a clip of one bar. On an audio track it does nothing: audio clips come from files |
 | Arrangement | click on a clip | Select it |
 | Arrangement | shift-click or cmd-click on a clip | Add it to the selection, or take it out |
 | Arrangement | drag on empty track space | Select the clips the rectangle touches. With shift or cmd add them |
