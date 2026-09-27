@@ -577,7 +577,9 @@ impl TrackPanel {
             let label = SharedString::from(input.to_string());
             MenuItem::new(label.clone(), label)
         });
-        let entries = vec![MenuEntry::Group(MenuGroup::new().label("Input").items(items))];
+        let entries = vec![MenuEntry::Group(
+            MenuGroup::new().label("Input").items(items),
+        )];
         let project = self.session.read(cx).project();
         let picked = project.state(&self.track).map(|state| state.input);
         let picked = picked.unwrap_or_default().to_string().into();
@@ -588,13 +590,17 @@ impl TrackPanel {
     fn choose_input(&mut self, picked: &SharedString, cx: &mut Context<Self>) {
         let channels = self.recording.read(cx).input_channels();
         let offered = InputChannels::offered(channels.unwrap_or(CHANNELS_BEFORE_OPENING));
-        let Some(input) = offered.into_iter().find(|input| input.to_string() == **picked) else {
+        let Some(input) = offered
+            .into_iter()
+            .find(|input| input.to_string() == **picked)
+        else {
             return;
         };
         let (session, track) = (&self.session, &self.track);
         let change = ValueChange::Set(input);
         let set = |track: &mut TrackState, input| track.input = input;
-        self.edit.apply(session, track, INPUT_LABEL, change, set, cx);
+        self.edit
+            .apply(session, track, INPUT_LABEL, change, set, cx);
     }
 
     /// The view in each card of the rack, left to right. `None` for a card without one.

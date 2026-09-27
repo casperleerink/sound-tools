@@ -117,9 +117,15 @@ mod tests {
         assert_eq!(pair.device_channels(), 2..4);
         assert_eq!(serde_json::to_string(&pair).unwrap(), "[3,4]");
         let mono: InputChannels = serde_json::from_str("[2]").unwrap();
-        assert_eq!((mono.to_string(), mono.device_channels()), ("In 2".into(), 1..2));
+        assert_eq!(
+            (mono.to_string(), mono.device_channels()),
+            ("In 2".into(), 1..2)
+        );
         for wrong in ["[]", "[0]", "[1, 3]", "[2, 1]", "[1, 2, 3]", "[0, 1]"] {
-            assert!(serde_json::from_str::<InputChannels>(wrong).is_err(), "{wrong}");
+            assert!(
+                serde_json::from_str::<InputChannels>(wrong).is_err(),
+                "{wrong}"
+            );
         }
     }
 

@@ -3025,7 +3025,10 @@ fn live_shape(
     let clock = project.clock();
     let start = clock.seconds_of(take.start);
     let start_seconds = take.sound.as_ref().map_or(0., |sound| sound.start_seconds);
-    let (from, to) = (rect.x.max(0.).floor(), (rect.x + rect.width).min(width).ceil());
+    let (from, to) = (
+        rect.x.max(0.).floor(),
+        (rect.x + rect.width).min(width).ceil(),
+    );
     let columns = (to - from).max(0.) as usize;
     let edges = (0..=columns).map(|column| {
         clock.seconds_of(viewport.tick_at(from + column as f32)) - start + start_seconds

@@ -11,9 +11,7 @@ use std::time::Duration;
 use arrangement::AudioClip;
 use runtime::recorder::{Placement, Recorder, RecorderCommand, RecorderReport, TakeRequest};
 use runtime::window::recording::add_audio_take_clips;
-use sound_core::{
-    CaptureWriter, Changes, EngineStatus, InstanceId, StreamTiming, Ticks, capture,
-};
+use sound_core::{CaptureWriter, Changes, EngineStatus, InstanceId, StreamTiming, Ticks, capture};
 use sound_media::Imported;
 
 use crate::support::{BAR, Harness};
@@ -157,11 +155,14 @@ impl Studio {
         let clock = self.harness.project.clock().clone();
         for (tick, channel) in &self.claps {
             let engine_frame = i128::from(clock.frame_of(*tick).0) - ahead;
-            let heard =
-                self.timing.sound_time_nanos(u64::try_from(engine_frame).unwrap()).unwrap();
+            let heard = self
+                .timing
+                .sound_time_nanos(u64::try_from(engine_frame).unwrap())
+                .unwrap();
             let since = u128::from(heard - INPUT_ZERO_NANOS) * u128::from(self.input_rate);
             let frame = (since + 500_000_000) / 1_000_000_000;
-            self.clap_frames.push((u64::try_from(frame).unwrap(), *channel));
+            self.clap_frames
+                .push((u64::try_from(frame).unwrap(), *channel));
         }
     }
 
@@ -290,9 +291,16 @@ fn a_take_lands_where_it_was_heard_to_the_frame() {
     assert_eq!(voice.asset.to_string(), "voice-take-1.wav");
     assert_eq!(guitar.asset.to_string(), "guitar-take-1.wav");
     for (take, channels) in takes.iter().zip([1, 2]) {
-        let path = studio.harness.project.assets().path(take.1.asset.asset_name());
+        let path = studio
+            .harness
+            .project
+            .assets()
+            .path(take.1.asset.asset_name());
         let spec = hound::WavReader::open(path).unwrap().spec();
-        assert_eq!((spec.channels, spec.sample_rate, spec.bits_per_sample), (channels, 48_000, 32));
+        assert_eq!(
+            (spec.channels, spec.sample_rate, spec.bits_per_sample),
+            (channels, 48_000, 32)
+        );
     }
     // Both start where the recording began and end where it ended.
     assert_eq!((voice.start, guitar.start), (Ticks(0), Ticks(0)));
@@ -303,13 +311,21 @@ fn a_take_lands_where_it_was_heard_to_the_frame() {
     };
     assert_eq!((heard(&voice), heard(&guitar)), (end, end));
     // What the files hold before the start is the wait after play and the latency.
-    assert!(voice.file_start_seconds > 0.01, "{}", voice.file_start_seconds);
+    assert!(
+        voice.file_start_seconds > 0.01,
+        "{}",
+        voice.file_start_seconds
+    );
 
     let render = studio.harness.play_from_the_start(4 * BAR);
     let [left, right] = loud_frames(&render);
     let at = |tick: Ticks| clock.frame_of(tick).0 as usize;
     assert_eq!(left, [at(first)], "the voice and the left of the guitar");
-    assert_eq!(right, [at(first), at(second)], "the voice and the right of the guitar");
+    assert_eq!(
+        right,
+        [at(first), at(second)],
+        "the voice and the right of the guitar"
+    );
 }
 
 /// The whole recording, every track of it, is one undo step, and undo leaves the files: an
@@ -320,10 +336,20 @@ fn one_undo_takes_every_clip_of_the_recording_away_and_leaves_the_files() {
     let (placement, end) = studio.record(2);
     let takes = studio.finish(placement, end);
     assert!(studio.clip(VOICE).is_some() && studio.clip(GUITAR).is_some());
-    assert_eq!(studio.harness.project.undo().unwrap(), Some("Record".to_string()));
+    assert_eq!(
+        studio.harness.project.undo().unwrap(),
+        Some("Record".to_string())
+    );
     assert_eq!((studio.clip(VOICE), studio.clip(GUITAR)), (None, None));
     for (_, take) in &takes {
-        assert!(studio.harness.project.assets().path(take.asset.asset_name()).exists());
+        assert!(
+            studio
+                .harness
+                .project
+                .assets()
+                .path(take.asset.asset_name())
+                .exists()
+        );
     }
     studio.harness.project.redo().unwrap();
     assert!(studio.clip(VOICE).is_some() && studio.clip(GUITAR).is_some());
@@ -344,5 +370,8 @@ fn a_take_from_an_input_at_another_rate_lands_within_a_frame() {
         .max_by(|a, b| left[*a].abs().total_cmp(&left[*b].abs()))
         .unwrap();
     let expected = studio.harness.project.clock().frame_of(beat).0 as usize;
-    assert!(loudest.abs_diff(expected) <= 1, "{loudest} against {expected}");
+    assert!(
+        loudest.abs_diff(expected) <= 1,
+        "{loudest} against {expected}"
+    );
 }

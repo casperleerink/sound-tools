@@ -123,7 +123,9 @@ impl TakeFile {
                     .write_sample(*sample)
                     .map_err(|error| self.error(error))?;
             }
-            let loudest = frame.iter().fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+            let loudest = frame
+                .iter()
+                .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
             self.stretch = (self.stretch.0.max(loudest), self.stretch.1 + 1);
             if self.stretch.1 == FINEST_FRAMES {
                 self.overview.push(self.stretch.0, self.stretch.1);
@@ -185,7 +187,11 @@ mod tests {
         assert_eq!(mono.audio.channels(), 1);
         let mut read = vec![[0.0; 2]; 1_000];
         mono.audio.read(0, &mut read);
-        assert!(read.iter().zip(&samples).all(|(frame, sample)| frame[0] == *sample));
+        assert!(
+            read.iter()
+                .zip(&samples)
+                .all(|(frame, sample)| frame[0] == *sample)
+        );
         // The waveform drawn while it recorded is the one of the file.
         let whole = Overview::of(&mono.audio);
         assert_eq!(overview.read(Overview::clone), whole);

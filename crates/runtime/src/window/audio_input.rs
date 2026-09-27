@@ -4,9 +4,7 @@
 
 use std::rc::Rc;
 
-use sound_core::{
-    Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InputStream,
-};
+use sound_core::{Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InputStream};
 
 use crate::recorder::{Recorder, RecorderCommand, RecorderReport};
 
@@ -25,7 +23,11 @@ pub fn default_input() -> Result<OpenedInput, DeviceError> {
     let device = InputDevice::default_input()?;
     let name = device.name()?;
     let (stream, reader) = device.start()?;
-    println!("audio in: {name}, {} Hz, {} channels", reader.sample_rate(), reader.channels());
+    println!(
+        "audio in: {name}, {} Hz, {} channels",
+        reader.sample_rate(),
+        reader.channels()
+    );
     Ok(OpenedInput {
         stream: Some(stream),
         reader,

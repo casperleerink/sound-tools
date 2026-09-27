@@ -392,7 +392,12 @@ impl TransportPill {
             let state = project.state(&track)?;
             (state.kind == TrackKind::Audio).then_some(track)
         };
-        let armed: Vec<_> = self.recording.read(cx).armed().filter_map(audio_track).collect();
+        let armed: Vec<_> = self
+            .recording
+            .read(cx)
+            .armed()
+            .filter_map(audio_track)
+            .collect();
         if !armed.is_empty() {
             return armed;
         }
@@ -414,7 +419,8 @@ impl TransportPill {
         cx: &mut Context<Self>,
     ) -> Option<AudioTake> {
         if let Err(error) = self.open_input(cx) {
-            self.session.update(cx, |session, cx| session.report(error, cx));
+            self.session
+                .update(cx, |session, cx| session.report(error, cx));
             return None;
         }
         let project = self.session.read(cx).project();
@@ -465,7 +471,10 @@ impl TransportPill {
                 session.update(cx, |session, cx| session.report(error, cx));
             }
             // Nothing was played: no clip and no file.
-            if let Some(played) = keyboard.finish_recording(until).filter(|take| !take.is_empty()) {
+            if let Some(played) = keyboard
+                .finish_recording(until)
+                .filter(|take| !take.is_empty())
+            {
                 // The performance first, and whatever happens to the clip. It is the only copy
                 // of what the composer played, and a clip can fail to be made: its track may be
                 // gone.
@@ -533,7 +542,13 @@ impl TransportPill {
                 session.edit(cx, |project| {
                     let mut changes = Changes::new();
                     if let Some((track, played, name)) = &midi {
-                        recording::add_take_clip(project, &mut changes, track, played, name.clone())?;
+                        recording::add_take_clip(
+                            project,
+                            &mut changes,
+                            track,
+                            played,
+                            name.clone(),
+                        )?;
                     }
                     recording::add_audio_take_clips(project, &mut changes, clips)?;
                     project.commit(recording::LABEL, changes)
@@ -564,7 +579,8 @@ impl TransportPill {
         let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
         if armed && !self.audio.is_open() {
             if let Err(error) = self.open_input(cx) {
-                self.session.update(cx, |session, cx| session.report(error, cx));
+                self.session
+                    .update(cx, |session, cx| session.report(error, cx));
                 // Armed with no input would show a level that never moves.
                 self.recording
                     .update(cx, |recording, cx| recording.retain_armed(|_| false, cx));

@@ -98,12 +98,19 @@ fn clip_end(opened: &mut Opened<'_>, clip: &AudioClip) -> Ticks {
 #[gpui::test]
 fn the_arm_toggle_opens_the_input_and_shows_its_level(cx: &mut TestAppContext) {
     let (mut opened, input) = open(cx);
-    assert_eq!(input.openings.get(), 0, "nothing opens the input before a track is armed");
+    assert_eq!(
+        input.openings.get(),
+        0,
+        "nothing opens the input before a track is armed"
+    );
     arm(&mut opened, "voice");
     assert!(armed(&mut opened, VOICE));
     assert_eq!(input.openings.get(), 1);
     let recording = recording(&mut opened);
-    assert_eq!(opened.cx.read(|cx| recording.read(cx).input_channels()), Some(2));
+    assert_eq!(
+        opened.cx.read(|cx| recording.read(cx).input_channels()),
+        Some(2)
+    );
 
     play(&mut opened, &input, 4_096, tone);
     let level = opened.cx.read(|cx| recording.read(cx).level(0..2));
@@ -114,7 +121,10 @@ fn the_arm_toggle_opens_the_input_and_shows_its_level(cx: &mut TestAppContext) {
     // Disarmed, the input closes, and the level goes.
     arm(&mut opened, "voice");
     assert!(!armed(&mut opened, VOICE));
-    assert_eq!(opened.cx.read(|cx| recording.read(cx).input_channels()), None);
+    assert_eq!(
+        opened.cx.read(|cx| recording.read(cx).input_channels()),
+        None
+    );
 }
 
 /// The input select offers the channels of the input, each alone, then pairs, and a pick is
@@ -126,11 +136,16 @@ fn the_input_select_writes_the_channels_of_the_track(cx: &mut TestAppContext) {
     opened.click(header);
     opened.settle();
     let panel = opened.track_panel().unwrap();
-    let select = opened.cx.read(|cx| panel.read(cx).input_select().cloned().unwrap());
+    let select = opened
+        .cx
+        .read(|cx| panel.read(cx).input_select().cloned().unwrap());
     let shown = opened.cx.read(|cx| select.read(cx).label().clone());
     assert_eq!(shown.as_ref(), "In 1");
     for item in ["In 1", "In 2", "In 1 + 2"] {
-        assert!(opened.cx.read(|cx| select.read(cx).item(item).is_some()), "{item}");
+        assert!(
+            opened.cx.read(|cx| select.read(cx).item(item).is_some()),
+            "{item}"
+        );
     }
 
     let trigger = opened.control("input");
@@ -150,7 +165,10 @@ fn the_input_select_writes_the_channels_of_the_track(cx: &mut TestAppContext) {
     assert!(record.unwrap().contains(r#""input": [1, 2]"#));
     opened.keys("cmd-z");
     let record = std::fs::read_to_string(opened.path("state/arrangement/voice/instance.json"));
-    assert!(!record.unwrap().contains("input"), "the default is left out of the record");
+    assert!(
+        !record.unwrap().contains("input"),
+        "the default is left out of the record"
+    );
 }
 
 /// `r` records every armed audio track, mono and stereo, and the selected instrument track
@@ -185,16 +203,28 @@ fn r_records_every_armed_track_as_one_undo_step(cx: &mut TestAppContext) {
     assert_eq!(voice[0].asset.to_string(), "voice-take-1.wav");
     assert_eq!(guitar[0].asset.to_string(), "guitar-take-1.wav");
     assert!(opened.clip("arrangement/track-1/take").is_some());
-    let files = ["assets/audio/voice-take-1.wav", "assets/audio/guitar-take-1.wav"];
+    let files = [
+        "assets/audio/voice-take-1.wav",
+        "assets/audio/guitar-take-1.wav",
+    ];
     let channels: Vec<u16> = files
         .iter()
-        .map(|file| hound::WavReader::open(opened.path(file)).unwrap().spec().channels)
+        .map(|file| {
+            hound::WavReader::open(opened.path(file))
+                .unwrap()
+                .spec()
+                .channels
+        })
         .collect();
     assert_eq!(channels, [1, 2]);
     // The voice heard input 1, the guitar both.
     let samples = |file: &str, opened: &mut Opened<'_>| -> Vec<f32> {
         let mut reader = hound::WavReader::open(opened.path(file)).unwrap();
-        reader.samples::<f32>().take(4).map(Result::unwrap).collect()
+        reader
+            .samples::<f32>()
+            .take(4)
+            .map(Result::unwrap)
+            .collect()
     };
     assert_eq!(samples(files[0], &mut opened), [0.5; 4]);
     assert_eq!(samples(files[1], &mut opened), [0.5, 0.25, 0.5, 0.25]);
@@ -243,7 +273,10 @@ fn a_take_lands_where_it_was_heard(cx: &mut TestAppContext) {
     let status = opened.cx.read(|cx| session.read(cx).engine_status());
     let ahead = status.playhead_frame.0 as i64 - status.frames as i64;
     let beat = (960 * FRAMES_PER_TICK) as i64 - ahead;
-    assert!(beat > opened.engine.frames() as i64, "the beat is still to come");
+    assert!(
+        beat > opened.engine.frames() as i64,
+        "the beat is still to come"
+    );
     CLAP.with(|clap| clap.set(beat as u64));
     play(&mut opened, &input, 48_000, clap);
     opened.keys("r");
@@ -302,8 +335,14 @@ fn stop_pause_and_seek_end_the_take(cx: &mut TestAppContext) {
             .find(|clip| clip.asset.to_string() == format!("voice-take-{take}.wav"))
             .unwrap_or_else(|| panic!("{ending}: no clip"));
         let end = clip_end(&mut opened, clip);
-        assert!(end <= before + Ticks(2 * 2_048 / FRAMES_PER_TICK), "{ending}: {end:?}");
-        assert!(end > before.saturating_sub(Ticks(100)), "{ending}: {end:?} {before:?}");
+        assert!(
+            end <= before + Ticks(2 * 2_048 / FRAMES_PER_TICK),
+            "{ending}: {end:?}"
+        );
+        assert!(
+            end > before.saturating_sub(Ticks(100)),
+            "{ending}: {end:?} {before:?}"
+        );
         // Back to the start and stopped for the next one.
         let stop = opened.control("stop");
         opened.click(stop);

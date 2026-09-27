@@ -124,9 +124,8 @@ impl Shell {
         .detach();
         let mut shell = Self {
             project_menu: cx.new(|cx| ProjectMenu::new(session.clone(), device_name, cx)),
-            transport: cx.new(|cx| {
-                TransportPill::with_device(session.clone(), timing, open_input, cx)
-            }),
+            transport: cx
+                .new(|cx| TransportPill::with_device(session.clone(), timing, open_input, cx)),
             session,
             main: None,
             focus_handle,

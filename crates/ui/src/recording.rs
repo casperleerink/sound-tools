@@ -100,7 +100,10 @@ impl Recording {
     /// channel shows on both sides. Silence for a channel the input does not have.
     pub fn level(&self, channels: Range<usize>) -> [f32; 2] {
         let at = |channel: usize| self.levels.get(channel).copied().unwrap_or_default();
-        let (first, last) = (channels.start, channels.end.saturating_sub(1).max(channels.start));
+        let (first, last) = (
+            channels.start,
+            channels.end.saturating_sub(1).max(channels.start),
+        );
         [at(first), at(last)]
     }
 

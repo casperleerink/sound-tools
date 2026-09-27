@@ -114,7 +114,9 @@ impl Recorder {
             Some(name),
         );
         let clip = clip.unwrap().unwrap();
-        project.commit(runtime::window::recording::LABEL, changes).unwrap();
+        project
+            .commit(runtime::window::recording::LABEL, changes)
+            .unwrap();
         clip
     }
 

@@ -64,7 +64,10 @@ pub enum RecorderReport {
     },
     /// The take of a track has no file, or stopped being written: the error says why. The
     /// rest of the recording goes on.
-    Failed { track: InstanceId, error: MediaError },
+    Failed {
+        track: InstanceId,
+        error: MediaError,
+    },
     /// The recorder fell behind the input and frames were lost: the takes have a hole.
     Behind { frames: u64 },
 }
@@ -231,7 +234,10 @@ impl Recorder {
             until.saturating_sub(recording.frames).min(read as u64)
         });
         recording.frames += wanted;
-        let read = self.read.get(..wanted as usize * channels).unwrap_or_default();
+        let read = self
+            .read
+            .get(..wanted as usize * channels)
+            .unwrap_or_default();
         for take in &mut recording.takes {
             let Some(file) = &mut take.file else {
                 continue;
