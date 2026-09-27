@@ -5218,6 +5218,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sampler"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "hound",
+ "serde",
+ "serde_json",
+ "sound-core",
+ "sound-media",
+ "sound-notes",
+ "sound-ui",
+ "tempfile",
+]
+
+[[package]]
 name = "scheduler"
 version = "0.1.0"
 source = "git+https://github.com/zed-industries/zed?rev=7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f#7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f"
