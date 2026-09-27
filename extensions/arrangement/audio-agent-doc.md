@@ -27,14 +27,13 @@ state/arrangement/<track>/<clip>.json      an audio clip of that track
     "order": 3,
     "gain_db": 0.0,
     "pan": 0.0,
-    "mute": false,
-    "input": [1]
+    "mute": false
   }
 }
 ```
 
 - `kind`: `"audio"` makes an audio track. It is chosen when the track is made; an instrument track leaves the field out. Do not change it on a track that has clips.
-- `input`: which channels of the composer's audio input the track records when they record in the window: one channel, `[1]`, or two next to each other for a stereo take, `[1, 2]`. Channels count from 1. `[1]` when left out.
+- `input`: which channels of the composer's audio input the track records when they record in the window: one channel, `[1]`, or two next to each other for a stereo take, `[1, 2]`. Channels count from 1. Leave it out for `[1]`, as this example does.
 - No `instrument.json`: an audio track plays its clips through its effects, if any, into the master.
 
 ## An audio clip: `arrangement.audio_clip`
