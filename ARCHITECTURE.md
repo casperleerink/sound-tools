@@ -82,6 +82,7 @@ Compile enabled extensions into the project runtime executable. The composer can
 - Started with no folder, as the Finder starts it, the runtime opens the last project (`~/Library/Application Support/Sound Tools/last-project`), or the macOS folder panel when that folder is gone. The window form writes that file; `--headless`, `--inspect` and `--render` never do.
 - **Open project…** quits the way cmd-q does and starts the program again at the very end of the quit, when the project, its plugins and its lock are gone. Switching inside one process would mean taking down the device, the plugins and their windows by hand; a new process gets that right for free.
 - **Install command line tool** links `sound-tools` to the program inside the app, in `/usr/local/bin` or else `~/.local/bin`, with no administrator prompt. The agent docs say `sound-tools . --inspect`.
+- On Linux there is no bundle, and the same program does the same with Linux places: the last project in `$XDG_CONFIG_HOME/sound-tools/` (`~/.config/sound-tools/`), the folder panel through the XDG desktop portal, which GPUI uses, and the command line tool in `~/.local/bin` only. When the portal is missing the start window says so.
 - Custom extensions built by an agent stay parked with the outer application. When they come back, the app would build a runtime per project with the composer's own `rustup` into `~/Library/Application Support/Sound Tools`, and fall back to the bundled binary while there is none or a build fails.
 
 ### Build-loop experiment, September 9, 2026

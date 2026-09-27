@@ -25,8 +25,11 @@ sudo apt-get install build-essential pkg-config libasound2-dev libfontconfig-dev
 
 What is checked: the build and every test on x86_64 (CI) and arm64, and the window opening under Xvfb with software Vulkan. What should work, but nobody has tried on a real Linux desktop yet: playback through ALSA (PipeWire and PulseAudio take it too), MIDI input through ALSA, recording, and CLAP and VST 3 plugins for their sound. Plugins are looked for in `~/.clap` and `/usr/lib/clap`, and in `~/.vst3`, `/usr/lib/vst3` and `/usr/local/lib/vst3`. The plugin cache is in `~/.cache/sound-tools/`.
 
+With no folder, `runtime` opens the last project, which it keeps in `~/.config/sound-tools/`, or else a folder panel. The panel needs the XDG desktop portal, which GNOME and KDE have. **Install command line tool** links `sound-tools` into `~/.local/bin`.
+
 What does not work yet:
 
+- An app bundle or package. There is no Linux counterpart of `tooling/bundle-macos.sh` yet.
 - Plugin windows. The card of a plugin has `Open window` greyed out and says why. The plugin plays, and its state is saved.
 - The snapshot tests. They render with Metal, so on Linux they only say so. The rest of the tests run.
 - **Open terminal in project folder** starts `$TERMINAL`, or else `x-terminal-emulator`, so it needs one of the two.
