@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Sound Tools
+Comment=A small DAW that an AI agent can work in
+Exec=sound-tools
+Icon=sound-tools
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+StartupWMClass=sound-tools
