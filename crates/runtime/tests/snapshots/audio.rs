@@ -422,6 +422,7 @@ pub fn snapshots(
     cx.run_until_parked();
     save(cx, &opened, "audio-menu")?;
     drop(opened);
+    armed_frame_times(cx)?;
     recording(cx, save)
 }
 
@@ -545,6 +546,30 @@ fn wait_for_takes(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<()> {
         std::thread::sleep(Duration::from_millis(10));
     }
     anyhow::bail!("the takes were not lined up")
+}
+
+/// The frame one poll of the window causes on the nine tracks of audio while one of them is
+/// armed and the project is stopped: the input level moves every poll.
+fn armed_frame_times(cx: &mut HeadlessAppContext) -> Result<()> {
+    let input = SimulatedInput::default();
+    let mut opened = Opened::with_input(cx, audio_tracks, Some(input.opener()))?;
+    wait_for_waveforms(cx, &opened)?;
+    arm(&opened, &["arrangement/take-0"], cx)?;
+    let poll = (48_000. * sound_ui::POLL_INTERVAL.as_secs_f32()) as usize;
+    let mut times = Vec::new();
+    for _ in 0..200 {
+        let mut buffer = vec![0.0_f32; poll * 2];
+        opened.engine.process_block(&mut buffer);
+        input.write_until(opened.engine.frames());
+        let started = std::time::Instant::now();
+        poll_window(&opened, cx)?;
+        times.push(started.elapsed());
+    }
+    super::print_times(
+        "audio clips: frame per poll, one track armed, stopped",
+        times,
+    );
+    Ok(())
 }
 
 /// Arming, the input select and a recording, from a simulated input.
