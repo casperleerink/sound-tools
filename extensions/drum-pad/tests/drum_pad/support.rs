@@ -1,6 +1,6 @@
 //! A test-only track tool, a harness on a temporary project folder and measurements.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use drum_pad::{DrumPadState, FIRST_NOTE};
@@ -138,10 +138,6 @@ impl Stereo {
             .collect()
     }
 
-    pub fn frames(&self) -> usize {
-        self.left.len()
-    }
-
     /// Writes a 32-bit float WAV, for a person to listen to.
     pub fn write_wav(&self, path: &Path) {
         let spec = hound::WavSpec {
@@ -164,7 +160,7 @@ pub struct Harness {
     pub project: Project,
     pub engine: Engine,
     /// Last, so the folder outlives the project that holds its lock.
-    pub folder: tempfile::TempDir,
+    _folder: tempfile::TempDir,
 }
 
 impl Harness {
@@ -179,7 +175,7 @@ impl Harness {
         Self {
             project,
             engine,
-            folder,
+            _folder: folder,
         }
     }
 
@@ -195,29 +191,6 @@ impl Harness {
         let track = changes.create(id(name), Track { notes });
         changes.create(track.id().child(INSTRUMENT).unwrap(), drums);
         self.project.commit("Add track", changes).unwrap();
-    }
-
-    pub fn drums(&self) -> sound_core::Instance<DrumPadState> {
-        self.project
-            .resolve::<DrumPadState>(&id("track/instrument"))
-            .unwrap()
-    }
-
-    /// Changes the Drum pad as one commit.
-    pub fn edit(&mut self, change: impl FnOnce(&mut DrumPadState)) {
-        let drums = self.drums();
-        let mut state = self.project.state(&drums).unwrap().clone();
-        change(&mut state);
-        let mut changes = Changes::new();
-        changes.set(&drums, state);
-        self.project.commit("Edit drums", changes).unwrap();
-    }
-
-    /// Writes a file and applies it, as the watcher would.
-    pub fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
-        let path: PathBuf = self.project.root().join(relative);
-        std::fs::write(&path, contents).unwrap();
-        self.project.apply_outside_changes(&[path]).unwrap()
     }
 
     /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
