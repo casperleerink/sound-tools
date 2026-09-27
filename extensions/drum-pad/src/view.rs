@@ -18,8 +18,8 @@
 use std::path::PathBuf;
 
 use gpui::{
-    Context, Entity, FocusHandle, KeyDownEvent, MouseButton, PathPromptOptions, Task,
-    Window, div, prelude::*, px,
+    Context, Entity, FocusHandle, KeyDownEvent, MouseButton, PathPromptOptions, Task, Window, div,
+    prelude::*, px,
 };
 use sound_core::{Instance, ProjectEvent, State};
 use sound_media::{Cached, Imported, MediaError};
@@ -254,7 +254,9 @@ impl DrumPadView {
         let (project, id) = (self.session.read(cx).project(), self.drums.id());
         let mut sounding = [0.; PADS];
         for (pad, level) in sounding.iter_mut().enumerate() {
-            let taken = project.peaks(id, &peaks_name(pad)).map_or(0., |peaks| peaks.take()[0]);
+            let taken = project
+                .peaks(id, &peaks_name(pad))
+                .map_or(0., |peaks| peaks.take()[0]);
             *level = (taken.clamp(0., 1.) * SOUNDING_STEPS).round() / SOUNDING_STEPS;
         }
         if sounding != self.sounding {
@@ -331,7 +333,10 @@ impl DrumPadView {
     /// pad, an undo or an outside edit. The list has the sounds of the kit, the pad's own file
     /// when it plays one, and `Choose file…`.
     fn show_sound(&mut self, cx: &mut Context<Self>) {
-        let Some(pad) = self.state(cx).map(|state| state.pads[self.selected].clone()) else {
+        let Some(pad) = self
+            .state(cx)
+            .map(|state| state.pads[self.selected].clone())
+        else {
             return;
         };
         let sounds = Sound::ALL.map(|sound| MenuItem::new(sound.key(), sound.name()));
@@ -362,7 +367,8 @@ impl DrumPadView {
         let Some(sound) = Sound::ALL.into_iter().find(|sound| sound.key() == value) else {
             return;
         };
-        let set = move |state: &mut DrumPadState, sound| state.pads[pad].source = Source::Sound(sound);
+        let set =
+            move |state: &mut DrumPadState, sound| state.pads[pad].source = Source::Sound(sound);
         self.change("Change sound", ValueChange::Set(sound), set, cx);
     }
 
@@ -400,7 +406,8 @@ impl DrumPadView {
                     return;
                 }
             };
-            view.update(cx, |view, cx| view.load_files(pad, paths, cx)).ok();
+            view.update(cx, |view, cx| view.load_files(pad, paths, cx))
+                .ok();
         })
         .detach();
     }
@@ -479,7 +486,12 @@ impl DrumPadView {
         }
     }
 
-    fn grid(&self, state: &DrumPadState, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn grid(
+        &self,
+        state: &DrumPadState,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let ring = cx.theme().lavender;
         let ring_shows = self.keyboard_focus.shows_ring(&self.grid_focus, window);
         let rows = (0..COLUMNS).rev().map(|row| {
@@ -489,7 +501,8 @@ impl DrumPadView {
                 let view = cx.weak_entity();
                 let press = move |window: &mut Window, cx: &mut gpui::App| {
                     // Released: there is nothing left to press.
-                    view.update(cx, |view, cx| view.press(index, window, cx)).ok();
+                    view.update(cx, |view, cx| view.press(index, window, cx))
+                        .ok();
                 };
                 let drop_files = weak_callback(cx, move |view: &mut Self, paths, cx| {
                     view.load_files(index, paths, cx)
@@ -501,7 +514,10 @@ impl DrumPadView {
                     .on_press(press)
                     .on_drop_files(drop_files)
             });
-            div().flex().gap(px(PAD_GAP)).children(pads.collect::<Vec<_>>())
+            div()
+                .flex()
+                .gap(px(PAD_GAP))
+                .children(pads.collect::<Vec<_>>())
         });
         div()
             .id("pads")
@@ -562,13 +578,19 @@ impl gpui::Render for DrumPadView {
         let on = pad.choke;
         let choke = Toggle::new("choke", if on { "On" } else { "Off" }, on).on_change(
             weak_callback(cx, move |view: &mut Self, on: bool, cx| {
-                let label = if on { "Add to choke group" } else { "Take out of choke group" };
+                let label = if on {
+                    "Add to choke group"
+                } else {
+                    "Take out of choke group"
+                };
                 let set = move |state: &mut DrumPadState, on| state.pads[selected].choke = on;
                 view.change(label, ValueChange::Set(on), set, cx);
             }),
         );
         let hidden = [
-            Column::new().top(sound).bottom(Cell::new(choke).label("Choke")),
+            Column::new()
+                .top(sound)
+                .bottom(Cell::new(choke).label("Choke")),
             Column::new(),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));

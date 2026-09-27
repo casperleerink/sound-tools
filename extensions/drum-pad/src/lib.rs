@@ -677,7 +677,8 @@ mod tests {
             for parameter in &PARAMETERS[0] {
                 let row = format!("| `{}` |", parameter.field);
                 let row = doc.lines().find(|line| line.starts_with(&row));
-                let row = row.unwrap_or_else(|| panic!("{name} has no row for {}", parameter.field));
+                let row =
+                    row.unwrap_or_else(|| panic!("{name} has no row for {}", parameter.field));
                 let range = format!("| {} to {} |", parameter.min, parameter.max);
                 assert!(row.contains(&range), "{name}: {row}");
             }
@@ -693,7 +694,10 @@ mod tests {
                     kit.decay_ms,
                     kit.pan
                 );
-                assert!(doc.lines().any(|line| line == row), "{name} has no row {row}");
+                assert!(
+                    doc.lines().any(|line| line == row),
+                    "{name} has no row {row}"
+                );
             }
         }
     }

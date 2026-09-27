@@ -7,6 +7,7 @@
 mod agent_doc;
 mod audio;
 mod compressor;
+mod drums;
 mod effects;
 mod eq;
 mod filter;
