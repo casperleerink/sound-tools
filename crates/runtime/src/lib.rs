@@ -24,7 +24,7 @@ use reverb::ReverbState;
 use sampler::SamplerState;
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
-    ProjectError, Registry, SavedDestination, State,
+    ProjectError, Registry, SavedDestination, State, Ticks,
 };
 use sound_ui::{DeviceOffer, Devices, Views};
 
@@ -552,4 +552,49 @@ pub fn render_into(
         left -= size - skip;
     }
     Ok(problems)
+}
+
+/// Below this every sample of a tail is silence: -90 dB.
+const SILENT: f32 = 3.2e-5;
+
+/// Plays `from..to` and then the tail: what reverbs and releases still sound after the
+/// transport stops at `to`. The tail ends after half a second of silence, or after ten seconds
+/// for a sound that never ends, such as the noise of a plugin. See [`render_into`].
+pub fn render_range(
+    project: &mut Project,
+    engine: &mut Engine,
+    plugins: &Plugins,
+    from: Ticks,
+    to: Ticks,
+    mut write: impl FnMut(&[f32]) -> Result<()>,
+) -> Result<Vec<plugin_host::PluginProblem>> {
+    let clock = project.clock();
+    let frames = clock.frame_of(to).0.saturating_sub(clock.frame_of(from).0);
+    project.engine().seek(from);
+    project.engine().play();
+    let mut problems = render_into(project, engine, plugins, frames as usize, &mut write)?;
+    // Stopping releases every held note, which is where the tail starts.
+    project.engine().pause();
+    let channels = engine.channels();
+    let rate = engine.sample_rate() as usize;
+    let (mut quiet, mut tail) = (0, 0);
+    while quiet < rate / 2 && tail < rate * 10 {
+        problems.extend(render_into(project, engine, plugins, 512, |samples| {
+            let frames = samples.len() / channels;
+            quiet = if samples.iter().all(|sample| sample.abs() < SILENT) {
+                quiet + frames
+            } else {
+                0
+            };
+            tail += frames;
+            write(samples)
+        })?);
+    }
+    Ok(problems)
+}
+
+/// Where a render of the whole project ends: the end of the last clip of the main
+/// arrangement, before the tail. `None` when it has no clips.
+pub fn project_end(project: &Project) -> Option<Ticks> {
+    arrangement::end(project, main_arrangement(project)?.id())
 }
