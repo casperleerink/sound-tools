@@ -1,5 +1,5 @@
 //! Rack section: every control of a device card and the mixer strip, in each of its states, as
-//! in `docs/reference/m3-step-0/mockups/components.png`: knob, volume, meter and gain
+//! in `docs/mockups/components.png`: knob, volume, meter and gain
 //! reduction, toggle, segmented control, select and drag number, and device cards with their header and a
 //! display. The focus section beside it shows the focus ring of each, which one window can
 //! show only one at a time.

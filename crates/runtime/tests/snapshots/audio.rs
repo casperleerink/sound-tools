@@ -1,4 +1,4 @@
-//! The audio states of the window, as drawn in `docs/reference/m4-step-0/mockups/`:
+//! The audio states of the window, as drawn in `docs/mockups/`:
 //!
 //! - `audio-window.png`: the piece with two audio tracks, Voice and Guitar, playing, a clip of
 //!   the voice selected with fades and gain, and the panel of the voice: the Clip card, the

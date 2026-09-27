@@ -1,5 +1,5 @@
 //! Drums section: the pad in each of its states, and a Drum pad card made of pads, as in
-//! `docs/reference/m4-step-0/mockups/drum-pad.png`. The samples show states, so they hold
+//! `docs/mockups/drum-pad.png`. The samples show states, so they hold
 //! still: the card of the Drum pad is where they are pressed.
 
 use gpui::AppContext;
