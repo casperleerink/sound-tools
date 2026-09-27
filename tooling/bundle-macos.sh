@@ -3,9 +3,9 @@
 #
 #   tooling/bundle-macos.sh [--zip] [output-folder]
 #
-# The app goes to dist/ by default. --zip also writes Sound-Tools-<version>.zip next to it,
-# for a release. The app is signed ad hoc, which is enough to run it on this Mac. It asks for
-# nothing, so CI can run it.
+# The app goes to dist/ by default. --zip also writes Sound-Tools-<version>-macos-<arch>.zip
+# next to it, for a release. The app is signed ad hoc, which is enough to run it on this Mac.
+# It asks for nothing, so CI can run it.
 set -euo pipefail
 
 zip=false
@@ -24,12 +24,7 @@ output="${output:-dist}"
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 
-# The version of the workspace, from [workspace.package] in Cargo.toml.
-version="$(sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml)"
-if [[ -z "$version" ]]; then
-  echo "no version in [workspace.package] of Cargo.toml" >&2
-  exit 1
-fi
+version="$(tooling/version.sh)"
 
 cargo build --release -p runtime --locked
 # .cargo/config.toml moves the build output out of the repository, so ask cargo where it is.
@@ -45,9 +40,9 @@ cp "$binary" "$app/Contents/MacOS/sound-tools"
 iconset="$(mktemp -d)/AppIcon.iconset"
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
-  sips -z "$size" "$size" tooling/macos/AppIcon.png --out "$iconset/icon_${size}x${size}.png" >/dev/null
+  sips -z "$size" "$size" tooling/icon/sound-tools.png --out "$iconset/icon_${size}x${size}.png" >/dev/null
   double=$((size * 2))
-  sips -z "$double" "$double" tooling/macos/AppIcon.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+  sips -z "$double" "$double" tooling/icon/sound-tools.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
 rm -rf "$(dirname "$iconset")"
@@ -95,10 +90,12 @@ plutil -lint "$app/Contents/Info.plist" >/dev/null
 # CLAP and VST 3 plugins of other makers.
 codesign --force --deep --sign - --entitlements tooling/macos/entitlements.plist "$app"
 codesign --verify --deep --strict "$app"
+"$app/Contents/MacOS/sound-tools" --version
 echo "built $app ($version)"
 
 if [[ "$zip" == true ]]; then
-  archive="$output/Sound-Tools-$version.zip"
+  # arm64 on Apple silicon. A release has no Intel build.
+  archive="$output/Sound-Tools-$version-macos-$(uname -m).zip"
   rm -f "$archive"
   ditto -c -k --keepParent "$app" "$archive"
   echo "built $archive"
