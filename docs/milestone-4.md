@@ -1,5 +1,7 @@
 # Milestone 4: audio tracks, recording, a sampler and drums
 
+Done September 26, 2026: every step is merged, and the check of the milestone is in [ARCHITECTURE.md](../ARCHITECTURE.md), "Verified September 26, 2026, the fourth milestone", with "Known gaps after the fourth milestone" after it.
+
 Drafted September 26, 2026. This is the plan an orchestrating agent works from. It holds goals, decisions and checks, no implementation. [ARCHITECTURE.md](../ARCHITECTURE.md) stays the source of truth. Each step records what it settles there. The starting point is "Known gaps after the third milestone" in the same file.
 
 ## Goal
@@ -50,14 +52,14 @@ Time-stretching and warping, comping and take lanes, crossfades between clips, s
 
 ## Steps, one pull request each
 
-| # | Step | Done when |
-| --- | --- | --- |
-| 0 | Design | Mockups in the approved direction for an audio clip with its waveform, an audio track while recording, the Sampler card and the Drum pad card. The owner has approved them. |
-| 1 | Media and audio clips | Files import into `assets/audio/`, audio tracks play their clips in time with the rest, and the arrangement edits them as it edits note clips. A missing file is a problem, not a crash. |
-| 2 | Recording audio | A take from the default input lands where it was heard, as a file and a clip, with one undo step. |
-| 3 | Sampler | See "Verify the milestone". |
-| 4 | Drum pad and the default kit | See "Verify the milestone". |
-| 5 | Milestone check | Every check below has evidence, the README is current, and the known gaps are listed. |
+| # | Step | Done when | Done in |
+| --- | --- | --- | --- |
+| 0 | Design | Mockups in the approved direction for an audio clip with its waveform, an audio track while recording, the Sampler card and the Drum pad card. The owner has approved them. | #45 |
+| 1 | Media and audio clips | Files import into `assets/audio/`, audio tracks play their clips in time with the rest, and the arrangement edits them as it edits note clips. A missing file is a problem, not a crash. | #46 (1a), #47 (1b) |
+| 2 | Recording audio | A take from the default input lands where it was heard, as a file and a clip, with one undo step. | #49 |
+| 3 | Sampler | See "Verify the milestone". | #48 |
+| 4 | Drum pad and the default kit | See "Verify the milestone". | #50 |
+| 5 | Milestone check | Every check below has evidence, the README is current, and the known gaps are listed. | #51 |
 
 Step 0 goes first. Step 1 follows, because every later step reads media. Steps 2, 3 and 4 may run in parallel once step 1 is merged. Steps 1 and 4 may each split in two.
 

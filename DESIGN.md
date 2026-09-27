@@ -453,7 +453,8 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Anywhere | r | Record from the playhead on every armed audio track and on the selected instrument track; with nothing armed and an audio track selected, arm it and record. Again to end the take |
 | Anywhere | cmd-z, shift-cmd-z | Undo, redo. Both wait while a drag is going on |
 | Anywhere | tab, shift-tab | Move the focus: project menu, transport, arrangement, the panel below |
-| Project menu | Add track | A new track with a synth |
+| Project menu | Add track, Instrument track | A new track with a synth |
+| Project menu | Add track, Audio track | A new empty audio track |
 | Project menu | Fit tempo to take | Fit the project tempo to the take of the selected clip. One undo step |
 | Project menu | Open terminal in project folder | The macOS Terminal in the folder, to start a coding agent there |
 | Ruler | click | Move the playhead there, on the grid |
@@ -472,7 +473,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Track panel | the input select of an audio track, `In 1` | Which channels of the default input of macOS it records: one alone, or a pair for a stereo take. One undo step |
 | A MIDI keyboard | any key, and the sustain pedal | Plays the instrument of the selected track, whether the project plays or not |
 | Arrangement or note editor | scroll, cmd-scroll or pinch | Pan, zoom in time |
-| Arrangement | double click on empty track space | Add a clip of one bar |
+| Arrangement | double click on empty space of an instrument track | Add a clip of one bar. On an audio track it does nothing: audio clips come from files |
 | Arrangement | click on a clip | Select it |
 | Arrangement | shift-click or cmd-click on a clip | Add it to the selection, or take it out |
 | Arrangement | drag on empty track space | Select the clips the rectangle touches. With shift or cmd add them |
@@ -481,10 +482,13 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Arrangement | cmd-v | Paste at the playhead. The top row goes on the track of the first selected clip, else on the selected track, else on the first track. Rows below the last track land on the last track |
 | Arrangement | cmd-d | A copy of the selected clips right after them |
 | Arrangement | drag a clip | Move it, and every other selected clip, in time and to another track |
-| Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note |
+| Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note. On an audio clip it trims the file and keeps the sound where it is in time |
+| Arrangement | drag a fade handle or the gain handle of an audio clip | Fade it in or out, or change its gain. Shift makes the gain finer |
+| Arrangement | alt-up, alt-down | The gain of the selected audio clips by 1 dB |
+| Arrangement | drop audio files from the Finder | Copy them into `assets/audio/` and add them as clips one after another on that audio track, or on a new audio track under the last one. One undo step |
 | Arrangement | delete or backspace | Delete the selected clips |
 | Arrangement | left, right, up, down | Move the selected clips by a step of the snap (a sixteenth when it is off), or to the track above or below |
-| Arrangement | double click on a clip, or enter | Open the note editor for it. It takes the place of the track panel |
+| Arrangement | double click on a clip, or enter | Open the note editor for it. It takes the place of the track panel. For an audio clip, open the panel of its track, with the clip in its Clip card |
 | Arrangement | click on a track header | Select the track and open its track panel. It takes the place of the note editor |
 | Arrangement | up, down, with a track and no clip selected | Select the track above or below. The open track panel follows |
 | Arrangement | enter, with a track and no clip selected, or a double click on a track header | Edit the name of the track. Enter or a click elsewhere keeps it, escape does not |
