@@ -8,6 +8,7 @@
 //! - `rack`: reordering the track rack.
 //! - `track_panel`: the track panel and the view of the synth in it.
 //! - `instruments`: picking the instrument of a track, and the plugin's own window.
+//! - `drum_pad`: the card of the Drum pad: its pads, its keys and samples dropped on it.
 //! - `effects`: adding and removing effects in the rack.
 //! - `fit`: fitting the tempo to a take, and the steadiness in the transport.
 //! - `transport`: the tempo, the click and the view following the playhead.
@@ -22,6 +23,7 @@
 mod audio;
 mod clips;
 mod compressor;
+mod drum_pad;
 mod editing;
 mod effects;
 mod eq;

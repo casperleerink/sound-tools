@@ -40,7 +40,7 @@ use sound_ui::{
 
 use crate::{
     DECAY, DrumPad, DrumPadState, DrumUpdate, PADS, PAN, PARAMETERS, PITCH, PROCESSOR, Pad,
-    PadParameter, Sound, Source, VOLUME, peaks_name,
+    PadParameter, Sound, Source, VOLUME, note_of, peaks_name,
 };
 
 /// The name the rack puts on the card of a Drum pad.
@@ -507,7 +507,8 @@ impl DrumPadView {
                 let drop_files = weak_callback(cx, move |view: &mut Self, paths, cx| {
                     view.load_files(index, paths, cx)
                 });
-                PadElement::new(("pad", index), pad.name(index))
+                // For tests: `pad-36` to `pad-51`.
+                PadElement::new(usize::from(note_of(index)), pad.name(index))
                     .selected(index == self.selected)
                     .sounding(self.sounding[index])
                     .glyph(self.glyph(pad, cx))
