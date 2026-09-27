@@ -8,12 +8,7 @@
 //! ```json
 //! {
 //!   "tool": "drum-pad",
-//!   "state": {
-//!     "pads": {
-//!       "36": {"sound": "kick", "volume_db": 0.0, "pitch_semitones": 0.0, "decay_ms": 600.0, "pan": 0.0, "choke": false},
-//!       "48": {"sample": "shaker.wav", "decay_ms": 900.0}
-//!     }
-//!   }
+//!   "state": {"pads": {"36": {"decay_ms": 900.0}, "48": {"sample": "shaker.wav", "decay_ms": 900.0}}}
 //! }
 //! ```
 //!
@@ -385,9 +380,16 @@ struct PadRecord {
     choke: Option<bool>,
 }
 
+/// Only the pads that differ from the kit, each whole: a pad that is left out is the pad of
+/// the kit, so the file of a new Drum pad is `{"pads": {}}` and an agent sees at once what was
+/// changed. The kit is in the agent doc.
 fn pads_to_map<S: Serializer>(pads: &[Pad; PADS], serializer: S) -> Result<S::Ok, S::Error> {
-    let mut map = serializer.serialize_map(Some(PADS))?;
-    for (index, pad) in pads.iter().enumerate() {
+    let changed = pads
+        .iter()
+        .enumerate()
+        .filter(|(index, pad)| **pad != Pad::default_at(*index));
+    let mut map = serializer.serialize_map(None)?;
+    for (index, pad) in changed {
         let (sound, sample) = match &pad.source {
             Source::Sound(sound) => (Some(*sound), None),
             Source::Sample(asset) => (None, Some(asset.clone())),
@@ -632,22 +634,20 @@ mod tests {
         }
     }
 
-    /// The runtime writes every field of every pad, so an agent reads the whole kit, and what
-    /// it writes loads back as it was.
+    /// The runtime writes every pad that differs from the kit, each with every field, so an
+    /// agent sees what was changed, and what it writes loads back as it was.
     #[test]
-    fn the_record_is_written_whole_and_reads_back() {
+    fn the_pads_that_differ_from_the_kit_are_written_whole_and_read_back() {
         let json = serde_json::to_string(&DrumPadState::default()).unwrap();
-        assert!(
-            json.starts_with(r#"{"pads":{"36":{"sound":"kick","volume_db":0.0,"pitch_semitones":0.0,"decay_ms":600.0,"pan":0.0,"choke":false},"37":"#),
-            "{json}"
-        );
+        assert_eq!(json, r#"{"pads":{}}"#);
         assert_eq!(parse(&json), Ok(DrumPadState::default()));
         let mut state = DrumPadState::default();
         state.pads[12].source = Source::Sample(AudioAsset::new("shaker.wav").unwrap());
+        state.pads[10].decay_ms = 900.0;
         let json = serde_json::to_string(&state).unwrap();
-        assert!(
-            json.contains(r#""48":{"sample":"shaker.wav","volume_db""#),
-            "{json}"
+        assert_eq!(
+            json,
+            r#"{"pads":{"46":{"sound":"open_hat","volume_db":0.0,"pitch_semitones":0.0,"decay_ms":900.0,"pan":0.0,"choke":true},"48":{"sample":"shaker.wav","volume_db":0.0,"pitch_semitones":3.0,"decay_ms":550.0,"pan":-0.15,"choke":false}}}"#
         );
         assert_eq!(parse(&json), Ok(state));
     }
@@ -663,6 +663,39 @@ mod tests {
         assert_eq!(pad.decay_ms, 10_000.0);
         pad.load_sample(shaker, 0.001);
         assert_eq!(pad.decay_ms, 10.0);
+    }
+
+    /// The docs give the kit and the ranges to agents and to people. They are checked against
+    /// the one definition, so they cannot drift from it.
+    #[test]
+    fn the_docs_give_the_kit_and_the_range_of_every_field() {
+        let docs = [
+            ("agent-doc.md", include_str!("../agent-doc.md")),
+            ("README.md", include_str!("../README.md")),
+        ];
+        for (name, doc) in docs {
+            for parameter in &PARAMETERS[0] {
+                let row = format!("| `{}` |", parameter.field);
+                let row = doc.lines().find(|line| line.starts_with(&row));
+                let row = row.unwrap_or_else(|| panic!("{name} has no row for {}", parameter.field));
+                let range = format!("| {} to {} |", parameter.min, parameter.max);
+                assert!(row.contains(&range), "{name}: {row}");
+            }
+            for (pad, kit) in KIT.iter().enumerate() {
+                let choke = if kit.choke { "yes" } else { "no" };
+                let row = format!(
+                    "| {} | {} | `{}` | {} | {} | {} | {} | {choke} |",
+                    note_of(pad),
+                    kit.name,
+                    kit.sound.key(),
+                    kit.volume_db,
+                    kit.pitch_semitones,
+                    kit.decay_ms,
+                    kit.pan
+                );
+                assert!(doc.lines().any(|line| line == row), "{name} has no row {row}");
+            }
+        }
     }
 
     #[test]

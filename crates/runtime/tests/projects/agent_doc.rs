@@ -155,7 +155,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .iter()
             .flat_map(|(_, text)| json_examples(text))
             .collect();
-        assert_eq!(all.len(), 25, "{time_signature}");
+        assert_eq!(all.len(), 29, "{time_signature}");
 
         // The raw take of a recording is not a record: it is an asset the runtime writes once
         // and never reads back. Its example is checked as the file it is.
@@ -185,21 +185,24 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             );
             write(folder.path(), path, body);
         }
-        // The file the audio clip of its doc plays, which an agent copies in before it writes
-        // the clip. Five seconds, as the clip plays up to 4.5 s of it.
-        let audio = folder.path().join("assets/audio/voice-take-1.wav");
-        std::fs::create_dir_all(audio.parent().unwrap()).unwrap();
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: 48_000,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        };
-        let mut writer = hound::WavWriter::create(&audio, spec).unwrap();
-        for _ in 0..5 * 48_000 {
-            writer.write_sample(0_i16).unwrap();
+        // The files the audio clip of its doc and the sample pad of the drums play, which an
+        // agent copies in before it writes the record. Five seconds, as the clip plays up to
+        // 4.5 s of it.
+        for file in ["voice-take-1.wav", "shaker.wav"] {
+            let audio = folder.path().join("assets/audio").join(file);
+            std::fs::create_dir_all(audio.parent().unwrap()).unwrap();
+            let spec = hound::WavSpec {
+                channels: 1,
+                sample_rate: 48_000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            };
+            let mut writer = hound::WavWriter::create(&audio, spec).unwrap();
+            for _ in 0..5 * 48_000 {
+                writer.write_sample(0_i16).unwrap();
+            }
+            writer.finalize().unwrap();
         }
-        writer.finalize().unwrap();
         let mut copy = Harness::open(folder);
         // The plugin doc names a plugin no machine is expected to have. That is the case its
         // doc describes: the record loads, the track is silent and the problem names the id.
@@ -242,6 +245,9 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
                 "arrangement",
                 "arrangement/bass",
                 "arrangement/bass/dark",
+                "arrangement/beat",
+                "arrangement/beat/groove",
+                "arrangement/beat/instrument",
                 "arrangement/drums",
                 "arrangement/drums/glue",
                 "arrangement/keys",
