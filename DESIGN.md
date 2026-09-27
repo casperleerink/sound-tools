@@ -104,7 +104,7 @@ Step 3, September 26, 2026. The after images are in `docs/reference/m4-step-3/`:
 - Times read `2 ms`, `400 ms`, `1.18 s`; the gain `0 dB`, `-6 dB`.
 - Empty, and with a file that is missing (`kalimba.wav is missing`) or does not play, the display says so in 12 pt `gray-800` over the subtle 28 pt `Choose file` button, 12 pt apart, in the middle of the display. The file panel says `Load`. The line under the display is left out then.
 - The ring of a drop is the 2 pt lavender border of the display, over an opaque `gray-100` with the line in 12 pt `gray-950`: `Drop to load the file`, or `Drop to replace the file` over a Sampler with a file. It covers the waveform and the envelope, as the mockup covers the words of the empty display.
-- A new file starts at its start: a drop or a choice sets `start_seconds` to 0 and leaves out `end_seconds`, and keeps the rest.
+- A new file starts at its start: a drop or a choice sets `start_seconds` to 0 and leaves out `end_seconds`, and keeps the rest. A file under the name the record already names, which was missing, keeps the record whole, trims too.
 - Differences from the mockup, found side by side: the kalimba of the snapshots is made by a formula, so its waveform is a smooth decay; the file icon and its name under the pointer while dragging are the platform's drag image, not ours; while a file is over a Sampler that has one, the edges of the start and attack handles, which reach 5 pt past the display, show outside the ring. Otherwise the card, its display, the lines, the handles, the caption, the knobs, the expanded columns, the empty display and the ring match in place and size.
 
 ## Direction for the third milestone

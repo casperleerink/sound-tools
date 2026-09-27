@@ -332,7 +332,13 @@ fn the_green_line_follows_the_last_note(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_missing_file_shows_on_the_card_and_a_drop_brings_one(cx: &mut TestAppContext) {
-    let mut opened = open_with(cx, with_sample("gone.wav"), None);
+    // Trimmed, so the drop shows it keeps the trims of the record.
+    let trimmed = SamplerState {
+        start_seconds: 0.5,
+        end_seconds: Some(0.9),
+        ..with_sample("gone.wav")
+    };
+    let mut opened = open_with(cx, trimmed.clone(), None);
     let problems = opened.project(|project| project.problems());
     assert_eq!(problems.len(), 1);
     assert!(
@@ -344,11 +350,16 @@ fn a_missing_file_shows_on_the_card_and_a_drop_brings_one(cx: &mut TestAppContex
     assert!(opened.find("choose-file").is_some());
     assert_eq!(opened.find("handle-attack"), None);
 
+    // A file of that name: it loads with the record as it was, no edit and no undo step.
     let outside = tempfile::tempdir().unwrap();
     let source = outside.path().join("gone.wav");
     write_wav(&source, 1.);
     let target = opened.control("file-drop");
     drop_files(&mut opened, &[source], target);
     assert_eq!(opened.project(|project| project.problems()), []);
+    assert_eq!(state(&mut opened), trimmed);
+    assert_eq!(opened.undo_label(), None);
     assert!(opened.find("handle-attack").is_some());
+    // And it plays: from half a second into the file.
+    assert!(support::peak(&play(&mut opened, 4_800)) > 0.05);
 }

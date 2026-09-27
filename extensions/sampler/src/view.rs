@@ -290,21 +290,21 @@ impl SamplerView {
         let Some(mut state) = session.read(cx).project().state(&self.sampler).cloned() else {
             return;
         };
-        // Where the old file started and ended means nothing in the new one.
-        state.sample = Some(imported.asset.clone());
-        state.start_seconds = 0.0;
-        state.end_seconds = None;
         let sampler = self.sampler.clone();
         // `imported` holds the file in memory until the edit is made, so the behaviour that
         // hands it to the sampler reads nothing.
         session.update(cx, |session, cx| {
-            // The file a record names that was missing, now there under its name: the record
-            // stays as it is, and the sampler loads it. No edit and no undo step, as when the
-            // file arrives by the watcher.
-            if session.project().state(&sampler) == Some(&state) {
+            // The file the record names, missing and now there under that name: the record
+            // stays as it is, trims and all, and the sampler loads the file. No edit and no
+            // undo step, as when the file arrives by the watcher.
+            if state.sample.as_ref() == Some(&imported.asset) {
                 session.rebind(std::slice::from_ref(sampler.id()), cx);
                 return;
             }
+            // Where the old file started and ended means nothing in the new one.
+            state.sample = Some(imported.asset.clone());
+            state.start_seconds = 0.0;
+            state.end_seconds = None;
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
                 changes.set(&sampler, state);
