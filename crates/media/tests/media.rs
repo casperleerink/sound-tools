@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use sound_core::Assets;
-use sound_media::{Audio, AudioAsset, Encoding, MediaError, Resampler, SCRATCH_FRAMES};
+use sound_media::{Audio, AudioAsset, Encoding, MediaError, Resampler, SCRATCH_FRAMES, varispeed};
 
 /// A WAV file of these frames, through `hound`, which is not the code under test.
 fn wav(
@@ -323,6 +323,111 @@ fn a_block_renders_the_same_on_its_own_as_in_a_run() {
     let mut piece = vec![[0.0_f32; 2]; 37];
     resampler.render(&audio, 100, 1_234, &mut piece, &mut scratch);
     assert_eq!(piece, whole[1_234..1_271]);
+}
+
+/// A float WAV of a sine of `hz` at half of full scale, `seconds` long, at `rate`.
+fn sine_file(folder: &Path, rate: u32, hz: f64, seconds: f64) -> Audio {
+    let frames = (seconds * f64::from(rate)) as usize;
+    let sine: Vec<[f64; 2]> = (0..frames)
+        .map(|frame| [0.5 * (TAU * hz * frame as f64 / f64::from(rate)).sin(); 2])
+        .collect();
+    let path = folder.join(format!("sine-{rate}-{hz}-{seconds}.wav"));
+    wav(&path, rate, 2, (32, hound::SampleFormat::Float), &sine);
+    Audio::parse(std::fs::read(&path).unwrap()).unwrap()
+}
+
+/// The frequency of a steady sine, from the first and the last of its rising zero crossings,
+/// each placed between two frames on a straight line.
+fn frequency(samples: &[f32], rate: f64) -> f64 {
+    let crossings: Vec<f64> = samples
+        .windows(2)
+        .enumerate()
+        .filter(|(_, pair)| pair[0] < 0.0 && pair[1] >= 0.0)
+        .map(|(frame, pair)| {
+            let (a, b) = (f64::from(pair[0]), f64::from(pair[1]));
+            frame as f64 + a / (a - b)
+        })
+        .collect();
+    let (first, last) = (crossings[0], crossings[crossings.len() - 1]);
+    (crossings.len() - 1) as f64 * rate / (last - first)
+}
+
+#[test]
+fn varispeed_plays_a_file_at_its_own_speed_sample_for_sample() {
+    let folder = tempfile::tempdir().unwrap();
+    let audio = sine_file(folder.path(), 48_000, 441.0, 0.5);
+    let mut expected = vec![[0.0_f32; 2]; 1_000];
+    audio.read(5_000, &mut expected);
+    let mut out = vec![[0.0_f32; 2]; 1_000];
+    let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
+    for (index, block) in out.chunks_mut(64).enumerate() {
+        let position = 5_000.0 + (index * 64) as f64;
+        varispeed().render(&audio, position, 1.0, block, &mut scratch);
+    }
+    assert_eq!(out, expected);
+}
+
+/// A sine played at the steps of keys from four octaves down to four up, also from a file at
+/// another rate than the engine: each comes out at its frequency and its level.
+#[test]
+fn varispeed_plays_a_sine_at_the_frequency_of_its_step_and_at_its_level() {
+    let folder = tempfile::tempdir().unwrap();
+    let engine_rate = 48_000.0;
+    for file_rate in [48_000_u32, 44_100, 96_000] {
+        let audio = sine_file(folder.path(), file_rate, 440.0, 4.0);
+        for semitones in [-48, -31, -12, -7, -1, 0, 1, 5, 12, 19, 24, 36, 48] {
+            let pitch = 2.0_f64.powf(f64::from(semitones) / 12.0);
+            let step = pitch * f64::from(file_rate) / engine_rate;
+            // Half a second, or as much as the file holds from its second frame on.
+            let frames = (engine_rate / 2.0).min((audio.frames() as f64 - 64.0) / step) as usize;
+            let mut out = vec![[0.0_f32; 2]; frames];
+            let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
+            for (index, block) in out.chunks_mut(64).enumerate() {
+                let position = 32.0 + step * (index * 64) as f64;
+                varispeed().render(&audio, position, step, block, &mut scratch);
+            }
+            let left: Vec<f32> = out.iter().map(|frame| frame[0]).collect();
+            let measured = frequency(&left, engine_rate);
+            let expected = 440.0 * pitch;
+            let cents = 1200.0 * (measured / expected).log2();
+            let peak = left
+                .iter()
+                .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+            let level = 20.0 * f64::from(peak / 0.5).log10();
+            println!(
+                "{file_rate} Hz file, {semitones:+} semitones: {measured:.3} Hz for {expected:.3} Hz ({cents:+.4} cents), level {level:+.3} dB"
+            );
+            assert!(cents.abs() < 0.01, "{file_rate} {semitones}: {cents} cents");
+            assert!(level.abs() < 0.05, "{file_rate} {semitones}: {level} dB");
+        }
+    }
+}
+
+#[test]
+fn varispeed_renders_a_block_on_its_own_as_in_a_run() {
+    let folder = tempfile::tempdir().unwrap();
+    let audio = sine_file(folder.path(), 44_100, 1_234.5, 1.0);
+    let step = 1.37;
+    let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
+    let mut whole = vec![[0.0_f32; 2]; 4_000];
+    varispeed().render(&audio, 100.25, step, &mut whole, &mut scratch);
+    let mut piece = vec![[0.0_f32; 2]; 37];
+    varispeed().render(
+        &audio,
+        100.25 + 1_234.0 * step,
+        step,
+        &mut piece,
+        &mut scratch,
+    );
+    for (piece, whole) in piece.iter().zip(&whole[1_234..1_271]) {
+        assert!((piece[0] - whole[0]).abs() < 1e-6, "{piece:?} {whole:?}");
+    }
+    // A step far beyond what the scratch holds in a block still reads every frame.
+    let mut fast = vec![[0.0_f32; 2]; 64];
+    varispeed().render(&audio, 0.0, 700.0, &mut fast, &mut scratch);
+    let mut expected = [[0.0_f32; 2]; 1];
+    audio.read(700 * 10, &mut expected);
+    assert_eq!(fast[10], expected[0]);
 }
 
 #[test]

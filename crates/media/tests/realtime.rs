@@ -7,10 +7,12 @@ use std::sync::Arc;
 use sound_core::{
     AudioOutput, Connection, Engine, EngineConfig, Ports, PrepareConfig, ProcessContext, Processor,
 };
-use sound_media::{Audio, Resampler, SCRATCH_FRAMES};
+use sound_media::{Audio, Resampler, SCRATCH_FRAMES, varispeed};
 
-/// Plays a file from its start through a resampler, as a clip or a sampler would.
+/// Plays a file from its start through a resampler, as a clip would, or at a speed of its own
+/// through the varispeed, as a sampler would.
 struct Reader {
+    step: Option<f64>,
     audio: Arc<Audio>,
     resampler: Arc<Resampler>,
     scratch: Box<[[f32; 2]]>,
@@ -35,8 +37,15 @@ impl Processor for Reader {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let frames = &mut self.frames[..context.frames];
-        self.resampler
-            .render(&self.audio, 0, self.played, frames, &mut self.scratch);
+        match self.step {
+            Some(step) => {
+                let position = self.played as f64 * step;
+                varispeed().render(&self.audio, position, step, frames, &mut self.scratch);
+            }
+            None => self
+                .resampler
+                .render(&self.audio, 0, self.played, frames, &mut self.scratch),
+        }
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);
         for ((left, right), frame) in left.iter_mut().zip(right.iter_mut()).zip(frames.iter()) {
             *left = frame[0];
@@ -80,27 +89,32 @@ fn reading_and_resampling_run_on_the_audio_thread_without_allocating_locking_or_
         writer.finalize().unwrap();
         let audio = Arc::new(Audio::parse(std::fs::read(&path).unwrap()).unwrap());
 
-        let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 2));
-        let reader = Reader {
-            audio,
-            resampler: Arc::new(Resampler::new(rate, 48_000)),
-            scratch: vec![[0.0; 2]; SCRATCH_FRAMES].into_boxed_slice(),
-            frames: vec![[0.0; 2]; sound_core::MAX_BLOCK].into_boxed_slice(),
-            played: 0,
-        };
-        let mut edit = control.edit();
-        let node = edit.add_processor("reader", reader).unwrap();
-        edit.connect(Connection::to_device(node.id(), Reader::OUTPUT, 0))
-            .unwrap();
-        edit.commit().unwrap();
-        let mut output = vec![0.0_f32; 2 * 48_000];
-        for buffer in output.chunks_mut(2 * 512) {
-            engine.process_block(buffer);
+        for step in [None, Some(1.0), Some(0.37), Some(2.9)] {
+            let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 2));
+            // Made here, on the control side, and never first on the audio thread.
+            varispeed();
+            let reader = Reader {
+                step,
+                audio: audio.clone(),
+                resampler: Arc::new(Resampler::new(rate, 48_000)),
+                scratch: vec![[0.0; 2]; SCRATCH_FRAMES].into_boxed_slice(),
+                frames: vec![[0.0; 2]; sound_core::MAX_BLOCK].into_boxed_slice(),
+                played: 0,
+            };
+            let mut edit = control.edit();
+            let node = edit.add_processor("reader", reader).unwrap();
+            edit.connect(Connection::to_device(node.id(), Reader::OUTPUT, 0))
+                .unwrap();
+            edit.commit().unwrap();
+            let mut output = vec![0.0_f32; 2 * 48_000];
+            for buffer in output.chunks_mut(2 * 512) {
+                engine.process_block(buffer);
+            }
+            control.poll().unwrap();
+            assert!(
+                output[2 * 1_000..].iter().any(|sample| *sample != 0.0),
+                "{rate} {step:?}"
+            );
         }
-        control.poll().unwrap();
-        assert!(
-            output[2 * 1_000..].iter().any(|sample| *sample != 0.0),
-            "{rate}"
-        );
     }
 }
