@@ -149,6 +149,16 @@ impl Render for PluginView {
                 .child(body(line(text.to_string()), Some(detail)))
                 .into_any_element();
         };
+        // A plugin's view is put in an `NSView` of ours, which Linux does not have. The host
+        // itself does not know: its tests open windows without a view on every platform.
+        let (has_window, no_window) = if cfg!(target_os = "macos") {
+            (has_window, "This plugin has no window of its own.")
+        } else {
+            (
+                false,
+                "Plugin windows open on macOS only for now. The plugin plays.",
+            )
+        };
         let is_open = plugins.window_is_open(id);
         let label = if is_open {
             "Close window"
@@ -168,9 +178,7 @@ impl Render for PluginView {
             .items_start()
             .gap(px(4.))
             .child(button)
-            .children(
-                (!has_window).then(|| line("This plugin has no window of its own.".to_string())),
-            );
+            .children((!has_window).then(|| line(no_window.to_string())));
         card.child(body(top, Some(detail))).into_any_element()
     }
 }

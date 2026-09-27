@@ -27,7 +27,7 @@ This document records architecture decisions and proposals. The product goals ar
 
 Rust is the preferred language for the core and extensions. Extensions are trusted user code.
 
-Target macOS, Windows and Linux desktop. macOS is the primary development and initial validation platform. Keep platform-specific integration separate from the shared core and SDK; verify the other desktop platforms explicitly before claiming support.
+Target macOS, Windows and Linux desktop. macOS is the primary development and initial validation platform. Keep platform-specific integration separate from the shared core and SDK; verify the other desktop platforms explicitly before claiming support. Linux builds from source and passes the tests in CI since September 27, 2026, see the README, "Linux". What differs is behind `cfg(target_os = "macos")`: the loading of a VST 3 bundle (`CFBundle` or `dlopen`), the plugin folders and the cache folder, the terminal, and the plugin windows, which open on macOS only. The window snapshots render with Metal and stay on macOS.
 
 Sound Tools is a standalone application. Running Sound Tools itself as a plugin inside another DAW is outside the target architecture.
 
@@ -82,6 +82,7 @@ Compile enabled extensions into the project runtime executable. The composer can
 - Started with no folder, as the Finder starts it, the runtime opens the last project (`~/Library/Application Support/Sound Tools/last-project`), or the macOS folder panel when that folder is gone. The window form writes that file; `--headless`, `--inspect` and `--render` never do.
 - **Open project…** quits the way cmd-q does and starts the program again at the very end of the quit, when the project, its plugins and its lock are gone. Switching inside one process would mean taking down the device, the plugins and their windows by hand; a new process gets that right for free.
 - **Install command line tool** links `sound-tools` to the program inside the app, in `/usr/local/bin` or else `~/.local/bin`, with no administrator prompt. The agent docs say `sound-tools . --inspect`.
+- On Linux there is no bundle, and the same program does the same with Linux places: the last project in `$XDG_CONFIG_HOME/sound-tools/` (`~/.config/sound-tools/`), the folder panel through the XDG desktop portal, which GPUI uses, and the command line tool in `~/.local/bin` only. When the portal is missing the start window says so.
 - Custom extensions built by an agent stay parked with the outer application. When they come back, the app would build a runtime per project with the composer's own `rustup` into `~/Library/Application Support/Sound Tools`, and fall back to the bundled binary while there is none or a build fails.
 
 ### Build-loop experiment, September 9, 2026
@@ -249,7 +250,7 @@ One agent doc per project does not scale with the extensions and tasks of this m
 
 #### The terminal from the project menu, decided September 20, 2026 with step 0
 
-The composer needs a terminal in the project folder to start a coding agent. "Open terminal in project folder" sits next to "Reveal project folder" in the project menu and runs `/usr/bin/open -a Terminal <folder>`: the system Terminal, which every Mac has. No picker, no setting, no terminal inside the window. Other platforms come when we claim them. The command is built by a function of its own so a test reads its program and arguments, which CI can do without a Terminal it cannot close. It runs on the background executor and a failure goes to the notice of the session.
+The composer needs a terminal in the project folder to start a coding agent. "Open terminal in project folder" sits next to "Reveal project folder" in the project menu and runs `/usr/bin/open -a Terminal <folder>`: the system Terminal, which every Mac has. No picker, no setting, no terminal inside the window. On Linux, added September 27, 2026, it starts `$TERMINAL`, or else `x-terminal-emulator`, in the folder through `sh`, which returns at once as `open` does. The command is built by a function of its own so a test reads its program and arguments, which CI can do without a Terminal it cannot close. It runs on the background executor and a failure goes to the notice of the session.
 
 #### Stereo signal path and the track mixer, decided September 20, 2026 with step 1
 

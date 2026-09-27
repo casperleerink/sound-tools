@@ -37,15 +37,20 @@ pub use plugin::load;
 use crate::scan::ScannedPlugin;
 use crate::{PluginFormat, PluginProblem};
 
-/// The folders macOS keeps VST 3 plugins in, plus `VST3_PATH` from the environment. The list
-/// and the variable are Steinberg's, from the VST 3 specification.
+/// The folders the system keeps VST 3 plugins in, plus `VST3_PATH` from the environment. The
+/// lists and the variable are Steinberg's, from the VST 3 specification.
 pub fn default_search_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        paths.push(PathBuf::from(home).join("Library/Audio/Plug-Ins/VST3"));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if cfg!(target_os = "macos") {
+        paths.extend(home.map(|home| home.join("Library/Audio/Plug-Ins/VST3")));
+        paths.push(PathBuf::from("/Library/Audio/Plug-Ins/VST3"));
+        paths.push(PathBuf::from("/Network/Library/Audio/Plug-Ins/VST3"));
+    } else {
+        paths.extend(home.map(|home| home.join(".vst3")));
+        paths.push(PathBuf::from("/usr/lib/vst3"));
+        paths.push(PathBuf::from("/usr/local/lib/vst3"));
     }
-    paths.push(PathBuf::from("/Library/Audio/Plug-Ins/VST3"));
-    paths.push(PathBuf::from("/Network/Library/Audio/Plug-Ins/VST3"));
     if let Some(extra) = std::env::var_os("VST3_PATH") {
         paths.extend(std::env::split_paths(&extra));
     }
@@ -81,7 +86,7 @@ pub fn class_id_text(id: &TUID) -> String {
     for byte in id {
         use std::fmt::Write as _;
         // The digits cannot fail to be written into a string.
-        let _ = write!(text, "{:02X}", *byte as u8);
+        let _ = write!(text, "{:02X}", byte.to_ne_bytes()[0]);
     }
     text
 }
@@ -92,10 +97,11 @@ pub fn class_id_of(text: &str) -> Option<TUID> {
     if text.len() != 32 {
         return None;
     }
-    let mut id = [0_i8; 16];
+    // `TUID` holds C chars, which are signed on macOS and unsigned on Linux on arm64.
+    let mut id: TUID = [0; 16];
     for (byte, digits) in id.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
         let digits = std::str::from_utf8(digits).ok()?;
-        *byte = u8::from_str_radix(digits, 16).ok()? as i8;
+        *byte = u8::from_str_radix(digits, 16).ok()? as std::ffi::c_char;
     }
     Some(id)
 }
@@ -124,9 +130,10 @@ mod tests {
     #[test]
     fn a_class_id_survives_the_way_to_a_record_and_back() {
         let id: TUID = [
-            0x6E, 0x33, 0x22, 0x52, 0x54, 0x22, 0x4A, 0x00, -0x56, 0x69, 0x30, 0x1A, -0x0D, 0x18,
+            0x6E_u8, 0x33, 0x22, 0x52, 0x54, 0x22, 0x4A, 0x00, 0xAA, 0x69, 0x30, 0x1A, 0xF3, 0x18,
             0x79, 0x7D,
-        ];
+        ]
+        .map(|byte| byte as std::ffi::c_char);
         let text = class_id_text(&id);
         assert_eq!(text, "6E33225254224A00AA69301AF318797D");
         assert_eq!(class_id_of(&text), Some(id));

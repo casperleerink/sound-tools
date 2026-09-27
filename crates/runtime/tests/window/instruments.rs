@@ -325,6 +325,11 @@ fn the_window_opens_from_its_card(format: PluginFormat, cx: &mut TestAppContext)
 
     let button = opened.control("plugin-window");
     opened.click(button);
+    // Linux has no plugin windows yet: the control is greyed out and opens nothing.
+    if cfg!(not(target_os = "macos")) {
+        assert!(!window_is_open(&mut opened));
+        return;
+    }
     assert!(window_is_open(&mut opened));
     // The keys of the main window still work there with a plugin's window open: the plugin's
     // window floats above it and takes none of them.
@@ -357,6 +362,7 @@ fn the_window_opens_from_its_card(format: PluginFormat, cx: &mut TestAppContext)
     assert_eq!(opened.notice(), None);
 }
 
+#[cfg(target_os = "macos")]
 #[gpui::test]
 fn deleting_the_track_from_outside_closes_a_clap_plugins_window_and_undo_brings_it_back_silent(
     cx: &mut TestAppContext,
@@ -364,6 +370,7 @@ fn deleting_the_track_from_outside_closes_a_clap_plugins_window_and_undo_brings_
     deleting_the_track_closes_the_window(PluginFormat::Clap, cx);
 }
 
+#[cfg(target_os = "macos")]
 #[gpui::test]
 fn deleting_the_track_from_outside_closes_a_vst3_plugins_window_and_undo_brings_it_back_silent(
     cx: &mut TestAppContext,
@@ -371,6 +378,7 @@ fn deleting_the_track_from_outside_closes_a_vst3_plugins_window_and_undo_brings_
     deleting_the_track_closes_the_window(PluginFormat::Vst3, cx);
 }
 
+#[cfg(target_os = "macos")]
 fn deleting_the_track_closes_the_window(format: PluginFormat, cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     pick(&mut opened, &plugin_item(format));

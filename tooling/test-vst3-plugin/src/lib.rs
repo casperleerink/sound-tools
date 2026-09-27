@@ -1452,6 +1452,17 @@ pub extern "C" fn bundleExit() -> bool {
     true
 }
 
+/// The same two on Linux, where `ModuleEntry` gets the `dlopen` handle of the library.
+#[unsafe(no_mangle)]
+pub extern "C" fn ModuleEntry(_library: *mut c_void) -> bool {
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ModuleExit() -> bool {
+    true
+}
+
 /// The one entry a host calls to see what is in a bundle. Everything a test needs a
 /// misbehaving plugin for happens here, because this is what a scan makes a bundle do.
 #[unsafe(no_mangle)]

@@ -10,8 +10,9 @@ publish = false
 # Every dependency, internal or external, is declared here once. Members write `foo.workspace = true`.
 [workspace.dependencies]
 # Zed stable v1.20.2. Keep the rev and rust-toolchain.toml in step with Zed's pin.
+# `wayland` and `x11` are the window systems of Linux. Without them Linux opens no window.
 gpui = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f", features = ["runtime_shaders", "font-kit"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f", features = ["runtime_shaders", "font-kit", "wayland", "x11"] }
 arrangement = { path = "extensions/arrangement" }
 compressor = { path = "extensions/compressor" }
 drum-pad = { path = "extensions/drum-pad" }

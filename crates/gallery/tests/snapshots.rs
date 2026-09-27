@@ -12,6 +12,11 @@ use gpui::{AppContext, HeadlessAppContext, KeyDownEvent, Keystroke, PlatformInpu
 use sound_ui::Assets;
 
 fn main() -> anyhow::Result<()> {
+    // The offscreen renderer of GPUI is Metal's. Other platforms have none.
+    if cfg!(not(target_os = "macos")) {
+        println!("The snapshots render with Metal, so they run on macOS only.");
+        return Ok(());
+    }
     let out_dir = std::env::var("GALLERY_SNAPSHOT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {

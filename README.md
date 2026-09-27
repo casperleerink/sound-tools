@@ -6,10 +6,34 @@ Four milestones are built. The first: tracks, clips, notes, one synth and a wind
 
 ## Requirements
 
-- macOS 11 or later. Other platforms are not tried yet.
+- macOS 11 or later, the main platform. Linux builds from source too, see "Linux" below. Windows is not tried yet.
 - To build it: Rust through `rustup`. `rust-toolchain.toml` pins the version and `rustup` installs it on the first build.
 - The first build takes about a minute, plus the download of the dependencies. Later builds take seconds.
 - `.cargo/config.toml` puts the build output in `/private/tmp/sound-tools-timing/target`, shared by every checkout. `/private/tmp` is emptied on a restart of the Mac, so the first build after that is slow again.
+
+### Linux
+
+Linux x86_64 and arm64 build from source, and CI runs the tests on Ubuntu. On Ubuntu or Debian, install:
+
+```sh
+sudo apt-get install build-essential pkg-config libasound2-dev libfontconfig-dev \
+  libfreetype-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libvulkan1 \
+  mesa-vulkan-drivers
+```
+
+`/private/tmp` is a macOS folder, so set another build folder first, for example `export CARGO_TARGET_DIR=target`. Then build and run as on macOS. The window needs Vulkan: a graphics driver, or `mesa-vulkan-drivers` for a software one.
+
+What is checked: the build and every test on x86_64 (CI) and arm64, and the window opening under Xvfb with software Vulkan. What should work, but nobody has tried on a real Linux desktop yet: playback through ALSA (PipeWire and PulseAudio take it too), MIDI input through ALSA, recording, and CLAP and VST 3 plugins for their sound. Plugins are looked for in `~/.clap` and `/usr/lib/clap`, and in `~/.vst3`, `/usr/lib/vst3` and `/usr/local/lib/vst3`. The plugin cache is in `~/.cache/sound-tools/`.
+
+With no folder, `runtime` opens the last project, which it keeps in `~/.config/sound-tools/`, or else a folder panel. The panel needs the XDG desktop portal, which GNOME and KDE have. **Install command line tool** links `sound-tools` into `~/.local/bin`.
+
+What does not work yet:
+
+- An app bundle or package. There is no Linux counterpart of `tooling/bundle-macos.sh` yet.
+- Plugin windows. The card of a plugin has `Open window` greyed out and says why. The plugin plays, and its state is saved.
+- The snapshot tests. They render with Metal, so on Linux they only say so. The rest of the tests run.
+- **Open terminal in project folder** starts `$TERMINAL`, or else `x-terminal-emulator`, so it needs one of the two.
+- Some text still says "this Mac", "macOS" or "the Finder".
 
 ## Run it
 

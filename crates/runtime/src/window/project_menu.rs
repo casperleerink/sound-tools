@@ -179,9 +179,23 @@ fn fit_tempo_to_take(session: &mut Session, cx: &mut Context<Session>) {
 ///
 /// A function of its own so a test can read the program and the arguments without a Terminal
 /// opening, which CI has no way to close.
+#[cfg(target_os = "macos")]
 fn terminal_command(folder: &Path) -> Command {
     let mut command = Command::new("/usr/bin/open");
     command.arg("-a").arg("Terminal").arg(folder);
+    command
+}
+
+/// Linux: the terminal `$TERMINAL` names, else `x-terminal-emulator`, which Debian and Ubuntu
+/// point at the one the system has, started in `folder`. The shell starts it without waiting,
+/// as `open` does, and fails only when there is no such program.
+#[cfg(not(target_os = "macos"))]
+fn terminal_command(folder: &Path) -> Command {
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg(r#"t="${TERMINAL:-x-terminal-emulator}"; command -v "$t" >/dev/null && { "$t" >/dev/null 2>&1 & }"#)
+        .current_dir(folder);
     command
 }
 
@@ -294,9 +308,15 @@ fn installed_message(installed: &Installed) -> (String, String) {
         app::TOOL_NAME
     );
     if !installed.on_default_path {
-        detail.push_str(
-            "\n\nIf a terminal says “command not found”, add ~/.local/bin to your PATH: add the line export PATH=\"$HOME/.local/bin:$PATH\" to ~/.zshrc and open a new terminal.",
-        );
+        // The shell a new account starts with: zsh on a Mac, bash on most Linux systems.
+        let startup = if cfg!(target_os = "macos") {
+            "~/.zshrc"
+        } else {
+            "~/.bashrc"
+        };
+        detail.push_str(&format!(
+            "\n\nIf a terminal says “command not found”, add ~/.local/bin to your PATH: add the line export PATH=\"$HOME/.local/bin:$PATH\" to {startup} and open a new terminal."
+        ));
     }
     (message, detail)
 }
@@ -368,6 +388,7 @@ mod tests {
     use super::*;
 
     /// CI has no Terminal to open, so the check is on the command itself.
+    #[cfg(target_os = "macos")]
     #[test]
     fn the_terminal_command_opens_the_system_terminal_at_the_project_folder() {
         let command = terminal_command(Path::new("/Users/someone/Music/my piece"));
@@ -379,6 +400,23 @@ mod tests {
         );
         // One argument, not a shell line, so a space in the folder name needs no quoting.
         assert_eq!(arguments.len(), 3);
+    }
+
+    /// `true` stands for a terminal: it starts, in the folder, and the command succeeds. A
+    /// name that is no program fails, which is what the notice reports.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_terminal_command_starts_the_terminal_of_the_system_in_the_project_folder() {
+        let folder = tempfile::tempdir().expect("a folder");
+        let mut command = terminal_command(folder.path());
+        assert_eq!(command.get_current_dir(), Some(folder.path()));
+        let started = command.env("TERMINAL", "true").status().expect("sh runs");
+        assert!(started.success());
+        let missing = terminal_command(folder.path())
+            .env("TERMINAL", "no-such-terminal-program")
+            .status()
+            .expect("sh runs");
+        assert!(!missing.success());
     }
 
     #[test]

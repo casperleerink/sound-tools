@@ -172,13 +172,19 @@ pub fn scan_bundle(bundle: &std::path::Path) -> Result<Vec<ScannedPlugin>, Strin
     Ok(plugins)
 }
 
-/// The folders macOS keeps CLAP plugins in, plus `CLAP_PATH` from the environment.
+/// The folders the system keeps CLAP plugins in, plus `CLAP_PATH` from the environment. The
+/// lists are the ones the CLAP specification gives, in `entry.h`.
 pub fn default_search_paths() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
     let mut paths = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        paths.push(std::path::PathBuf::from(home).join("Library/Audio/Plug-Ins/CLAP"));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if cfg!(target_os = "macos") {
+        paths.extend(home.map(|home| home.join("Library/Audio/Plug-Ins/CLAP")));
+        paths.push(PathBuf::from("/Library/Audio/Plug-Ins/CLAP"));
+    } else {
+        paths.extend(home.map(|home| home.join(".clap")));
+        paths.push(PathBuf::from("/usr/lib/clap"));
     }
-    paths.push(std::path::PathBuf::from("/Library/Audio/Plug-Ins/CLAP"));
     if let Some(extra) = std::env::var_os("CLAP_PATH") {
         paths.extend(std::env::split_paths(&extra));
     }
