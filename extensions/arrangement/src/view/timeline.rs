@@ -3081,7 +3081,12 @@ impl Render for Timeline {
                 let height = f32::from(bounds.size.height) - RULER_HEIGHT;
                 let mut scene = timeline.read(cx).scene(width, height, cx);
                 timeline.read(cx).painted.set(scene.viewport);
-                timeline.read(cx).painted_size.set((width, height));
+                // The controls over the headers are laid out from this size, so the first
+                // paint, and one at another size, lays them out again.
+                let resized = timeline.read(cx).painted_size.replace((width, height));
+                if resized != (width, height) {
+                    timeline.update(cx, |_, cx| cx.notify());
+                }
                 timeline.read(cx).painted_bounds.set(bounds);
                 paint_scene(&mut scene, bounds, window, cx);
                 let keyboard_focus = &timeline.read(cx).keyboard_focus;
