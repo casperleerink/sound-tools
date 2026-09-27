@@ -6,8 +6,8 @@ Four milestones are built. The first: tracks, clips, notes, one synth and a wind
 
 ## Requirements
 
-- macOS. Other platforms are not tried yet.
-- Rust through `rustup`. `rust-toolchain.toml` pins the version and `rustup` installs it on the first build.
+- macOS 11 or later. Other platforms are not tried yet.
+- To build it: Rust through `rustup`. `rust-toolchain.toml` pins the version and `rustup` installs it on the first build.
 - The first build takes about a minute, plus the download of the dependencies. Later builds take seconds.
 - `.cargo/config.toml` puts the build output in `/private/tmp/sound-tools-timing/target`, shared by every checkout. `/private/tmp` is emptied on a restart of the Mac, so the first build after that is slow again.
 
@@ -18,6 +18,19 @@ cargo run -p runtime -- ~/Music/my-piece
 ```
 
 The folder is the project. When it is empty or missing, the app makes the default project in it, which is 120 bpm, 4/4 and one track with a synth. There is no save. The app writes every finished edit to the folder.
+
+### Install the app
+
+```sh
+tooling/bundle-macos.sh
+cp -R "dist/Sound Tools.app" /Applications/
+```
+
+The script makes a release build and puts `Sound Tools.app` in `dist/`. Double click it in the Finder. It opens the last project you had open, or asks for a folder the first time: pick a project, or click **New Folder** for a new project. Cancel quits. **Open project…** in the project menu switches to another one.
+
+The app is signed on this Mac only ("ad hoc"), not by a known developer. If macOS says it cannot check the app, right-click it in the Finder, pick **Open**, and confirm once. macOS asks for the microphone the first time you record audio; a new build of the app asks again.
+
+The app and `cargo run -p runtime` are the same program. Opening a folder on the command line also makes it the last project of the app. `tooling/bundle-macos.sh --zip` also writes a zip of the app, for a release.
 
 ## Two-minute tour
 
@@ -35,7 +48,7 @@ The folder is the project. When it is empty or missing, the app makes the defaul
 11. Click **Add effect** at the end of that rack and pick `Filter`, `Compressor`, `EQ` or `Reverb`, the built-in effects, or an effect plugin. It lands after the instrument, and the track plays through it. Add another and it lands after the first. The small `x` on a card takes that effect off, and the power icon bypasses it. Each is one undo step. Drag a card by its title bar onto another to change the order, or press cmd-left and cmd-right in a card. An agent can do the same by editing `effects` in the track's `instance.json`; the rack follows at once.
 12. Record a take with the click off, click the clip, then click the project name and pick **Fit tempo to take**. The tempo map now follows what you played: the bar lines land on your beats and the take sounds exactly as it did. A `steady` number appears in the transport next to the tempo; drag it up to pull the tempo towards one steady one, and back to 0 for the playing as it was. If the grid runs at twice or half the speed of the music, or the bar lines are in the wrong place, ask an agent: "the grid runs twice as fast as the music, fix the fit". It is one field in `state/fit-tempo.json`.
 13. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
-14. Press cmd-q to quit. Run the same command again and the piece is back.
+14. Press cmd-q to quit. Run the same command again, or open the app, and the piece is back.
 
 Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 
@@ -97,7 +110,7 @@ What the agent uses:
 
 - `AGENTS.md`. The app writes it into the project, with a `CLAUDE.md` that imports it. It is a short map: the folder layout, the bar math of this project, how to check the work, and a list of docs in `agent-docs/` with one line each saying when to open it. The record formats live in those docs, one per extension. Agents read the map by themselves and open only the doc their task needs.
 - `problems.txt`. The app keeps it current while it runs. It lists every file that did not load, and why. `No problems. Every file is live.` means all of it plays. The agent reads it to check its work.
-- `runtime <folder> --inspect`. It prints the tempo, every track and every clip with its bar range, and the problems. It works next to the running app. It loads no plugin: it says which plugin a track names and whether this Mac has it, and runs none of them, so no plugin can end it.
+- `sound-tools . --inspect`. It prints the tempo, every track and every clip with its bar range, and the problems. It works next to the running app. It loads no plugin: it says which plugin a track names and whether this Mac has it, and runs none of them, so no plugin can end it. `sound-tools` is the command line tool of the app: pick **Install command line tool** in the project menu once. It links `/usr/local/bin/sound-tools`, or `~/.local/bin/sound-tools` when `/usr/local/bin` needs an administrator, to the program inside the app. From a checkout, `cargo run -p runtime -- . --inspect` is the same.
 
 ## Without the window
 
@@ -107,6 +120,8 @@ cargo run -p runtime -- ~/Music/my-piece --render /tmp/my-piece.wav --seconds 16
 cargo run -p runtime -- ~/Music/my-piece --headless
 cargo run -p runtime -- --plugins
 ```
+
+With the command line tool installed, `sound-tools` takes the place of `cargo run -p runtime --` in all of these.
 
 - `--inspect` prints a summary and changes nothing. It loads no plugin, so it costs nothing extra and no plugin of this Mac runs in it.
 - `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float.

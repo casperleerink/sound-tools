@@ -407,7 +407,7 @@ Every element must earn its keep. Reference feel: the source design system and H
 - Agent sidebar: a turn is the composer's message and the agent's result text. While working, one line such as `Building Polyrhythm` with a slow pulse. After, a muted `Worked for 12 s` that expands on click to the history. A failed build is `Build failed` in red plus one short sentence. No tool-call rows, progress bars, timestamps per message, or explanatory prose about builds and playback.
 - Composer: input, model name, send. Placeholder inside the input is the only hint.
 - Transport: a pill centred in the title row, since September 25, 2026. Play/pause, stop, record, position, duration if the project has one, a hairline seek strip, the tempo, the click and the master meter. Build status and device selection are not in it; at most a small dot when a reload is pending.
-- Chrome: project name top-left as a quiet menu holding add, undo/redo, output device and the project folder in the Finder or in a terminal. No legends, no zoom controls, no grid.
+- Chrome: project name top-left as a quiet menu holding add, undo/redo, output device, another project, the project folder in the Finder or in a terminal, and the command line tool. No legends, no zoom controls, no grid.
 - Cards and panels: 16 px padding, no meta chips in headers, port labels on hover only, secondary parameters behind the expand icon of a card.
 - Accessible: visible focus rings, labelled controls, full keyboard reach. This is a product requirement.
 
@@ -445,7 +445,7 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 
 ## Using the app
 
-`cargo run -p runtime -- <project-folder>` opens the window. Everything snaps to the snap setting in the corner above the track headers, a sixteenth when the window opens; cmd held during a drag bypasses it. Every drag and every key below that changes the piece is one undo step, and escape during a drag puts it back. The keys follow macOS: cmd-c, cmd-x, cmd-v, cmd-d, cmd-a, delete, shift-click and cmd-click, enter to rename.
+`Sound Tools.app`, or `cargo run -p runtime -- <project-folder>`, opens the window. The app opens the last project, or the macOS folder panel when there is none; when a project does not open, a small window says why and has **Choose folder…**. Everything snaps to the snap setting in the corner above the track headers, a sixteenth when the window opens; cmd held during a drag bypasses it. Every drag and every key below that changes the piece is one undo step, and escape during a drag puts it back. The keys follow macOS: cmd-c, cmd-x, cmd-v, cmd-d, cmd-a, delete, shift-click and cmd-click, enter to rename.
 
 | Where | Mouse or key | What it does |
 | --- | --- | --- |
@@ -456,7 +456,9 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Project menu | Add track, Instrument track | A new track with a synth |
 | Project menu | Add track, Audio track | A new empty audio track |
 | Project menu | Fit tempo to take | Fit the project tempo to the take of the selected clip. One undo step |
+| Project menu | Open project… | Pick another project folder, or make a new empty one, in the macOS folder panel. The app quits as with cmd-q and opens again on it. A folder with other files and no `project.json` is refused |
 | Project menu | Open terminal in project folder | The macOS Terminal in the folder, to start a coding agent there |
+| Project menu | Install command line tool | Link `sound-tools` to this app in `/usr/local/bin`, or in `~/.local/bin` when that needs an administrator. A dialog says where, and how to add `~/.local/bin` to the `PATH`. Agents run `sound-tools . --inspect` |
 | Ruler | click | Move the playhead there, on the grid |
 | Ruler | double click, or `t` in the arrangement | Add a tempo change there, or at the playhead. It keeps the tempo that played there until it is edited |
 | Ruler | click a tempo mark (`96 bpm`) | Select it and move the playhead onto it: the tempo of the transport is then its tempo, and a drag there edits it |
