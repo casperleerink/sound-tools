@@ -24,13 +24,11 @@ Musical conventions beyond tempo and time are extension choices. The bundled ext
 
 Extensions are trusted user code. The project provides clear contracts, documentation and examples; extension authors remain responsible for their extensions' behaviour.
 
-## Starting point
+## Where it stands
 
-Build the core and the bundled DAW extensions together. Each bundled extension should be small and finished before adding the next. Custom composition workflows and agent-authored tools follow once the bundled set works.
+The DAW comes first: a composer can make a short piece with the bundled tools and reopen it later. Until the agent sidebar exists, the agent is an external coding agent such as Claude Code or Codex, run in the project folder. It edits the project files and the running app plays the change without a build.
 
-The v0 succeeds when a composer can open a project, make a short piece with the bundled tools, ask the agent for a change in plain language, hear the result without a build, and reopen the work later.
-
-Changed September 20, 2026: the DAW comes first. The next work is what makes it worth using by itself: MIDI recording, third-party plugins, and fitting the tempo to a freely played take. Until the agent sidebar exists, the agent is an external coding agent such as Claude Code or Codex, run in the project folder.
+Next come the agent sidebar and agent-built extensions: a composer asks for a tool that does not exist, and the agent writes it as an extension that the app builds and reloads.
 
 ## Inspirations
 
@@ -38,4 +36,4 @@ Changed September 20, 2026: the DAW comes first. The next work is what makes it 
 - Ableton Live and Logic: the workspace shape composers already know.
 - Pure Data and Max/MSP: reusable building blocks that composers combine into their own musical tools.
 
-Technical architecture and implementation decisions belong in a separate document.
+Technical decisions are in [ARCHITECTURE.md](ARCHITECTURE.md).

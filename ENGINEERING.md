@@ -1,380 +1,10 @@
 # Engineering guide
 
-How to build Sound Tools: tooling, dependencies and the audio engine design. Researched September 19, 2026 from Zed (`916fc2b`), Pure Data (`d9639d2`, 0.57 dev), Elementary (`60e7234`) and crates.io. [ARCHITECTURE.md](ARCHITECTURE.md) remains the source of truth for product decisions. This file gives recommendations for how to implement them. When the two disagree, ARCHITECTURE.md wins. Record the disagreement there.
+How to work in this codebase: the rules for code, the audio thread, and testing. Product decisions are in [ARCHITECTURE.md](ARCHITECTURE.md). The engine API for extension authors is in [crates/core/README.md](crates/core/README.md), and the view API in [crates/ui/README.md](crates/ui/README.md). Commands to build and check are in [README.md](README.md), "Checks".
 
-Reference repos: [Zed](https://github.com/zed-industries/zed), [Pure Data](https://github.com/pure-data/pure-data) and [Elementary](https://github.com/elemaudio/elementary). Clone them next to this repo and read them before designing something they already solved. Paths in this file are relative to each repo's root.
+## Rules for writing code
 
-Versions below were current on the research date. AI agents tend to write code for older APIs. Use these pinned versions and check the crate's changelog before relying on memory.
-
-## 1. Toolchain and workspace
-
-### Toolchain
-
-Pin an exact toolchain in `rust-toolchain.toml`. The shared target directory rebuilds every dependency when the compiler changes, so upgrades should be deliberate commits. Stable was 1.98.1 on the research date. The pin follows the gpui revision instead, see section 6.
-
-```toml
-[toolchain]
-channel = "1.97.1"
-profile = "minimal"
-components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]
-```
-
-Edition 2024 everywhere. Useful recent language features: let chains (1.88), `if let` guards in match arms (1.95), async closures (1.85), `File::lock` (1.89), `get_disjoint_mut` (1.86). `std::simd` is still nightly only.
-
-### Cargo config
-
-Keep the shared target directory from `.cargo/config.toml`. Add Zed's v0 symbol mangling for readable closure backtraces:
-
-```toml
-[target.'cfg(all())']
-rustflags = ["-C", "symbol-mangling-version=v0"]
-```
-
-Never vary `rustflags` or environment variables between builds. Any change rebuilds everything. The outer application must run cargo with the same clean environment every time, and rust-analyzer should not inherit variables from `cargo run`.
-
-Do not set a custom linker on macOS. Apple's default linker is fast, mold dropped macOS, and Wild is ELF only. On Linux x86_64, rust-lld is already the default since 1.90.
-
-Put `-D warnings` in a CI-only config file (`.cargo/ci-config.toml`, passed with `--config`), not in the local config. A warning in an agent-written extension must never fail a composer's build. Zed does the same.
-
-### Profiles
-
-Start from this. It keeps our measured `debug = 0` and adds Zed's build-time settings.
-
-```toml
-[profile.dev]
-debug = 0
-incremental = true
-codegen-units = 16
-
-# Build scripts and proc macros use the same settings.
-# Without this, Zed measured ~400 crates compiling twice.
-[profile.dev.build-override]
-debug = 0
-codegen-units = 16
-
-# Fast proc macros make every derive-heavy extension build faster.
-# Fast layout and SVG keep debug UI usable.
-[profile.dev.package]
-syn = { opt-level = 3 }
-quote = { opt-level = 3 }
-proc-macro2 = { opt-level = 3 }
-serde_derive = { opt-level = 3 }
-gpui_macros = { opt-level = 3 }
-taffy = { opt-level = 3 }
-resvg = { opt-level = 3 }
-# Every crate with DSP code gets opt-level 3 (validated in the build-loop experiment).
-# Audio in an unoptimized build glitches and hides real performance problems.
-
-[profile.dbg]
-inherits = "dev"
-debug = "full"
-
-[profile.release]
-debug = "limited"
-lto = "thin"
-codegen-units = 1
-
-# For profiling audio without thin-LTO link times.
-[profile.release-fast]
-inherits = "release"
-lto = false
-codegen-units = 16
-debug = "full"
-```
-
-Adopted September 19, 2026. Measured on the workspace with only the UI crate and gallery: the cold build went from 38 s to 45 s, and a rebuild after touching the UI crate from 1.7 s to 1.6 s. The slower cold build is the optimized proc macros, layout and SVG crates. It is a one-time cost per machine. Measure again once derive-heavy extension crates exist.
-
-### macOS build loop
-
-macOS Gatekeeper scans every new binary, which Zed measured at a few seconds per iteration. Run `sudo spctl developer-mode enable-terminal`, then add the terminal and the outer application under System Settings → Privacy & Security → Developer Tools. Check this first if the reload loop is slower than the 2.2 s measured in the experiment.
-
-Also check the Cargo book chapter "Optimizing Build Performance" (added in 1.92). Skip Cranelift for now. It cannot unwind panics on macOS and only partly supports SIMD. The parallel front end is still nightly only.
-
-### Crate layout
-
-- Every dependency, internal or external, is declared once in `[workspace.dependencies]`. Members write `foo.workspace = true`. Every crate sets `[lints] workspace = true`.
-- Bundled extensions live in `extensions/`, everything else in `crates/` and `tooling/`. Extensions depend on the SDK and on small shared contract crates, never on each other's implementation. A test in `tooling/workspace-rules` reads `cargo metadata` and fails if one extension crate depends on another, directly or transitively. Zed does this in `tooling/xtask/src/workspace.rs`. It keeps the build wide and parallel, which protects incremental build time.
-- Test fakes go behind a `test-support` feature.
-- No `mod.rs` files. Use `src/foo.rs` next to `src/foo/`. Avoid many tiny files.
-- Dev builds read UI assets from disk; release builds embed them (Zed's `rust-embed` pattern), so asset edits need no rebuild.
-
-### Lints
-
-Follow Zed: deny a short list of real mistakes, allow clippy's style group so agents do not fight style lints.
-
-```toml
-[workspace.lints.clippy]
-dbg_macro = "deny"
-todo = "deny"
-redundant_clone = "deny"
-disallowed_methods = "deny"
-declare_interior_mutable_const = "deny"
-undocumented_unsafe_blocks = "deny"
-unwrap_used = "warn"
-style = { level = "allow", priority = -1 }
-type_complexity = "allow"
-too_many_arguments = "allow"
-```
-
-`clippy.toml`:
-
-```toml
-allow-unwrap-in-tests = true
-disallowed-methods = [
-  { path = "std::process::Command::spawn", reason = "Blocks the current thread", replacement = "smol::process::Command::spawn" },
-  { path = "smol::Timer::after", reason = "Non-deterministic in GPUI tests", replacement = "gpui::BackgroundExecutor::timer" },
-  { path = "serde_json::from_reader", reason = "Much slower", replacement = "serde_json::from_slice" },
-]
-```
-
-`rustfmt.toml` holds only `edition = "2024"` and `style_edition = "2024"`.
-
-## 2. Dependencies
-
-Match what gpui 0.2.2 already pulls in (smol 2, async-task, log, parking_lot, slotmap, anyhow, thiserror 2, serde_json) instead of adding competing crates.
-
-### App infrastructure
-
-| Need | Use | Notes |
-| --- | --- | --- |
-| Errors | `anyhow` 1 + `thiserror` 2 | anyhow in app code, thiserror at crate boundaries where callers match on errors. |
-| Error helpers | `gpui_util` =0.2.2 | Zed's `ResultExt::log_err()`, `warn_on_err()`, `debug_panic!`, `maybe!`. Depend on it; do not copy. |
-| Async | GPUI executors (`cx.background_spawn`) | No tokio unless a dependency forces it. |
-| Logging | `tracing` 0.1 + `tracing-subscriber` 0.3 | The subscriber also captures gpui's `log` records. Never log on the audio thread. |
-| Profiling | `tracing-tracy` 0.12 / `tracy-client` 0.19 | Behind a feature so it costs nothing normally. Pin `tracy-client-sys` to the Tracy GUI version. |
-| JSON | `serde` 1, `serde_json` 1 with `preserve_order` | Key order stays stable, so agent diffs of project files stay small. |
-| JSON errors | `serde_path_to_error` 0.1 | Reports `tracks[3].gain` instead of a line number. Agents fix their edits from this. |
-| JSON schema | `schemars` 1 | Optional. Publish schemas of record types for agents. |
-| File watching | `notify` 8.2 | notify 9 was still a release candidate. No `notify-debouncer-full`: the project reads changed paths again instead of trusting event kinds, and it groups events by a quiet window itself, so a burst is never split. See ARCHITECTURE.md "Project storage". |
-| Atomic writes | Our own | Temporary file and rename, no `fsync` (6 ms per file on macOS): a dozen lines in `project/storage.rs`. Power loss is left to git and snapshots. Own writes are known by a fingerprint of the bytes, not by ignoring events. |
-| Project lock | `std::fs::File::lock` | Stops two runtimes opening one project. No dependency. |
-| IPC | JSON lines over the child's stdin/stdout | The runtime is the outer app's child process. Use `interprocess` 2 only if a reconnectable socket becomes necessary. Avoid `ipc-channel`. |
-| IDs | `slotmap` 1 | Already in gpui. |
-| Channels (non-realtime) | std `mpsc` or `crossbeam-channel` | |
-| Undo | Our own | With whole-record edits, storing before and after records is simpler than an undo crate. |
-
-### Audio
-
-| Need | Use | Notes |
-| --- | --- | --- |
-| Device I/O | `cpal` 0.18 | 0.18 changed error kinds, made PipeWire the Linux default and renamed the realtime feature. The next major renames `play()` to `start()` and adds duplex streams. Keep our wrapper thin. |
-| Control ↔ audio queues | `rtrb` ≥0.4 | Lock-free SPSC. Versions before 0.3.5 have a soundness bug. |
-| Audio → UI snapshots | `triple_buffer` 9 | Playhead, CPU load. Latest value wins. Meters use `sound_core::Peaks` since step 2 of the third milestone. |
-| Denormals | `no_denormals` 0.3 | Wraps the body of `Engine::process_block`. The function is `unsafe` since 0.3. |
-| Realtime checks | `rtsan-standalone` 0.3 | `Engine::process_block` is `#[nonblocking]`. It does nothing unless the build sets `RTSAN_ENABLE=1`; then it aborts on allocations, locks and syscalls. See section 3. |
-| Worker thread priority | `audio_thread_priority` 0.38 | Only for our own realtime threads. cpal's callback thread already has realtime priority on macOS. |
-| SIMD | `wide` 1.7 | Plain loops that auto-vectorize first. |
-| Decoding | Our own WAV and AIFF reader in `crates/media` | Since step 1a of the fourth milestone. `symphonia` 0.6.1 was checked and is not used: WAV and AIFF are a few chunks around plain samples, and a file is kept in memory as its own bytes, so a decoder would only add a copy. About 300 lines. Compressed formats are out of scope; if they come, `symphonia` is the choice (MPL-2.0, allowed). |
-| WAV writing | `hound` 3.5 | 3.5.1. Old but finished. Writes the offline render, recorded takes (`sound_media::TakeFile`, 32-bit float, the header written again every second), and the test files of `sound-media`, the arrangement and the runtime. |
-| Resampling | Our own windowed sinc in `crates/media` | Since step 1a of the fourth milestone. `rubato` 5.0.0 was checked and is not used: its resamplers keep a filter state that runs from the start of a stream, and a clip must render from any frame the playhead reaches, the same every time. Ours is stateless: Kaiser-windowed sinc designed per pair of rates (100 dB stop band from the lower Nyquist frequency, flat to 20 kHz; 184 taps from 44.1 to 48 kHz), a table of up to 1024 phases, exact integer positions. Measured from 100 Hz to 20 kHz: level within 0.0001 dB, worst difference from the ideal sine 102.5 dB down; fold-back 102.6 dB down. Since step 3 of the fourth milestone also `Varispeed`, a file read at any speed for an instrument that plays it at the pitch of a key: an interpolating windowed sinc of 32 taps, a whole place gives its sample exactly, keys four octaves each way within 0.0041 cents; above a step of 1 the kernel stretches with the step, so nothing folds back (80 dB down or more, up to a step of 8). |
-| FFT | `realfft` 3.5 / `rustfft` 6.4 | |
-| Filters | Our own RBJ biquad | ~50 lines. `biquad` 0.6 is fine too. |
-| MIDI devices | `midir` 0.11 | Used in `extensions/midi`. `connect` takes the `MidiInput`, so one port needs one of its own. |
-| MIDI messages | `wmidi` 4 | 4.0.11. No allocation, so a device thread parses without waiting. |
-| MIDI files | `midly` 0.5 | Dormant but complete. |
-| CLAP hosting | `clack-host` 0.2, `clack-extensions` 0.2 | 0.2.0, September 2026, MIT OR Apache-2.0. The only working Rust CLAP host layer. Used in `extensions/plugin-host` since step 4a of the second milestone. The extensions crate is feature-gated per CLAP extension; we enable `audio-ports`, `gui`, `note-ports` and `state`. |
-| Writing a CLAP plugin | `clack-plugin` 0.2 | Only for `tooling/test-clap-plugin`, the CLAP instrument the repository builds so that CI needs no third-party plugin. |
-| VST3 hosting | `vst3` 0.3 (coupler-rs) | Raw COM bindings; we write the safe layer. The VST3 SDK is MIT licensed since 3.8 (Oct 2025). |
-| AU hosting | `objc2-audio-toolbox`, `objc2-avf-audio` | No mature Rust AU host exists. |
-
-Read, do not depend on: `firewheel` 0.14 (closest Rust design to ours, but its README says it is not a DAW engine), `fundsp` 0.23 (useful DSP building blocks; its `Net::commit()` is the same compile-and-send idea).
-
-Avoid: `nih-plug` (maintenance mode; plugin authoring, which we do not need), `knyst`, `dasp`, `audio-graph` (dormant), `rodio`, `kira` (playback libraries, not engines), Meadowlark code (AGPL).
-
-### Tooling
-
-| Tool | Use for |
-| --- | --- |
-| `cargo-nextest` | Running tests. `.config/nextest.toml`: `slow-timeout = { period = "60s", terminate-after = 1 }`. |
-| `cargo-shear` | Unused dependencies. |
-| `cargo-deny` | Licences and advisories. Plugin hosting and bundled code make licences matter. |
-| `typos` | Spelling. |
-| `bacon` | Background check loop during development. |
-| `insta` | Snapshot tests of project JSON and render summaries. |
-| `proptest` | Property tests for the graph compiler, the musical clock and state application. |
-| `criterion` | Benchmarks for DSP and graph compile time. |
-| `miri` | Unsafe and lock-free code. |
-| `loom` or `shuttle` | Only if we write our own lock-free structure. Prefer rtrb and triple_buffer instead. |
-
-## 3. Audio engine design
-
-Status, September 19, 2026: built in `crates/core` (`processor.rs`, `graph.rs`, `engine.rs`, `control.rs`, `device.rs`, `clock.rs`, `transport.rs`), except the parts marked "not built yet". The API guide for extension authors is [crates/core/README.md](crates/core/README.md). Where the build took a simpler road than the first design, the text says so and why.
-
-This section answers the open items "Audio graph execution, scheduling and transport notification APIs" and "queue representation" from ARCHITECTURE.md and SDK_SKETCH.md. All studied engines (Pd, Elementary, firewheel, fundsp) converge on the same core idea: edit a graph on a normal thread, compile it to a flat schedule there, and hand that to the audio thread through a lock-free queue. The design below follows them and avoids their known mistakes.
-
-### Threads
-
-| Thread | Owns | May |
-| --- | --- | --- |
-| UI / main (GPUI) | Views | Edit project state through the editing service. |
-| Control | Project graph, compiler, tempo map, asset registry | Allocate, lock, do I/O. Compiles schedules and builds processors. |
-| Audio (cpal callback) | Live processors, current schedule, buffers | Only preallocated work. No allocation, freeing, locks, I/O, logging or GPUI calls. |
-
-Control can be the main thread at first if compiles stay small. Move it to a background task when compile time shows up in profiles.
-
-The engine is a value, not global state: `Engine::process_block(&mut self, output)` takes interleaved samples. The cpal callback, offline rendering and tests all call the same function. `Engine::new(config)` returns the control half and the audio half. Pd needed years to retrofit multi-instance support because it started with globals.
-
-### Messages between threads
-
-Two `rtrb` rings, created once with fixed capacity:
-
-- **Control → audio**: one message per edit, a batch (`Vec<Command>`) of processor inserts and removals, processor updates, a larger slot table, a new schedule, transport operations and a new clock. The audio thread drains the ring at the start of each sub-block.
-- **Audio → control**: the same batches, coming back. The audio thread applies every command by swapping: the new value goes in, the old value ends up inside the command. So old schedules, removed processors and replaced snapshots ride back inside the batch that replaced them, and `EngineControl::poll` drops them. Nothing is ever freed on the audio thread.
-
-One batch in gives one batch out. The audio thread takes a batch only when the return ring has room. Otherwise the batch waits in the command ring for a later block. This is why a full return ring can never force a drop on the audio thread.
-
-Plus a `triple_buffer` for values the control side or UI reads at its own pace. Today it carries `EngineStatus`: blocks and frames processed, edits applied, event overflows, port handle misuses, full-ring counts, whether the project plays and the playhead in frames and ticks. Meters do not: a triple buffer gives the latest block, and a meter must see the loudest block since the interface last looked. They are `Peaks` since step 2 of the third milestone, an atomic maximum per channel that the interface takes and sets back to zero, see ARCHITECTURE.md, "The master, solo, bypass and meters".
-
-Simpler than first designed: reports are not messages on the return ring. They are counters that only grow, published through the triple buffer. Reading the latest value never misses a count, and the return ring keeps its one in, one out rule. Device xruns and late callbacks are counted the same way in `OutputStream::status`.
-
-A full ring must not lose edits. `EngineControl` keeps batches that did not fit and sends them, in order, on the next `poll` or commit. When the `Engine` is dropped, `poll` returns `EngineStopped` and the waiting batches are dropped. Elementary silently drops a schedule when its queue is full; do not copy that.
-
-Every `Arc` the audio thread might release must come back through the return ring. Elementary frees sample buffers on the audio thread in one edge case because it relied on a registry holding a reference.
-
-One edit is one batch, so its changes land in the same block (firewheel's `update()` flush). `EngineControl::edit()` collects changes on a copy of the graph and `commit()` compiles before it sends. A half-applied edit must never reach the engine: validate and compile the whole change before sending anything. This matches the SDK sketch's "decode and validate before publishing".
-
-### Processors
-
-Two-phase trait, from Pd's `dsp`/`perform` split:
-
-```rust
-trait Processor: Send + 'static {
-    /// The one message type the control side sends to this processor.
-    type Update: Send + 'static;
-    fn ports(&self) -> Ports;
-    /// Control thread. May allocate. Called before the processor reaches the audio thread.
-    fn prepare(&mut self, config: &PrepareConfig);
-    /// Audio thread, at a block start. Copy or swap values out of `update`, never drop them.
-    fn update(&mut self, update: &mut Self::Update);
-    /// Audio thread. Realtime safe.
-    fn process(&mut self, context: &mut ProcessContext);
-}
-```
-
-Calling `prepare` again after a sample rate change is not built yet. The engine is created for one device configuration.
-
-`ProcessContext` gives separate input and output slices per port, the block's sorted events with frame offsets, the engine time of the block and the transport info (see "Arrangement playback and transport"). Do not alias input and output buffers the way Pd does; in Rust that is undefined behaviour. The compiler can still reuse buffers whose lifetimes do not overlap.
-
-Decided September 20, 2026 with the track mixer: every audio port carries two channels, left then right (`CHANNELS`), and `get` gives them as `[&[f32]; 2]` and `[&mut [f32]; 2]`. There is no mono port and no channel count to negotiate anywhere, which is why a `project.json` connection names the first device channel of a stereo pair. A processor that makes one signal writes the left channel and copies it to the right.
-
-Processors live in a slot table on the audio thread, indexed by IDs the control side assigns. Schedules refer to slots, not to processors. A routing change sends a new schedule while every surviving processor keeps its phase, envelopes and delay lines. This removes the SDK sketch's fallback of stopping playback on routing edits. New processors arrive prepared and boxed; removed ones go back on the return ring. When the table is full the control side sends a table of twice the size in the same batch, the audio thread moves the processors over, and the old table goes back.
-
-### Schedule compile
-
-On the control thread, from the typed project graph (instances, ports, connections):
-
-1. Topologically sort. Order independent branches by a stable key such as instance ID, not creation order, so output is reproducible.
-2. Reject cycles that do not pass through a declared feedback delay, with a typed error naming the connection. Pd silently drops nodes in a cycle; do not.
-3. Assign buffers. Every output port gets one buffer, which all its connections read (fan-out). Before a step runs, the engine sums the sources of each audio input into a scratch buffer and merges the sources of each event input into that port's event buffer (fan-in). Unconnected inputs are silent. Sources are summed in schedule order, so results do not depend on the order connections were made in.
-4. Emit a flat `Vec<Step>` with the slot, the source buffers per input and the output buffer ranges. The audio thread loops over it. The source lists are the dependency edges a parallel executor needs later; v0 is single threaded. The schedule owns its buffers, so they are allocated at compile time and travel back with the old schedule.
-
-Simpler than first designed: inputs are copies, and buffers are not reused between steps. This costs one copy of 64 frames per connection and 512 bytes per output port, which is two channels of 64 f32. In return no input can alias an output, so the engine needs no `unsafe` for buffers. Reuse can come later inside `compile` without touching processors.
-
-Feedback delays are not built yet, so step 2 rejects every cycle. The error names a connection on the cycle.
-
-One edit group or undo step triggers one compile, like Pd's `canvas_suspend_dsp`. Keep the project graph between compiles. Pd throws it away and rebuilds from scratch with lookups that cost objects × connections.
-
-### Block size and feedback
-
-- Split each device buffer into sub-blocks of at most `MAX_BLOCK = 64` frames (Pd's size). The last sub-block may be shorter. This adds no latency and keeps processor buffers fixed size. Do not skip leftover frames the way Pd does. Edits are taken at every sub-block start, so an edit waits at most 64 frames whatever the device buffer size is.
-- Not built yet, the next three points. A feedback connection compiles to a write half (sink) and a read half (source) sharing one delay line owned by the delay processor. The sort sees no cycle.
-- The minimum feedback delay is always `MAX_BLOCK` frames, independent of sort order and device buffer size. Pd's minimum is 0 or one block depending on invisible sort order, and Elementary's changes with the host block size. Longer delays read further back in the same line. This answers the open "minimum delay and processing granularity" item.
-- Loops shorter than a block (for example Karplus-Strong) stay inside one processor.
-
-### Parameters and events
-
-- **Base value edits** from UI or agent: a typed `Processor::Update` message applied at the next block start. The same message type carries data snapshots and "do this now" events from the UI, so the core has one control-to-processor path. A tool's behaviour sends the current values on every state application, which costs no compile. Elementary's `createRef` fast path works the same way. The SDK provides one smoothing helper, `Smoothed` (a straight line to the target over a number of frames, built with the synth and shared with the track mixer since September 20, 2026); the core smooths nothing by itself. Work out what a value means, such as a pan law, on the control thread and send the result.
-- **Scheduled events** travel between processors through typed event ports and carry an explicit frame offset within the block. Any `Copy + Send + 'static` type is an event; the core moves it without knowing it. `Copy` rules out allocation and drops on the audio thread. Port handles carry the event type, and `connect` rejects two ports with different types. Each processor receives a time-sorted event list per block, the model CLAP and VST3 use. Not built: events scheduled from the control thread for a future frame. Timeline-driven processors make their own events on the audio thread (next heading), which covers the milestone. Pd gets sub-sample timing from one shared thread and an implicit logical clock; we have separate threads, so timestamps must be explicit.
-- Engine time is a `u64` frame counter. Project position is separate and only advances while playing. Musical time converts through the core tempo map. Integer frames avoid Pd's floating-point time unit tricks.
-- Event buffers per port are preallocated with fixed capacity (`EngineConfig::event_capacity`, per block). Overflow is counted in `EngineStatus::event_overflows`, never allocated. `push` tells the sender whether the event fitted, so a sender keeps a note off that did not fit and sends it in the next block. A processor counts an event it dropped for a full list of its own with `count_dropped`, into the same counter.
-
-### Arrangement playback and transport
-
-Built in `transport.rs` and `clock.rs`, and in `extensions/arrangement/src/sequencer.rs`, whose README has the rules of the sequencer.
-
-Timeline-driven processors generate their own events on the audio thread. The arrangement extension's processor holds an immutable snapshot of its clips (`Arc`, replaced by an update message with `std::mem::swap`, old one returned). Its update type has a second variant, the preview note of the note editor, which an interface sends with `Project::send`. It sounds in engine time, so also while the project is stopped, and the processor sends its off after 0.3 s by itself. Each block it reads the transport info (`ProcessContext::transport`: playing, the block's range in project frames and in ticks, the jump flag, the clock) and emits the notes that fall inside the block.
-
-This beats scheduling ahead from the control thread: timing never depends on control thread latency, seek takes effect in the next block, and open-ended projects need no preparation. Transport operations (play, pause, stop, seek) are control → audio messages, applied at a sub-block start like every other command. The core sets the transport info and notifies processors through two flags in the context, each set for one block: `jumped` after a seek or a stop, and `stopped_playing` when the previous block played and this one does not. A processor with held notes releases them on either flag, because while not playing the ranges are empty and nothing else would end them. The second flag is in the core so that not every processor keeps its own copy of the previous playing state. Each tool decides how to respond, as ARCHITECTURE.md already requires.
-
-The transport state on the audio thread is small: playing, whether the previous block played, the project position in frames, the jump flag and an `Arc<Clock>`. Each sub-block gets the frame range `position..position + frames` (empty while not playing) and the tick range `tick_at(start)..tick_at(end)`. Both ends come from the same pure function, so the end of one block is the start of the next by construction, and every tick belongs to exactly one block. Nothing is cached between blocks. The cost is two binary searches over the tempo changes and two 128 bit divisions per sub-block.
-
-A tempo map change is a new `Arc<Clock>`, compiled on the control thread. The audio thread reads the next tick from the old clock, swaps the clocks, and moves the frame position to that tick's frame in the new clock. So the tick sequence the device plays goes on with no gap and no repeat, and `jumped` stays false. The frame position does change, by design. A processor that runs ahead of the device because of latency after it (ARCHITECTURE.md, "Latency compensation") would land elsewhere in the new clock, so each such processor starts its next range at the tick after its last one: after a faster tempo the ticks it would have skipped come at offset 0 of that block, late by less than its lead, and after a slower one it gets empty ranges until the clock has caught up. No tick is skipped or given twice. The old clock rides back in the batch. The control side keeps the same `Arc` for its own conversions. `set_tempo_map` with a map equal to the current one sends nothing, so a project file saved again unchanged does not move the frame position.
-
-### Musical clock
-
-Decided and built September 19, 2026, in `clock.rs`. The rules behind "rounds in one place":
-
-- `Clock::frame_of(tick)` is the one conversion. A tick lands on the frame that contains its exact time: the exact position rounded down. `tick_at(frame)` is its inverse, the first tick at or after a frame. Rounding down makes that inverse a plain ceiling division. The error is below one frame and the same everywhere.
-- All math is integers. A tempo is held in steps of 0.001 bpm, so frames per tick is the fraction `sample_rate * 60000 / (milli_bpm * 960)`. Products use `u128`, so positions far beyond any real project stay exact.
-- Each tempo change starts a segment on the whole frame of its own tick. Math inside a segment then starts from an integer, and a segment is found with a binary search by tick or by frame. The start is rounded down like any tick, so each tempo change can move the ticks after it early by less than one frame. That is far below what anyone hears, and every conversion uses the same clock, so all parts still agree on the frame of a tick.
-- Tempo bounds are 10 to 1000 bpm. With the 1000 bpm limit a tick is at least one frame long from 16000 Hz up (`MIN_EXACT_SAMPLE_RATE`). Then no two ticks share a frame and `tick_at(frame_of(tick)) == tick`. 44100, 48000 and 96000 Hz are tested. `OutputDevice` refuses devices below 16000 Hz. Offline engines below it still run and never panic, but two ticks can share a frame there, and a tempo map change can repeat a tick.
-- Seconds go through frames (`seconds_of`, `tick_at_seconds`), so they agree with the audio.
-- Bars and beats need only the time signature: `TimeSignature::bar_beat_of` and `ticks_of`. Denominators 1 to 32 all divide the 3840 ticks of a whole note, so a beat is a whole tick count.
-
-Saved form: `TempoMap` derives serde and validates while loading. Step 3 puts it in `project.json`.
-
-```json
-{
-  "time_signature": "4/4",
-  "tempo_changes": [
-    { "tick": 0, "bpm": 120.0 },
-    { "tick": 15360, "bpm": 93.5 }
-  ]
-}
-```
-
-Simpler than planned: the time signature is saved as a string. It reads well, and the validated type needs no second unvalidated struct for serde. `Engine::new` stays infallible: it takes any sample rate and the device wrapper checks the limit, instead of a validated sample rate type through every config.
-
-### Graph change clicks
-
-Processors that survive a recompile keep their state, so most routing edits produce no discontinuity beyond the new routing itself. For v0, accept a hard switch. If clicks become a problem, add a short gain ramp (about 10 to 20 ms) on added and removed connections. Elementary crossfades the whole output on every structural edit, which doubles CPU during the fade; do not copy that.
-
-### Realtime safety checks
-
-- `rtsan-standalone`: `Engine::process_block` is `#[nonblocking]`, which covers every `update` and `process` it calls. The crate reads `RTSAN_ENABLE` in its build script and does nothing without it. Run `RTSAN_ENABLE=1 cargo nextest run -p sound-core -p sound-media -p tone -p instrument -p filter -p eq -p reverb -p compressor -p drum-pad -p sound-notes -p arrangement -p metronome -p midi -p plugin-host -p sampler`, then `RTSAN_ENABLE=1 cargo nextest run -p runtime --test projects`, which plays real projects: every track with its sequencer into its synth, with file edits during playback, and a whole recording from the MIDI input into a clip. Add every new crate with a processor to this list and to the CI step. Checked September 20, 2026: the workspace has seven processors outside tests, `Tone`, `Synth`, `Sequencer`, `Mixer`, `Metronome`, `Keys` and `HostedPlugin`, and each runs under the sanitizer in the tests of its own crate. Step 2 of the third milestone added `Master`, the master and its limiter, in the arrangement crate, which the list already runs. The built-in `Filter` joined them with step 5 of the third milestone, and the `Eq` with step 7, and `Reverb` with step 8. The built-in `Compressor` joined them with step 6. Step 1a of the fourth milestone added `AudioPlayer`, the player of an audio track, in the arrangement crate, and `sound-media`, whose reading and resampling run inside `process_block` in its own test `realtime.rs`, since step 3 the `Varispeed` too. Step 3 added the `Sampler`, in the sampler crate, with a test that replaces its file while a note sounds. Step 2 of the fourth milestone added no processor: the input of a recording never reaches the engine. What runs on the input device's own realtime thread is `CaptureWriter::write`, `#[nonblocking]`, whose tests in sound-core run under the sanitizer, so no crate joins the list for it. Step 4 of the fourth milestone added `DrumPad`, the processor of the Drum pad, in `drum-pad`, which joins the list: it holds its sounds by `Arc` and hands a replaced one back in the next update, so it frees nothing on the audio thread. Checked again with the check of the fourth milestone, September 26, 2026: fifteen processors outside tests, each in a crate of the list. `HostedPlugin` wraps a third-party plugin: everything of ours around the plugin's own calls is checked, and each of those calls is inside an `rtsan` `ScopedDisabler`, because what a plugin does inside itself is not this repository's to check. That exemption would also hide a buffer of ours growing while a plugin pushed into it, so the plugin host is tested with a counting global allocator as well: a plugin that sends fifty thousand events a block makes the process allocate nothing. CI does, as its last step. This is the one allowed exception to "never vary environment variables": it rebuilds only the sanitizer and our audio crates. One test starts a child that allocates inside `process` and expects the sanitizer to abort it, so a sanitizer that is silently off fails CI.
-- `no_denormals` wraps the body of `process_block`, so offline renders and the device callback compute the same.
-- Keep the realtime path free of `Mutex`, `Vec::push` beyond capacity, `Box::new`, `Arc` drops, `String` formatting and logging. Report through the return ring instead.
-- Not built yet: hold an App Nap prevention activity on macOS while the engine runs (Zed's `prevent_app_nap`). It belongs with the application window. Zed's own audio locks and allocates in its callback; that is fine for calls and wrong for a DAW.
-
-### DSP speed
-
-Decided with the synth, September 19, 2026:
-
-- Measure a DSP crate as a whole project: 100 instances in one engine, rendered offline in the dev profile, as a realtime ratio. `extensions/instrument/tests/synth/performance.rs` is the pattern. An idle processor must return before it touches its output.
-- A recursive filter is bound by the chain of operations from one frame to the next, not by the count of operations. Multiplying out the state update of the synth's filter made the chain half as long and a voice 1.4 times faster. It is still the same filter.
-- Rust never fuses a multiply and an add by itself. Do not reach for `f32::mul_add`: it is one instruction on Apple Silicon, and a slow library call on x86 without the FMA feature.
-- Work out filter factors (`tan`, `powf`) once per block and only while a parameter moves, never per frame. Smooth the parameter, not the factors. A filter whose cutoff an LFO moves may work them out per short run inside the block: the built-in Filter does every 16 frames, which costs four `tan` per block while it moves.
-
-### Extension SDK surface
-
-Extensions never touch threads or queues. Through the SDK they:
-
-- register processor types and ports for their tools,
-- implement `prepare`, `update` and `process`,
-- map state changes to update messages or graph changes in their state application hook,
-- read immutable data snapshots delivered as update messages.
-
-The core owns everything in this section. It is built and described in [crates/core/README.md](crates/core/README.md): processors, and tools with their state application hook, which the code calls a behaviour. The hook gets the next state only, not the previous one. It declares what the instance needs and the core sends the difference, so a behaviour sends its few parameters every time instead of comparing records. A behaviour has nowhere to keep a previous state. If rebuilding a large snapshot ever shows up in a profile, the core can hand behaviours the previous records then.
-
-### Device output
-
-`OutputDevice::default_output()` opens the default device with its default configuration, f32 samples only. `start(engine)` moves the engine into the cpal callback. It refuses an engine built for another channel count or another sample rate than the device has. Device selection and sample formats other than f32 are not built yet. `InputDevice::default_input()` opens the default input the same way, f32 only, and gives a ring of what it captures, see ARCHITECTURE.md, "Recording audio". `cargo run -p runtime -- <project-folder>` opens the window: it plays a project folder on the device and keeps it live. It creates the default project of the arrangement extension in an empty folder. When the window closes it prints the device counters. `--headless` does the same without a window and without starting GPUI, for tests, CI and agents. It prints every change it applies and, at the end, the counters. It reads `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status` and `quit` as lines on stdin. This is provisional and not the outer application protocol. `--inspect` prints a summary without a device and without the project lock. A tool with a registered summary, such as the arrangement, describes what it owns there. The runtime is a library plus a thin binary, so tests of whole projects use the same registry, summary and render. `--render <wav> --seconds <n>` renders offline. The earlier hard-coded scenario with its beat click is gone. `tests/transport.rs` covers what it checked.
-
-## 4. Testing and CI
-
-- Project folder tests call `Project::apply_outside_changes` with explicit paths, the function the watcher calls, so they do not depend on timing. One test uses the real watcher, with long timeouts. The scale test (10,000 child records) is `#[ignore]`: `cargo nextest run -p sound-core --run-ignored only ten_thousand --no-capture`.
-- DSP, graph compile, clock and project state tests are plain `#[test]` with no GPUI. Offline rendering through `process_block` makes audio behaviour testable: render N frames, assert on samples or snapshot a summary with insta.
-- Use `#[gpui::test]` only for views and entities. In GPUI tests use `cx.background_executor().timer(..)`, never `smol::Timer::after`, or `run_until_parked()` fails.
-- Clippy's `allow-unwrap-in-tests` covers `#[test]` functions only. A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`.
-- Property tests: random graphs compile to valid schedules; ticks ↔ frames and ticks ↔ bars/beats round-trip exactly; a processor that emits from the transport info fires every tick exactly once over random tempo maps, device buffer sizes, a pause and a tempo map change; any valid record applied on top of any other gives the same state as loading it from empty.
-- The two snapshot renderers have no test harness, so nextest skips them. `cargo test -p gallery --test snapshots` renders the components and `cargo test -p runtime --test snapshots` renders the application window for three projects, with the note editor open too, and prints frame times and the time of one mouse move of a clip drag and a note drag on the large project. Both run in CI, which has no display. Look at the PNGs after a UI change. `WINDOW_SNAPSHOT_ONLY=audio` renders the default project and the audio states only, in about 20 s, and `WINDOW_SNAPSHOT_ONLY=drums` the Drum pad states only. A drop from the Finder is tested the same way, with no display: `FileDropEvent`s through the window of a GPUI test (`crates/runtime/tests/window/audio.rs`). Recording audio is tested with a simulated input: a test makes the ring with `sound_core::capture` and writes into it what a device would, with its callback time and latency, through the function the device callback calls. `runtime --test projects recording_audio` also simulates the output device (`StreamTiming::simulated`) and runs the engine by hand; `--test window recording_audio` gives the window the input as its default input (`Shell::with_device`). A disk that cannot take more of a take is made with `ulimit -f` in a child process of the test.
-- Window behaviour is tested with `#[gpui::test]` and a simulated mouse and keys (`crates/runtime/tests/window/`), on an offline engine that the test runs by hand with `process_block`. `support.rs` presses, drags and releases at the place of a tick, a track or a pitch. `clips.rs` and `notes.rs` check the project, the undo history and the files after every gesture, and the sound of a preview note by rendering. `piece.rs` makes a short piece by hand from the default project, closes it, opens it again and compares the files byte for byte and an offline render sample for sample.
-- CI on macOS first (`.github/workflows/ci.yml`): `cargo fmt --check`, clippy with `-D warnings` via the CI config, `cargo nextest run --workspace`, `cargo shear`, `cargo build --locked`, `typos`, `cargo deny check`, the forbidden-dependency test, the gallery and window snapshots, and the realtime sanitizer run from section 3. Five jobs run side by side (lint, tests, snapshots, sanitizer, Linux), each with its own build and cache, so a run takes about as long as its slowest job. A change that only touches `docs/` runs the lint job alone. The Linux job builds and runs the tests on `ubuntu-latest`, with the apt packages from the README and `CARGO_TARGET_DIR` set, because the target folder of `.cargo/config.toml` is a macOS one. Lint, snapshots and the sanitizer stay on macOS. A tag `v<version>` runs `.github/workflows/release.yml`: it checks the tag against the version in `Cargo.toml`, builds the macOS zip on `macos-15` (Apple silicon only) and the Linux tarballs on `ubuntu-24.04` and `ubuntu-24.04-arm`, so they need glibc 2.39, with `tooling/bundle-macos.sh` and `tooling/bundle-linux.sh`, and makes the GitHub release. Started by hand it is a dry run that keeps the files as artifacts. `/release` (`.agents/skills/release/SKILL.md`) cuts one. Add Miri for any unsafe code. Add a Windows job when we claim support there.
-- Linux from a Mac: Docker with an `ubuntu:24.04` image, the README packages and `rustup`, the repository mounted, and `CARGO_TARGET_DIR` on a named volume. Run the commands of the Linux job as a normal user, not root: root can write into the read-only folders three tests make. For the window, add `xvfb` and `mesa-vulkan-drivers` (software Vulkan), give the container a null sound card with `pcm.!default { type null }` in `~/.asoundrc`, run the app on `DISPLAY` of the Xvfb and take a screenshot with `xwd -root`. Checked this way on arm64 on September 27, 2026. Docker Desktop's default 8 GB is too little for ten links at once: set `CARGO_BUILD_JOBS=4`.
-
-## 5. Rules for agents writing code here
-
-Adapted from Zed's `.rules`. Rules are traps to avoid, not general advice. Add a rule only when it is non-obvious, happened more than once and is actionable.
+Rules are traps to avoid, not general advice. Add a rule only when it is non-obvious, happened more than once and is actionable.
 
 - Correctness and clarity first. Optimize only the audio path or measured hot spots.
 - Comments explain why, never restate the code.
@@ -388,21 +18,88 @@ Adapted from Zed's `.rules`. Rules are traps to avoid, not general advice. Add a
       async move { state.update(); }
   });
   ```
-- GPUI: no `cx.notify()` or entity updates inside `render`; no blocking file I/O or sleeps on the UI thread. See the gpui skills in `.agents/skills/`.
-- Audio thread: nothing from the realtime list in section 3.
-- Check a crate's current version and changelog before using it from memory. symphonia, rubato and cpal changed their APIs in 2026.
+- GPUI: no `cx.notify()` or entity updates inside `render`; no blocking file I/O or sleeps on the UI thread. See the gpui skills in [.agents/skills/](.agents/skills/).
+- Audio thread: nothing from "What may not happen on the audio thread" below.
+- Check a crate's current version and changelog before using it from memory. Agents tend to write code for older APIs.
+- Every dependency is declared once in `[workspace.dependencies]`. Every crate uses the workspace lints.
+- Extensions depend on the SDK and on small shared contract crates, never on each other. `tooling/workspace-rules` fails the tests if one does. This keeps the build wide and parallel.
+- Warnings fail CI only (`.cargo/ci-config.toml`), never a local build: a warning in agent-written code must not break a composer's build.
+- Never vary `rustflags` or environment variables between builds. Any change rebuilds everything. The sanitizer run below is the one exception.
 
-## 6. GPUI version
+## The audio engine
 
-crates.io `gpui` 0.2.2 is from October 2025 and has had no release since. Zed main has moved far ahead: platform code split into `gpui_platform` and per-OS crates, a `RealtimeAudio` executor priority, `#[gpui::property_test]`. `gpui_platform` is not on crates.io. `gpui-pre` 0.3.5 (September 2026) is a community snapshot of Zed main that gpui-component now uses.
+The engine is in `crates/core`. It follows what Pure Data, Elementary and similar engines do: edit a graph on a normal thread, compile it to a flat schedule there, and hand that to the audio thread through a lock-free queue.
 
-Decided September 19, 2026: `gpui` and `gpui_platform` come from Zed git, pinned to a stable release tag's commit (v1.20.2) in the root `Cargo.toml`. `rust-toolchain.toml` matches the toolchain Zed pins at that commit. To upgrade, pick a newer stable tag, update both the rev and the toolchain, fix the build, check `cargo test -p gallery --test snapshots` against the previous PNGs, and update the gpui skills in the same change.
+### Threads
 
-The pinned version also renders windows offscreen (`HeadlessAppContext` plus the Metal headless renderer), so UI checks run without opening a window.
+| Thread | Owns | May |
+| --- | --- | --- |
+| UI (GPUI) | Views | Edit project state through the editing service. |
+| Control | Project graph, compiler, tempo map, assets | Allocate, lock, do I/O. Compiles schedules and builds processors. |
+| Audio (device callback) | Live processors, current schedule, buffers | Only preallocated work. |
 
-## Sources
+The engine is a value, not global state. The device callback, offline rendering and tests all call the same `Engine::process_block`. Pd needed years to add multiple instances because it started with globals.
 
-- Zed: `Cargo.toml` (profiles, lints), `.cargo/config.toml`, `.cargo/ci-config.toml`, `clippy.toml`, `.rules`, `.config/nextest.toml`, `tooling/xtask/src/workspace.rs`, `crates/gpui_util/src/lib.rs`, `crates/audio/`, `docs/src/development/macos.md`.
-- Pure Data: `src/m_sched.c` (scheduler, clocks), `src/d_ugen.c` (graph sort, chain, buffers), `src/g_canvas.c` (`canvas_update_dsp` rebuild), `src/d_delay.c` (`delwrite~`, sort-dependent delay), `src/d_ctl.c` (`vline~`), `src/s_audio_pa.c` (callback, block splitting).
-- Elementary: `runtime/elem/Runtime.h` (instructions, schedule swap, `gc`), `runtime/elem/GraphRenderSequence.h`, `runtime/elem/builtins/Feedback.h` (tap pairs), `runtime/elem/builtins/Core.h` (root fades), `runtime/elem/SharedResource.h`, `js/packages/core/src/Reconciler.res` and `Hash.ts` (diffing).
-- [firewheel design doc](https://github.com/BillyDM/firewheel/blob/main/DESIGN_DOC.md), [fundsp](https://github.com/SamiPerttu/fundsp), [clack](https://github.com/prokopyl/clack), [vst3-rs](https://github.com/coupler-rs/vst3-rs), [cpal changelog](https://github.com/RustAudio/cpal/blob/master/CHANGELOG.md), [rtsan-standalone-rs](https://github.com/realtime-sanitizer/rtsan-standalone-rs), [Symphonia 0.6 migration](https://github.com/pdeljanov/Symphonia/blob/master/docs/guides/migration/0p6.md), [Rust releases](https://github.com/rust-lang/rust/blob/stable/RELEASES.md), [rust-lld default on 1.90](https://blog.rust-lang.org/2025/09/01/rust-lld-on-1.90.0-stable).
+### What may not happen on the audio thread
+
+No allocation, no freeing, no locks, no I/O, no logging, no GPUI calls. So no `Mutex`, no `Vec::push` past capacity, no `Box::new`, no `Arc` drops, no `String` formatting.
+
+How the engine keeps to that:
+
+- Two fixed-size rings connect control and audio. One edit is one batch of commands. The audio thread applies a command by swapping: the new value goes in, the old one rides back in the same batch on the return ring, and the control side drops it. Nothing is ever freed on the audio thread.
+- The audio thread takes a batch only when the return ring has room, so a full ring never forces a drop. The control side keeps batches that did not fit and sends them later, in order. Edits are never lost.
+- Every `Arc` the audio thread might release must come back the same way.
+- A whole edit is validated and compiled before anything is sent. A half-applied edit never reaches the engine.
+- Status and counters (blocks, overflows, playhead) go out through a triple buffer and only grow, so reading the latest never misses a count. Meters use `Peaks`, an atomic maximum per channel, so a meter sees the loudest block since it last looked.
+- Events are `Copy` types in preallocated per-port buffers. Overflow is counted, never allocated.
+- Processors have two phases, from Pd: `prepare` on the control thread may allocate; `update` and `process` on the audio thread may not. `update` swaps values out of its message and never drops them.
+- Processors live in a slot table. A routing change sends a new schedule and every surviving processor keeps its state.
+- Device buffers are split into sub-blocks of at most 64 frames. Edits are taken at each sub-block start.
+- Time is integers: engine time is a frame counter, and ticks convert to frames through one function in `clock.rs`, which rounds in one place. Every part then agrees on the frame of a tick.
+- Timeline processors make their own events from the transport info of each block, instead of the control thread scheduling ahead. Timing then never depends on control thread latency.
+
+### How the realtime sanitizer check runs
+
+`Engine::process_block` is marked `#[nonblocking]` with `rtsan-standalone`. It does nothing unless the build sets `RTSAN_ENABLE=1`. Then it aborts on any allocation, lock or system call inside `process_block`, which covers every `update` and `process`. The input device callback (`CaptureWriter::write`) is marked the same way.
+
+- The CI job `sanitizer` in `.github/workflows/ci.yml` runs the tests of every crate with a processor, and then `runtime --test projects`, which plays real projects with file edits and recording.
+- Add every new crate with a processor to that list.
+- A test in `crates/core/tests/engine.rs` starts a child that allocates inside `process` and expects the abort, so a sanitizer that is silently off fails CI.
+- `HostedPlugin` wraps each call into a third-party plugin in a `ScopedDisabler`: what a plugin does inside itself is not ours to check. Because that could hide our own buffers growing, the plugin host is also tested with a counting global allocator.
+
+`no_denormals` wraps the body of `process_block`, so offline renders and the device compute the same.
+
+### DSP speed
+
+- Measure a DSP crate as a whole project: 100 instances in one engine, rendered offline in the dev profile, as a realtime ratio. `extensions/instrument/tests/synth/performance.rs` is the pattern. An idle processor returns before it touches its output.
+- A recursive filter is bound by the chain of operations from one frame to the next, not by their count. Shorten the chain.
+- Do not use `f32::mul_add`: one instruction on Apple Silicon, a slow library call on x86 without FMA.
+- Work out filter factors (`tan`, `powf`) once per block and only while a parameter moves, never per frame. Smooth the parameter, not the factors.
+- Every crate with DSP code gets `opt-level = 3` in the dev profile. Unoptimized audio glitches and hides real performance problems.
+
+## Testing
+
+- DSP, graph, clock and project state tests are plain `#[test]` with no GPUI. Offline rendering through `process_block` makes audio testable: render frames, then assert on samples or snapshot a summary with `insta`.
+- Project folder tests call `Project::apply_outside_changes` with explicit paths, the function the file watcher calls, so they do not depend on timing.
+- Property tests (`proptest`) cover the graph compiler, the clock round trips, transport events over random tempo maps and buffer sizes, and state application.
+- `#[gpui::test]` only for views and entities. In GPUI tests use `cx.background_executor().timer(..)`, never `smol::Timer::after`, or `run_until_parked()` fails.
+- Window behaviour is tested with a simulated mouse and keys on an offline engine run by hand (`crates/runtime/tests/window/`). The tests check the project, the undo history and the files after every gesture.
+- Recording is tested with a simulated input device and output timing. No test needs real hardware.
+- The two snapshot tests render the component gallery and the window to PNGs without a display. Look at the PNGs after a UI change. `WINDOW_SNAPSHOT_ONLY` picks a subset of window states.
+- A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
+
+CI runs the commands of [README.md](README.md), "Checks", plus the sanitizer job. The jobs (lint, tests, snapshots, sanitizer, Linux) run side by side. Lint, snapshots and the sanitizer run on macOS; the Linux job builds and runs the tests on Ubuntu. Add Miri for new unsafe code.
+
+To try Linux from a Mac: an `ubuntu:24.04` Docker container with the README packages, `CARGO_TARGET_DIR` on a volume, run as a normal user (root can write into the read-only folders some tests make). For the window add `xvfb` and `mesa-vulkan-drivers` and a null sound card. Set `CARGO_BUILD_JOBS=4` on Docker Desktop's default memory.
+
+## GPUI version
+
+`gpui` and `gpui_platform` come from Zed git, pinned to the commit of a stable Zed release in the root `Cargo.toml`, because the crates.io release is old and lacks what we use (offscreen rendering, arcs, the split platform crate). `rust-toolchain.toml` matches the toolchain Zed pins at that commit. To upgrade: move both together, compare the gallery snapshots with the previous PNGs, and update the gpui skills in the same change.
+
+## Reference repos
+
+Clone them next to this repo and read them before designing something they already solved.
+
+- [Zed](https://github.com/zed-industries/zed): GPUI itself and how a large GPUI app is built. Its `Cargo.toml` profiles and lints, `.rules`, `clippy.toml`, `tooling/xtask/src/workspace.rs` (dependency rules), `crates/gpui_util` (`log_err` and friends).
+- [Pure Data](https://github.com/pure-data/pure-data): the classic audio graph. `src/d_ugen.c` (graph sort, buffers), `src/m_sched.c` (scheduler, clocks), `src/g_canvas.c` (rebuilding the graph), `src/d_delay.c` (feedback delay). Also what not to copy: globals, silently dropped cycles, sort-dependent delays.
+- [Elementary](https://github.com/elemaudio/elementary): compiled schedules swapped into a realtime runtime. `runtime/elem/Runtime.h` (schedule swap, garbage collection), `runtime/elem/GraphRenderSequence.h`, `runtime/elem/builtins/Feedback.h`. Also what not to copy: dropping a schedule when its queue is full, freeing on the audio thread, crossfading the whole output on every edit.

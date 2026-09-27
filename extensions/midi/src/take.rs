@@ -3,7 +3,7 @@
 //! The messages arrive with the moment they reached this process and with the tick the engine
 //! sounded them on. Both become microseconds when the take is written, because the saved form
 //! ([`sound_notes::RawTake`]) must keep its meaning when the tempo map changes under it, which
-//! is exactly what step 7 does to it.
+//! is exactly what a tempo fit does to it.
 
 use sound_core::{Clock, Ticks};
 use sound_notes::{Clip, Pedal, RawEvent, RawTake};

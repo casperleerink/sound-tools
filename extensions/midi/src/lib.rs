@@ -17,8 +17,6 @@
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! `README.md` in this crate is the guide.
 
 mod keyboard;
 mod keys;

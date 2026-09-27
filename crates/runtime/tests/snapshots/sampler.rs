@@ -1,4 +1,4 @@
-//! The Sampler in the window, in the states of `docs/reference/m4-step-0/mockups/sampler.png`:
+//! The Sampler in the window, in the states of `docs/mockups/sampler.png`:
 //!
 //! - `sampler-playing.png`: the piece with a Kalimba track whose instrument is a Sampler of a
 //!   kalimba-like file, its panel open, playing: the envelope over the waveform, and the green

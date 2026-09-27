@@ -1,6 +1,6 @@
 //! Audio section: the clip waveform of an audio clip on the timeline in each of its states, and
 //! the waveform display of the Clip card and the Sampler, as in
-//! `docs/reference/m4-step-0/mockups/audio-clip.png` and `sampler.png`. The samples show states, so they hold
+//! `docs/mockups/audio-clip.png` and `sampler.png`. The samples show states, so they hold
 //! still: the arrangement is where they are dragged.
 
 use std::sync::Arc;

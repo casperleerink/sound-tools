@@ -1,6 +1,6 @@
 //! What an extension implements and touches: processors, ports, events and the process context.
 //!
-//! Extensions never see threads or queues. See `crates/core/README.md` for a walkthrough.
+//! Extensions never see threads or queues. See `crates/core/README.md` for the guide.
 
 use std::any::{Any, TypeId};
 use std::cell::Cell;

@@ -23,8 +23,16 @@
 //! }
 //! ```
 //!
-//! `README.md` in this crate has the sound, the ranges and the ports. [`view`] is the card of
-//! the reverb, and the only module here that uses GPUI.
+//! Known gaps:
+//!
+//! - A freeze over a short decay in a large room rises by up to 1.5 dB, although the frozen
+//!   loop keeps its energy exactly. The cause is not proven.
+//! - With damping, the 20 ms glide into freeze can write up to about 1 dB more into the lines
+//!   than they held, as the damping filter lets go.
+//! - The power icon bypasses the slot with a hard switch, the same for every effect. The tail
+//!   stops at once, and on a loud tail it may click.
+//!
+//! [`view`] is the card of the reverb, and the only module here that uses GPUI.
 
 mod processor;
 pub mod view;
@@ -206,14 +214,11 @@ fn apply(state: &ReverbState, context: &mut BehaviourContext<'_>) -> Result<(), 
 mod tests {
     use super::*;
 
-    /// The docs give the ranges and the defaults to agents and to people. They are checked
-    /// against the one definition, so they cannot drift from it.
+    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
+    /// definition, so they cannot drift from it.
     #[test]
     fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let docs = [
-            ("agent-doc.md", include_str!("../agent-doc.md")),
-            ("README.md", include_str!("../README.md")),
-        ];
+        let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
         for (name, doc) in docs {
             for Parameter {
                 field,

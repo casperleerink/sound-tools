@@ -12,8 +12,7 @@
 //! }
 //! ```
 //!
-//! `README.md` in this crate has the sound, the ranges and the ports. [`view`] is the card of
-//! the Drum pad, and the only module here that uses GPUI.
+//! [`view`] is the card of the Drum pad, and the only module here that uses GPUI.
 
 mod kit;
 mod processor;
@@ -667,14 +666,11 @@ mod tests {
         assert_eq!(pad.decay_ms, 10.0);
     }
 
-    /// The docs give the kit and the ranges to agents and to people. They are checked against
-    /// the one definition, so they cannot drift from it.
+    /// The agent doc gives the kit and the ranges to agents. They are checked against the one
+    /// definition, so they cannot drift from it.
     #[test]
     fn the_docs_give_the_kit_and_the_range_of_every_field() {
-        let docs = [
-            ("agent-doc.md", include_str!("../agent-doc.md")),
-            ("README.md", include_str!("../README.md")),
-        ];
+        let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
         for (name, doc) in docs {
             for parameter in &PARAMETERS[0] {
                 let row = format!("| `{}` |", parameter.field);

@@ -15,8 +15,7 @@
 //!
 //! This extension knows no track and no MIDI device. It reads a take through the note contract
 //! crate ([`sound_notes::RawTake`]), which the MIDI extension writes, and it writes a
-//! [`sound_notes::Clip`], which the arrangement plays. `README.md` in this crate is the guide
-//! and `agent-doc.md` is what an agent reads.
+//! [`sound_notes::Clip`], which the arrangement plays. `agent-doc.md` is what an agent reads.
 
 mod beats;
 mod grid;

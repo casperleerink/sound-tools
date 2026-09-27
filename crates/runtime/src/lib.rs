@@ -218,7 +218,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     // What the picker says under its offers: that the scan of this machine is still running,
     // and what Steinberg asks of anyone who writes "VST". Their guidelines want the VST
     // Compatible Logo next to the term and the attribution where the logo does not fit; a menu
-    // row is such a place, so the attribution is what is shown. See the plugin host's README.
+    // row is such a place, so the attribution is what is shown. See `plugin_host::VST_TRADEMARK`.
     devices.notes({
         let plugins = plugins.clone();
         move || {

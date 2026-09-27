@@ -27,9 +27,10 @@ use sound_notes::{Clip, RawTake};
 
 use crate::beats;
 
-/// The sample rate a fitted tempo map is built for. Offline renders use it, so the check that a
-/// fitted project renders like the take it came from is exact. At another rate the clock rounds
-/// each tempo change down to a whole frame, which moves the grid slowly: see `README.md`.
+/// The sample rate a fitted tempo map is built for. It is fixed so that one take gives the same
+/// file on every machine. Offline renders use it, so the check that a fitted project renders
+/// like the take it came from is exact. At other rates a fitted grid lands within a fraction of
+/// a millisecond of the take.
 pub const FIT_SAMPLE_RATE: u32 = 48_000;
 
 /// How many beats the grid gets for every beat the finder heard.

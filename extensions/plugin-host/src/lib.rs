@@ -15,7 +15,26 @@
 //! a stereo output `audio`, so one record fits the `instrument` child of a track like any other
 //! instrument and an effect slot after it. Nothing here knows which slot it is in.
 //!
-//! `README.md` in this crate is the guide, and `agent-doc.md` is what an agent reads.
+//! Why it is built this way, where the code does not show it:
+//!
+//! - What a plugin says it is decides only which picker offers it. A record may name any
+//!   plugin in either slot, because plugins get this wrong: Spectral Freeze calls itself an
+//!   instrument and is an effect. A slot whose plugin is missing or failed passes its input
+//!   through, so one missing effect never silences a track.
+//! - The plugin's own handle belongs to the main thread and only its audio side goes to the
+//!   engine, in both formats. So [`Plugins`] lives on the thread the project lives on, and the
+//!   behaviour keeps an `Rc` of it.
+//! - A plugin's state is opaque bytes in an asset, not project state. It is never an undo step,
+//!   and nothing replaces it with a guess: a state the plugin could not give leaves the asset as
+//!   it was.
+//! - Loading a plugin runs its code, so the scan runs one child process per bundle. A scan of a
+//!   real machine takes seconds, most of it VST 3 bundles loading and checking their licence,
+//!   so it runs off the thread that draws and a cache of this machine remembers each bundle.
+//! - A render tells the plugin it is offline, so a streaming sampler waits for its samples
+//!   instead of playing silence. It also does the main-thread work of the host for every block,
+//!   because some plugins stay silent until the host answers them.
+//!
+//! `agent-doc.md` is what an agent reads.
 
 mod backend;
 mod clap;
@@ -46,7 +65,9 @@ pub const EXTENSION: &str = "plugin-host";
 /// What Steinberg asks of anyone who writes "VST", from their VST usage guidelines, section
 /// 15. It belongs in product credits and documentation, and wherever the VST Compatible Logo
 /// does not fit. This program shows it in the picker that offers VST 3 plugins and prints it
-/// under `runtime --plugins`; the docs carry it as well. See README.md.
+/// under `runtime --plugins`; the agent doc carries it as well. A row of a menu is a place
+/// where the logo does not fit, so the notice is shown instead. "VST" is never stylized and is
+/// not in the product name.
 pub const VST_TRADEMARK: &str =
     "VST is a registered trademark of Steinberg Media Technologies GmbH.";
 
@@ -67,7 +88,7 @@ pub enum PluginFormat {
 
 impl PluginFormat {
     /// What a person reads. "VST" is Steinberg's trademark and is written as they ask, see
-    /// README.md.
+    /// [`VST_TRADEMARK`].
     pub fn name(self) -> &'static str {
         match self {
             Self::Clap => "CLAP",

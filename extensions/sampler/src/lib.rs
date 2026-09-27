@@ -20,8 +20,7 @@
 //! }
 //! ```
 //!
-//! `README.md` in this crate has the units, ranges and ports. [`view`] is the card of the
-//! sampler, and the only module here that uses GPUI.
+//! [`view`] is the card of the sampler, and the only module here that uses GPUI.
 
 mod processor;
 pub mod view;
@@ -260,21 +259,14 @@ fn apply(state: &SamplerState, context: &mut BehaviourContext<'_>) -> Result<(),
 mod tests {
     use super::*;
 
-    /// The docs give the ranges and the defaults to agents and to people. They are checked
-    /// against the one definition, so they cannot drift from it.
+    /// The agent doc gives the ranges to agents, and the defaults in an example that another test
+    /// loads. They are checked against the one definition, so they cannot drift from it.
     #[test]
-    fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let docs = [
-            ("agent-doc.md", include_str!("../agent-doc.md")),
-            ("README.md", include_str!("../README.md")),
-        ];
+    fn the_docs_give_the_range_of_every_parameter() {
+        let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
         for (name, doc) in docs {
             for Parameter {
-                field,
-                min,
-                max,
-                default,
-                ..
+                field, min, max, ..
             } in PARAMETERS
             {
                 let row = format!("| `{field}` |");
@@ -284,9 +276,6 @@ mod tests {
                     row.contains(&format!("| {min} to {max} |")),
                     "{name}: {row}"
                 );
-                if name == "README.md" {
-                    assert!(row.contains(&format!("| {default} |")), "{name}: {row}");
-                }
             }
         }
     }

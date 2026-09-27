@@ -2,8 +2,21 @@
 //!
 //! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and
 //! [`Clip`], the saved [`RawTake`] a recording writes and a fit reads, the realtime
-//! [`NoteEvent`] and the port names of an instrument and an effect. `README.md` in this crate
-//! is the guide.
+//! [`NoteEvent`] and the port names of an instrument and an effect. The port names live here
+//! and not in a crate of their own, because both sides of a track already read this one.
+//!
+//! Rules for a sender of notes, which no type enforces:
+//!
+//! - Send [`NoteEvent::AllOff`] at offset 0 when the transport says `stopped_playing` or
+//!   `jumped`, before the notes of that block. So no note is ever stuck, whoever sent it.
+//! - On one frame, send the pedal first, then the offs, then the ons. Else an off does not see
+//!   where the pedal stands, or the end of one note releases the next note of the same pitch.
+//! - A sender whose notes can change while they sound keeps a fixed list of what it started,
+//!   and sends the offs from that list. `extensions/arrangement/src/sequencer.rs` does this.
+//!
+//! A known limit, accepted: `AllOff` releases everything an instrument holds, also the keys
+//! held on a MIDI keyboard, because live input plays into the same port. That is what makes
+//! "no note is ever stuck" a property of the contract and not of every sender.
 
 mod take;
 

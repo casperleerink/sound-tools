@@ -34,7 +34,7 @@ pub const SCAN_ARGUMENT: &str = "--scan-plugin";
 const MARK: &str = "sound-tools-plugin ";
 
 /// How long one bundle may take. A working bundle costs milliseconds; this is what a plugin
-/// that never answers costs, once. See README.md for the measured numbers.
+/// that never answers costs, once.
 pub const SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the child is looked at while the deadline runs. Short enough that a normal scan

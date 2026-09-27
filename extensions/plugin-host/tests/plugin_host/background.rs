@@ -156,7 +156,7 @@ fn a_record_waiting_for_the_scan_is_reported_and_plays_when_the_plugin_turns_up(
 }
 
 /// The cache of this machine. Without it every start pays for every bundle, which on the
-/// machine this was written on is seconds. See README.md for the numbers.
+/// machine this was written on is seconds.
 #[test]
 fn a_bundle_that_has_not_changed_is_not_looked_at_again() {
     let folder = tempfile::tempdir().unwrap();

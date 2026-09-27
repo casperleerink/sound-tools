@@ -1,283 +1,82 @@
 # sound-ui
 
-The Sound Tools UI SDK: design tokens, shared components and the bridge from a live project to GPUI views. The design rules are in [DESIGN.md](../../DESIGN.md). The gallery in `crates/gallery` shows every component. How a tool saves and edits state is in the [core README](../core/README.md), "Read and edit from an interface". This file is the guide for writing a view of a tool.
-
-Read the GPUI skills in `.agents/skills/` before you write GPUI code. The pinned GPUI differs from what blog posts show.
-
-## The bridge
-
-`Session` is one GPUI entity that owns the `Project` on the main thread. There is one per window, made by the runtime. It polls the engine and the file watcher every 16 ms (`POLL_INTERVAL`) from a timer, never from `render`. A poll that finds nothing new notifies nobody, so a stopped project draws no frames.
-
-A view gets two things from it:
-
-- `session.read(cx).project()`: the project, to read state while rendering.
-- `session.read(cx).playhead()`: an `Entity<Playhead>` with `playing`, `tick` and `jumps`. It is an entity of its own, because it changes on every frame during playback. Observe it only in the small view that shows the position, or in a view that follows it. `jumps` counts seeks and stops: keep the last value to tell a jump from the position moving with playback, which the tick alone cannot say. The arrangement uses it to bring the playhead back into view.
-
-- `session.read(cx).recording()`: an `Entity<Recording>`, recording audio as views see it: which audio tracks are armed (`is_armed`, `set_armed`), how many channels the input has once the window opened it, the level of the input (`level(channels)`, a new reading with each `InputLevels` event), and each take while it records (`takes()`, a `LiveTake` with its start and, once placed, its `LiveSound`). Interface state: nothing is saved and arming is no undo step. The window owns the input and records; the arrangement arms tracks and draws.
-- `session.read(cx).engine_status()`: the `EngineStatus` of the last poll, for a view or the window that needs more than the playhead, such as the engine frame.
-
-What the session tells its observers:
-
-- It emits every `ProjectEvent` (`Created`, `Changed`, `Deleted`, `ProjectFileChanged`, `ProblemsChanged`). Interface edits, file edits by an agent, undo and redo all arrive this way. Subscribe and refresh only for the ids you show.
-- It notifies once per group of events, after every `edit` and when the notice changes. Observe it when you refresh on anything, as a menu with undo labels does.
-- `history_moves()` counts the undo and redo steps that applied; one with nothing to undo does not count. Read it on every event, not only on those of what the view shows, or an undo elsewhere looks like one of yours later. The events do not say where a change came from, so a view that keeps the last count knows that what it hears now comes from an undo or a redo, and can select what it brought back, as the note editor does.
-
-## Write a view
-
-A view holds the session and a typed `Instance<S>`. It reads the current state in `render` and keeps no copy of saved state. Its own fields are interface state only: scroll, zoom, selection, an open gesture.
-
-```rust
-pub struct ToneView {
-    session: Entity<Session>,
-    tone: Instance<ToneState>,
-    /// Open while a slider is dragged.
-    drag: Option<ProjectEdit>,
-}
-
-impl ToneView {
-    pub fn new(session: Entity<Session>, tone: Instance<ToneState>, _: &mut Window, cx: &mut Context<Self>) -> Self {
-        cx.subscribe(&session, |view, _, event: &ProjectEvent, cx| {
-            if matches!(event, ProjectEvent::Changed(id) if id == view.tone.id()) {
-                cx.notify();
-            }
-        })
-        .detach();
-        Self { session, tone, drag: None }
-    }
-}
-
-impl Render for ToneView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // `None` once the instance is deleted. Show nothing then.
-        let Some(state) = self.session.read(cx).project().state(&self.tone) else {
-            return div();
-        };
-        div().child(format!("{} Hz", state.frequency_hz))
-    }
-}
-```
-
-A view of an owner that shows its children refreshes for `id.is_inside(owner.id())` too. `extensions/arrangement/src/view.rs` does this.
-
-Register the view next to the tool, in a function the runtime calls:
-
-```rust
-pub fn register(views: &mut Views) {
-    views.register(ToneView::new);     // for the tool of `ToneState`
-}
-```
-
-The runtime collects the views of every bundled extension and gives them to its window: `Shell::new(session, (views, devices), ..)` takes both registries and installs them (`views.install(cx)`), so the runtime cannot forget them. They are GPUI globals from then on. The second one, `Devices`, is below.
-
-A tool that edits what it owns shows that inside its own view. The window has one main area with one root view. Decided for the first milestone: the note editor is a panel inside the arrangement view and belongs to the arrangement extension, which opens it for the selected clip. The window does not know it.
-
-`Views::view_of(&session, &id, window, cx)` makes the view of an instance from the installed registry. The window shows the view of `Views::main_instance(&session, cx)`: the first instance at the top of the project whose tool has a view. This is provisional. Composing a workspace from many views is later work.
-
-### Host the view of another instance
-
-Any view may call `Views::view_of`, because the registry is a global and not a field of the window. So a view can host the view of an instance whose tool it does not know, and an extension can show what another extension owns without depending on it.
-
-A rack is the common case, and it has a registration of its own. A tool whose instances sit in the slots of a rack registers a card: a view that draws the whole device card, because it owns what the body shows. The rack gives it a `CardFrame`: an id that tells this card from every other, the title, which is the picker of the slot, and the power and close icons of an effect. Whether an effect is on is saved on its slot, which the rack owns, so `CardFrame::power(is_on, on_toggle)` takes a function that is read every time the card draws. The track panel of the arrangement does this (`extensions/arrangement/src/view/track_panel.rs`), and the synth is the example of a card (`extensions/instrument/src/view.rs`):
-
-```rust
-// Where the tool registers.
-views.register_card(SynthView::new);   // new(session, instance, frame, window, cx)
-
-// In the rack. `None`: the instance is gone, its tool has no card, or no registry is installed.
-let frame = CardFrame::new(card_id, picker.clone())
-    .power(move |cx| /* is the slot on? */ true, move |window, cx| { /* bypass it */ })
-    .close(move |window, cx| { /* take it off */ });
-let view: Option<AnyView> = Views::card_of(&session, &slot, frame, window, cx);
-
-// In the render of the card: the frame gives the header, the view adds the rest.
-self.frame.card()
-    .expand(self.expanded, expand)       // whether it is expanded is the view's own state
-    .display(display)
-    .column(Column::new().top(cutoff).bottom(gain))
-    .hidden_column(Column::new().top(attack).bottom(sustain))
-```
-
-- A rack that reorders its cards gives the frame a grip: `frame.draggable(value, preview)` makes the header of the card a handle that carries `value` in a GPUI drag, with `preview` under the pointer, to wherever the rack takes a drop of it (`on_drop`). The header answers `<card>-header` to a test.
-- Keep the `AnyView` in a field and make it when the instance or its tool changes, in a subscription with a window (`cx.subscribe_in`), never in `render`. Remember the tool name you made it for (`project.tool_of(&id)`): a file from outside can put another tool at the same id.
-- Show something quiet when there is no view. A tool without a view is normal. The track panel draws a card of its own then, with the same frame.
-- The hosted view owns its edits and its gestures. The host gives it a surface, or a frame, and nothing else. When the host drops the view during a drag, the view must finish its gesture when it is released (`cx.on_release`), as `SynthView` does.
-- A test with the window of the runtime has the registry through `Shell::new`. A test of a view alone installs one itself: `views.install(cx)`.
-
-### What a composer can put in a slot
-
-A view that hosts a slot of a rack, such as the track panel, also has to offer what else could
-go there and to name what is there. It knows no tool, so it is told. `Devices` is the second
-registry, of the same shape as `Views`:
-
-```rust
-// Filled by whoever makes the window, which is the one place that knows every extension.
-devices.describe::<SynthState>(|_| DeviceLabel {         // what a rack says about one
-    key: SynthState::TOOL.into(),
-    name: "Synth".into(),
-});
-devices.instruments(|| vec![DeviceOffer::new(            // what a composer can pick
-    SynthState::TOOL,
-    "Synth",
-    |_project, slot, changes| { changes.create(slot.clone(), SynthState::default()); Ok(()) },
-)]);
-devices.effects(|| vec![/* the same, for an effect slot */]);
-
-// In the view:
-let offers = Devices::offered(Slot::Effect, cx);         // when the picker is made, not per frame
-let label = Devices::label_of(&session, &slot, cx);      // `None`: the tool registered nothing
-// An offer a project cannot load says why, in words for a composer. The file edit that
-// enables the extension is for the agent docs.
-DeviceOffer::new(..).needs("plugin-host", "This project does not load plugins.");
-// When the composer picks one, as one undo step:
-offer.write(session.project(), &slot, &mut changes)?;
-project.commit(&format!("Choose {}", offer.name), changes)
-```
-
-`DeviceLabel::key` is the `DeviceOffer::key` of the offer that would write the record that is
-there. Both sides build it the same way, so a picker marks what is in the slot and does
-nothing when it is picked again. Writing a fresh record over the same device would throw its
-sound away, and for a plugin it would make an empty state file.
-
-A source of offers is asked every time a picker is filled, not while the window opens, so a
-source that has to look at the machine pays for it then. The plugin host's source scans for
-plugins, which is why a track panel is where that scan happens.
-
-There are two kinds of slot, `Slot::Instrument` and `Slot::Effect`, and an offer is made for
-one of them: the picker on the instrument card asks for instruments and the control that adds
-one at the end of the rack asks for effects. Which list a plugin is in is what it says it is,
-and nothing more; a record written by hand may name any plugin in either place.
-
-A source may learn more while a view is open: the plugin host looks for the plugins of this Mac
-on a thread of its own. So a view keeps `Devices::offers_generation`, a number that changes when
-the offers do, and fills its menus again when it changes. Reading it costs a counter per source,
-so a poll may ask on every frame; reading the offers themselves may cost a look at the machine,
-which is why they are read only then. `devices.offers_change(|| ..)` is how a source provides
-its number.
-
-`DeviceOffer::write` stages a whole record, so choosing replaces what was in the slot and undo
-brings it back. `extensions/arrangement/src/view/track_panel.rs` is the one caller and
-`crates/runtime/src/lib.rs`, `views`, is where the registry is filled.
-
-## Edit from a view
-
-Every change goes through `Session::edit`. It runs one project operation, tells the observers what changed, and puts an error into the notice, which the window shows as a quiet line. It gives `None` on an error, so a view cannot drop one.
-
-```rust
-// One step.
-session.update(cx, |session, cx| {
-    session.edit(cx, |project| {
-        let mut changes = Changes::new();
-        changes.delete(clip.id());
-        project.commit("Delete clip", changes)
-    })
-});
-
-// A drag is a gesture of the session. Sound and every other view follow each move. The file
-// is written once, at the end, and the whole drag is one undo step.
-// Mouse down:
-self.session.update(cx, |session, cx| session.begin_gesture("Change frequency", cx));
-// Each mouse move:
-let tone = self.tone.clone();
-self.session.update(cx, |session, cx| {
-    session.gesture(cx, |project, edit| project.update(edit, &tone, |state| state.frequency_hz = hz))
-});
-// Mouse up. On escape it is `cancel_gesture`, which applies the state from before.
-self.session.update(cx, |session, cx| session.finish_gesture(cx));
-```
-
-The session keeps the open edit of a gesture, not the view. So a view cannot leave one open by losing it, a new gesture finishes one that was left open, and the session knows that a drag is going on: `Session::undo` and `Session::redo`, which the window's cmd-z, shift-cmd-z and menu call, do nothing until the gesture ends. An undo in the middle of a drag would be overwritten by the next mouse move. A view keeps only what the gesture needs of its own, such as the clip as it was at mouse down. Call `session.undo(cx)` for an undo button of your own, never `edit(cx, Project::undo)`.
-
-What the clip and note drags of the arrangement added to this pattern, in `extensions/arrangement/src/view.rs`:
-
-- Begin the gesture with the first mouse move that changes something, not at mouse down. A plain click is then no undo step, and an empty step never reaches the history.
-- Work out each move from the value at mouse down and the distance the pointer went, not from the live value. A drag there and back then ends where it began.
-- Skip the publish when the value did not change. Most mouse moves are inside one snap step.
-- A mouse move listener of a drag is not hit tested: the drag goes on wherever the pointer is. A move without the button means that the mouse up went somewhere else: finish.
-- The target may go away under the drag, by an outside delete. Read it on every move and finish the gesture when it is gone. Subscribe to `Deleted` too, so the drag ends when it happens and not at the next move.
-- Something that should sound now and is not an edit, such as a preview note, goes through `Project::send` inside `session.edit`. See the core README, "Updates".
-
-Transport goes through `session.engine()`: `play`, `pause`, `stop`, `seek`. `Session::toggle_playback` is what space does. The result shows in the `Playhead` after the next poll. `session.engine()` is the whole `EngineControl`, so a view can also add a processor of its own to the graph, outside the project and outside undo. The transport pill does that for the click, see [metronome](../../extensions/metronome/README.md). Keep that for things that are not music: everything a composer saves goes through an edit.
-
-`Session::selected` and `Session::select` are the one instance the composer is working on, such as the track whose header was clicked last. It is interface state: nothing is saved and there is no undo step. The view that owns a selection publishes it, and anything outside that view reads it. The arrangement view publishes its selected track there, and the window uses it to send a MIDI keyboard into the instrument of that track, so the two extensions need nothing of each other.
-
-### A control on saved state
-
-The knob, the volume and the handles of a display are controlled, so a view of saved state keeps no copy of what they show: give the value on every render and handle the `ValueChange`. `ControlEdit` does the session side, so a view keeps one of it and nothing else of a drag. `extensions/instrument/src/view.rs` is the example, and the mixer strip of `extensions/arrangement/src/view/track_panel.rs` is a shorter one.
-
-```rust
-Knob::new("cutoff_hz")
-    .range(KnobRange::logarithmic(20., 20_000.))   // or `KnobRange::linear`
-    .value(state.cutoff_hz)
-    .default_value(2_000.)                          // what a double click and backspace set
-    .label("Cutoff")
-    .readout("2 kHz")                               // the caller formats: it knows the unit
-    .on_change(callback)                            // gets a `ValueChange`
-
-// In the callback. `set` is `fn(&mut SynthState, f32)`; one call handles every kind of change.
-self.edit.apply(&self.session, &self.synth, "Change cutoff", change, set, cx);
-// When the view goes, and when its record is deleted from outside during a drag:
-self.edit.finish(&self.session, cx);
-```
-
-What `ControlEdit::apply` does with each change, which is what a view that does it by hand must do:
-
-- `ValueChange::Drag(value)`: begin the gesture when it is the first of this drag, then publish. The control works the value out from the value at the press, and sends it only when it is not the value it sent last. It does not compare with the value of the last render, because several mouse moves arrive between two frames. Back at the height of the press the value is exactly that of the press, so a press with a sideways move never rounds a value that was written by hand.
-- `ValueChange::DragEnd`: `finish_gesture`. `ValueChange::DragCancel` (escape): `cancel_gesture`. Both come only after a `Drag`, so a plain click is no undo step.
-- `ValueChange::Set(value)`: a key step or a reset. One `commit`. A toggle or a segmented control is one `Set` too: `ValueChange::Set(on)`.
-
-The gesture is one for all three controls, in `components/gesture.rs`: a drag from the press that never jumps, shift ten times finer, double click or backspace for the default, the arrows, escape. A knob travels 200 pt; the volume and a handle follow the pointer. Every one of them has its own tab stop and focus ring except a handle, whose value always has a knob too. `KnobRange::value` gives three significant digits, and `Knob::step(1.)` whole steps for a value such as a note number, with an arrow key one step, and `knob::short` writes a number the same way for a readout: `2`, `15.5`, `632`. Every such control hears every mouse up and every press of the window, because a drag goes on outside it. It tells nobody unless a drag was open, so a click somewhere else renders nothing. A press while a drag is still open ends that drag: its mouse up was lost.
-
-A number without a dial, such as the tempo of the transport, is a `DragNumber`: the same gesture, and a drag in whole steps from the value it began on that does not round the result, so a value written by hand keeps its fraction. The owner gives the text as children and hears `ValueChange<f64>`.
-
-A device card is built from `DeviceCard`, `Column`, `Cell` and `Display`, see the rack section of the gallery (`crates/gallery/src/sections/rack.rs`). The meter shows a `Level`; where it comes from is the owner's business, and `meter::Ballistics` makes one from a peak per frame. A cell may span two columns (`Cell::span(2)`), for a control that needs the room, such as a select with a `trigger_width`.
-
-A meter of a level on the audio thread: the processor records `sound_core::Peaks` every block, and the view keeps a `Metering` and reads the peaks once per poll of the session with `sound_ui::every_poll`. It notifies only when what the meter shows changed, so a meter at rest costs no frame.
-
-```rust
-metering: Metering::default(),
-_metering: every_poll(cx, |view: &mut Self, cx| {
-    let peaks = view.session.read(cx).project().peaks(view.instance.id(), "level");
-    if view.metering.read(peaks.as_ref()) {
-        cx.notify();
-    }
-}),
-// In render:
-Volume::new("gain_db", state.gain_db)
-    .level(self.metering.level())
-    .on_clear_clip(weak_action(cx, |view: &mut Self, cx| {
-        view.metering.clear_clip();
-        cx.notify();
-    }))
-```
-
-The track panel does this for the track, the master panel for the master and the transport for the device output.
-
-## Rules
-
-- No `cx.notify()` and no entity updates inside `render` or inside a paint callback. Mouse listeners that a canvas registers while painting may update: they run later, on an event.
-- No blocking I/O on the main thread beyond what `Project` does per edit.
-- Draw only what is visible. A view of many records paints on a `canvas`, like the arrangement, and does not make an element per record.
-- Keep what walks many records between the project events that can change it, and read it again in `render`, once per group of events, not per paint and not per event. The arrangement keeps its track order and its end this way. This is the one kind of copy a view holds.
-- Keys: the window binds space, cmd-z and shift-cmd-z in the context `Shell && !TextInput`, so a focused `TextInput` gets them first, and tab and shift-tab in `Shell`. Bindings run before key listeners. For keys of your own view, the simplest is `track_focus` with a tab stop and `on_key_down` on the root of the view, as the arrangement does: they reach the view only while it has the focus, and it calls `cx.stop_propagation()` for a key it used. Focus the view on mouse down.
-- Show a focus ring only when the focus came from the keyboard. `.focus_visible(..)` also shows it when a key follows a click, and space follows a click all the time. `sound_ui::KeyboardFocus` works it out while rendering or painting: keep one next to the focus handle, ask `shows_ring(&handle, window)` and call `pressed(cx)` on a mouse press. The arrangement, the knob and the segmented control use it.
-- A callback that a control keeps, such as `Knob::on_change`, should hold the view weakly. `cx.listener` does. `cx.processor` holds it strongly, and then the mouse listeners of the last frame keep a view that was just closed alive for one more frame, with its open drag. `sound_ui::weak_callback(cx, f)` is the weak form for a callback that takes its argument by value, and `weak_action(cx, f)` for one that takes none, such as the clip light of a meter.
-- Keep what repaints with the playhead apart from the rest. A view that GPUI is to keep while the playhead moves must not have the playhead view inside it: a notified view also renders every view above it. Make them siblings and put `.cached(..)` on the heavy one. See `ArrangementView`.
-- Put coordinate math in pure functions with tests (`extensions/arrangement/src/view/layout.rs`).
-- Use the components of this crate and the theme tokens (`cx.theme()`). A new general component goes here with a gallery entry. What only one tool needs stays in its extension.
-
-## Test a view
-
-`crates/ui/tests/bridge.rs` and `crates/runtime/tests/window/` show the pattern: a project on a temporary folder with an offline engine, a `Session`, `#[gpui::test]`, and `cx.executor().advance_clock(POLL_INTERVAL)` to let the poll timer fire. Call `engine.process_block(..)` yourself, so that transport commands apply. Wait with `cx.background_executor().timer(..)`, never with `smol::Timer`. `tests/window/support.rs` has the hands of a composer: press, drag and release at the place of a tick, a track or a pitch, worked out with the layout functions of the view. A control made of elements has no layout function. The controls name themselves for tests with GPUI's `debug_selector` (`knob-<id>`, `volume-<id>`, `toggle-<id>`, `handle-<id>`, `segment-<value>`, `number-<id>`, `notice-<id>`, and `<card>-expand`, `<card>-power`, `<card>-close` for the icons of a device card), which does nothing in a normal build, and `Opened::control("knob-cutoff_hz")` gives the middle of one. It asks for a whole frame first, because a cached view that was not painted again has no bounds in the last frame. Two keys in one `simulate_keystrokes` call have no frame between them. Send them one by one when the second needs what the first painted, such as the tab order.
-
-`cargo test -p runtime --test snapshots` renders the whole window to PNGs with no visible window, and `cargo test -p gallery --test snapshots` renders the components.
-
-## Waveforms
-
-`Waveforms::overview(assets, asset, cx)` gives the `sound_media::Overview` of an audio file of a project, or `None` until it is made: the first ask starts a task of the background executor, and `Waveforms::entity(cx)` notifies when one is ready, so a view that draws waveforms observes it. The thread that draws never reads a file for a waveform. One cache for the application, kept in memory only.
-
-- `components::waveform_display::WaveformDisplay`: a whole file in the display inset, the part outside its start and end shaded, the start and end lines with hollow handles 8 pt above the bottom that drag sideways, a green line where the sound plays, and a curve with handles over it as on any `Display`. The Clip card of the arrangement and the Sampler share it. `Display` itself has `waveform`, `kept` and `signal_line` for it.
-- `components::waveform_display::FileDrop`: where a display takes a file dropped from the Finder. While a file is dragged over it, the 2 pt lavender ring and a line that says what a drop does, over what the display shows; a drop gives the paths. It is a style of the drag of `ExternalPaths`, so it keeps no state. `WaveformDisplay::drop_file` and `NoFile::drop_file` put one on a display, and `Display::overlay` is how: an element over the whole inset, above the handles. `Display::takes_files` hides the handles while a file is dragged over the display, with GPUI's `group_drag_over`, since their dots reach past the ring. The Sampler uses it; `shown(true)` draws it as if a file were over it, for the gallery. After a key press GPUI takes the pointer to hover nothing until it moves, and a drag from the Finder does not move it, so a file dragged in before the pointer has moved over the window is not taken (ARCHITECTURE.md, "The Sampler").
-- `components::waveform_display::SHORTEST_SECONDS`, `clamped_start`, `clamped_end`: the rule of a start and an end line, shared by the Clip card and the Sampler: 10 ms between them at least, and no end at the end of the file, within a frame.
-- `components::waveform_display::NoFile`: a display with no file yet, a line and a button in its middle, such as `Drop an audio file here` over `Choose file`.
-- `components::pad::Pad`: one pad of a drum pad, 72 x 32, in every state: selected, sounding (green fading with a level from 0 to 1), a sample or a missing file (its glyph), and the lavender ring of a drop target, which it shows by itself while files from the Finder are over it when it has `on_drop_files`. A pad is no tab stop; its owner makes the grid one. The Drum pad is its user.
-- `components::audio_clip`: `paint_audio_clip(&AudioClipLook, window, cx)` paints an audio clip of the timeline in any of its states, and `ClipHandles` says where its three handles are for a hit test. It is a painter, because the timeline paints every clip on one canvas.
+Design tokens, shared components, and the bridge from a live project to GPUI views. This guide
+gives the mental model for writing the view of a tool. The design rules are in `DESIGN.md`,
+and `crates/gallery` shows every component. Read the GPUI skills in `.agents/skills/` before
+you write GPUI code: the pinned GPUI differs from what most examples online show.
+
+## The mental model
+
+- **`Session`** is one GPUI entity per window. It owns the `Project` on the main thread. It
+  polls the engine and the file watcher every 16 ms from a timer, never from `render`. A poll
+  that finds nothing new tells nobody, so a still project draws no frames.
+- **A view** holds the session and a typed `Instance<S>`. It reads the current state in
+  `render` and **keeps no copy of saved state**. Its own fields are interface state only:
+  scroll, zoom, selection, whether a card is expanded. Interface state is never saved and is
+  never an undo step.
+- **The session emits every `ProjectEvent`.** Edits from a view, file edits by an agent, undo
+  and redo all look the same. A view subscribes and notifies only for the ids it shows. Events
+  carry no state and do not say where a change came from.
+
+So an agent that edits a file while a view is open is shown at once, also in the middle of a
+drag. Nothing needs to sync.
+
+## How a view edits
+
+- **One step:** `session.edit(cx, |project| project.commit(label, changes))`. An error goes to
+  the notice line of the window, so a view cannot lose one.
+- **A drag is a gesture of the session:** `begin_gesture`, `gesture` per move, then
+  `finish_gesture`, or `cancel_gesture` on escape. Sound and every view follow each move. The
+  file is written once, and the whole drag is one undo step. The session holds the open edit,
+  so undo and redo wait until the drag ends.
+- **A control on saved state is controlled.** Give it the value on every render and hand its
+  `ValueChange` to `ControlEdit::apply`. That one call does the gesture, a key step and a reset.
+- **Something that should sound now but is not an edit**, such as a preview note, goes through
+  `Project::send`. Nothing is saved.
+
+## How views find each other
+
+Extensions never depend on each other, and neither do their views. The runtime fills two
+registries (`crates/runtime/src/lib.rs`, `views`) and installs them as GPUI globals:
+
+- `Views`: `register` gives a tool its main view, and `register_card` gives it a card for a
+  slot in a rack. A host calls `Views::card_of` or `Views::view_of` to show the view of an
+  instance whose tool it does not know.
+- `Devices`: what a rack says about a slot (`describe`) and what a composer can pick for it
+  (`instruments`, `effects`). A picker reads the offers when it is made, not per frame, because
+  a source may have to look at the machine. It fills itself again when
+  `Devices::offers_generation` changes.
+
+## Rules that are easy to miss
+
+- No `cx.notify()` and no entity updates inside `render` or a paint callback.
+- Begin a gesture at the first mouse move that changes something, not at mouse down. A plain
+  click is then no undo step.
+- Work out each move from the value at the press and the distance moved, not from the live
+  value. A drag there and back then ends where it began.
+- The target of a drag can be deleted under it by an agent. Check on every move and on
+  `Deleted`, and finish the gesture when it is gone. Finish an open gesture when the view is
+  released too (`cx.on_release`).
+- A callback that a control keeps holds the view weakly: `cx.listener`, `weak_callback` or
+  `weak_action`, not `cx.processor`. A strong one keeps a closed view and its drag alive.
+- Keep what repaints with the playhead apart from heavy views, and put `.cached(..)` on the
+  heavy one. A notified view also renders every view above it.
+- A meter reads `sound_core::Peaks` once per poll with `Metering` and `every_poll`, and
+  notifies only when what it shows changed.
+- Draw only what is visible. A view of many records paints on one `canvas`.
+- Show a focus ring only when the focus came from the keyboard (`KeyboardFocus`).
+- Put coordinate math in pure functions with tests.
+- Use the components and theme tokens of this crate. A general component goes here, with a
+  gallery entry. What only one tool needs stays in its extension.
+
+## Copy an example
+
+| You want | Start from |
+| --- | --- |
+| A device card with knobs and a display | `extensions/filter/src/view.rs` |
+| A card with handles on a display | `extensions/instrument/src/view.rs` |
+| A rack that hosts cards of other extensions | `extensions/arrangement/src/view/track_panel.rs` |
+| A meter and a mixer strip | `extensions/arrangement/src/view/track_panel.rs` |
+| A large view on a canvas, with drags and keys | `extensions/arrangement/src/view.rs` |
+| A test of the bridge | `crates/ui/tests/bridge.rs` |
+| A test of a view with a simulated mouse and keys | `crates/runtime/tests/window/` |

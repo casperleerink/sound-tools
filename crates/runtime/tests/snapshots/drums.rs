@@ -1,4 +1,4 @@
-//! The Drum pad in the window, as drawn in `docs/reference/m4-step-0/mockups/drum-pad.png` and
+//! The Drum pad in the window, as drawn in `docs/mockups/drum-pad.png` and
 //! `drop-file.png`:
 //!
 //! - `drums-playing.png`: the piece with a Drums track playing a beat, its panel open with the

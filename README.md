@@ -2,7 +2,7 @@
 
 A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The agent is an external coding agent, run in the project folder.
 
-Four milestones are built. The first: tracks, clips, notes, one synth and a window to edit them. The second: stereo tracks with gain, pan and mute, a metronome, MIDI recording with the sustain pedal, CLAP and VST 3 plugins as instruments and as effects with their own windows, and **fit tempo** — play freely with no click, and one action moves the grid onto your playing, so bars and beats land where you hear them and everything added afterwards follows. The third: a master with a limiter that keeps the output under its ceiling, solo, a fader and a meter per track, four built-in effects (Filter, Compressor, EQ and Reverb), latency compensation, plugin windows that stay above the main one, and editing in the window: several clips and notes at once, copy and paste, renaming a track, tempo changes, the snap, velocities and the order of the rack. The fourth: audio tracks with clips from WAV and AIFF files that you trim, move and fade, recording from the default input of macOS where you heard it, a Sampler that plays one file across the keyboard, and a Drum pad with a kit made by synthesis, so a beat needs no sample files. The second was checked on September 21, 2026, the third and the fourth on September 26, 2026, see [ARCHITECTURE.md](ARCHITECTURE.md), "Verified September 21, 2026", "Verified September 26, 2026" and "Verified September 26, 2026, the fourth milestone".
+What it has: instrument and audio tracks, clips with notes or audio, a synth, a Sampler, a Drum pad, CLAP and VST 3 plugins, four effects (Filter, Compressor, EQ, Reverb), a mixer with a limited master, MIDI and audio recording, and **fit tempo**: play freely with no click, and one action moves the grid onto your playing.
 
 ## Requirements
 
@@ -23,18 +23,17 @@ sudo apt-get install build-essential pkg-config libasound2-dev libfontconfig-dev
 
 `/private/tmp` is a macOS folder, so set another build folder first, for example `export CARGO_TARGET_DIR=target`. Then build and run as on macOS. The window needs Vulkan: a graphics driver, or `mesa-vulkan-drivers` for a software one.
 
-What is checked: the build and every test on x86_64 (CI) and arm64, and the window opening under Xvfb with software Vulkan, also from a release tarball installed in a plain Ubuntu 24.04 with only the runtime libraries. What should work, but nobody has tried on a real Linux desktop yet: playback through ALSA (PipeWire and PulseAudio take it too), MIDI input through ALSA, recording, and CLAP and VST 3 plugins for their sound. Plugins are looked for in `~/.clap` and `/usr/lib/clap`, and in `~/.vst3`, `/usr/lib/vst3` and `/usr/local/lib/vst3`. The plugin cache is in `~/.cache/sound-tools/`.
+CI builds and tests on Ubuntu. Playback, MIDI, recording and plugins go through ALSA and should work, but nobody has tried them on a real Linux desktop yet. Plugins are looked for in `~/.clap` and `/usr/lib/clap`, and in `~/.vst3`, `/usr/lib/vst3` and `/usr/local/lib/vst3`. The plugin cache is in `~/.cache/sound-tools/`.
 
 A release has a tarball for x86_64 and one for aarch64, see "Releases". `tooling/bundle-linux.sh` makes it: the program, a menu entry, the icon and `install.sh`, which puts them in `~/.local`. It needs glibc 2.39 or later (Ubuntu 24.04 or newer) and the runtime libraries the page of the release names, not the `-dev` packages above.
 
 With no folder, `runtime` opens the last project, which it keeps in `~/.config/sound-tools/`, or else a folder panel. The panel needs the XDG desktop portal, which GNOME and KDE have. **Install command line tool** links `sound-tools` into `~/.local/bin`.
 
-What does not work yet:
+Not on Linux:
 
 - Plugin windows. The card of a plugin has `Open window` greyed out and says why. The plugin plays, and its state is saved.
 - The snapshot tests. They render with Metal, so on Linux they only say so. The rest of the tests run.
 - **Open terminal in project folder** starts `$TERMINAL`, or else `x-terminal-emulator`, so it needs one of the two.
-- Some text still says "this Mac", "macOS" or "the Finder".
 
 ## Run it
 
@@ -68,55 +67,16 @@ To make a release, run `/release` in Claude Code, with `patch` (the default), `m
 
 ## Two-minute tour
 
-1. Click the project name top-left and pick **Add track**, **Instrument track**.
-2. Double click on empty space in a track row. That adds a clip of one bar.
-3. Double click the clip. The note editor opens below.
-4. Double click on empty space inside the clip to add a note, and keep the second press down to drag its length. It sounds. Drag a note to move it, drag its end to change its length, press delete to remove it. Shift-click or drag a rectangle to select several; cmd-c, cmd-x, cmd-v and cmd-d copy, cut, paste and duplicate them. The bars at the bottom are the velocities: drag one up or down, or drag across the lane to draw several.
-5. Drag a WAV or AIFF file from the Finder under the last track. It is copied into `assets/audio/` and becomes an audio clip on a new audio track. Drag an edge of the clip to trim it, a top corner to fade it and the handle in the middle of its top for its gain. Double click it for its Clip card in the panel below. It moves, copies and undoes as a note clip does.
-6. Press space to play and again to pause. Click the ruler to move the playhead. The view follows it and pages forward while it plays. In the arrangement, shift-click or drag a rectangle to select several clips, and cmd-c, cmd-x, cmd-v and cmd-d work on them as on notes. Double click a track name to rename it. Double click the ruler, or press `t`, to add a tempo change. The snap is in the corner above the track names; hold cmd during a drag to ignore it.
-7. In the transport pill in the title row at the top: drag the tempo number up or down to change the tempo, and click the metronome to turn the click on or off. The click is not part of the piece and is never in a render.
-8. Plug in a MIDI keyboard and play. It sounds through the instrument of the selected track, with or without playback. Press the red record button, or `r`, to record what you play onto that track from the playhead, and press it again to end the take. The take becomes a clip, with the sustain pedal, as one undo step, and the performance as you played it is kept under `assets/takes/`, which nothing ever changes.
-   To record audio, add an audio track (project name, **Add track**, **Audio track**) and click the circle in its header to arm it: it turns red and shows the level of the default input of macOS. In its panel, `In 1` picks the channel, or a pair for stereo. `r` then records every armed track, and the take lands where you heard it, as a file in `assets/audio/` and a clip. With nothing armed and an audio track selected, `r` arms it first.
-9. Click the name of a track on the left. Its panel opens below with the synth, and on the left, under the track name, the mixer of the track: the volume fader with its meter, pan, `M` to mute and `S` to solo. Drag a knob up or down while it plays, and double click a knob to reset it. Click **Master** under the tracks for the master panel: the master volume and the limiter, which is on in every project and keeps the output under its ceiling.
-10. Click `Synth` at the top of that card to pick another instrument: the built-in synth, the Sampler, the Drum pad, or any CLAP or VST 3 instrument this Mac has. Drop an audio file from the Finder on the display of the Sampler and it plays that file across the keyboard. The Drum pad plays notes 36 to 51 on its 16 pads with a kit made by synthesis: click a pad to hear it, drop an audio file from the Finder on a pad to make it a sample pad. The card gets `Open window`, which opens the plugin's own window, above this one. Change a sound there and it is saved with the piece. Picking an instrument is one undo step. The app looks for the plugins of this Mac on a thread of its own, so a project always opens at once; the picker says so while it is still looking, and a track whose plugin has not turned up yet is quiet for a moment and then plays.
-11. Click **Add effect** at the end of that rack and pick `Filter`, `Compressor`, `EQ` or `Reverb`, the built-in effects, or an effect plugin. It lands after the instrument, and the track plays through it. Add another and it lands after the first. The small `x` on a card takes that effect off, and the power icon bypasses it. Each is one undo step. Drag a card by its title bar onto another to change the order, or press cmd-left and cmd-right in a card. An agent can do the same by editing `effects` in the track's `instance.json`; the rack follows at once.
-12. Record a take with the click off, click the clip, then click the project name and pick **Fit tempo to take**. The tempo map now follows what you played: the bar lines land on your beats and the take sounds exactly as it did. A `steady` number appears in the transport next to the tempo; drag it up to pull the tempo towards one steady one, and back to 0 for the playing as it was. If the grid runs at twice or half the speed of the music, or the bar lines are in the wrong place, ask an agent: "the grid runs twice as fast as the music, fix the fit". It is one field in `state/fit-tempo.json`.
-13. Press cmd-z to undo and shift-cmd-z to redo. Every drag and every key is one step.
-14. Press cmd-q to quit. Run the same command again, or open the app, and the piece is back.
+1. Click the project name top-left, **Add track**, **Instrument track**.
+2. Double click empty space in the track row to add a clip, then double click the clip to open the note editor.
+3. Double click in the clip to add a note. Drag to move it, drag its end to change its length.
+4. Press space to play. Click the ruler to move the playhead.
+5. Click a track name for its panel: the instrument, the effects rack and the mixer. Click `Synth` to pick another instrument or a plugin. **Add effect** adds an effect.
+6. Drag a WAV or AIFF file from the Finder onto the arrangement for an audio clip.
+7. Plug in a MIDI keyboard and play. Press `r` to record a take.
+8. cmd-z undoes, shift-cmd-z redoes. cmd-q quits. There is no save; every edit is written to the folder.
 
 Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
-
-## A project made before this milestone
-
-It opens and plays as it did, and nothing is rewritten. Some things need one edit of `project.json` before the new parts of the app are within reach. Add them to `extensions` and open the project again:
-
-```json
-"extensions": ["arrangement", "compressor", "drum-pad", "eq", "filter", "fit-tempo", "instrument", "plugin-host", "reverb", "sampler", "tone"]
-```
-
-- `plugin-host` for CLAP and VST 3 plugins. Without it the picker shows every plugin greyed out with that line under it.
-- `fit-tempo` for **Fit tempo to take**. Without it the menu item is greyed out with that line under it.
-- `drum-pad` for the Drum pad. Without it the instrument picker shows it greyed out.
-- `filter` for the built-in Filter effect. Without it `Add effect` shows it greyed out.
-- `compressor` for the built-in Compressor effect. Without it `Add effect` shows it greyed out.
-- `eq` for the built-in EQ effect, the same way.
-- `reverb` for the built-in Reverb effect, the same way.
-- `sampler` for the Sampler, which the instrument picker then offers next to the synth.
-
-One thing is reported: a project of the first milestone connects a track once per device channel, and audio is stereo now, so one connection carries both channels. `problems.txt` names the second line and says to remove it. The project sounds as it did in the meantime.
-
-## What to check by ear
-
-Nobody who built this can hear. These need the owner, and each takes a few minutes. The third milestone adds checks of its own: the limiter, solo and the faders, each effect next to the Ableton effect it is modelled on, your VST 3 plugins, and editing a piece only in the window. They are in [docs/milestone-3.md](docs/milestone-3.md), "What the owner checks". The fourth milestone's are items 4 to 8 below, and in [docs/milestone-4.md](docs/milestone-4.md), "What the owner checks".
-
-1. **Latency.** Plug in your keyboard, click a track name, play. Does it feel like an instrument, or is there a wait? The numbers say 20 ms from key to sound on the built-in speakers; a wired interface should be faster.
-2. **Your pianos.** Put each piano plugin you use on a track (click `Synth` at the top of its card), open its window, load a sound, play. Does it sound the way it does in your other DAW, and does its window work?
-3. **A free take fitted.** Turn the click off, press `r`, play something with rubato, press `r` again. Click the clip, then the project name, then **Fit tempo to take**. Are the bar lines where you hear the beats? Drag `steady` up and back to 0. Does the take still sound as you played it?
-4. **Your own files.** Drop a few of your own files onto the arrangement, then trim, move and fade them. Does it feel right, and does a clip edge ever click?
-5. **A take in time.** Add an audio track, arm it, turn the click on, press `r` and clap or sing on the beats. Does the take land on them? Nobody has recorded with a real input yet.
-6. **The Sampler.** Pick `Sampler` on a track, drop a sample of your own on it and play it from your keyboard. Is every key in tune, and does the envelope feel right?
-7. **The drum kit.** Click `Synth` on a track and pick `Drum pad`, press every pad, then build a beat. Does it sound good enough to keep?
-8. **A short piece in the window only**, with audio, the Sampler and drums. What still needs a file edit, or feels slow?
 
 ## Work with an agent
 
@@ -144,7 +104,7 @@ What the agent uses:
 
 - `AGENTS.md`. The app writes it into the project, with a `CLAUDE.md` that imports it. It is a short map: the folder layout, the bar math of this project, how to check the work, and a list of docs in `agent-docs/` with one line each saying when to open it. The record formats live in those docs, one per extension. Agents read the map by themselves and open only the doc their task needs.
 - `problems.txt`. The app keeps it current while it runs. It lists every file that did not load, and why. `No problems. Every file is live.` means all of it plays. The agent reads it to check its work.
-- `sound-tools . --inspect`. It prints the tempo, every track and every clip with its bar range, and the problems. It works next to the running app. It loads no plugin: it says which plugin a track names and whether this Mac has it, and runs none of them, so no plugin can end it. `sound-tools` is the command line tool of the app: pick **Install command line tool** in the project menu once. It links `/usr/local/bin/sound-tools`, or `~/.local/bin/sound-tools` when `/usr/local/bin` needs an administrator, to the program inside the app. From a checkout, `cargo run -p runtime -- . --inspect` is the same.
+- `sound-tools . --inspect`. It prints the tempo, every track and every clip with its bar range, and the problems. It works next to the running app and loads no plugin. Install `sound-tools` once with **Install command line tool** in the project menu. From a checkout, `cargo run -p runtime -- . --inspect` is the same.
 
 ## Without the window
 
@@ -158,11 +118,11 @@ cargo run -p runtime -- --version
 
 With the command line tool installed, `sound-tools` takes the place of `cargo run -p runtime --` in all of these.
 
-- `--inspect` prints a summary and changes nothing. It loads no plugin, so it costs nothing extra and no plugin of this Mac runs in it.
+- `--inspect` prints a summary and changes nothing. It loads no plugin.
 - `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float.
 - `--headless` plays the project live without a window and reads commands from stdin: `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status`, `quit`. It prints every change that arrives from the folder. Only one app can have a project open live. `--inspect` and `--render` work next to it.
-- `--plugins` prints the CLAP and VST 3 plugins of this Mac with their ids and whether each says it is an instrument, an effect or both, which is what a track record needs when an agent writes one. In the app you pick one by name instead. Each is looked at in a child process, so one that crashes costs that one and is reported. It looks at every plugin again, whatever the app remembered, so it is also how a plugin that failed once is tried again.
-- `--version` prints `sound-tools` and the version, for example `sound-tools 0.1.0`.
+- `--plugins` prints the installed CLAP and VST 3 plugins with their ids and kind (instrument, effect or both). It scans every plugin again, so it also retries one that failed before.
+- `--version` prints the version.
 
 A release build is `cargo build --release -p runtime`. The binary is `/private/tmp/sound-tools-timing/target/release/runtime`.
 
@@ -180,23 +140,18 @@ cargo shear
 cargo deny check
 ```
 
-CI runs the same on macOS, plus the realtime sanitizer from [ENGINEERING.md](ENGINEERING.md) section 3. The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`. The build
-comes first because the tests load the repository's own CLAP and VST 3 plugins, which are
-dynamic libraries that `cargo test` does not build.
+CI runs the same on macOS, plus the realtime sanitizer, see [ENGINEERING.md](ENGINEERING.md). The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`. The build comes first because the tests load the repository's own CLAP and VST 3 test plugins, which `cargo test` does not build.
 
 The two snapshot tests render the UI components and the window to PNGs without opening a window. They print the folder they write to. `cargo run -p gallery` opens the component gallery in a window.
 
 ## Docs
 
 - [CONCEPT.md](CONCEPT.md): what the product is for.
-- [ARCHITECTURE.md](ARCHITECTURE.md): the decisions, the four milestones with their checks, and the known gaps after each.
-- [ENGINEERING.md](ENGINEERING.md): how to build: dependencies, the audio engine, testing, rules for agents.
-- [docs/milestone-2.md](docs/milestone-2.md): the plan of the second milestone, done September 21, 2026. [docs/agent-brief.md](docs/agent-brief.md) is the shared brief for the agents that built it.
-- [docs/milestone-3.md](docs/milestone-3.md): the plan of the third milestone: mixer, built-in effects, reliable plugins and a better window. Done September 26, 2026.
-- [docs/milestone-4.md](docs/milestone-4.md): the plan of the fourth milestone: audio tracks, recording, a sampler and drums. Done September 26, 2026. An agent adds audio clips with `agent-docs/audio.md`, and uses `agent-docs/sampler.md` and `agent-docs/drums.md` for the new instruments.
+- [ARCHITECTURE.md](ARCHITECTURE.md): the technical decisions and why.
+- [ENGINEERING.md](ENGINEERING.md): how to work in this code: audio thread rules, testing, rules for agents.
 - [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
-- [SDK_SKETCH.md](SDK_SKETCH.md): an early sketch of the extension SDK.
-- Guides per crate: [core](crates/core/README.md) for extension authors, [ui](crates/ui/README.md) for view authors, [notes](crates/notes/README.md) for the note contract, [media](crates/media/README.md) for audio files, [arrangement](extensions/arrangement/README.md), [instrument](extensions/instrument/README.md), [filter](extensions/filter/README.md), [compressor](extensions/compressor/README.md), [eq](extensions/eq/README.md), [reverb](extensions/reverb/README.md), [drum-pad](extensions/drum-pad/README.md), [sampler](extensions/sampler/README.md), [metronome](extensions/metronome/README.md), [midi](extensions/midi/README.md), [plugin-host](extensions/plugin-host/README.md), [fit-tempo](extensions/fit-tempo/README.md).
+- [crates/core/README.md](crates/core/README.md) and [crates/ui/README.md](crates/ui/README.md): how to write an extension and its view.
+- `extensions/*/agent-doc.md`: the docs the app writes into each project for the agent.
 
 ## License
 
