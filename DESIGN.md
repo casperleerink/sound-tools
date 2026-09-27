@@ -103,6 +103,20 @@ Step 2, September 26, 2026. The after images are in `docs/reference/m4-step-2/`:
 - A take while it records covers what it lies over, as the ghost of a drop does, since the clip it becomes covers: the window colour under the clip fill, a 1 pt red border, no handles. It starts where the recording began and its right edge is the playhead. Its waveform shows once the first frames are placed, a poll or two after the start.
 - Differences from the mockups, side by side: the input select opens its list above itself when there is no room below, and its check is on the right, as in every menu of the app; the voice and guitar of the snapshots are made by a formula; the transport shows the record control filled red while it records, as in the second milestone. Otherwise the header, the meter, the toggle, the takes and the panel match in place and size.
 
+### Settled with the Sampler
+
+Step 3, September 26, 2026. The after images are in `docs/reference/m4-step-3/`: `window/sampler-*.png` from `cargo test -p runtime --test snapshots` (`WINDOW_SNAPSHOT_ONLY=sampler` renders them alone), `gallery/audio.png` from the gallery, its last block. Compared with `sampler.png` side by side, the differences are listed last.
+
+- The envelope is drawn in the time of the file from the start line: silence at the foot of the start line, full level at 88 % of the height at the end of the attack, the sustain level from the end of the decay to the end line. Its handles move in the time of the file, so a handle and its knob agree to the millisecond; a short attack sits on the start line, as in the mockup.
+- The attack peak and the decay corner are the full handles, the start and end the hollow ones of the waveform display. A drag of the decay corner is one step, "Change decay and sustain".
+- Start and End keep 10 ms between them, as the trim of a clip. The end of the file is written as no end. With no file that plays they are dimmed.
+- The Root knob moves in whole notes and says the note: `C4`, `C#4`. Its arrow keys step a semitone. The names are `Pitch::name` of `sound-notes`.
+- Times read `2 ms`, `400 ms`, `1.18 s`; the gain `0 dB`, `-6 dB`.
+- Empty, and with a file that is missing (`kalimba.wav is missing`) or does not play, the display says so in 12 pt `gray-800` over the subtle 28 pt `Choose file` button, 12 pt apart, in the middle of the display. The file panel says `Load`. The line under the display is left out then.
+- The ring of a drop is the 2 pt lavender border of the display, over an opaque `gray-100` with the line in 12 pt `gray-950`: `Drop to load the file`, or `Drop to replace the file` over a Sampler with a file. It covers the waveform and the envelope, as the mockup covers the words of the empty display, and the handles hide while a file is over the display (`Display::takes_files`), since their dots reach 5 pt past it.
+- A new file starts at its start: a drop or a choice sets `start_seconds` to 0 and leaves out `end_seconds`, and keeps the rest. A file under the name the record already names, which was missing, keeps the record whole, trims too.
+- Differences from the mockup, found side by side: the kalimba of the snapshots is made by a formula, so its waveform is a smooth decay; the file icon and its name under the pointer while dragging are the platform's drag image, not ours. Otherwise the card, its display, the lines, the handles, the caption, the knobs, the expanded columns, the empty display and the ring match in place and size.
+
 ## Direction for the third milestone
 
 **Decided by the owner on September 25, 2026:** our own palette (see "Colour"), the transport in the title row, and the mixer strip in the header column. The owner also asked for a shorter panel, one volume control on the meter, a power icon in the card header and a look of its own for each device. The sizes, components and devices below are this step's answer to that, drawn in the mockups. Where this section differs from the sections after it, this section holds.
@@ -485,6 +499,8 @@ What is built, in `crates/runtime/src/window.rs`, `extensions/arrangement/src/vi
 | Track panel | the close icon in the header of an effect card | Take that effect off the track. One undo step, and undo brings it back as it sounded |
 | Track panel | drag the header of an effect card onto another card | Move the effect to that place in the chain. On the instrument it goes first, on `Add effect` last. One undo step. It keeps its bypass. Escape during the drag lets go |
 | Track panel | cmd-left, cmd-right, in an effect card | Move that effect one place. The instrument stays first |
+| Track panel | drop an audio file from the Finder on the display of a Sampler, or `Choose file` on it | Copy the file into the project and play it across the keyboard. One undo step, "Load sample" |
+| Track panel | up or down on the focused Root knob of a Sampler | One semitone |
 | Track panel | Open window, on the card of a plugin | The plugin's own window, above this one, where it was the last time. The same control closes it |
 | Note editor | double click on empty space inside the clip | Add a note of one step of the snap. Keep the second press down and drag to draw its length. It sounds |
 | Note editor | click on a note | Select it. It sounds |

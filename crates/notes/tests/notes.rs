@@ -163,3 +163,14 @@ fn interface_math_gets_the_nearest_valid_value() {
     assert_eq!(Length::at_least_one(Ticks(0)).ticks(), Ticks(1));
     assert_eq!(Length::at_least_one(Ticks(480)).ticks(), Ticks(480));
 }
+
+#[test]
+fn a_pitch_has_the_note_name_of_the_app() {
+    let name = |number| Pitch::new(number).unwrap().name();
+    assert_eq!(name(60), "C4");
+    assert_eq!(name(61), "C#4");
+    assert_eq!(name(69), "A4");
+    assert_eq!(name(59), "B3");
+    assert_eq!(name(0), "C-1");
+    assert_eq!(name(127), "G9");
+}

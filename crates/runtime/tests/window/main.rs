@@ -36,6 +36,7 @@ mod rack;
 mod recording;
 mod recording_audio;
 mod reverb;
+mod sampler;
 mod several_notes;
 mod shell;
 mod support;

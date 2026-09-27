@@ -19,6 +19,7 @@ use plugin_host::{
     default_search_paths,
 };
 use reverb::ReverbState;
+use sampler::SamplerState;
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
     ProjectError, Registry, SavedDestination, State,
@@ -112,6 +113,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     instrument::register(&mut registry)?;
     plugin_host::register(&mut registry, plugins)?;
     reverb::register(&mut registry)?;
+    sampler::register(&mut registry)?;
     tone::register(&mut registry)?;
     registry.runtime_agent_doc(INSPECT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
@@ -135,6 +137,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     compressor::view::register(&mut views, &mut devices);
     eq::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
+    sampler::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     devices.instruments(|| {
         vec![
@@ -149,6 +152,18 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             .needs(
                 instrument::EXTENSION,
                 "This project does not load the synth.",
+            ),
+            DeviceOffer::new(
+                SamplerState::TOOL,
+                sampler::view::NAME,
+                |_, slot, changes| {
+                    changes.create(slot.clone(), SamplerState::default());
+                    Ok(())
+                },
+            )
+            .needs(
+                sampler::EXTENSION,
+                "This project does not load the sampler.",
             ),
         ]
     });

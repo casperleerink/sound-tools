@@ -6,7 +6,8 @@
 use std::f32::consts::{PI, SQRT_2};
 
 use sound_core::{
-    AudioOutput, EventInput, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
+    AudioOutput, Envelope, EnvelopeState, EventInput, Ports, PrepareConfig, ProcessContext,
+    Processor, Smoothed,
 };
 use sound_notes::{NoteEvent, Pedal, Pitch, Velocity};
 
@@ -29,46 +30,15 @@ const START_PHASE: f32 = 0.25;
 /// Above this a cycle is about two frames and the waveform corrections overlap.
 const HIGHEST_PHASE_STEP: f32 = 0.45;
 
-/// How far past full level the attack aims. It shapes the attack curve, and lets it reach full
-/// level in exactly the attack time.
-const ATTACK_OVERSHOOT: f32 = 0.3;
-
-/// -60 dB. The release aims this far below silence, and so reaches silence in exactly the
-/// release time. The decay is within this of the sustain level after the decay time. A held
-/// note with no sustain ends when it falls below this.
-const ENVELOPE_FLOOR: f32 = 0.001;
-
-/// The envelope of every voice, as per-frame factors. Each stage is `level * coefficient +
-/// base`: a curve toward a point a little past the target.
-#[derive(Default)]
-struct Envelope {
-    attack_coefficient: f32,
-    attack_base: f32,
-    decay_coefficient: f32,
-    sustain: f32,
-    release_coefficient: f32,
-    release_base: f32,
-}
-
-impl Envelope {
-    fn new(state: &SynthState, sample_rate: f32) -> Self {
-        // The factor that covers a distance of 1 in `seconds`, when the curve aims `overshoot`
-        // past the end of that distance.
-        let coefficient = |seconds: f32, overshoot: f32| {
-            let frames = (seconds * sample_rate).max(1.0);
-            (-((1.0 + overshoot) / overshoot).ln() / frames).exp()
-        };
-        let attack_coefficient = coefficient(state.attack_seconds, ATTACK_OVERSHOOT);
-        let release_coefficient = coefficient(state.release_seconds, ENVELOPE_FLOOR);
-        Self {
-            attack_coefficient,
-            attack_base: (1.0 + ATTACK_OVERSHOOT) * (1.0 - attack_coefficient),
-            decay_coefficient: coefficient(state.decay_seconds, ENVELOPE_FLOOR),
-            sustain: state.sustain,
-            release_coefficient,
-            release_base: -ENVELOPE_FLOOR * (1.0 - release_coefficient),
-        }
-    }
+/// The envelope of the synth, from its state.
+fn envelope(state: &SynthState, sample_rate: f32) -> Envelope {
+    Envelope::new(
+        state.attack_seconds,
+        state.decay_seconds,
+        state.sustain,
+        state.release_seconds,
+        sample_rate,
+    )
 }
 
 /// A state variable low-pass filter in the trapezoidal form (Simper, "Solving the continuous
@@ -109,18 +79,8 @@ impl FilterFactors {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Stage {
-    Idle,
-    Attack,
-    /// Decay, and the sustain it ends in. One stage, so a sustain edit on a held note glides.
-    Decay,
-    Release,
-}
-
 #[derive(Copy, Clone)]
 struct Voice {
-    stage: Stage,
     /// The key of this note is up and only the sustain pedal keeps it sounding. It is released
     /// when the pedal comes up.
     sustained: bool,
@@ -133,8 +93,7 @@ struct Voice {
     phase_step: f32,
     /// From the velocity.
     amplitude: f32,
-    /// The envelope, from 0 to 1.
-    level: f32,
+    envelope: EnvelopeState,
     filter_state: [f32; 2],
 }
 
@@ -158,34 +117,31 @@ fn sawtooth(phase: f32, phase_step: f32) -> f32 {
 
 impl Voice {
     const IDLE: Self = Self {
-        stage: Stage::Idle,
         sustained: false,
         pitch: None,
         started: 0,
         phase: 0.0,
         phase_step: 0.0,
         amplitude: 0.0,
-        level: 0.0,
+        envelope: EnvelopeState::IDLE,
         filter_state: [0.0; 2],
     };
 
     fn is_idle(&self) -> bool {
-        self.stage == Stage::Idle
+        self.envelope.is_idle()
     }
 
     fn loudness(&self) -> f32 {
-        self.level * self.amplitude
+        self.envelope.level as f32 * self.amplitude
     }
 
     fn is_held(&self) -> bool {
-        matches!(self.stage, Stage::Attack | Stage::Decay)
+        self.envelope.is_held()
     }
 
     fn release(&mut self) {
         self.sustained = false;
-        if self.is_held() {
-            self.stage = Stage::Release;
-        }
+        self.envelope.release();
     }
 
     /// The key came up. With the pedal down the note sounds on until the pedal comes up.
@@ -203,18 +159,15 @@ impl Voice {
         if self.is_idle() {
             self.phase = START_PHASE;
             self.filter_state = [0.0; 2];
-            self.level = 0.0;
+            self.envelope.level = 0.0;
         } else {
             // A voice taken from another note keeps its phase and filter state, and its
             // loudness (level times amplitude), so the takeover is not a click. A quiet note
             // that takes over a loud voice starts above full level, and decays from there.
-            self.level = self.level * self.amplitude / amplitude;
+            let loudness = f64::from(self.amplitude / amplitude);
+            self.envelope.level *= loudness;
         }
-        self.stage = if self.level < 1.0 {
-            Stage::Attack
-        } else {
-            Stage::Decay
-        };
+        self.envelope.start();
         self.pitch = Some(pitch);
         self.started = started;
         self.amplitude = amplitude;
@@ -247,33 +200,12 @@ impl Voice {
             let filtered = mix(filter.output);
             [ic1, ic2] = filter.next_state.map(mix);
 
-            match self.stage {
-                Stage::Attack => {
-                    self.level = self.level * envelope.attack_coefficient + envelope.attack_base;
-                    if self.level >= 1.0 {
-                        self.level = 1.0;
-                        self.stage = Stage::Decay;
-                    }
-                }
-                Stage::Decay => {
-                    let above = self.level - envelope.sustain;
-                    self.level = envelope.sustain + above * envelope.decay_coefficient;
-                    // A pluck: with no sustain a held note ends here, and not at its note off.
-                    if self.level < ENVELOPE_FLOOR && envelope.sustain < ENVELOPE_FLOOR {
-                        self.level = 0.0;
-                        self.stage = Stage::Idle;
-                    }
-                }
-                Stage::Release => {
-                    self.level = self.level * envelope.release_coefficient + envelope.release_base;
-                    if self.level <= 0.0 {
-                        self.level = 0.0;
-                        self.stage = Stage::Idle;
-                    }
-                }
-                Stage::Idle => break,
+            // An idle voice ended on the frame before: nothing of it is added any more.
+            if self.envelope.is_idle() {
+                break;
             }
-            *sample += filtered * self.level * self.amplitude;
+            let level = self.envelope.next(envelope) as f32;
+            *sample += filtered * level * self.amplitude;
         }
         self.filter_state = [ic1, ic2];
     }
@@ -425,13 +357,13 @@ impl Processor for Synth {
 
     fn prepare(&mut self, config: &PrepareConfig) {
         self.sample_rate = config.sample_rate as f32;
-        self.envelope = Envelope::new(&self.state, self.sample_rate);
+        self.envelope = envelope(&self.state, self.sample_rate);
         self.move_filter(0);
     }
 
     fn update(&mut self, update: &mut SynthState) {
         self.state = *update;
-        self.envelope = Envelope::new(&self.state, self.sample_rate);
+        self.envelope = envelope(&self.state, self.sample_rate);
         let ramp_frames = RAMP_SECONDS * self.sample_rate;
         self.cutoff_octaves
             .set_target(self.state.cutoff_hz.log2(), ramp_frames);

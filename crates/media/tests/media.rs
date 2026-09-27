@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use sound_core::Assets;
-use sound_media::{Audio, AudioAsset, Encoding, MediaError, Resampler, SCRATCH_FRAMES};
+use sound_media::{Audio, AudioAsset, Encoding, MediaError, Resampler, SCRATCH_FRAMES, varispeed};
 
 /// A WAV file of these frames, through `hound`, which is not the code under test.
 fn wav(
@@ -323,6 +323,186 @@ fn a_block_renders_the_same_on_its_own_as_in_a_run() {
     let mut piece = vec![[0.0_f32; 2]; 37];
     resampler.render(&audio, 100, 1_234, &mut piece, &mut scratch);
     assert_eq!(piece, whole[1_234..1_271]);
+}
+
+/// A float WAV of a sine of `hz` at half of full scale, `seconds` long, at `rate`.
+fn sine_file(folder: &Path, rate: u32, hz: f64, seconds: f64) -> Audio {
+    let frames = (seconds * f64::from(rate)) as usize;
+    let sine: Vec<[f64; 2]> = (0..frames)
+        .map(|frame| [0.5 * (TAU * hz * frame as f64 / f64::from(rate)).sin(); 2])
+        .collect();
+    let path = folder.join(format!("sine-{rate}-{hz}-{seconds}.wav"));
+    wav(&path, rate, 2, (32, hound::SampleFormat::Float), &sine);
+    Audio::parse(std::fs::read(&path).unwrap()).unwrap()
+}
+
+/// The frequency of a steady sine, from the first and the last of its rising zero crossings,
+/// each placed between two frames on a straight line.
+fn frequency(samples: &[f32], rate: f64) -> f64 {
+    let crossings: Vec<f64> = samples
+        .windows(2)
+        .enumerate()
+        .filter(|(_, pair)| pair[0] < 0.0 && pair[1] >= 0.0)
+        .map(|(frame, pair)| {
+            let (a, b) = (f64::from(pair[0]), f64::from(pair[1]));
+            frame as f64 + a / (a - b)
+        })
+        .collect();
+    let (first, last) = (crossings[0], crossings[crossings.len() - 1]);
+    (crossings.len() - 1) as f64 * rate / (last - first)
+}
+
+#[test]
+fn varispeed_plays_a_file_at_its_own_speed_sample_for_sample() {
+    let folder = tempfile::tempdir().unwrap();
+    let audio = sine_file(folder.path(), 48_000, 441.0, 0.5);
+    let mut expected = vec![[0.0_f32; 2]; 1_000];
+    audio.read(5_000, &mut expected);
+    let mut out = vec![[0.0_f32; 2]; 1_000];
+    let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
+    for (index, block) in out.chunks_mut(64).enumerate() {
+        let position = 5_000.0 + (index * 64) as f64;
+        varispeed().render(&audio, position, 1.0, block, &mut scratch);
+    }
+    assert_eq!(out, expected);
+}
+
+/// A sine played at the steps of keys from four octaves down to four up, also from a file at
+/// another rate than the engine: each comes out at its frequency and its level.
+#[test]
+fn varispeed_plays_a_sine_at_the_frequency_of_its_step_and_at_its_level() {
+    let folder = tempfile::tempdir().unwrap();
+    let engine_rate = 48_000.0;
+    for file_rate in [48_000_u32, 44_100, 96_000] {
+        let audio = sine_file(folder.path(), file_rate, 440.0, 4.0);
+        for semitones in [-48, -31, -12, -7, -1, 0, 1, 5, 12, 19, 24, 36, 48] {
+            let pitch = 2.0_f64.powf(f64::from(semitones) / 12.0);
+            let step = pitch * f64::from(file_rate) / engine_rate;
+            // Half a second, or as much as the file holds from its second frame on.
+            let frames = (engine_rate / 2.0).min((audio.frames() as f64 - 64.0) / step) as usize;
+            let mut out = vec![[0.0_f32; 2]; frames];
+            let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
+            for (index, block) in out.chunks_mut(64).enumerate() {
+                let position = 32.0 + step * (index * 64) as f64;
+                varispeed().render(&audio, position, step, block, &mut scratch);
+            }
+            let left: Vec<f32> = out.iter().map(|frame| frame[0]).collect();
+            let measured = frequency(&left, engine_rate);
+            let expected = 440.0 * pitch;
+            let cents = 1200.0 * (measured / expected).log2();
+            let peak = left
+                .iter()
+                .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+            let level = 20.0 * f64::from(peak / 0.5).log10();
+            println!(
+                "{file_rate} Hz file, {semitones:+} semitones: {measured:.3} Hz for {expected:.3} Hz ({cents:+.4} cents), level {level:+.3} dB"
+            );
+            assert!(cents.abs() < 0.01, "{file_rate} {semitones}: {cents} cents");
+            assert!(level.abs() < 0.05, "{file_rate} {semitones}: {level} dB");
+        }
+    }
+}
+
+/// The level of what a sine of `file_hz` in a file at `file_rate`, played at `step` into an
+/// engine at 48 kHz, comes out as, in dB against the sine: the whole output, so for a tone
+/// above the Nyquist frequency of the output it is what folds back.
+fn played_level(folder: &Path, file_rate: u32, file_hz: f64, step: f64) -> f64 {
+    let audio = sine_file(folder, file_rate, file_hz, 2.0);
+    let frames = ((audio.frames() as f64 - 2_000.0) / step).min(48_000.0) as usize;
+    let mut out = vec![[0.0_f32; 2]; frames];
+    let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
+    for (index, block) in out.chunks_mut(64).enumerate() {
+        let position = 1_000.0 + step * (index * 64) as f64;
+        varispeed().render(&audio, position, step, block, &mut scratch);
+    }
+    let middle = &out[frames / 10..frames - frames / 10];
+    let power: f64 = middle.iter().map(|frame| f64::from(frame[0]).powi(2)).sum();
+    let rms = (power / middle.len() as f64).sqrt();
+    20.0 * (rms / (0.5 / 2.0_f64.sqrt())).log10()
+}
+
+/// Above a step of 1 the kernel follows the output: a tone that lands above the Nyquist
+/// frequency of the engine is gone, not folded back; one under 16 kHz keeps its level.
+#[test]
+fn varispeed_folds_nothing_back_above_a_step_of_one() {
+    let folder = tempfile::tempdir().unwrap();
+    // (the rate of the file, the step, where the tone lands in the output)
+    let cases: [(u32, f64, &[f64]); 4] = [
+        (
+            48_000,
+            1.06,
+            &[10_000.0, 16_000.0, 20_000.0, 23_000.0, 24_500.0, 25_000.0],
+        ),
+        (
+            48_000,
+            2.0,
+            &[10_000.0, 16_000.0, 20_000.0, 25_000.0, 30_000.0, 40_000.0],
+        ),
+        (
+            48_000,
+            4.0,
+            &[10_000.0, 16_000.0, 25_000.0, 40_000.0, 60_000.0, 80_000.0],
+        ),
+        // A file at 96 kHz at its root: a step of 2.
+        (
+            96_000,
+            2.0,
+            &[10_000.0, 16_000.0, 20_000.0, 25_000.0, 30_000.0, 40_000.0],
+        ),
+    ];
+    for (file_rate, step, lands) in cases {
+        let ratio = f64::from(file_rate) / 48_000.0;
+        for out_hz in lands {
+            // The tone in the file that lands there at this step.
+            let file_hz = out_hz / step * ratio;
+            let level = played_level(folder.path(), file_rate, file_hz, step);
+            let what = match *out_hz > 24_000.0 {
+                true => format!("folds back to {:.0} Hz at", 48_000.0 - (out_hz % 48_000.0)),
+                false => "comes out at".to_string(),
+            };
+            println!(
+                "{file_rate} Hz file, step {step}: {file_hz:.0} Hz in the file lands at {out_hz:.0} Hz, {what} {level:+.1} dB"
+            );
+            if *out_hz > 24_000.0 {
+                assert!(level < -70.0, "{file_rate} {step} {out_hz}: {level} dB");
+            } else if *out_hz <= 16_000.0 {
+                assert!(
+                    level.abs() < 0.05,
+                    "{file_rate} {step} {out_hz}: {level} dB"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn varispeed_renders_a_block_on_its_own_as_in_a_run() {
+    let folder = tempfile::tempdir().unwrap();
+    let audio = sine_file(folder.path(), 44_100, 1_234.5, 1.0);
+    let step = 1.37;
+    let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
+    let mut whole = vec![[0.0_f32; 2]; 4_000];
+    varispeed().render(&audio, 100.25, step, &mut whole, &mut scratch);
+    let mut piece = vec![[0.0_f32; 2]; 37];
+    varispeed().render(
+        &audio,
+        100.25 + 1_234.0 * step,
+        step,
+        &mut piece,
+        &mut scratch,
+    );
+    for (piece, whole) in piece.iter().zip(&whole[1_234..1_271]) {
+        assert!((piece[0] - whole[0]).abs() < 1e-6, "{piece:?} {whole:?}");
+    }
+    // A step far beyond what the scratch holds in a block still reads every frame, each a
+    // filtered sample of the file, never more than it holds.
+    let mut fast = vec![[0.0_f32; 2]; 64];
+    varispeed().render(&audio, 0.0, 700.0, &mut fast, &mut scratch);
+    assert!(
+        fast.iter()
+            .all(|frame| frame[0].is_finite() && frame[0].abs() <= 0.55)
+    );
+    assert!(fast.iter().any(|frame| frame[0] != 0.0));
 }
 
 #[test]

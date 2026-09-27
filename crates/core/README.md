@@ -56,6 +56,7 @@ In `process`:
 - `context.event_inputs.get(port)` gives `&[Timed<E>]`, sorted by `offset`, the frame offset within this block. Several connections arrive merged.
 - `context.event_outputs.push(port, offset, event)` sends an event. It returns whether the event fitted. Keep an event you must not lose, such as a note off, and send it in the next block. `context.event_outputs.count_dropped()` counts an event you dropped for a full list of your own.
 - `context.frames` is 1 to `MAX_BLOCK` (64). `context.start_frame` is the engine time of the block's first frame.
+- `Envelope` and `EnvelopeState` are an attack, a decay to a sustain level and a release, per voice and per frame, in `f64`: `Envelope::new(attack, decay, sustain, release, sample_rate)` when the times change, `state.start()`, `state.release()` and `state.next(&envelope)` for the level of each frame. The attack reaches full level in its time, the release silence in its time from full level, and the decay is within 0.1 % of the way to the sustain level after `ln 1000 / ln 1001` of its time. The synth and the Sampler share it.
 - `Smoothed` is the one smoothing helper of the SDK. `set_target(value, ramp_frames)` in `update`, `advance(frames)` in `process`, `snap()` when nothing sounds. A parameter that jumps clicks; the core smooths nothing by itself.
 - `Parameter<S>` is one number of a saved state: its field, range and default, written once as a constant. `check(&state)` gives the error that names the field, for `State::validate`. The synth and the Filter are the examples.
 

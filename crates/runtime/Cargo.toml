@@ -22,6 +22,7 @@ metronome.workspace = true
 midi.workspace = true
 plugin-host.workspace = true
 reverb.workspace = true
+sampler.workspace = true
 sound-core.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
