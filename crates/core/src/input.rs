@@ -18,8 +18,19 @@ use rtsan_standalone::nonblocking;
 use crate::device::{DeviceError, monotonic_nanos};
 
 /// How much input the ring holds for a reader that fell behind. A reader that is late by more
-/// than this loses frames, which [`CaptureReader::lost_frames`] counts.
+/// than this loses frames, which [`CaptureReader::lost_frames`] counts and reads as silence.
 pub const CAPTURE_SECONDS: u32 = 10;
+
+/// Stretches of lost frames the ring remembers until the reader comes back. Past that, the
+/// writer keeps counting into the last one and leaves its buffers out as well.
+const GAPS: usize = 256;
+
+/// Frames left out because the ring was full, before the frame numbered `at`.
+#[derive(Copy, Clone, Debug)]
+struct Gap {
+    at: u64,
+    frames: u64,
+}
 
 /// The default input device of the system and its default configuration.
 pub struct InputDevice {
@@ -126,6 +137,7 @@ pub fn capture(sample_rate: u32, channels: usize) -> (CaptureWriter, CaptureRead
     let channels = channels.max(1);
     let capacity = sample_rate as usize * CAPTURE_SECONDS as usize * channels;
     let (producer, consumer) = rtrb::RingBuffer::new(capacity);
+    let (gaps, gaps_read) = rtrb::RingBuffer::new(GAPS);
     let shared = Arc::new(Shared {
         sample_rate,
         channels,
@@ -137,11 +149,14 @@ pub fn capture(sample_rate: u32, channels: usize) -> (CaptureWriter, CaptureRead
     });
     let writer = CaptureWriter {
         producer,
+        gaps,
         shared: shared.clone(),
-        written: 0,
+        position: 0,
+        lost: 0,
     };
     let reader = CaptureReader {
         consumer,
+        gaps: gaps_read,
         shared,
         read: 0,
     };
@@ -151,9 +166,14 @@ pub fn capture(sample_rate: u32, channels: usize) -> (CaptureWriter, CaptureRead
 /// The end of a capture on the thread of the device. Dropping it says the input is gone.
 pub struct CaptureWriter {
     producer: rtrb::Producer<f32>,
+    /// Where frames were left out, so the reader puts silence there and every frame after keeps
+    /// its number, and with it the moment it was captured.
+    gaps: rtrb::Producer<Gap>,
     shared: Arc<Shared>,
-    /// Frames written so far. Only this side counts them, so no atomic is read to add one.
-    written: u64,
+    /// Frames captured so far, the ones left out included: the number of the next frame.
+    position: u64,
+    /// Frames left out since the last buffer that went in, not yet told to the reader.
+    lost: u64,
 }
 
 impl CaptureWriter {
@@ -164,7 +184,8 @@ impl CaptureWriter {
     /// callback calls it.
     ///
     /// A buffer the ring has no room for is left out whole and counted, so a reader never
-    /// takes half a frame.
+    /// takes half a frame. The next buffer that goes in says how many frames came before it,
+    /// and the reader reads them as silence.
     #[nonblocking]
     pub fn write(&mut self, samples: &[f32], callback_nanos: u64, latency_nanos: u64) {
         let capture_nanos = callback_nanos.saturating_sub(latency_nanos);
@@ -180,14 +201,31 @@ impl CaptureWriter {
             }
         }
         let frames = (whole / channels) as u64;
-        if self.producer.push_entire_slice(samples).is_err() {
+        let room = self.producer.slots() >= samples.len();
+        let told = self.lost == 0 || !self.gaps.is_full();
+        if !room || !told {
             self.shared.lost.fetch_add(frames, Ordering::Relaxed);
+            self.lost += frames;
+            self.position += frames;
             return;
         }
-        let zero = capture_nanos.saturating_sub(self.shared.nanos_of(self.written));
+        if self.lost > 0 {
+            let gap = Gap {
+                at: self.position - self.lost,
+                frames: self.lost,
+            };
+            // There is room: it was looked at above, and only this side adds.
+            if self.gaps.push(gap).is_ok() {
+                self.lost = 0;
+            }
+        }
+        if self.producer.push_entire_slice(samples).is_err() {
+            return;
+        }
+        let zero = capture_nanos.saturating_sub(self.shared.nanos_of(self.position));
         self.shared.frame_zero_nanos.store(zero, Ordering::Relaxed);
-        self.written += frames;
-        self.shared.written.store(self.written, Ordering::Relaxed);
+        self.position += frames;
+        self.shared.written.store(self.position, Ordering::Relaxed);
     }
 }
 
@@ -201,6 +239,7 @@ impl Drop for CaptureWriter {
 /// was. One reader per capture.
 pub struct CaptureReader {
     consumer: rtrb::Consumer<f32>,
+    gaps: rtrb::Consumer<Gap>,
     shared: Arc<Shared>,
     /// Frames read so far: the number of the next frame [`Self::read`] gives.
     read: u64,
@@ -216,18 +255,41 @@ impl CaptureReader {
     }
 
     /// Appends every whole frame the ring holds to `into`, interleaved, and gives the number
-    /// of the first of them. Frames are numbered from the first one ever written.
+    /// of the first of them. Frames are numbered from the first one ever captured. Frames the
+    /// ring had no room for come as silence where they were, so every frame keeps its number.
     pub fn read(&mut self, into: &mut Vec<f32>) -> u64 {
         let first = self.read;
+        let channels = self.shared.channels;
         let available = self.consumer.slots();
-        let whole = available - available % self.shared.channels;
-        if let Ok(chunk) = self.consumer.read_chunk(whole) {
-            let (head, tail) = chunk.as_slices();
-            into.extend_from_slice(head);
-            into.extend_from_slice(tail);
-            chunk.commit_all();
-            self.read += (whole / self.shared.channels) as u64;
+        let whole = available - available % channels;
+        let Ok(chunk) = self.consumer.read_chunk(whole) else {
+            return first;
+        };
+        let (head, tail) = chunk.as_slices();
+        let mut samples = head.iter().chain(tail).copied();
+        let mut left = (whole / channels) as u64;
+        loop {
+            // A gap is told before the frames after it go in, so it is here when they are.
+            while let Ok(gap) = self.gaps.peek().copied()
+                && gap.at <= self.read
+            {
+                let silence = gap.frames as usize * channels;
+                into.extend(std::iter::repeat_n(0.0, silence));
+                self.read += gap.frames;
+                if self.gaps.pop().is_err() {
+                    break;
+                }
+            }
+            if left == 0 {
+                break;
+            }
+            let next_gap = self.gaps.peek().map_or(u64::MAX, |gap| gap.at);
+            let frames = left.min(next_gap.saturating_sub(self.read).max(1));
+            into.extend(samples.by_ref().take(frames as usize * channels));
+            self.read += frames;
+            left -= frames;
         }
+        chunk.commit_all();
         first
     }
 
@@ -242,8 +304,8 @@ impl CaptureReader {
         Some(zero.saturating_add(self.shared.nanos_of(frame)))
     }
 
-    /// Frames the ring had no room for, because this reader fell behind. The frames after such
-    /// a gap are numbered as if it were not there, so a recording that spans one is damaged.
+    /// Frames the ring had no room for, because this reader fell behind. They are read as
+    /// silence where they were, so a recording that spans them stays in time, with a hole.
     pub fn lost_frames(&self) -> u64 {
         self.shared.lost.load(Ordering::Relaxed)
     }
@@ -313,16 +375,26 @@ mod tests {
     }
 
     #[test]
-    fn a_reader_that_falls_behind_loses_whole_buffers_and_is_told() {
+    fn a_reader_that_falls_behind_reads_what_was_lost_as_silence_in_its_place() {
+        // 100 frames a second, so the ring holds 1000 frames and a buffer is 400: 4 s.
         let (mut writer, mut reader) = capture(100, 1);
-        let buffer = [0.1_f32; 400];
-        for _ in 0..3 {
-            writer.write(&buffer, 0, 0);
+        let at = |buffer: u64| buffer * 4_000_000_000;
+        for buffer in 0..3 {
+            writer.write(&[0.1 + buffer as f32 / 10.; 400], at(buffer), 0);
         }
-        // The ring holds 10 s of 100 frames: two buffers fit, the third does not.
+        // Two buffers fit, the third does not.
         assert_eq!(reader.lost_frames(), 400);
         let mut samples = Vec::new();
-        reader.read(&mut samples);
+        assert_eq!(reader.read(&mut samples), 0);
         assert_eq!(samples.len(), 800);
+        // The fourth goes in after 400 frames that are not there.
+        writer.write(&[0.4; 400], at(3), 0);
+        samples.clear();
+        assert_eq!(reader.read(&mut samples), 800);
+        assert_eq!(samples.len(), 800);
+        assert!(samples[..400].iter().all(|sample| *sample == 0.0));
+        assert!(samples[400..].iter().all(|sample| *sample == 0.4));
+        // Its frames keep the moments they were captured at.
+        assert_eq!(reader.nanos_of(1_200), Some(at(3)));
     }
 }

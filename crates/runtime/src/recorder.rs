@@ -68,7 +68,8 @@ pub enum RecorderReport {
         track: InstanceId,
         error: MediaError,
     },
-    /// The recorder fell behind the input and frames were lost: the takes have a hole.
+    /// The recorder fell behind the input and frames were lost: the takes have silence
+    /// there, and every frame after it is still where it was heard.
     Behind { frames: u64 },
 }
 

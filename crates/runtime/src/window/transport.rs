@@ -713,12 +713,10 @@ impl TransportPill {
                 }
                 RecorderReport::Behind { frames } => {
                     let notice = format!(
-                        "Recording fell behind the input and lost {frames} frames. The take ends here."
+                        "Recording fell behind the input and lost {frames} frames. The take has silence there and stays in time."
                     );
                     self.session
                         .update(cx, |session, cx| session.report(notice, cx));
-                    let tick = self.playhead.read(cx).tick;
-                    self.finish_recording(tick, cx);
                 }
                 RecorderReport::Finished { first_nanos, takes } => {
                     if let Some(audio) = self.take.as_mut().and_then(|take| take.audio.as_mut())

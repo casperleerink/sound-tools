@@ -87,6 +87,11 @@ struct Studio {
     project_ahead: Option<i128>,
     last: EngineStatus,
     reports: Vec<RecorderReport>,
+    /// The recorder does not run while the engine is in these frames, as if the thread that
+    /// runs it were held up.
+    stalled: std::ops::Range<u64>,
+    /// Frames the recorder said were lost.
+    lost: u64,
 }
 
 impl Studio {
@@ -106,6 +111,8 @@ impl Studio {
             project_ahead: None,
             last: EngineStatus::default(),
             reports: Vec::new(),
+            stalled: 0..0,
+            lost: 0,
         }
     }
 
@@ -124,6 +131,9 @@ impl Studio {
             self.learn_when_ticks_sound(status);
             // The callback of the next block begins about now.
             self.deliver_input_until(FRAME_ZERO_NANOS + nanos(status.frames, ENGINE_RATE));
+            if self.stalled.contains(&status.frames) {
+                continue;
+            }
             let reports = self.recorder.run(Vec::new());
             self.take_reports(reports, placement);
         }
@@ -133,6 +143,9 @@ impl Studio {
         for report in reports {
             if let RecorderReport::Started { first_nanos, .. } = &report {
                 placement.first_nanos = Some(*first_nanos);
+            }
+            if let RecorderReport::Behind { frames } = &report {
+                self.lost += frames;
             }
             self.reports.push(report);
         }
@@ -248,10 +261,18 @@ impl Studio {
             match report {
                 RecorderReport::Finished { takes, .. } => finished = Some(takes),
                 RecorderReport::Started { .. } => {}
+                RecorderReport::Behind { frames } => assert!(
+                    !self.stalled.is_empty(),
+                    "{frames} frames lost with the recorder running"
+                ),
                 other => panic!("{other:?}"),
             }
         }
         finished
+    }
+
+    fn recorder_lost(&self) -> u64 {
+        self.lost
     }
 
     fn clip(&self, track: &str) -> Option<AudioClip> {
@@ -374,4 +395,20 @@ fn a_take_from_an_input_at_another_rate_lands_within_a_frame() {
         loudest.abs_diff(expected) <= 1,
         "{loudest} against {expected}"
     );
+}
+
+/// The recorder is held up for 12 s, longer than the ring holds, so the input loses frames.
+/// The take has silence there, and a clap after it still lands on its beat, to the frame.
+#[test]
+fn a_take_stays_in_time_after_the_recorder_fell_behind() {
+    let beat = Ticks(6 * 3840 + 1920);
+    let mut studio = Studio::new(ENGINE_RATE, vec![(beat, 0)]);
+    studio.stalled = 48_000..48_000 * 13;
+    let (placement, end) = studio.record(8);
+    assert!(studio.recorder_lost() > 48_000, "the ring overflowed");
+    studio.finish(placement, end);
+    let render = studio.harness.play_from_the_start(8 * BAR);
+    let [left, _] = loud_frames(&render);
+    let expected = studio.harness.project.clock().frame_of(beat).0 as usize;
+    assert_eq!(left, [expected]);
 }
