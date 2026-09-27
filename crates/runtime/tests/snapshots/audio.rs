@@ -162,7 +162,7 @@ fn audio_piece(project: &mut Project) -> Result<()> {
 }
 
 /// Lets the background threads make every waveform the window asked for, and draws again.
-fn wait_for_waveforms(cx: &mut HeadlessAppContext, opened: &Opened) -> Result<()> {
+pub fn wait_for_waveforms(cx: &mut HeadlessAppContext, opened: &Opened) -> Result<()> {
     for _ in 0..200 {
         cx.run_until_parked();
         let asking = cx.update(|cx| {
