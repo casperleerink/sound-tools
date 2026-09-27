@@ -27,12 +27,14 @@ state/arrangement/<track>/<clip>.json      an audio clip of that track
     "order": 3,
     "gain_db": 0.0,
     "pan": 0.0,
-    "mute": false
+    "mute": false,
+    "input": [1]
   }
 }
 ```
 
 - `kind`: `"audio"` makes an audio track. It is chosen when the track is made; an instrument track leaves the field out. Do not change it on a track that has clips.
+- `input`: which channels of the composer's audio input the track records when they record in the window: one channel, `[1]`, or two next to each other for a stereo take, `[1, 2]`. Channels count from 1. `[1]` when left out.
 - No `instrument.json`: an audio track plays its clips through its effects, if any, into the master.
 
 ## An audio clip: `arrangement.audio_clip`
@@ -72,6 +74,7 @@ This clip starts on bar 5 and plays four seconds of `assets/audio/voice-take-1.w
 - **Trim**: change `file_start_seconds` or `file_end_seconds`. To keep the rest of the clip where it was when you trim its start, move `start` later by the same time in ticks.
 - **Louder, quieter, fades**: `gain_db`, `fade_in_ms`, `fade_out_ms`. They apply while the project plays.
 - **Delete a clip**: remove its file. The audio file stays in `assets/audio/`.
+- **A recorded take** is a file such as `assets/audio/voice-take-1.wav` and a clip of it where the composer heard it. Its `file_start_seconds` skips what the file holds from before the recording began, so leave it as it is unless you mean to trim.
 - **Find how long a file is**: `runtime . --inspect` prints each audio clip with its file and how long that file is, see `agent-docs/inspect.md`.
 
 What `problems.txt` says, and what to do:

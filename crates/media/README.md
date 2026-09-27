@@ -30,6 +30,10 @@ Measured in `tests/media.rs`, from 44.1 to 48, 48 to 44.1 and 96 to 48 kHz, sine
 
 `Overview::of(&audio)` is what a waveform draws: the loudest sample of every 64 frames, left and right together, and coarser levels of 8 times as many frames each. `overview.peak(from, to)` gives the loudest sample of any stretch in 8 to 64 lookups, and `columns(from_seconds, to_seconds, count)` the peaks of a waveform of `count` columns. It reads the whole file once, 35 ms for 10 minutes of stereo 24-bit in the dev profile, so it is made away from the thread that draws; `sound_ui::Waveforms` does that and keeps them. It is never written into the project folder.
 
+## Takes
+
+`TakeFile::create(assets, name, sample_rate, channels)` creates `assets/audio/<name>-1.wav`, or the next free number (`Assets::create`, which never opens a file that is there), for a take that records: 32-bit float, mono or stereo. `write(samples)` appends interleaved frames; every second of audio it writes the header for the length so far, so a take whose program ends without finishing plays up to its last second. `overview()` is a `TakeOverview`, the `Overview` of what the file holds so far, which a window draws while the take grows and which is the overview of the finished file. `finish()` writes the header and gives the file in memory as `Imported`, as an import does.
+
 ## Checks
 
 ```sh
