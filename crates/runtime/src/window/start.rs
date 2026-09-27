@@ -109,6 +109,8 @@ fn explain(message: String, cx: &mut App) {
             title: Some("Sound Tools".into()),
             ..Default::default()
         }),
+        // Linux matches the window to sound-tools.desktop by it, for the icon.
+        app_id: Some(crate::app::TOOL_NAME.into()),
         ..Default::default()
     };
     match cx.open_window(options, |_, cx| cx.new(|_| StartView { message })) {

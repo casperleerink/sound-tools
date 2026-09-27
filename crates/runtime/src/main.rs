@@ -332,6 +332,10 @@ fn main() -> Result<()> {
             Ok(())
         }
         ["--plugins"] => list_plugins(),
+        ["--version"] => {
+            println!("sound-tools {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         [folder] => runtime::window::run(Path::new(folder)),
         [folder, "--headless"] => run(Path::new(folder)),
         [folder, "--inspect"] => inspect(Path::new(folder)),
@@ -343,7 +347,7 @@ fn main() -> Result<()> {
             render(Path::new(folder), Path::new(wav), seconds)
         }
         _ => bail!(
-            "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> --seconds <n>]]\n       sound-tools --plugins"
+            "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> --seconds <n>]]\n       sound-tools --plugins | --version"
         ),
     }
 }

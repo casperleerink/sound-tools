@@ -1,0 +1,126 @@
+name: Release
+
+# A tag v<version> builds the app for macOS and Linux and makes a GitHub release of it.
+# Started by hand, it builds the same files and keeps them as artifacts of the run, with no
+# release: the dry run. `/release` makes the tag, see .agents/skills/release/SKILL.md.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      # Cargo.toml holds the version. A tag that says another one is a mistake.
+      - name: Check the tag against Cargo.toml
+        id: version
+        run: |
+          version="$(tooling/version.sh)"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::The tag $GITHUB_REF_NAME does not match version $version in Cargo.toml."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # Apple silicon only. There is no Intel build.
+  macos:
+    needs: version
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> /private/tmp/sound-tools-timing/target"
+      - run: tooling/bundle-macos.sh --zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/Sound-Tools-${{ needs.version.outputs.version }}-macos-arm64.zip
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    strategy:
+      matrix:
+        include:
+          # 24.04 on both: the glibc of the runner is the oldest the program runs with.
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      # `.cargo/config.toml` builds into /private/tmp, a folder of macOS.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config \
+            libasound2-dev libfontconfig-dev libfreetype-dev libwayland-dev libx11-xcb-dev \
+            libxkbcommon-x11-dev libvulkan1
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: tooling/bundle-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/sound-tools-${{ needs.version.outputs.version }}-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # The fixed install notes come first, then the notes GitHub writes from the pull requests.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          cat > notes.md <<'NOTES'
+          ## Install
+
+          **macOS** (Apple silicon, macOS 11 or later): unzip `Sound-Tools-*-macos-arm64.zip` and drag `Sound Tools.app` to Applications. The app is not signed by a known developer, so macOS blocks the first open. Run this once in a terminal:
+
+          ```sh
+          xattr -dr com.apple.quarantine "/Applications/Sound Tools.app"
+          ```
+
+          Or try to open it once, then click **Open Anyway** in System Settings, Privacy & Security.
+
+          **Linux** (x86_64 or aarch64): extract the tarball for your machine and run its `install.sh`. It puts the app in `~/.local`, with a menu entry and the `sound-tools` command.
+
+          ```sh
+          tar -xzf sound-tools-*-linux-*.tar.gz
+          cd sound-tools-*-linux-*/
+          ./install.sh
+          ```
+
+          It needs glibc 2.39 or later: Ubuntu 24.04, Debian 13, Fedora 40 or newer. It also needs ALSA, Vulkan (a graphics driver, or Mesa for a software one), xkbcommon, fontconfig and Wayland or X11, which a desktop mostly has. On Ubuntu or Debian: `sudo apt-get install libasound2t64 libvulkan1 mesa-vulkan-drivers libxkbcommon-x11-0 libwayland-client0 libx11-xcb1 libfontconfig1`.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Sound Tools $VERSION" --notes-file notes.md --generate-notes

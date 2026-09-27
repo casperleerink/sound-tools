@@ -1,6 +1,6 @@
-// Draws the app icon, tooling/macos/AppIcon.png, 1024 x 1024.
-// Run it after a change, from the repository root: swift tooling/macos/make-icon.swift
-// The bundle script turns the PNG into AppIcon.icns.
+// Draws the app icon, tooling/icon/sound-tools.png, 1024 x 1024, and a copy at 512 x 512.
+// Run it after a change, from the repository root: swift tooling/icon/make-icon.swift
+// The macOS bundle script turns the large PNG into AppIcon.icns. The Linux one ships the small one.
 //
 // The rounded square of a macOS icon in the window colours of DESIGN.md, with a waveform of
 // seven bars in the text colour. The middle bar is lavender, the colour of the agent.
@@ -70,10 +70,23 @@ for (index, height) in heights.enumerated() {
     x += barWidth + gap
 }
 
+// 1024 for macOS, and 512 for Linux, the largest size of the hicolor icon theme.
+func write(_ image: CGImage, _ path: String) {
+    let output = URL(fileURLWithPath: path)
+    let destination = CGImageDestinationCreateWithURL(
+        output as CFURL, "public.png" as CFString, 1, nil)!
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else { fatalError("could not write \(path)") }
+    print("wrote \(path)")
+}
+
 let image = context.makeImage()!
-let output = URL(fileURLWithPath: "tooling/macos/AppIcon.png")
-let destination = CGImageDestinationCreateWithURL(
-    output as CFURL, "public.png" as CFString, 1, nil)!
-CGImageDestinationAddImage(destination, image, nil)
-guard CGImageDestinationFinalize(destination) else { fatalError("could not write \(output.path)") }
-print("wrote \(output.path)")
+write(image, "tooling/icon/sound-tools.png")
+
+let half = size / 2
+let small = CGContext(
+    data: nil, width: half, height: half, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+small.interpolationQuality = .high
+small.draw(image, in: CGRect(x: 0, y: 0, width: half, height: half))
+write(small.makeImage()!, "tooling/icon/sound-tools-512.png")

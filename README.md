@@ -23,13 +23,14 @@ sudo apt-get install build-essential pkg-config libasound2-dev libfontconfig-dev
 
 `/private/tmp` is a macOS folder, so set another build folder first, for example `export CARGO_TARGET_DIR=target`. Then build and run as on macOS. The window needs Vulkan: a graphics driver, or `mesa-vulkan-drivers` for a software one.
 
-What is checked: the build and every test on x86_64 (CI) and arm64, and the window opening under Xvfb with software Vulkan. What should work, but nobody has tried on a real Linux desktop yet: playback through ALSA (PipeWire and PulseAudio take it too), MIDI input through ALSA, recording, and CLAP and VST 3 plugins for their sound. Plugins are looked for in `~/.clap` and `/usr/lib/clap`, and in `~/.vst3`, `/usr/lib/vst3` and `/usr/local/lib/vst3`. The plugin cache is in `~/.cache/sound-tools/`.
+What is checked: the build and every test on x86_64 (CI) and arm64, and the window opening under Xvfb with software Vulkan, also from a release tarball installed in a plain Ubuntu 24.04 with only the runtime libraries. What should work, but nobody has tried on a real Linux desktop yet: playback through ALSA (PipeWire and PulseAudio take it too), MIDI input through ALSA, recording, and CLAP and VST 3 plugins for their sound. Plugins are looked for in `~/.clap` and `/usr/lib/clap`, and in `~/.vst3`, `/usr/lib/vst3` and `/usr/local/lib/vst3`. The plugin cache is in `~/.cache/sound-tools/`.
+
+A release has a tarball for x86_64 and one for aarch64, see "Releases". `tooling/bundle-linux.sh` makes it: the program, a menu entry, the icon and `install.sh`, which puts them in `~/.local`. It needs glibc 2.39 or later (Ubuntu 24.04 or newer) and the runtime libraries the page of the release names, not the `-dev` packages above.
 
 With no folder, `runtime` opens the last project, which it keeps in `~/.config/sound-tools/`, or else a folder panel. The panel needs the XDG desktop portal, which GNOME and KDE have. **Install command line tool** links `sound-tools` into `~/.local/bin`.
 
 What does not work yet:
 
-- An app bundle or package. There is no Linux counterpart of `tooling/bundle-macos.sh` yet.
 - Plugin windows. The card of a plugin has `Open window` greyed out and says why. The plugin plays, and its state is saved.
 - The snapshot tests. They render with Metal, so on Linux they only say so. The rest of the tests run.
 - **Open terminal in project folder** starts `$TERMINAL`, or else `x-terminal-emulator`, so it needs one of the two.
@@ -55,6 +56,15 @@ The script makes a release build and puts `Sound Tools.app` in `dist/`. Double c
 The app is signed on this Mac only ("ad hoc"), not by a known developer. If macOS says it cannot check the app, right-click it in the Finder, pick **Open**, and confirm once. macOS asks for the microphone the first time you record audio; a new build of the app asks again.
 
 The app and `cargo run -p runtime` are the same program. Opening a folder on the command line also makes it the last project of the app. `tooling/bundle-macos.sh --zip` also writes a zip of the app, for a release.
+
+## Releases
+
+Each [release](https://github.com/casperleerink/sound-tools/releases) has the app for macOS (Apple silicon) and Linux (x86_64 and aarch64). The page of a release says how to install it:
+
+- macOS: unzip and drag `Sound Tools.app` to Applications. It is not signed by a known developer, so macOS blocks the first open. Run `xattr -dr com.apple.quarantine "/Applications/Sound Tools.app"` once, or click **Open Anyway** in System Settings, Privacy & Security.
+- Linux: extract the tarball and run `./install.sh`. Run it again to update.
+
+To make a release, run `/release` in Claude Code, with `patch` (the default), `minor`, `major` or a version. It bumps the version, merges that through a pull request, tags main with `v<version>` and watches `.github/workflows/release.yml` build the files and make the release. The version is `version` in `[workspace.package]` of `Cargo.toml`, the only place it is written. `gh workflow run release.yml --ref <branch>` is a dry run: it builds the files and makes no release. The steps are in `.agents/skills/release/SKILL.md`.
 
 ## Two-minute tour
 
@@ -143,6 +153,7 @@ cargo run -p runtime -- ~/Music/my-piece --inspect
 cargo run -p runtime -- ~/Music/my-piece --render /tmp/my-piece.wav --seconds 16
 cargo run -p runtime -- ~/Music/my-piece --headless
 cargo run -p runtime -- --plugins
+cargo run -p runtime -- --version
 ```
 
 With the command line tool installed, `sound-tools` takes the place of `cargo run -p runtime --` in all of these.
@@ -151,6 +162,7 @@ With the command line tool installed, `sound-tools` takes the place of `cargo ru
 - `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float.
 - `--headless` plays the project live without a window and reads commands from stdin: `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status`, `quit`. It prints every change that arrives from the folder. Only one app can have a project open live. `--inspect` and `--render` work next to it.
 - `--plugins` prints the CLAP and VST 3 plugins of this Mac with their ids and whether each says it is an instrument, an effect or both, which is what a track record needs when an agent writes one. In the app you pick one by name instead. Each is looked at in a child process, so one that crashes costs that one and is reported. It looks at every plugin again, whatever the app remembered, so it is also how a plugin that failed once is tried again.
+- `--version` prints `sound-tools` and the version, for example `sound-tools 0.1.0`.
 
 A release build is `cargo build --release -p runtime`. The binary is `/private/tmp/sound-tools-timing/target/release/runtime`.
 
