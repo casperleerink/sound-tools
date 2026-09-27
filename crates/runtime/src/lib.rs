@@ -10,6 +10,7 @@ use std::path::Path;
 use anyhow::Result;
 use arrangement::{ArrangementState, Colour};
 use compressor::CompressorState;
+use drum_pad::DrumPadState;
 use eq::EqState;
 use filter::FilterState;
 use instrument::SynthState;
@@ -105,6 +106,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
     arrangement::register(&mut registry)?;
     compressor::register(&mut registry)?;
+    drum_pad::register(&mut registry)?;
     eq::register(&mut registry)?;
     filter::register(&mut registry)?;
     fit_tempo::register(&mut registry)?;
@@ -130,6 +132,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut devices = Devices::new();
     arrangement::view::register(&mut views);
     instrument::view::register(&mut views, &mut devices);
+    drum_pad::view::register(&mut views, &mut devices);
     filter::view::register(&mut views, &mut devices);
     compressor::view::register(&mut views, &mut devices);
     eq::view::register(&mut views, &mut devices);
@@ -148,6 +151,18 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             .needs(
                 instrument::EXTENSION,
                 "This project does not load the synth.",
+            ),
+            DeviceOffer::new(
+                DrumPadState::TOOL,
+                drum_pad::view::NAME,
+                |_, slot, changes| {
+                    changes.create(slot.clone(), DrumPadState::default());
+                    Ok(())
+                },
+            )
+            .needs(
+                drum_pad::EXTENSION,
+                "This project does not load the Drum pad.",
             ),
         ]
     });

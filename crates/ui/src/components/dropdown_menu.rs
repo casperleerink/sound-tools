@@ -392,6 +392,9 @@ pub struct DropdownMenu {
     align: Align,
     width: f32,
     trigger: Trigger,
+    /// A trigger this wide, its label at the left and its chevron at the right. `None`: as
+    /// wide as what it says.
+    trigger_width: Option<f32>,
     /// What a test looks the trigger up by, see `VisualTestContext::debug_bounds`.
     debug_name: Option<SharedString>,
 }
@@ -414,6 +417,7 @@ impl DropdownMenu {
             align: Align::default(),
             width: 320.,
             trigger: Trigger::Outline,
+            trigger_width: None,
             debug_name: None,
         }
     }
@@ -441,6 +445,12 @@ impl DropdownMenu {
 
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
+        self
+    }
+
+    /// Makes the trigger this wide, such as a select that spans two cells of a card.
+    pub fn trigger_width(mut self, width: f32) -> Self {
+        self.trigger_width = Some(width);
         self
     }
 
@@ -573,6 +583,7 @@ impl DropdownMenu {
 impl Render for DropdownMenu {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (side, align, width) = (self.side, self.align, self.width);
+        let trigger_width = self.trigger_width;
         let trigger_element = match self.trigger {
             Trigger::Outline => trigger("dropdown-trigger", cx),
             Trigger::Ghost => ghost_trigger("dropdown-trigger", cx),
@@ -604,12 +615,19 @@ impl Render for DropdownMenu {
                     .when_some(self.debug_name.clone(), |element, name| {
                         element.debug_selector(move || name.to_string())
                     })
+                    .when_some(trigger_width, |trigger, width| trigger.w(px(width)))
                     .track_focus(&self.trigger_focus)
                     .border_1()
                     .focus_visible(move |s| s.border_color(ring))
                     .map(|trigger| match icon {
                         Some(icon) => trigger.child(Icon::new(icon).size(14.).color(text)),
-                        None => trigger.child(div().min_w_0().truncate().child(label)),
+                        None => trigger.child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .when(trigger_width.is_some(), |label| label.flex_1())
+                                .child(label),
+                        ),
                     })
                     .child(
                         div()

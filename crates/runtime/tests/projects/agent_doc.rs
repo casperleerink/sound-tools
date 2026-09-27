@@ -61,6 +61,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "agent-docs/arrangement.md",
             "agent-docs/audio.md",
             "agent-docs/compressor.md",
+            "agent-docs/drums.md",
             "agent-docs/eq.md",
             "agent-docs/filter.md",
             "agent-docs/fit-tempo.md",
@@ -98,7 +99,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             );
         }
     }
-    let inspect = &files[12].1;
+    let inspect = &files[13].1;
     assert!(inspect.contains("```sh\nruntime . --inspect\n```"));
     assert_eq!(
         std::fs::read_to_string(harness.path("CLAUDE.md")).unwrap(),
@@ -294,11 +295,12 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 /// The map is what an agent reads on every task. One doc more adds one line to it, not a
 /// section: the whole agent doc was 2030 words before the split, the map was about 960. Each
 /// built-in effect adds a line of about 20 words: with the Filter, the EQ, the Reverb and the
-/// Compressor it is about 1130, and with the doc of audio about 1150.
+/// Compressor it is about 1130, with the doc of audio about 1150, and with the Drum pad about
+/// 1180.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1170, "the map has {words} words");
+    assert!(words < 1200, "the map has {words} words");
 }

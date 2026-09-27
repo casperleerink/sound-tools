@@ -50,7 +50,7 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{Knob, KnobRange, pan_readout};
 use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::components::volume::Volume;
 use sound_ui::{
@@ -90,18 +90,6 @@ const SOLO_LEFT: f32 = PAN_LEFT + toggle::LETTER_WIDTH + 4.;
 /// What an undo step of the volume is called.
 pub(super) const VOLUME_LABEL: &str = "Change volume";
 const PAN_LABEL: &str = "Change pan";
-
-/// The pan as people read it: `C` in the middle, else how far to a side in percent.
-fn pan_readout(pan: f32) -> String {
-    let percent = short(pan.abs() * 100.);
-    if pan < 0. {
-        format!("{percent}L")
-    } else if pan > 0. {
-        format!("{percent}R")
-    } else {
-        "C".to_string()
-    }
-}
 
 /// What the panel asks of the view that holds it.
 pub enum TrackPanelEvent {

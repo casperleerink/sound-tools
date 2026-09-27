@@ -227,6 +227,17 @@ impl Pad {
         }
     }
 
+    /// Makes the pad play `asset`, a file of `seconds`, as a drop of the file on it does: at the
+    /// pitch of the file, and with a decay half again as long as the file, so the fade over the
+    /// decay takes no more than 2 dB off the very end of it. A file longer than the longest
+    /// decay is faded out over that.
+    pub fn load_sample(&mut self, asset: AudioAsset, seconds: f64) {
+        let decay = &PARAMETERS[0][DECAY];
+        self.source = Source::Sample(asset);
+        self.pitch_semitones = 0.0;
+        self.decay_ms = three_digits(seconds * 1500.0).clamp(decay.min, decay.max);
+    }
+
     /// What the card writes on pad `pad`: the name of the kit while it plays the sound of the
     /// kit, the name of another sound, or the file name of a sample without its extension.
     pub fn name(&self, pad: usize) -> String {
@@ -242,6 +253,15 @@ impl Pad {
             }
         }
     }
+}
+
+/// A number with three significant digits, as a knob gives it, so the file stays short.
+fn three_digits(value: f64) -> f32 {
+    if value <= 0.0 || !value.is_finite() {
+        return 0.0;
+    }
+    let scale = 10_f64.powi(2 - value.log10().floor() as i32);
+    ((value * scale).round() / scale) as f32
 }
 
 /// One number of a pad, with its range and the default of its pad.
@@ -630,6 +650,19 @@ mod tests {
             "{json}"
         );
         assert_eq!(parse(&json), Ok(state));
+    }
+
+    #[test]
+    fn a_loaded_sample_plays_at_its_own_pitch_for_half_again_its_length() {
+        let mut pad = Pad::default_at(12);
+        let shaker = AudioAsset::new("shaker.wav").unwrap();
+        pad.load_sample(shaker.clone(), 0.4123);
+        assert_eq!(pad.source, Source::Sample(shaker.clone()));
+        assert_eq!((pad.pitch_semitones, pad.decay_ms), (0.0, 618.0));
+        pad.load_sample(shaker.clone(), 60.0);
+        assert_eq!(pad.decay_ms, 10_000.0);
+        pad.load_sample(shaker, 0.001);
+        assert_eq!(pad.decay_ms, 10.0);
     }
 
     #[test]
