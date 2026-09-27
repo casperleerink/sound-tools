@@ -875,6 +875,11 @@ fn scale(project: &mut Project) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    // The offscreen renderer of GPUI is Metal's. Other platforms have none.
+    if cfg!(not(target_os = "macos")) {
+        println!("The snapshots render with Metal, so they run on macOS only.");
+        return Ok(());
+    }
     let out_dir = std::env::var("WINDOW_SNAPSHOT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("../window-snapshots"));
