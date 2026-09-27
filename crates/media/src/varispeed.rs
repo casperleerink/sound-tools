@@ -101,7 +101,8 @@ impl Varispeed {
     /// The kernel at `distance` in its own units, between two places of the fine table.
     fn kernel(&self, distance: f32) -> f32 {
         let place = (distance + HALF as f32) * PHASES as f32;
-        if !(place > 0.0) {
+        // Before the kernel, and a place that is not a number, weigh nothing.
+        if place.is_nan() || place <= 0.0 {
             return 0.0;
         }
         let index = place as usize;

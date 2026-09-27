@@ -60,6 +60,7 @@ A track connects both itself. To play a synth straight to the device, add connec
 ## How it plays
 
 - 16 voices. Each is one oscillator, one low-pass filter of 12 dB per octave and one envelope. The 17th note takes over a voice: the quietest one that was already released, by its level at that moment, or the oldest held one. The voice keeps its phase and its loudness, so the takeover does not click.
+- The envelope is `sound_core::Envelope`, which the Sampler shares: in `f64` since step 3 of the fourth milestone, which moved a render by 3.1e-5 at most.
 - Note on and note off apply on their exact frame. Velocity sets the level with a square curve: velocity 64 is a quarter of velocity 127.
 - The loudest single note is one on the cutoff with `resonance` 1. At `gain` 0.25 and velocity 127 it peaks at 0.38 with the saw and 0.75 with the square.
 - A held note with `sustain` 0 ends by itself after its decay. Its voice is then free, and the later note off does nothing.
