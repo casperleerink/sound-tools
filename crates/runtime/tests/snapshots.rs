@@ -227,6 +227,9 @@ impl Opened {
     /// timer do in the real window. Returns how long the poll and the frame it caused took:
     /// with test support GPUI draws a window as soon as an update leaves it dirty.
     fn advance(&mut self, frames: usize, cx: &mut HeadlessAppContext) -> Duration {
+        // What the poll of the window does for the sounds of the Drum pads.
+        drum_pad::wait_for_sounds();
+        cx.update(|cx| runtime::window::take_drum_sounds(&self.session, cx));
         let mut buffer = vec![0.0_f32; frames * OFFLINE.channels];
         self.engine.process_block(&mut buffer);
         let started = Instant::now();

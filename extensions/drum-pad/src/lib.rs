@@ -31,7 +31,9 @@ use sound_media::AudioAsset;
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
 
 pub use processor::{DrumPad, DrumUpdate, FADE_SECONDS, RAMP_SECONDS, VOICES, pad_gains};
-pub use sounds::{MAX_SAMPLE_SECONDS, Rendered, render};
+pub use sounds::{
+    MAX_SAMPLE_SECONDS, Rendered, SAMPLE_END_SECONDS, sounds_pending, take_ready, wait_for_sounds,
+};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "drum-pad";
@@ -491,26 +493,26 @@ pub fn peaks_name(pad: usize) -> String {
 /// The name of the processor, for [`sound_core::Project::send`]: a click on a pad plays it.
 pub const PROCESSOR: &str = "drums";
 
-/// Runs for every valid state, from every source. The sound of each pad is made or loaded
-/// here, on the control thread, and kept while anything plays it, so an edit of a volume or a
-/// pan makes nothing again. The processor is kept between runs, so what sounds goes on.
+/// Runs for every valid state, from every source. It makes no sound and reads no file: the
+/// sound each pad needs is taken from those made before, or asked of the thread that makes them,
+/// and the pad keeps the sound it had until the new one is ready, see [`take_ready`]. The
+/// processor is kept between runs, so what sounds goes on.
 fn apply(state: &DrumPadState, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let rate = context.prepare_config().sample_rate;
     let peaks = std::array::from_fn(|pad| context.peaks(&peaks_name(pad)));
+    let instance = context.id().clone();
     let mut problems = Vec::new();
     let pads = std::array::from_fn(|index| {
         let pad = &state.pads[index];
-        match render(pad, context.assets(), rate) {
-            Ok(sound) => processor::PadPlay::new(pad, Some(sound), rate),
-            Err(error) => {
-                let name = pad.name(index);
-                problems.push(format!(
-                    "pad \"{}\" ({name}) is silent: {error}. The rest of the pads play",
-                    note_of(index)
-                ));
-                processor::PadPlay::new(pad, None, rate)
-            }
+        let asked = sounds::sound_for(&instance, index, pad, context.assets(), rate);
+        if let Some(error) = asked.problem {
+            let name = pad.name(index);
+            problems.push(format!(
+                "pad \"{}\" ({name}) is silent: {error}. The rest of the pads play",
+                note_of(index)
+            ));
         }
+        processor::PadPlay::new(pad, asked.sound, rate)
     });
     for problem in problems {
         context.problem(problem);

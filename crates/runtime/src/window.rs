@@ -385,6 +385,24 @@ pub fn run(folder: &Path) -> Result<()> {
                 }
             })
             .detach();
+            // The sounds of the Drum pads, made on a thread of their own: each Drum pad whose
+            // sounds are ready runs its behaviour again, which puts them in its kit. It is not an
+            // edit. One look per session poll.
+            cx.spawn({
+                let session = session.downgrade();
+                async move |cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(sound_ui::POLL_INTERVAL)
+                            .await;
+                        let Some(session) = session.upgrade() else {
+                            break;
+                        };
+                        cx.update(|cx| take_drum_sounds(&session, cx));
+                    }
+                }
+            })
+            .detach();
             // The plugins of the project: the main-thread callbacks they ask for, and the
             // state they say changed, written into the project. One poll per session poll.
             cx.spawn({
@@ -547,4 +565,17 @@ pub fn run(folder: &Path) -> Result<()> {
             }
         });
     Ok(())
+}
+
+/// Runs the behaviour of every Drum pad whose sounds were made since the last look, which puts
+/// them in its kit. The window does it once per session poll; a test calls it when it settles.
+pub fn take_drum_sounds(session: &Entity<Session>, cx: &mut App) {
+    let ready = drum_pad::take_ready(session.read(cx).project().assets());
+    if ready.is_empty() {
+        return;
+    }
+    let instances: Vec<InstanceId> = ready.iter().map(|(instance, _)| instance.clone()).collect();
+    session.update(cx, |session, cx| session.rebind(&instances, cx));
+    // The sounds are let go of here, now that the kits hold them.
+    drop(ready);
 }

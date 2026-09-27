@@ -348,3 +348,75 @@ fn choose_file_in_the_sound_list_opens_the_file_panel_and_loads_the_file(cx: &mu
     opened.cx.run_until_parked();
     one_undo_step(&mut opened, "Load sample", &before);
 }
+
+/// A drag of Pitch on the longest sounds there are, the ride at 10 s and a sample of a minute
+/// played two octaves up, makes no sound on the thread that draws: each move is the edit and
+/// its frame, and the sound comes from the thread that makes them.
+#[gpui::test]
+fn a_pitch_drag_on_the_longest_sounds_makes_nothing_on_the_thread_that_draws(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open_drums(cx);
+    let outside = tempfile::tempdir().unwrap();
+    let minute = outside.path().join("minute.wav");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 48_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&minute, spec).unwrap();
+    for frame in 0..60 * 48_000 {
+        let sample = 0.2 * (std::f64::consts::TAU * 220.0 * frame as f64 / 48_000.0).sin();
+        writer.write_sample((sample * 32_767.0) as i16).unwrap();
+    }
+    writer.finalize().unwrap();
+    let asset = opened.edit(|project| {
+        sound_media::import(project.assets(), &minute).map_err(|error| {
+            sound_core::ProjectError::InvalidState {
+                id: id(SLOT),
+                message: error.to_string(),
+            }
+        })
+    });
+    let asset = asset.unwrap().asset;
+    opened.edit(|project| {
+        let drums = project.resolve::<DrumPadState>(&id(SLOT)).unwrap();
+        let mut state = project.state(&drums).unwrap().clone();
+        state.pads[15].decay_ms = 10_000.0;
+        state.pads[12].source = Source::Sample(asset);
+        state.pads[12].pitch_semitones = 22.0;
+        state.pads[12].decay_ms = 10_000.0;
+        let mut changes = sound_core::Changes::new();
+        changes.set(&drums, state);
+        project.commit("Long sounds", changes)
+    });
+    opened.settle();
+    for (note, name) in [
+        (51, "ride at 10 s"),
+        (48, "sample of a minute at +22 st and up"),
+    ] {
+        let target = pad(&mut opened, note);
+        opened.click(target);
+        opened.settle();
+        let knob = opened.control("knob-pitch_semitones");
+        opened.press(knob);
+        let mut moves = Vec::new();
+        for step in 1..=12 {
+            let started = std::time::Instant::now();
+            opened.drag_to(point(knob.x, knob.y - px(step as f32)));
+            moves.push(started.elapsed().as_secs_f64() * 1000.0);
+            if step == 1 {
+                assert!(drum_pad::sounds_pending(), "{name}: made inside the move");
+            }
+        }
+        opened.release(point(knob.x, knob.y - px(12.)));
+        moves.sort_by(f64::total_cmp);
+        println!(
+            "pitch drag of the {name}: one move with its frame: median {:.2} ms, longest {:.2} ms",
+            moves[moves.len() / 2],
+            moves[moves.len() - 1]
+        );
+        opened.settle();
+    }
+}

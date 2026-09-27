@@ -18,7 +18,7 @@ A drum part is a track whose `instrument.json` is a Drum pad, and note clips on 
 }
 ```
 
-`"pads": {}` is the kit as it is. That is all a drum part needs: write its notes.
+`"pads": {}` is the kit as it is. That is all a drum part needs: write its notes. The kit belongs to the version of the app: a later version may change how its pads sound, and a pad you wrote out keeps what you wrote.
 
 ## Notes: the pads
 
@@ -106,6 +106,6 @@ Write only the pads you change, by note. A pad you leave out is the pad of the k
 | `pan` | -1 is left, 1 is right. | -1 to 1 |
 | `choke` | In the choke group: a hit of it cuts every other pad of the group. | `true` or `false` |
 
-Set a sample pad's `decay_ms` a little longer than its file, else its end is faded out; the window sets it to one and a half times the file. A pad whose file is not there is silent and listed in `problems.txt`, and the other pads play; it plays once the file is in `assets/audio/`.
+Set a sample pad's `decay_ms` a little longer than its file, else its end is faded out; the window sets it to one and a half times the file. The last 2 ms of a sample always fade to silence, and a sample plays at most 10 s. A pad whose file is not there is silent and listed in `problems.txt`, and the other pads play; it plays once the file is in `assets/audio/`.
 
-Starting points: a deeper, longer kick is `pitch_semitones` -2 to -4 with `decay_ms` 800 to 1200. A tight snare is `decay_ms` 150 to 200. Toms are one sound, tuned apart: keep them in steps of 2 to 3 semitones. Hats too loud in a busy part: bring the hat pads to -4 to -6 dB rather than lowering their velocities. An edit applies while the part plays. Volume and pan glide over 20 ms; sound, pitch and decay apply from the next hit.
+Starting points: a deeper, longer kick is `pitch_semitones` -2 to -4 with `decay_ms` 800 to 1200. A tight snare is `decay_ms` 150 to 200. Toms are one sound, tuned apart: keep them in steps of 2 to 3 semitones. Hats too loud in a busy part: bring the hat pads to -4 to -6 dB rather than lowering their velocities. An edit applies while the part plays. Volume and pan glide over 20 ms; sound, pitch and decay apply from the next hit once the new sound is made, a moment after the edit.

@@ -7,7 +7,9 @@
 //!   either still the sound of its pad, which the processor holds too, so letting go of it only
 //!   counts down; or it was replaced by an edit, and it goes into a graveyard that the next kit
 //!   takes back to the control thread. At most [`VOICES`] sounds can wait there: only a voice
-//!   that sounded when a kit arrived can hold a replaced sound, and each kit empties it.
+//!   that sounded when a kit arrived can hold a replaced sound, and each kit empties it. What
+//!   waits there is a render, at most 10 s of sound, never the file of a sample, so a sound
+//!   that waits for the next edit costs little.
 //! - One voice per pad sounds at a time: a new hit of a pad fades its last one out over
 //!   [`FADE_SECONDS`], and so does a hit of a pad of the choke group for every other pad of it.
 //!   Fading voices are the rest of the voices. Nothing stops with a step, so nothing clicks.

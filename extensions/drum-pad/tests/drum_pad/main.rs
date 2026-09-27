@@ -10,4 +10,5 @@ mod listen;
 mod performance;
 mod playing;
 mod samples;
+mod sounds;
 mod support;

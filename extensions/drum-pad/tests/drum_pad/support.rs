@@ -193,8 +193,29 @@ impl Harness {
         self.project.commit("Add track", changes).unwrap();
     }
 
-    /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
+    /// Waits for the sounds that were asked for and puts them in their kits, as an offline
+    /// render of the runtime does before each block.
+    pub fn take_sounds(&mut self) {
+        drum_pad::wait_for_sounds();
+        self.take_ready_sounds();
+    }
+
+    /// Puts the sounds that are made in their kits, without waiting.
+    pub fn take_ready_sounds(&mut self) {
+        for (instance, _sounds) in drum_pad::take_ready(self.project.assets()) {
+            self.project.rebind(&instance).unwrap();
+        }
+    }
+
+    /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render,
+    /// after every sound that was asked for is in its kit.
     pub fn render(&mut self, frames: usize) -> Stereo {
+        self.take_sounds();
+        self.render_as_it_is(frames)
+    }
+
+    /// The same, with the kits as they are now.
+    pub fn render_as_it_is(&mut self, frames: usize) -> Stereo {
         let mut output = vec![0.0; frames * 2];
         for buffer in output.chunks_mut(960) {
             self.engine.process_block(buffer);

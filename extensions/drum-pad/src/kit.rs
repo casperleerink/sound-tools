@@ -1,7 +1,7 @@
 //! The default kit: every synthesized sound of the Drum pad, made from oscillators, noise,
 //! filters and envelopes. No sample file ships with the product.
 //!
-//! A sound is rendered whole on the control thread, at the pitch and decay of its pad and the
+//! A sound is rendered whole on a thread of its own, at the pitch and decay of its pad and the
 //! rate of the engine, and played from memory like a sample. So the audio thread does the same
 //! for a synthesized pad as for a sample pad, and a render is the same bytes every time: the
 //! noise is a fixed sequence that starts from the same seed for every hit.
