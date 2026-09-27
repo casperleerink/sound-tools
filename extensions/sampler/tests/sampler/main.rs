@@ -5,5 +5,6 @@
 mod clicks;
 mod envelope;
 mod loading;
+mod performance;
 mod pitch;
 mod support;

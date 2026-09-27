@@ -179,13 +179,19 @@ mod tests {
                 state.level - f64::from(sustain) <= near
             });
             let expected = f64::from(decay * RATE) * 1000_f64.ln() / 1001_f64.ln();
-            assert!((settled as f64 - expected).abs() <= 1.0, "decay {decay}: {settled}");
+            assert!(
+                (settled as f64 - expected).abs() <= 1.0,
+                "decay {decay}: {settled}"
+            );
             // From full level, the release reaches silence in its time.
             state.level = 1.0;
             state.release();
             let silent = frames_until(&mut state, &envelope, EnvelopeState::is_idle);
             let expected = (release * RATE).round() as usize;
-            assert!(silent.abs_diff(expected) <= 1, "release {release}: {silent}");
+            assert!(
+                silent.abs_diff(expected) <= 1,
+                "release {release}: {silent}"
+            );
             assert_eq!(state, EnvelopeState::IDLE);
         }
     }

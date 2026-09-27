@@ -36,7 +36,7 @@ use sound_core::{ASSETS_FOLDER, AssetName, Assets, InvalidAssetName};
 pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES};
 pub use overview::{FINEST_FRAMES, Overview};
 pub use resample::{Resampler, SCRATCH_FRAMES};
-pub use varispeed::{Varispeed, varispeed};
+pub use varispeed::{MAX_STEP, Varispeed, varispeed};
 
 /// The folder of audio files, under `assets/`.
 pub const AUDIO_FOLDER: &str = "audio";

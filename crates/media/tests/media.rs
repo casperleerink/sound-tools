@@ -403,6 +403,78 @@ fn varispeed_plays_a_sine_at_the_frequency_of_its_step_and_at_its_level() {
     }
 }
 
+/// The level of what a sine of `file_hz` in a file at `file_rate`, played at `step` into an
+/// engine at 48 kHz, comes out as, in dB against the sine: the whole output, so for a tone
+/// above the Nyquist frequency of the output it is what folds back.
+fn played_level(folder: &Path, file_rate: u32, file_hz: f64, step: f64) -> f64 {
+    let audio = sine_file(folder, file_rate, file_hz, 2.0);
+    let frames = ((audio.frames() as f64 - 2_000.0) / step).min(48_000.0) as usize;
+    let mut out = vec![[0.0_f32; 2]; frames];
+    let mut scratch = vec![[0.0_f32; 2]; SCRATCH_FRAMES];
+    for (index, block) in out.chunks_mut(64).enumerate() {
+        let position = 1_000.0 + step * (index * 64) as f64;
+        varispeed().render(&audio, position, step, block, &mut scratch);
+    }
+    let middle = &out[frames / 10..frames - frames / 10];
+    let power: f64 = middle.iter().map(|frame| f64::from(frame[0]).powi(2)).sum();
+    let rms = (power / middle.len() as f64).sqrt();
+    20.0 * (rms / (0.5 / 2.0_f64.sqrt())).log10()
+}
+
+/// Above a step of 1 the kernel follows the output: a tone that lands above the Nyquist
+/// frequency of the engine is gone, not folded back; one under 16 kHz keeps its level.
+#[test]
+fn varispeed_folds_nothing_back_above_a_step_of_one() {
+    let folder = tempfile::tempdir().unwrap();
+    // (the rate of the file, the step, where the tone lands in the output)
+    let cases: [(u32, f64, &[f64]); 4] = [
+        (
+            48_000,
+            1.06,
+            &[10_000.0, 16_000.0, 20_000.0, 23_000.0, 24_500.0, 25_000.0],
+        ),
+        (
+            48_000,
+            2.0,
+            &[10_000.0, 16_000.0, 20_000.0, 25_000.0, 30_000.0, 40_000.0],
+        ),
+        (
+            48_000,
+            4.0,
+            &[10_000.0, 16_000.0, 25_000.0, 40_000.0, 60_000.0, 80_000.0],
+        ),
+        // A file at 96 kHz at its root: a step of 2.
+        (
+            96_000,
+            2.0,
+            &[10_000.0, 16_000.0, 20_000.0, 25_000.0, 30_000.0, 40_000.0],
+        ),
+    ];
+    for (file_rate, step, lands) in cases {
+        let ratio = f64::from(file_rate) / 48_000.0;
+        for out_hz in lands {
+            // The tone in the file that lands there at this step.
+            let file_hz = out_hz / step * ratio;
+            let level = played_level(folder.path(), file_rate, file_hz, step);
+            let what = match *out_hz > 24_000.0 {
+                true => format!("folds back to {:.0} Hz at", 48_000.0 - (out_hz % 48_000.0)),
+                false => "comes out at".to_string(),
+            };
+            println!(
+                "{file_rate} Hz file, step {step}: {file_hz:.0} Hz in the file lands at {out_hz:.0} Hz, {what} {level:+.1} dB"
+            );
+            if *out_hz > 24_000.0 {
+                assert!(level < -70.0, "{file_rate} {step} {out_hz}: {level} dB");
+            } else if *out_hz <= 16_000.0 {
+                assert!(
+                    level.abs() < 0.05,
+                    "{file_rate} {step} {out_hz}: {level} dB"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn varispeed_renders_a_block_on_its_own_as_in_a_run() {
     let folder = tempfile::tempdir().unwrap();
@@ -422,12 +494,15 @@ fn varispeed_renders_a_block_on_its_own_as_in_a_run() {
     for (piece, whole) in piece.iter().zip(&whole[1_234..1_271]) {
         assert!((piece[0] - whole[0]).abs() < 1e-6, "{piece:?} {whole:?}");
     }
-    // A step far beyond what the scratch holds in a block still reads every frame.
+    // A step far beyond what the scratch holds in a block still reads every frame, each a
+    // filtered sample of the file, never more than it holds.
     let mut fast = vec![[0.0_f32; 2]; 64];
     varispeed().render(&audio, 0.0, 700.0, &mut fast, &mut scratch);
-    let mut expected = [[0.0_f32; 2]; 1];
-    audio.read(700 * 10, &mut expected);
-    assert_eq!(fast[10], expected[0]);
+    assert!(
+        fast.iter()
+            .all(|frame| frame[0].is_finite() && frame[0].abs() <= 0.55)
+    );
+    assert!(fast.iter().any(|frame| frame[0] != 0.0));
 }
 
 #[test]
