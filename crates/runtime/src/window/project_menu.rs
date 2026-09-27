@@ -290,7 +290,7 @@ fn installed_message(installed: &Installed) -> (String, String) {
     let link = installed.link.display();
     let message = format!("Installed {}", app::TOOL_NAME);
     let mut detail = format!(
-        "{link} runs this app. An agent in a project folder runs `{} . --inspect` to read the whole piece.",
+        "{link} runs this app. An agent in a project folder runs “{} . --inspect” to read the whole piece.",
         app::TOOL_NAME
     );
     if !installed.on_default_path {

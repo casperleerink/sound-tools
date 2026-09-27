@@ -60,7 +60,7 @@ Changing `steadiness` never touches the clip. It writes the tempo map and nothin
 
 After a fit, bars and beats mean what the composer played. A clip you write at bar 5 starts where the fifth bar of the performance starts, whatever the tempo does there. So the ordinary way of adding a part works: write the clip at the bar you want, with `start` and note starts in ticks, as `agent-docs/arrangement.md` says. Nothing about a fitted project is special for you.
 
-`runtime . --inspect` prints the fit in one line: which take, the beat, the steadiness, how many beats the grid has and where the first downbeat is.
+`sound-tools . --inspect` prints the fit in one line: which take, the beat, the steadiness, how many beats the grid has and where the first downbeat is.
 
 ## What the beat finder gets wrong
 

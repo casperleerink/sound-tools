@@ -38,7 +38,7 @@ This is a second track, `strings`, with its own track record and its own state f
 | Field | Meaning |
 | --- | --- |
 | `format` | `clap` or `vst3`. |
-| `plugin_id` | For `clap`, the id the plugin's maker gave it, such as `com.u-he.diva`. For `vst3`, the plugin's class id as thirty-two hex digits, such as `A1B2C3D4E5F60718293A4B5C6D7E8F90`. Neither is the file name of the plugin, and neither is in any file of the project. Get them from `runtime --plugins`, or ask the composer. |
+| `plugin_id` | For `clap`, the id the plugin's maker gave it, such as `com.u-he.diva`. For `vst3`, the plugin's class id as thirty-two hex digits, such as `A1B2C3D4E5F60718293A4B5C6D7E8F90`. Neither is the file name of the plugin, and neither is in any file of the project. Get them from `sound-tools --plugins`, or ask the composer. |
 | `state_asset` | A name you choose for the file that holds the plugin's own settings: `assets/plugin-state/<name>.bin`. Lowercase letters, digits, `-` and `_`. Give every plugin its own name: two records that name one file share it, and two different plugins that name one file cannot read each other's settings. |
 
 The track record itself says nothing about the plugin:
@@ -85,12 +85,13 @@ plays here is one you can name again.
 For the rest, not from any file. When you can run commands:
 
 ```sh
-runtime --plugins
+sound-tools --plugins
 ```
 
 It prints every plugin with its format, its id and what it says it is, and it looks at every
-plugin again, so a plugin that failed once is tried again. `runtime` is the program that has
-this project open. When it is not on your `PATH`, ask the composer for the id.
+plugin again, so a plugin that failed once is tried again. `sound-tools` is the command line
+tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install
+command line tool** in the project menu, or ask for the id.
 
 The first word of a line is the format, which is what `format` in the record takes:
 
