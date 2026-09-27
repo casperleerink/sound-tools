@@ -18,7 +18,7 @@ const BOUND: f32 = 8.0;
 /// energy exactly, yet a short decay in a large room rises by up to 1.5 dB once frozen. The
 /// likely cause, not proven: the tail of a short decay is mostly the first pass, and a frozen
 /// one is the sum of many, where paths through the same lines in another order arrive
-/// together. A known gap, in the README.
+/// together. A known gap.
 const FREEZE_LEVEL_DB: f64 = 2.0;
 const FREEZE_PEAK_DB: f64 = 2.5;
 

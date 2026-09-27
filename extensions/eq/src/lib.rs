@@ -18,8 +18,11 @@
 //! }
 //! ```
 //!
-//! `README.md` in this crate has the sound, the ranges and the ports. [`view`] is the card of
-//! the EQ, and the only module here that uses GPUI.
+//! A band or a field left out is reset to the default of that band, not kept, so an agent
+//! writes the whole list. A list with fewer bands loads, so more bands later would not break a
+//! saved project.
+//!
+//! [`view`] is the card of the EQ, and the only module here that uses GPUI.
 
 mod processor;
 pub mod view;
@@ -283,15 +286,12 @@ mod tests {
         row.unwrap_or_else(|| panic!("{name} has no row for {field}"))
     }
 
-    /// The docs give the ranges and the defaults to agents and to people. They are checked
-    /// against the one definition, so they cannot drift from it. The frequency has a default
-    /// per band, and its row lists them in the order of the bands.
+    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
+    /// definition, so they cannot drift from it. The frequency has a default per band, and its row
+    /// lists them in the order of the bands.
     #[test]
     fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let docs = [
-            ("agent-doc.md", include_str!("../agent-doc.md")),
-            ("README.md", include_str!("../README.md")),
-        ];
+        let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
         let frequencies = FREQUENCIES
             .each_ref()
             .map(|parameter| parameter.default.to_string());

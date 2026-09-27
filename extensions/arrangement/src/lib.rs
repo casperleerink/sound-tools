@@ -17,9 +17,18 @@
 //! state/arrangement/vocal/verse-take.json    an audio clip
 //! ```
 //!
-//! `agent-doc.md` and `audio-agent-doc.md` in this crate have the record formats. `README.md`
-//! is for extension and interface authors. The interface is in [`view`]. Nothing else here
-//! uses GPUI.
+//! This crate depends on no instrument and no effect. A track finds its instrument by the child
+//! name `instrument`, and each effect by the name its record lists, and both by the port names
+//! of the note contract. So any tool with those ports fits. A missing effect is skipped and
+//! reported, and the sound goes through the rest.
+//!
+//! Tracks are not copied, only clips: a track owns devices of any tool, and the core creates a
+//! record only of a type the caller knows. A known gap: a file edit of a clip while that clip
+//! is dragged to another track comes back as a second clip, because its file still has the old
+//! id then.
+//!
+//! `agent-doc.md` and `audio-agent-doc.md` in this crate have the record formats. The interface
+//! is in [`view`]. Nothing else here uses GPUI.
 
 mod audio;
 pub mod decibels;
@@ -933,14 +942,11 @@ fn id_name(display: &str, fallback: &str) -> String {
 mod tests {
     use super::{LimiterState, TrackState, id_name};
 
-    /// The ranges are written once, in the states. The docs tell people and agents the same
-    /// numbers, so they cannot drift from them.
+    /// The ranges are written once, in the states. The agent doc gives the same numbers, so they
+    /// cannot drift from them.
     #[test]
     fn the_docs_give_the_ranges_of_the_mixer_and_the_limiter() {
-        let docs = [
-            ("agent-doc.md", include_str!("../agent-doc.md")),
-            ("README.md", include_str!("../README.md")),
-        ];
+        let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
         let ranges = [
             TrackState::PAN,
             LimiterState::GAIN_DB,

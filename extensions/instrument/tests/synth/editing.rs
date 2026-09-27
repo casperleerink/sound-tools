@@ -257,7 +257,7 @@ fn a_record_may_leave_out_fields_and_the_default_synth_has_a_sane_level() {
     assert_eq!(harness.project.state(&synth), Some(&SynthState::default()));
 
     let level = peak(&harness.play(24_000));
-    // The README says 0.16 for velocity 127.
+    // With the defaults one note at velocity 127 peaks at 0.16.
     assert!((0.15..0.17).contains(&level), "{level}");
 
     let record = r#"{"tool": "instrument.synth", "state": {"waveform": "square", "sustain": 0.5}}"#;

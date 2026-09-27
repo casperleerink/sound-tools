@@ -21,8 +21,13 @@
 //! }
 //! ```
 //!
-//! `README.md` in this crate has the sound, the ranges and the ports. [`view`] is the card of
-//! the compressor, and the only module here that uses GPUI.
+//! The record has no on and off field. The power icon of the card bypasses the effect slot,
+//! which the track saves, as for every effect.
+//!
+//! The detector hears the last 10 ms. Under 50 Hz that can fall between two peaks of the wave,
+//! so the gain follows the wave and adds harmonics. A longer release keeps deep bass cleaner.
+//!
+//! [`view`] is the card of the compressor, and the only module here that uses GPUI.
 
 mod processor;
 pub mod view;
@@ -249,14 +254,11 @@ fn apply(
 mod tests {
     use super::*;
 
-    /// The docs give the ranges and the defaults to agents and to people. They are checked
-    /// against the one definition, so they cannot drift from it.
+    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
+    /// definition, so they cannot drift from it.
     #[test]
     fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let docs = [
-            ("agent-doc.md", include_str!("../agent-doc.md")),
-            ("README.md", include_str!("../README.md")),
-        ];
+        let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
         for (name, doc) in docs {
             for Parameter {
                 field,

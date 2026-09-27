@@ -193,7 +193,7 @@ fn the_quietest_released_voice_gives_way_not_the_one_lowest_in_its_envelope() {
 
 #[test]
 fn a_held_note_with_no_sustain_ends_by_itself() {
-    // The pluck of the README: no sustain. The decay of 0.1 s is 4800 frames.
+    // A pluck: no sustain. The decay of 0.1 s is 4800 frames.
     let pluck = SynthState {
         sustain: 0.0,
         ..plain(Waveform::Saw)
@@ -258,7 +258,7 @@ fn a_note_that_starts_where_the_same_pitch_ends_is_held() {
 #[test]
 fn resonance_and_chords_stay_under_full_scale() {
     // A loud single note: full velocity, the strongest peak, the cutoff on the fundamental,
-    // and a gain well above the default. The README gives these levels.
+    // and a gain well above the default.
     for waveform in [Waveform::Saw, Waveform::Square] {
         let ringing = SynthState {
             waveform,

@@ -15,7 +15,9 @@
 //! - [`Overview`] is what a waveform of it draws, made from the file and never saved.
 //! - [`TakeFile`] is a recording on its way in: a WAV file that grows while it records.
 //!
-//! `README.md` in this crate is the guide.
+//! The WAV and AIFF parser is our own. These files are a few chunks around plain samples, and
+//! a decoding library would only add a copy of what the file already holds. Compressed formats
+//! are not read.
 
 mod file;
 mod overview;

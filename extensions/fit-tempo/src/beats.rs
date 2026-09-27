@@ -24,8 +24,10 @@
 //! 4. **Snapping.** Each beat moves to the onset within [`SNAP_US`] of it, so a beat is on the
 //!    note the hand played and not on the 5 ms grid the search used.
 //!
-//! What it is wrong about is in `README.md` and in the agent doc: it is the octave, the first
-//! downbeat and the time signature, which is exactly what an agent corrects in the fit record.
+//! What it cannot know from the timing alone is the octave, the first downbeat and the time
+//! signature, which is exactly what an agent corrects in the fit record. It is also weaker at a
+//! sudden change of tempo: the period is measured over a window that holds both tempos, so the
+//! beat at the change lands about a fifth of a beat out.
 
 use sound_notes::RawEvent;
 

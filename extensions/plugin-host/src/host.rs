@@ -7,8 +7,8 @@
 //!
 //! The rule for saving: a plugin's state is written to its asset when the plugin says it
 //! changed, at the next [`Plugins::poll`] and then at most once a second while it keeps saying
-//! so, and always when the plugin goes or the project closes. See README.md for what a crash
-//! can lose.
+//! so, and always when the plugin goes or the project closes. A crash can lose up to a second
+//! of a plugin's own changes, and anything a plugin changed without saying so.
 //!
 //! The table never decides what the engine gets. [`Plugins::open`] loads a plugin and hands it
 //! over every time it runs, and [`Plugins::poll`] lets go of every entry whose record no longer
@@ -421,7 +421,7 @@ impl Plugins {
     }
 
     /// Every plugin this machine has. The first call pays for the scan unless one is already
-    /// running in the background, and then it is what is known so far. See README.md.
+    /// running in the background, and then it is what is known so far.
     pub fn scan(&self) -> Scan {
         self.ensure_scan();
         self.known()
