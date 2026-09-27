@@ -488,7 +488,7 @@ pub fn run(folder: &Path) -> Result<()> {
                 cx.new(|cx| {
                     let registries = views(weak_plugins.clone());
                     let name = device_name.into();
-                    let input: OpenInput = Rc::new(audio_input::default_input);
+                    let input: OpenInput = Arc::new(audio_input::default_input);
                     let device = (Some(timing), Some(input));
                     Shell::with_device(session.clone(), registries, name, device, window, cx)
                 })

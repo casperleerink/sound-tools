@@ -23,9 +23,9 @@
 //!   growing to the playhead at 7.3 with their waveforms, and the panel of the voice with no
 //!   clip selected. `recording.png` of the mockups.
 
-use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -431,17 +431,19 @@ pub fn snapshots(
 /// an input frame is heard at the engine frame of the same number.
 #[derive(Clone, Default)]
 struct SimulatedInput {
-    writer: Rc<RefCell<Option<CaptureWriter>>>,
-    written: Rc<Cell<u64>>,
+    writer: Arc<Mutex<Option<CaptureWriter>>>,
+    written: Arc<AtomicU64>,
 }
 
 impl SimulatedInput {
     fn opener(&self) -> OpenInput {
         let input = self.clone();
-        Rc::new(move || {
+        Arc::new(move || {
             let (writer, reader) = sound_core::capture(48_000, 2);
-            *input.writer.borrow_mut() = Some(writer);
-            input.written.set(0);
+            if let Ok(mut slot) = input.writer.lock() {
+                *slot = Some(writer);
+            }
+            input.written.store(0, Ordering::Relaxed);
             Ok(OpenedInput {
                 stream: None,
                 reader,
@@ -450,11 +452,13 @@ impl SimulatedInput {
     }
 
     fn write_until(&self, until: u64) {
-        let mut writer = self.writer.borrow_mut();
+        let Ok(mut writer) = self.writer.lock() else {
+            return;
+        };
         let Some(writer) = writer.as_mut() else {
             return;
         };
-        let first = self.written.get();
+        let first = self.written.load(Ordering::Relaxed);
         let frames = first..until.max(first);
         let samples: Vec<f32> = frames
             .flat_map(|frame| {
@@ -463,7 +467,7 @@ impl SimulatedInput {
             })
             .collect();
         writer.write(&samples, first * 1_000_000_000 / 48_000, 0);
-        self.written.set(until.max(first));
+        self.written.store(until.max(first), Ordering::Relaxed);
     }
 }
 

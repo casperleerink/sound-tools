@@ -38,7 +38,7 @@ use sound_ui::{
     typography, weak_action, weak_callback,
 };
 
-use super::audio_input::{AudioInput, OpenInput};
+use super::audio_input::{AudioInput, OpenInput, OpenedInput};
 use super::{recording, steadiness, tempo};
 use crate::recorder::{
     Placement, RecorderCommand, RecorderReport, StartedTake, TakeRequest, take_seconds_at,
@@ -438,11 +438,14 @@ impl TransportPill {
         clock: Arc<Clock>,
         cx: &mut Context<Self>,
     ) -> Option<AudioTake> {
-        if let Err(error) = self.open_input(cx) {
+        if !self.audio.can_open() {
+            let error = sound_core::DeviceError::NoInputDevice;
             self.session
                 .update(cx, |session, cx| session.report(error, cx));
             return None;
         }
+        // The takes start as soon as the input is open: the start waits for the recorder.
+        self.open_input(cx);
         let project = self.session.read(cx).project();
         let requests: Vec<_> = tracks
             .iter()
@@ -588,17 +591,46 @@ impl TransportPill {
         self.follow_arming(cx);
     }
 
-    /// Opens the input when it is not open, and says how many channels it has.
-    fn open_input(&mut self, cx: &mut Context<Self>) -> Result<(), sound_core::DeviceError> {
-        if self.audio.is_open() {
-            return Ok(());
-        }
+    /// Opens the input on the background executor, when it is not open or on its way.
+    fn open_input(&mut self, cx: &mut Context<Self>) {
+        let Some((opener, generation)) = self.audio.start_opening() else {
+            return;
+        };
+        let work = cx.background_spawn(async move { opener() });
+        cx.spawn(async move |pill, cx| {
+            let opened = work.await;
+            // A window that went away takes the input with it.
+            let _gone = pill.update(cx, |pill, cx| pill.input_opened(generation, opened, cx));
+        })
+        .detach();
+    }
+
+    /// The input opened, or why not. With no input, nothing is armed and no audio records.
+    fn input_opened(
+        &mut self,
+        generation: u64,
+        opened: Result<OpenedInput, sound_core::DeviceError>,
+        cx: &mut Context<Self>,
+    ) {
         let assets = self.session.read(cx).project().assets().clone();
-        let channels = self.audio.open(&assets)?;
-        self.recording.update(cx, |recording, cx| {
-            recording.set_input_channels(Some(channels), cx)
-        });
-        Ok(())
+        match self.audio.opened(generation, opened, &assets) {
+            None => {}
+            Some(Ok(channels)) => self.recording.update(cx, |recording, cx| {
+                recording.set_input_channels(Some(channels), cx)
+            }),
+            Some(Err(error)) => {
+                self.session
+                    .update(cx, |session, cx| session.report(error, cx));
+                // Armed with no input would show a level that never moves.
+                self.recording.update(cx, |recording, cx| {
+                    recording.retain_armed(|_| false, cx);
+                    recording.set_takes(Vec::new(), cx);
+                });
+                if let Some(take) = &mut self.take {
+                    take.audio = None;
+                }
+            }
+        }
     }
 
     /// The input is open while a track is armed or audio records, and closed otherwise, so the
@@ -606,15 +638,9 @@ impl TransportPill {
     fn follow_arming(&mut self, cx: &mut Context<Self>) {
         let armed = self.recording.read(cx).armed().next().is_some();
         let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
-        if armed && !self.audio.is_open() {
-            if let Err(error) = self.open_input(cx) {
-                self.session
-                    .update(cx, |session, cx| session.report(error, cx));
-                // Armed with no input would show a level that never moves.
-                self.recording
-                    .update(cx, |recording, cx| recording.retain_armed(|_| false, cx));
-            }
-        } else if !armed && !records && self.audio.is_open() {
+        if armed {
+            self.open_input(cx);
+        } else if !records && self.audio.is_open_or_opening() {
             self.audio.close();
             self.recording
                 .update(cx, |recording, cx| recording.set_input_channels(None, cx));
@@ -624,11 +650,16 @@ impl TransportPill {
     /// One poll of the audio input: the level, a device that went away, what ties a take to
     /// the timeline, and a run of the recorder on the background executor.
     fn poll_audio(&mut self, cx: &mut Context<Self>) {
-        if let Some(levels) = self.audio.take_levels() {
+        if let Some((levels, silent)) = self.audio.poll_levels() {
             self.recording
                 .update(cx, |recording, cx| recording.set_levels(levels, cx));
+            if silent {
+                let notice = "The audio input gives nothing but silence. If it is a microphone, allow Sound Tools, or the terminal it runs from, in System Settings, Privacy & Security, Microphone, then arm again.";
+                self.session
+                    .update(cx, |session, cx| session.report(notice, cx));
+            }
         }
-        if self.audio.is_gone() {
+        if self.audio.went_away() {
             self.input_gone(cx);
         }
         let status = self.session.read(cx).engine_status();
@@ -654,11 +685,12 @@ impl TransportPill {
     /// default input that macOS has then.
     fn input_gone(&mut self, cx: &mut Context<Self>) {
         let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
-        if self.is_recording() && records {
+        let ends_a_take = self.is_recording() && records;
+        if ends_a_take {
             let tick = self.playhead.read(cx).tick;
             self.finish_recording(tick, cx);
         }
-        let notice = match records {
+        let notice = match ends_a_take {
             true => "The audio input went away. The take ends here and keeps what was recorded.",
             false => "The audio input went away.",
         };

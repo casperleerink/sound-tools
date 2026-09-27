@@ -398,3 +398,10 @@ mod tests {
         assert_eq!(reader.nanos_of(1_200), Some(at(3)));
     }
 }
+
+// The window opens the input on a background thread and keeps the stream on its own.
+const _: fn() = || {
+    fn send<T: Send>() {}
+    send::<InputStream>();
+    send::<CaptureReader>();
+};

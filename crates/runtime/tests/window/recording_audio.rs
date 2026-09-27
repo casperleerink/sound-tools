@@ -99,13 +99,13 @@ fn clip_end(opened: &mut Opened<'_>, clip: &AudioClip) -> Ticks {
 fn the_arm_toggle_opens_the_input_and_shows_its_level(cx: &mut TestAppContext) {
     let (mut opened, input) = open(cx);
     assert_eq!(
-        input.openings.get(),
+        input.openings(),
         0,
         "nothing opens the input before a track is armed"
     );
     arm(&mut opened, "voice");
     assert!(armed(&mut opened, VOICE));
-    assert_eq!(input.openings.get(), 1);
+    assert_eq!(input.openings(), 1);
     let recording = recording(&mut opened);
     assert_eq!(
         opened.cx.read(|cx| recording.read(cx).input_channels()),
@@ -366,21 +366,29 @@ fn an_input_that_goes_away_ends_the_take_and_keeps_it(cx: &mut TestAppContext) {
     opened.settle();
     play(&mut opened, &input, 24_000, tone);
     input.unplug();
-    play(&mut opened, &input, 8_192, tone);
+    opened.settle();
     assert!(!opened.is_recording());
+    let notice = opened.notice().unwrap();
+    assert!(notice.contains("audio input went away"), "{notice}");
+    assert!(notice.contains("The take ends here"), "{notice}");
+    // Told once: not again while the last of the take is written.
+    opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, cx| session.dismiss_notice(cx));
+    });
+    play(&mut opened, &input, 8_192, tone);
     until_clips(&mut opened, &input, tone);
+    assert_eq!(opened.notice(), None);
     let clips = audio_clips(&mut opened, VOICE);
     assert_eq!(clips.len(), 1);
     let file = opened.path("assets/audio/voice-take-1.wav");
     let frames = hound::WavReader::open(file).unwrap().duration();
     assert!(frames >= 20_000, "{frames} frames kept");
-    let notice = opened.notice().unwrap();
-    assert!(notice.contains("audio input went away"), "{notice}");
     assert!(!armed(&mut opened, VOICE));
     assert_eq!(opened.undo_label(), Some("Record".to_string()));
 
     arm(&mut opened, "voice");
-    assert_eq!(input.openings.get(), 2);
+    assert_eq!(input.openings(), 2);
 }
 
 /// A change of the tempo map ends the take where it happened, as a seek does: every tick after
@@ -456,4 +464,77 @@ fn deleting_the_midi_track_while_it_records_keeps_the_audio(cx: &mut TestAppCont
     assert!(opened.path("assets/takes/take-1.json").exists());
     let notice = opened.notice().unwrap();
     assert!(notice.contains("MIDI take went away"), "{notice}");
+}
+
+/// Opening a device can take a while, and the first time macOS asks the composer about the
+/// microphone: the input is opened by a task of the background executor, never inside the
+/// update that armed the track.
+#[gpui::test]
+fn the_input_opens_away_from_the_thread_that_draws(cx: &mut TestAppContext) {
+    let (mut opened, input) = open(cx);
+    let recording = recording(&mut opened);
+    opened.cx.update(|_, cx| {
+        recording.update(cx, |recording, cx| recording.set_armed(id(VOICE), true, cx));
+    });
+    assert_eq!(input.openings(), 0, "opened while the window updated");
+    opened.cx.run_until_parked();
+    assert_eq!(input.openings(), 1);
+    let channels = opened.cx.read(|cx| recording.read(cx).input_channels());
+    assert_eq!(channels, Some(2));
+}
+
+/// An input that gives nothing but exact silence for about two seconds while a track is armed
+/// is likely one macOS does not let the app hear: the notice says where to allow it, once.
+#[gpui::test]
+fn an_input_that_stays_silent_points_at_the_microphone_permission(cx: &mut TestAppContext) {
+    let (mut opened, input) = open(cx);
+    arm(&mut opened, "voice");
+    for _ in 0..140 {
+        input.write_until(opened.engine.frames() + 768, |_| [0.0; 2]);
+        opened.settle();
+    }
+    let notice = opened.notice().unwrap();
+    assert!(
+        notice.contains("Privacy & Security, Microphone"),
+        "{notice}"
+    );
+    opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, cx| session.dismiss_notice(cx));
+    });
+    for _ in 0..140 {
+        opened.settle();
+    }
+    assert_eq!(opened.notice(), None, "told once");
+
+    // An input with sound says nothing.
+    let (mut opened, input) = open(cx);
+    arm(&mut opened, "voice");
+    for _ in 0..140 {
+        input.write_until(opened.engine.frames() + 768, tone);
+        opened.settle();
+    }
+    assert_eq!(opened.notice(), None);
+}
+
+/// A device that goes away while nothing records is told once, not at every poll, and says
+/// nothing of a take.
+#[gpui::test]
+fn an_input_that_goes_away_is_told_once(cx: &mut TestAppContext) {
+    let (mut opened, input) = open(cx);
+    arm(&mut opened, "voice");
+    input.unplug();
+    opened.settle();
+    assert_eq!(
+        opened.notice().as_deref(),
+        Some("The audio input went away.")
+    );
+    opened.cx.update(|_, cx| {
+        let session = opened.session.clone();
+        session.update(cx, |session, cx| session.dismiss_notice(cx));
+    });
+    for _ in 0..10 {
+        opened.settle();
+    }
+    assert_eq!(opened.notice(), None);
 }

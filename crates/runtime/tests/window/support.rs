@@ -1,9 +1,9 @@
 //! A window on a temporary project, and the hands of a composer: a mouse that presses, moves
 //! and releases at the place of a tick, a track or a pitch, and the keys.
 
-use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
@@ -229,21 +229,21 @@ pub fn open_project(
 /// written at that moment was played while the composer heard that frame.
 #[derive(Clone, Default)]
 pub struct SimulatedInput {
-    writer: Rc<RefCell<Option<CaptureWriter>>>,
+    writer: Arc<Mutex<Option<CaptureWriter>>>,
     /// Input frames written so far.
-    written: Rc<Cell<u64>>,
+    written: Arc<AtomicU64>,
     /// Times the window opened it.
-    pub openings: Rc<Cell<u32>>,
+    pub openings: Arc<AtomicU32>,
 }
 
 impl SimulatedInput {
     pub fn opener(&self) -> OpenInput {
         let input = self.clone();
-        Rc::new(move || {
+        Arc::new(move || {
             let (writer, reader) = sound_core::capture(48_000, 2);
-            *input.writer.borrow_mut() = Some(writer);
-            input.written.set(0);
-            input.openings.set(input.openings.get() + 1);
+            *input.writer.lock().unwrap() = Some(writer);
+            input.written.store(0, Ordering::Relaxed);
+            input.openings.fetch_add(1, Ordering::Relaxed);
             Ok(OpenedInput {
                 stream: None,
                 reader,
@@ -251,26 +251,30 @@ impl SimulatedInput {
         })
     }
 
+    pub fn openings(&self) -> u32 {
+        self.openings.load(Ordering::Relaxed)
+    }
+
     /// Writes the input up to engine frame `until`: each frame from `sample(frame)`, left and
     /// right, captured at the moment that engine frame sounds.
     pub fn write_until(&self, until: u64, sample: impl Fn(u64) -> [f32; 2]) {
-        let mut writer = self.writer.borrow_mut();
+        let mut writer = self.writer.lock().unwrap();
         let Some(writer) = writer.as_mut() else {
             return;
         };
-        let first = self.written.get();
+        let first = self.written.load(Ordering::Relaxed);
         if until <= first {
             return;
         }
         let samples: Vec<f32> = (first..until).flat_map(sample).collect();
         let nanos = |frame: u64| frame * 1_000_000_000 / 48_000;
         writer.write(&samples, nanos(first), 0);
-        self.written.set(until);
+        self.written.store(until, Ordering::Relaxed);
     }
 
     /// The device goes away, as an interface that is unplugged.
     pub fn unplug(&self) {
-        self.writer.borrow_mut().take();
+        self.writer.lock().unwrap().take();
     }
 }
 
