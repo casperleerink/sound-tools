@@ -92,6 +92,8 @@ struct Studio {
     stalled: std::ops::Range<u64>,
     /// Frames the recorder said were lost.
     lost: u64,
+    /// What the recorder said could not be written.
+    failures: Vec<String>,
 }
 
 impl Studio {
@@ -113,6 +115,7 @@ impl Studio {
             reports: Vec::new(),
             stalled: 0..0,
             lost: 0,
+            failures: Vec::new(),
         }
     }
 
@@ -261,11 +264,13 @@ impl Studio {
             match report {
                 RecorderReport::Finished { takes, .. } => finished = Some(takes),
                 RecorderReport::Started { .. } => {}
+                RecorderReport::Failed { track, error } => {
+                    self.failures.push(format!("{track}: {error}"));
+                }
                 RecorderReport::Behind { frames } => assert!(
                     !self.stalled.is_empty(),
                     "{frames} frames lost with the recorder running"
                 ),
-                other => panic!("{other:?}"),
             }
         }
         finished
@@ -410,5 +415,47 @@ fn a_take_stays_in_time_after_the_recorder_fell_behind() {
     let render = studio.harness.play_from_the_start(8 * BAR);
     let [left, _] = loud_frames(&render);
     let expected = studio.harness.project.clock().frame_of(beat).0 as usize;
+    assert_eq!(left, [expected]);
+}
+
+/// A take that cannot be written on, as on a full disk, keeps what was written and becomes a
+/// clip of that, and the recorder says why. The disk is made full by a limit on the size of
+/// a file, in a child process of this test.
+#[test]
+fn a_take_that_cannot_be_written_on_keeps_what_was_written() {
+    if !cfg!(unix) {
+        return;
+    }
+    // 500 blocks, of 512 or 1024 bytes as the shell counts them: 1.3 to 2.7 s of a mono take
+    // of 32-bit floats at 48 kHz.
+    let script = "trap '' XFSZ; ulimit -f 500; exec \"$0\" --exact recording_audio::record_past_the_file_size_limit --ignored";
+    let output = std::process::Command::new("sh")
+        .args(["-c", script])
+        .arg(std::env::current_exe().unwrap())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
+}
+
+#[test]
+#[ignore = "runs with a limit on the size of a file, from the test above"]
+fn record_past_the_file_size_limit() {
+    let mut studio = Studio::new(ENGINE_RATE, vec![(Ticks(960), 0)]);
+    let (placement, end) = studio.record(4);
+    studio.finish(placement, end);
+    assert_eq!(studio.failures.len(), 2, "{:?}", studio.failures);
+    let voice = studio.clip(VOICE).unwrap();
+    let file = sound_media::info(studio.harness.project.assets(), &voice.asset).unwrap();
+    // What was written before the limit, and nothing of the 8 s the recording ran.
+    assert!((1.0..3.0).contains(&file.seconds()), "{}", file.seconds());
+    let played = file.seconds() - voice.file_start_seconds;
+    assert!(played > 0.9, "{played}");
+    // The clap in it still plays on its beat.
+    let render = studio.harness.play_from_the_start(BAR);
+    let [left, _] = loud_frames(&render);
+    let expected = studio.harness.project.clock().frame_of(Ticks(960)).0 as usize;
     assert_eq!(left, [expected]);
 }

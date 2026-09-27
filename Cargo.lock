@@ -5123,6 +5123,7 @@ dependencies = [
  "test-clap-plugin",
  "test-plugin-support",
  "test-vst3-plugin",
+ "thiserror 2.0.20",
  "tone",
 ]
 

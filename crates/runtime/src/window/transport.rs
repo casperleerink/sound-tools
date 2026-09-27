@@ -737,7 +737,9 @@ impl TransportPill {
                         .resolve::<TrackState>(&track)
                         .and_then(|track| Some(project.state(&track)?.name.clone()))
                         .unwrap_or_else(|| track.to_string());
-                    let notice = format!("The take of {name} stops: {error}");
+                    let notice = format!(
+                        "The take of {name} stopped: {error}. What was recorded before is kept."
+                    );
                     self.session
                         .update(cx, |session, cx| session.report(notice, cx));
                 }

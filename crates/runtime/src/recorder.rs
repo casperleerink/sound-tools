@@ -63,12 +63,9 @@ pub enum RecorderReport {
         first_nanos: Option<u64>,
         takes: Vec<(InstanceId, Imported)>,
     },
-    /// The take of a track has no file, or stopped being written: the error says why. The
-    /// rest of the recording goes on.
-    Failed {
-        track: InstanceId,
-        error: MediaError,
-    },
+    /// The take of a track has no file, or stopped being written: the error says why. What was
+    /// written before it is kept and becomes its clip, and the rest of the recording goes on.
+    Failed { track: InstanceId, error: TakeError },
     /// The recorder fell behind the input and frames were lost: the takes have silence
     /// there, and every frame after it is still where it was heard.
     Behind { frames: u64 },
@@ -79,6 +76,17 @@ struct Take {
     channels: Range<usize>,
     /// `None` once it failed, which was reported: the first error ends the writing.
     file: Option<TakeFile>,
+    /// What a take whose writing failed holds up to the failure, closed at once.
+    kept: Option<Imported>,
+}
+
+/// Why the take of a track has no file, or stopped being written.
+#[derive(Debug, thiserror::Error)]
+pub enum TakeError {
+    #[error("the input has {channels} channels and no channel {wanted}")]
+    NoSuchChannel { channels: usize, wanted: usize },
+    #[error(transparent)]
+    Media(#[from] MediaError),
 }
 
 struct Recording {
@@ -114,14 +122,6 @@ impl Recorder {
             read: Vec::new(),
             picked: Vec::new(),
         }
-    }
-
-    pub fn input_channels(&self) -> usize {
-        self.input.channels()
-    }
-
-    pub fn is_recording(&self) -> bool {
-        self.recording.is_some()
     }
 
     /// Carries out the commands in order, then writes what the input captured since the last
@@ -164,14 +164,13 @@ impl Recorder {
         let mut failed = Vec::new();
         let mut takes = Vec::new();
         for request in requests {
+            let channels = request.channels.len();
             let file = match request.channels.end <= count {
-                true => TakeFile::create(&self.assets, &request.name, rate, request.channels.len()),
-                false => Err(MediaError::Io {
-                    path: sound_media::AUDIO_FOLDER.to_string(),
-                    source: std::io::Error::other(format!(
-                        "the input has {count} channels and no channel {}",
-                        request.channels.end
-                    )),
+                true => TakeFile::create(&self.assets, &request.name, rate, channels)
+                    .map_err(TakeError::from),
+                false => Err(TakeError::NoSuchChannel {
+                    channels: count,
+                    wanted: request.channels.end,
                 }),
             };
             let file = file
@@ -184,6 +183,7 @@ impl Recorder {
                 track: request.track,
                 channels: request.channels,
                 file,
+                kept: None,
             });
         }
         self.recording = Some(Recording {
@@ -250,8 +250,10 @@ impl Recorder {
                 self.picked.extend_from_slice(picked);
             }
             if let Err(error) = file.write(&self.picked) {
-                take.file = None;
+                // What was written is closed and kept, and becomes the clip of the take.
+                take.kept = take.file.take().and_then(|file| close(file, &self.assets));
                 let track = take.track.clone();
+                let error = error.into();
                 reports.push(RecorderReport::Failed { track, error });
             }
         }
@@ -266,13 +268,23 @@ impl Recorder {
         };
         let mut finished = Vec::new();
         for take in recording.takes {
-            match take.file.map(TakeFile::finish) {
-                Some(Ok(file)) => finished.push((take.track, file)),
-                Some(Err(error)) => reports.push(RecorderReport::Failed {
-                    track: take.track,
-                    error,
-                }),
-                None => {}
+            let kept = match take.file {
+                Some(file) => {
+                    let asset = file.asset().clone();
+                    match file.finish() {
+                        Ok(file) => Some(file),
+                        Err(error) => {
+                            let track = take.track.clone();
+                            let error = error.into();
+                            reports.push(RecorderReport::Failed { track, error });
+                            reopen(&self.assets, asset)
+                        }
+                    }
+                }
+                None => take.kept,
+            };
+            if let Some(kept) = kept {
+                finished.push((take.track, kept));
             }
         }
         reports.push(RecorderReport::Finished {
@@ -281,6 +293,19 @@ impl Recorder {
         });
         reports
     }
+}
+
+/// Closes a take whose writing failed, with what it holds.
+fn close(file: TakeFile, assets: &Assets) -> Option<Imported> {
+    let asset = file.asset().clone();
+    file.finish().ok().or_else(|| reopen(assets, asset))
+}
+
+/// A take whose last header could not be written, as it is on disk: its header says the length
+/// it had at most a second before.
+fn reopen(assets: &Assets, asset: AudioAsset) -> Option<Imported> {
+    let audio = sound_media::load(assets, &asset).ok()?;
+    Some(Imported { asset, audio })
 }
 
 /// The device plays project frame `project_frame` at engine frame `engine_frame`, and has for a
