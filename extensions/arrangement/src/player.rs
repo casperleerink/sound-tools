@@ -233,12 +233,12 @@ impl AudioPlayer {
         self.tail_at = 0;
     }
 
-    /// Adds, to frames `range` of a block that starts on project frame `block`, what the clips
-    /// that hand over play past their edge.
+    /// Adds, to frames `range` of a block, the first of which is at `offset` in the block, what
+    /// the clips that hand over play past their edge.
     fn play_past_hand_overs(
         &mut self,
         range: std::ops::Range<u64>,
-        block: u64,
+        offset: usize,
         outputs: [&mut [f32]; 2],
     ) {
         let [left, right] = outputs;
@@ -274,7 +274,7 @@ impl AudioPlayer {
                 let entered = self.entered.saturating_add(from - range.start);
                 let first = (from - outgoing_span.start, entered);
                 clip.write(first, part, ramp, piece, &mut self.scratch);
-                let at = (from - block) as usize;
+                let at = offset + (from - range.start) as usize;
                 let outputs = left.iter_mut().zip(right.iter_mut()).skip(at);
                 for ((left, right), sample) in outputs.zip(piece.iter()) {
                     *left += sample[0];
@@ -410,9 +410,9 @@ impl Processor for AudioPlayer {
                     self.spans.push(Span { start, end });
                 }
             }
-            // The project frame of the first frame of this block. Right after a play in a
-            // project with latency, `range` may start later than the block.
-            let block = range.end - frames as u64;
+            // Where `range` starts in the block. Right after a play in a project with latency
+            // it starts later than the block, whose first frame may then be before frame 0.
+            let offset = frames.saturating_sub((range.end - range.start) as usize);
             let mut frame = range.start;
             while frame < range.end {
                 let (owner, next) = heard_at(&self.spans, frame, range.end);
@@ -434,7 +434,7 @@ impl Processor for AudioPlayer {
                         let entered = self.entered.saturating_add(frame - range.start);
                         let first = (frame - span.start, entered);
                         clip.write(first, part, self.ramp, piece, &mut self.scratch);
-                        let at = (frame - block) as usize;
+                        let at = offset + (frame - range.start) as usize;
                         let outputs = left.iter_mut().zip(right.iter_mut()).skip(at);
                         for ((left, right), sample) in outputs.zip(piece.iter()) {
                             *left = sample[0];
@@ -444,7 +444,7 @@ impl Processor for AudioPlayer {
                 }
                 frame = next;
             }
-            self.play_past_hand_overs(range.clone(), block, [&mut *left, &mut *right]);
+            self.play_past_hand_overs(range.clone(), offset, [&mut *left, &mut *right]);
             self.entered = self.entered.saturating_add(range.end - range.start);
             let (owner, _) = heard_at(&self.spans, range.end - 1, range.end);
             self.last = owner.and_then(|clip| {

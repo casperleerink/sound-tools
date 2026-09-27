@@ -67,14 +67,12 @@ impl InputDevice {
         let stream = self.device.build_input_stream(
             self.config,
             move |samples: &[f32], info: &cpal::InputCallbackInfo| {
-                // What the device says passed between the capture and this callback: its
-                // buffer and its own latency.
                 let timestamp = info.timestamp();
-                let delay = timestamp
+                let latency = timestamp
                     .callback
                     .saturating_duration_since(timestamp.capture);
-                let delay = u64::try_from(delay.as_nanos()).unwrap_or(u64::MAX);
-                writer.write(samples, monotonic_nanos().saturating_sub(delay));
+                let latency = u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX);
+                writer.write(samples, monotonic_nanos(), latency);
             },
             // cpal calls this from a thread of its own, not from the data callback.
             move |error: cpal::Error| {
@@ -159,13 +157,17 @@ pub struct CaptureWriter {
 }
 
 impl CaptureWriter {
-    /// Puts one buffer of the device into the ring: interleaved samples of every channel, and
-    /// when its first frame was captured. Realtime safe: the device callback calls it.
+    /// Puts one buffer of the device into the ring: interleaved samples of every channel.
+    /// `callback_nanos` is when the callback that brings it began, on the clock of
+    /// [`monotonic_nanos`], and `latency_nanos` what the device says passed from the capture of
+    /// its first frame to then: its buffer and its own latency. Realtime safe: the device
+    /// callback calls it.
     ///
     /// A buffer the ring has no room for is left out whole and counted, so a reader never
     /// takes half a frame.
     #[nonblocking]
-    pub fn write(&mut self, samples: &[f32], capture_nanos: u64) {
+    pub fn write(&mut self, samples: &[f32], callback_nanos: u64, latency_nanos: u64) {
+        let capture_nanos = callback_nanos.saturating_sub(latency_nanos);
         let channels = self.shared.channels;
         let whole = samples.len() - samples.len() % channels;
         let samples = samples.get(..whole).unwrap_or_default();
@@ -246,6 +248,11 @@ impl CaptureReader {
         self.shared.lost.load(Ordering::Relaxed)
     }
 
+    /// The input went away, see [`CaptureStatus::is_gone`].
+    pub fn is_gone(&self) -> bool {
+        self.shared.gone.load(Ordering::Relaxed)
+    }
+
     /// A handle for the thread that shows the level and watches the input.
     pub fn status(&self) -> CaptureStatus {
         CaptureStatus(self.shared.clone())
@@ -287,9 +294,10 @@ mod tests {
         let (mut writer, mut reader) = capture(48_000, 2);
         let status = reader.status();
         assert_eq!(reader.nanos_of(0), None);
-        writer.write(&[0.5, -0.25, 0.1, 0.2], 1_000_000);
+        // Captured 3 ms before the callback that brings it.
+        writer.write(&[0.5, -0.25, 0.1, 0.2], 4_000_000, 3_000_000);
         // A half frame at the end is left out.
-        writer.write(&[0.3, -0.75, 0.9], 1_000_000 + 41_666);
+        writer.write(&[0.3, -0.75, 0.9], 4_041_666, 3_000_000);
         let mut samples = Vec::new();
         assert_eq!(reader.read(&mut samples), 0);
         assert_eq!(samples, [0.5, -0.25, 0.1, 0.2, 0.3, -0.75]);
@@ -309,7 +317,7 @@ mod tests {
         let (mut writer, mut reader) = capture(100, 1);
         let buffer = [0.1_f32; 400];
         for _ in 0..3 {
-            writer.write(&buffer, 0);
+            writer.write(&buffer, 0, 0);
         }
         // The ring holds 10 s of 100 frames: two buffers fit, the third does not.
         assert_eq!(reader.lost_frames(), 400);

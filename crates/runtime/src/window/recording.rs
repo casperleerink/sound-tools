@@ -5,9 +5,9 @@
 //! the window puts the two together here, as it does for views.
 
 use anyhow::Result;
-use arrangement::{TrackKind, TrackState};
+use arrangement::{AudioClip, TrackKind, TrackState};
 use midi::Take;
-use sound_core::{InputEndpoint, Instance, InstanceId, Project, ProjectError};
+use sound_core::{Changes, InputEndpoint, Instance, InstanceId, Project, ProjectError};
 use sound_notes::NOTES_INPUT;
 
 use crate::main_arrangement;
@@ -79,4 +79,27 @@ pub fn add_take_clip(
 /// file is created and never opened again, so no take can be written over.
 pub fn write_take(project: &Project, take: &Take) -> Result<String> {
     Ok(take.raw(project.clock()).write(project.assets())?)
+}
+
+/// Adds the clip of each audio take to its track, to a group of changes, over every clip the
+/// track has. The clip is named after its file. A track that went away while it recorded gets
+/// nothing: its file stays in `assets/audio/`, as every asset does.
+pub fn add_audio_take_clips(
+    project: &Project,
+    changes: &mut Changes,
+    clips: Vec<(InstanceId, AudioClip)>,
+) -> Result<(), ProjectError> {
+    let placed: Vec<_> = clips
+        .into_iter()
+        .filter_map(|(track, clip)| {
+            let track = project.resolve::<TrackState>(&track)?;
+            let name = clip.asset.asset_name().name().to_string();
+            Some((track, name, clip))
+        })
+        .collect();
+    let placed = placed
+        .iter()
+        .map(|(track, name, clip)| (track, name.as_str(), clip.clone()));
+    arrangement::add_audio_clips(project, changes, placed)?;
+    Ok(())
 }

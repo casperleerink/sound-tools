@@ -141,7 +141,7 @@ impl TakeFile {
     /// Writes the header for the whole length and closes the file. Gives the take in memory,
     /// as an import does: hold it until its clip is added, and the track that plays the clip
     /// reads nothing.
-    pub fn finish(mut self) -> Result<Imported, MediaError> {
+    pub fn finish(self) -> Result<Imported, MediaError> {
         if self.stretch.1 > 0 {
             self.overview.push(self.stretch.0, self.stretch.1);
         }
