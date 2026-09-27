@@ -115,6 +115,8 @@ mod audio;
 mod drums;
 #[path = "projects/generated_take.rs"]
 mod generated_take;
+#[path = "snapshots/sampler.rs"]
+mod sampler;
 
 const BAR: u64 = 3840;
 /// The window in points.
@@ -885,13 +887,18 @@ fn main() -> Result<()> {
     let opened = Opened::new(&mut cx, |_| Ok(()))?;
     save(&mut cx, &opened, "default")?;
 
-    // Audio tracks and clips and the Drum pad first, so a run that only looks at one of them
-    // does not wait for the rest.
+    // Audio tracks and clips, the Sampler and the Drum pad first, so a run that only looks at
+    // one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=audio`, `=sampler` or
+    // `=drums` renders the default project and those alone.
     let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
-    if only.as_deref() != Some("drums") {
+    let runs = |name: &str| only.as_deref().is_none_or(|only| only == name);
+    if runs("audio") {
         audio::snapshots(&mut cx, &save)?;
     }
-    if only.as_deref() != Some("audio") {
+    if runs("sampler") {
+        sampler::snapshots(&mut cx, &save)?;
+    }
+    if runs("drums") {
         drums::snapshots(&mut cx, &save)?;
     }
     if only.is_some() {

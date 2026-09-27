@@ -37,6 +37,7 @@ fn the_default_project_is_a_small_musical_template() {
             "instrument",
             "plugin-host",
             "reverb",
+            "sampler",
             "tone"
         ]
     );

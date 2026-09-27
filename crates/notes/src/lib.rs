@@ -69,6 +69,15 @@ impl Pitch {
     pub fn frequency_hz(self) -> f32 {
         440.0 * ((f32::from(self.0) - 69.0) / 12.0).exp2()
     }
+
+    /// The name of the note in the app: `C4` is 60, `A4` is 69, `C#4` is 61, `C-1` is 0.
+    pub fn name(self) -> String {
+        const NAMES: [&str; 12] = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
+        let octave = i32::from(self.0 / 12) - 1;
+        format!("{}{octave}", NAMES[usize::from(self.0 % 12)])
+    }
 }
 
 impl TryFrom<i64> for Pitch {

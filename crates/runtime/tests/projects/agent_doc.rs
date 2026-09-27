@@ -68,6 +68,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "agent-docs/instrument.md",
             "agent-docs/plugins.md",
             "agent-docs/reverb.md",
+            "agent-docs/sampler.md",
             "agent-docs/tone.md",
             "agent-docs/inspect.md",
             "agent-docs/takes.md",
@@ -99,7 +100,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             );
         }
     }
-    let inspect = &files[13].1;
+    let inspect = &files[14].1;
     assert!(inspect.contains("```sh\nruntime . --inspect\n```"));
     assert_eq!(
         std::fs::read_to_string(harness.path("CLAUDE.md")).unwrap(),
@@ -155,7 +156,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .iter()
             .flat_map(|(_, text)| json_examples(text))
             .collect();
-        assert_eq!(all.len(), 29, "{time_signature}");
+        assert_eq!(all.len(), 31, "{time_signature}");
 
         // The raw take of a recording is not a record: it is an asset the runtime writes once
         // and never reads back. Its example is checked as the file it is.
@@ -185,11 +186,11 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             );
             write(folder.path(), path, body);
         }
-        // The files the audio clip of its doc and the sample pad of the drums play, which an
-        // agent copies in before it writes the record. Five seconds, as the clip plays up to
-        // 4.5 s of it.
-        for file in ["voice-take-1.wav", "shaker.wav"] {
-            let audio = folder.path().join("assets/audio").join(file);
+        // The files the audio clip of its doc, the Sampler of its doc and the sample pad of
+        // the drums play, which an agent copies in before it writes the record. Five seconds,
+        // as the clip plays up to 4.5 s of it.
+        for name in ["voice-take-1.wav", "kalimba.wav", "shaker.wav"] {
+            let audio = folder.path().join("assets/audio").join(name);
             std::fs::create_dir_all(audio.parent().unwrap()).unwrap();
             let spec = hound::WavSpec {
                 channels: 1,
@@ -250,6 +251,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
                 "arrangement/beat/instrument",
                 "arrangement/drums",
                 "arrangement/drums/glue",
+                "arrangement/kalimba",
+                "arrangement/kalimba/instrument",
                 "arrangement/keys",
                 "arrangement/keys/room",
                 "arrangement/piano",
@@ -301,12 +304,12 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 /// The map is what an agent reads on every task. One doc more adds one line to it, not a
 /// section: the whole agent doc was 2030 words before the split, the map was about 960. Each
 /// built-in effect adds a line of about 20 words: with the Filter, the EQ, the Reverb and the
-/// Compressor it is about 1130, with the doc of audio about 1150, and with the Drum pad about
-/// 1180.
+/// Compressor it is about 1130, with the doc of audio about 1150, with the Sampler about 1170,
+/// and with the Drum pad about 1200.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1200, "the map has {words} words");
+    assert!(words < 1215, "the map has {words} words");
 }
