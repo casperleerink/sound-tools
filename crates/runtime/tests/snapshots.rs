@@ -69,6 +69,7 @@
 //! - `arrangement-snap.png`: the snap setting open in the corner above the track headers.
 //! - `arrangement-rename.png`: the name field open in the header of the bass.
 //! - `audio-*.png`: audio tracks and clips, see `snapshots/audio.rs`.
+//! - `drums-*.png`: the Drum pad, see `snapshots/drums.rs`.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -110,6 +111,8 @@ use tempfile::TempDir;
 
 #[path = "snapshots/audio.rs"]
 mod audio;
+#[path = "snapshots/drums.rs"]
+mod drums;
 #[path = "projects/generated_take.rs"]
 mod generated_take;
 
@@ -879,9 +882,16 @@ fn main() -> Result<()> {
     let opened = Opened::new(&mut cx, |_| Ok(()))?;
     save(&mut cx, &opened, "default")?;
 
-    // Audio tracks and clips first, so a run that only looks at them does not wait for the rest.
-    audio::snapshots(&mut cx, &save)?;
-    if std::env::var("WINDOW_SNAPSHOT_ONLY").is_ok_and(|only| only == "audio") {
+    // Audio tracks and clips and the Drum pad first, so a run that only looks at one of them
+    // does not wait for the rest.
+    let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
+    if only.as_deref() != Some("drums") {
+        audio::snapshots(&mut cx, &save)?;
+    }
+    if only.as_deref() != Some("audio") {
+        drums::snapshots(&mut cx, &save)?;
+    }
+    if only.is_some() {
         return Ok(());
     }
 

@@ -284,6 +284,11 @@ impl DrumPadView {
         self.selected
     }
 
+    /// The select of the sound of the selected pad, for a test that opens it.
+    pub fn sound_list(&self) -> &Entity<DropdownMenu> {
+        &self.sounds
+    }
+
     /// How loud the card shows each pad, from 0 to 1. For tests.
     pub fn sounding(&self) -> [f32; PADS] {
         self.sounding
