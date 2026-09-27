@@ -157,6 +157,8 @@ fn the_picker_puts_an_empty_sampler_with_its_card_on_the_track(cx: &mut TestAppC
     let width =
         |opened: &mut Opened<'_>| opened.bounds("card-instrument-header").unwrap().size.width;
     assert_eq!(width(&mut opened), px(649. - 2.));
+    // The icon moved with the right edge.
+    let expand = opened.control("card-instrument-expand");
     opened.click(expand);
     assert_eq!(width(&mut opened), px(464. - 2.));
 }
