@@ -302,11 +302,18 @@ impl SamplerView {
         // `imported` holds the file in memory until the edit is made, so the behaviour that
         // hands it to the sampler reads nothing.
         session.update(cx, |session, cx| {
+            // The file a record names that was missing, now there under its name: the record
+            // stays as it is, and the sampler loads it. No edit and no undo step, as when the
+            // file arrives by the watcher.
+            if session.project().state(&sampler) == Some(&state) {
+                session.rebind(std::slice::from_ref(sampler.id()), cx);
+                return;
+            }
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
                 changes.set(&sampler, state);
                 project.commit(LOAD_LABEL, changes)
-            })
+            });
         });
         drop(imported);
     }
