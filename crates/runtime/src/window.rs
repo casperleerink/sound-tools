@@ -558,6 +558,8 @@ impl Opened {
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(16.), px(16.))),
             }),
+            // Linux matches the window to sound-tools.desktop by it, for the icon.
+            app_id: Some(crate::app::TOOL_NAME.into()),
             ..Default::default()
         };
         let opened = cx.open_window(options, |window, cx| {
