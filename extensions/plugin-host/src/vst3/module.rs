@@ -161,7 +161,7 @@ fn text(field: &[c_char]) -> String {
     let bytes: Vec<u8> = field
         .iter()
         .take_while(|byte| **byte != 0)
-        .map(|byte| *byte as u8)
+        .map(|byte| byte.to_ne_bytes()[0])
         .collect();
     String::from_utf8_lossy(&bytes).trim().to_string()
 }

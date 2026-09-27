@@ -86,7 +86,7 @@ pub fn class_id_text(id: &TUID) -> String {
     for byte in id {
         use std::fmt::Write as _;
         // The digits cannot fail to be written into a string.
-        let _ = write!(text, "{:02X}", *byte as u8);
+        let _ = write!(text, "{:02X}", byte.to_ne_bytes()[0]);
     }
     text
 }
