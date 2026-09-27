@@ -25,7 +25,8 @@ use gpui::{
 use metronome::Click;
 use midi::{Input, Keyboard, Latency, Lost};
 use sound_core::{
-    Changes, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo, TempoChange, Ticks,
+    Changes, Clock, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo, TempoChange,
+    Ticks,
 };
 use sound_media::Imported;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -51,6 +52,9 @@ const FINISH_POLLS: u32 = 120;
 struct Take {
     /// The playhead it began at.
     start: Ticks,
+    /// The clock it began under. Its takes, of MIDI and of audio, are placed under this one: a
+    /// change of the tempo map ends a take, as a seek does.
+    clock: Arc<Clock>,
     /// The track the MIDI input records onto: the one it began on, whatever the composer
     /// selects while it runs.
     midi_track: Option<Instance<TrackState>>,
@@ -180,6 +184,19 @@ impl TransportPill {
             if !matches!(event, ProjectEvent::ProblemsChanged) {
                 pill.end_is_stale = true;
                 cx.notify();
+            }
+            // A change of the tempo map moves every tick in time from where the take began, and
+            // the take was heard under the old one: it ends here, as at a seek.
+            if matches!(event, ProjectEvent::ProjectFileChanged) && pill.is_recording() {
+                let project = pill.session.read(cx).project();
+                let changed = pill
+                    .take
+                    .as_ref()
+                    .is_some_and(|take| take.clock.tempo_map() != project.clock().tempo_map());
+                if changed {
+                    let tick = pill.playhead.read(cx).tick;
+                    pill.finish_recording(tick, cx);
+                }
             }
             // A deleted track is no longer armed.
             if matches!(event, ProjectEvent::Deleted(_)) {
@@ -359,16 +376,18 @@ impl TransportPill {
         let session = self.session.clone();
         let selected = session.read(cx).selected().cloned();
         let midi_track = recording::target_track(session.read(cx).project(), selected.as_ref());
+        let clock = Arc::new(session.read(cx).project().clock().clone());
         let audio_tracks = self.tracks_to_record(selected.as_ref(), cx);
         let audio = match audio_tracks.is_empty() {
             true => None,
-            false => self.start_audio(audio_tracks, tick, cx),
+            false => self.start_audio(audio_tracks, tick, clock.clone(), cx),
         };
         if let Some(keyboard) = self.keyboard.as_mut() {
             keyboard.start_recording(tick);
         }
         self.take = Some(Take {
             start: tick,
+            clock,
             midi_track,
             audio,
             ended: None,
@@ -416,6 +435,7 @@ impl TransportPill {
         &mut self,
         tracks: Vec<Instance<TrackState>>,
         start: Ticks,
+        clock: Arc<Clock>,
         cx: &mut Context<Self>,
     ) -> Option<AudioTake> {
         if let Err(error) = self.open_input(cx) {
@@ -445,7 +465,7 @@ impl TransportPill {
             .update(cx, |recording, cx| recording.set_takes(live, cx));
         self.audio.send(RecorderCommand::Start(requests));
         Some(AudioTake {
-            placement: Placement::new(start),
+            placement: Placement::new(start, clock),
             started: Vec::new(),
             shown: false,
         })
@@ -490,10 +510,9 @@ impl TransportPill {
             }
         }
         if let Some(audio) = &take.audio {
-            let project = session.read(cx).project();
             let frames = input_rate.and_then(|rate| {
                 let placement = &audio.placement;
-                placement.input_frames_until(until, timing.as_deref(), project.clock(), rate)
+                placement.input_frames_until(until, timing.as_deref(), rate)
             });
             self.audio.send(RecorderCommand::Finish { frames });
         }
@@ -512,7 +531,13 @@ impl TransportPill {
     /// The clips of the ended take, of MIDI and of audio, as one undo step. The files of the
     /// audio are held in memory until then, so the tracks read nothing.
     fn make_clips(&mut self, audio_takes: Vec<(InstanceId, Imported)>, cx: &mut Context<Self>) {
-        let Some(Take { audio, ended, .. }) = self.take.take() else {
+        let Some(Take {
+            audio,
+            ended,
+            clock,
+            ..
+        }) = self.take.take()
+        else {
             return;
         };
         self.recording
@@ -521,14 +546,23 @@ impl TransportPill {
             return;
         };
         let timing = self.timing.clone();
-        let project = self.session.read(cx).project();
         let clips = match &audio {
-            Some(audio) => {
-                let placement = &audio.placement;
-                placement.clips(&audio_takes, end, timing.as_deref(), project.clock())
-            }
+            Some(audio) => audio.placement.clips(&audio_takes, end, timing.as_deref()),
             None => Vec::new(),
         };
+        // A track deleted while it recorded gets no clip. Its raw take is on disk already, and
+        // the clips of the other tracks are made all the same.
+        let project = self.session.read(cx).project();
+        let (midi, gone) = match midi {
+            Some(midi) if project.state(&midi.0).is_none() => (None, true),
+            midi => (midi, false),
+        };
+        if gone {
+            let notice = "The track of the MIDI take went away while it recorded. What was played is kept under assets/takes/.";
+            self.session
+                .update(cx, |session, cx| session.report(notice, cx));
+        }
+
         if clips.len() < audio_takes.len() {
             let missing = audio_takes.len() - clips.len();
             let notice = format!(
@@ -542,13 +576,8 @@ impl TransportPill {
                 session.edit(cx, |project| {
                     let mut changes = Changes::new();
                     if let Some((track, played, name)) = &midi {
-                        recording::add_take_clip(
-                            project,
-                            &mut changes,
-                            track,
-                            played,
-                            name.clone(),
-                        )?;
+                        let take = (played, name.clone());
+                        recording::add_take_clip(project, &mut changes, track, take, &clock)?;
                     }
                     recording::add_audio_take_clips(project, &mut changes, clips)?;
                     project.commit(recording::LABEL, changes)
@@ -604,7 +633,8 @@ impl TransportPill {
         }
         let status = self.session.read(cx).engine_status();
         if let Some(take) = &mut self.take {
-            if let Some(audio) = &mut take.audio {
+            // Only while it records: after its end the engine may play under another tempo.
+            if let Some(audio) = take.audio.as_mut().filter(|_| take.ended.is_none()) {
                 audio.placement.observe(status);
             }
             // The input never brought the end: the files close with what they have.
@@ -652,8 +682,8 @@ impl TransportPill {
         let Some(audio) = take.audio.as_mut().filter(|audio| !audio.shown) else {
             return;
         };
-        let clock = self.session.read(cx).project().clock().clone();
-        let Some(head) = audio.placement.head(timing.as_deref(), &clock) else {
+        let clock = audio.placement.clock().clone();
+        let Some(head) = audio.placement.head(timing.as_deref()) else {
             return;
         };
         if audio.started.is_empty() {

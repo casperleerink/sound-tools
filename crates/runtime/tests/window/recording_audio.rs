@@ -382,3 +382,78 @@ fn an_input_that_goes_away_ends_the_take_and_keeps_it(cx: &mut TestAppContext) {
     arm(&mut opened, "voice");
     assert_eq!(input.openings.get(), 2);
 }
+
+/// A change of the tempo map ends the take where it happened, as a seek does: every tick after
+/// it is at another time now. The clip holds what was recorded up to there, placed under the
+/// tempo it was heard at, and the clap in it is where it was heard.
+#[gpui::test]
+fn a_tempo_change_ends_the_take_where_it_happened(cx: &mut TestAppContext) {
+    let (mut opened, input) = open(cx);
+    arm(&mut opened, "voice");
+    opened.keys("r");
+    opened.settle();
+    play(&mut opened, &input, 4_096, |_| [0.0; 2]);
+    let session = opened.session.clone();
+    let status = opened.cx.read(|cx| session.read(cx).engine_status());
+    let ahead = status.playhead_frame.0 as i64 - status.frames as i64;
+    CLAP.with(|clap| clap.set(((960 * FRAMES_PER_TICK) as i64 - ahead) as u64));
+    play(&mut opened, &input, 48_000, clap);
+    let heard_under = opened.project(|project| project.clock().clone());
+    let changed_at = opened.playhead().tick;
+    assert!(changed_at > Ticks(1_500), "{changed_at:?}");
+    opened.write_tempo_map(
+        r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 90.0}]}"#,
+    );
+    assert!(!opened.is_recording(), "the change ended the take");
+    until_clips(&mut opened, &input, clap);
+
+    let clip = audio_clips(&mut opened, VOICE).remove(0);
+    assert_eq!(clip.start, Ticks(0));
+    let mut reader = hound::WavReader::open(opened.path("assets/audio/voice-take-1.wav")).unwrap();
+    let samples: Vec<f32> = reader.samples::<f32>().map(Result::unwrap).collect();
+    // It plays what was heard from the start up to the change, under the old tempo: the file
+    // holds up to there and not beyond, so the clip plays to its end.
+    let file_end = samples.len() as f64 / 48_000.;
+    let played = clip.file_end_seconds.unwrap_or(file_end) - clip.file_start_seconds;
+    let heard = heard_under.seconds_of(changed_at) - heard_under.seconds_of(Ticks(0));
+    assert!(
+        (played - heard).abs() < 1. / 48_000.,
+        "{played} against {heard}"
+    );
+    let in_file = samples.iter().position(|sample| *sample > 0.5).unwrap() as f64;
+    let heard_at = in_file - clip.file_start_seconds * 48_000.;
+    assert_eq!(heard_at, heard_under.frame_of(Ticks(960)).0 as f64);
+}
+
+/// The instrument track that takes the MIDI input is deleted while it records. Its performance
+/// stays under `assets/takes/`, the notice says so, and the audio of the armed track becomes
+/// its clip all the same, as one undo step.
+#[gpui::test]
+fn deleting_the_midi_track_while_it_records_keeps_the_audio(cx: &mut TestAppContext) {
+    let (mut opened, input) = open(cx);
+    arm(&mut opened, "voice");
+    let header = opened.track_header(0);
+    opened.click(header);
+    opened.settle();
+    opened.keys("r");
+    opened.settle();
+    let on = midi::Played::On {
+        pitch: sound_notes::Pitch::new(60).unwrap(),
+        velocity: sound_notes::Velocity::new(90).unwrap(),
+    };
+    opened.play_midi(on);
+    play(&mut opened, &input, 24_000, tone);
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.delete(&id("arrangement/track-1"));
+        project.commit("Delete track", changes)
+    });
+    opened.keys("r");
+    opened.settle();
+    until_clips(&mut opened, &input, tone);
+    assert_eq!(audio_clips(&mut opened, VOICE).len(), 1);
+    assert_eq!(opened.undo_label(), Some("Record".to_string()));
+    assert!(opened.path("assets/takes/take-1.json").exists());
+    let notice = opened.notice().unwrap();
+    assert!(notice.contains("MIDI take went away"), "{notice}");
+}

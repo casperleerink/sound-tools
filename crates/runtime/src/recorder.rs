@@ -10,6 +10,7 @@
 //! Nothing of this is on the audio thread, and nothing is played: there is no monitoring.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use sound_core::{
     Assets, CaptureReader, Clock, EngineStatus, Frames, InstanceId, StreamTiming, Ticks,
@@ -368,27 +369,37 @@ pub fn take_clip(
     Some(clip)
 }
 
-/// A recording on the thread that draws: where it began, and what ties it to the timeline once
-/// it is known. The window keeps one while it records, and a test that plays the part of the
-/// window does the same.
+/// A recording on the thread that draws: where it began, the clock it began under, and what
+/// ties it to the timeline once it is known. The window keeps one while it records, and a test
+/// that plays the part of the window does the same.
+///
+/// Everything is worked out under the clock the recording began with. A change of the tempo
+/// map moves the project frames of the ticks, so the window ends a take at one, as at a seek.
 #[derive(Clone, Debug)]
 pub struct Placement {
     /// The playhead the recording began at.
     pub start: Ticks,
     /// When the first frame of its takes was captured, from the recorder.
     pub first_nanos: Option<u64>,
+    clock: Arc<Clock>,
     playing: Option<PlayingAt>,
     last: Option<EngineStatus>,
 }
 
 impl Placement {
-    pub fn new(start: Ticks) -> Self {
+    pub fn new(start: Ticks, clock: Arc<Clock>) -> Self {
         Self {
             start,
             first_nanos: None,
+            clock,
             playing: None,
             last: None,
         }
+    }
+
+    /// The clock the recording began under, which places its takes.
+    pub fn clock(&self) -> &Arc<Clock> {
+        &self.clock
     }
 
     /// Takes one engine status, as the window polls it. The first two in a row that show the
@@ -403,8 +414,9 @@ impl Placement {
     }
 
     /// See [`take_head`]. `None` until the first frame came and the project played steadily.
-    pub fn head(&self, timing: Option<&StreamTiming>, clock: &Clock) -> Option<i128> {
-        let heard = frame_sounding_at(timing, clock.sample_rate(), self.first_nanos?);
+    pub fn head(&self, timing: Option<&StreamTiming>) -> Option<i128> {
+        let rate = self.clock.sample_rate();
+        let heard = frame_sounding_at(timing, rate, self.first_nanos?);
         Some(take_head(heard, self.playing?))
     }
 
@@ -415,10 +427,10 @@ impl Placement {
         &self,
         end: Ticks,
         timing: Option<&StreamTiming>,
-        clock: &Clock,
         input_rate: u32,
     ) -> Option<u64> {
-        let head = self.head(timing, clock)?;
+        let clock = &self.clock;
+        let head = self.head(timing)?;
         let heard = (i128::from(clock.frame_of(end).0) - head).max(0);
         let rate = i128::from(clock.sample_rate().max(1));
         let frames = (heard * i128::from(input_rate) + rate - 1) / rate;
@@ -433,9 +445,9 @@ impl Placement {
         takes: &[(InstanceId, Imported)],
         end: Ticks,
         timing: Option<&StreamTiming>,
-        clock: &Clock,
     ) -> Vec<(InstanceId, arrangement::AudioClip)> {
-        let Some(head) = self.head(timing, clock) else {
+        let clock = &self.clock;
+        let Some(head) = self.head(timing) else {
             return Vec::new();
         };
         let clips = takes.iter().filter_map(|(track, take)| {

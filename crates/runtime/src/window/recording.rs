@@ -7,7 +7,7 @@
 use anyhow::Result;
 use arrangement::{AudioClip, TrackKind, TrackState};
 use midi::Take;
-use sound_core::{Changes, InputEndpoint, Instance, InstanceId, Project, ProjectError};
+use sound_core::{Changes, Clock, InputEndpoint, Instance, InstanceId, Project, ProjectError};
 use sound_notes::NOTES_INPUT;
 
 use crate::main_arrangement;
@@ -55,14 +55,16 @@ pub fn live_notes_input(project: &Project, selected: Option<&InstanceId>) -> Opt
 /// Adds the clip of a finished MIDI take to its track, to a group of changes. `take_name` is
 /// the raw take the clip came from, which is already on disk, or `None` when writing it failed.
 /// Gives the id of the clip; a take with no notes adds nothing.
+/// `clock` is the one the take was played under: a change of the tempo map ends a take, so its
+/// clip is placed under the tempo it was heard at.
 pub fn add_take_clip(
     project: &Project,
     changes: &mut Changes,
     track: &Instance<TrackState>,
-    take: &Take,
-    take_name: Option<String>,
+    (take, take_name): (&Take, Option<String>),
+    clock: &Clock,
 ) -> Result<Option<InstanceId>, ProjectError> {
-    let Some(mut clip) = take.clip(project.clock()) else {
+    let Some(mut clip) = take.clip(clock) else {
         return Ok(None);
     };
     // A clip never names a take that is not there: a failed write leaves the field out.

@@ -106,12 +106,13 @@ impl Recorder {
         let track = self.harness.project.resolve(&track).unwrap();
         let mut changes = sound_core::Changes::new();
         let project = &mut self.harness.project;
+        let clock = project.clock().clone();
         let clip = runtime::window::recording::add_take_clip(
             project,
             &mut changes,
             &track,
-            take,
-            Some(name),
+            (take, Some(name)),
+            &clock,
         );
         let clip = clip.unwrap().unwrap();
         project

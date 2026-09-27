@@ -214,7 +214,8 @@ impl Studio {
                 channels: 0..2,
             },
         ];
-        let mut placement = Placement::new(Ticks(0));
+        let clock = std::sync::Arc::new(self.harness.project.clock().clone());
+        let mut placement = Placement::new(Ticks(0), clock);
         let reports = self.recorder.run(vec![RecorderCommand::Start(requests)]);
         self.take_reports(reports, &mut placement);
         self.harness.project.engine().play();
@@ -228,8 +229,7 @@ impl Studio {
     /// heard at the end, which the input brings a little later, and closes the files; every
     /// take becomes a clip where it was heard, all in one undo step.
     fn finish(&mut self, mut placement: Placement, end: Ticks) -> Vec<(InstanceId, Imported)> {
-        let clock = self.harness.project.clock().clone();
-        let frames = placement.input_frames_until(end, Some(&self.timing), &clock, self.input_rate);
+        let frames = placement.input_frames_until(end, Some(&self.timing), self.input_rate);
         assert!(frames.is_some(), "the recording is tied to the timeline");
         let finish = RecorderCommand::Finish { frames };
         let reports = self.recorder.run(vec![finish]);
@@ -245,7 +245,7 @@ impl Studio {
         }
         let finished = finished.expect("the recording finished");
         let project = &mut self.harness.project;
-        let clips = placement.clips(&finished, end, Some(&self.timing), &clock);
+        let clips = placement.clips(&finished, end, Some(&self.timing));
         assert_eq!(clips.len(), 2);
         let mut changes = Changes::new();
         add_audio_take_clips(project, &mut changes, clips).unwrap();
