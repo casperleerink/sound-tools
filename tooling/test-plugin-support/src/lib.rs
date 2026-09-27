@@ -403,7 +403,11 @@ pub fn log(call: &str, plugin: u64, processed: u64) {
         return;
     };
     use std::io::Write as _;
-    let thread = format!("{:?}", std::thread::current().id());
+    // The thread as the system knows it. `std::thread::current` would leave a destructor of
+    // this plugin's own copy of std on a thread the host made, which crashes when that thread
+    // ends on Linux.
+    // SAFETY: `pthread_self` takes nothing and cannot fail.
+    let thread = unsafe { pthread_self() };
     let line = format!("{call} plugin={plugin} thread={thread} processed={processed}\n");
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
@@ -412,6 +416,11 @@ pub fn log(call: &str, plugin: u64, processed: u64) {
     {
         let _ = file.write_all(line.as_bytes());
     }
+}
+
+// `pthread_t` is a pointer on macOS and an unsigned long on Linux: one word on both.
+unsafe extern "C" {
+    fn pthread_self() -> usize;
 }
 
 /// Counts the audio processors the test plugins have made, so a log says which plugin a call is
@@ -718,19 +727,26 @@ pub fn built_library(package: &str) -> PathBuf {
     panic!("{name} is not built. Run `cargo build -p {package}` first");
 }
 
-/// Copies a built library into `folder` as a macOS bundle of `extension`, and gives back the
-/// bundle. CLAP takes a plain file; VST 3 wants a real bundle with its `Info.plist`, which is
-/// what `CFBundle` needs to find the binary.
+/// Copies a built library into `folder` as a bundle of `extension`, and gives back the bundle.
+/// CLAP takes a plain file. VST 3 wants a real bundle: on macOS with its `Info.plist`, which is
+/// what `CFBundle` needs to find the binary, and on Linux with the `.so` in the folder of the
+/// architecture, as the plugin host's `scan::binary_folder` says.
 pub fn install_bundle(folder: &Path, library: &Path, name: &str, extension: &str) -> PathBuf {
     let bundle = folder.join(format!("{name}.{extension}"));
     if extension == "clap" {
         std::fs::create_dir_all(folder).expect("the plugin folder");
-        std::fs::copy(library, &bundle).expect("a copy of the test plugin");
+        put_copy(library, &bundle);
+        return bundle;
+    }
+    if cfg!(not(target_os = "macos")) {
+        let binaries = bundle.join(format!("Contents/{}-linux", std::env::consts::ARCH));
+        std::fs::create_dir_all(&binaries).expect("the bundle folder");
+        put_copy(library, &binaries.join(format!("{name}.so")));
         return bundle;
     }
     let contents = bundle.join("Contents");
     std::fs::create_dir_all(contents.join("MacOS")).expect("the bundle folder");
-    std::fs::copy(library, contents.join("MacOS").join(name)).expect("a copy of the test plugin");
+    put_copy(library, &contents.join("MacOS").join(name));
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -748,4 +764,14 @@ pub fn install_bundle(folder: &Path, library: &Path, name: &str, extension: &str
     );
     std::fs::write(contents.join("Info.plist"), plist).expect("the bundle Info.plist");
     bundle
+}
+
+/// Copies `library` to `to` as a new file put in place, never by writing into the file that is
+/// there. A test that installs a plugin again, on a reopen, would otherwise change the code of
+/// the copy this process has loaded under it, which crashes it on Linux.
+fn put_copy(library: &Path, to: &Path) {
+    let mut next = to.as_os_str().to_owned();
+    next.push(".next");
+    std::fs::copy(library, &next).expect("a copy of the test plugin");
+    std::fs::rename(&next, to).expect("the copy in place");
 }

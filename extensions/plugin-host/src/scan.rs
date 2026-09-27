@@ -404,14 +404,21 @@ pub struct ScanCache {
 const CACHE_VARIABLE: &str = "SOUND_TOOLS_PLUGIN_CACHE";
 
 impl ScanCache {
-    /// The cache of this machine: `~/Library/Caches/sound-tools/plugins.json`.
+    /// The cache of this machine: `~/Library/Caches/sound-tools/plugins.json` on macOS, and
+    /// `~/.cache/sound-tools/plugins.json` on Linux, or under `XDG_CACHE_HOME` when it is set.
     pub fn of_this_machine() -> Self {
         if let Some(named) = std::env::var_os(CACHE_VARIABLE) {
             return Self::at(PathBuf::from(named));
         }
-        let path = std::env::var_os("HOME")
-            .map(|home| PathBuf::from(home).join("Library/Caches/sound-tools/plugins.json"));
-        Self::kept_at(path)
+        let home = || std::env::var_os("HOME").map(PathBuf::from);
+        let caches = if cfg!(target_os = "macos") {
+            home().map(|home| home.join("Library/Caches"))
+        } else {
+            std::env::var_os("XDG_CACHE_HOME")
+                .map(PathBuf::from)
+                .or_else(|| home().map(|home| home.join(".cache")))
+        };
+        Self::kept_at(caches.map(|caches| caches.join("sound-tools/plugins.json")))
     }
 
     pub fn at(path: impl Into<PathBuf>) -> Self {
@@ -621,7 +628,7 @@ fn stamp(bundle: &Path) -> Option<Stamp> {
             .ok()?;
         Some(i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()))
     };
-    let binaries = bundle.join("Contents/MacOS");
+    let binaries = binary_folder(bundle);
     let mut latest = match std::fs::read_dir(&binaries) {
         Ok(entries) => {
             let mut files: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
@@ -638,6 +645,16 @@ fn stamp(bundle: &Path) -> Option<Stamp> {
         architecture: std::env::consts::ARCH.to_string(),
         changed: latest?,
     })
+}
+
+/// The folder of a bundle that holds its binaries: `Contents/MacOS` on macOS, and the folder
+/// of this machine's architecture on Linux, such as `Contents/x86_64-linux`.
+pub(crate) fn binary_folder(bundle: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        bundle.join("Contents/MacOS")
+    } else {
+        bundle.join(format!("Contents/{}-linux", std::env::consts::ARCH))
+    }
 }
 
 /// Scans every bundle under `folders`, using `cache` for the ones that have not changed, and
@@ -725,7 +742,7 @@ mod tests {
     /// and resources. Nothing in it is a plugin; these tests are about the files.
     fn bundle_in(folder: &Path) -> PathBuf {
         let bundle = folder.join("piano.vst3");
-        let binaries = bundle.join("Contents/MacOS");
+        let binaries = binary_folder(&bundle);
         std::fs::create_dir_all(&binaries).unwrap();
         std::fs::create_dir_all(bundle.join("Contents/Resources")).unwrap();
         std::fs::write(bundle.join("Contents/Info.plist"), "<plist/>").unwrap();
@@ -748,7 +765,7 @@ mod tests {
         std::fs::write(bundle.join("Contents/Resources/sound"), "other samples").unwrap();
         assert_eq!(stamp(&bundle), Some(before.clone()));
 
-        let binary = bundle.join("Contents/MacOS/piano");
+        let binary = binary_folder(&bundle).join("piano");
         let modified = std::fs::metadata(&binary).unwrap().modified().unwrap();
         std::fs::write(&binary, "the next build!").unwrap();
         let file = std::fs::File::options().write(true).open(&binary).unwrap();
