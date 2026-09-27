@@ -50,7 +50,7 @@ fn at_rest(bounds: Bounds<Pixels>, cx: &App) -> AudioClipLook {
 }
 
 fn clips(cx: &App) -> AnyElement {
-    let states: [(&'static str, fn(&mut AudioClipLook)); 8] = [
+    let states: [(&'static str, fn(&mut AudioClipLook)); 9] = [
         ("at rest: the waveform in the track colour", |_| {}),
         ("pointer on it: two fade handles and the gain", |look| {
             look.handles = true
@@ -88,6 +88,9 @@ fn clips(cx: &App) -> AnyElement {
             look.missing = Some(SharedString::from("voice-take-2.wav is missing"));
         }),
         ("on a muted track: at 40 %", |look| look.muted = true),
+        ("a take while it records: a red border", |look| {
+            look.recording = true
+        }),
     ];
     let samples = states.map(|(name, state)| sample(name, cx, themed_clip(state)));
     block("Clip waveform", cx, samples)

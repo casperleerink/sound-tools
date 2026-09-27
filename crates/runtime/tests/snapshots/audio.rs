@@ -16,18 +16,27 @@
 //! - `audio-drop-track.png`: two files over the guitar, one after the other.
 //! - `audio-menu.png`: the project menu, where `Add track` offers an instrument or an audio
 //!   track.
+//! - `audio-armed.png`: the voice armed, its input level in its header and on the meter of its
+//!   panel, the guitar not armed, and the input select under M and S. `audio-clip.png`.
+//! - `audio-input-select.png`: the input select open: each channel alone, then the pair.
+//! - `audio-recording.png`: both armed and recording from bar 5 over their clips, the takes
+//!   growing to the playhead at 7.3 with their waveforms, and the panel of the voice with no
+//!   clip selected. `recording.png` of the mockups.
 
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use arrangement::view::ArrangementView;
-use arrangement::{AudioClip, Colour, TrackState};
+use arrangement::{AudioClip, Colour, InputChannels, TrackState};
 use gpui::{
     Entity, ExternalPaths, FileDropEvent, HeadlessAppContext, Pixels, PlatformInput, Point, point,
     px,
 };
-use sound_core::{Changes, Instance, InstanceId, Project, Ticks};
+use runtime::window::audio_input::{OpenInput, OpenedInput};
+use sound_core::{CaptureWriter, Changes, Instance, InstanceId, Project, Ticks};
 use sound_media::AudioAsset;
 use sound_ui::Waveforms;
 
@@ -412,5 +421,177 @@ pub fn snapshots(
     })?;
     cx.run_until_parked();
     save(cx, &opened, "audio-menu")?;
+    drop(opened);
+    recording(cx, save)
+}
+
+/// An audio input the window opens as its default input, with no device: the voice on input 1
+/// and the guitar on input 2, as the engine runs. With no device the window has no timing, so
+/// an input frame is heard at the engine frame of the same number.
+#[derive(Clone, Default)]
+struct SimulatedInput {
+    writer: Rc<RefCell<Option<CaptureWriter>>>,
+    written: Rc<Cell<u64>>,
+}
+
+impl SimulatedInput {
+    fn opener(&self) -> OpenInput {
+        let input = self.clone();
+        Rc::new(move || {
+            let (writer, reader) = sound_core::capture(48_000, 2);
+            *input.writer.borrow_mut() = Some(writer);
+            input.written.set(0);
+            Ok(OpenedInput {
+                stream: None,
+                reader,
+            })
+        })
+    }
+
+    fn write_until(&self, until: u64) {
+        let mut writer = self.writer.borrow_mut();
+        let Some(writer) = writer.as_mut() else {
+            return;
+        };
+        let first = self.written.get();
+        let frames = first..until.max(first);
+        let samples: Vec<f32> = frames
+            .flat_map(|frame| {
+                let time = frame as f64 / 48_000.;
+                [(voice(time) * 0.5) as f32, (strum(time) * 0.5) as f32]
+            })
+            .collect();
+        writer.write(&samples, first * 1_000_000_000 / 48_000, 0);
+        self.written.set(until.max(first));
+    }
+}
+
+/// The piece with audio, the guitar recording input 2.
+fn studio(project: &mut Project) -> Result<()> {
+    audio_piece(project)?;
+    let guitar = project
+        .resolve::<TrackState>(&InstanceId::new("arrangement/guitar")?)
+        .context("no guitar")?;
+    let mut state = project.state(&guitar).context("no guitar")?.clone();
+    state.input = InputChannels::mono(2).context("input 2")?;
+    let mut changes = Changes::new();
+    changes.set(&guitar, state);
+    project.commit("Guitar on input 2", changes)?;
+    Ok(())
+}
+
+fn arm(opened: &Opened, tracks: &[&str], cx: &mut HeadlessAppContext) -> Result<()> {
+    for track in tracks {
+        let track = InstanceId::new(track)?;
+        cx.update(|cx| {
+            let recording = opened.session.read(cx).recording().clone();
+            recording.update(cx, |recording, cx| recording.set_armed(track, true, cx));
+        });
+    }
+    cx.run_until_parked();
+    Ok(())
+}
+
+/// Runs the engine and the input for `seconds` in polls of 16 ms, and what the timers of the
+/// window do after each: the poll of the transport, which reads the input and runs the
+/// recorder, and the meters.
+fn run_input(
+    opened: &mut Opened,
+    input: &SimulatedInput,
+    seconds: f32,
+    cx: &mut HeadlessAppContext,
+) -> Result<()> {
+    let poll = (48_000. * sound_ui::POLL_INTERVAL.as_secs_f32()) as usize;
+    for _ in 0..(seconds * 1000. / 16.) as usize {
+        opened.advance(poll, cx);
+        input.write_until(opened.engine.frames());
+        poll_window(opened, cx)?;
+    }
+    Ok(())
+}
+
+fn poll_window(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<()> {
+    let view = view(opened, cx)?;
+    cx.update(|cx| {
+        let transport = opened.window.read(cx)?.transport().clone();
+        transport.update(cx, |pill, cx| {
+            pill.poll_input(cx);
+            pill.read_meter(cx);
+        });
+        if let Some(panel) = view.read(cx).track_panel().cloned() {
+            panel.update(cx, |panel, cx| panel.read_meter(cx));
+        }
+        anyhow::Ok(())
+    })?;
+    cx.run_until_parked();
+    Ok(())
+}
+
+/// Lets the recorder, which runs on a background thread, write what came in, and the window
+/// line the takes up with the timeline.
+fn wait_for_takes(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<()> {
+    for _ in 0..200 {
+        poll_window(opened, cx)?;
+        let lined_up = cx.update(|cx| {
+            let recording = opened.session.read(cx).recording().read(cx);
+            let takes = recording.takes();
+            !takes.is_empty() && takes.iter().all(|take| take.sound.is_some())
+        });
+        if lined_up {
+            std::thread::sleep(Duration::from_millis(50));
+            poll_window(opened, cx)?;
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    anyhow::bail!("the takes were not lined up")
+}
+
+/// Arming, the input select and a recording, from a simulated input.
+fn recording(
+    cx: &mut HeadlessAppContext,
+    save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
+) -> Result<()> {
+    // The voice armed, stopped, with its panel open: the level of its input.
+    let input = SimulatedInput::default();
+    let mut opened = Opened::with_input(cx, studio, Some(input.opener()))?;
+    arm(&opened, &["arrangement/voice"], cx)?;
+    opened.click_track_header(3., cx)?;
+    run_input(&mut opened, &input, 0.5, cx)?;
+    wait_for_waveforms(cx, &opened)?;
+    save(cx, &opened, "audio-armed")?;
+    let view = view(&opened, cx)?;
+    let select = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned().context("no panel")?;
+        let select = panel.read(cx).input_select().cloned();
+        select.context("no input select")
+    })?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        select.update(cx, |select, cx| select.open(window, cx));
+    })?;
+    cx.run_until_parked();
+    save(cx, &opened, "audio-input-select")?;
+    drop(opened);
+
+    // Both armed, recording from bar 5 to 7.3 over their clips.
+    let input = SimulatedInput::default();
+    let mut opened = Opened::with_input(cx, studio, Some(input.opener()))?;
+    arm(&opened, &["arrangement/voice", "arrangement/guitar"], cx)?;
+    opened.click_track_header(3., cx)?;
+    cx.update(|cx| {
+        opened
+            .session
+            .update(cx, |session, _| session.engine().seek(Ticks(4 * BAR)))
+    });
+    opened.advance(64, cx);
+    cx.update(|cx| {
+        let transport = opened.window.read(cx)?.transport().clone();
+        transport.update(cx, |pill, cx| pill.toggle_recording(cx));
+        anyhow::Ok(())
+    })?;
+    run_input(&mut opened, &input, 4.6, cx)?;
+    wait_for_takes(&opened, cx)?;
+    wait_for_waveforms(cx, &opened)?;
+    save(cx, &opened, "audio-recording")?;
     Ok(())
 }
