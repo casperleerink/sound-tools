@@ -198,6 +198,30 @@ fn the_add_track_button_under_the_last_track_adds_an_instrument_track(cx: &mut T
     assert_eq!(track_kinds(&mut opened), [TrackKind::Instrument]);
 }
 
+#[gpui::test]
+fn tab_scrolls_the_add_track_button_into_view_under_many_tracks(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let arrangement = main_arrangement(project).unwrap();
+        for _ in 0..40 {
+            runtime::add_track(project, &arrangement).unwrap();
+        }
+    });
+    let master = opened.bounds("master-row").unwrap();
+    let below_the_view = |opened: &mut Opened<'_>| {
+        let button = opened.bounds("add-track").unwrap();
+        button.bottom() > master.top()
+    };
+    assert!(below_the_view(&mut opened));
+
+    // GPUI tells of a focus change only in an active window, which a test window is not.
+    opened.cx.update(|window, _| window.activate_window());
+    opened.click_timeline(3.5, 0.5);
+    opened.keys("tab tab");
+    assert!(!below_the_view(&mut opened));
+    opened.press_enter();
+    assert_eq!(track_kinds(&mut opened).len(), 42);
+}
+
 /// Stands in for a view with a text field, such as a rename or the agent composer later.
 struct FieldView {
     field: Entity<TextInput>,

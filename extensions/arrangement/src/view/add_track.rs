@@ -5,7 +5,7 @@
 //! It is a view of its own over the timeline, as the recording overlay is: the timeline paints
 //! its headers on one canvas, and a notified timeline paints every clip again.
 
-use gpui::{App, Context, Entity, IntoElement, Render, Window, div, prelude::*, px};
+use gpui::{App, Context, Entity, Focusable, IntoElement, Render, Window, div, prelude::*, px};
 use sound_core::{Instance, Project, ProjectError};
 use sound_ui::Session;
 use sound_ui::components::dropdown_menu::{
@@ -49,6 +49,7 @@ impl AddTrackButton {
         arrangement: Instance<ArrangementState>,
         timeline: Entity<Timeline>,
         add_track: AddTrack,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         // A scroll, or a track more or less, moves the button.
@@ -78,6 +79,13 @@ impl AddTrackButton {
         .detach();
         let menu = button.read(cx).menu().clone();
         cx.observe(&menu, |_, _, cx| cx.notify()).detach();
+        // Tab may reach the button while it is scrolled out of the view.
+        let focus = button.focus_handle(cx);
+        cx.on_focus_in(&focus, window, |this, _, cx| {
+            this.timeline
+                .update(cx, |timeline, cx| timeline.reveal_add_row(cx));
+        })
+        .detach();
         Self { timeline, button }
     }
 
@@ -94,7 +102,7 @@ impl Render for AddTrackButton {
         // Files dragged under the last track show the header of the track they would make
         // where the button is.
         let dropping = matches!(timeline.incoming_target(), Some(DropTarget::NewTrack(_)));
-        let top = timeline.add_row_top() + (ADD_ROW_HEIGHT - split_button::HEIGHT) / 2.;
+        let top = timeline.add_row_top(cx) + (ADD_ROW_HEIGHT - split_button::HEIGHT) / 2.;
         // Clipped to the header column under the ruler, as the painted headers are. Not while
         // the menu is open: GPUI clips the menu to where it was made, which is this column.
         div()

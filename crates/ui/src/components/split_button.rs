@@ -6,8 +6,8 @@
 //! value of the menu item it stands for, so whoever holds it handles one event for both.
 
 use gpui::{
-    Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla, IntoElement, MouseButton, Render,
-    SharedString, Window, div, prelude::*, px,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, IntoElement,
+    MouseButton, Render, SharedString, Window, div, prelude::*, px,
 };
 
 use crate::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuPicked, Trigger};
@@ -33,6 +33,7 @@ pub struct SplitButton {
     label: SharedString,
     icon: Option<SharedString>,
     main_value: SharedString,
+    focus_handle: FocusHandle,
     main_focus: FocusHandle,
     keyboard_focus: KeyboardFocus,
     menu: Entity<DropdownMenu>,
@@ -64,6 +65,7 @@ impl SplitButton {
             label: choices.label,
             icon: None,
             main_value: choices.main_value,
+            focus_handle: cx.focus_handle(),
             main_focus: cx.focus_handle().tab_stop(true),
             keyboard_focus: KeyboardFocus::default(),
             menu,
@@ -80,9 +82,13 @@ impl SplitButton {
     pub fn menu(&self) -> &Entity<DropdownMenu> {
         &self.menu
     }
+}
 
-    pub fn main_focus(&self) -> &FocusHandle {
-        &self.main_focus
+/// The whole button, not a tab stop: `on_focus_in` of it hears a focus on either half, or in
+/// the open menu.
+impl Focusable for SplitButton {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -130,6 +136,7 @@ impl Render for SplitButton {
             })
             .child(self.label.clone());
         div()
+            .track_focus(&self.focus_handle)
             .flex()
             .flex_none()
             .items_center()

@@ -137,7 +137,14 @@ impl ArrangementView {
             cx.new(|cx| RecordingOverlay::new(session.clone(), timeline.clone(), cx));
         let add_track_button = cx.new(|cx| {
             let (session, arrangement) = (session.clone(), arrangement.clone());
-            AddTrackButton::new(session, arrangement, timeline.clone(), add_track, cx)
+            AddTrackButton::new(
+                session,
+                arrangement,
+                timeline.clone(),
+                add_track,
+                window,
+                cx,
+            )
         });
 
         cx.subscribe_in(
