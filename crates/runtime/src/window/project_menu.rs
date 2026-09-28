@@ -237,21 +237,31 @@ fn export_audio(
                 async move { render_in_child(&folder, &wav, &span) }
             })
             .await;
-        if let Err(error) = rendered {
-            let message = format!("The export failed: {error:#}");
-            session.update(cx, |session, cx| session.report(message, cx));
-            return;
-        }
+        let errors = match rendered {
+            Ok(errors) => errors,
+            Err(error) => {
+                let message = format!("The export failed: {error:#}");
+                session.update(cx, |session, cx| session.report(message, cx));
+                return;
+            }
+        };
         let file = wav.file_name().unwrap_or_default().to_string_lossy();
         let answer = cx.update(|window, cx| {
             let message = format!("Exported {file}");
+            // A plugin that did not load or answer in the render is missing from the file.
+            let (level, detail) = if errors.is_empty() {
+                (PromptLevel::Info, None)
+            } else {
+                let detail = format!("It may be incomplete:\n{}", errors.join("\n"));
+                (PromptLevel::Warning, Some(detail))
+            };
             let reveal = if cfg!(target_os = "macos") {
                 "Show in Finder"
             } else {
                 "Show in folder"
             };
             let buttons = [reveal, "OK"];
-            window.prompt(PromptLevel::Info, &message, None, &buttons, cx)
+            window.prompt(level, &message, detail.as_deref(), &buttons, cx)
         });
         if let Ok(answer) = answer
             && let Ok(0) = answer.await
@@ -262,9 +272,9 @@ fn export_audio(
     .detach();
 }
 
-/// Runs `--render` and waits for it. What it printed last on stderr is the error, when it
-/// failed.
-fn render_in_child(folder: &Path, wav: &Path, span: &[String]) -> anyhow::Result<()> {
+/// Runs `--render` and waits for it. Gives the errors it printed on the way, such as a plugin
+/// that did not load. When it failed, what it printed last on stderr is the error.
+fn render_in_child(folder: &Path, wav: &Path, span: &[String]) -> anyhow::Result<Vec<String>> {
     let program = std::env::current_exe()?;
     let output = Command::new(program)
         .arg(folder)
@@ -273,7 +283,11 @@ fn render_in_child(folder: &Path, wav: &Path, span: &[String]) -> anyhow::Result
         .args(span)
         .output()?;
     if output.status.success() {
-        return Ok(());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let errors = stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix("error: "));
+        return Ok(errors.map(str::to_string).collect());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     let last = stderr.lines().rfind(|line| !line.trim().is_empty());
