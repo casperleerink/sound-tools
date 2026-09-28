@@ -65,12 +65,15 @@ fn a_header_dragged_down_moves_its_track_with_everything_it_has(cx: &mut TestApp
         recording.update(cx, |recording, cx| recording.set_armed(id(AUDIO), true, cx));
     });
     let before = mark(&mut opened);
-    // Let go below the last track, over empty space: the track goes last, over the master.
-    let (from, to) = (opened.track_header(0), opened.track_header(5));
+    // Let go below the last track, on the add track button: the track goes last, and the
+    // button adds nothing, as the press was not on it.
+    let button = opened.bounds("add-track").unwrap();
+    let (from, to) = (opened.track_header(0), button.center());
     opened.drag(from, to);
     opened.settle();
 
     assert_eq!(order(&mut opened), names(&[SECOND, AUDIO, FIRST]));
+    assert_eq!(opened.bounds("add-track"), Some(button));
     // The same track, so the same selection, panel and clips. Only the orders changed.
     assert_eq!(opened.selected_track(), Some(id(FIRST)));
     assert_eq!(opened.panel_track(), Some(id(FIRST)));
