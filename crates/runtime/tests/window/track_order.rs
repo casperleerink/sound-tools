@@ -65,7 +65,8 @@ fn a_header_dragged_down_moves_its_track_with_everything_it_has(cx: &mut TestApp
         recording.update(cx, |recording, cx| recording.set_armed(id(AUDIO), true, cx));
     });
     let before = mark(&mut opened);
-    let (from, to) = (opened.track_header(0), opened.track_header(2));
+    // Let go below the last track, over empty space: the track goes last, over the master.
+    let (from, to) = (opened.track_header(0), opened.track_header(5));
     opened.drag(from, to);
     opened.settle();
 
@@ -74,21 +75,46 @@ fn a_header_dragged_down_moves_its_track_with_everything_it_has(cx: &mut TestApp
     assert_eq!(opened.selected_track(), Some(id(FIRST)));
     assert_eq!(opened.panel_track(), Some(id(FIRST)));
     assert!(opened.clip(PART).is_some());
-    assert!(armed(&mut opened, AUDIO));
-    // The arm toggle of the audio track is in its new row, the second.
-    let toggle = opened.control("toggle-arm-track-3");
-    let row = opened.track_header(1);
-    assert!((toggle.y - row.y).abs() < px(8.), "{toggle:?} {row:?}");
     assert!(!opened.gesture_open());
     one_undo_step(&mut opened, "Move track", &before);
 
-    // Up again to the top: one more step.
+    // The armed audio track up to the top: it stays armed, and its arm toggle goes with it.
     let before = mark(&mut opened);
-    let (from, to) = (opened.track_header(2), opened.track_header(0));
+    let (from, to) = (opened.track_header(1), opened.track_header(0));
     opened.drag(from, to);
     opened.settle();
-    assert_eq!(order(&mut opened), names(&[FIRST, SECOND, AUDIO]));
+    assert_eq!(order(&mut opened), names(&[AUDIO, SECOND, FIRST]));
+    assert_eq!(opened.selected_track(), Some(id(AUDIO)));
+    assert_eq!(opened.panel_track(), Some(id(AUDIO)));
+    assert!(armed(&mut opened, AUDIO));
+    let toggle = opened.control("toggle-arm-track-3");
+    let row = opened.track_header(0);
+    assert!((toggle.y - row.y).abs() < px(8.), "{toggle:?} {row:?}");
     one_undo_step(&mut opened, "Move track", &before);
+}
+
+/// An agent deletes a track while another is dragged: the rows close up and the drag goes on
+/// over the tracks that are left.
+#[gpui::test]
+fn a_track_deleted_during_a_drag_leaves_the_rows(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let (from, to) = (opened.track_header(0), opened.track_header(1));
+    opened.press(from);
+    opened.drag_to(to);
+    assert_eq!(order(&mut opened), names(&[SECOND, FIRST, AUDIO]));
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.delete(&id(SECOND));
+        project.commit("Delete track", changes)
+    });
+    assert_eq!(order(&mut opened), names(&[FIRST, AUDIO]));
+    let below = to + point(px(0.), px(8.));
+    opened.drag_to(below);
+    assert_eq!(order(&mut opened), names(&[AUDIO, FIRST]));
+    opened.release(below);
+    opened.settle();
+    assert!(!opened.gesture_open());
+    assert_eq!(opened.undo_label().as_deref(), Some("Move track"));
 }
 
 #[gpui::test]

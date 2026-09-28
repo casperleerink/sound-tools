@@ -360,8 +360,9 @@ struct Marquee {
 /// themselves show where it lands. The whole drag is one gesture of the session.
 struct TrackDrag {
     track: InstanceId,
-    /// The tracks as people saw them at the press, with their orders then. Every move starts
-    /// from here, so a drag back to where it began writes nothing and is no undo step.
+    /// The tracks as people saw them when the gesture opened, with their orders then. Every
+    /// move starts from here, so a drag back to where it began writes nothing and is no undo
+    /// step.
     origin: Vec<(Instance<TrackState>, u32)>,
     from: usize,
     /// The place the last move gave the track, so a move inside one row publishes nothing.
@@ -1457,7 +1458,7 @@ impl Timeline {
                 if double {
                     self.start_rename(track, window, cx);
                 } else {
-                    self.start_track_drag(track.id(), y, cx);
+                    self.start_track_drag(track.id(), y);
                 }
             }
             return;
@@ -1822,17 +1823,13 @@ impl Timeline {
     }
 
     /// A press on a track header, which may become a drag of the track.
-    fn start_track_drag(&mut self, track: &InstanceId, y: f32, cx: &mut Context<Self>) {
-        let project = self.session.read(cx).project();
-        let origin = track_orders(project, self.arrangement.id());
-        let Some(from) = origin.iter().position(|(row, _)| row.id() == track) else {
-            return;
-        };
+    fn start_track_drag(&mut self, track: &InstanceId, y: f32) {
+        // The tracks are read at the first move, see `drag_track`.
         self.track_drag = Some(TrackDrag {
             track: track.clone(),
-            origin,
-            from,
-            at: from,
+            origin: Vec::new(),
+            from: 0,
+            at: 0,
             press: f64::from(y) + self.painted.get().scroll_y,
             moving: false,
             begun: false,
@@ -1854,6 +1851,31 @@ impl Timeline {
         if !drag.moving {
             drag.moving = true;
             cx.notify();
+        }
+        let project = self.session.read(cx).project();
+        let tracks = drag.origin.len();
+        match drag.begun {
+            // Until the gesture opens, undo is free and an agent may write: the drag starts
+            // from the tracks as they are now. Once it opens, it owns the orders.
+            false => drag.origin = track_orders(project, self.arrangement.id()),
+            // A track deleted from outside leaves the rows, and the others close up.
+            true => drag
+                .origin
+                .retain(|(track, _)| project.state(track).is_some()),
+        }
+        let Some(from) = drag
+            .origin
+            .iter()
+            .position(|(row, _)| *row.id() == drag.track)
+        else {
+            self.track_drag = Some(drag);
+            return self.end_drag(cx);
+        };
+        if !drag.begun {
+            (drag.from, drag.at) = (from, from);
+        } else if drag.origin.len() != tracks {
+            // The rows moved under the drag: publish again, wherever the pointer is.
+            (drag.from, drag.at) = (from, usize::MAX);
         }
         let to = viewport
             .nearest_track(y, drag.origin.len())
