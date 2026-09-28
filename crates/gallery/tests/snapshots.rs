@@ -72,7 +72,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// The controls of the focus section that tab reaches, one frame each.
-const FOCUS_STOPS: usize = 6;
+const FOCUS_STOPS: usize = 8;
 
 /// The frames one under the other.
 fn stack(frames: Vec<image::RgbaImage>) -> image::RgbaImage {

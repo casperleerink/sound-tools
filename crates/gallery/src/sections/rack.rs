@@ -21,8 +21,11 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::meter::{GainReduction, Level, Meter};
 use sound_ui::components::segmented_control::SegmentedControl;
+use sound_ui::components::split_button::SplitButton;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::volume::Volume;
+
+use super::overlays::add_track_button;
 
 /// A value of a sample, and where it was at the press of a drag, for escape.
 #[derive(Clone, Copy)]
@@ -823,6 +826,7 @@ struct FocusState {
     segment: SharedString,
     select: Entity<DropdownMenu>,
     on: bool,
+    split: Entity<SplitButton>,
 }
 
 /// The focus section: one of each control that the keyboard reaches, in tab order, so that the
@@ -835,6 +839,7 @@ pub fn focus_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         segment: "low".into(),
         select: select(cx),
         on: true,
+        split: add_track_button("focus-split", cx),
     });
     let change = |f: fn(&mut FocusState, ValueChange)| {
         let focus = focus.clone();
@@ -848,6 +853,7 @@ pub fn focus_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let state = focus.read(cx);
     let (cutoff, volume, mute) = (state.cutoff.value, state.volume.value, state.mute);
     let (segment, select, on) = (state.segment.clone(), state.select.clone(), state.on);
+    let split = state.split.clone();
     let peach = cx.theme().peach;
     let toggle = {
         let focus = focus.clone();
@@ -925,6 +931,8 @@ pub fn focus_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                         ),
                     ),
             ),
+            // Two stops: the main half, then the chevron.
+            sample("split button", cx, split),
         ],
     )
 }
