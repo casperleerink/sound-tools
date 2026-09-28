@@ -1070,6 +1070,24 @@ fn main() -> Result<()> {
     })?;
     cx.run_until_parked();
     save(&mut cx, &editing, "arrangement-rename")?;
+    editing.key("escape", &mut cx)?;
+
+    // The first track dragged by its header onto the third row, before the button comes up:
+    // the rows have moved, and the ring of a drag shows where it lands. Escape puts it back.
+    let header = |row: f32| {
+        point(
+            px(HEADER_WIDTH / 2.),
+            px(48. + RULER_HEIGHT + TRACK_HEIGHT * (row + 0.5)),
+        )
+    };
+    editing.press_and_move(header(0.), header(2.), &mut cx)?;
+    anyhow::ensure!(
+        cx.update(|cx| editing.session.read(cx).gesture_open()),
+        "the track drag did not begin"
+    );
+    save(&mut cx, &editing, "arrangement-track-drag")?;
+    editing.key("escape", &mut cx)?;
+    editing.release(header(2.), &mut cx)?;
     drop(editing);
 
     // A recorded take: the project menu offers to fit the tempo to it once its clip is
