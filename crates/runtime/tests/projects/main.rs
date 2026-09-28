@@ -10,6 +10,7 @@ mod compressor;
 mod drums;
 mod effects;
 mod eq;
+mod export;
 mod filter;
 mod fit;
 mod generated_take;

@@ -6,7 +6,10 @@
 //! runtime <project-folder>                                 run live in the window
 //! runtime <project-folder> --headless                      run live, commands from stdin
 //! runtime <project-folder> --inspect                       print a summary, open no device
-//! runtime <project-folder> --render <wav> --seconds <n>    render offline
+//! runtime <project-folder> --render <wav>                 render the project and its tail
+//! runtime <project-folder> --render <wav> --seconds <n>    render the first n seconds
+//! runtime <project-folder> --render <wav> --from <ticks> --to <ticks>
+//!                                                          render a range and its tail
 //! runtime --plugins                                        list the plugins of this machine
 //! ```
 //!
@@ -220,10 +223,19 @@ fn inspect(folder: &Path) -> Result<()> {
     Ok(())
 }
 
-fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
+/// What a render plays.
+enum Span {
+    /// From the start, this long, with no tail. Whatever the clips say.
+    Seconds(f64),
+    /// From the start to the end of the last clip, and the tail.
+    Project,
+    /// This range and the tail, as the window exports selected clips.
+    Range(Ticks, Ticks),
+}
+
+fn render(folder: &Path, wav: &Path, span: Span) -> Result<()> {
     let (mut project, mut engine, plugins) = open_read_only(folder)?;
     print_problems(&project);
-    project.engine().play();
     let mut writer = hound::WavWriter::create(
         wav,
         hound::WavSpec {
@@ -233,23 +245,43 @@ fn render(folder: &Path, wav: &Path, seconds: f64) -> Result<()> {
             sample_format: hound::SampleFormat::Float,
         },
     )?;
-    let frames = (seconds * f64::from(OFFLINE.sample_rate)) as usize;
     let mut peak = 0.0_f32;
-    // The plugin host is polled for every buffer, as the live loop does: a render answers a
-    // plugin's main-thread requests or it renders what a plugin that is waiting for one sounds
-    // like, which can be nothing at all.
-    let problems = runtime::render_into(&mut project, &mut engine, &plugins, frames, |samples| {
+    let write = |samples: &[f32]| {
         for sample in samples {
             peak = peak.max(sample.abs());
             writer.write_sample(*sample)?;
         }
         Ok(())
-    })?;
+    };
+    // The plugin host is polled for every buffer, as the live loop does: a render answers a
+    // plugin's main-thread requests or it renders what a plugin that is waiting for one sounds
+    // like, which can be nothing at all.
+    let problems = match span {
+        Span::Seconds(seconds) => {
+            project.engine().play();
+            let frames = (seconds * f64::from(OFFLINE.sample_rate)) as usize;
+            runtime::render_into(&mut project, &mut engine, &plugins, frames, write)?
+        }
+        Span::Project => {
+            let Some(end) = runtime::project_end(&project) else {
+                bail!("the project has no clips, so there is nothing to render");
+            };
+            runtime::render_range(&mut project, &mut engine, &plugins, Ticks(0), end, write)?
+        }
+        Span::Range(from, to) => {
+            runtime::render_range(&mut project, &mut engine, &plugins, from, to, write)?
+        }
+    };
     for problem in problems {
         println!("error: {problem}");
     }
+    let frames = writer.len() / OFFLINE.channels as u32;
     writer.finalize()?;
-    println!("rendered {seconds} s to {}, peak {peak:.4}", wav.display());
+    let seconds = f64::from(frames) / f64::from(OFFLINE.sample_rate);
+    println!(
+        "rendered {seconds:.2} s to {}, peak {peak:.4}",
+        wav.display()
+    );
     // Above zero, notes were lost: more events in one block than a port holds, or more held
     // notes than a track keeps.
     let status = project.engine().poll()?;
@@ -342,12 +374,19 @@ fn main() -> Result<()> {
         // The child of a plugin scan. It loads one bundle, which is why it is a process of
         // its own: a plugin that crashes while it is looked at costs this child and no more.
         [plugin_host::SCAN_ARGUMENT, format, bundle] => scan_one_bundle(format, Path::new(bundle)),
+        [folder, "--render", wav] => render(Path::new(folder), Path::new(wav), Span::Project),
         [folder, "--render", wav, "--seconds", seconds] => {
             let seconds = seconds.parse().context("--seconds takes a number")?;
-            render(Path::new(folder), Path::new(wav), seconds)
+            render(Path::new(folder), Path::new(wav), Span::Seconds(seconds))
+        }
+        [folder, "--render", wav, "--from", from, "--to", to] => {
+            let from = from.parse().context("--from takes a position in ticks")?;
+            let to = to.parse().context("--to takes a position in ticks")?;
+            let span = Span::Range(Ticks(from), Ticks(to));
+            render(Path::new(folder), Path::new(wav), span)
         }
         _ => bail!(
-            "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> --seconds <n>]]\n       sound-tools --plugins | --version"
+            "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [--seconds <n> | --from <ticks> --to <ticks>]]]\n       sound-tools --plugins | --version"
         ),
     }
 }

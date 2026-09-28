@@ -117,6 +117,81 @@ fn shift_and_cmd_click_add_clips_to_the_selection_and_take_them_out(cx: &mut Tes
     assert_eq!(opened.undo_label(), None);
 }
 
+/// The session has every selected clip, the first one first, so the project menu can export
+/// the time they cover: from the start of `part` to the end of `hook`.
+#[gpui::test]
+fn the_selected_clips_reach_the_session_and_give_the_time_an_export_covers(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open(cx);
+    let (on_part, on_hook) = (opened.at(BAR + 960, 0), opened.at(4 * BAR + 960, 1));
+    let session = opened.session.clone();
+    let exported = |opened: &mut Opened<'_>| {
+        opened.cx.read(|cx| {
+            let session = session.read(cx);
+            let clips = session.selected_clips().to_vec();
+            (
+                clips.clone(),
+                runtime::clips_span(session.project(), &clips),
+            )
+        })
+    };
+    assert_eq!(exported(&mut opened), (vec![], None));
+    opened.click(on_part);
+    opened.click_with(on_hook, shift());
+    let span = Some((Ticks(BAR), Ticks(5 * BAR)));
+    assert_eq!(exported(&mut opened), (vec![id(HOOK), id(PART)], span));
+    opened.click_with(on_hook, cmd());
+    let span = Some((Ticks(BAR), Ticks(3 * BAR)));
+    assert_eq!(exported(&mut opened), (vec![id(PART)], span));
+}
+
+/// Opens the project menu and clicks one of its items.
+fn pick_in_project_menu(opened: &mut Opened<'_>, item: &str) {
+    let menu = opened.cx.read(|cx| {
+        let shell = opened.shell.read(cx);
+        shell.project_menu().read(cx).menu().clone()
+    });
+    opened
+        .cx
+        .update(|window, cx| menu.update(cx, |menu, cx| menu.open(window, cx)));
+    opened.cx.run_until_parked();
+    let row = opened.control(&format!("menu-{item}"));
+    opened.click(row);
+    opened.settle();
+}
+
+/// Export selection asks where to save while a clip is selected. The render itself runs this
+/// program with `--render`, which the tests of whole projects cover.
+#[gpui::test]
+fn export_selection_asks_where_to_save(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let on_part = opened.at(BAR + 960, 0);
+    opened.click(on_part);
+    pick_in_project_menu(&mut opened, "export-selection");
+    assert!(opened.cx.did_prompt_for_new_path());
+    // Cancelled: nothing happens.
+    opened.cx.simulate_new_path_selection(|_| None);
+    opened.settle();
+    assert_eq!(opened.notice(), None);
+}
+
+/// Without clips there is nothing to export: a notice says so, and with no clip selected
+/// Export selection does nothing.
+#[gpui::test]
+fn exporting_a_project_without_clips_says_there_is_nothing_to_export(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |_| {});
+    pick_in_project_menu(&mut opened, "export");
+    assert!(!opened.cx.did_prompt_for_new_path());
+    let notice = opened.notice().unwrap();
+    assert_eq!(
+        notice,
+        "The project has no clips, so there is nothing to export."
+    );
+    pick_in_project_menu(&mut opened, "export-selection");
+    assert!(!opened.cx.did_prompt_for_new_path());
+}
+
 #[gpui::test]
 fn a_drag_of_several_clips_moves_them_all_as_one_undo_step(cx: &mut TestAppContext) {
     let mut opened = open(cx);

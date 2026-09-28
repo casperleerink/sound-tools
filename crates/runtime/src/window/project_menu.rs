@@ -1,5 +1,6 @@
 //! The project menu: the project name top-left as a quiet menu. Add an instrument track or an
-//! audio track, undo and redo with what they would do, the output device by name, another
+//! audio track, export the project or the selected clips as a WAV, undo and redo with what
+//! they would do, the output device by name, another
 //! project, the project folder in the Finder or in a terminal, and the command line tool. The
 //! terminal is where the composer starts a coding agent on the project, and the tool is what
 //! that agent runs to read the whole piece.
@@ -23,6 +24,8 @@ use crate::{add_audio_track, add_track, main_arrangement};
 const ADD_TRACK: &str = "add-track";
 const ADD_AUDIO_TRACK: &str = "add-audio-track";
 const FIT_TEMPO: &str = "fit-tempo";
+const EXPORT: &str = "export";
+const EXPORT_SELECTION: &str = "export-selection";
 const UNDO: &str = "undo";
 const REDO: &str = "redo";
 const DEVICE: &str = "device";
@@ -42,13 +45,14 @@ pub struct ProjectMenu {
 /// All that the items depend on in the project.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Shown {
-    can_add_track: bool,
+    has_arrangement: bool,
     /// The selected clip, when it was recorded and its take can be fitted to.
     fit_clip: Option<InstanceId>,
     /// Why the fit is out of reach, when the project does not enable the extension it needs. A
     /// project made before the fit existed is such a project. The file edit that enables it is
     /// in the agent docs.
     fit_needs: Option<&'static str>,
+    has_selection: bool,
     undo: Option<String>,
     redo: Option<String>,
 }
@@ -57,10 +61,11 @@ impl Shown {
     fn of(session: &Session) -> Self {
         let project = session.project();
         Self {
-            can_add_track: main_arrangement(project).is_some(),
+            has_arrangement: main_arrangement(project).is_some(),
             fit_clip: recorded_clip(session).map(|(id, _)| id),
             fit_needs: (!extension_is_enabled(project, fit_tempo::EXTENSION))
                 .then_some("This project does not include the tempo fit."),
+            has_selection: !session.selected_clips().is_empty(),
             undo: project.undo_label().map(str::to_string),
             redo: project.redo_label().map(str::to_string),
         }
@@ -128,9 +133,11 @@ impl ProjectMenu {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if picked.0.as_ref() == INSTALL_TOOL {
-            install_command_line_tool(self.session.clone(), window, cx);
-            return;
+        match picked.0.as_ref() {
+            INSTALL_TOOL => return install_command_line_tool(self.session.clone(), window, cx),
+            EXPORT => return export_audio(self.session.clone(), false, window, cx),
+            EXPORT_SELECTION => return export_audio(self.session.clone(), true, window, cx),
+            _ => {}
         }
         // An error from any of these shows as the notice of the session.
         self.session
@@ -172,6 +179,123 @@ fn fit_tempo_to_take(session: &mut Session, cx: &mut Context<Session>) {
         fit_tempo::fit_take(project, &mut changes, &clip)?;
         project.commit(fit_tempo::FIT_LABEL, changes)
     });
+}
+
+/// What the export runs after `<folder> --render <wav>`: nothing for the whole project, which
+/// the render ends by itself, or the time the selected clips cover. `None` when there is
+/// nothing to export.
+fn export_span(session: &Session, selection: bool) -> Option<Vec<String>> {
+    let project = session.project();
+    if !selection {
+        return crate::project_end(project).map(|_| Vec::new());
+    }
+    let (from, to) = crate::clips_span(project, session.selected_clips())?;
+    Some(vec![
+        "--from".into(),
+        from.0.to_string(),
+        "--to".into(),
+        to.0.to_string(),
+    ])
+}
+
+/// Asks where the WAV goes and renders it in a process of its own: this program with
+/// `--render`, which reads the project from its folder as an agent's render does. The window
+/// keeps playing meanwhile, and a plugin that crashes in the render costs the render only.
+fn export_audio(
+    session: Entity<Session>,
+    selection: bool,
+    window: &mut Window,
+    cx: &mut Context<ProjectMenu>,
+) {
+    let (folder, span) = session.read_with(cx, |session, _| {
+        let folder = session.project().root().to_path_buf();
+        (folder, export_span(session, selection))
+    });
+    let Some(span) = span else {
+        let message = "The project has no clips, so there is nothing to export.";
+        session.update(cx, |session, cx| session.report(message, cx));
+        return;
+    };
+    // Next to the project folder and not in it: an export is not part of the project, and in
+    // the folder it would end up in git and in front of the agent.
+    let directory = folder.parent().unwrap_or(&folder).to_path_buf();
+    let name = folder.file_name().unwrap_or_default().to_string_lossy();
+    let picked = cx.prompt_for_new_path(&directory, Some(&format!("{name}.wav")));
+    cx.spawn_in(window, async move |_, cx| {
+        let wav = match picked.await {
+            Ok(Ok(Some(wav))) => wav,
+            Ok(Ok(None)) | Err(_) => return,
+            Ok(Err(error)) => {
+                let message = format!("{error:#}");
+                session.update(cx, |session, cx| session.report(message, cx));
+                return;
+            }
+        };
+        let rendered = cx
+            .background_spawn({
+                let wav = wav.clone();
+                async move { render_in_child(&folder, &wav, &span) }
+            })
+            .await;
+        let errors = match rendered {
+            Ok(errors) => errors,
+            Err(error) => {
+                let message = format!("The export failed: {error:#}");
+                session.update(cx, |session, cx| session.report(message, cx));
+                return;
+            }
+        };
+        let file = wav.file_name().unwrap_or_default().to_string_lossy();
+        let answer = cx.update(|window, cx| {
+            let message = format!("Exported {file}");
+            // A plugin that did not load or answer in the render is missing from the file.
+            let (level, detail) = if errors.is_empty() {
+                (PromptLevel::Info, None)
+            } else {
+                let detail = format!("It may be incomplete:\n{}", errors.join("\n"));
+                (PromptLevel::Warning, Some(detail))
+            };
+            let reveal = if cfg!(target_os = "macos") {
+                "Show in Finder"
+            } else {
+                "Show in folder"
+            };
+            let buttons = [reveal, "OK"];
+            window.prompt(level, &message, detail.as_deref(), &buttons, cx)
+        });
+        if let Ok(answer) = answer
+            && let Ok(0) = answer.await
+        {
+            cx.update(|_, cx| cx.reveal_path(&wav)).ok();
+        }
+    })
+    .detach();
+}
+
+/// Runs `--render` and waits for it. Gives the errors it printed on the way, such as a plugin
+/// that did not load. When it failed, what it printed last on stderr is the error.
+fn render_in_child(folder: &Path, wav: &Path, span: &[String]) -> anyhow::Result<Vec<String>> {
+    let program = std::env::current_exe()?;
+    let output = Command::new(program)
+        .arg(folder)
+        .arg("--render")
+        .arg(wav)
+        .args(span)
+        .output()?;
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let errors = stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix("error: "));
+        return Ok(errors.map(str::to_string).collect());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let last = stderr.lines().rfind(|line| !line.trim().is_empty());
+    anyhow::bail!(
+        "{}",
+        last.unwrap_or("the render stopped")
+            .trim_start_matches("Error: ")
+    )
 }
 
 /// The command that opens a terminal in `folder`. macOS only: the system Terminal, which is
@@ -333,8 +457,8 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
     vec![
         // A track is an instrument track or an audio track, chosen when it is made.
         MenuEntry::Group(MenuGroup::new().label("Add track").items([
-            command(ADD_TRACK, "Instrument track".to_string()).disabled(!shown.can_add_track),
-            command(ADD_AUDIO_TRACK, "Audio track".to_string()).disabled(!shown.can_add_track),
+            command(ADD_TRACK, "Instrument track".to_string()).disabled(!shown.has_arrangement),
+            command(ADD_AUDIO_TRACK, "Audio track".to_string()).disabled(!shown.has_arrangement),
         ])),
         MenuEntry::Separator,
         MenuEntry::Group(
@@ -352,6 +476,14 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
                     None => command(FIT_TEMPO, "Fit tempo to take".to_string())
                         .disabled(shown.fit_clip.is_none()),
                 },
+            ]),
+        ),
+        MenuEntry::Separator,
+        MenuEntry::Group(
+            MenuGroup::new().items([
+                command(EXPORT, "Export audio…".to_string()).disabled(!shown.has_arrangement),
+                command(EXPORT_SELECTION, "Export selection…".to_string())
+                    .disabled(!shown.has_selection),
             ]),
         ),
         MenuEntry::Separator,
