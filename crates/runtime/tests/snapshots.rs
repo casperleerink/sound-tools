@@ -8,7 +8,7 @@
 //! - `transport-click-off.png`: the same with the transport in focus, the click off.
 //! - `transport-click-on.png`: the same with the click on.
 //! - `transport-recording.png`: the same while it records.
-//! - `notices.png`: an error from an edit and a file that is not live, bottom-left.
+//! - `notices.png`: an error from an edit and a file that is not live, top-right.
 //! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
 //! - `menu.png`: the project menu, open, after one edit.
 //! - `fit-action.png`: the project menu over a recorded take, with `Fit tempo to take`.
@@ -956,7 +956,7 @@ fn main() -> Result<()> {
     cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_click(cx)));
     cx.run_until_parked();
 
-    // The two notices, bottom-left: an edit that failed, and a file that is not live, here
+    // The two notices, top-right: an edit that failed, and a file that is not live, here
     // the record of a plugin this machine does not have.
     let notices = Opened::new(&mut cx, |project| {
         piece(project)?;

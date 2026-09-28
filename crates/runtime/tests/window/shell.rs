@@ -306,7 +306,7 @@ fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
 }
 
 #[gpui::test]
-fn a_long_error_fits_bottom_left_in_three_lines_at_most(cx: &mut TestAppContext) {
+fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let session = opened.session.clone();
     let long = "a problem that goes on and on, ".repeat(20);
@@ -315,28 +315,22 @@ fn a_long_error_fits_bottom_left_in_three_lines_at_most(cx: &mut TestAppContext)
         .update(|_, cx| session.update(cx, |session, cx| session.report(long, cx)));
     let notice = opened.bounds("notice-error").unwrap();
     let window = opened.cx.update(|window, _| window.viewport_size());
-    // 24 pt in from the track headers and the bottom, and 400 pt wide at most.
-    assert_eq!(notice.left(), px(HEADER_WIDTH + 24.));
-    assert_eq!(notice.bottom(), window.height - px(24.));
+    // 24 pt in from the right and under the title row, so it never covers the transport, and
+    // 400 pt wide at most.
+    assert_eq!(notice.right(), window.width - px(24.), "{notice:?}");
+    assert_eq!(notice.top(), px(TOP_ROW + 24.));
     assert!(notice.size.width <= px(400.), "{notice:?}");
-    // As tall as the three lines of 20 pt it paints and its padding: the lines stay inside it,
-    // and so inside the window.
+    // As tall as the three lines of 20 pt it paints and its padding: the lines stay inside it.
     assert!(
         (px(60.)..=px(74.)).contains(&notice.size.height),
         "{notice:?}"
     );
 
-    // Above the track panel, so it covers none of the mixer strip, and back down when the panel
-    // closes.
+    // It stays where it is while the track panel opens below.
     let header = opened.track_header(0);
     opened.click(header);
-    let notice = opened.bounds("notice-error").unwrap();
-    let panel = opened.bounds("track-panel").unwrap();
-    assert_eq!(notice.bottom(), panel.top() - px(24.));
-    assert!(notice.left() >= panel.left() + px(HEADER_WIDTH));
-    opened.keys("escape");
-    let notice = opened.bounds("notice-error").unwrap();
-    assert_eq!(notice.bottom(), window.height - px(24.));
+    assert!(opened.bounds("track-panel").is_some());
+    assert_eq!(opened.bounds("notice-error"), Some(notice));
 
     // A short one is as wide as its text.
     opened.cx.update(|_, cx| {

@@ -1,6 +1,6 @@
 //! The application window: the title row with the project menu at its left and the transport
 //! in its middle, the view of the project's main instance under it, and a quiet line for
-//! errors and problems bottom-left.
+//! errors and problems top-right, under the title row.
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
 //! view the installed [`Views`] has for the first instance at the top of the project.
@@ -56,7 +56,7 @@ actions!(
 /// Room for the traffic lights of a macOS window, left of the project menu.
 const TRAFFIC_LIGHTS_WIDTH: f32 = 80.;
 const TOP_ROW_HEIGHT: f32 = 48.;
-/// The notices sit this far in from the left and the bottom of the window.
+/// The notices sit this far in from the right of the window and below the title row.
 const NOTICE_INSET: f32 = 24.;
 /// The widest a notice gets. A longer message wraps, to three lines at most.
 const NOTICE_WIDTH: f32 = 400.;
@@ -172,21 +172,19 @@ impl Shell {
             count => Some(format!("{count} files are not live, see problems.txt")),
         };
         let error = session.notice().cloned();
-        // In the corner the main view leaves free: right of the track headers and above the
-        // panel below the timeline.
-        let room = session.notice_room();
-        // A definite width, so that a message wraps at the width it gets and the box is as tall
-        // as its lines: with only a largest width the text was measured on one line and then
-        // painted on three, past the bottom of the window. A notice is as wide as its text up
-        // to this width.
+        // Top-right, under the title row: clear of the transport, the track headers and the
+        // panel below, whatever the main view shows. A definite width, so that a message wraps
+        // at the width it gets and the box is as tall as its lines: with only a largest width
+        // the text was measured on one line and then painted on three. A notice is as wide as
+        // its text up to this width.
         div()
             .absolute()
-            .left(px(room.left + NOTICE_INSET))
-            .bottom(px(room.bottom + NOTICE_INSET))
+            .top(px(TOP_ROW_HEIGHT + NOTICE_INSET))
+            .right(px(NOTICE_INSET))
             .w(px(NOTICE_WIDTH))
             .flex()
             .flex_col()
-            .items_start()
+            .items_end()
             .gap(px(8.))
             .children(files.map(|files| {
                 Notice::new("problems", files)
