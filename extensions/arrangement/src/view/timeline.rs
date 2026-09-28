@@ -20,7 +20,7 @@ use gpui::{
 };
 use sound_core::{
     Assets, Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks,
-    TimeSignature,
+    TimeSignatures,
 };
 use sound_media::{AudioAsset, Cached, Info, TakeOverview};
 use sound_notes::Clip;
@@ -42,14 +42,14 @@ use super::clips::{
 };
 use super::gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
 use super::layout::{
-    ADD_ROW_HEIGHT, Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, TRACK_HEIGHT, Viewport, rows_between,
-    shifted,
+    ADD_ROW_HEIGHT, Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, RulerBar, TRACK_HEIGHT, Viewport,
+    rows_between, shifted,
 };
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
 };
 use super::selection::Selection;
-use super::snap::{Grid, SharedSnap, Snap, snap, snap_floor, snapped_delta};
+use super::snap::{Grid, SharedSnap, Snap};
 use crate::{
     ArrangementState, AudioClip, Colour, FreeIds, TrackKind, TrackState, add_audio_clips,
     add_audio_track, add_clip, add_clips, move_track, top_layer, track_orders, tracks, unnumbered,
@@ -152,7 +152,7 @@ pub struct Scene {
     pub viewport: Viewport,
     pub clips: Vec<ClipShape>,
     rows: Vec<TrackRow>,
-    bars: Vec<(u64, f32)>,
+    bars: Vec<RulerBar>,
     tempo: Vec<TempoMark>,
     /// Where each tempo change is in the ruler, across: filled by the paint, which measures
     /// the labels, and hit by a press.
@@ -864,7 +864,7 @@ impl Timeline {
             end: end.max(self.playhead.read(cx).tick),
             tracks: self.order.len(),
         };
-        viewport.clamped(extent, self.time_signature(cx), width, height)
+        viewport.clamped(extent, self.time_signatures(cx), width, height)
     }
 
     /// Whether an event about `id` can change what the timeline paints: the arrangement, a
@@ -1108,14 +1108,14 @@ impl Timeline {
         Some((&rename.track, &rename.input))
     }
 
-    fn time_signature(&self, cx: &App) -> TimeSignature {
+    fn time_signatures<'a>(&self, cx: &'a App) -> &'a TimeSignatures {
         let project = self.session.read(cx).project();
-        project.project_file().tempo_map.time_signature()
+        project.project_file().tempo_map.time_signatures()
     }
 
-    /// The grid of the snap setting in the time signature of the project.
+    /// The grid of the snap setting over the time signatures of the project.
     fn grid(&self, cx: &App) -> Grid {
-        self.snap.get().grid(self.time_signature(cx))
+        self.snap.get().grid(self.time_signatures(cx))
     }
 
     /// Everything to paint into a timeline area of this size, read from the project now.
@@ -1123,7 +1123,7 @@ impl Timeline {
         let project = self.session.read(cx).project();
         let theme = cx.theme();
         let tempo_map = &project.project_file().tempo_map;
-        let time_signature = tempo_map.time_signature();
+        let time_signatures = tempo_map.time_signatures();
         // Clamped again for this size: the window may have grown since the last scroll.
         let viewport = self.clamped(self.viewport, width, height, cx);
         let visible_ticks = viewport.visible_ticks(width);
@@ -1158,7 +1158,7 @@ impl Timeline {
             viewport,
             clips: Vec::new(),
             rows: Vec::new(),
-            bars: viewport.ruler_bars(time_signature, width).collect(),
+            bars: viewport.ruler_bars(time_signatures, width),
             tempo,
             tempo_zones: Vec::new(),
             marquee,
@@ -1391,13 +1391,7 @@ impl Timeline {
             DropTarget::NewTrack(start) => (self.order.len(), *start),
         };
         let clock = project.clock();
-        let bar = Ticks(
-            project
-                .project_file()
-                .tempo_map
-                .time_signature()
-                .ticks_per_bar(),
-        );
+        let time_signatures = project.project_file().tempo_map.time_signatures();
         let mut at = start;
         let mut clips = Vec::new();
         for (index, path) in incoming.paths.iter().enumerate() {
@@ -1411,7 +1405,7 @@ impl Timeline {
                     );
                     clock.tick_at(sound_core::Frames(clock.frame_of(at).0 + frames))
                 }
-                None => at + bar,
+                None => time_signatures.bar_at(at).end(),
             };
             let name = path
                 .file_name()
@@ -1669,7 +1663,7 @@ impl Timeline {
             self.seek(tick, cx);
             return;
         }
-        let tick = snap(scene.viewport.tick_at(x), self.grid(cx).step);
+        let tick = self.grid(cx).snap(scene.viewport.tick_at(x));
         if double {
             self.add_tempo_change(tick, cx);
         } else {
@@ -1731,12 +1725,7 @@ impl Timeline {
         {
             return;
         }
-        let grid = self.grid(cx);
-        let clip = new_clip(
-            scene.viewport.tick_at(x),
-            self.time_signature(cx),
-            grid.step,
-        );
+        let clip = new_clip(scene.viewport.tick_at(x), &self.grid(cx));
         let added = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
@@ -1988,7 +1977,11 @@ impl Timeline {
         }
         let viewport = self.painted.get();
         let earliest = clips.iter().map(|moved| moved.start.0).min().unwrap_or(0);
-        let delta = snapped_delta(drag.grab, viewport.tick_at(x), grid.step);
+        // The clip under the pointer lands on the grid, and the others move with it.
+        let anchor = clips
+            .get(index)
+            .map_or(Ticks(earliest), |moved| moved.start);
+        let delta = grid.delta(anchor, drag.grab, viewport.tick_at(x));
         let delta = delta.max(-(earliest as i64));
         let rows = self.order.len();
         let (top, bottom) = (
@@ -2100,11 +2093,16 @@ impl Timeline {
             self.drag = Some(drag);
             return self.end_drag(cx);
         };
-        let delta = snapped_delta(drag.grab, self.painted.get().tick_at(x), grid.step);
         let clock = project.clock();
+        let anchor = match edge {
+            Edge::Left => origin.start,
+            Edge::Right => origin.end(Some(file), clock),
+        };
+        let delta = grid.delta(anchor, drag.grab, self.painted.get().tick_at(x));
+        let unit = grid.unit_at(anchor);
         let next = match edge {
             Edge::Left => {
-                let trimmed = trimmed_left(origin, file, clock, delta, grid.unit);
+                let trimmed = trimmed_left(origin, file, clock, delta, unit);
                 AudioClip {
                     start: trimmed.start,
                     file_start_seconds: trimmed.file_start_seconds,
@@ -2112,7 +2110,7 @@ impl Timeline {
                 }
             }
             Edge::Right => {
-                let trimmed = trimmed_right(origin, file, clock, delta, grid.unit);
+                let trimmed = trimmed_right(origin, file, clock, delta, unit);
                 AudioClip {
                     file_end_seconds: trimmed.file_end_seconds,
                     ..live
@@ -2236,15 +2234,19 @@ impl Timeline {
             drag.grab = shifted(drag.grab, done);
             (*origin, *written) = (live.clone(), live);
         }
-        let next_delta = snapped_delta(drag.grab, pointer, grid.step);
+        let anchor = match edge {
+            Edge::Left => origin.start,
+            Edge::Right => origin.end(),
+        };
+        let next_delta = grid.delta(anchor, drag.grab, pointer);
         if !rebased && next_delta == *delta {
             self.drag = Some(drag);
             return;
         }
         *delta = next_delta;
         let next = match edge {
-            Edge::Left => resized_left(origin, next_delta, grid.unit),
-            Edge::Right => resized_right(origin, next_delta, grid.unit),
+            Edge::Left => resized_left(origin, next_delta, grid.unit_at(anchor)),
+            Edge::Right => resized_right(origin, next_delta, grid.unit_at(anchor)),
         };
         if next == *written {
             self.drag = Some(drag);
@@ -2479,7 +2481,7 @@ impl Timeline {
             // to the nearest step. Stopped, it is where a click on the ruler put it.
             let playhead = *self.playhead.read(cx);
             let tick = match playhead.playing {
-                true => snap(playhead.tick, self.grid(cx).step),
+                true => self.grid(cx).snap(playhead.tick),
                 false => playhead.tick,
             };
             self.add_tempo_change(tick, cx);
@@ -2496,12 +2498,11 @@ impl Timeline {
         let Some(clip) = primary.filter(|clip| is_clip_tool(project, clip)) else {
             return self.on_track_key(key, window, cx);
         };
-        let unit = self.grid(cx).unit.0 as i64;
         match key {
             "enter" => self.open(&clip, cx),
             "backspace" | "delete" => self.delete_clips("Delete clip", "Delete clips", cx),
-            "left" => self.nudge_in_time(-unit, cx),
-            "right" => self.nudge_in_time(unit, cx),
+            "left" => self.nudge_in_time(false, cx),
+            "right" => self.nudge_in_time(true, cx),
             "up" => self.nudge_to_track(-1, cx),
             "down" => self.nudge_to_track(1, cx),
             _ => return false,
@@ -2798,11 +2799,13 @@ impl Timeline {
 
     /// The arrows left and right: every selected clip by one unit of the grid, as one undo
     /// step. The earliest stops at tick 0. A moved audio clip goes on top of its track.
-    fn nudge_in_time(&mut self, delta: i64, cx: &mut Context<Self>) {
+    fn nudge_in_time(&mut self, forward: bool, cx: &mut Context<Self>) {
         self.refresh_order(cx);
         let selected = self.selected_states(cx);
         let earliest = selected.iter().map(|(_, clip)| clip.start().0).min();
-        let delta = delta.max(-(earliest.unwrap_or(0) as i64));
+        let earliest = earliest.unwrap_or(0);
+        let delta = self.grid(cx).nudge(Ticks(earliest), forward);
+        let delta = delta.max(-(earliest as i64));
         if delta == 0 || selected.is_empty() {
             return;
         }
@@ -2903,7 +2906,7 @@ impl Timeline {
             return None;
         }
         let viewport = self.painted.get();
-        let tick = snap_floor(viewport.tick_at(x), self.grid(cx).step);
+        let tick = self.grid(cx).floor(viewport.tick_at(x));
         let rows = self.order.len();
         let Some(row) = viewport.track_at(y, rows) else {
             return (y >= viewport.y_of(rows)).then_some(DropTarget::NewTrack(tick));
@@ -3664,7 +3667,7 @@ enum Overview {
 /// where each label is across, for the hit test of a press.
 fn paint_tempo_marks(
     marks: &[TempoMark],
-    bars: &[(u64, f32)],
+    bars: &[RulerBar],
     ruler: Bounds<Pixels>,
     window: &mut Window,
     cx: &mut App,
@@ -3694,12 +3697,10 @@ fn paint_tempo_marks(
         for mark in marks {
             let x = mark.x.round();
             // A bar number at the same place stays readable: the label goes after it.
-            let bar = bars
-                .iter()
-                .find(|(_, bar_x)| (bar_x.round() - x).abs() < 1.);
+            let bar = bars.iter().find(|bar| (bar.x.round() - x).abs() < 1.);
             let after = match bar {
-                Some((number, _)) => {
-                    let text: SharedString = number.to_string().into();
+                Some(bar) => {
+                    let text: SharedString = bar.label().into();
                     let runs = [run(text.len(), unit)];
                     let shaped = window
                         .text_system()

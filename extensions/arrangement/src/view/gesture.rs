@@ -1,15 +1,15 @@
 //! What a drag or a key does to a clip. Pure math, no GPUI and no project: the view finds the
 //! clip and the pointer, these functions say what the clip becomes.
 //!
-//! A drag is a delta in whole snap steps from where it began ([`super::snap::snapped_delta`]),
+//! A drag is a delta in whole snap steps from where it began ([`super::snap::Grid::delta`]),
 //! always applied to the clip as it was at mouse down. So dragging out and back again gives the
 //! clip back as it was, with every note.
 
-use sound_core::{Ticks, TimeSignature};
+use sound_core::Ticks;
 use sound_notes::{Clip, Length};
 
 use super::layout::{Rect, shifted};
-use super::snap::snap_floor;
+use super::snap::Grid;
 
 /// How far into a clip or a note its edges reach, in pixels.
 pub const EDGE_ZONE: f32 = 6.0;
@@ -35,16 +35,15 @@ pub fn zone_at(rect: Rect, x: f32) -> Zone {
     }
 }
 
-/// The empty clip of one bar that a double click makes, in the grid cell under the pointer.
-pub fn new_clip(at: Ticks, time_signature: TimeSignature, step: Ticks) -> Clip {
-    Clip::new(
-        snap_floor(at, step),
-        Length::at_least_one(Ticks(time_signature.ticks_per_bar())),
-        Vec::new(),
-    )
+/// The empty clip of one bar that a double click makes, in the grid cell under the pointer. It
+/// is as long as the bar it starts in.
+pub fn new_clip(at: Ticks, grid: &Grid) -> Clip {
+    let start = grid.floor(at);
+    let length = grid.bar_at(start).length();
+    Clip::new(start, Length::at_least_one(length), Vec::new())
 }
 
-/// A shape does not get shorter than `unit` (see [`super::snap::Snap::unit`]), or than it
+/// A shape does not get shorter than `unit` (see [`super::snap::Grid::unit_at`]), or than it
 /// already was.
 pub(super) fn shortest(length: Length, unit: Ticks) -> u64 {
     unit.0.min(length.ticks().0)
@@ -102,8 +101,12 @@ pub fn nudged_track(current: usize, tracks: usize, step: i64) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+
+    use sound_core::{SignatureRun, TimeSignature, TimeSignatures};
     use sound_notes::{Note, Pedal, PedalChange, Pitch, Velocity};
 
+    use super::super::snap::Snap;
     use super::*;
 
     const BAR: u64 = 3840;
@@ -154,14 +157,25 @@ mod tests {
 
     #[test]
     fn a_new_clip_is_one_bar_in_the_cell_under_the_pointer() {
-        let four_four = TimeSignature::new(4, 4).unwrap();
+        let four_four = Snap::Sixteenth.grid(&TimeSignatures::default());
         assert_eq!(
-            new_clip(Ticks(BAR + 479), four_four, UNIT),
+            new_clip(Ticks(BAR + 479), &four_four),
             clip(BAR + 240, BAR, &[])
         );
-        assert_eq!(new_clip(Ticks(0), four_four, UNIT), clip(0, BAR, &[]));
-        let waltz = TimeSignature::new(3, 4).unwrap();
-        assert_eq!(new_clip(Ticks(100), waltz, UNIT), clip(0, 2880, &[]));
+        assert_eq!(new_clip(Ticks(0), &four_four), clip(0, BAR, &[]));
+        let waltz = TimeSignatures::constant(TimeSignature::new(3, 4).unwrap());
+        let waltz = Snap::Sixteenth.grid(&waltz);
+        assert_eq!(new_clip(Ticks(100), &waltz), clip(0, 2880, &[]));
+
+        // A bar of 3/16 and then 4/4: a new clip is as long as the bar it starts in.
+        let run = |signature: &str, bars| SignatureRun {
+            signature: signature.parse().unwrap(),
+            bars: NonZeroU32::new(bars).unwrap(),
+        };
+        let changing = TimeSignatures::new(vec![run("3/16", 1), run("4/4", 1)]).unwrap();
+        let bar = Snap::Bar.grid(&changing);
+        assert_eq!(new_clip(Ticks(500), &bar), clip(0, 720, &[]));
+        assert_eq!(new_clip(Ticks(900), &bar), clip(720, BAR, &[]));
     }
 
     #[test]

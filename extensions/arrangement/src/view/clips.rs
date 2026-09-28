@@ -94,12 +94,8 @@ pub fn shown_end(project: &Project, clip: &AudioClip) -> Ticks {
             clock.tick_at_seconds(seconds).max(clip.start + Ticks(1))
         }
         None => {
-            let bar = project
-                .project_file()
-                .tempo_map
-                .time_signature()
-                .ticks_per_bar();
-            clip.start + Ticks(bar)
+            let time_signatures = project.project_file().tempo_map.time_signatures();
+            clip.start + time_signatures.bar_at(clip.start).length()
         }
     }
 }

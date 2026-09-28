@@ -6,7 +6,7 @@
 
 use std::ops::Range;
 
-use sound_core::{TICKS_PER_QUARTER, Ticks, TimeSignature};
+use sound_core::{TICKS_PER_QUARTER, Ticks, TimeSignature, TimeSignatures};
 use sound_notes::Clip;
 
 pub const HEADER_WIDTH: f32 = 176.0;
@@ -43,6 +43,25 @@ pub fn rows_between(a: f64, b: f64, tracks: usize) -> Range<usize> {
     let row = |y: f64| (y / f64::from(TRACK_HEIGHT)).floor().max(0.0) as usize;
     let (top, bottom) = if a <= b { (a, b) } else { (b, a) };
     row(top).min(tracks)..(row(bottom) + 1).min(tracks)
+}
+
+/// A bar with a mark and a number in the ruler, see [`Viewport::ruler_bars`].
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct RulerBar {
+    pub number: u64,
+    pub x: f32,
+    /// The time signature, on a bar where one starts.
+    pub signature: Option<TimeSignature>,
+}
+
+impl RulerBar {
+    /// The number, and the time signature where one starts: `9  7/8`.
+    pub fn label(&self) -> String {
+        match self.signature {
+            Some(signature) => format!("{}  {signature}", self.number),
+            None => self.number.to_string(),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -187,13 +206,13 @@ impl Viewport {
     pub fn clamped(
         &self,
         extent: Extent,
-        time_signature: TimeSignature,
+        time_signatures: &TimeSignatures,
         width: f32,
         height: f32,
     ) -> Self {
         let rows = extent.tracks as f64 * f64::from(TRACK_HEIGHT);
         let content_height = rows + f64::from(ADD_ROW_HEIGHT);
-        self.clamped_to(extent.end, content_height, time_signature, width, height)
+        self.clamped_to(extent.end, content_height, time_signatures, width, height)
     }
 
     /// The same for any content below the ruler: `end` with the room after it across, and
@@ -202,11 +221,11 @@ impl Viewport {
         &self,
         end: Ticks,
         content_height: f64,
-        time_signature: TimeSignature,
+        time_signatures: &TimeSignatures,
         width: f32,
         height: f32,
     ) -> Self {
-        let end_room = END_ROOM_BARS * time_signature.ticks_per_bar();
+        let end_room = END_ROOM_BARS * time_signatures.bar_at(end).length().0;
         let content_width = (end.0 + end_room) as f64 * self.pixels_per_tick() + f64::from(LEAD_IN);
         Self {
             scroll_x: self
@@ -232,45 +251,49 @@ impl Viewport {
         }
     }
 
-    /// The bars that get a mark in the ruler, as `(bar number from 1, x)`. When bars get
-    /// narrow only every 2nd, 4th, 8th and so on is marked, so the numbers never crowd. The
-    /// first one is at or left of the left edge: its number scrolls out, it does not vanish.
-    pub fn ruler_bars(
-        &self,
-        time_signature: TimeSignature,
-        width: f32,
-    ) -> impl Iterator<Item = (u64, f32)> + use<> {
-        let ticks_per_bar = time_signature.ticks_per_bar();
-        let pixels_per_bar = ticks_per_bar as f64 * self.pixels_per_tick();
+    /// The bars that get a mark in the ruler. When bars get narrow only every 2nd, 4th, 8th and
+    /// so on is marked, so the numbers never crowd: how many is set by the shortest bar in
+    /// view. The first one is at or left of the left edge: its number scrolls out, it does
+    /// not vanish.
+    pub fn ruler_bars(&self, time_signatures: &TimeSignatures, width: f32) -> Vec<RulerBar> {
+        let visible = self.visible_ticks(width);
+        let in_view = time_signatures.bars_from(visible.start);
+        let in_view = in_view.take_while(|bar| bar.start < visible.end);
+        let shortest = in_view.map(|bar| bar.length().0).min().unwrap_or(1);
+        let pixels_per_bar = shortest as f64 * self.pixels_per_tick();
         let step =
             ((MIN_LABEL_SPACING / pixels_per_bar).ceil().max(1.0) as u64).next_power_of_two();
-        let visible = self.visible_ticks(width);
-        let first = visible.start.0 / ticks_per_bar / step * step;
-        let viewport = *self;
-        (first..)
-            .step_by(step as usize)
-            .map(move |bar| (bar + 1, viewport.x_of(Ticks(bar * ticks_per_bar))))
-            .take_while(move |(_, x)| *x < width)
+        let first = time_signatures.bar_at(visible.start).number;
+        let first = (first - 1) / step * step + 1;
+        let starts: Vec<u64> = time_signatures.changes().map(|bar| bar.number).collect();
+        (0..)
+            .map_while(|index: u64| time_signatures.bar(first + index * step))
+            .map(|bar| RulerBar {
+                number: bar.number,
+                x: self.x_of(bar.start),
+                signature: starts.contains(&bar.number).then_some(bar.signature),
+            })
+            .take_while(|bar| bar.x < width)
+            .collect()
     }
 
     /// The x of every beat that is not a bar line, for very faint lines in the note editor.
-    /// Nothing when beats are too narrow to help.
-    pub fn beat_lines(
-        &self,
-        time_signature: TimeSignature,
-        width: f32,
-    ) -> impl Iterator<Item = f32> + use<> {
-        let ticks_per_beat = time_signature.ticks_per_beat();
-        let ticks_per_bar = time_signature.ticks_per_bar();
-        let wide_enough = ticks_per_beat as f64 * self.pixels_per_tick() >= MIN_BEAT_SPACING;
+    /// Only in bars whose beats are wide enough to help.
+    pub fn beat_lines(&self, time_signatures: &TimeSignatures, width: f32) -> Vec<f32> {
         let visible = self.visible_ticks(width);
-        let first = visible.start.0 / ticks_per_beat;
-        let viewport = *self;
-        (first..)
-            .map(move |beat| beat * ticks_per_beat)
-            .take_while(move |tick| wide_enough && *tick < visible.end.0)
-            .filter(move |tick| !tick.is_multiple_of(ticks_per_bar))
-            .map(move |tick| viewport.x_of(Ticks(tick)))
+        let mut lines = Vec::new();
+        let bars = time_signatures.bars_from(visible.start);
+        for bar in bars.take_while(|bar| bar.start < visible.end) {
+            let beat = bar.signature.ticks_per_beat();
+            if (beat as f64 * self.pixels_per_tick()) < MIN_BEAT_SPACING {
+                continue;
+            }
+            let beats = (1..u64::from(bar.signature.numerator()))
+                .map(|index| bar.start + Ticks(index * beat))
+                .filter(|tick| visible.contains(tick));
+            lines.extend(beats.map(|tick| self.x_of(tick)));
+        }
+        lines
     }
 
     /// The notes of a clip as small bars inside `rect`, the rect of [`Self::clip_rect`].
@@ -310,15 +333,30 @@ impl Viewport {
 
 #[cfg(test)]
 mod tests {
-    use sound_core::{Ticks, TimeSignature};
+    use std::num::NonZeroU32;
+
+    use sound_core::{SignatureRun, Ticks, TimeSignature, TimeSignatures};
+
+    fn time_signatures(runs: &[(&str, u32)]) -> TimeSignatures {
+        let runs = runs
+            .iter()
+            .map(|(signature, bars)| SignatureRun {
+                signature: signature.parse().unwrap(),
+                bars: NonZeroU32::new(*bars).unwrap(),
+            })
+            .collect();
+        TimeSignatures::new(runs).unwrap()
+    }
     use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 
     use super::*;
 
     const BAR: u64 = 4 * TICKS_PER_QUARTER;
 
-    fn four_four() -> TimeSignature {
-        TimeSignature::new(4, 4).unwrap()
+    fn four_four() -> &'static TimeSignatures {
+        static FOUR_FOUR: std::sync::LazyLock<TimeSignatures> =
+            std::sync::LazyLock::new(TimeSignatures::default);
+        &FOUR_FOUR
     }
 
     fn clip(start: u64, length: u64, notes: &[(u64, u64, u8)]) -> Clip {
@@ -405,14 +443,21 @@ mod tests {
 
     #[test]
     fn beat_lines_show_only_when_beats_are_wide_enough() {
-        let beats: Vec<_> = Viewport::default().beat_lines(four_four(), 120.0).collect();
+        let beats = Viewport::default().beat_lines(four_four(), 120.0);
         // 24 px per beat. The bar lines at 8 and 104 are not beat lines.
         assert_eq!(beats, [32.0, 56.0, 80.0]);
         let narrow = Viewport {
             pixels_per_quarter: 23.0,
             ..Viewport::default()
         };
-        assert_eq!(narrow.beat_lines(four_four(), 500.0).count(), 0);
+        assert_eq!(narrow.beat_lines(four_four(), 500.0).len(), 0);
+
+        // Each bar has the beats of its own time signature: three sixteenths in 3/16 at
+        // 6 px each are too narrow, two eighths in 2/8 at 12 px too, and 4/4 at 24 px shows.
+        let changing = time_signatures(&[("3/16", 1), ("2/8", 1), ("4/4", 1)]);
+        let beats = Viewport::default().beat_lines(&changing, 200.0);
+        // 4/4 starts at tick 1680, x 8 + 42, and goes on: the next bar line is at x 146.
+        assert_eq!(beats, [74.0, 98.0, 122.0, 170.0, 194.0]);
     }
 
     #[test]
@@ -567,27 +612,70 @@ mod tests {
 
     #[test]
     fn the_ruler_marks_bars_and_thins_them_out_when_narrow() {
-        let bars: Vec<_> = Viewport::default().ruler_bars(four_four(), 300.0).collect();
-        assert_eq!(bars, [(1, 8.0), (2, 104.0), (3, 200.0), (4, 296.0)]);
+        let marks = |bars: Vec<RulerBar>| -> Vec<(u64, f32)> {
+            bars.iter().map(|bar| (bar.number, bar.x)).collect()
+        };
+        let bars = Viewport::default().ruler_bars(four_four(), 300.0);
+        assert_eq!(
+            marks(bars.clone()),
+            [(1, 8.0), (2, 104.0), (3, 200.0), (4, 296.0)]
+        );
+        // The time signature shows where it starts: here only at bar 1.
+        let labels: Vec<String> = bars.iter().map(RulerBar::label).collect();
+        assert_eq!(labels, ["1  4/4", "2", "3", "4"]);
 
         let scrolled = Viewport {
             scroll_x: 100.0,
             ..Viewport::default()
         };
-        let bars: Vec<_> = scrolled.ruler_bars(four_four(), 200.0).collect();
-        assert_eq!(bars, [(1, -92.0), (2, 4.0), (3, 100.0), (4, 196.0)]);
+        let bars = scrolled.ruler_bars(four_four(), 200.0);
+        assert_eq!(marks(bars), [(1, -92.0), (2, 4.0), (3, 100.0), (4, 196.0)]);
 
         // 12 px bars: every 8th bar is 96 px apart, every 4th would be 48 px.
         let narrow = Viewport {
             pixels_per_quarter: 3.0,
             ..Viewport::default()
         };
-        let bars: Vec<_> = narrow.ruler_bars(four_four(), 208.0).collect();
-        assert_eq!(bars, [(1, 8.0), (9, 104.0), (17, 200.0)]);
+        let bars = narrow.ruler_bars(four_four(), 208.0);
+        assert_eq!(marks(bars), [(1, 8.0), (9, 104.0), (17, 200.0)]);
 
-        let waltz = TimeSignature::new(3, 4).unwrap();
-        let bars: Vec<_> = Viewport::default().ruler_bars(waltz, 160.0).collect();
-        assert_eq!(bars, [(1, 8.0), (2, 80.0), (3, 152.0)]);
+        let waltz = TimeSignatures::constant(TimeSignature::new(3, 4).unwrap());
+        let bars = Viewport::default().ruler_bars(&waltz, 160.0);
+        assert_eq!(marks(bars), [(1, 8.0), (2, 80.0), (3, 152.0)]);
+    }
+
+    /// Bars of 4/4, then of 3/16: the numbers thin out for the short bars in view, and each
+    /// change of time signature that has a mark shows it.
+    #[test]
+    fn the_ruler_follows_changing_time_signatures() {
+        let changing = time_signatures(&[("4/4", 2), ("7/8", 1), ("3/16", 8)]);
+        // 96 px per 4/4 bar, 84 per 7/8, 18 per 3/16.
+        let bars = Viewport::default().ruler_bars(&changing, 400.0);
+        let marks: Vec<(u64, f32, String)> = bars
+            .iter()
+            .map(|bar| (bar.number, bar.x, bar.label()))
+            .collect();
+        // The 3/16 bars are in view, so every 4th bar has a mark: 18 px apart is too close,
+        // 72 px is not. Bar 4, where 3/16 starts, has none.
+        let mark = |number, x: f32, label: &str| (number, x, label.to_string());
+        assert_eq!(
+            marks,
+            [
+                mark(1, 8.0, "1  4/4"),
+                mark(5, 302.0, "5"),
+                mark(9, 374.0, "9")
+            ]
+        );
+        let wide = Viewport {
+            pixels_per_quarter: 96.0,
+            ..Viewport::default()
+        };
+        let labels: Vec<String> = wide
+            .ruler_bars(&changing, 1300.0)
+            .iter()
+            .map(RulerBar::label)
+            .collect();
+        assert_eq!(labels, ["1  4/4", "2", "3  7/8", "4  3/16", "5", "6"]);
     }
 
     #[test]
