@@ -26,7 +26,7 @@ use std::rc::Rc;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, Assets, Changes, Derived, Instance, InstanceId, Place, Project, ProjectError,
-    Registry, RegistryError, State, TimeSignatures, Was,
+    Registry, RegistryError, State, TimeSignature, Was,
 };
 use sound_notes::{Clip, RawTake};
 
@@ -203,9 +203,8 @@ struct Fits {
     cache: Rc<RefCell<Cache>>,
 }
 
-/// Everything that decides where the beats are, and the time signatures the fitted map keeps.
-/// Steadiness is not in it.
-type GridKey = (String, u64, BeatRate, TimeSignatures);
+/// Everything that decides where the beats are. Steadiness is not in it.
+type GridKey = (String, u64, BeatRate, TimeSignature);
 
 #[derive(Default)]
 struct Cache {
@@ -219,13 +218,13 @@ impl Fits {
         &self,
         assets: &Assets,
         state: &FitState,
-        time_signatures: &TimeSignatures,
+        time_signature: TimeSignature,
     ) -> Rc<Result<Fitted, String>> {
         let key: GridKey = (
             state.take.clone(),
             state.first_downbeat_us,
             state.beat,
-            time_signatures.clone(),
+            time_signature,
         );
         if let Some((cached, fitted)) = &self.cache.borrow().grid
             && *cached == key
@@ -234,7 +233,7 @@ impl Fits {
         }
         let take = self.take(assets, &state.take);
         let fitted = take.and_then(|take| {
-            grid::fit(&take, time_signatures, state.first_downbeat_us, state.beat)
+            grid::fit(&take, time_signature, state.first_downbeat_us, state.beat)
                 .map_err(|error| error.to_string())
         });
         let fitted = Rc::new(fitted);
@@ -263,8 +262,8 @@ impl Fits {
     /// The derive: the tempo map, and the clip of the take when the beats moved.
     ///
     /// The clip is made again from the raw take only when an input that decides where the
-    /// beats are changed: the take, the first downbeat, half, normal or double, or the
-    /// project's time signatures. A steadiness change writes the tempo map and nothing else, so
+    /// beats are changed: the take, the first downbeat, half, normal or double, or the time
+    /// signature of bar 1. A steadiness change writes the tempo map and nothing else, so
     /// a note moved by hand, a trimmed clip or a clip dragged somewhere else all survive it.
     fn derive(
         &self,
@@ -276,8 +275,11 @@ impl Fits {
         let Some(state) = project.state(fit) else {
             return;
         };
-        let time_signatures = project.project_file().tempo_map.time_signatures();
-        let fitted = self.fitted(project.assets(), state, time_signatures);
+        // The grid is built in the time signature of bar 1. The map keeps every time signature
+        // of the project as it is: a fit decides the tempo, not the bars.
+        let tempo_map = &project.project_file().tempo_map;
+        let time_signature = tempo_map.time_signatures().first();
+        let fitted = self.fitted(project.assets(), state, time_signature);
         let fitted = match &*fitted {
             Ok(fitted) => fitted,
             Err(message) => {
@@ -288,17 +290,15 @@ impl Fits {
         for problem in &fitted.problems {
             derived.problem(problem.clone());
         }
-        let map = fitted.map_at(state.steadiness);
+        let map = fitted.map_at(time_signature, state.steadiness);
         let beats_moved = match was {
             Was::Created => true,
-            // The time signatures changed under the fit. The grid is built in the time
-            // signature of bar 1, so a change after it leaves the tempo changes as they are,
-            // and the clip keeps what was done to it by hand.
-            Was::Unchanged => {
-                map.tempo_changes() != project.project_file().tempo_map.tempo_changes()
-            }
+            // The time signatures changed under the fit. A change after bar 1 leaves the tempo
+            // changes as they are, and the clip keeps what was done to it by hand.
+            Was::Unchanged => map.tempo_changes() != tempo_map.tempo_changes(),
             Was::Changed(before) => before.grid_inputs() != state.grid_inputs(),
         };
+        let map = map.with_time_signatures(tempo_map.time_signatures().clone());
         derived.changes().set_tempo_map(map);
         if !beats_moved {
             return;
@@ -331,6 +331,7 @@ impl Fits {
             return String::new();
         };
         let time_signatures = project.project_file().tempo_map.time_signatures();
+        let time_signature = time_signatures.first();
         let head = format!(
             "fit `{}` take {} beat {} steadiness {:.0}%",
             fit.id(),
@@ -338,9 +339,9 @@ impl Fits {
             state.beat.name(),
             state.steadiness * 100.0
         );
-        match &*self.fitted(project.assets(), state, time_signatures) {
+        match &*self.fitted(project.assets(), state, time_signature) {
             Ok(fitted) => {
-                let downbeat = fitted.first_downbeat_tick();
+                let downbeat = fitted.first_downbeat_tick(time_signature);
                 format!(
                     "{head}, {} beats, first downbeat at {}",
                     fitted.beat_count(),

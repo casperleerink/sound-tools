@@ -179,24 +179,23 @@ impl Grid {
     }
 }
 
+/// Time signatures from runs of `(signature, bars)`, for the tests of the views.
+#[cfg(test)]
+pub(super) fn time_signatures(runs: &[(&str, u32)]) -> TimeSignatures {
+    let runs = runs
+        .iter()
+        .map(|(signature, bars)| sound_core::SignatureRun {
+            signature: signature.parse().unwrap(),
+            bars: std::num::NonZeroU32::new(*bars).unwrap(),
+        });
+    TimeSignatures::new(runs.collect()).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
-
-    use sound_core::{SignatureRun, TimeSignature};
+    use sound_core::TimeSignature;
 
     use super::*;
-
-    fn time_signatures(runs: &[(&str, u32)]) -> TimeSignatures {
-        let runs = runs
-            .iter()
-            .map(|(signature, bars)| SignatureRun {
-                signature: signature.parse().unwrap(),
-                bars: NonZeroU32::new(*bars).unwrap(),
-            })
-            .collect();
-        TimeSignatures::new(runs).unwrap()
-    }
 
     fn four_four(snap: Snap) -> Grid {
         snap.grid(&TimeSignatures::default())

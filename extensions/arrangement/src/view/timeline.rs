@@ -1405,7 +1405,7 @@ impl Timeline {
                     );
                     clock.tick_at(sound_core::Frames(clock.frame_of(at).0 + frames))
                 }
-                None => time_signatures.bar_at(at).end(),
+                None => at + time_signatures.bar_at(at).length(),
             };
             let name = path
                 .file_name()

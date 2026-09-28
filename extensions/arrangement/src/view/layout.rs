@@ -254,7 +254,8 @@ impl Viewport {
     /// The bars that get a mark in the ruler. When bars get narrow only every 2nd, 4th, 8th and
     /// so on of a time signature is marked, counted from where it starts, and a mark never
     /// comes closer than [`MIN_LABEL_SPACING`] to the one before it, so the numbers never crowd.
-    /// A mark shows the time signature of its bar when one started since the mark before.
+    /// A mark shows the time signature of its bar when one started since the mark before, and
+    /// the first mark always does.
     ///
     /// The marks are counted from bar 1, so they stay put while the view scrolls. The first one
     /// is at or left of the left edge: its number scrolls out, it does not vanish.
@@ -265,7 +266,7 @@ impl Viewport {
         let runs: Vec<Bar> = time_signatures.changes().collect();
         let mut marks: Vec<RulerBar> = Vec::new();
         let mut last: Option<(u64, f32)> = None;
-        for (index, first) in runs.iter().enumerate() {
+        'runs: for (index, first) in runs.iter().enumerate() {
             let end = runs.get(index + 1).map_or(u64::MAX, |next| next.number);
             let pixels_per_bar = first.length().0 as f64 * self.pixels_per_tick();
             let step =
@@ -284,7 +285,7 @@ impl Viewport {
             for bar in numbers.map_while(|number| time_signatures.bar(number)) {
                 let x = self.x_of(bar.start);
                 if x >= width {
-                    return marks;
+                    break 'runs;
                 }
                 let room =
                     last.is_none_or(|(_, last_x)| f64::from(x - last_x) >= MIN_LABEL_SPACING);
@@ -303,6 +304,13 @@ impl Viewport {
                 });
                 last = Some((bar.number, x));
             }
+        }
+        // The first mark says which time signature the view starts in, however far back it
+        // started.
+        if let Some(first) = marks.first_mut()
+            && first.signature.is_none()
+        {
+            first.signature = time_signatures.bar(first.number).map(|bar| bar.signature);
         }
         marks
     }
@@ -363,20 +371,10 @@ impl Viewport {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
+    use sound_core::{Ticks, TimeSignature, TimeSignatures};
 
-    use sound_core::{SignatureRun, Ticks, TimeSignature, TimeSignatures};
+    use super::super::snap::time_signatures;
 
-    fn time_signatures(runs: &[(&str, u32)]) -> TimeSignatures {
-        let runs = runs
-            .iter()
-            .map(|(signature, bars)| SignatureRun {
-                signature: signature.parse().unwrap(),
-                bars: NonZeroU32::new(*bars).unwrap(),
-            })
-            .collect();
-        TimeSignatures::new(runs).unwrap()
-    }
     use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 
     use super::*;
@@ -674,6 +672,9 @@ mod tests {
             ..narrow
         };
         let bars = far.ruler_bars(four_four(), 208.0);
+        // The first mark says the time signature the view starts in.
+        assert_eq!(bars[0].label(), "993  4/4");
+        assert_eq!(bars[1].label(), "1001");
         assert_eq!(
             marks(bars),
             [(993, -92.0), (1001, 4.0), (1009, 100.0), (1017, 196.0)]

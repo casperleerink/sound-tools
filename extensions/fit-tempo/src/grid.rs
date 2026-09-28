@@ -22,9 +22,7 @@
 //!   device of the moment would make a fit different on two machines.
 
 use serde::{Deserialize, Serialize};
-use sound_core::{
-    Clock, TICKS_PER_QUARTER, Tempo, TempoChange, TempoMap, Ticks, TimeSignature, TimeSignatures,
-};
+use sound_core::{Clock, TICKS_PER_QUARTER, Tempo, TempoChange, TempoMap, Ticks, TimeSignature};
 use sound_notes::{Clip, RawTake};
 
 use crate::beats;
@@ -69,13 +67,11 @@ impl BeatRate {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fitted {
     /// The moment of every beat of the grid on the project timeline, in microseconds. Index 0
-    /// is tick 0 and is always 0, so index `j` is tick `j * ticks_per_beat`, a beat of the time
-    /// signature of bar 1.
+    /// is tick 0 and is always 0, so index `j` is tick `j * ticks_per_beat`.
     pub targets_us: Vec<u64>,
     /// Which index of `targets_us` is the first downbeat. Always on a bar line.
     pub first_downbeat: usize,
-    /// The tempo map at 0 % steadiness: the grid as it was played. Its time signatures are the
-    /// project's, as they were given to [`fit`].
+    /// The tempo map at 0 % steadiness: the grid as it was played.
     pub map: TempoMap,
     /// The clip of the take under that map. The caller puts the take's name back in it.
     pub clip: Clip,
@@ -98,12 +94,9 @@ pub enum FitError {
 ///
 /// `first_downbeat_us` counts from the start of the recording, like every time in the take, so
 /// an agent reads the right value straight out of the take file.
-///
-/// The grid is built in the time signature of bar 1. The map keeps every run of
-/// `time_signatures` as it is: a fit decides the tempo, not the bars.
 pub fn fit(
     take: &RawTake,
-    time_signatures: &TimeSignatures,
+    time_signature: TimeSignature,
     first_downbeat_us: u64,
     rate: BeatRate,
 ) -> Result<Fitted, FitError> {
@@ -126,9 +119,9 @@ pub fn fit(
         .map(|time| time.saturating_add(take.start_us))
         .collect();
 
-    let lead = lead_beats(downbeat, time_signatures.first(), &beats_us);
+    let lead = lead_beats(downbeat, time_signature, &beats_us);
     let targets_us = targets(&beats_us, lead);
-    let (map, problems) = tempo_map(time_signatures, &targets_us);
+    let (map, problems) = tempo_map(time_signature, &targets_us);
     let clock = Clock::new(map.clone(), FIT_SAMPLE_RATE);
     let clip = take
         .clip(|time_us| clock.tick_at_micros(time_us))
@@ -149,20 +142,18 @@ impl Fitted {
     ///
     /// The first and the last beat keep their moment, so the piece begins and ends where it
     /// did. Everything between them slides, which is what moves the playing towards the grid.
-    pub fn map_at(&self, steadiness: f32) -> TempoMap {
+    pub fn map_at(&self, time_signature: TimeSignature, steadiness: f32) -> TempoMap {
         let steadiness = f64::from(steadiness.clamp(0.0, 1.0));
         if steadiness == 0.0 {
             return self.map.clone();
         }
-        let steady_us = steady(&self.targets_us, steadiness);
-        let (map, _) = tempo_map(self.map.time_signatures(), &steady_us);
+        let (map, _) = tempo_map(time_signature, &steady(&self.targets_us, steadiness));
         map
     }
 
     /// The tick of the first downbeat, for a summary and for the agent doc.
-    pub fn first_downbeat_tick(&self) -> Ticks {
-        let ticks_per_beat = self.map.time_signatures().first().ticks_per_beat();
-        Ticks(self.first_downbeat as u64 * ticks_per_beat)
+    pub fn first_downbeat_tick(&self, time_signature: TimeSignature) -> Ticks {
+        Ticks(self.first_downbeat as u64 * time_signature.ticks_per_beat())
     }
 
     /// How many beats the grid has, without the one at tick 0.
@@ -259,10 +250,9 @@ fn targets(beats_us: &[u64], lead: usize) -> Vec<u64> {
     targets
 }
 
-/// The tempo map that puts beat `j` of the time signature of bar 1 on the moment of
-/// `targets_us[j]`, and what it could not do. The map has `time_signatures` as they are.
-fn tempo_map(time_signatures: &TimeSignatures, targets_us: &[u64]) -> (TempoMap, Vec<String>) {
-    let ticks_per_beat = time_signatures.first().ticks_per_beat();
+/// The tempo map that puts beat `j` on the moment of `targets_us[j]`, and what it could not do.
+fn tempo_map(time_signature: TimeSignature, targets_us: &[u64]) -> (TempoMap, Vec<String>) {
+    let ticks_per_beat = time_signature.ticks_per_beat();
     let targets: Vec<u128> = targets_us.iter().map(|time| sub_frame_of(*time)).collect();
     let mut changes: Vec<TempoChange> = Vec::new();
     let mut segment: Option<Segment> = None;
@@ -305,8 +295,8 @@ fn tempo_map(time_signatures: &TimeSignatures, targets_us: &[u64]) -> (TempoMap,
         };
         actual = current.start_of(tick);
     }
-    let map = TempoMap::new(time_signatures.clone(), changes)
-        .unwrap_or_else(|_| TempoMap::constant(time_signatures.clone(), Tempo::default()));
+    let map = TempoMap::new(time_signature, changes)
+        .unwrap_or_else(|_| TempoMap::constant(time_signature, Tempo::default()));
     let mut problems = Vec::new();
     if clamped > 0 {
         problems.push(format!(

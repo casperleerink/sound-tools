@@ -101,12 +101,10 @@ pub fn nudged_track(current: usize, tracks: usize, step: i64) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
-
-    use sound_core::{SignatureRun, TimeSignature, TimeSignatures};
+    use sound_core::{TimeSignature, TimeSignatures};
     use sound_notes::{Note, Pedal, PedalChange, Pitch, Velocity};
 
-    use super::super::snap::Snap;
+    use super::super::snap::{Snap, time_signatures};
     use super::*;
 
     const BAR: u64 = 3840;
@@ -168,11 +166,7 @@ mod tests {
         assert_eq!(new_clip(Ticks(100), &waltz), clip(0, 2880, &[]));
 
         // A bar of 3/16 and then 4/4: a new clip is as long as the bar it starts in.
-        let run = |signature: &str, bars| SignatureRun {
-            signature: signature.parse().unwrap(),
-            bars: NonZeroU32::new(bars).unwrap(),
-        };
-        let changing = TimeSignatures::new(vec![run("3/16", 1), run("4/4", 1)]).unwrap();
+        let changing = time_signatures(&[("3/16", 1), ("4/4", 1)]);
         let bar = Snap::Bar.grid(&changing);
         assert_eq!(new_clip(Ticks(500), &bar), clip(0, 720, &[]));
         assert_eq!(new_clip(Ticks(900), &bar), clip(720, BAR, &[]));

@@ -1104,7 +1104,7 @@ fn a_pathological_take_ends_in_bounded_time() {
         };
         assert_eq!(take.validate(), Ok(()), "{what}");
         let started = std::time::Instant::now();
-        let fitted = fit_tempo::fit(&take, &signature.into(), 0, BeatRate::Normal);
+        let fitted = fit_tempo::fit(&take, signature, 0, BeatRate::Normal);
         let elapsed = started.elapsed();
         assert!(
             elapsed < std::time::Duration::from_secs(30),

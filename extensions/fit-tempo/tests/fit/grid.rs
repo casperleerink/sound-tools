@@ -1,7 +1,7 @@
 //! The grid a fit builds: the tempo map, the clip and what steadiness does to them.
 
 use fit_tempo::{BeatRate, FIT_SAMPLE_RATE, fit};
-use sound_core::{Clock, Frames, SignatureRun, TempoMap, Ticks, TimeSignatures};
+use sound_core::{Clock, Frames, TempoMap, Ticks, TimeSignatures};
 use sound_notes::RawTake;
 
 use crate::beats::cases;
@@ -37,7 +37,7 @@ fn the_tempo_map_puts_every_beat_where_the_take_had_it() {
     };
     let (take, _) = case.take();
     let signature = case.signature();
-    let fitted = fit(&take, &signature.into(), 0, BeatRate::Normal).expect("a fit");
+    let fitted = fit(&take, signature, 0, BeatRate::Normal).expect("a fit");
     assert!(fitted.beat_count() > 1500, "{} beats", fitted.beat_count());
     let clock = clock(&fitted.map);
     let ticks_per_beat = signature.ticks_per_beat();
@@ -67,10 +67,9 @@ fn the_first_downbeat_lands_on_a_bar_line() {
             };
             let (take, _) = case.take();
             let signature = case.signature();
-            let fitted =
-                fit(&take, &signature.into(), downbeat_us, BeatRate::Normal).expect("a fit");
-            let tick = fitted.first_downbeat_tick();
-            let position = fitted.map.time_signatures().bar_beat_of(tick);
+            let fitted = fit(&take, signature, downbeat_us, BeatRate::Normal).expect("a fit");
+            let tick = fitted.first_downbeat_tick(signature);
+            let position = TimeSignatures::constant(signature).bar_beat_of(tick);
             assert_eq!(
                 (position.beat, position.tick),
                 (1, 0),
@@ -89,7 +88,7 @@ fn half_and_double_change_the_beats_and_not_the_downbeat() {
     let case = first_case();
     let (take, _) = case.take();
     let signature = case.signature();
-    let at = |rate| fit(&take, &signature.into(), 0, rate).expect("a fit");
+    let at = |rate| fit(&take, signature, 0, rate).expect("a fit");
     let (half, normal, double) = (
         at(BeatRate::Half),
         at(BeatRate::Normal),
@@ -121,20 +120,20 @@ fn steadiness_moves_the_beats_and_can_always_be_turned_back() {
     let case = first_case();
     let (take, _) = case.take();
     let signature = case.signature();
-    let fitted = fit(&take, &signature.into(), 0, BeatRate::Normal).expect("a fit");
-    let played = fitted.map_at(0.0);
+    let fitted = fit(&take, signature, 0, BeatRate::Normal).expect("a fit");
+    let played = fitted.map_at(signature, 0.0);
     assert_eq!(played, fitted.map);
-    assert_eq!(fitted.map_at(0.0), played);
+    assert_eq!(fitted.map_at(signature, 0.0), played);
 
     // Half way the map still follows the playing, with fewer steps than the take had.
-    let half = fitted.map_at(0.5);
+    let half = fitted.map_at(signature, 0.5);
     assert_ne!(half, played);
     assert!(half.tempo_changes().len() > 1);
 
     // At 100 % every beat is the same length to within a frame, and every step of the map has
     // the same tempo to within a hundredth of a bpm: a beat of about 30000 frames cannot be
     // hit exactly by a tempo held in thousandths, so the last frame is corrected step by step.
-    let steady = fitted.map_at(1.0);
+    let steady = fitted.map_at(signature, 1.0);
     let tempos: Vec<f64> = steady
         .tempo_changes()
         .iter()
@@ -165,44 +164,7 @@ fn steadiness_moves_the_beats_and_can_always_be_turned_back() {
     );
 
     // And back.
-    assert_eq!(fitted.map_at(0.0), played);
-}
-
-/// A piece whose time signature changes keeps its runs: the fit writes the tempo and leaves
-/// the bars alone. The grid is built in the time signature of bar 1, so the tempo is the same
-/// as for a piece that stays in it.
-#[test]
-fn a_fit_keeps_the_time_signature_runs_and_builds_its_grid_in_bar_one() {
-    let case = Case {
-        time_signature: "6/8",
-        ..first_case()
-    };
-    let (take, _) = case.take();
-    let runs: Vec<SignatureRun> = [("6/8", 2), ("3/4", 1), ("5/16", 3)]
-        .iter()
-        .map(|(signature, bars)| SignatureRun {
-            signature: signature.parse().expect("a time signature"),
-            bars: std::num::NonZeroU32::new(*bars).expect("at least one bar"),
-        })
-        .collect();
-    let time_signatures = TimeSignatures::new(runs).expect("time signatures");
-    let fitted = fit(&take, &time_signatures, 0, BeatRate::Normal).expect("a fit");
-    let in_bar_one = fit(&take, &case.signature().into(), 0, BeatRate::Normal).expect("a fit");
-
-    for steadiness in [0.0, 0.5, 1.0] {
-        let map = fitted.map_at(steadiness);
-        assert_eq!(map.time_signatures(), &time_signatures, "at {steadiness}");
-        assert_eq!(
-            map.tempo_changes(),
-            in_bar_one.map_at(steadiness).tempo_changes(),
-            "at {steadiness}"
-        );
-    }
-    assert_eq!(
-        fitted.first_downbeat_tick(),
-        in_bar_one.first_downbeat_tick()
-    );
-    assert_eq!(fitted.clip, in_bar_one.clip);
+    assert_eq!(fitted.map_at(signature, 0.0), played);
 }
 
 /// The clip of a fit renders the take as it was heard: every note within one tick of the
@@ -216,7 +178,7 @@ fn the_fitted_clip_keeps_every_note_where_it_was_heard() {
         };
         let (take, _) = case.take();
         let signature = case.signature();
-        let fitted = fit(&take, &signature.into(), 0, BeatRate::Normal).expect("a fit");
+        let fitted = fit(&take, signature, 0, BeatRate::Normal).expect("a fit");
         let clock = clock(&fitted.map);
         let worst = worst_note_error_ticks(&take, &fitted.clip, &clock);
         assert!(worst <= 1, "{playing:?}: {worst} ticks");
@@ -258,7 +220,7 @@ fn the_take_keeps_its_place_in_real_time() {
     };
     let (take, _) = case.take();
     let signature = case.signature();
-    let fitted = fit(&take, &signature.into(), 0, BeatRate::Normal).expect("a fit");
+    let fitted = fit(&take, signature, 0, BeatRate::Normal).expect("a fit");
     let clock = clock(&fitted.map);
     let start = clock.frame_of(fitted.clip.start).0;
     // Within one tick: the clip starts on the first tick at or after the moment the recording
