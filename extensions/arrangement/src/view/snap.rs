@@ -147,14 +147,20 @@ impl Grid {
         target.0 as i64 - line
     }
 
-    /// How far an arrow key moves a shape at `anchor`: one unit of the bar it moves in.
-    /// Towards the start that is the bar before the anchor, so a bar grid steps from bar line
-    /// to bar line.
+    /// How far an arrow key moves a shape at `anchor`: from the grid line at or before it to
+    /// the next or the previous one. So a shape on the grid stays on it, bar lines included, and
+    /// one off the grid keeps its offset. With snap off it moves by a sixteenth.
     pub fn nudge(&self, anchor: Ticks, forward: bool) -> i64 {
-        match forward {
-            true => self.unit_at(anchor).0 as i64,
-            false => -(self.unit_at(anchor.saturating_sub(Ticks(1))).0 as i64),
+        if self.snap == Snap::Off {
+            let unit = self.unit_at(anchor).0 as i64;
+            return if forward { unit } else { -unit };
         }
+        let line = self.floor(anchor);
+        let to = match forward {
+            true => self.lines_around(line).1,
+            false => self.floor(line.saturating_sub(Ticks(1))),
+        };
+        to.0 as i64 - line.0 as i64
     }
 
     /// The grid lines at or before `tick` and after it. The one after is the next bar line
@@ -293,9 +299,17 @@ mod tests {
         assert_eq!(bar.delta(Ticks(0), Ticks(100), Ticks(1900)), 1680);
         assert_eq!(bar.delta(Ticks(1680), Ticks(1700), Ticks(1000)), -960);
 
-        // Keys step from bar line to bar line both ways.
+        // Keys step from grid line to grid line both ways, bar lines included.
         assert_eq!(bar.nudge(Ticks(720), true), 960);
         assert_eq!(bar.nudge(Ticks(720), false), -720);
         assert_eq!(bar.nudge(Ticks(1680), false), -960);
+        assert_eq!(eighth.nudge(Ticks(480), true), 240);
+        assert_eq!(eighth.nudge(Ticks(720), true), 480);
+        assert_eq!(eighth.nudge(Ticks(720), false), -240);
+        // Off the grid: the offset from the line before it stays.
+        assert_eq!(eighth.nudge(Ticks(500), true), 240);
+        assert_eq!(four_four(Snap::Sixteenth).nudge(Ticks(250), false), -240);
+        assert_eq!(four_four(Snap::Off).nudge(Ticks(250), false), -240);
+        assert_eq!(four_four(Snap::Off).nudge(Ticks(250), true), 240);
     }
 }

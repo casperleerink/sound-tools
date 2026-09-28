@@ -368,6 +368,23 @@ fn a_steadiness_change_keeps_a_hand_edit_and_a_correction_does_not() {
     // And back at 0 % the fitted map is the fitted map again, byte for byte.
     assert_eq!(project_json(&harness), fitted_file);
 
+    // A time signature that starts after bar 1 leaves the grid as it is, so the clip keeps
+    // the edit too. The fit keeps the new runs.
+    let one = r#""time_signatures": [{"signature": "4/4", "bars": 1}]"#;
+    assert!(fitted_file.contains(one), "{fitted_file}");
+    let fitted_changes = tempo_map(&harness).tempo_changes().to_vec();
+    let two =
+        r#""time_signatures": [{"signature": "4/4", "bars": 8}, {"signature": "7/8", "bars": 1}]"#;
+    harness.write_and_apply("project.json", &fitted_file.replace(one, two));
+    assert_eq!(
+        clip_json(&harness),
+        by_hand,
+        "a later time signature moved a note"
+    );
+    let runs = tempo_map(&harness).time_signatures().runs().len();
+    assert_eq!(runs, 2);
+    assert_eq!(tempo_map(&harness).tempo_changes(), fitted_changes);
+
     // A correction of the beat does make the clip again, and undo brings the edit back.
     let corrected = FitState {
         beat: BeatRate::Half,

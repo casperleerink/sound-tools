@@ -54,7 +54,7 @@ The grid of a fit follows the time signature of bar 1. A piece whose time signat
 
 ## What a correction costs
 
-Changing `take`, `first_downbeat_us` or `beat`, or the project's `time_signatures`, makes the clip's notes again from the raw take, so it is exact however many times you correct it. **Edits made by hand to that clip before such a correction are lost.** One undo brings them back, together with the tempo map and the fit record, because the three are one step.
+Changing `take`, `first_downbeat_us` or `beat`, or the time signature of bar 1, makes the clip's notes again from the raw take, so it is exact however many times you correct it. **Edits made by hand to that clip before such a correction are lost.** One undo brings them back, together with the tempo map and the fit record, because the three are one step.
 
 Changing `steadiness` never touches the clip. It writes the tempo map and nothing else, so a note moved by hand, a trimmed clip and a clip moved to another track all survive it.
 

@@ -259,7 +259,9 @@ impl Viewport {
     /// The marks are counted from bar 1, so they stay put while the view scrolls. The first one
     /// is at or left of the left edge: its number scrolls out, it does not vanish.
     pub fn ruler_bars(&self, time_signatures: &TimeSignatures, width: f32) -> Vec<RulerBar> {
-        let left = self.x_of(self.visible_ticks(width).start);
+        let visible = self.visible_ticks(width);
+        let left = self.x_of(visible.start);
+        let left_bar = time_signatures.bar_at(visible.start).number;
         let runs: Vec<Bar> = time_signatures.changes().collect();
         let mut marks: Vec<RulerBar> = Vec::new();
         let mut last: Option<(u64, f32)> = None;
@@ -268,7 +270,17 @@ impl Viewport {
             let pixels_per_bar = first.length().0 as f64 * self.pixels_per_tick();
             let step =
                 ((MIN_LABEL_SPACING / pixels_per_bar).ceil().max(1.0) as u64).next_power_of_two();
-            let numbers = (first.number..end).step_by(step as usize);
+            // Every mark of a run after its first is far enough from the one before it, so the
+            // marks of a run left of the view need not be walked: this starts at the one
+            // before the last at or left of the left edge.
+            let before_view = left_bar
+                .min(end.saturating_sub(1))
+                .saturating_sub(first.number);
+            let skipped = (before_view / step).saturating_sub(1);
+            if skipped > 0 {
+                last = Some((first.number, f32::NEG_INFINITY));
+            }
+            let numbers = (first.number + skipped * step..end).step_by(step as usize);
             for bar in numbers.map_while(|number| time_signatures.bar(number)) {
                 let x = self.x_of(bar.start);
                 if x >= width {
@@ -656,6 +668,16 @@ mod tests {
         };
         let bars = narrow.ruler_bars(four_four(), 208.0);
         assert_eq!(marks(bars), [(1, 8.0), (9, 104.0), (17, 200.0)]);
+        // Far into the piece the marks are where counting from bar 1 puts them.
+        let far = Viewport {
+            scroll_x: 12.0 * 1000.0 + 4.0,
+            ..narrow
+        };
+        let bars = far.ruler_bars(four_four(), 208.0);
+        assert_eq!(
+            marks(bars),
+            [(993, -92.0), (1001, 4.0), (1009, 100.0), (1017, 196.0)]
+        );
 
         let waltz = TimeSignatures::constant(TimeSignature::new(3, 4).unwrap());
         let bars = Viewport::default().ruler_bars(&waltz, 160.0);

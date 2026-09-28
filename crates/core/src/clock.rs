@@ -71,6 +71,8 @@ pub enum ClockError {
     },
     #[error("time_signatures needs at least one entry")]
     NoTimeSignature,
+    #[error("the runs of time_signatures reach past the last tick")]
+    TooManyBars,
     #[error("write the time signatures as \"time_signatures\", not as \"time_signature\" as well")]
     TwoTimeSignatureFields,
     #[error("the tempo map needs \"time_signatures\"")]
@@ -291,7 +293,7 @@ pub struct TimeSignatures {
 }
 
 impl TimeSignatures {
-    /// Fails when there is no run.
+    /// Fails when there is no run, or when a run starts past the last tick.
     pub fn new(runs: Vec<SignatureRun>) -> Result<Self, ClockError> {
         let first_run = runs.first().ok_or(ClockError::NoTimeSignature)?;
         let first = Bar {
@@ -303,11 +305,7 @@ impl TimeSignatures {
         let mut previous = (first, first_run.bars);
         for run in runs.iter().skip(1) {
             let (bar, bars) = previous;
-            // A run that ends past the last tick leaves the runs after it at the last tick.
-            let next = bar_after(bar, u64::from(bars.get())).unwrap_or(Bar {
-                start: Ticks(u64::MAX),
-                ..bar
-            });
+            let next = bar_after(bar, u64::from(bars.get())).ok_or(ClockError::TooManyBars)?;
             let next = Bar {
                 signature: run.signature,
                 ..next

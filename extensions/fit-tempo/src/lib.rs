@@ -276,12 +276,6 @@ impl Fits {
         let Some(state) = project.state(fit) else {
             return;
         };
-        let beats_moved = match was {
-            // A fit that was just made, and time signatures that changed under one: the grid
-            // is another grid either way.
-            Was::Created | Was::Unchanged => true,
-            Was::Changed(before) => before.grid_inputs() != state.grid_inputs(),
-        };
         let time_signatures = project.project_file().tempo_map.time_signatures();
         let fitted = self.fitted(project.assets(), state, time_signatures);
         let fitted = match &*fitted {
@@ -295,6 +289,16 @@ impl Fits {
             derived.problem(problem.clone());
         }
         let map = fitted.map_at(state.steadiness);
+        let beats_moved = match was {
+            Was::Created => true,
+            // The time signatures changed under the fit. The grid is built in the time
+            // signature of bar 1, so a change after it leaves the tempo changes as they are,
+            // and the clip keeps what was done to it by hand.
+            Was::Unchanged => {
+                map.tempo_changes() != project.project_file().tempo_map.tempo_changes()
+            }
+            Was::Changed(before) => before.grid_inputs() != state.grid_inputs(),
+        };
         derived.changes().set_tempo_map(map);
         if !beats_moved {
             return;
