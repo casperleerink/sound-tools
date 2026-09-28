@@ -35,7 +35,7 @@ This is the main rule of the codebase.
 - The core has no track, clip, note, pitch, velocity, effect, plugin or audio file type, and depends on no bundled crate. `workspace-rules` checks this.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (saved `Note` and `Clip`, the realtime `NoteEvent`, the raw MIDI take, the port names of instruments and effects) and `sound-media` (reading, resampling and pitching audio files).
 - Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`. An effect has an audio input and output both named `audio`. So any tool with those ports fits a track slot, and the arrangement depends on no instrument, effect or plugin.
-- The core does own the musical clock (tempo map, time signature, ticks). Nearly every tool and agent request talks in bars and beats, so one clock in the core beats one per extension.
+- The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and agent request talks in bars and beats, so one clock in the core beats one per extension.
 - `extensions/tone` is a small non-musical tool. It is not in the default project; it proves the core rules hold for a tool shaped differently from the arrangement.
 
 ## Tools, instances and behaviours
@@ -50,7 +50,7 @@ Built in `crates/core/src/project`.
 - Ownership is the folder tree. References (connections, a clip's take) are saved ids that resolve to an optional instance and keep nothing alive. A reference may arrive before its target; data of a missing extension stays intact.
 - `Project::rebind` runs one behaviour again with the record it has, with no write and no undo step. It is for a service outside the project that can now do more: a plugin scan that found the plugin, a drum sound rendered in the background. `rebinds_on_assets(folder)` does the same when a file arrives under `assets/<folder>/`, only for instances that have a problem.
 - A tool may say where its instances live (`Place`): anywhere, at the top, only inside one named tool, or at one fixed id. A record in the wrong place is a problem that says where it belongs, so an agent's mistake is a message and not silence.
-- A derive (`ToolRegistration::derive`) turns one changed record into more changes in the same group, so the result is one engine batch and one undo step. It runs when its record or the time signature changes, never on load, undo, redo or cancel, because the files already hold its output. It cannot loop and cannot fail: what it cannot compute is a problem. It is told what the record was, so it writes only what moved. Rejected: running derives on load (cost on every `--inspect`, and it could silently disagree with the files).
+- A derive (`ToolRegistration::derive`) turns one changed record into more changes in the same group, so the result is one engine batch and one undo step. It runs when its record or the time signatures change, never on load, undo, redo or cancel, because the files already hold its output. It cannot loop and cannot fail: what it cannot compute is a problem. It is told what the record was, so it writes only what moved. Rejected: running derives on load (cost on every `--inspect`, and it could silently disagree with the files).
 - A tool may register a summary (for `--inspect`) and an end (for the transport length). This is how the core prints "what plays where" without knowing tracks.
 
 ## Project storage
@@ -112,7 +112,10 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 - One audio engine. `process` never allocates, locks or makes a system call; values leaving the audio thread are dropped on the control thread. Every crate with a processor runs its tests under the realtime sanitizer in CI.
 - Every audio port is stereo. No mono ports means no channel negotiation, a stereo cable cannot be half connected, and a plugin's stereo output fits one port.
 - Engine time is an integer frame count. Musical time is an integer tick count, 960 per quarter note. Saved positions are ticks, never floats or seconds. Tick to frame rounds in one place, and each clock segment keeps the fraction of a frame across tempo changes, so a map with a change on every beat stays exact.
-- The tempo map is a list of step changes with one time signature. A tempo change during playback keeps the position in ticks.
+- The tempo map is a list of step changes and the time signatures. A tempo change during playback keeps the position in ticks.
+- Time signatures are runs of whole bars (`{"signature": "7/8", "bars": 2}`), and the last run goes on. So a change can only fall on a bar line and no position has to be checked against one. A change every bar, as in the Danse sacrale, is one run per bar. Rejected: changes at ticks, which could fall inside a bar.
+- Changing the time signatures moves bar lines, never notes: clips keep their ticks. Keeping bar positions would need a derive that moves every clip, and it would go wrong for clips an agent placed off the bar lines.
+- Bar math (`bar_at`, `bar_beat_of`, the grid, the ruler, the click) lives in `TimeSignatures`, so no extension assumes a fixed bar length. `AGENTS.md` explains the math and points at `project.json` instead of copying the time signatures, and `--inspect` prints where each one starts.
 - Each block, a processor gets the range of ticks it covers and the frame of any tick in it, so no extension rounds time itself. The core holds no scheduled events: timeline processors make their events block by block, so a seek has nothing to invalidate.
 - Transport changes are two one-block flags: the position jumped (seek, stop) and playback stopped (pause, stop). Tools release what they hold on either. Seeking does not replay skipped events.
 - The engine runs every processor every block, playing or not, so live keys and effect tails keep sounding while stopped.

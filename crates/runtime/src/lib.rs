@@ -48,7 +48,7 @@ const INSPECT_DOC: AgentDoc = AgentDoc {
     when: "You can run commands and want the whole piece in one read",
     markdown: "# Inspect from a command line
 
-When you can run commands, the Sound Tools runtime prints the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems. It works while the project is open and changes nothing.
+When you can run commands, the Sound Tools runtime prints where each time signature starts, the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems. It works while the project is open and changes nothing.
 
 ```sh
 sound-tools . --inspect
