@@ -543,6 +543,69 @@ pub fn tracks<'a>(
     tracks
 }
 
+/// The tracks of an arrangement as people see them, each with its `order` now: where a move of
+/// a track starts from, see [`move_track`].
+pub fn track_orders(
+    project: &Project,
+    arrangement: &InstanceId,
+) -> Vec<(Instance<TrackState>, u32)> {
+    let tracks = tracks(project, arrangement).into_iter();
+    tracks.map(|(track, state)| (track, state.order)).collect()
+}
+
+/// The `order` of each track after the one at `from` goes to place `to`, for orders given in
+/// the order people see the tracks: the new order of the track at each place of `orders`. A
+/// `to` past the last is the last. `None` when nothing moves.
+///
+/// The tracks are numbered again from 0, because tracks of the same order, which an agent may
+/// write, have no free number between them.
+pub fn reordered(orders: &[u32], from: usize, to: usize) -> Option<Vec<u32>> {
+    let to = to.min(orders.len().checked_sub(1)?);
+    if from == to || from >= orders.len() {
+        return None;
+    }
+    let mut places: Vec<usize> = (0..orders.len()).collect();
+    let moved = places.remove(from);
+    places.insert(to, moved);
+    let mut reordered = orders.to_vec();
+    for (order, place) in (0u32..).zip(places) {
+        if let Some(slot) = reordered.get_mut(place) {
+            *slot = order;
+        }
+    }
+    Some(reordered)
+}
+
+/// Moves the track at `from` to place `to`, to a group of changes. `tracks` are what
+/// [`track_orders`] gave when the move began, so a drag that comes back to where it began
+/// writes back the orders there were, ties included, and makes no undo step. Only a track
+/// whose order changes is written; one deleted since is left out. The clips, the devices and
+/// everything else of a track stay in its folder, so the track keeps its id.
+pub fn move_track(
+    project: &Project,
+    changes: &mut Changes,
+    tracks: &[(Instance<TrackState>, u32)],
+    from: usize,
+    to: usize,
+) {
+    let orders: Vec<u32> = tracks.iter().map(|(_, order)| *order).collect();
+    let orders = reordered(&orders, from, to).unwrap_or(orders);
+    for ((track, _), order) in tracks.iter().zip(orders) {
+        let Some(state) = project.state(track) else {
+            continue;
+        };
+        if state.order != order {
+            changes.set(
+                track,
+                TrackState {
+                    order,
+                    ..state.clone()
+                },
+            );
+        }
+    }
+}
+
 /// The clips of a track by start, then by id.
 pub fn clips<'a>(project: &'a Project, track: &InstanceId) -> Vec<(Instance<Clip>, &'a Clip)> {
     let mut clips: Vec<_> = project.children::<Clip>(track).collect();
@@ -940,7 +1003,37 @@ fn id_name(display: &str, fallback: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{LimiterState, TrackState, id_name};
+    use super::{LimiterState, TrackState, id_name, reordered};
+
+    #[test]
+    fn a_moved_track_takes_its_new_place_and_the_others_close_up() {
+        let orders = [0, 1, 2, 3];
+        // Up one, and down one.
+        assert_eq!(reordered(&orders, 2, 1), Some(vec![0, 2, 1, 3]));
+        assert_eq!(reordered(&orders, 1, 2), Some(vec![0, 2, 1, 3]));
+        // To the first place, and to the last.
+        assert_eq!(reordered(&orders, 3, 0), Some(vec![1, 2, 3, 0]));
+        assert_eq!(reordered(&orders, 0, 3), Some(vec![3, 0, 1, 2]));
+        // A place past the last is the last.
+        assert_eq!(reordered(&orders, 0, 10), Some(vec![3, 0, 1, 2]));
+    }
+
+    #[test]
+    fn a_track_let_go_where_it_was_changes_nothing() {
+        assert_eq!(reordered(&[0, 1, 2], 1, 1), None);
+        assert_eq!(reordered(&[0, 1, 2], 2, 5), None);
+        assert_eq!(reordered(&[0, 1, 2], 3, 0), None);
+        assert_eq!(reordered(&[], 0, 0), None);
+    }
+
+    /// Orders an agent wrote: gaps and ties. Tracks of the same order show by id, so a move
+    /// among them needs new numbers, and the order people saw is kept for the others.
+    #[test]
+    fn tracks_with_gaps_or_the_same_order_are_numbered_again() {
+        assert_eq!(reordered(&[0, 0, 0], 2, 0), Some(vec![1, 2, 0]));
+        assert_eq!(reordered(&[0, 0, 0], 0, 0), None);
+        assert_eq!(reordered(&[5, 10, 10, 40], 3, 1), Some(vec![0, 2, 3, 1]));
+    }
 
     /// The ranges are written once, in the states. The agent doc gives the same numbers, so they
     /// cannot drift from them.

@@ -52,7 +52,7 @@ use super::selection::Selection;
 use super::snap::{Grid, SharedSnap, Snap, snap, snap_floor, snapped_delta};
 use crate::{
     ArrangementState, AudioClip, Colour, FreeIds, TrackKind, TrackState, add_audio_clips,
-    add_audio_track, add_clip, add_clips, top_layer, tracks, unnumbered,
+    add_audio_track, add_clip, add_clips, move_track, top_layer, track_orders, tracks, unnumbered,
 };
 
 struct TrackRow {
@@ -68,6 +68,8 @@ struct TrackRow {
     /// An armed audio track shows the level of its input in its header, and its name is
     /// shorter.
     armed: bool,
+    /// Its header is being dragged: the ring of a drag shows where it lands.
+    lifted: bool,
 }
 
 /// What a clip shows: the notes of a note clip, or the waveform of an audio clip.
@@ -354,6 +356,32 @@ struct Marquee {
     at_press: (Vec<InstanceId>, Option<InstanceId>),
 }
 
+/// A drag of a track header. The track goes to the row under the pointer at once, so the rows
+/// themselves show where it lands. The whole drag is one gesture of the session.
+struct TrackDrag {
+    track: InstanceId,
+    /// The tracks as people saw them when the gesture opened, with their orders then. Every
+    /// move starts from here, so a drag back to where it began writes nothing and is no undo
+    /// step.
+    origin: Vec<(Instance<TrackState>, u32)>,
+    from: usize,
+    /// The place the last move gave the track, so a move inside one row publishes nothing.
+    at: usize,
+    /// Where the press was, from the top of the first track.
+    press: f64,
+    /// Past [`TRACK_DRAG_THRESHOLD`], so a click, or the first press of a double click, that
+    /// shakes a little is still a click.
+    moving: bool,
+    /// Whether the gesture of the session is open. It opens with the first move to another
+    /// row, so a click on a header is no undo step.
+    begun: bool,
+}
+
+/// The undo step of a track drag and of alt-up and alt-down on a track.
+const MOVE_TRACK_LABEL: &str = "Move track";
+/// How far a press on a header moves before it drags the track, in points.
+const TRACK_DRAG_THRESHOLD: f64 = 4.;
+
 /// The name of a track while it is being edited in its header.
 struct Rename {
     track: Instance<TrackState>,
@@ -583,6 +611,7 @@ pub struct Timeline {
     reselects_later: bool,
     drag: Option<ClipDrag>,
     marquee: Option<Marquee>,
+    track_drag: Option<TrackDrag>,
     /// What cmd-c and cmd-x kept, for cmd-v. In the app only, and shared with the note
     /// editor.
     clipboard: SharedClipboard,
@@ -671,6 +700,14 @@ impl Timeline {
                     {
                         timeline.end_drag(cx);
                     }
+                    // The dragged track deleted from outside: that was the last write.
+                    if timeline
+                        .track_drag
+                        .as_ref()
+                        .is_some_and(|drag| drag.track == *id)
+                    {
+                        timeline.end_drag(cx);
+                    }
                     changed
                 }
                 // The time signature places the bars, and the tempo map the tempo marks.
@@ -697,7 +734,9 @@ impl Timeline {
         // A drag that is still open when the timeline goes away must not leave the gesture
         // of the session open: undo and redo wait for it.
         cx.on_release(|timeline, cx| {
-            if timeline.drag.take().is_some_and(|drag| drag.begun) {
+            let clip_drag = timeline.drag.take().is_some_and(|drag| drag.begun);
+            let track_drag = timeline.track_drag.take().is_some_and(|drag| drag.begun);
+            if clip_drag || track_drag {
                 let session = timeline.session.clone();
                 session.update(cx, |session, cx| session.finish_gesture(cx));
             }
@@ -742,6 +781,7 @@ impl Timeline {
             reselects_later: false,
             drag: None,
             marquee: None,
+            track_drag: None,
             clipboard,
             deleted: Vec::new(),
             rename: None,
@@ -1146,6 +1186,10 @@ impl Timeline {
                 muted: state.mute,
                 renaming: renaming == Some(track.id()),
                 armed: state.kind == TrackKind::Audio && recording.is_armed(track.id()),
+                lifted: self
+                    .track_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.moving && drag.track == *track.id()),
             });
             let shape = |id: &InstanceId, rect: Rect, body: Body| ClipShape {
                 id: id.clone(),
@@ -1413,6 +1457,8 @@ impl Timeline {
                 cx.emit(TimelineEvent::OpenTrack(track.clone()));
                 if double {
                     self.start_rename(track, window, cx);
+                } else {
+                    self.start_track_drag(track.id(), y);
                 }
             }
             return;
@@ -1768,6 +1814,111 @@ impl Timeline {
             Some(ClipDragKind::Gain { .. }) => self.drag_gain(y, fine, cx),
             None => {}
         }
+    }
+
+    /// Whether the mouse has something: clips, a rectangle or a track. Keys then wait, as they
+    /// would fight the next mouse move.
+    fn dragging(&self) -> bool {
+        self.drag.is_some() || self.marquee.is_some() || self.track_drag.is_some()
+    }
+
+    /// A press on a track header, which may become a drag of the track.
+    fn start_track_drag(&mut self, track: &InstanceId, y: f32) {
+        // The tracks are read at the first move, see `drag_track`.
+        self.track_drag = Some(TrackDrag {
+            track: track.clone(),
+            origin: Vec::new(),
+            from: 0,
+            at: 0,
+            press: f64::from(y) + self.painted.get().scroll_y,
+            moving: false,
+            begun: false,
+        });
+    }
+
+    /// One mouse move of a track drag: the track goes to the row under the pointer, above the
+    /// first the first and below the last the last. The master is not a track and stays last.
+    fn drag_track(&mut self, y: f32, cx: &mut Context<Self>) {
+        let Some(mut drag) = self.track_drag.take() else {
+            return;
+        };
+        let viewport = self.painted.get();
+        let moved = (f64::from(y) + viewport.scroll_y - drag.press).abs();
+        if !drag.moving && moved < TRACK_DRAG_THRESHOLD {
+            self.track_drag = Some(drag);
+            return;
+        }
+        if !drag.moving {
+            drag.moving = true;
+            cx.notify();
+        }
+        let project = self.session.read(cx).project();
+        let tracks = drag.origin.len();
+        match drag.begun {
+            // Until the gesture opens, undo is free and an agent may write: the drag starts
+            // from the tracks as they are now. Once it opens, it owns the orders.
+            false => drag.origin = track_orders(project, self.arrangement.id()),
+            // A track deleted from outside leaves the rows, and the others close up.
+            true => drag
+                .origin
+                .retain(|(track, _)| project.state(track).is_some()),
+        }
+        let Some(from) = drag
+            .origin
+            .iter()
+            .position(|(row, _)| *row.id() == drag.track)
+        else {
+            self.track_drag = Some(drag);
+            return self.end_drag(cx);
+        };
+        if !drag.begun {
+            (drag.from, drag.at) = (from, from);
+        } else if drag.origin.len() != tracks {
+            // The rows moved under the drag: publish again, wherever the pointer is.
+            (drag.from, drag.at) = (from, usize::MAX);
+        }
+        let to = viewport
+            .nearest_track(y, drag.origin.len())
+            .unwrap_or(drag.from);
+        if to == drag.at {
+            self.track_drag = Some(drag);
+            return;
+        }
+        let begun = std::mem::replace(&mut drag.begun, true);
+        self.session.update(cx, |session, cx| {
+            if !begun {
+                session.begin_gesture(MOVE_TRACK_LABEL, cx);
+            }
+            session.gesture(cx, |project, edit| {
+                let mut changes = Changes::new();
+                move_track(project, &mut changes, &drag.origin, drag.from, to);
+                project.publish(edit, changes)
+            })
+        });
+        drag.at = to;
+        self.track_drag = Some(drag);
+    }
+
+    /// Alt-up and alt-down: the selected track one place up or down, one undo step. Whether a
+    /// track is selected.
+    fn nudge_track(&mut self, step: i64, cx: &mut Context<Self>) -> bool {
+        let Some(track) = self.selected_track.clone() else {
+            return false;
+        };
+        let arrangement = self.arrangement.id().clone();
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let tracks = track_orders(project, &arrangement);
+                let Some(from) = tracks.iter().position(|(row, _)| *row.id() == track) else {
+                    return Ok(());
+                };
+                let to = nudged_track(from, tracks.len(), step);
+                let mut changes = Changes::new();
+                move_track(project, &mut changes, &tracks, from, to);
+                project.commit(MOVE_TRACK_LABEL, changes)
+            })
+        });
+        true
     }
 
     /// The kind of the track on a row.
@@ -2126,6 +2277,10 @@ impl Timeline {
     /// that did not move changes the selection as the click it was, see [`OnRelease`].
     fn end_drag(&mut self, cx: &mut Context<Self>) {
         self.marquee = None;
+        if self.track_drag.take().is_some_and(|drag| drag.begun) {
+            self.session
+                .update(cx, |session, cx| session.finish_gesture(cx));
+        }
         if let Some(drag) = self.drag.take() {
             if drag.begun {
                 self.session
@@ -2141,11 +2296,20 @@ impl Timeline {
         cx.notify();
     }
 
-    /// Escape: the clips go back to where they were at mouse down. Whether there was a drag.
+    /// Escape: the clips or the track go back to where they were at mouse down. Whether there
+    /// was a drag.
     fn cancel_drag(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(marquee) = self.marquee.take() {
             let (clips, primary) = marquee.at_press;
             self.set_clips(clips, primary, cx);
+            cx.notify();
+            return true;
+        }
+        if let Some(drag) = self.track_drag.take() {
+            if drag.begun {
+                self.session
+                    .update(cx, |session, cx| session.cancel_gesture(cx));
+            }
             cx.notify();
             return true;
         }
@@ -2193,6 +2357,9 @@ impl Timeline {
     }
 
     fn cursor(&self) -> Option<CursorStyle> {
+        if self.track_drag.as_ref().is_some_and(|drag| drag.moving) {
+            return Some(CursorStyle::ClosedHand);
+        }
         match &self.drag {
             Some(drag) => drag.cursor(),
             None => self.hover_cursor,
@@ -2272,11 +2439,17 @@ impl Timeline {
             ..
         } = event.keystroke.modifiers;
         let key = event.keystroke.key.as_str();
-        // Alt-up and alt-down: the gain of the selected audio clips.
-        if alt && !(control || shift || platform) && self.drag.is_none() {
-            return match key {
-                "up" => self.step_gains(GAIN_KEY_STEP_DB, cx),
-                "down" => self.step_gains(-GAIN_KEY_STEP_DB, cx),
+        // Alt-up and alt-down: the gain of the selected audio clips, and with no clip selected,
+        // the place of the selected track.
+        if alt && !(control || shift || platform) && !self.dragging() {
+            let project = self.session.read(cx).project();
+            let primary = self.clips.primary();
+            let clip_selected = primary.is_some_and(|clip| is_clip_tool(project, clip));
+            return match (key, clip_selected) {
+                ("up", true) => self.step_gains(GAIN_KEY_STEP_DB, cx),
+                ("down", true) => self.step_gains(-GAIN_KEY_STEP_DB, cx),
+                ("up", false) => self.nudge_track(-1, cx),
+                ("down", false) => self.nudge_track(1, cx),
                 _ => false,
             };
         }
@@ -2295,7 +2468,7 @@ impl Timeline {
             return false;
         }
         // The mouse has the clips: a key would fight the next mouse move.
-        if self.drag.is_some() || self.marquee.is_some() {
+        if self.dragging() {
             return false;
         }
         if platform {
@@ -3144,8 +3317,7 @@ fn listen(
                 if !paths.is_empty() {
                     timeline.forget_files(cx);
                 }
-                let dragging = timeline.drag.is_some() || timeline.marquee.is_some();
-                if !dragging {
+                if !timeline.dragging() {
                     // Something from elsewhere is dragged over, such as files from the
                     // Finder before the timeline knows them: no clip is under the pointer.
                     match hitbox.is_hovered(window) && !cx.has_active_drag() {
@@ -3157,6 +3329,8 @@ fn listen(
                     timeline.end_drag(cx);
                 } else if timeline.marquee.is_some() {
                     timeline.marquee_to(x, y, cx);
+                } else if timeline.track_drag.is_some() {
+                    timeline.drag_track(y, cx);
                 } else {
                     let keys = (event.modifiers.platform, event.modifiers.shift);
                     timeline.drag_to(x, y, keys, cx);
@@ -3178,7 +3352,7 @@ fn listen(
         move |event: &MouseUpEvent, phase, _, cx| {
             if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
                 timeline.update(cx, |timeline, cx| {
-                    if timeline.drag.is_some() || timeline.marquee.is_some() {
+                    if timeline.dragging() {
                         timeline.end_drag(cx);
                     }
                 });
@@ -3279,6 +3453,16 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
                     selected_header,
                     BorderStyle::Solid,
                 ));
+            }
+            // Where a dragged track lands: the ring of a drag, on the shape of a selected header.
+            if row.lifted {
+                let inside = Bounds::new(
+                    top + point(px(8.), px(4.)),
+                    size(px(HEADER_WIDTH - 16.), px(TRACK_HEIGHT - 8.)),
+                );
+                let clear = Hsla::transparent_black();
+                let solid = BorderStyle::Solid;
+                window.paint_quad(quad(inside, px(6.), clear, px(2.), drop_ring, solid));
             }
             // An audio track keeps the room of its arm toggle, from 144 pt: its name ends 8 pt
             // before it, and before the meter of its input, from 88 pt, while it is armed.

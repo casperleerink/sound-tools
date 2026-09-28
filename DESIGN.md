@@ -106,6 +106,8 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Arrangement | double click on a clip, enter or cmd-down | Open it: the note editor for a note clip, the track panel with its Clip card for an audio clip |
 | Arrangement | click a track header | Select the track and open its track panel |
 | Arrangement | up, down, with a track and no clip selected | Select the track above or below. The open panel follows |
+| Arrangement | drag a track header up or down | Move the track there, with its clips and devices. A lavender ring shows where it lands. The master stays last |
+| Arrangement | alt-up, alt-down, with a track and no clip selected | Move the track one place up or down |
 | Arrangement | enter with a track selected, or double click a track header | Rename the track. Enter or a click elsewhere keeps it, escape does not |
 | Arrangement | cmd-down, with a track and no clip selected | Open the track panel |
 | Arrangement | the circle in an audio track header | Arm or disarm it. An armed track shows its input level and records on `r`. Not saved, no undo step |

@@ -6,6 +6,7 @@
 //! - `notes`: the note editor.
 //! - `several_notes`, `velocity`: several notes, copy and paste, and the velocity lane.
 //! - `rack`: reordering the track rack.
+//! - `track_order`: moving tracks up and down by their headers and with alt and the arrows.
 //! - `track_panel`: the track panel and the view of the synth in it.
 //! - `instruments`: picking the instrument of a track, and the plugin's own window.
 //! - `drum_pad`: the card of the Drum pad: its pads, its keys and samples dropped on it.
@@ -42,6 +43,7 @@ mod sampler;
 mod several_notes;
 mod shell;
 mod support;
+mod track_order;
 mod track_panel;
 mod transport;
 mod velocity;
