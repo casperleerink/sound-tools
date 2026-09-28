@@ -1,8 +1,9 @@
 //! Toggle: a 24 pt button that is on or off, such as M and S of a track or `Freeze` of a reverb.
 //! 28 pt wide for a letter or a glyph and as wide as its word otherwise. The arm toggle of an
-//! audio track is a 10 pt circle, hollow while off and filled while on ([`Toggle::dot`]). Off it is `alpha/5` with muted
-//! text. On it is white at 10 %, or its colour at 16 % with that colour as text: mute is peach
-//! and solo yellow, the one place a control fills with colour.
+//! audio track is a 10 pt circle in a 24 pt square, the size of an icon of a card header, hollow
+//! while off and filled while on ([`Toggle::dot`]). Off it is `alpha/5` with muted text. On it
+//! is white at 10 %, or its colour at 16 % with that colour as text: mute is peach and solo
+//! yellow, the one place a control fills with colour.
 //!
 //! Controlled: the caller gives `on` and hears the new state. A click toggles it, and so do
 //! enter and space on the focused toggle, through GPUI's keyboard click. In the window space
@@ -109,10 +110,11 @@ impl RenderOnce for Toggle {
             (true, Some(color)) => (color.opacity(0.16), color),
         };
         let ring = theme.lavender;
-        let letter = self
-            .label
-            .as_ref()
-            .is_none_or(|label| label.chars().count() == 1);
+        let width = match &self.label {
+            None => Some(HEIGHT),
+            Some(label) if label.chars().count() == 1 => Some(LETTER_WIDTH),
+            Some(_) => None,
+        };
         let on = self.on;
         let on_change = self.on_change.filter(|_| !disabled);
         // For tests, which find a toggle by its id: `toggle-<id>`. Nothing in a normal build.
@@ -126,9 +128,9 @@ impl RenderOnce for Toggle {
             .items_center()
             .justify_center()
             .h(px(HEIGHT))
-            .map(|toggle| match letter {
-                true => toggle.w(px(LETTER_WIDTH)),
-                false => toggle.px(px(10.)),
+            .map(|toggle| match width {
+                Some(width) => toggle.w(px(width)),
+                None => toggle.px(px(10.)),
             })
             .rounded(px(6.))
             .bg(background)
