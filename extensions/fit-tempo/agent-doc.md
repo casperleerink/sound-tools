@@ -46,13 +46,15 @@ The file is `state/fit-tempo.json` and nowhere else. A `fit-tempo` record under 
 
 Then write `"first_downbeat_us": 1436000`. It does not have to be exact: the beat nearest to it is taken.
 
-**The bars are the wrong length.** The time signature is the project's, not the fit's. Change `time_signature` in `project.json`, for example from `"4/4"` to `"3/4"`, and the grid is built again for it in the same undo step. The tempo changes in that file are written by the fit; leave them alone.
+**The bars are the wrong length.** The time signature is the project's, not the fit's. Change the `signature` of the first run in `tempo_map.time_signatures` in `project.json`, for example from `"4/4"` to `"3/4"`, and the grid is built again for it in the same undo step. The tempo changes in that file are written by the fit; leave them alone.
+
+The grid of a fit follows the time signature of bar 1. A piece whose time signature changes later keeps its runs, and the fit leaves them as they are.
 
 **The tempo wobbles more than the playing did.** Raise `steadiness`. `0.3` takes some of it out, `1.0` leaves one tempo.
 
 ## What a correction costs
 
-Changing `take`, `first_downbeat_us` or `beat`, or the project's `time_signature`, makes the clip's notes again from the raw take, so it is exact however many times you correct it. **Edits made by hand to that clip before such a correction are lost.** One undo brings them back, together with the tempo map and the fit record, because the three are one step.
+Changing `take`, `first_downbeat_us` or `beat`, or the project's `time_signatures`, makes the clip's notes again from the raw take, so it is exact however many times you correct it. **Edits made by hand to that clip before such a correction are lost.** One undo brings them back, together with the tempo map and the fit record, because the three are one step.
 
 Changing `steadiness` never touches the clip. It writes the tempo map and nothing else, so a note moved by hand, a trimmed clip and a clip moved to another track all survive it.
 

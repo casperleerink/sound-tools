@@ -14,7 +14,7 @@ const BOUND_MS: f64 = 30.0;
 /// beat of the take.
 pub fn errors_ms(case: &Case) -> Vec<f64> {
     let (take, truth) = case.take();
-    let fitted = fit(&take, case.signature(), 0, BeatRate::Normal).expect("a fit");
+    let fitted = fit(&take, &case.signature().into(), 0, BeatRate::Normal).expect("a fit");
     let grid = &fitted.targets_us[fitted.first_downbeat..];
     // The last true beat is the one after the last note. Nothing was played on it, so the grid
     // has no reason to reach it.
@@ -176,9 +176,9 @@ fn the_fitted_beats_land_close_to_the_true_beats() {
 fn a_fit_of_one_take_is_the_same_every_time() {
     let (case, _) = cases().into_iter().next().expect("a case");
     let (take, _) = case.take();
-    let once = fit(&take, case.signature(), 0, BeatRate::Normal).expect("a fit");
+    let once = fit(&take, &case.signature().into(), 0, BeatRate::Normal).expect("a fit");
     for _ in 0..3 {
-        let again = fit(&take, case.signature(), 0, BeatRate::Normal).expect("a fit");
+        let again = fit(&take, &case.signature().into(), 0, BeatRate::Normal).expect("a fit");
         assert_eq!(once, again);
     }
 }
@@ -189,7 +189,7 @@ fn a_take_with_too_few_notes_is_not_fitted() {
     let (case, _) = cases().into_iter().next().expect("a case");
     let (mut take, _) = case.take();
     take.events.truncate(6);
-    let error = fit(&take, case.signature(), 0, BeatRate::Normal).expect_err("no fit");
+    let error = fit(&take, &case.signature().into(), 0, BeatRate::Normal).expect_err("no fit");
     assert!(error.to_string().contains("to find a beat in"), "{error}");
 }
 

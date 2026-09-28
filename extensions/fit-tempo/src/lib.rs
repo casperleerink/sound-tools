@@ -26,7 +26,7 @@ use std::rc::Rc;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, Assets, Changes, Derived, Instance, InstanceId, Place, Project, ProjectError,
-    Registry, RegistryError, State, TimeSignature, Was,
+    Registry, RegistryError, State, TimeSignatures, Was,
 };
 use sound_notes::{Clip, RawTake};
 
@@ -203,8 +203,9 @@ struct Fits {
     cache: Rc<RefCell<Cache>>,
 }
 
-/// Everything that decides where the beats are. Steadiness is not in it.
-type GridKey = (String, u64, BeatRate, TimeSignature);
+/// Everything that decides where the beats are, and the time signatures the fitted map keeps.
+/// Steadiness is not in it.
+type GridKey = (String, u64, BeatRate, TimeSignatures);
 
 #[derive(Default)]
 struct Cache {
@@ -218,13 +219,13 @@ impl Fits {
         &self,
         assets: &Assets,
         state: &FitState,
-        time_signature: TimeSignature,
+        time_signatures: &TimeSignatures,
     ) -> Rc<Result<Fitted, String>> {
         let key: GridKey = (
             state.take.clone(),
             state.first_downbeat_us,
             state.beat,
-            time_signature,
+            time_signatures.clone(),
         );
         if let Some((cached, fitted)) = &self.cache.borrow().grid
             && *cached == key
@@ -233,7 +234,7 @@ impl Fits {
         }
         let take = self.take(assets, &state.take);
         let fitted = take.and_then(|take| {
-            grid::fit(&take, time_signature, state.first_downbeat_us, state.beat)
+            grid::fit(&take, time_signatures, state.first_downbeat_us, state.beat)
                 .map_err(|error| error.to_string())
         });
         let fitted = Rc::new(fitted);
@@ -263,7 +264,7 @@ impl Fits {
     ///
     /// The clip is made again from the raw take only when an input that decides where the
     /// beats are changed: the take, the first downbeat, half, normal or double, or the
-    /// project's time signature. A steadiness change writes the tempo map and nothing else, so
+    /// project's time signatures. A steadiness change writes the tempo map and nothing else, so
     /// a note moved by hand, a trimmed clip or a clip dragged somewhere else all survive it.
     fn derive(
         &self,
@@ -276,13 +277,13 @@ impl Fits {
             return;
         };
         let beats_moved = match was {
-            // A fit that was just made, and a time signature that changed under one: the grid
+            // A fit that was just made, and time signatures that changed under one: the grid
             // is another grid either way.
             Was::Created | Was::Unchanged => true,
             Was::Changed(before) => before.grid_inputs() != state.grid_inputs(),
         };
-        let time_signature = project.project_file().tempo_map.time_signature();
-        let fitted = self.fitted(project.assets(), state, time_signature);
+        let time_signatures = project.project_file().tempo_map.time_signatures();
+        let fitted = self.fitted(project.assets(), state, time_signatures);
         let fitted = match &*fitted {
             Ok(fitted) => fitted,
             Err(message) => {
@@ -293,7 +294,7 @@ impl Fits {
         for problem in &fitted.problems {
             derived.problem(problem.clone());
         }
-        let map = fitted.map_at(time_signature, state.steadiness);
+        let map = fitted.map_at(state.steadiness);
         derived.changes().set_tempo_map(map);
         if !beats_moved {
             return;
@@ -325,7 +326,7 @@ impl Fits {
         let Some(state) = project.state(fit) else {
             return String::new();
         };
-        let time_signature = project.project_file().tempo_map.time_signature();
+        let time_signatures = project.project_file().tempo_map.time_signatures();
         let head = format!(
             "fit `{}` take {} beat {} steadiness {:.0}%",
             fit.id(),
@@ -333,13 +334,13 @@ impl Fits {
             state.beat.name(),
             state.steadiness * 100.0
         );
-        match &*self.fitted(project.assets(), state, time_signature) {
+        match &*self.fitted(project.assets(), state, time_signatures) {
             Ok(fitted) => {
-                let downbeat = fitted.first_downbeat_tick(time_signature);
+                let downbeat = fitted.first_downbeat_tick();
                 format!(
                     "{head}, {} beats, first downbeat at {}",
                     fitted.beat_count(),
-                    time_signature.bar_beat_of(downbeat)
+                    time_signatures.bar_beat_of(downbeat)
                 )
             }
             Err(message) => format!("{head}, not fitted: {message}"),
