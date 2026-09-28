@@ -423,17 +423,24 @@ pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, 
 pub fn summary(project: &Project) -> String {
     let project_file = project.project_file();
     let tempo_map = &project_file.tempo_map;
-    let time_signature = tempo_map.time_signature();
-    let mut lines = vec![
-        format!("extensions: {}", project_file.extensions.join(", ")),
-        format!(
-            "time signature: {time_signature}, {} ticks per bar, {} ticks per beat",
-            time_signature.ticks_per_bar(),
-            time_signature.ticks_per_beat()
-        ),
-    ];
+    let time_signatures = tempo_map.time_signatures();
+    let mut lines = vec![format!(
+        "extensions: {}",
+        project_file.extensions.join(", ")
+    )];
+    // Where each time signature starts, so bar math across changes needs no adding up.
+    for bar in time_signatures.changes() {
+        let signature = bar.signature;
+        lines.push(format!(
+            "time signature: {signature} from bar {} (tick {}), {} ticks per bar, {} ticks per beat",
+            bar.number,
+            bar.start.0,
+            signature.ticks_per_bar(),
+            signature.ticks_per_beat()
+        ));
+    }
     for change in tempo_map.tempo_changes() {
-        let position = time_signature.bar_beat_of(change.tick);
+        let position = time_signatures.bar_beat_of(change.tick);
         lines.push(format!(
             "tempo: {} bpm from {position} (tick {})",
             change.bpm.bpm(),

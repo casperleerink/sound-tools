@@ -7,7 +7,11 @@ One file at the top of the project folder. Most work needs no edit here: a track
   "format": 1,
   "extensions": {{extensions}},
   "tempo_map": {
-    "time_signatures": [{"signature": "4/4", "bars": 8}, {"signature": "7/8", "bars": 2}, {"signature": "3/4", "bars": 1}],
+    "time_signatures": [
+      {"signature": "4/4", "bars": 8},
+      {"signature": "7/8", "bars": 2},
+      {"signature": "3/4", "bars": 1}
+    ],
     "tempo_changes": [{"tick": 0, "bpm": 120.0}]
   },
   "connections": []

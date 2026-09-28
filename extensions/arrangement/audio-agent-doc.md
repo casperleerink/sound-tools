@@ -43,7 +43,7 @@ state/arrangement/<track>/<clip>.json      an audio clip of that track
   "tool": "arrangement.audio_clip",
   "state": {
     "asset": "voice-take-1.wav",
-    "start": {{bar_5_start}},
+    "start": 15360,
     "file_start_seconds": 0.5,
     "file_end_seconds": 4.5,
     "gain_db": -3.0,
@@ -54,7 +54,7 @@ state/arrangement/<track>/<clip>.json      an audio clip of that track
 }
 ```
 
-This clip starts on bar 5 and plays four seconds of `assets/audio/voice-take-1.wav`, from 0.5 s to 4.5 s into the file, 3 dB quieter, with a short fade in and a longer fade out.
+In 4/4 this clip starts on bar 5. It plays four seconds of `assets/audio/voice-take-1.wav`, from 0.5 s to 4.5 s into the file, 3 dB quieter, with a short fade in and a longer fade out.
 
 - `asset`: the file name under `assets/audio/`.
 - `start`: where the clip starts in the project, in ticks, like a note clip.

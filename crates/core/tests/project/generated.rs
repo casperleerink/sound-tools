@@ -143,7 +143,10 @@ fn the_map_is_not_written_again_while_its_text_is_the_same() {
 fn the_map_points_at_the_time_signatures_and_does_not_copy_them() {
     let mut harness = Harness::new();
     let before = harness.read(AGENT_DOC_FILE);
-    assert!(before.contains("under `tempo_map.time_signatures`"), "{before}");
+    assert!(
+        before.contains("under `tempo_map.time_signatures`"),
+        "{before}"
+    );
     let project_file = harness.read("project.json").replace("4/4", "6/8");
     harness.write_and_apply("project.json", &project_file);
     harness.project.poll().unwrap();

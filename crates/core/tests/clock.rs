@@ -298,8 +298,19 @@ fn positions_outside_the_time_signature_are_errors() {
     }
     // Beat 3 exists in bar 1 but not in bar 2, which is in 2/8.
     let changing = time_signatures(&[("3/8", 1), ("2/8", 1)]);
-    assert_eq!(changing.ticks_of(BarBeat { bar: 1, beat: 3, tick: 0 }), Ok(Ticks(960)));
-    let position = BarBeat { bar: 2, beat: 3, tick: 0 };
+    assert_eq!(
+        changing.ticks_of(BarBeat {
+            bar: 1,
+            beat: 3,
+            tick: 0
+        }),
+        Ok(Ticks(960))
+    );
+    let position = BarBeat {
+        bar: 2,
+        beat: 3,
+        tick: 0,
+    };
     assert_eq!(
         changing.ticks_of(position),
         Err(ClockError::InvalidBarBeat {
@@ -342,11 +353,20 @@ fn the_time_signature_can_change_every_bar() {
         .changes()
         .map(|bar| (bar.number, bar.start.0))
         .collect();
-    assert_eq!(changes, [(1, 0), (2, 720), (3, 1200), (5, 2640), (6, 3600), (7, 4800)]);
+    assert_eq!(
+        changes,
+        [(1, 0), (2, 720), (3, 1200), (5, 2640), (6, 3600), (7, 4800)]
+    );
     assert_eq!(sacrale.first(), signature("3/16"));
 
-    assert_eq!(sacrale.bar_beat_of(Ticks(1200 + 480)).to_string(), "3:3:000");
-    assert_eq!(sacrale.bar_beat_of(Ticks(8640 + 3840 + 961)).to_string(), "9:2:001");
+    assert_eq!(
+        sacrale.bar_beat_of(Ticks(1200 + 480)).to_string(),
+        "3:3:000"
+    );
+    assert_eq!(
+        sacrale.bar_beat_of(Ticks(8640 + 3840 + 961)).to_string(),
+        "9:2:001"
+    );
     assert_eq!(sacrale.bar(9).map(|bar| bar.start), Some(Ticks(12_480)));
     assert_eq!(sacrale.bar(0), None);
 
@@ -360,7 +380,10 @@ fn the_time_signature_can_change_every_bar() {
 
 #[test]
 fn time_signatures_need_a_run_and_whole_bars() {
-    assert_eq!(TimeSignatures::new(Vec::new()), Err(ClockError::NoTimeSignature));
+    assert_eq!(
+        TimeSignatures::new(Vec::new()),
+        Err(ClockError::NoTimeSignature)
+    );
     let error = |json: &str| {
         serde_json::from_str::<TimeSignatures>(json)
             .unwrap_err()

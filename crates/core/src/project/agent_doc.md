@@ -39,12 +39,10 @@ agent-docs/               the docs of the list above, generated
 
 Positions and lengths are whole ticks. 960 ticks are a quarter note at every tempo, so a tempo change never moves a tick position.
 
-The time signatures are in `project.json`, under `tempo_map.time_signatures`: runs of bars, such as `[{"signature": "4/4", "bars": 8}, {"signature": "7/8", "bars": 2}]`. The last run goes on to the end of the piece. Read them before you place anything by bar. Bars and beats count from 1.
+The time signatures are in `project.json`, under `tempo_map.time_signatures`: runs such as `[{"signature": "4/4", "bars": 8}, {"signature": "7/8", "bars": 2}]`, the last going on to the end.
 
-- A beat is the note value of the lower number: 960 ticks in 4/4, 480 in 7/8, 240 in 3/16. A bar is the upper number of beats: 3840 ticks in 4/4, 3360 in 7/8, 720 in 3/16.
-- A bar starts where the bar before it ends. With one run, bar N starts at tick (N - 1) × the length of a bar.
-- Worked example in 4/4, bars 5 to 8: they start at (5 - 1) × 3840 = 15360 and last 4 × 3840 = 15360 ticks, so they end at tick 30720, where bar 9 starts. Bar 3, beat 2 is tick 2 × 3840 + 960 = 8640.
-- With several runs, add up the runs before the bar. With the runs above, bars 1 to 8 are 8 × 3840 = 30720 ticks, so bar 9 starts at 30720 and bar 10 at 30720 + 3360 = 34080.
+- A beat is the note value of the lower number, a bar the upper number of beats: 960 and 3840 ticks in 4/4, 480 and 3360 in 7/8.
+- Bars and beats count from 1. In 4/4, bar 5 is at 4 × 3840 = 15360 and bar 3, beat 2 at 2 × 3840 + 960 = 8640. With the runs above, bar 10 is at 8 × 3840 + 3360 = 34080: add up the bars before it.
 - Note lengths: whole 3840, half 1920, quarter 960, eighth 480, sixteenth 240, eighth triplet 320.
 
 ## Rules

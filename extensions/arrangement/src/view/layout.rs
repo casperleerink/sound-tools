@@ -6,7 +6,7 @@
 
 use std::ops::Range;
 
-use sound_core::{TICKS_PER_QUARTER, Ticks, TimeSignature, TimeSignatures};
+use sound_core::{Bar, TICKS_PER_QUARTER, Ticks, TimeSignature, TimeSignatures};
 use sound_notes::Clip;
 
 pub const HEADER_WIDTH: f32 = 176.0;
@@ -252,29 +252,47 @@ impl Viewport {
     }
 
     /// The bars that get a mark in the ruler. When bars get narrow only every 2nd, 4th, 8th and
-    /// so on is marked, so the numbers never crowd: how many is set by the shortest bar in
-    /// view. The first one is at or left of the left edge: its number scrolls out, it does
-    /// not vanish.
+    /// so on of a time signature is marked, counted from where it starts, and a mark never
+    /// comes closer than [`MIN_LABEL_SPACING`] to the one before it, so the numbers never crowd.
+    /// A mark shows the time signature of its bar when one started since the mark before.
+    ///
+    /// The marks are counted from bar 1, so they stay put while the view scrolls. The first one
+    /// is at or left of the left edge: its number scrolls out, it does not vanish.
     pub fn ruler_bars(&self, time_signatures: &TimeSignatures, width: f32) -> Vec<RulerBar> {
-        let visible = self.visible_ticks(width);
-        let in_view = time_signatures.bars_from(visible.start);
-        let in_view = in_view.take_while(|bar| bar.start < visible.end);
-        let shortest = in_view.map(|bar| bar.length().0).min().unwrap_or(1);
-        let pixels_per_bar = shortest as f64 * self.pixels_per_tick();
-        let step =
-            ((MIN_LABEL_SPACING / pixels_per_bar).ceil().max(1.0) as u64).next_power_of_two();
-        let first = time_signatures.bar_at(visible.start).number;
-        let first = (first - 1) / step * step + 1;
-        let starts: Vec<u64> = time_signatures.changes().map(|bar| bar.number).collect();
-        (0..)
-            .map_while(|index: u64| time_signatures.bar(first + index * step))
-            .map(|bar| RulerBar {
-                number: bar.number,
-                x: self.x_of(bar.start),
-                signature: starts.contains(&bar.number).then_some(bar.signature),
-            })
-            .take_while(|bar| bar.x < width)
-            .collect()
+        let left = self.x_of(self.visible_ticks(width).start);
+        let runs: Vec<Bar> = time_signatures.changes().collect();
+        let mut marks: Vec<RulerBar> = Vec::new();
+        let mut last: Option<(u64, f32)> = None;
+        for (index, first) in runs.iter().enumerate() {
+            let end = runs.get(index + 1).map_or(u64::MAX, |next| next.number);
+            let pixels_per_bar = first.length().0 as f64 * self.pixels_per_tick();
+            let step =
+                ((MIN_LABEL_SPACING / pixels_per_bar).ceil().max(1.0) as u64).next_power_of_two();
+            let numbers = (first.number..end).step_by(step as usize);
+            for bar in numbers.map_while(|number| time_signatures.bar(number)) {
+                let x = self.x_of(bar.start);
+                if x >= width {
+                    return marks;
+                }
+                let room =
+                    last.is_none_or(|(_, last_x)| f64::from(x - last_x) >= MIN_LABEL_SPACING);
+                if !room {
+                    continue;
+                }
+                let changed = last.is_none_or(|(number, _)| number < first.number);
+                // Marks left of the one at the left edge are never seen.
+                if x <= left {
+                    marks.clear();
+                }
+                marks.push(RulerBar {
+                    number: bar.number,
+                    x,
+                    signature: changed.then_some(bar.signature),
+                });
+                last = Some((bar.number, x));
+            }
+        }
+        marks
     }
 
     /// The x of every beat that is not a bar line, for very faint lines in the note editor.
@@ -644,38 +662,52 @@ mod tests {
         assert_eq!(marks(bars), [(1, 8.0), (2, 80.0), (3, 152.0)]);
     }
 
-    /// Bars of 4/4, then of 3/16: the numbers thin out for the short bars in view, and each
-    /// change of time signature that has a mark shows it.
+    /// Each time signature thins its own marks out, counted from where it starts, and a change
+    /// that has no mark of its own shows at the next mark.
     #[test]
     fn the_ruler_follows_changing_time_signatures() {
-        let changing = time_signatures(&[("4/4", 2), ("7/8", 1), ("3/16", 8)]);
-        // 96 px per 4/4 bar, 84 per 7/8, 18 per 3/16.
-        let bars = Viewport::default().ruler_bars(&changing, 400.0);
-        let marks: Vec<(u64, f32, String)> = bars
-            .iter()
-            .map(|bar| (bar.number, bar.x, bar.label()))
-            .collect();
-        // The 3/16 bars are in view, so every 4th bar has a mark: 18 px apart is too close,
-        // 72 px is not. Bar 4, where 3/16 starts, has none.
+        let labels = |time_signatures: &TimeSignatures, width: f32| -> Vec<(u64, f32, String)> {
+            let bars = Viewport::default().ruler_bars(time_signatures, width);
+            bars.iter()
+                .map(|bar| (bar.number, bar.x, bar.label()))
+                .collect()
+        };
         let mark = |number, x: f32, label: &str| (number, x, label.to_string());
+        // 96 px per 4/4 bar, 84 per 7/8, 18 per 3/16: every 4th bar of 3/16 has a mark.
+        let changing = time_signatures(&[("4/4", 2), ("7/8", 1), ("3/16", 8)]);
         assert_eq!(
-            marks,
+            labels(&changing, 400.0),
             [
                 mark(1, 8.0, "1  4/4"),
-                mark(5, 302.0, "5"),
-                mark(9, 374.0, "9")
+                mark(2, 104.0, "2"),
+                mark(3, 200.0, "3  7/8"),
+                mark(4, 284.0, "4  3/16"),
+                mark(8, 356.0, "8"),
             ]
         );
-        let wide = Viewport {
-            pixels_per_quarter: 96.0,
-            ..Viewport::default()
-        };
-        let labels: Vec<String> = wide
-            .ruler_bars(&changing, 1300.0)
-            .iter()
-            .map(RulerBar::label)
-            .collect();
-        assert_eq!(labels, ["1  4/4", "2", "3  7/8", "4  3/16", "5", "6"]);
+        // A new time signature every bar, as in the Danse sacrale: bars 4 to 6 are too close to
+        // bar 3 for a mark, so bar 7 shows the 5/16 it is in. Bar 8, where 7/8 starts, is too
+        // close to bar 7, so bar 9 shows it.
+        let sacrale = time_signatures(&[
+            ("4/4", 2),
+            ("3/16", 1),
+            ("2/16", 1),
+            ("3/16", 1),
+            ("2/8", 1),
+            ("5/16", 1),
+            ("7/8", 2),
+            ("4/4", 1),
+        ]);
+        assert_eq!(
+            labels(&sacrale, 450.0),
+            [
+                mark(1, 8.0, "1  4/4"),
+                mark(2, 104.0, "2"),
+                mark(3, 200.0, "3  3/16"),
+                mark(7, 272.0, "7  5/16"),
+                mark(9, 386.0, "9  7/8"),
+            ]
+        );
     }
 
     #[test]

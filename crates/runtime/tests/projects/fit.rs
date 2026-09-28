@@ -293,7 +293,7 @@ fn another_downbeat_and_another_time_signature_rebuild_the_grid() {
     let file = r#"{"format": 1, "extensions": ["arrangement", "compressor", "drum-pad", "eq", "filter", "fit-tempo", "instrument", "plugin-host", "reverb", "sampler", "tone"], "tempo_map": {"time_signature": "3/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}, "connections": []}"#;
     harness.write_and_apply("project.json", file);
     let after = tempo_map(&harness);
-    assert_eq!(after.time_signature().to_string(), "3/4");
+    assert_eq!(after.time_signatures().first().to_string(), "3/4");
     assert!(
         after.tempo_changes().len() > 1,
         "the fit did not rewrite the map: {:?}",
@@ -1087,7 +1087,7 @@ fn a_pathological_take_ends_in_bounded_time() {
         };
         assert_eq!(take.validate(), Ok(()), "{what}");
         let started = std::time::Instant::now();
-        let fitted = fit_tempo::fit(&take, signature, 0, BeatRate::Normal);
+        let fitted = fit_tempo::fit(&take, &signature.into(), 0, BeatRate::Normal);
         let elapsed = started.elapsed();
         assert!(
             elapsed < std::time::Duration::from_secs(30),

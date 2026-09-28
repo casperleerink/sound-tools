@@ -68,6 +68,9 @@
 //!   playhead and the transport on it.
 //! - `arrangement-snap.png`: the snap setting open in the corner above the track headers.
 //! - `arrangement-rename.png`: the name field open in the header of the bass.
+//! - `arrangement-time-signatures.png`: the piece with a time signature that changes almost
+//!   every bar, each shown in the ruler where it starts.
+//! - `editor-time-signatures.png`: the note editor on the melody in those bars.
 //! - `audio-*.png`: audio tracks and clips, see `snapshots/audio.rs`.
 //! - `drums-*.png`: the Drum pad, see `snapshots/drums.rs`.
 //!
@@ -104,6 +107,7 @@ use runtime::window::Shell;
 use runtime::{OFFLINE, main_arrangement, open_or_create_with, views};
 use sound_core::{
     Changes, Engine, Instance, InstanceId, Project, Tempo, TempoChange, TempoMap, Ticks,
+    TimeSignature,
 };
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{Assets, Session};
@@ -1020,7 +1024,7 @@ fn main() -> Result<()> {
         });
         let changes = changes.into_iter().collect::<Result<Vec<_>>>()?;
         let mut edit = Changes::new();
-        edit.set_tempo_map(TempoMap::new("4/4".parse()?, changes)?);
+        edit.set_tempo_map(TempoMap::new(TimeSignature::default(), changes)?);
         project.commit("Tempo", edit)?;
         Ok(())
     })?;
@@ -1089,6 +1093,36 @@ fn main() -> Result<()> {
     editing.key("escape", &mut cx)?;
     editing.release(header(2.), &mut cx)?;
     drop(editing);
+
+    // Time signatures that change: two bars of 4/4, then a new one almost every bar as in the
+    // Danse sacrale. The ruler shows each where it starts, and the editor has the beats of
+    // each bar.
+    let meters = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        let time_signatures = serde_json::from_str(
+            r#"[
+                {"signature": "4/4", "bars": 2},
+                {"signature": "3/16", "bars": 1},
+                {"signature": "2/16", "bars": 1},
+                {"signature": "3/16", "bars": 1},
+                {"signature": "2/8", "bars": 1},
+                {"signature": "5/16", "bars": 1},
+                {"signature": "7/8", "bars": 2},
+                {"signature": "4/4", "bars": 1}
+            ]"#,
+        )?;
+        let tempo_map = project.project_file().tempo_map.clone();
+        let mut edit = Changes::new();
+        edit.set_tempo_map(tempo_map.with_time_signatures(time_signatures));
+        project.commit("Time signatures", edit)?;
+        Ok(())
+    })?;
+    save(&mut cx, &meters, "arrangement-time-signatures")?;
+    let melody =
+        InstanceId::new("arrangement/a-melody-with-a-name-too-long-for-its-header/clip-000")?;
+    meters.open_editor(&melody, &mut cx)?;
+    save(&mut cx, &meters, "editor-time-signatures")?;
+    drop(meters);
 
     // A recorded take: the project menu offers to fit the tempo to it once its clip is
     // selected, and the transport grows a steadiness control once the fit is there.

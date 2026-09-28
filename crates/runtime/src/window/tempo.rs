@@ -47,14 +47,14 @@ mod tests {
                 bpm: Tempo::from_bpm(bpm).unwrap(),
             })
             .collect();
-        TempoMap::new("4/4".parse().unwrap(), changes).unwrap()
+        TempoMap::new(sound_core::TimeSignature::default(), changes).unwrap()
     }
 
     #[test]
     fn an_edit_changes_the_tempo_change_at_its_tick_and_leaves_the_rest() {
         let before = map(&[(0, 120.0), (3840, 60.0)]);
         let after = with_bpm(&before, Ticks(3840), 140.0).unwrap();
-        assert_eq!(after.time_signature(), before.time_signature());
+        assert_eq!(after.time_signatures(), before.time_signatures());
         assert_eq!(after.tempo_changes()[0], before.tempo_changes()[0]);
         assert_eq!(after.tempo_changes()[1].tick, Ticks(3840));
         assert_eq!(after.tempo_changes()[1].bpm.bpm(), 140.0);
