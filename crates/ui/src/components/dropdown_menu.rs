@@ -326,8 +326,11 @@ pub enum Trigger {
     /// The shared 32 pt trigger with a border.
     #[default]
     Outline,
-    /// No border or fill, just a hover wash. For the project name and the title of a card.
+    /// No border or fill, just a hover wash. For the project name.
     Ghost,
+    /// The title of a device card: a ghost the height of the icons at the other end of the
+    /// header, so the hover wash has the same air above and below as theirs.
+    Title,
     /// A 24 pt select on `alpha/5` that says what is picked, or the label while nothing is.
     Select,
 }
@@ -348,6 +351,27 @@ fn select_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
         .bg(background)
         .text_size(px(12.))
         .line_height(px(14.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(text)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+}
+
+/// The title of a card: 24 pt, 6 pt corners and `alpha/8` under the pointer, as the icons of
+/// the header. 14 pt medium, as a card title is.
+fn title_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    let (hover, text) = (theme.alpha_at(0.08), theme.gray_950);
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .h(px(24.))
+        .pl(px(8.))
+        .pr(px(6.))
+        .rounded(px(6.))
+        .text_size(px(14.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(text)
         .cursor_pointer()
@@ -587,6 +611,7 @@ impl Render for DropdownMenu {
         let trigger_element = match self.trigger {
             Trigger::Outline => trigger("dropdown-trigger", cx),
             Trigger::Ghost => ghost_trigger("dropdown-trigger", cx),
+            Trigger::Title => title_trigger("dropdown-trigger", cx),
             Trigger::Select => select_trigger("dropdown-trigger", cx),
         };
         let (label, icon, chevron) = match self.trigger {
@@ -599,6 +624,8 @@ impl Render for DropdownMenu {
                 )
             }
             Trigger::Outline | Trigger::Ghost => (self.label.clone(), None, 14.),
+            // The glyph of the icons beside it.
+            Trigger::Title => (self.label.clone(), None, 12.),
         };
         let text = cx.theme().gray_950;
         let (muted, ring) = (cx.theme().gray_700, cx.theme().lavender);

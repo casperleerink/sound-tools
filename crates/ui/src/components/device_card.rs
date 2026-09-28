@@ -64,7 +64,7 @@ pub struct CardFrame {
     /// Tells this card from every other in the rack, so that two cards with controls of one
     /// name keep a drag and a focus each, and names its icons for tests: `<id>-close`.
     id: SharedString,
-    /// The picker of the slot: a ghost trigger, which brings 8 pt of padding of its own.
+    /// The picker of the slot: a title trigger, which brings 8 pt of padding of its own.
     title: AnyView,
     power: Option<(IsOn, Rc<dyn Fn(&mut Window, &mut App)>)>,
     close: Option<Rc<dyn Fn(&mut Window, &mut App)>>,

@@ -237,7 +237,7 @@ impl Device {
         let picker = cx.new(|cx| {
             let mut picker = DropdownMenu::new(label.name, entries, cx)
                 .debug_name(name)
-                .trigger(Trigger::Ghost)
+                .trigger(Trigger::Title)
                 .width(280.);
             // The offer that is already there is marked, so the menu says what a card holds.
             if let Some(key) = label.key {
