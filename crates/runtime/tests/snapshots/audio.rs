@@ -14,8 +14,8 @@
 //! - `audio-drop-new-track.png`: a file from the Finder over the space under the last track:
 //!   its ghost, and `New audio track` in the header column.
 //! - `audio-drop-track.png`: two files over the guitar, one after the other.
-//! - `audio-menu.png`: the project menu, where `Add track` offers an instrument or an audio
-//!   track.
+//! - `audio-add-track.png`: the add track button under the guitar, its menu open: an
+//!   instrument or an audio track.
 //! - `audio-armed.png`: the voice armed, its input level in its header and on the meter of its
 //!   panel, the guitar not armed, and the input select under M and S. `audio-clip.png`.
 //! - `audio-input-select.png`: the input select open: each channel alone, then the pair.
@@ -411,16 +411,14 @@ pub fn snapshots(
 
     frame_times(cx)?;
 
-    // The project menu, open.
-    let menu = cx.update(|cx| {
-        let shell = opened.window.read(cx)?;
-        anyhow::Ok(shell.project_menu().read(cx).menu().clone())
-    })?;
+    // The menu of the add track button, open.
+    let shown = opened.arrangement_view(cx)?;
+    let menu = cx.update(|cx| shown.read(cx).add_track_menu(cx));
     cx.update_window(opened.window.into(), |_, window, cx| {
         menu.update(cx, |menu, cx| menu.open(window, cx));
     })?;
     cx.run_until_parked();
-    save(cx, &opened, "audio-menu")?;
+    save(cx, &opened, "audio-add-track")?;
     drop(opened);
     armed_frame_times(cx)?;
     recording(cx, save)

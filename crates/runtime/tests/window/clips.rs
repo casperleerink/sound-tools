@@ -458,11 +458,11 @@ fn the_focus_ring_shows_only_for_a_focus_from_the_keyboard(cx: &mut TestAppConte
     let in_editor = opened.in_editor(BAR + 100, 72);
     opened.click(in_editor);
     assert!(!editor_ring(&mut opened));
-    // Back past the master row and the snap setting, which sit between the timeline and the
-    // editor.
-    opened.keys("shift-tab");
-    opened.keys("shift-tab");
-    opened.keys("shift-tab");
+    // Back past the master row, the two halves of the add track button and the snap setting,
+    // which sit between the timeline and the editor.
+    for _ in 0..5 {
+        opened.keys("shift-tab");
+    }
     assert!(timeline_ring(&mut opened));
     opened.click(place);
     assert!(!timeline_ring(&mut opened));

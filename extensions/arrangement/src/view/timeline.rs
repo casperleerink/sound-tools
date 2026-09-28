@@ -42,7 +42,8 @@ use super::clips::{
 };
 use super::gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
 use super::layout::{
-    Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, TRACK_HEIGHT, Viewport, rows_between, shifted,
+    ADD_ROW_HEIGHT, Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, TRACK_HEIGHT, Viewport, rows_between,
+    shifted,
 };
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
@@ -1232,6 +1233,31 @@ impl Timeline {
         });
         rows.map(|(index, track)| (self.viewport.y_of(index), track.clone()))
             .collect()
+    }
+
+    /// The top of the row under the last track, from the top of the first row: where the add
+    /// track button is. Clamped as the paint clamps, so the button stays with the headers when
+    /// tracks go or the window grows.
+    pub(super) fn add_row_top(&self, cx: &App) -> f32 {
+        let (width, height) = self.painted_size.get();
+        let viewport = self.clamped(self.viewport, width, height, cx);
+        viewport.y_of(self.order.len())
+    }
+
+    /// Scrolls just enough to show the whole row of the add track button, for a focus that
+    /// the keys moved onto it.
+    pub(super) fn reveal_add_row(&mut self, cx: &mut Context<Self>) {
+        let (_, height) = self.painted_size.get();
+        let top = f64::from(self.add_row_top(cx));
+        let bottom = top + f64::from(ADD_ROW_HEIGHT) - f64::from(height);
+        let scroll_by = top.min(0.) + bottom.max(0.);
+        if scroll_by != 0. {
+            let viewport = Viewport {
+                scroll_y: self.viewport.scroll_y + scroll_by,
+                ..self.viewport
+            };
+            self.set_viewport(viewport, cx);
+        }
     }
 
     /// What an audio clip shows: the times of its file under each column on screen, its fades

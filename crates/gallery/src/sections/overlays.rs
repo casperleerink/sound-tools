@@ -1,5 +1,7 @@
-//! Tooltip, popover and dropdown menu. The select, a style of the dropdown menu, is in the
-//! rack section. `GALLERY_OPEN=dropdown|popover` opens one overlay at startup.
+//! Tooltip, popover, dropdown menu and split button. The select, a style of the dropdown menu,
+//! is in the rack section, and the focus rings of the split button in the focus section.
+//! `GALLERY_OPEN=dropdown|popover` opens one overlay at startup. Without it the second split
+//! button opens its menu, so the snapshot shows it.
 
 use gpui::{
     App, Entity, FontWeight, Global, IntoElement, ParentElement, Styled, Window, div, prelude::*,
@@ -7,6 +9,7 @@ use gpui::{
 };
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem};
 use sound_ui::components::popover::{Align, Popover};
+use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::tooltip::{Tooltip, TooltipVariant};
 use sound_ui::theme::ActiveTheme;
 
@@ -14,9 +17,28 @@ use sound_ui::theme::ActiveTheme;
 struct OverlaysState {
     popover: Entity<Popover>,
     menu: Entity<DropdownMenu>,
+    split: Entity<SplitButton>,
+    split_open: Entity<SplitButton>,
 }
 
 impl Global for OverlaysState {}
+
+/// The split button of the arrangement: `Add track`, and an instrument or an audio track.
+pub(crate) fn add_track_button(name: &'static str, cx: &mut App) -> Entity<SplitButton> {
+    cx.new(|cx| {
+        let items = [
+            MenuItem::new("instrument", "Instrument track").selectable(false),
+            MenuItem::new("audio", "Audio track").selectable(false),
+        ];
+        let choices = SplitChoices {
+            label: "Add track".into(),
+            main_value: "instrument".into(),
+            menu_label: "Instrument or audio track".into(),
+            entries: vec![MenuEntry::Group(MenuGroup::new().items(items))],
+        };
+        SplitButton::new(name, choices, cx).icon("plus")
+    })
+}
 
 fn models() -> Vec<MenuItem> {
     [
@@ -81,13 +103,23 @@ fn install(window: &mut Window, cx: &mut App) {
             .align(Align::Start)
             .width(300.)
     });
+    let split = add_track_button("split", cx);
+    let split_open = add_track_button("split-open", cx);
     match open.as_str() {
         "popover" => popover.update(cx, |this, cx| this.open(window, cx)),
         "dropdown" => menu.update(cx, |this, cx| this.open(window, cx)),
-        _ => {}
+        _ => {
+            let split_menu = split_open.read(cx).menu().clone();
+            split_menu.update(cx, |this, cx| this.open(window, cx));
+        }
     }
 
-    cx.set_global(OverlaysState { popover, menu });
+    cx.set_global(OverlaysState {
+        popover,
+        menu,
+        split,
+        split_open,
+    });
 }
 
 fn heading(label: &'static str, cx: &App) -> impl IntoElement {
@@ -114,6 +146,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     }
     let state = cx.global::<OverlaysState>();
     let (popover, menu) = (state.popover.clone(), state.menu.clone());
+    let (split, split_open) = (state.split.clone(), state.split_open.clone());
     let theme = cx.theme();
     let (border, text, hover) = (theme.alpha_at(0.10), theme.gray_950, theme.alpha_at(0.10));
 
@@ -168,4 +201,10 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .child(row("Tooltip", cx, tooltips))
         .child(row("Popover", cx, popover))
         .child(row("Dropdown menu", cx, menu))
+        // Last, so the open menu hangs over nothing.
+        .child(row(
+            "Split button: at rest, and its menu open",
+            cx,
+            div().flex().gap(px(48.)).child(split).child(split_open),
+        ))
 }

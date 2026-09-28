@@ -26,4 +26,5 @@ pub mod waveform_display;
 
 pub mod dropdown_menu;
 pub mod popover;
+pub mod split_button;
 pub mod tooltip;

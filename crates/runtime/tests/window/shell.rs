@@ -3,8 +3,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use arrangement::ArrangementState;
 use arrangement::view::layout::{HEADER_WIDTH, LEAD_IN, RULER_HEIGHT, TRACK_HEIGHT, Viewport};
+use arrangement::{ArrangementState, TrackKind};
 use gpui::{
     AppContext, Context, Entity, Focusable, IntoElement, Modifiers, PlatformInput, Render,
     ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext, Window, div, point,
@@ -162,6 +162,66 @@ fn the_timeline_is_notified_for_its_arrangement_and_not_for_the_playhead(cx: &mu
     assert_eq!(*notified.borrow(), 1);
 }
 
+fn track_kinds(opened: &mut Opened<'_>) -> Vec<TrackKind> {
+    opened.project(|project| {
+        let arrangement = main_arrangement(project).unwrap();
+        let tracks = arrangement::tracks(project, arrangement.id());
+        tracks.iter().map(|(_, state)| state.kind).collect()
+    })
+}
+
+#[gpui::test]
+fn the_add_track_button_under_the_last_track_adds_an_instrument_track(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    // Right under the header of the only track.
+    let first = opened.bounds("add-track").unwrap();
+    let under_first = TOP_ROW + RULER_HEIGHT + TRACK_HEIGHT;
+    assert!(first.top() > px(under_first) && first.bottom() < px(under_first + 40.));
+    assert!(first.right() < px(HEADER_WIDTH));
+
+    opened.click(first.center());
+    assert_eq!(track_kinds(&mut opened), [TrackKind::Instrument; 2]);
+    assert_eq!(opened.undo_label().as_deref(), Some("Add track"));
+    assert!(opened.project(|project| project.problems().is_empty()));
+    // It moved down with the new track.
+    let second = opened.bounds("add-track").unwrap();
+    assert_eq!(second.top() - first.top(), px(TRACK_HEIGHT));
+
+    // The keys reach it: tab from the timeline past the snap setting, and enter.
+    opened.click_timeline(3.5, 0.5);
+    opened.keys("tab tab");
+    opened.press_enter();
+    assert_eq!(track_kinds(&mut opened), [TrackKind::Instrument; 3]);
+
+    // One undo step each.
+    opened.keys("cmd-z cmd-z");
+    assert_eq!(track_kinds(&mut opened), [TrackKind::Instrument]);
+}
+
+#[gpui::test]
+fn tab_scrolls_the_add_track_button_into_view_under_many_tracks(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let arrangement = main_arrangement(project).unwrap();
+        for _ in 0..40 {
+            runtime::add_track(project, &arrangement).unwrap();
+        }
+    });
+    let master = opened.bounds("master-row").unwrap();
+    let below_the_view = |opened: &mut Opened<'_>| {
+        let button = opened.bounds("add-track").unwrap();
+        button.bottom() > master.top()
+    };
+    assert!(below_the_view(&mut opened));
+
+    // GPUI tells of a focus change only in an active window, which a test window is not.
+    opened.cx.update(|window, _| window.activate_window());
+    opened.click_timeline(3.5, 0.5);
+    opened.keys("tab tab");
+    assert!(!below_the_view(&mut opened));
+    opened.press_enter();
+    assert_eq!(track_kinds(&mut opened).len(), 42);
+}
+
 /// Stands in for a view with a text field, such as a rename or the agent composer later.
 struct FieldView {
     field: Entity<TextInput>,
@@ -290,10 +350,11 @@ fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
     opened.cx.run_until_parked();
 
     // The menu, play, stop, record, the seek strip, the tempo, the click, the arrangement,
-    // the snap setting, the master row, then the notice.
+    // the snap setting, the two halves of the add track button, the master row, then the
+    // notice.
     opened
         .cx
-        .simulate_keystrokes("tab tab tab tab tab tab tab tab tab tab tab");
+        .simulate_keystrokes("tab tab tab tab tab tab tab tab tab tab tab tab tab");
     opened.press_enter();
     opened
         .cx

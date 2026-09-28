@@ -67,7 +67,7 @@ To make a release, run `/release` in Claude Code, with `patch` (the default), `m
 
 ## Two-minute tour
 
-1. Click the project name top-left, **Add track**, **Instrument track**.
+1. Click **Add track** under the track headers.
 2. Double click empty space in the track row to add a clip, then double click the clip to open the note editor.
 3. Double click in the clip to add a note. Drag to move it, drag its end to change its length.
 4. Press space to play. Click the ruler to move the playhead.

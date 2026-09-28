@@ -5,6 +5,8 @@
 //! [`Trigger::Select`] makes it a select: a 24 pt trigger that says what is picked, for a list
 //! that does not fit as segments, such as the shape of an EQ band. When the picked item has an
 //! icon, the trigger shows the icon and not the words, so that it fits in a cell of a card.
+//!
+//! [`Trigger::Chevron`] is the menu half of a [`crate::components::split_button::SplitButton`].
 
 use std::rc::Rc;
 
@@ -17,6 +19,7 @@ use gpui::{
 use crate::components::icon::Icon;
 use crate::components::kbd::Kbd;
 use crate::components::popover::{Align, Side, TRIGGER_HEIGHT, anchor, surface, trigger};
+use crate::components::tooltip::Tooltip;
 use crate::theme::ActiveTheme;
 
 const ROW_HEIGHT: f32 = 32.;
@@ -333,6 +336,9 @@ pub enum Trigger {
     Title,
     /// A 24 pt select on `alpha/5` that says what is picked, or the label while nothing is.
     Select,
+    /// Only a chevron, 24 pt high and rounded on the right: the menu half of a split button.
+    /// The label is its tooltip, since it shows no words.
+    Chevron,
 }
 
 /// A select: 24 pt, 12 pt medium type, 6 pt corners, as a toggle or a segmented control.
@@ -374,6 +380,21 @@ fn title_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
         .text_size(px(14.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(text)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+}
+
+/// The chevron at the right of a split button, with the hover wash of its main half.
+fn chevron_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
+    let hover = cx.theme().alpha_at(0.05);
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(px(24.))
+        .w(px(24.))
+        .rounded_r(px(6.))
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
 }
@@ -613,6 +634,7 @@ impl Render for DropdownMenu {
             Trigger::Ghost => ghost_trigger("dropdown-trigger", cx),
             Trigger::Title => title_trigger("dropdown-trigger", cx),
             Trigger::Select => select_trigger("dropdown-trigger", cx),
+            Trigger::Chevron => chevron_trigger("dropdown-trigger", cx),
         };
         let (label, icon, chevron) = match self.trigger {
             Trigger::Select => {
@@ -626,7 +648,9 @@ impl Render for DropdownMenu {
             Trigger::Outline | Trigger::Ghost => (self.label.clone(), None, 14.),
             // The glyph of the icons beside it.
             Trigger::Title => (self.label.clone(), None, 12.),
+            Trigger::Chevron => (self.label.clone(), None, 12.),
         };
+        let words = self.trigger != Trigger::Chevron;
         let text = cx.theme().gray_950;
         let (muted, ring) = (cx.theme().gray_700, cx.theme().lavender);
 
@@ -648,6 +672,9 @@ impl Render for DropdownMenu {
                     .focus_visible(move |s| s.border_color(ring))
                     .map(|trigger| match icon {
                         Some(icon) => trigger.child(Icon::new(icon).size(14.).color(text)),
+                        None if !words => {
+                            trigger.tooltip(move |_, cx| Tooltip::new(label.clone()).view(cx))
+                        }
                         None => trigger.child(
                             div()
                                 .min_w_0()
