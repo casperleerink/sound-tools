@@ -1,7 +1,7 @@
 //! The grid a fit builds: the tempo map, the clip and what steadiness does to them.
 
 use fit_tempo::{BeatRate, FIT_SAMPLE_RATE, fit};
-use sound_core::{Clock, Frames, TempoMap, Ticks};
+use sound_core::{Clock, Frames, TempoMap, Ticks, TimeSignatures};
 use sound_notes::RawTake;
 
 use crate::beats::cases;
@@ -69,7 +69,7 @@ fn the_first_downbeat_lands_on_a_bar_line() {
             let signature = case.signature();
             let fitted = fit(&take, signature, downbeat_us, BeatRate::Normal).expect("a fit");
             let tick = fitted.first_downbeat_tick(signature);
-            let position = signature.bar_beat_of(tick);
+            let position = TimeSignatures::constant(signature).bar_beat_of(tick);
             assert_eq!(
                 (position.beat, position.tick),
                 (1, 0),

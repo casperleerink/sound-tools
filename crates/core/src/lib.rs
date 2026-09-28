@@ -18,8 +18,8 @@ mod project;
 mod transport;
 
 pub use clock::{
-    BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, TICKS_PER_QUARTER, Tempo,
-    TempoChange, TempoMap, Ticks, TimeSignature,
+    Bar, BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, SignatureRun,
+    TICKS_PER_QUARTER, Tempo, TempoChange, TempoMap, Ticks, TimeSignature, TimeSignatures,
 };
 pub use control::{Edit, EngineConfig, EngineControl, EngineStopped, Node};
 pub use device::{

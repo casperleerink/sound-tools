@@ -38,10 +38,8 @@ pub(crate) const PROJECT_FILE_DOC: AgentDoc = AgentDoc {
 impl Project {
     /// The text of `AGENTS.md` for this project: the map.
     ///
-    /// These placeholders are filled in here and in every doc, so the bar math of every
-    /// example follows the time signature of the project: `{{time_signature}}`,
-    /// `{{ticks_per_beat}}`, `{{ticks_per_bar}}`, `{{bar_5_start}}`, `{{four_bars}}`,
-    /// `{{bar_9_start}}` and `{{bar_3_beat_2}}`.
+    /// The time signatures are not copied into it: the map says how bars work and points at
+    /// `project.json`, where they are.
     pub fn agent_doc(&self) -> String {
         let mut tools = String::from("| Tool | Form |\n| --- | --- |\n");
         for (tool, extension, owns_children) in self.registry.tools() {
@@ -81,13 +79,8 @@ impl Project {
         (self.project_file.extensions.iter()).any(|enabled| enabled == extension)
     }
 
-    /// Fills the placeholders of the project in a generated text.
+    /// Fills `{{extensions}}` in a generated text.
     fn fill(&self, text: &str) -> String {
-        let time_signature = self.project_file.tempo_map.time_signature();
-        let (beat, bar) = (
-            time_signature.ticks_per_beat(),
-            time_signature.ticks_per_bar(),
-        );
         // Every extension of this runtime, as a new project lists them: in a project that
         // lists fewer, the example of `project.json` is the edit that enables the rest. Laid
         // out as the runtime writes the file, which puts a long list on several lines.
@@ -99,21 +92,7 @@ impl Project {
             .trim_end()
             .trim_start_matches("{\n  \"extensions\": ")
             .trim_end_matches("\n}");
-        let values = [
-            ("{{extensions}}", list.to_string()),
-            ("{{time_signature}}", time_signature.to_string()),
-            ("{{ticks_per_beat}}", beat.to_string()),
-            ("{{ticks_per_bar}}", bar.to_string()),
-            ("{{bar_5_start}}", (4 * bar).to_string()),
-            ("{{four_bars}}", (4 * bar).to_string()),
-            ("{{bar_9_start}}", (8 * bar).to_string()),
-            ("{{bar_3_beat_2}}", (2 * bar + beat).to_string()),
-        ];
-        let mut text = text.to_string();
-        for (placeholder, value) in values {
-            text = text.replace(placeholder, &value);
-        }
-        text
+        text.replace("{{extensions}}", list)
     }
 
     /// Brings the generated files up to date. Called when the project opens and from `poll`.

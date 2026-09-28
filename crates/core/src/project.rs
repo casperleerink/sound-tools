@@ -37,7 +37,7 @@ use registry::DerivedFrom;
 use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
-use crate::clock::{Clock, Ticks, TimeSignature};
+use crate::clock::{Clock, Ticks, TimeSignatures};
 use crate::control::EngineControl;
 use crate::graph::GraphError;
 use crate::peaks::Peaks;
@@ -481,7 +481,6 @@ impl Project {
         // What behaviours said last time, so that `problems.txt` and the views follow a
         // behaviour that starts or stops reporting. Empty in a project with nothing to report.
         let instance_problems_before = self.instance_problems();
-        let time_signature_before = project_file_before.tempo_map.time_signature();
         let mut records = Vec::new();
         let mut derived = Vec::new();
         let result = self
@@ -489,7 +488,7 @@ impl Project {
             .and_then(|()| {
                 self.stage_derived(
                     source,
-                    time_signature_before,
+                    project_file_before.tempo_map.time_signatures(),
                     project_file_arrives,
                     &mut records,
                     &mut derived,
@@ -543,14 +542,14 @@ impl Project {
     /// group. See [`ToolRegistration::derive`].
     ///
     /// A derive runs when a record of its tool changed in this group, or when the project's
-    /// time signature changed. What a derive gives is staged and nothing more: it starts no
+    /// time signatures changed. What a derive gives is staged and nothing more: it starts no
     /// second round, so this cannot loop. It does not run while the project loads, nor for
     /// undo, redo or a cancel, because the files and the undo step already hold what it would
     /// compute. So a read-only project never derives and never writes.
     fn stage_derived(
         &mut self,
         source: Source,
-        time_signature_before: TimeSignature,
+        time_signatures_before: &TimeSignatures,
         project_file_arrives: bool,
         records: &mut Vec<RecordChange>,
         derived: &mut Vec<InstanceId>,
@@ -564,7 +563,7 @@ impl Project {
             Some(())
         };
         let signature_changed =
-            self.project_file.tempo_map.time_signature() != time_signature_before;
+            self.project_file.tempo_map.time_signatures() != time_signatures_before;
         let mut ids: BTreeSet<InstanceId> = BTreeSet::new();
         if signature_changed {
             let live = self.instances.keys();

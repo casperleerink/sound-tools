@@ -1,4 +1,4 @@
-//! The musical clock: ticks, tempo, time signature, the tempo map and its conversions.
+//! The musical clock: ticks, tempo, time signatures, the tempo map and its conversions.
 //!
 //! [`TempoMap`] is the saved form and knows nothing about sample rates. [`Clock`] is a tempo
 //! map compiled for one sample rate. It is the only place where ticks become frames, so every
@@ -10,10 +10,11 @@
 //! when the tick goes up, and `tick_at` is its inverse: the first tick at or after a frame.
 
 use std::fmt;
+use std::num::NonZeroU32;
 use std::ops::Add;
 use std::str::FromStr;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// Musical time resolution. One quarter note is 960 ticks, whatever the time signature is.
 pub const TICKS_PER_QUARTER: u64 = 960;
@@ -68,6 +69,14 @@ pub enum ClockError {
         position: BarBeat,
         time_signature: TimeSignature,
     },
+    #[error("time_signatures needs at least one entry")]
+    NoTimeSignature,
+    #[error("the runs of time_signatures reach past the last tick")]
+    TooManyBars,
+    #[error("write the time signatures as \"time_signatures\", not as \"time_signature\" as well")]
+    TwoTimeSignatureFields,
+    #[error("the tempo map needs \"time_signatures\"")]
+    NoTimeSignatureField,
 }
 
 /// Beats per minute, where a beat is a quarter note. Held in steps of 0.001 bpm so all clock
@@ -133,7 +142,7 @@ impl From<Tempo> for f64 {
     }
 }
 
-/// One time signature for the whole project. Saved as a string, for example `"6/8"`.
+/// The time signature of a bar. Saved as a string, for example `"6/8"`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct TimeSignature {
@@ -171,37 +180,6 @@ impl TimeSignature {
 
     pub fn ticks_per_bar(self) -> u64 {
         self.ticks_per_beat() * u64::from(self.numerator)
-    }
-
-    pub fn bar_beat_of(self, position: Ticks) -> BarBeat {
-        let in_bar = position.0 % self.ticks_per_bar();
-        BarBeat {
-            bar: position.0 / self.ticks_per_bar() + 1,
-            // Both fit: a bar has at most 32 beats and a beat at most 3840 ticks.
-            beat: (in_bar / self.ticks_per_beat()) as u32 + 1,
-            tick: (in_bar % self.ticks_per_beat()) as u32,
-        }
-    }
-
-    /// Fails when the position does not exist in this signature, for example beat 5 in 4/4.
-    pub fn ticks_of(self, position: BarBeat) -> Result<Ticks, ClockError> {
-        let beat_exists = (1..=self.numerator).contains(&position.beat);
-        let tick_exists = u64::from(position.tick) < self.ticks_per_beat();
-        position
-            .bar
-            .checked_sub(1)
-            .filter(|_| beat_exists && tick_exists)
-            .and_then(|bars| bars.checked_mul(self.ticks_per_bar()))
-            .and_then(|ticks| {
-                let in_bar =
-                    u64::from(position.beat - 1) * self.ticks_per_beat() + u64::from(position.tick);
-                ticks.checked_add(in_bar)
-            })
-            .map(Ticks)
-            .ok_or(ClockError::InvalidBarBeat {
-                position,
-                time_signature: self,
-            })
     }
 }
 
@@ -266,6 +244,223 @@ impl fmt::Display for BarBeat {
     }
 }
 
+/// A run of bars that share one time signature.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SignatureRun {
+    pub signature: TimeSignature,
+    pub bars: NonZeroU32,
+}
+
+/// One bar of the piece: its number, counted from 1, where it starts and its time signature.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Bar {
+    pub number: u64,
+    pub start: Ticks,
+    pub signature: TimeSignature,
+}
+
+impl Bar {
+    pub fn length(self) -> Ticks {
+        Ticks(self.signature.ticks_per_bar())
+    }
+
+    /// Where the next bar starts.
+    pub fn end(self) -> Ticks {
+        self.start + self.length()
+    }
+}
+
+/// The time signature of every bar: runs of bars, and the last run goes on forever. A change
+/// can only fall on a bar line, because a run is a whole number of bars. Saved as the list of
+/// runs:
+///
+/// ```json
+/// [
+///   { "signature": "4/4", "bars": 8 },
+///   { "signature": "3/16", "bars": 1 },
+///   { "signature": "5/16", "bars": 2 }
+/// ]
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "Vec<SignatureRun>", into = "Vec<SignatureRun>")]
+pub struct TimeSignatures {
+    runs: Vec<SignatureRun>,
+    /// Bar 1, where the first run starts.
+    first: Bar,
+    /// The first bar of every later run, in the order of the runs.
+    later: Vec<Bar>,
+}
+
+impl TimeSignatures {
+    /// Fails when there is no run, or when a run starts past the last tick.
+    pub fn new(runs: Vec<SignatureRun>) -> Result<Self, ClockError> {
+        let first_run = runs.first().ok_or(ClockError::NoTimeSignature)?;
+        let first = Bar {
+            number: 1,
+            start: Ticks(0),
+            signature: first_run.signature,
+        };
+        let mut later = Vec::with_capacity(runs.len() - 1);
+        let mut previous = (first, first_run.bars);
+        for run in runs.iter().skip(1) {
+            let (bar, bars) = previous;
+            let next = bar_after(bar, u64::from(bars.get())).ok_or(ClockError::TooManyBars)?;
+            let next = Bar {
+                signature: run.signature,
+                ..next
+            };
+            later.push(next);
+            previous = (next, run.bars);
+        }
+        Ok(Self { runs, first, later })
+    }
+
+    /// One time signature for every bar.
+    pub fn constant(signature: TimeSignature) -> Self {
+        Self {
+            runs: vec![SignatureRun {
+                signature,
+                bars: NonZeroU32::MIN,
+            }],
+            first: Bar {
+                number: 1,
+                start: Ticks(0),
+                signature,
+            },
+            later: Vec::new(),
+        }
+    }
+
+    pub fn runs(&self) -> &[SignatureRun] {
+        &self.runs
+    }
+
+    /// The first bar of every run: where each time signature starts.
+    pub fn changes(&self) -> impl Iterator<Item = Bar> + '_ {
+        std::iter::once(self.first).chain(self.later.iter().copied())
+    }
+
+    /// The time signature of bar 1.
+    pub fn first(&self) -> TimeSignature {
+        self.first.signature
+    }
+
+    /// The bar that `tick` is in.
+    pub fn bar_at(&self, tick: Ticks) -> Bar {
+        let count = self.later.partition_point(|bar| bar.start <= tick);
+        let start = self.run_before(count);
+        let bars = (tick.0 - start.start.0) / start.signature.ticks_per_bar();
+        // These bars end at or before `tick`, so they always fit.
+        bar_after(start, bars).unwrap_or(start)
+    }
+
+    /// Bar `number`, counted from 1. `None` for 0 and for a bar past the last tick.
+    pub fn bar(&self, number: u64) -> Option<Bar> {
+        let count = self.later.partition_point(|bar| bar.number <= number);
+        let start = self.run_before(count);
+        bar_after(start, number.checked_sub(start.number)?)
+    }
+
+    /// Every bar from the one that `tick` is in, one after the other, without end.
+    pub fn bars_from(&self, tick: Ticks) -> impl Iterator<Item = Bar> + '_ {
+        let next = |bar: &Bar| {
+            let end = bar.start.0.checked_add(bar.length().0)?;
+            Some(self.bar_at(Ticks(end)))
+        };
+        std::iter::successors(Some(self.bar_at(tick)), next)
+    }
+
+    /// The first beat at or after `tick`, and whether it is the first beat of its bar. A beat
+    /// is the note value of the lower number of its bar's time signature.
+    pub fn beat_from(&self, tick: Ticks) -> (Ticks, bool) {
+        let bar = self.bar_at(tick);
+        let beat = bar.signature.ticks_per_beat();
+        let beats = (tick.0 - bar.start.0).div_ceil(beat);
+        let at = bar.start + Ticks(beats * beat);
+        match at < bar.end() {
+            true => (at, beats == 0),
+            false => (bar.end(), true),
+        }
+    }
+
+    pub fn bar_beat_of(&self, tick: Ticks) -> BarBeat {
+        let bar = self.bar_at(tick);
+        let beat = bar.signature.ticks_per_beat();
+        let in_bar = tick.0 - bar.start.0;
+        BarBeat {
+            bar: bar.number,
+            // Both fit: a bar has at most 32 beats and a beat at most 3840 ticks.
+            beat: (in_bar / beat) as u32 + 1,
+            tick: (in_bar % beat) as u32,
+        }
+    }
+
+    /// Fails when the position does not exist, for example beat 5 of a bar in 4/4.
+    pub fn ticks_of(&self, position: BarBeat) -> Result<Ticks, ClockError> {
+        let invalid = |time_signature| ClockError::InvalidBarBeat {
+            position,
+            time_signature,
+        };
+        let bar = self.bar(position.bar).ok_or(invalid(self.first()))?;
+        let signature = bar.signature;
+        let beat_exists = (1..=signature.numerator()).contains(&position.beat);
+        let tick_exists = u64::from(position.tick) < signature.ticks_per_beat();
+        if !beat_exists || !tick_exists {
+            return Err(invalid(signature));
+        }
+        let in_bar =
+            u64::from(position.beat - 1) * signature.ticks_per_beat() + u64::from(position.tick);
+        (bar.start.0.checked_add(in_bar))
+            .map(Ticks)
+            .ok_or(invalid(signature))
+    }
+
+    /// The first bar of the last of the first `count` later runs, or bar 1 when `count` is 0.
+    fn run_before(&self, count: usize) -> Bar {
+        (count.checked_sub(1))
+            .and_then(|index| self.later.get(index))
+            .copied()
+            .unwrap_or(self.first)
+    }
+}
+
+/// The bar `bars` after `bar`, in the time signature of `bar`. `None` past the last tick.
+fn bar_after(bar: Bar, bars: u64) -> Option<Bar> {
+    let ticks = bars.checked_mul(bar.signature.ticks_per_bar())?;
+    Some(Bar {
+        number: bar.number.checked_add(bars)?,
+        start: Ticks(bar.start.0.checked_add(ticks)?),
+        signature: bar.signature,
+    })
+}
+
+impl Default for TimeSignatures {
+    fn default() -> Self {
+        Self::constant(TimeSignature::default())
+    }
+}
+
+impl From<TimeSignature> for TimeSignatures {
+    fn from(signature: TimeSignature) -> Self {
+        Self::constant(signature)
+    }
+}
+
+impl TryFrom<Vec<SignatureRun>> for TimeSignatures {
+    type Error = ClockError;
+
+    fn try_from(runs: Vec<SignatureRun>) -> Result<Self, ClockError> {
+        Self::new(runs)
+    }
+}
+
+impl From<TimeSignatures> for Vec<SignatureRun> {
+    fn from(time_signatures: TimeSignatures) -> Self {
+        time_signatures.runs
+    }
+}
+
 /// From `tick` on, the tempo is `bpm`. A step: there are no ramps.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TempoChange {
@@ -273,41 +468,66 @@ pub struct TempoChange {
     pub bpm: Tempo,
 }
 
-/// The saved musical clock of a project: one time signature and the tempo changes.
+/// The saved musical clock of a project: the time signatures and the tempo changes.
 ///
 /// ```json
 /// {
-///   "time_signature": "4/4",
+///   "time_signatures": [{ "signature": "4/4", "bars": 8 }, { "signature": "7/8", "bars": 1 }],
 ///   "tempo_changes": [
 ///     { "tick": 0, "bpm": 120.0 },
 ///     { "tick": 15360, "bpm": 93.5 }
 ///   ]
 /// }
 /// ```
+///
+/// A project from before a time signature could change has `"time_signature": "4/4"` in place
+/// of the list. It reads as one run, and is written as the list the next time.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "SavedTempoMap")]
 pub struct TempoMap {
-    time_signature: TimeSignature,
-    #[serde(deserialize_with = "deserialize_tempo_changes")]
+    time_signatures: TimeSignatures,
     tempo_changes: Vec<TempoChange>,
+}
+
+/// What `project.json` holds, before the one-signature form is read as a list.
+#[derive(Deserialize)]
+struct SavedTempoMap {
+    time_signatures: Option<TimeSignatures>,
+    time_signature: Option<TimeSignature>,
+    tempo_changes: Vec<TempoChange>,
+}
+
+impl TryFrom<SavedTempoMap> for TempoMap {
+    type Error = ClockError;
+
+    fn try_from(saved: SavedTempoMap) -> Result<Self, ClockError> {
+        let time_signatures = match (saved.time_signatures, saved.time_signature) {
+            (Some(time_signatures), None) => time_signatures,
+            (None, Some(signature)) => TimeSignatures::constant(signature),
+            (Some(_), Some(_)) => return Err(ClockError::TwoTimeSignatureFields),
+            (None, None) => return Err(ClockError::NoTimeSignatureField),
+        };
+        Self::new(time_signatures, saved.tempo_changes)
+    }
 }
 
 impl TempoMap {
     /// The first change must be at tick 0. Ticks must go up, each tick used once.
     pub fn new(
-        time_signature: TimeSignature,
+        time_signatures: impl Into<TimeSignatures>,
         tempo_changes: Vec<TempoChange>,
     ) -> Result<Self, ClockError> {
         check_tempo_changes(&tempo_changes)?;
         Ok(Self {
-            time_signature,
+            time_signatures: time_signatures.into(),
             tempo_changes,
         })
     }
 
     /// One tempo for the whole project.
-    pub fn constant(time_signature: TimeSignature, bpm: Tempo) -> Self {
+    pub fn constant(time_signatures: impl Into<TimeSignatures>, bpm: Tempo) -> Self {
         Self {
-            time_signature,
+            time_signatures: time_signatures.into(),
             tempo_changes: vec![TempoChange {
                 tick: Ticks(0),
                 bpm,
@@ -315,8 +535,17 @@ impl TempoMap {
         }
     }
 
-    pub fn time_signature(&self) -> TimeSignature {
-        self.time_signature
+    pub fn time_signatures(&self) -> &TimeSignatures {
+        &self.time_signatures
+    }
+
+    /// The same tempo changes with other time signatures. The ticks of the tempo changes stay,
+    /// so what plays stays where it is and the bar lines move.
+    pub fn with_time_signatures(&self, time_signatures: TimeSignatures) -> Self {
+        Self {
+            time_signatures,
+            tempo_changes: self.tempo_changes.clone(),
+        }
     }
 
     pub fn tempo_changes(&self) -> &[TempoChange] {
@@ -336,7 +565,7 @@ impl TempoMap {
             .find(|change| change.tick == tick)?;
         change.bpm = bpm;
         Some(Self {
-            time_signature: self.time_signature,
+            time_signatures: self.time_signatures.clone(),
             tempo_changes,
         })
     }
@@ -368,7 +597,7 @@ impl TempoMap {
         let index = tempo_changes.partition_point(|change| change.tick < tick);
         tempo_changes.insert(index, TempoChange { tick, ..change });
         Some(Self {
-            time_signature: self.time_signature,
+            time_signatures: self.time_signatures.clone(),
             tempo_changes,
         })
     }
@@ -386,7 +615,7 @@ impl TempoMap {
         let mut tempo_changes = self.tempo_changes.clone();
         tempo_changes.remove(index);
         Some(Self {
-            time_signature: self.time_signature,
+            time_signatures: self.time_signatures.clone(),
             tempo_changes,
         })
     }
@@ -410,14 +639,6 @@ fn check_tempo_changes(tempo_changes: &[TempoChange]) -> Result<(), ClockError> 
         Some([_, later]) => Err(ClockError::TempoChangesNotSorted(later.tick)),
         _ => Ok(()),
     }
-}
-
-fn deserialize_tempo_changes<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<TempoChange>, D::Error> {
-    let tempo_changes = Vec::deserialize(deserializer)?;
-    check_tempo_changes(&tempo_changes).map_err(serde::de::Error::custom)?;
-    Ok(tempo_changes)
 }
 
 /// The stretch of the timeline from one tempo change to the next.

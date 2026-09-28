@@ -11,7 +11,7 @@ use gpui::{
 };
 use sound_ui::{ActiveTheme, Playhead, Theme, typography};
 
-use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, Viewport};
+use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, RulerBar, Viewport};
 use crate::Colour;
 
 /// Track colours are design tokens. The match is exhaustive, so a new colour cannot be
@@ -103,9 +103,9 @@ pub(super) fn paint_text(
     }
 }
 
-/// The bar ruler: a short mark and a number per bar of [`Viewport::ruler_bars`].
+/// The bar ruler: a short mark and a label per bar of [`Viewport::ruler_bars`].
 pub(super) fn paint_ruler(
-    bars: &[(u64, f32)],
+    bars: &[RulerBar],
     ruler: Bounds<Pixels>,
     window: &mut Window,
     cx: &mut App,
@@ -113,18 +113,26 @@ pub(super) fn paint_ruler(
     let theme = cx.theme();
     let (mark_color, muted) = (theme.alpha_at(0.10), theme.gray_700);
     window.with_content_mask(Some(ContentMask { bounds: ruler }), |window| {
-        for (bar, x) in bars {
-            let x = px(x.round());
+        for bar in bars {
+            let x = px(bar.x.round());
             let mark = Bounds::new(
                 ruler.origin + point(x, px(RULER_HEIGHT - 8.)),
                 size(px(1.), px(8.)),
             );
             window.paint_quad(fill(mark, mark_color));
             let label = ruler.origin + point(x + px(8.), px(8.));
-            let number = bar.to_string().into();
             let fit = Fit::SkipPast(ruler.right());
             let weight = FontWeight::NORMAL;
-            paint_text(number, label, 12., weight, muted, fit, window, cx);
+            paint_text(
+                bar.label().into(),
+                label,
+                12.,
+                weight,
+                muted,
+                fit,
+                window,
+                cx,
+            );
         }
     });
 }

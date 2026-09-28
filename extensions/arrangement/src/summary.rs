@@ -12,7 +12,7 @@ pub(crate) fn of_arrangement(
     project: &Project,
     arrangement: &Instance<ArrangementState>,
 ) -> String {
-    let time_signature = project.project_file().tempo_map.time_signature();
+    let time_signatures = project.project_file().tempo_map.time_signatures();
     let tracks = tracks(project, arrangement.id());
     let mut lines = vec![format!(
         "arrangement `{}`: {}. Positions are bar:beat:tick, a clip runs up to its end position",
@@ -50,8 +50,8 @@ pub(crate) fn of_arrangement(
             lines.push(format!(
                 "    clip `{}`: {} to {}, ticks {} to {}, {}{pitches}",
                 clip.id(),
-                time_signature.bar_beat_of(state.start),
-                time_signature.bar_beat_of(state.end()),
+                time_signatures.bar_beat_of(state.start),
+                time_signatures.bar_beat_of(state.end()),
                 state.start.0,
                 state.end().0,
                 counted(state.notes.len(), "note"),
@@ -69,7 +69,7 @@ fn audio_track(
     state: &TrackState,
     lines: &mut Vec<String>,
 ) {
-    let time_signature = project.project_file().tempo_map.time_signature();
+    let time_signatures = project.project_file().tempo_map.time_signatures();
     lines.push(format!(
         "  track `{}` {:?}: colour {}, order {}, audio track",
         track.id(),
@@ -100,8 +100,8 @@ fn audio_track(
         lines.push(format!(
             "    audio clip `{}`: {} to {}, ticks {} to {}, {file}, gain {} dB, fades {} ms and {} ms, layer {}",
             clip.id(),
-            time_signature.bar_beat_of(state.start),
-            time_signature.bar_beat_of(end),
+            time_signatures.bar_beat_of(state.start),
+            time_signatures.bar_beat_of(end),
             state.start.0,
             end.0,
             state.gain_db,

@@ -293,7 +293,7 @@ fn another_downbeat_and_another_time_signature_rebuild_the_grid() {
     let file = r#"{"format": 1, "extensions": ["arrangement", "compressor", "drum-pad", "eq", "filter", "fit-tempo", "instrument", "plugin-host", "reverb", "sampler", "tone"], "tempo_map": {"time_signature": "3/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}, "connections": []}"#;
     harness.write_and_apply("project.json", file);
     let after = tempo_map(&harness);
-    assert_eq!(after.time_signature().to_string(), "3/4");
+    assert_eq!(after.time_signatures().first().to_string(), "3/4");
     assert!(
         after.tempo_changes().len() > 1,
         "the fit did not rewrite the map: {:?}",
@@ -367,6 +367,23 @@ fn a_steadiness_change_keeps_a_hand_edit_and_a_correction_does_not() {
     }
     // And back at 0 % the fitted map is the fitted map again, byte for byte.
     assert_eq!(project_json(&harness), fitted_file);
+
+    // A time signature that starts after bar 1 leaves the grid as it is, so the clip keeps
+    // the edit too. The fit keeps the new runs.
+    let one = r#""time_signatures": [{"signature": "4/4", "bars": 1}]"#;
+    assert!(fitted_file.contains(one), "{fitted_file}");
+    let fitted_changes = tempo_map(&harness).tempo_changes().to_vec();
+    let two =
+        r#""time_signatures": [{"signature": "4/4", "bars": 8}, {"signature": "7/8", "bars": 1}]"#;
+    harness.write_and_apply("project.json", &fitted_file.replace(one, two));
+    assert_eq!(
+        clip_json(&harness),
+        by_hand,
+        "a later time signature moved a note"
+    );
+    let runs = tempo_map(&harness).time_signatures().runs().len();
+    assert_eq!(runs, 2);
+    assert_eq!(tempo_map(&harness).tempo_changes(), fitted_changes);
 
     // A correction of the beat does make the clip again, and undo brings the edit back.
     let corrected = FitState {

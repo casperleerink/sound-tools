@@ -1063,16 +1063,18 @@ impl TransportPill {
     /// Left and right move by a bar when the strip has the focus.
     fn on_strip_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         let project = self.session.read(cx).project();
-        let bar = project
-            .project_file()
-            .tempo_map
-            .time_signature()
-            .ticks_per_bar();
+        let time_signatures = project.project_file().tempo_map.time_signatures();
         let now = self.playhead.read(cx).tick;
         let end = self.end.unwrap_or(Ticks(u64::MAX));
+        // Back by the bar before the playhead and on by the bar it is in, so from a bar line
+        // each press lands on the next bar line, whatever the time signature of each bar.
+        let back = time_signatures
+            .bar_at(now.saturating_sub(Ticks(1)))
+            .length();
+        let on = time_signatures.bar_at(now).length();
         match event.keystroke.key.as_str() {
-            "left" => self.seek(Ticks(now.0.saturating_sub(bar)), cx),
-            "right" => self.seek((now + Ticks(bar)).min(end), cx),
+            "left" => self.seek(now.saturating_sub(back), cx),
+            "right" => self.seek((now + on).min(end), cx),
             _ => {}
         }
     }
@@ -1172,7 +1174,7 @@ fn position_texts(project: &sound_core::Project, tick: Ticks) -> (String, String
     let position = project
         .project_file()
         .tempo_map
-        .time_signature()
+        .time_signatures()
         .bar_beat_of(tick);
     (
         format!("{}.{}", position.bar, position.beat),

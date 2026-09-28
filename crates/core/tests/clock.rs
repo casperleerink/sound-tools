@@ -3,9 +3,11 @@
 #![allow(clippy::unwrap_used)]
 
 use proptest::prelude::*;
+use std::num::NonZeroU32;
+
 use sound_core::{
-    BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, Tempo, TempoChange, TempoMap, Ticks,
-    TimeSignature,
+    Bar, BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, SignatureRun, Tempo,
+    TempoChange, TempoMap, Ticks, TimeSignature, TimeSignatures,
 };
 
 fn bpm(value: f64) -> Tempo {
@@ -46,6 +48,37 @@ fn any_tempo_map() -> impl Strategy<Value = TempoMap> {
         }
         TempoMap::new(TimeSignature::default(), changes).unwrap()
     })
+}
+
+fn signature(text: &str) -> TimeSignature {
+    text.parse().unwrap()
+}
+
+/// Runs of bars, each `(signature, bars)`.
+fn time_signatures(runs: &[(&str, u32)]) -> TimeSignatures {
+    let runs = runs
+        .iter()
+        .map(|(text, bars)| SignatureRun {
+            signature: signature(text),
+            bars: NonZeroU32::new(*bars).unwrap(),
+        })
+        .collect();
+    TimeSignatures::new(runs).unwrap()
+}
+
+fn any_signature() -> impl Strategy<Value = TimeSignature> {
+    let denominator = prop::sample::select(vec![1_u32, 2, 4, 8, 16, 32]);
+    (1_u32..=32, denominator)
+        .prop_map(|(numerator, denominator)| TimeSignature::new(numerator, denominator).unwrap())
+}
+
+/// One to twenty runs of one to five bars, often one bar each as in the Danse sacrale.
+fn any_time_signatures() -> impl Strategy<Value = TimeSignatures> {
+    let run = (any_signature(), 1_u32..=5).prop_map(|(signature, bars)| SignatureRun {
+        signature,
+        bars: NonZeroU32::new(bars).unwrap(),
+    });
+    prop::collection::vec(run, 1..20).prop_map(|runs| TimeSignatures::new(runs).unwrap())
 }
 
 fn any_sample_rate() -> impl Strategy<Value = u32> {
@@ -99,16 +132,51 @@ proptest! {
 
     #[test]
     fn bar_beat_round_trips(
-        numerator in 1_u32..=32,
-        denominator in prop::sample::select(vec![1_u32, 2, 4, 8, 16, 32]),
+        time_signatures in any_time_signatures(),
         tick in 0_u64..1_000_000_000_000,
     ) {
-        let time_signature = TimeSignature::new(numerator, denominator).unwrap();
-        let position = time_signature.bar_beat_of(Ticks(tick));
-        prop_assert!(position.bar >= 1);
-        prop_assert!((1..=numerator).contains(&position.beat));
-        prop_assert!(u64::from(position.tick) < time_signature.ticks_per_beat());
-        prop_assert_eq!(time_signature.ticks_of(position), Ok(Ticks(tick)));
+        let bar = time_signatures.bar_at(Ticks(tick));
+        prop_assert!(bar.start <= Ticks(tick) && Ticks(tick) < bar.end());
+        prop_assert_eq!(time_signatures.bar(bar.number), Some(bar));
+        let position = time_signatures.bar_beat_of(Ticks(tick));
+        prop_assert_eq!(position.bar, bar.number);
+        prop_assert!((1..=bar.signature.numerator()).contains(&position.beat));
+        prop_assert!(u64::from(position.tick) < bar.signature.ticks_per_beat());
+        prop_assert_eq!(time_signatures.ticks_of(position), Ok(Ticks(tick)));
+    }
+
+    #[test]
+    fn every_bar_starts_where_the_one_before_it_ends(
+        time_signatures in any_time_signatures(),
+        tick in 0_u64..100_000,
+    ) {
+        let bars: Vec<Bar> = time_signatures.bars_from(Ticks(tick)).take(120).collect();
+        prop_assert!(bars[0].start <= Ticks(tick) && Ticks(tick) < bars[0].end());
+        for pair in bars.windows(2) {
+            prop_assert_eq!(pair[1].start, pair[0].end());
+            prop_assert_eq!(pair[1].number, pair[0].number + 1);
+            prop_assert_eq!(time_signatures.bar_at(pair[1].start), pair[1]);
+        }
+    }
+
+    #[test]
+    fn the_next_beat_is_the_first_beat_at_or_after_a_tick(
+        time_signatures in any_time_signatures(),
+        tick in 0_u64..100_000,
+    ) {
+        let (beat, downbeat) = time_signatures.beat_from(Ticks(tick));
+        prop_assert!(beat >= Ticks(tick));
+        let bar = time_signatures.bar_at(beat);
+        let in_bar = beat.0 - bar.start.0;
+        prop_assert!(in_bar.is_multiple_of(bar.signature.ticks_per_beat()));
+        prop_assert_eq!(downbeat, in_bar == 0);
+        // No beat between the tick and the one found: the beat before it is before the tick.
+        if beat > Ticks(0) {
+            let bar = time_signatures.bar_at(Ticks(beat.0 - 1));
+            let beat_length = bar.signature.ticks_per_beat();
+            let previous = bar.start.0 + (beat.0 - 1 - bar.start.0) / beat_length * beat_length;
+            prop_assert!(previous < tick);
+        }
     }
 
     #[test]
@@ -183,7 +251,7 @@ fn a_tempo_change_moves_later_ticks_by_the_expected_frames() {
 
 #[test]
 fn bars_and_beats_count_from_one() {
-    let four_four = TimeSignature::default();
+    let four_four = TimeSignatures::default();
     let first = BarBeat {
         bar: 1,
         beat: 1,
@@ -197,6 +265,7 @@ fn bars_and_beats_count_from_one() {
     let six_eight = TimeSignature::new(6, 8).unwrap();
     assert_eq!(six_eight.ticks_per_beat(), 480);
     assert_eq!(six_eight.ticks_per_bar(), 2880);
+    let six_eight = TimeSignatures::constant(six_eight);
     let position = BarBeat {
         bar: 2,
         beat: 6,
@@ -210,7 +279,7 @@ fn bars_and_beats_count_from_one() {
 
 #[test]
 fn positions_outside_the_time_signature_are_errors() {
-    let four_four = TimeSignature::default();
+    let four_four = TimeSignatures::default();
     for (bar, beat, tick) in [
         (0, 1, 0),
         (1, 0, 0),
@@ -223,10 +292,107 @@ fn positions_outside_the_time_signature_are_errors() {
             four_four.ticks_of(position),
             Err(ClockError::InvalidBarBeat {
                 position,
-                time_signature: four_four
+                time_signature: TimeSignature::default()
             })
         );
     }
+    // Beat 3 exists in bar 1 but not in bar 2, which is in 2/8.
+    let changing = time_signatures(&[("3/8", 1), ("2/8", 1)]);
+    assert_eq!(
+        changing.ticks_of(BarBeat {
+            bar: 1,
+            beat: 3,
+            tick: 0
+        }),
+        Ok(Ticks(960))
+    );
+    let position = BarBeat {
+        bar: 2,
+        beat: 3,
+        tick: 0,
+    };
+    assert_eq!(
+        changing.ticks_of(position),
+        Err(ClockError::InvalidBarBeat {
+            position,
+            time_signature: signature("2/8")
+        })
+    );
+}
+
+/// The opening of the Danse sacrale: a new time signature almost every bar.
+#[test]
+fn the_time_signature_can_change_every_bar() {
+    let sacrale = time_signatures(&[
+        ("3/16", 1),
+        ("2/16", 1),
+        ("3/16", 2),
+        ("2/8", 1),
+        ("5/16", 1),
+        ("4/4", 1),
+    ]);
+    let starts: Vec<(u64, u64, String)> = sacrale
+        .bars_from(Ticks(0))
+        .take(8)
+        .map(|bar| (bar.number, bar.start.0, bar.signature.to_string()))
+        .collect();
+    let expected = [
+        (1, 0, "3/16"),
+        (2, 720, "2/16"),
+        (3, 1200, "3/16"),
+        (4, 1920, "3/16"),
+        (5, 2640, "2/8"),
+        (6, 3600, "5/16"),
+        (7, 4800, "4/4"),
+        // The last run goes on.
+        (8, 8640, "4/4"),
+    ]
+    .map(|(bar, tick, text)| (bar, tick, text.to_string()));
+    assert_eq!(starts, expected);
+    let changes: Vec<(u64, u64)> = sacrale
+        .changes()
+        .map(|bar| (bar.number, bar.start.0))
+        .collect();
+    assert_eq!(
+        changes,
+        [(1, 0), (2, 720), (3, 1200), (5, 2640), (6, 3600), (7, 4800)]
+    );
+    assert_eq!(sacrale.first(), signature("3/16"));
+
+    assert_eq!(
+        sacrale.bar_beat_of(Ticks(1200 + 480)).to_string(),
+        "3:3:000"
+    );
+    assert_eq!(
+        sacrale.bar_beat_of(Ticks(8640 + 3840 + 961)).to_string(),
+        "9:2:001"
+    );
+    assert_eq!(sacrale.bar(9).map(|bar| bar.start), Some(Ticks(12_480)));
+    assert_eq!(sacrale.bar(0), None);
+
+    // The click: every sixteenth in the sixteenth bars, the downbeats on the bar lines.
+    assert_eq!(sacrale.beat_from(Ticks(0)), (Ticks(0), true));
+    assert_eq!(sacrale.beat_from(Ticks(1)), (Ticks(240), false));
+    assert_eq!(sacrale.beat_from(Ticks(481)), (Ticks(720), true));
+    assert_eq!(sacrale.beat_from(Ticks(2641)), (Ticks(2640 + 480), false));
+    assert_eq!(sacrale.beat_from(Ticks(3121)), (Ticks(3600), true));
+}
+
+#[test]
+fn time_signatures_need_a_run_and_whole_bars() {
+    assert_eq!(
+        TimeSignatures::new(Vec::new()),
+        Err(ClockError::NoTimeSignature)
+    );
+    let error = |json: &str| {
+        serde_json::from_str::<TimeSignatures>(json)
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(error("[]").contains("time_signatures needs at least one entry"));
+    assert!(error(r#"[{"signature": "4/4", "bars": 0}]"#).contains("nonzero"));
+    assert!(error(r#"[{"signature": "4/4"}]"#).contains("missing field `bars`"));
+    assert!(error(r#"[{"signature": "4/4", "bars": 1, "tempo": 3}]"#).contains("unknown field"));
 }
 
 #[test]
@@ -292,16 +458,20 @@ fn the_saved_json_is_plain_bpm_and_ticks() {
         ],
     )
     .unwrap();
-    let json = r#"{"time_signature":"6/8","tempo_changes":[{"tick":0,"bpm":120.0},{"tick":15360,"bpm":93.5}]}"#;
+    let json = r#"{"time_signatures":[{"signature":"6/8","bars":1}],"tempo_changes":[{"tick":0,"bpm":120.0},{"tick":15360,"bpm":93.5}]}"#;
     assert_eq!(serde_json::to_string(&tempo_map).unwrap(), json);
     assert_eq!(serde_json::from_str::<TempoMap>(json).unwrap(), tempo_map);
 
     // What an agent may write by hand: whole numbers and spaces.
-    let by_hand = r#"{ "time_signature": "6 / 8", "tempo_changes": [ { "tick": 0, "bpm": 120 }, { "tick": 15360, "bpm": 93.5 } ] }"#;
+    let by_hand = r#"{ "time_signatures": [{ "signature": "6 / 8", "bars": 1 }], "tempo_changes": [ { "tick": 0, "bpm": 120 }, { "tick": 15360, "bpm": 93.5 } ] }"#;
     assert_eq!(
         serde_json::from_str::<TempoMap>(by_hand).unwrap(),
         tempo_map
     );
+
+    // A project from before time signatures could change: one for the whole piece.
+    let one = r#"{"time_signature":"6/8","tempo_changes":[{"tick":0,"bpm":120.0},{"tick":15360,"bpm":93.5}]}"#;
+    assert_eq!(serde_json::from_str::<TempoMap>(one).unwrap(), tempo_map);
 }
 
 #[test]
@@ -317,13 +487,19 @@ fn invalid_json_is_rejected_with_the_reason() {
     assert!(error(no_start).contains("the first tempo change must be at tick 0"));
     let odd_signature = r#"{"time_signature":"4/5","tempo_changes":[{"tick":0,"bpm":120}]}"#;
     assert!(error(odd_signature).contains("time signature 4/5 is not supported"));
+    let odd_run = r#"{"time_signatures":[{"signature":"4/5","bars":1}],"tempo_changes":[{"tick":0,"bpm":120}]}"#;
+    assert!(error(odd_run).contains("time signature 4/5 is not supported"));
+    let both = r#"{"time_signature":"4/4","time_signatures":[{"signature":"4/4","bars":1}],"tempo_changes":[{"tick":0,"bpm":120}]}"#;
+    assert!(error(both).contains("not as \"time_signature\" as well"));
+    let neither = r#"{"tempo_changes":[{"tick":0,"bpm":120}]}"#;
+    assert!(error(neither).contains("the tempo map needs \"time_signatures\""));
 }
 
 #[test]
 fn one_tempo_change_of_a_map_can_be_set_by_its_tick() {
     let map = tempo_map(&[(0, 120.0), (3840, 60.0), (7680, 93.5)]);
     let changed = map.with_tempo_at(Ticks(3840), bpm(140.0)).unwrap();
-    assert_eq!(changed.time_signature(), map.time_signature());
+    assert_eq!(changed.time_signatures(), map.time_signatures());
     assert_eq!(changed.tempo_changes()[0], map.tempo_changes()[0]);
     assert_eq!(changed.tempo_changes()[2], map.tempo_changes()[2]);
     assert_eq!(changed.tempo_changes()[1].tick, Ticks(3840));
@@ -376,7 +552,7 @@ fn a_tempo_change_per_beat_gives_the_same_piece_at_every_sample_rate() {
             bpm: Tempo::from_bpm(96.0 + f64::from((beat % 37) as u32) * 0.137).unwrap(),
         })
         .collect();
-    let map = TempoMap::new("4/4".parse().unwrap(), changes).unwrap();
+    let map = TempoMap::new(signature("4/4"), changes).unwrap();
     let last = Ticks(beats * 960);
 
     let seconds = |rate: u32| {

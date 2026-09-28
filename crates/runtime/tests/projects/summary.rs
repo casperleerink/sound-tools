@@ -26,7 +26,7 @@ fn the_summary_tells_what_plays_where() {
     // A second, read-only open next to the live one sees the same: this is `--inspect`.
     let (inspected, _engine, _plugins) = runtime::open_read_only(harness.project.root()).unwrap();
     let expected = r#"extensions: arrangement, compressor, drum-pad, eq, filter, fit-tempo, instrument, plugin-host, reverb, sampler, tone
-time signature: 4/4, 3840 ticks per bar, 960 ticks per beat
+time signature: 4/4 from bar 1 (tick 0), 3840 ticks per bar, 960 ticks per beat
 tempo: 120 bpm from 1:1:000 (tick 0)
 tempo: 90 bpm from 5:1:000 (tick 15360)
 arrangement `arrangement`: 3 tracks. Positions are bar:beat:tick, a clip runs up to its end position
@@ -43,6 +43,43 @@ problems: 1
   state/arrangement/pad/broken.json: ?: EOF while parsing an object at line 1 column 1"#;
     assert_eq!(runtime::summary(&inspected), expected);
     assert_eq!(runtime::summary(&harness.project), expected);
+}
+
+/// A project whose time signature changes: the summary says where each one starts, and the
+/// positions of the clips count the bars of each. The clips keep their ticks.
+#[test]
+fn the_summary_follows_a_changing_time_signature() {
+    let mut harness = Harness::piece();
+    harness.write_and_apply(
+        "state/arrangement/pad/bars-5-8.json",
+        &clip(15360, 15360, &[(960, 480, 70), (1440, 480, 74)]),
+    );
+    let project_file = std::fs::read_to_string(harness.path("project.json")).unwrap();
+    let one = r#"[{"signature": "4/4", "bars": 1}]"#;
+    assert!(project_file.contains(one), "{project_file}");
+    let project_file = project_file.replace(
+        one,
+        r#"[{"signature": "4/4", "bars": 2}, {"signature": "3/16", "bars": 1}, {"signature": "7/8", "bars": 1}]"#,
+    );
+    harness.write_and_apply("project.json", &project_file);
+    assert_eq!(harness.project.problems(), [], "{project_file}");
+
+    let summary = runtime::summary(&harness.project);
+    let lines: Vec<&str> = summary.lines().collect();
+    assert_eq!(
+        lines[1..4],
+        [
+            "time signature: 4/4 from bar 1 (tick 0), 3840 ticks per bar, 960 ticks per beat",
+            "time signature: 3/16 from bar 3 (tick 7680), 720 ticks per bar, 240 ticks per beat",
+            "time signature: 7/8 from bar 4 (tick 8400), 3360 ticks per bar, 480 ticks per beat",
+        ]
+    );
+    // Tick 15360 is 6960 ticks into the 7/8 bars from bar 4: two bars and 240 ticks.
+    assert!(
+        summary
+            .contains("clip `arrangement/pad/bars-5-8`: 6:1:240 to 10:5:240, ticks 15360 to 30720"),
+        "{summary}"
+    );
 }
 
 /// `--inspect` opens the project with a host that loads no plugin, because printing a project

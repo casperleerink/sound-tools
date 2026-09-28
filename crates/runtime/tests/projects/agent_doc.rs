@@ -3,7 +3,7 @@
 //! would write. So the docs cannot rot.
 
 use sound_core::{
-    AGENT_DOC_FILE, AGENT_DOCS_FOLDER, Changes, InstanceId, Tempo, TempoMap, TimeSignature,
+    AGENT_DOC_FILE, AGENT_DOCS_FOLDER, Changes, InstanceId, Tempo, TempoMap, TimeSignatures,
 };
 
 use crate::support::{Harness, write};
@@ -141,163 +141,166 @@ fn a_doc_that_the_project_no_longer_has_is_taken_out_of_the_folder() {
 
 #[test]
 fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_it() {
-    for time_signature in ["4/4", "6/8", "7/4"] {
-        // The docs of a project in this time signature.
-        let mut harness = Harness::new();
-        let signature: TimeSignature = time_signature.parse().unwrap();
-        let mut changes = Changes::new();
-        changes.set_tempo_map(TempoMap::constant(signature, Tempo::default()));
-        harness
-            .project
-            .commit("Set time signature", changes)
-            .unwrap();
-        harness.project.poll().unwrap();
-        let all: Vec<(String, String)> = map_and_docs(&harness)
-            .iter()
-            .flat_map(|(_, text)| json_examples(text))
-            .collect();
-        assert_eq!(all.len(), 31, "{time_signature}");
+    // The docs do not depend on the time signatures. A project whose time signature changes
+    // is the harder case for the examples written into it.
+    let mut harness = Harness::new();
+    let time_signatures: TimeSignatures = serde_json::from_str(
+        r#"[{"signature": "6/8", "bars": 3}, {"signature": "7/4", "bars": 1}]"#,
+    )
+    .unwrap();
+    let mut changes = Changes::new();
+    changes.set_tempo_map(TempoMap::constant(time_signatures, Tempo::default()));
+    harness
+        .project
+        .commit("Set time signature", changes)
+        .unwrap();
+    harness.project.poll().unwrap();
+    let all: Vec<(String, String)> = map_and_docs(&harness)
+        .iter()
+        .flat_map(|(_, text)| json_examples(text))
+        .collect();
+    assert_eq!(all.len(), 31);
 
-        // The raw take of a recording is not a record: it is an asset the runtime writes once
-        // and never reads back. Its example is checked as the file it is.
-        let (assets, examples): (Vec<_>, Vec<_>) = all
-            .into_iter()
-            .partition(|(path, _)| path.starts_with("assets/"));
-        assert_eq!(assets.len(), 1, "{time_signature}");
-        for (path, body) in &assets {
-            let raw: sound_notes::RawTake = serde_json::from_str(body).unwrap();
-            // The bytes are those the runtime writes, so an agent reads the real thing.
-            assert_eq!(&raw.json(), body, "{path}");
-            // A take lives under its own name, which no clip id decides.
-            let folder = format!("{}/", sound_notes::TAKES_FOLDER);
-            let name = path
-                .strip_prefix(&folder)
-                .and_then(|it| it.strip_suffix(".json"));
-            let name = name.unwrap_or_else(|| panic!("{path} is not a take file"));
-            assert!(sound_notes::Clip::is_valid_take_name(name), "{name}");
-        }
+    // The raw take of a recording is not a record: it is an asset the runtime writes once
+    // and never reads back. Its example is checked as the file it is.
+    let (assets, examples): (Vec<_>, Vec<_>) = all
+        .into_iter()
+        .partition(|(path, _)| path.starts_with("assets/"));
+    assert_eq!(assets.len(), 1);
+    for (path, body) in &assets {
+        let raw: sound_notes::RawTake = serde_json::from_str(body).unwrap();
+        // The bytes are those the runtime writes, so an agent reads the real thing.
+        assert_eq!(&raw.json(), body, "{path}");
+        // A take lives under its own name, which no clip id decides.
+        let folder = format!("{}/", sound_notes::TAKES_FOLDER);
+        let name = path
+            .strip_prefix(&folder)
+            .and_then(|it| it.strip_suffix(".json"));
+        let name = name.unwrap_or_else(|| panic!("{path} is not a take file"));
+        assert!(sound_notes::Clip::is_valid_take_name(name), "{name}");
+    }
 
-        // They are written into an empty folder and are a project that loads whole.
-        let folder = tempfile::tempdir().unwrap();
-        for (path, body) in &examples {
-            assert!(
-                !path.is_empty(),
-                "an example does not name its file: {body}"
-            );
-            write(folder.path(), path, body);
-        }
-        // The files the audio clip of its doc, the Sampler of its doc and the sample pad of
-        // the drums play, which an agent copies in before it writes the record. Five seconds,
-        // as the clip plays up to 4.5 s of it.
-        for name in ["voice-take-1.wav", "kalimba.wav", "shaker.wav"] {
-            let audio = folder.path().join("assets/audio").join(name);
-            std::fs::create_dir_all(audio.parent().unwrap()).unwrap();
-            let spec = hound::WavSpec {
-                channels: 1,
-                sample_rate: 48_000,
-                bits_per_sample: 16,
-                sample_format: hound::SampleFormat::Int,
-            };
-            let mut writer = hound::WavWriter::create(&audio, spec).unwrap();
-            for _ in 0..5 * 48_000 {
-                writer.write_sample(0_i16).unwrap();
-            }
-            writer.finalize().unwrap();
-        }
-        let mut copy = Harness::open(folder);
-        // The plugin doc names a plugin no machine is expected to have. That is the case its
-        // doc describes: the record loads, the track is silent and the problem names the id.
-        let problems: Vec<String> = copy
-            .project
-            .problems()
-            .into_iter()
-            .map(|problem| format!("{}: {}", problem.path, problem.message))
-            .collect();
-        // Every plugin the docs name is one no machine is expected to have: two instruments,
-        // one per format, and the effect of the arrangement doc.
-        let expected = [
-            "state/arrangement/piano/warmth.json: this machine has no CLAP plugin with the id \"com.example.warmth\"",
-            "state/arrangement/rhodes/instrument.json: this machine has no CLAP plugin with the id \"com.example.piano\"",
-            "state/arrangement/strings/instrument.json: this machine has no VST 3 plugin",
-        ];
-        assert_eq!(problems.len(), 3, "{time_signature}: {problems:?}");
-        for (problem, expected) in problems.iter().zip(expected) {
-            assert!(problem.starts_with(expected), "{problems:?}");
-        }
-        // The piano is written twice, the second time silenced with `"-inf"` and its warmth
-        // bypassed, and that is what loaded.
-        let piano = copy
-            .project
-            .resolve::<arrangement::TrackState>(
-                &sound_core::InstanceId::new("arrangement/piano").unwrap(),
-            )
-            .unwrap();
-        let piano = copy.project.state(&piano).unwrap();
-        assert_eq!(piano.gain_db, f32::NEG_INFINITY);
-        assert_eq!(piano.bypassed("warmth"), Some(true));
-        let instances: Vec<String> = copy
-            .project
-            .instances()
-            .map(|(id, _)| id.to_string())
-            .collect();
-        assert_eq!(
-            instances,
-            [
-                "arrangement",
-                "arrangement/bass",
-                "arrangement/bass/dark",
-                "arrangement/beat",
-                "arrangement/beat/groove",
-                "arrangement/beat/instrument",
-                "arrangement/drums",
-                "arrangement/drums/glue",
-                "arrangement/kalimba",
-                "arrangement/kalimba/instrument",
-                "arrangement/keys",
-                "arrangement/keys/room",
-                "arrangement/piano",
-                "arrangement/piano/chords-bars-5-8",
-                "arrangement/piano/instrument",
-                "arrangement/piano/take-1",
-                "arrangement/piano/warmth",
-                "arrangement/rhodes",
-                "arrangement/rhodes/instrument",
-                "arrangement/strings",
-                "arrangement/strings/instrument",
-                "arrangement/vocal",
-                "arrangement/vocal/clear",
-                "arrangement/voice",
-                "arrangement/voice/verse-take",
-                "drone",
-                "fit-tempo",
-            ]
-        );
-
-        // The runtime writes every file again: delete all, undo, and a tempo edit with its
-        // undo. The bytes are those of the examples, so an agent that copies their layout
-        // makes no whitespace diff.
-        let mut changes = Changes::new();
-        changes.delete(&InstanceId::new("arrangement").unwrap());
-        changes.delete(&InstanceId::new("drone").unwrap());
-        changes.set_tempo_map(TempoMap::constant(
-            signature,
-            Tempo::from_bpm(90.0).unwrap(),
-        ));
-        copy.project.commit("Delete all", changes).unwrap();
+    // They are written into an empty folder and are a project that loads whole.
+    let folder = tempfile::tempdir().unwrap();
+    for (path, body) in &examples {
         assert!(
-            !copy
-                .path("state/arrangement")
-                .join("instance.json")
-                .exists()
+            !path.is_empty(),
+            "an example does not name its file: {body}"
         );
-        copy.project.undo().unwrap();
-        // A file two examples write, as the piano with its warmth bypassed, holds the last.
-        let last: std::collections::BTreeMap<&String, &String> =
-            examples.iter().map(|(path, body)| (path, body)).collect();
-        for (path, body) in last {
-            let written = std::fs::read_to_string(copy.path(path)).unwrap();
-            assert_eq!(&written, body, "{path} in {time_signature}");
+        write(folder.path(), path, body);
+    }
+    // The files the audio clip of its doc, the Sampler of its doc and the sample pad of
+    // the drums play, which an agent copies in before it writes the record. Five seconds,
+    // as the clip plays up to 4.5 s of it.
+    for name in ["voice-take-1.wav", "kalimba.wav", "shaker.wav"] {
+        let audio = folder.path().join("assets/audio").join(name);
+        std::fs::create_dir_all(audio.parent().unwrap()).unwrap();
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&audio, spec).unwrap();
+        for _ in 0..5 * 48_000 {
+            writer.write_sample(0_i16).unwrap();
         }
+        writer.finalize().unwrap();
+    }
+    let mut copy = Harness::open(folder);
+    // The plugin doc names a plugin no machine is expected to have. That is the case its
+    // doc describes: the record loads, the track is silent and the problem names the id.
+    let problems: Vec<String> = copy
+        .project
+        .problems()
+        .into_iter()
+        .map(|problem| format!("{}: {}", problem.path, problem.message))
+        .collect();
+    // Every plugin the docs name is one no machine is expected to have: two instruments,
+    // one per format, and the effect of the arrangement doc.
+    let expected = [
+        "state/arrangement/piano/warmth.json: this machine has no CLAP plugin with the id \"com.example.warmth\"",
+        "state/arrangement/rhodes/instrument.json: this machine has no CLAP plugin with the id \"com.example.piano\"",
+        "state/arrangement/strings/instrument.json: this machine has no VST 3 plugin",
+    ];
+    assert_eq!(problems.len(), 3, "{problems:?}");
+    for (problem, expected) in problems.iter().zip(expected) {
+        assert!(problem.starts_with(expected), "{problems:?}");
+    }
+    // The piano is written twice, the second time silenced with `"-inf"` and its warmth
+    // bypassed, and that is what loaded.
+    let piano = copy
+        .project
+        .resolve::<arrangement::TrackState>(
+            &sound_core::InstanceId::new("arrangement/piano").unwrap(),
+        )
+        .unwrap();
+    let piano = copy.project.state(&piano).unwrap();
+    assert_eq!(piano.gain_db, f32::NEG_INFINITY);
+    assert_eq!(piano.bypassed("warmth"), Some(true));
+    let instances: Vec<String> = copy
+        .project
+        .instances()
+        .map(|(id, _)| id.to_string())
+        .collect();
+    assert_eq!(
+        instances,
+        [
+            "arrangement",
+            "arrangement/bass",
+            "arrangement/bass/dark",
+            "arrangement/beat",
+            "arrangement/beat/groove",
+            "arrangement/beat/instrument",
+            "arrangement/drums",
+            "arrangement/drums/glue",
+            "arrangement/kalimba",
+            "arrangement/kalimba/instrument",
+            "arrangement/keys",
+            "arrangement/keys/room",
+            "arrangement/piano",
+            "arrangement/piano/chords-bars-5-8",
+            "arrangement/piano/instrument",
+            "arrangement/piano/take-1",
+            "arrangement/piano/warmth",
+            "arrangement/rhodes",
+            "arrangement/rhodes/instrument",
+            "arrangement/strings",
+            "arrangement/strings/instrument",
+            "arrangement/vocal",
+            "arrangement/vocal/clear",
+            "arrangement/voice",
+            "arrangement/voice/verse-take",
+            "drone",
+            "fit-tempo",
+        ]
+    );
+
+    // The runtime writes every file again: delete all, undo, and a tempo edit with its
+    // undo. The bytes are those of the examples, so an agent that copies their layout
+    // makes no whitespace diff.
+    let mut changes = Changes::new();
+    changes.delete(&InstanceId::new("arrangement").unwrap());
+    changes.delete(&InstanceId::new("drone").unwrap());
+    let time_signatures = copy.project.project_file().tempo_map.time_signatures();
+    changes.set_tempo_map(TempoMap::constant(
+        time_signatures.clone(),
+        Tempo::from_bpm(90.0).unwrap(),
+    ));
+    copy.project.commit("Delete all", changes).unwrap();
+    assert!(
+        !copy
+            .path("state/arrangement")
+            .join("instance.json")
+            .exists()
+    );
+    copy.project.undo().unwrap();
+    // A file two examples write, as the piano with its warmth bypassed, holds the last.
+    let last: std::collections::BTreeMap<&String, &String> =
+        examples.iter().map(|(path, body)| (path, body)).collect();
+    for (path, body) in last {
+        let written = std::fs::read_to_string(copy.path(path)).unwrap();
+        assert_eq!(&written, body, "{path}");
     }
 }
 

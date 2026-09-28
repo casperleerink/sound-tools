@@ -3,8 +3,8 @@
 //! The click is not music. It has no record, no tool and no undo step, so a project from
 //! before it existed gets one without anyone editing its files, and `--render` never contains
 //! it: only a window attaches a [`Click`]. The processor reads the beats from the transport's
-//! clock, so it follows every tempo change and every time signature by itself and keeps no
-//! copy of the tempo map.
+//! clock, so it follows every tempo change and the time signature of every bar by itself and
+//! keeps no copy of the tempo map.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), sound_core::GraphError> {
@@ -98,12 +98,13 @@ struct Burst {
     amplitude: f32,
 }
 
-/// Clicks the beats of the project's tempo map. A beat is the note value of the time
-/// signature's lower number, and the first beat of a bar sounds higher than the rest.
+/// Clicks the beats of the project's tempo map. A beat is the note value of the lower number
+/// of its bar's time signature, so 7/8 clicks every eighth and 3/16 every sixteenth. The first
+/// beat of every bar sounds higher than the rest.
 ///
 /// It holds no tempo map: every block it asks the transport which ticks it covers and the
 /// clock on which frame each of them lands. So a tempo change, a tempo map written from
-/// outside and another time signature all need no update at all.
+/// outside and a change of time signature all need no update at all.
 pub struct Metronome {
     on: bool,
     burst: Burst,
@@ -194,17 +195,10 @@ impl Processor for Metronome {
             self.fade.set_target(0.0, self.fade_frames);
             self.fading = true;
         }
-        let time_signature = transport.clock.tempo_map().time_signature();
-        let ticks_per_beat = time_signature.ticks_per_beat();
-        let ticks_per_bar = time_signature.ticks_per_bar();
-        let mut beat = transport
-            .tick_range
-            .start
-            .0
-            .div_ceil(ticks_per_beat)
-            .saturating_mul(ticks_per_beat);
+        let time_signatures = transport.clock.tempo_map().time_signatures();
+        let (mut beat, mut downbeat) = time_signatures.beat_from(transport.tick_range.start);
         let mut onset = match self.on {
-            true => transport.offset_of(Ticks(beat)),
+            true => transport.offset_of(beat),
             false => None,
         };
         if onset.is_none() && self.burst.frames_left == 0 {
@@ -215,9 +209,9 @@ impl Processor for Metronome {
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);
         for (frame, sample) in left.iter_mut().enumerate() {
             while onset == Some(frame) {
-                self.strike(beat.is_multiple_of(ticks_per_bar));
-                beat = beat.saturating_add(ticks_per_beat);
-                onset = transport.offset_of(Ticks(beat));
+                self.strike(downbeat);
+                (beat, downbeat) = time_signatures.beat_from(beat + Ticks(1));
+                onset = transport.offset_of(beat);
             }
             *sample = self.next_sample();
         }

@@ -73,11 +73,15 @@ fn print_events(project: &mut Project) {
 }
 
 fn print_status(project: &mut Project, status: &EngineStatus) {
-    let time_signature = project.engine().clock().tempo_map().time_signature();
+    let clock = project.engine().clock();
+    let position = clock
+        .tempo_map()
+        .time_signatures()
+        .bar_beat_of(status.playhead_tick);
     println!(
         "status: {}, playhead {} (tick {}), {} edits applied, {} events dropped, undo: {}, redo: {}",
         if status.playing { "playing" } else { "stopped" },
-        time_signature.bar_beat_of(status.playhead_tick),
+        position,
         status.playhead_tick.0,
         status.batches_applied,
         status.event_overflows,

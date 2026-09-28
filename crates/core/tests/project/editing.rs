@@ -553,3 +553,31 @@ fn cancelling_a_tempo_gesture_leaves_what_the_file_holds() {
     );
     assert_eq!(harness.project.undo_label(), Some("File change"));
 }
+
+/// A project from before time signatures could change has one `time_signature` for the whole
+/// piece. It loads as one run and is written as the list the next time `project.json` is saved.
+#[test]
+fn a_project_with_one_time_signature_is_written_with_the_list() {
+    let mut harness = Harness::new();
+    let old = crate::tools::project_file("");
+    assert!(old.contains(r#""time_signature": "4/4""#));
+    harness.write_and_apply("project.json", &old);
+    assert_eq!(harness.project.problems(), []);
+    let time_signatures = harness.project.project_file().tempo_map.time_signatures();
+    assert_eq!(time_signatures, &sound_core::TimeSignatures::default());
+
+    let tempo_map = harness.project.project_file().tempo_map.clone();
+    let tempo_map = tempo_map.with_tempo_at(
+        sound_core::Ticks(0),
+        sound_core::Tempo::from_bpm(90.0).unwrap(),
+    );
+    let mut changes = Changes::new();
+    changes.set_tempo_map(tempo_map.unwrap());
+    harness.project.commit("Tempo", changes).unwrap();
+    let written = harness.read("project.json");
+    assert!(
+        written.contains(r#""time_signatures": [{"signature": "4/4", "bars": 1}]"#),
+        "{written}"
+    );
+    assert!(!written.contains(r#""time_signature":"#), "{written}");
+}

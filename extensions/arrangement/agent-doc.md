@@ -22,19 +22,19 @@ To see what plays where, list a track folder and read `start` and `length` of it
 {
   "tool": "arrangement.clip",
   "state": {
-    "start": {{bar_5_start}},
-    "length": {{four_bars}},
+    "start": 15360,
+    "length": 15360,
     "notes": [
-      {"start": 0, "length": {{ticks_per_bar}}, "pitch": 48, "velocity": 90},
-      {"start": 0, "length": {{ticks_per_bar}}, "pitch": 64, "velocity": 80},
-      {"start": 0, "length": {{ticks_per_bar}}, "pitch": 67, "velocity": 80},
-      {"start": {{ticks_per_bar}}, "length": {{ticks_per_beat}}, "pitch": 53, "velocity": 90}
+      {"start": 0, "length": 3840, "pitch": 48, "velocity": 90},
+      {"start": 0, "length": 3840, "pitch": 64, "velocity": 80},
+      {"start": 0, "length": 3840, "pitch": 67, "velocity": 80},
+      {"start": 3840, "length": 960, "pitch": 53, "velocity": 90}
     ]
   }
 }
 ```
 
-This clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one F on the first beat of bar 6.
+In 4/4 this clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one F on the first beat of bar 6. In another time signature, work out the ticks of the bars from `project.json`, as `AGENTS.md` says.
 
 - `start`: where the clip starts in the project, in ticks. `length`: how long it is, 1 tick or more.
 - `notes[].start` counts from the start of the clip, not of the project: 0 is the first tick of the clip. Every note starts inside the clip, so below the clip `length`. Else the file does not load.
@@ -54,7 +54,7 @@ A clip the composer recorded from a keyboard has a `pedal` list as well. Leave i
   "tool": "arrangement.clip",
   "state": {
     "start": 0,
-    "length": {{four_bars}},
+    "length": 15360,
     "notes": [
       {"start": 0, "length": 900, "pitch": 60, "velocity": 88},
       {"start": 940, "length": 880, "pitch": 64, "velocity": 76}

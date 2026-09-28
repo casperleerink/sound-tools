@@ -25,7 +25,7 @@ use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 
 use super::clipboard::{Copied, CopiedNotes, SharedClipboard};
 use super::gesture::Zone;
-use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, Viewport};
+use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, RulerBar, Viewport};
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
 };
@@ -37,7 +37,7 @@ use super::roll::{
 };
 use super::scrolled_or_zoomed;
 use super::selection::Selection;
-use super::snap::{Grid, SharedSnap, snap, snapped_delta};
+use super::snap::{Grid, SharedSnap};
 use crate::{TrackState, preview_note};
 
 /// What the editor asks of the view that holds it.
@@ -403,16 +403,16 @@ impl NoteEditor {
         let Some(clip) = project.state(&self.clip) else {
             return viewport;
         };
-        let time_signature = project.project_file().tempo_map.time_signature();
+        let time_signatures = project.project_file().tempo_map.time_signatures();
         let width = self.painted_width.get();
-        clamped(&viewport, clip, time_signature, width, ROLL_HEIGHT)
+        clamped(&viewport, clip, time_signatures, width, ROLL_HEIGHT)
     }
 
-    /// The grid of the snap setting in the time signature of the project.
+    /// The grid of the snap setting over the time signatures of the project.
     fn grid(&self, cx: &App) -> Grid {
         let project = self.session.read(cx).project();
-        let time_signature = project.project_file().tempo_map.time_signature();
-        self.snap.get().grid(time_signature)
+        let time_signatures = project.project_file().tempo_map.time_signatures();
+        self.snap.get().grid(time_signatures)
     }
 
     /// The position of a mouse event in the coordinates of [`super::roll`].
@@ -441,7 +441,7 @@ impl NoteEditor {
         let grid = self.grid(cx);
         if y < 0.0 {
             if x >= 0.0 {
-                let tick = snap(viewport.tick_at(x), grid.step);
+                let tick = grid.snap(viewport.tick_at(x));
                 self.session
                     .update(cx, |session, _| session.engine().seek(tick));
             }
@@ -592,7 +592,7 @@ impl NoteEditor {
         grid: Grid,
         cx: &mut Context<Self>,
     ) {
-        let Some(note) = drawn_note(&clip, pointer, pointer, pitch, grid) else {
+        let Some(note) = drawn_note(&clip, pointer, pointer, pitch, &grid) else {
             return;
         };
         // The start the grid gave at the press, as a project tick. Every move draws from it,
@@ -723,19 +723,23 @@ impl NoteEditor {
         let next: Vec<Note> = match &drag.kind {
             NoteDragKind::Draw { down } => {
                 let origin = origins[0];
-                vec![drawn_note(&clip, *down, pointer, origin.pitch, grid).unwrap_or(origin)]
+                vec![drawn_note(&clip, *down, pointer, origin.pitch, &grid).unwrap_or(origin)]
             }
             NoteDragKind::Move {
-                grab, grab_pitch, ..
+                grab,
+                grab_pitch,
+                grabbed,
             } => {
                 let semitones = i32::from(nearest_pitch(&viewport, y).number())
                     - i32::from(grab_pitch.number());
-                let delta = snapped_delta(*grab, pointer, grid.step);
+                let delta = grid.delta(clip.start + grabbed.start, *grab, pointer);
                 moved_notes(clip.length, &origins, delta, semitones)
             }
             NoteDragKind::Resize { grab } => {
-                let delta = snapped_delta(*grab, pointer, grid.step);
-                vec![resized_note(clip.length, origins[0], delta, grid.unit)]
+                let origin = origins[0];
+                let end = clip.start + origin.end();
+                let delta = grid.delta(end, *grab, pointer);
+                vec![resized_note(clip.length, origin, delta, grid.unit_at(end))]
             }
             NoteDragKind::Velocity { grab } => {
                 let dy = y - ROLL_HEIGHT - grab;
@@ -961,14 +965,16 @@ impl NoteEditor {
         if selected.is_empty() {
             return false;
         }
-        let step = self.grid(cx).unit.0 as i64;
+        let grid = self.grid(cx);
+        let earliest = selected.iter().map(|(_, note)| note.start).min();
+        let anchor = clip.start + earliest.unwrap_or_default();
         let (delta, semitones) = match (key, shift) {
             ("backspace" | "delete", false) => {
                 self.delete(&clip, &selected, "Delete note", "Delete notes", cx);
                 return true;
             }
-            ("left", false) => (-step, 0),
-            ("right", false) => (step, 0),
+            ("left", false) => (grid.nudge(anchor, false), 0),
+            ("right", false) => (grid.nudge(anchor, true), 0),
             ("up", false) => (0, 1),
             ("down", false) => (0, -1),
             ("up", true) => (0, 12),
@@ -1160,10 +1166,10 @@ impl NoteEditor {
         let track = track.and_then(|track| project.resolve::<TrackState>(&track));
         let track = track.and_then(|track| project.state(&track));
         let theme = cx.theme();
-        let time_signature = project.project_file().tempo_map.time_signature();
+        let time_signatures = project.project_file().tempo_map.time_signatures();
         let width = f32::from(bounds.size.width) - HEADER_WIDTH;
         let height = f32::from(bounds.size.height) - RULER_HEIGHT - VELOCITY_HEIGHT;
-        let viewport = clamped(&self.viewport, clip, time_signature, width, height);
+        let viewport = clamped(&self.viewport, clip, time_signatures, width, height);
         // Only what shows: a long clip has many notes and the editor shows a few bars of it.
         let ticks = viewport.visible_ticks(width);
         let pitches = visible_pitches(&viewport, height);
@@ -1186,8 +1192,8 @@ impl NoteEditor {
                 .unwrap_or_default()
                 .into(),
             accent: track.map_or(theme.blue, |track| accent(track.colour, theme)),
-            bars: viewport.ruler_bars(time_signature, width).collect(),
-            beats: viewport.beat_lines(time_signature, width).collect(),
+            bars: viewport.ruler_bars(time_signatures, width),
+            beats: viewport.beat_lines(time_signatures, width),
             clip_start: viewport.x_of(clip.start).clamp(0.0, width),
             clip_end: viewport.x_of(clip.end()).clamp(0.0, width),
             notes: visible
@@ -1267,7 +1273,7 @@ struct RollScene {
     height: f32,
     track_name: SharedString,
     accent: Hsla,
-    bars: Vec<(u64, f32)>,
+    bars: Vec<RulerBar>,
     beats: Vec<f32>,
     /// The part of the note area that is inside the clip.
     clip_start: f32,
@@ -1361,8 +1367,8 @@ fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx
         for x in &scene.beats {
             window.paint_quad(fill(upright(*x, area.origin, height), beat_line));
         }
-        for (_, x) in &scene.bars {
-            window.paint_quad(fill(upright(*x, area.origin, height), hairline));
+        for bar in &scene.bars {
+            window.paint_quad(fill(upright(bar.x, area.origin, height), hairline));
         }
         paint_veils(area.origin, height, window);
         // A selected note is filled with the text colour, which is the lightest there is, and
@@ -1391,8 +1397,8 @@ fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx
     // The lane: a bar at the start of each note in the track colour at 70 %, the selected ones
     // in the text colour and on top.
     window.with_content_mask(Some(ContentMask { bounds: lane }), |window| {
-        for (_, x) in &scene.bars {
-            window.paint_quad(fill(upright(*x, lane.origin, VELOCITY_HEIGHT), hairline));
+        for bar in &scene.bars {
+            window.paint_quad(fill(upright(bar.x, lane.origin, VELOCITY_HEIGHT), hairline));
         }
         paint_veils(lane.origin, VELOCITY_HEIGHT, window);
         let bar_color = scene.accent.opacity(0.7);
