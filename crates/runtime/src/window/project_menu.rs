@@ -1,7 +1,7 @@
-//! The project menu: the project name top-left as a quiet menu. Add an instrument track or an
-//! audio track, export the project or the selected clips as a WAV, undo and redo with what
-//! they would do, the output device by name, another
-//! project, the project folder in the Finder or in a terminal, and the command line tool. The
+//! The project menu: the project name top-left as a quiet menu. Fit the tempo to a take,
+//! export the project or the selected clips as a WAV, undo and redo with what they would do,
+//! the output device by name, another project, the project folder in the Finder or in a
+//! terminal, and the command line tool. The
 //! terminal is where the composer starts a coding agent on the project, and the tool is what
 //! that agent runs to read the whole piece.
 
@@ -19,10 +19,8 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::{Session, extension_is_enabled};
 
 use crate::app::{self, Installed};
-use crate::{add_audio_track, add_track, main_arrangement};
+use crate::main_arrangement;
 
-const ADD_TRACK: &str = "add-track";
-const ADD_AUDIO_TRACK: &str = "add-audio-track";
 const FIT_TEMPO: &str = "fit-tempo";
 const EXPORT: &str = "export";
 const EXPORT_SELECTION: &str = "export-selection";
@@ -142,16 +140,6 @@ impl ProjectMenu {
         // An error from any of these shows as the notice of the session.
         self.session
             .update(cx, |session, cx| match picked.0.as_ref() {
-                ADD_TRACK => {
-                    if let Some(arrangement) = main_arrangement(session.project()) {
-                        session.edit(cx, |project| add_track(project, &arrangement));
-                    }
-                }
-                ADD_AUDIO_TRACK => {
-                    if let Some(arrangement) = main_arrangement(session.project()) {
-                        session.edit(cx, |project| add_audio_track(project, &arrangement));
-                    }
-                }
                 FIT_TEMPO => fit_tempo_to_take(session, cx),
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
@@ -455,12 +443,6 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
             .disabled(label.is_none())
     };
     vec![
-        // A track is an instrument track or an audio track, chosen when it is made.
-        MenuEntry::Group(MenuGroup::new().label("Add track").items([
-            command(ADD_TRACK, "Instrument track".to_string()).disabled(!shown.has_arrangement),
-            command(ADD_AUDIO_TRACK, "Audio track".to_string()).disabled(!shown.has_arrangement),
-        ])),
-        MenuEntry::Separator,
         MenuEntry::Group(
             MenuGroup::new().items([
                 // The fit belongs to the whole project: it rewrites the tempo map every other

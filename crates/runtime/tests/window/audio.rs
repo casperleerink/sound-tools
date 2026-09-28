@@ -629,13 +629,13 @@ fn a_file_that_is_no_audio_is_left_out_and_said(cx: &mut TestAppContext) {
 // Adding an audio track.
 
 #[gpui::test]
-fn the_project_menu_adds_an_audio_track(cx: &mut TestAppContext) {
+fn the_menu_of_the_add_track_button_adds_an_audio_track(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let before = mark(&mut opened);
-    opened.keys("tab");
-    opened.press_enter();
-    opened.keys("down down");
-    opened.press_enter();
+    let chevron = opened.control("add-track-menu");
+    opened.click(chevron);
+    let audio = opened.control("menu-audio-track");
+    opened.click(audio);
     let tracks = opened.project(|project| {
         let arrangement = runtime::main_arrangement(project).unwrap();
         let tracks = arrangement::tracks(project, arrangement.id());

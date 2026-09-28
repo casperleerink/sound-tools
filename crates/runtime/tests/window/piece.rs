@@ -31,11 +31,9 @@ fn rendered(folder: &std::path::Path) -> Vec<f32> {
 fn a_short_piece_is_made_by_hand_and_is_there_after_closing_and_opening(cx: &mut TestAppContext) {
     let mut opened = support::open_with(cx, |_| {});
 
-    // A second track, from the project menu with the keys: open it, go to the first item.
-    opened.keys("tab");
-    opened.press_enter();
-    opened.keys("down");
-    opened.press_enter();
+    // A second track, from the add track button under the first.
+    let add = opened.control("add-track");
+    opened.click(add);
     assert_eq!(opened.undo_label().as_deref(), Some("Add track"));
     let tracks = opened.project(|project| {
         let arrangement = runtime::main_arrangement(project).unwrap();

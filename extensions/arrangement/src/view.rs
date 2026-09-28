@@ -21,6 +21,7 @@
 //! what is on screen. Every change goes through the session: a drag is one gesture and one
 //! undo step.
 
+mod add_track;
 pub mod clip_card;
 pub mod clipboard;
 pub mod clips;
@@ -42,9 +43,12 @@ use gpui::{
 };
 use sound_core::{Instance, InstanceId, ProjectEvent};
 use sound_notes::Clip;
+use sound_ui::components::dropdown_menu::DropdownMenu;
 use sound_ui::{ActiveTheme, KeyboardFocus, Session, Views};
 
 use crate::{ArrangementState, TrackState};
+pub use add_track::AddTrack;
+use add_track::AddTrackButton;
 use clipboard::SharedClipboard;
 use editor::EditorEvent;
 pub use editor::NoteEditor;
@@ -60,9 +64,11 @@ pub use timeline::{ClipShape, DropTarget, Scene, Timeline, TimelineEvent};
 pub use track_panel::TrackPanel;
 use track_panel::TrackPanelEvent;
 
-/// Registers the view of the `arrangement` tool.
-pub fn register(views: &mut Views) {
-    views.register(ArrangementView::new);
+/// Registers the view of the `arrangement` tool. Its add track button calls `add_track`.
+pub fn register(views: &mut Views, add_track: AddTrack) {
+    views.register(move |session, arrangement, window, cx| {
+        ArrangementView::new(session, arrangement, add_track, window, cx)
+    });
 }
 
 /// The note editor while it is open, with its own playhead line.
@@ -100,6 +106,7 @@ pub struct ArrangementView {
     playhead_line: Entity<PlayheadLine>,
     /// The arm toggles, input meters and growing takes over the timeline.
     recording_overlay: Entity<RecordingOverlay>,
+    add_track_button: Entity<AddTrackButton>,
     detail: Option<Detail>,
     /// The snap setting of the window, shared by the timeline and the note editor.
     snap: SharedSnap,
@@ -114,6 +121,7 @@ impl ArrangementView {
     pub fn new(
         session: Entity<Session>,
         arrangement: Instance<ArrangementState>,
+        add_track: AddTrack,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -127,6 +135,10 @@ impl ArrangementView {
         let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, painted, cx));
         let recording_overlay =
             cx.new(|cx| RecordingOverlay::new(session.clone(), timeline.clone(), cx));
+        let add_track_button = cx.new(|cx| {
+            let (session, arrangement) = (session.clone(), arrangement.clone());
+            AddTrackButton::new(session, arrangement, timeline.clone(), add_track, cx)
+        });
 
         cx.subscribe_in(
             &timeline,
@@ -182,6 +194,7 @@ impl ArrangementView {
             timeline,
             playhead_line,
             recording_overlay,
+            add_track_button,
             detail: None,
             snap,
             clipboard,
@@ -192,6 +205,11 @@ impl ArrangementView {
 
     pub fn timeline(&self) -> &Entity<Timeline> {
         &self.timeline
+    }
+
+    /// The menu of the add track button: an instrument or an audio track.
+    pub fn add_track_menu(&self, cx: &App) -> Entity<DropdownMenu> {
+        self.add_track_button.read(cx).menu(cx)
     }
 
     /// The note editor, while it is open.
@@ -496,6 +514,7 @@ impl Render for ArrangementView {
                     // Cached: a frame that only moves the playhead reuses what was painted.
                     .child(timeline.cached(fill_parent()))
                     .child(self.recording_overlay.clone())
+                    .child(self.add_track_button.clone())
                     .child(self.playhead_line.clone()),
             )
             .child(master_row)

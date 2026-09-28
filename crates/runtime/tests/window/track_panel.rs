@@ -184,10 +184,10 @@ fn the_keys_select_a_track_open_its_panel_and_close_it(cx: &mut TestAppContext) 
     opened.keys("up");
     assert_eq!(opened.panel_track(), Some(id(TRACK)));
 
-    // Tab goes past the snap setting and the master row into the panel: the close control,
-    // the volume, the pan, mute and solo of the track, the picker and the expand icon of the
-    // card, the waveform, then the first knob.
-    for _ in 0..10 {
+    // Tab goes past the snap setting, the add track button and the master row into the panel:
+    // the close control, the volume, the pan, mute and solo of the track, the picker and the
+    // expand icon of the card, the waveform, then the first knob.
+    for _ in 0..12 {
         opened.keys("tab");
     }
     opened.keys("right");
@@ -1157,9 +1157,9 @@ fn tab_reaches_the_master_row_and_enter_opens_its_panel(cx: &mut TestAppContext)
     let mut opened = open(cx);
     let place = opened.at(BAR, 0);
     opened.click(place);
-    // Past the snap setting, which comes right after the timeline.
-    opened.keys("tab");
-    opened.keys("tab");
+    // Past the snap setting, which comes right after the timeline, and the two halves of the
+    // add track button.
+    opened.keys("tab tab tab tab");
     opened.press_enter();
     assert!(opened.master_panel().is_some());
     // The volume of the master is the next stop after the close icon of the panel.

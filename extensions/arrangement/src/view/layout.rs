@@ -12,6 +12,8 @@ use sound_notes::Clip;
 pub const HEADER_WIDTH: f32 = 176.0;
 pub const RULER_HEIGHT: f32 = 32.0;
 pub const TRACK_HEIGHT: f32 = 64.0;
+/// The row under the last track that holds the add track button. The scroll reaches it.
+pub const ADD_ROW_HEIGHT: f32 = 40.0;
 /// Tick 0 sits this far into the timeline area, so the start of the piece, its bar number and
 /// the playhead at rest are clear of the track headers.
 pub const LEAD_IN: f32 = 8.0;
@@ -180,7 +182,8 @@ impl Viewport {
 
     /// Keeps the scroll inside the content for a timeline area of this size. The view paints
     /// with the clamped viewport, so a shrinking project or a growing window never shows a
-    /// position that the next scroll would jump away from.
+    /// position that the next scroll would jump away from. The content is the tracks and the
+    /// row of the add track button under them.
     pub fn clamped(
         &self,
         extent: Extent,
@@ -188,7 +191,8 @@ impl Viewport {
         width: f32,
         height: f32,
     ) -> Self {
-        let content_height = extent.tracks as f64 * f64::from(TRACK_HEIGHT);
+        let rows = extent.tracks as f64 * f64::from(TRACK_HEIGHT);
+        let content_height = rows + f64::from(ADD_ROW_HEIGHT);
         self.clamped_to(extent.end, content_height, time_signature, width, height)
     }
 
@@ -470,9 +474,10 @@ mod tests {
         };
         let far = Viewport::default().scrolled(-100_000.0, -100_000.0);
         let clamped = far.clamped(extent, four_four(), 960.0, 320.0);
-        // The lead-in, 8 bars and 16 bars of room are 2312 px. 10 rows are 640 px.
+        // The lead-in, 8 bars and 16 bars of room are 2312 px. 10 rows and the row of the add
+        // track button are 680 px.
         assert_eq!(clamped.scroll_x, 2312.0 - 960.0);
-        assert_eq!(clamped.scroll_y, 640.0 - 320.0);
+        assert_eq!(clamped.scroll_y, 680.0 - 320.0);
 
         let before_start = Viewport::default().scrolled(50.0, 50.0);
         assert_eq!(

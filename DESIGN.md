@@ -67,8 +67,6 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Anywhere | tab, shift-tab | Move the focus: project menu, transport, arrangement, the panel below |
 | Anywhere | cmd-q | Quit. There is no save: every finished edit is already in the folder |
 | A MIDI keyboard | any key, the sustain pedal | Play the instrument of the selected track, whether the project plays or not |
-| Project menu | Add track, Instrument track | A new track with a synth |
-| Project menu | Add track, Audio track | A new empty audio track |
 | Project menu | Fit tempo to take | Fit the tempo map to the take of the selected clip, so bar lines land on the beats as played |
 | Project menu | Undo, Redo | Named after the step they undo or redo |
 | Project menu | Output device | Shows the device the app plays on |
@@ -88,6 +86,8 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Ruler | click a tempo mark | Select it and move the playhead onto it. The transport tempo then edits it |
 | Arrangement | delete or backspace, with a tempo mark selected | Remove that tempo change. Escape lets go of it |
 | Arrangement | Snap select | Off, Bar, Beat, 1/8, 1/16 or 1/32. Not saved |
+| Arrangement | Add track, under the last track header | A new track with a synth |
+| Arrangement | the chevron next to Add track: Instrument track, Audio track | A new track with a synth, or a new empty audio track |
 | Arrangement, note editor | scroll; cmd-scroll or pinch | Pan; zoom in time about the pointer |
 | Arrangement | double click on empty space of an instrument track | Add a clip of one bar. Audio clips come from files only |
 | Arrangement | click; shift-click or cmd-click on a clip | Select it; add it to the selection or take it out |

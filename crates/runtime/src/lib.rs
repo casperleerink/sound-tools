@@ -10,7 +10,7 @@ pub mod window;
 use std::path::Path;
 
 use anyhow::Result;
-use arrangement::{ArrangementState, Colour};
+use arrangement::{ArrangementState, Colour, TrackKind};
 use compressor::CompressorState;
 use drum_pad::DrumPadState;
 use eq::EqState;
@@ -134,7 +134,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
 pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut views = Views::new();
     let mut devices = Devices::new();
-    arrangement::view::register(&mut views);
+    arrangement::view::register(&mut views, add_track_of_kind);
     instrument::view::register(&mut views, &mut devices);
     drum_pad::view::register(&mut views, &mut devices);
     filter::view::register(&mut views, &mut devices);
@@ -304,7 +304,7 @@ fn plugin_offers(
         .collect()
 }
 
-/// The arrangement that "Add track" adds to: the first one at the top of the project.
+/// The arrangement of the piece: the first one at the top of the project.
 pub fn main_arrangement(project: &Project) -> Option<Instance<ArrangementState>> {
     let mut instances = project.instances();
     let (id, _) =
@@ -347,6 +347,19 @@ pub fn add_audio_track(
     let mut changes = Changes::new();
     arrangement::add_audio_track(project, &mut changes, arrangement.id(), &name, colour)?;
     project.commit("Add audio track", changes)
+}
+
+/// [`add_track`] or [`add_audio_track`]: what the add track button of the arrangement calls.
+/// The arrangement knows no instrument, so the window hands it this.
+pub fn add_track_of_kind(
+    project: &mut Project,
+    arrangement: &Instance<ArrangementState>,
+    kind: TrackKind,
+) -> Result<(), ProjectError> {
+    match kind {
+        TrackKind::Instrument => add_track(project, arrangement),
+        TrackKind::Audio => add_audio_track(project, arrangement),
+    }
 }
 
 /// Opens the project with its lock, scanning for plugins on this thread the first time a

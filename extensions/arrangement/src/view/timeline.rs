@@ -1234,6 +1234,12 @@ impl Timeline {
             .collect()
     }
 
+    /// The top of the row under the last track, from the top of the first row: where the add
+    /// track button is.
+    pub(super) fn add_row_top(&self) -> f32 {
+        self.viewport.y_of(self.order.len())
+    }
+
     /// What an audio clip shows: the times of its file under each column on screen, its fades
     /// in points, its handles while the pointer is on it or it is selected, and while a drag
     /// changes it, the value that drag shows or the part of the file past the edge it moves.
