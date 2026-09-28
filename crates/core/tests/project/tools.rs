@@ -265,7 +265,7 @@ pub const BOOK_RECORD: &str = r#"{"tool": "test.book", "state": {}}"#;
 pub const TEST_AGENT_DOC: AgentDoc = AgentDoc {
     name: "test-tools",
     when: "You work on a test record",
-    markdown: "# Test tools\n\nA bar is {{ticks_per_bar}} ticks in {{time_signature}}.\n",
+    markdown: "# Test tools\n\nA record of a test tool.\n",
 };
 
 /// A bank tells what it owns in one line, so a summary does not list every level.
