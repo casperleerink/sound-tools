@@ -4,7 +4,7 @@
 //! with a fade at each end, and a green line while the playhead is inside the clip. The line
 //! under it says which part of the file plays: `2.1 s to 10.1 s of 14.6 s`. Its knobs are
 //! Gain, Fade in and Fade out, and behind expand Start and End: the keys reach every value the
-//! handles move. With no clip of the track selected it is the card of an empty slot.
+//! handles move. With no clip of the track selected it is the narrowest card, with a hint.
 //!
 //! Every drag is one gesture and one undo step, and a key step one commit, with the names the
 //! handles on the timeline use. The card acts on one clip, the effects after it on the whole
@@ -16,7 +16,7 @@ use gpui::{
 };
 use sound_core::{Instance, ProjectEvent};
 use sound_media::{Cached, Info};
-use sound_ui::components::device_card::{Column, DeviceCard, PLAIN_CARD_WIDTH};
+use sound_ui::components::device_card::{Column, DeviceCard, NARROW_CARD_WIDTH, PLAIN_CARD_WIDTH};
 use sound_ui::components::display::{Axis, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
@@ -33,8 +33,8 @@ use crate::{AudioClip, TrackState};
 pub const DISPLAY_WIDTH: f32 = 312.;
 /// The undo step of the start and end lines and of their knobs, as of an edge on the timeline.
 pub const TRIM_LABEL: &str = "Trim clip";
-/// What the empty card says.
-pub const EMPTY: &str = "Select a clip of this track.";
+/// What the empty card says. Short, because the card is one column of cells wide.
+pub const EMPTY: &str = "Select a clip.";
 /// The id of the card, which tests find its controls under.
 pub const CARD_ID: &str = "clip-card";
 
@@ -397,6 +397,8 @@ impl Render for ClipCard {
         let muted = cx.theme().gray_800;
         let quiet = |text: String| {
             div()
+                .min_w_0()
+                .flex_1()
                 .text_size(px(12.))
                 .line_height(px(14.))
                 .text_color(muted)
@@ -404,7 +406,7 @@ impl Render for ClipCard {
         };
         let Some((state, file)) = shown else {
             return DeviceCard::new(CARD_ID, title("Clip"))
-                .w(px(PLAIN_CARD_WIDTH))
+                .w(px(NARROW_CARD_WIDTH))
                 .child(quiet(EMPTY.to_string()))
                 .into_any_element();
         };

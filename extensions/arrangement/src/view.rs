@@ -42,7 +42,7 @@ use gpui::{
 };
 use sound_core::{Instance, InstanceId, ProjectEvent};
 use sound_notes::Clip;
-use sound_ui::{ActiveTheme, KeyboardFocus, NoticeRoom, Session, Views};
+use sound_ui::{ActiveTheme, KeyboardFocus, Session, Views};
 
 use crate::{ArrangementState, TrackState};
 use clipboard::SharedClipboard;
@@ -176,15 +176,7 @@ impl ArrangementView {
             }
         })
         .detach();
-        // The notices of the window sit right of the track headers and above the panel below.
-        // A view that is gone keeps no room.
-        cx.on_release(|view, cx| {
-            let room = NoticeRoom::default();
-            view.session
-                .update(cx, |session, cx| session.set_notice_room(room, cx));
-        })
-        .detach();
-        let view = Self {
+        Self {
             session,
             arrangement,
             timeline,
@@ -195,25 +187,7 @@ impl ArrangementView {
             clipboard,
             master_focus: cx.focus_handle().tab_stop(true),
             master_keyboard: KeyboardFocus::default(),
-        };
-        view.publish_notice_room(cx);
-        view
-    }
-
-    /// Tells the window where the notices go: right of the header column and above the panel
-    /// below, whichever is open, so a notice never covers the mixer strip of a track.
-    fn publish_notice_room(&self, cx: &mut Context<Self>) {
-        let bottom = match &self.detail {
-            Some(Detail::Editor(_)) => EDITOR_HEIGHT,
-            Some(Detail::Track(_) | Detail::Master(_)) => track_panel::PANEL_HEIGHT,
-            None => 0.,
-        };
-        let room = NoticeRoom {
-            left: HEADER_WIDTH,
-            bottom,
-        };
-        self.session
-            .update(cx, |session, cx| session.set_notice_room(room, cx));
+        }
     }
 
     pub fn timeline(&self) -> &Entity<Timeline> {
@@ -260,7 +234,6 @@ impl ArrangementView {
             panel,
             _events: events,
         }));
-        self.publish_notice_room(cx);
         cx.notify();
     }
 
@@ -297,7 +270,6 @@ impl ArrangementView {
                 playhead_line,
                 _events: events,
             }));
-            self.publish_notice_room(cx);
             cx.notify();
         }
         if let Some(editor) = self.editor() {
@@ -331,7 +303,6 @@ impl ArrangementView {
             panel,
             _events: events,
         }));
-        self.publish_notice_room(cx);
         cx.notify();
     }
 
@@ -352,7 +323,6 @@ impl ArrangementView {
         if focus_handle.contains_focused(window, cx) {
             window.focus(&self.timeline.focus_handle(cx), cx);
         }
-        self.publish_notice_room(cx);
         cx.notify();
     }
 

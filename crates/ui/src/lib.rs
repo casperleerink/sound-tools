@@ -20,7 +20,7 @@ pub use devices::{DeviceLabel, DeviceOffer, Devices, Needs, Slot, extension_is_e
 pub use focus::KeyboardFocus;
 pub use metering::{Metering, every_poll};
 pub use recording::{InputLevels, LiveSound, LiveTake, Recording};
-pub use session::{NoticeRoom, POLL_INTERVAL, Playhead, Session};
+pub use session::{POLL_INTERVAL, Playhead, Session};
 pub use theme::{ActiveTheme, Theme};
 pub use views::Views;
 pub use waveforms::Waveforms;

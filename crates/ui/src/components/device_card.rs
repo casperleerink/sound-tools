@@ -33,6 +33,9 @@ use crate::theme::ActiveTheme;
 pub const CARD_HEIGHT: f32 = 192.;
 /// A card with no display and no cells: a plugin, or a slot with nothing to show.
 pub const PLAIN_CARD_WIDTH: f32 = 200.;
+/// The narrowest card of the grid, one column of cells wide, for a card with a word or two to
+/// say: the Clip card of an audio track with no clip selected.
+pub const NARROW_CARD_WIDTH: f32 = CARD_PADDING * 2. + CELL_WIDTH;
 /// The value line of the second row of cells, from the top of the body: where a card puts its
 /// quiet line, such as `CLAP · <maker>`.
 pub const BODY_VALUE_LINE: f32 = ROW_HEIGHT + VALUE_LINE;
@@ -64,7 +67,7 @@ pub struct CardFrame {
     /// Tells this card from every other in the rack, so that two cards with controls of one
     /// name keep a drag and a focus each, and names its icons for tests: `<id>-close`.
     id: SharedString,
-    /// The picker of the slot: a ghost trigger, which brings 8 pt of padding of its own.
+    /// The picker of the slot: a title trigger, which brings 8 pt of padding of its own.
     title: AnyView,
     power: Option<(IsOn, Rc<dyn Fn(&mut Window, &mut App)>)>,
     close: Option<Rc<dyn Fn(&mut Window, &mut App)>>,

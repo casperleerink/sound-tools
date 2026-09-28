@@ -85,7 +85,7 @@ fn picker(name: &'static str, cx: &mut App) -> Entity<DropdownMenu> {
             cx,
         )
         .selected(name.to_lowercase())
-        .trigger(Trigger::Ghost)
+        .trigger(Trigger::Title)
         .width(200.)
     })
 }

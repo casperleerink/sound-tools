@@ -12,7 +12,7 @@ use sound_media::{Audio, Overview};
 use sound_ui::ActiveTheme;
 use sound_ui::components::audio_clip::{AudioClipLook, ClipHandle, Columns, paint_audio_clip};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::device_card::{Column, DeviceCard};
+use sound_ui::components::device_card::{Column, DeviceCard, NARROW_CARD_WIDTH};
 use sound_ui::components::display::{Axis, Handle};
 use sound_ui::components::knob::{Knob, KnobRange};
 use sound_ui::components::waveform_display::{FileDrop, NoFile, WaveformDisplay, place};
@@ -197,13 +197,15 @@ fn displays(cx: &App) -> AnyElement {
                 .bottom(knob("end", "End", 0.69, "10.1 s")),
         );
     let empty = DeviceCard::new("clip-card-empty", title("Clip"))
-        .w(px(200.))
+        .w(px(NARROW_CARD_WIDTH))
         .child(
             div()
+                .min_w_0()
+                .flex_1()
                 .text_size(px(12.))
                 .line_height(px(14.))
                 .text_color(cx.theme().gray_800)
-                .child("Select a clip of this track."),
+                .child("Select a clip."),
         );
     let waiting = WaveformDisplay::new("waiting", 312., None, 14.6)
         .trim(2.1, 10.1)

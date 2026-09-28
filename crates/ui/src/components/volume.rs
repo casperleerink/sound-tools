@@ -1,6 +1,6 @@
 //! Volume: one control for the level of a track, a fader whose track is the meter. The thumb, a
 //! 28 x 6 pt bar with a ring of the window colour, sits across the two bars at the gain, and the
-//! level shows through above and below it. A tick at the left marks 0 dB. The readout sits on
+//! level shows through above and below it. A tick on each side marks 0 dB. The readout sits on
 //! the value line under it: `-3.5 dB`, `0 dB`, `+2 dB`, `-inf`.
 //!
 //! The scale is the meter's: -inf at the bottom, 0 dB at 80 % of the height, +6 dB at the top,
@@ -160,18 +160,18 @@ struct ThumbColors {
     focus: Option<Hsla>,
 }
 
-/// The thumb at `position` and the 0 dB tick, over a meter whose bars fill `bounds`.
+/// The thumb at `position` and the 0 dB ticks, over a meter whose bars fill `bounds`.
 fn paint_thumb(bounds: Bounds<Pixels>, position: f32, colors: ThumbColors, window: &mut Window) {
     let top = bounds.origin.y + px(SCALE_TOP);
     let length = f32::from(bounds.bottom() - top);
     let y_of = |position: f32| bounds.bottom() - px(position * length);
     let centre_x = bounds.center().x;
     let tick_y = y_of(meter::UNITY);
-    let tick = Bounds::new(
-        point(bounds.origin.x - px(6.), tick_y),
-        size(px(4.), px(1.)),
-    );
-    window.paint_quad(fill(tick, colors.tick));
+    // One on each side, 2 pt off the bars, so the mark reads the same from both.
+    for tick_x in [bounds.origin.x - px(6.), bounds.right() + px(2.)] {
+        let tick = Bounds::new(point(tick_x, tick_y), size(px(4.), px(1.)));
+        window.paint_quad(fill(tick, colors.tick));
+    }
     let box_of = |width: f32, height: f32| {
         let centre = point(centre_x, y_of(position));
         Bounds::new(

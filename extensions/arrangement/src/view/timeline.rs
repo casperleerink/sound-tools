@@ -2923,9 +2923,9 @@ impl Timeline {
     }
 }
 
-/// Where the arm toggle of an audio track starts in its header. The name of an audio track
-/// ends before it.
-pub(super) const ARM_LEFT: f32 = 140.;
+/// Where the arm toggle of an audio track starts in its header: a 24 pt square that ends 8 pt
+/// from the edge, as the icons of a card header do. The name of an audio track ends before it.
+pub(super) const ARM_LEFT: f32 = HEADER_WIDTH - 8. - 24.;
 /// Where the meter of the input of an armed track starts in its header: 45 pt, to 133.
 pub(super) const ARMED_METER_LEFT: f32 = 88.;
 /// The meter is the master meter of the transport, 45 x 8.
@@ -3254,7 +3254,7 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
                     BorderStyle::Solid,
                 ));
             }
-            // An audio track keeps the room of its arm toggle, from 140 pt: its name ends 8 pt
+            // An audio track keeps the room of its arm toggle, from 144 pt: its name ends 8 pt
             // before it, and before the meter of its input, from 88 pt, while it is armed.
             let name_width = match (row.kind, row.armed) {
                 (TrackKind::Instrument, _) => HEADER_WIDTH - 44. - 16.,
