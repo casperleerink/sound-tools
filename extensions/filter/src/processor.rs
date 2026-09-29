@@ -17,11 +17,11 @@
 //! change of slope: both sections always run and the output glides from the first to the
 //! second. Nothing that a composer or an agent changes jumps.
 
-use std::f32::consts::{FRAC_1_SQRT_2, PI, TAU};
+use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
-    soft_clip,
+    AudioInput, AudioOutput, CHANNELS, Lfo, Ports, PrepareConfig, ProcessContext, Processor,
+    Smoothed, soft_clip,
 };
 
 use crate::{FilterState, FilterType, Slope};
@@ -237,9 +237,7 @@ pub struct Filter {
     mix: Smoothed,
     lfo_depth: Smoothed,
     lfo_rate_hz: f32,
-    /// In cycles, from 0 to 1. It starts at 0 when the filter is made, so a render is the
-    /// same every time.
-    lfo_phase: f32,
+    lfo: Lfo,
     /// Whether the factors have to be worked out again although nothing glides: after an
     /// update that snapped, and before the first block.
     stale: bool,
@@ -270,7 +268,7 @@ impl Filter {
             mix: Smoothed::new(1.0),
             lfo_depth: Smoothed::new(0.0),
             lfo_rate_hz: state.lfo_rate_hz,
-            lfo_phase: 0.0,
+            lfo: Lfo::default(),
             stale: true,
             factors: [Factors::default(); 2],
             level: 1.0,
@@ -334,9 +332,8 @@ impl Filter {
         let resonance = self.resonance.advance(frames);
         let slope = self.slope.advance(frames);
         let depth = self.lfo_depth.advance(frames);
-        let lfo = (TAU * self.lfo_phase).sin();
-        let step = frames as f32 * self.lfo_rate_hz / self.sample_rate;
-        self.lfo_phase = (self.lfo_phase + step).fract();
+        let lfo = self.lfo.value(0.0);
+        self.lfo.advance(frames, self.lfo_rate_hz, self.sample_rate);
         self.level = self.level_target;
         if !changes {
             return;
@@ -384,8 +381,7 @@ impl Processor for Filter {
             // Nothing sounds and nothing rings: no glide can be heard, and the output is
             // already silent. The LFO goes on, so where it is does not depend on the silence.
             self.snap();
-            let step = frames as f32 * self.lfo_rate_hz / self.sample_rate;
-            self.lfo_phase = (self.lfo_phase + step).fract();
+            self.lfo.advance(frames, self.lfo_rate_hz, self.sample_rate);
             return;
         }
         let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);

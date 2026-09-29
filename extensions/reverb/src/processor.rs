@@ -27,7 +27,8 @@
 use std::f32::consts::{LOG2_10, PI, TAU};
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
+    AudioInput, AudioOutput, CHANNELS, DelayLine, Ports, PrepareConfig, ProcessContext, Processor,
+    Smoothed,
 };
 
 use crate::{PRE_DELAY, ReverbState};
@@ -135,34 +136,6 @@ pub fn high_decay_seconds(state: &ReverbState) -> f32 {
 
 fn highs_part(damping: f32) -> f32 {
     1.0 - (1.0 - SHORTEST_HIGHS) * damping
-}
-
-/// A delay line whose length is a power of two, so a position wraps with a mask and a read can
-/// never be out of it.
-struct DelayLine {
-    buffer: Vec<f32>,
-    mask: usize,
-}
-
-impl DelayLine {
-    /// Holds at least `frames` frames of delay. Allocates.
-    fn new(frames: usize) -> Self {
-        let length = (frames + 1).next_power_of_two();
-        Self {
-            buffer: vec![0.0; length],
-            mask: length - 1,
-        }
-    }
-
-    /// What was written `delay` frames before `position`.
-    fn read(&self, position: usize, delay: usize) -> f32 {
-        // The mask keeps the index inside the buffer, whose length is the mask plus one.
-        self.buffer[position.wrapping_sub(delay) & self.mask]
-    }
-
-    fn write(&mut self, position: usize, value: f32) {
-        self.buffer[position & self.mask] = value;
-    }
 }
 
 /// Where a group of delay lines is read. A new length does not move a read position: the read
@@ -561,7 +534,7 @@ impl Reverb {
     /// The largest delay a sound can take through the reverb before it is in the lines.
     fn longest_path(&self) -> usize {
         let diffusers: usize = self.diffuser_frames.iter().flatten().sum();
-        self.pre_delay[0].buffer.len() + diffusers + self.lines[0].buffer.len()
+        self.pre_delay[0].frames() + diffusers + self.lines[0].frames()
     }
 
     /// One frame of the reverb, from the input of each channel to the wet sound of each.

@@ -19,6 +19,7 @@ mod limiter;
 mod live;
 mod metronome;
 mod mixer;
+mod modulation;
 mod plugins;
 mod rack_order;
 mod recording;

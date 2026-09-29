@@ -3716,6 +3716,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "modulation"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "proptest 1.11.0",
+ "serde",
+ "sound-core",
+ "sound-notes",
+ "sound-ui",
+]
+
+[[package]]
 name = "moxcms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5304,6 +5316,7 @@ dependencies = [
  "limiter",
  "metronome",
  "midi",
+ "modulation",
  "plugin-host",
  "reverb",
  "sampler",

@@ -79,6 +79,7 @@
 //! - `audio-*.png`: audio tracks and clips, see `snapshots/audio.rs`.
 //! - `drums-*.png`: the Drum pad, see `snapshots/drums.rs`.
 //! - `track-panel-utility*.png`: the Utility, see `snapshots/utility.rs`.
+//! - `modulation-*.png`: the Modulation, see `snapshots/modulation.rs`.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -128,6 +129,8 @@ mod audio;
 mod drums;
 #[path = "projects/generated_take.rs"]
 mod generated_take;
+#[path = "snapshots/modulation.rs"]
+mod modulation;
 #[path = "snapshots/sampler.rs"]
 mod sampler;
 #[path = "snapshots/utility.rs"]
@@ -954,7 +957,8 @@ fn main() -> Result<()> {
 
     // Audio tracks and clips, the Sampler, the Drum pad and the Utility first, so a run that
     // only looks at one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=audio`,
-    // `=sampler`, `=drums` or `=utility` renders the default project and those alone.
+    // `=sampler`, `=drums`, `=utility`, `=saturator` or
+    // `=modulation` renders the default project and those alone.
     let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
     let runs = |name: &str| only.as_deref().is_none_or(|only| only == name);
     if runs("audio") {
@@ -977,6 +981,9 @@ fn main() -> Result<()> {
     }
     if runs("utility") {
         utility::snapshots(&mut cx, &save)?;
+    }
+    if runs("modulation") {
+        modulation::snapshots(&mut cx, &save)?;
     }
     if only.is_some() {
         return Ok(());

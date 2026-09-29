@@ -162,11 +162,13 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 
 ## Built-in instruments and effects
 
-The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Reverb, Saturator and Utility all follow one pattern; `extensions/filter` is the reference.
+The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Reverb, Saturator, Utility and Modulation all follow one pattern; `extensions/filter` is the reference.
 
 - One extension per device, one tool with no children, found by port names.
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter` constant with range and default, which validation, the knobs, the reset and the doc tests all read.
 - Every change glides (about 20 ms, `Smoothed`), including choices, so no edit clicks.
+- What a processor uses per frame is in the SDK, next to `Smoothed`: `Envelope`, `Lfo` and `DelayLine`. The filter and the Modulation share one LFO, the reverb and the Modulation one delay line.
+- The Modulation glides rate, depth and spread over 100 ms: they move where its delay is read, and a read that moves fast bends the pitch.
 - Each effect has an exact response function, and tests hold the measured sound to it.
 - A gain in dB and the pan law are in `sound-core` (`amplitude`, `pan_gains`), so a pan means the same on a track, a drum pad and the Utility.
 - The card is drawn from shared UI components; every control goes through `ControlEdit`, one gesture per drag.
