@@ -40,7 +40,8 @@ fn the_default_project_is_a_small_musical_template() {
             "reverb",
             "sampler",
             "saturator",
-            "tone"
+            "tone",
+            "utility"
         ]
     );
     assert_eq!(project_file.tempo_map, sound_core::TempoMap::default());

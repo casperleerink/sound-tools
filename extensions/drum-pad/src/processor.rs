@@ -40,11 +40,7 @@ pub const RAMP_SECONDS: f32 = 0.02;
 /// a track (equal power, the middle exactly 1), so a pad keeps its loudness wherever it is.
 pub fn pad_gains(pad: &Pad) -> [f32; 2] {
     let level = 10.0_f64.powf(f64::from(pad.volume_db) / 20.0);
-    let pan = f64::from(pad.pan.clamp(-1.0, 1.0));
-    let parts = [(1.0 - pan) / 2.0, (1.0 + pan) / 2.0];
-    parts.map(|part| {
-        (level * std::f64::consts::SQRT_2 * (part * std::f64::consts::FRAC_PI_2).sin()) as f32
-    })
+    sound_core::pan_gains(level, pad.pan.clamp(-1.0, 1.0))
 }
 
 /// One pad as the audio thread plays it.

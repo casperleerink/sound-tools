@@ -162,12 +162,13 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 
 ## Built-in instruments and effects
 
-The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Reverb and Saturator all follow one pattern; `extensions/filter` is the reference.
+The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Reverb, Saturator and Utility all follow one pattern; `extensions/filter` is the reference.
 
 - One extension per device, one tool with no children, found by port names.
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter` constant with range and default, which validation, the knobs, the reset and the doc tests all read.
 - Every change glides (about 20 ms, `Smoothed`), including choices, so no edit clicks.
 - Each effect has an exact response function, and tests hold the measured sound to it.
+- A gain in dB and the pan law are in `sound-core` (`amplitude`, `pan_gains`), so a pan means the same on a track, a drum pad and the Utility.
 - The card is drawn from shared UI components; every control goes through `ControlEdit`, one gesture per drag.
 - A lookahead or delay is reported as latency; latency is a choice, not a knob, because a latency that moves with a drag would make every track jump.
 - The Drum pad renders its sounds whole on a background thread and plays buffers on the audio thread. No sound is made inside an edit. Its default kit is not written into records, so a change to the kit changes how existing projects sound. Treat it like a change to a saved format.

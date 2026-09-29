@@ -29,6 +29,7 @@ use sound_core::{
     ProjectError, Registry, SavedDestination, State, Ticks,
 };
 use sound_ui::{DeviceOffer, Devices, Views};
+use utility::UtilityState;
 
 const PROJECT_FILE: &str = "project.json";
 
@@ -122,6 +123,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     sampler::register(&mut registry)?;
     saturator::register(&mut registry)?;
     tone::register(&mut registry)?;
+    utility::register(&mut registry)?;
     registry.runtime_agent_doc(INSPECT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
@@ -147,6 +149,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     eq::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
     saturator::view::register(&mut views, &mut devices);
+    utility::view::register(&mut views, &mut devices);
     sampler::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     devices.instruments(|| {
@@ -242,6 +245,18 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             .needs(
                 saturator::EXTENSION,
                 "This project does not load the saturator.",
+            ),
+            DeviceOffer::new(
+                UtilityState::TOOL,
+                utility::view::NAME,
+                |_, slot, changes| {
+                    changes.create(slot.clone(), UtilityState::default());
+                    Ok(())
+                },
+            )
+            .needs(
+                utility::EXTENSION,
+                "This project does not load the utility.",
             ),
         ]
     });

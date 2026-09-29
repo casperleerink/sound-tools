@@ -32,6 +32,7 @@ sound-notes.workspace = true
 sound-ui.workspace = true
 thiserror.workspace = true
 tone.workspace = true
+utility.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

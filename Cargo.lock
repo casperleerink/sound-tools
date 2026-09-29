@@ -5319,6 +5319,7 @@ dependencies = [
  "test-vst3-plugin",
  "thiserror 2.0.20",
  "tone",
+ "utility",
 ]
 
 [[package]]
@@ -6672,6 +6673,18 @@ dependencies = [
  "perf",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "utility"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "proptest 1.11.0",
+ "serde",
+ "sound-core",
+ "sound-notes",
+ "sound-ui",
 ]
 
 [[package]]

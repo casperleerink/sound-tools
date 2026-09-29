@@ -9,6 +9,7 @@ mod control;
 mod device;
 mod engine;
 mod envelope;
+mod gain;
 mod graph;
 mod input;
 mod limiter;
@@ -29,6 +30,7 @@ pub use device::{
 };
 pub use engine::{Engine, EngineStatus};
 pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeStage, EnvelopeState};
+pub use gain::{amplitude, pan_gains};
 pub use graph::{Connection, Destination, GraphError, NodeId};
 pub use input::{
     CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputStream, capture,

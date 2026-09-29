@@ -2,7 +2,7 @@
 
 A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The agent is an external coding agent, run in the project folder.
 
-What it has: instrument and audio tracks, clips with notes or audio, a synth, a Sampler, a Drum pad, CLAP and VST 3 plugins, six effects (Filter, Compressor, Limiter, EQ, Reverb, Saturator), a mixer with a limited master, MIDI and audio recording, and **fit tempo**: play freely with no click, and one action moves the grid onto your playing.
+What it has: instrument and audio tracks, clips with notes or audio, a synth, a Sampler, a Drum pad, CLAP and VST 3 plugins, seven effects (Filter, Compressor, Limiter, EQ, Reverb, Saturator, Utility), a mixer with a limited master, MIDI and audio recording, and **fit tempo**: play freely with no click, and one action moves the grid onto your playing.
 
 ## Requirements
 
