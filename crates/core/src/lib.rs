@@ -8,6 +8,7 @@ mod clock;
 mod control;
 mod delay_line;
 mod device;
+mod dsp;
 mod engine;
 mod envelope;
 mod gain;
@@ -31,6 +32,7 @@ pub use delay_line::DelayLine;
 pub use device::{
     DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming, monotonic_nanos,
 };
+pub use dsp::{OnePole, Taps, held};
 pub use engine::{Engine, EngineStatus};
 pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeStage, EnvelopeState};
 pub use gain::{amplitude, pan_gains};

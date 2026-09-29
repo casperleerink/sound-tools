@@ -24,11 +24,11 @@
 //! pre-delay does not move a read position: it fades over 20 ms from the old tap to the new one,
 //! so nothing clicks and no pitch slides.
 
-use std::f32::consts::{LOG2_10, PI, TAU};
+use std::f32::consts::{LOG2_10, TAU};
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, DelayLine, Ports, PrepareConfig, ProcessContext, Processor,
-    Smoothed,
+    AudioInput, AudioOutput, CHANNELS, DelayLine, OnePole, Ports, PrepareConfig, ProcessContext,
+    Processor, Smoothed, Taps, held,
 };
 
 use crate::{PRE_DELAY, ReverbState};
@@ -70,7 +70,8 @@ const SHORTEST_HIGHS: f32 = 0.1;
 /// rest on each pass. A pole at 1 would hold a constant for ever.
 const MOST_POLE: f32 = 0.99;
 
-/// The cuts stay under this part of the sample rate, below the Nyquist frequency.
+/// The frequencies the loss is worked out at stay under this part of the sample rate, below
+/// the Nyquist frequency, as the cuts do.
 const HIGHEST_PART: f32 = 0.45;
 
 /// The level of the tail, on top of the loss of the loop. With it, noise comes out of the reverb
@@ -85,10 +86,6 @@ const HEARD_HZ: [f32; 8] = [
 
 /// While factors move, they are worked out again this often.
 const FACTOR_FRAMES: usize = 16;
-
-/// Input louder than this, or not a number, is held to it, so no sample of anyone else's can
-/// make the tail infinite. +36 dBFS: nothing real comes near it.
-const INPUT_LIMIT: f32 = 64.0;
 
 /// While the input is silent and nothing in the lines is louder than this, -180 dB, the reverb
 /// has rung out: it does no work and its output is silent.
@@ -138,119 +135,6 @@ fn highs_part(damping: f32) -> f32 {
     1.0 - (1.0 - SHORTEST_HIGHS) * damping
 }
 
-/// Where a group of delay lines is read. A new length does not move a read position: the read
-/// fades from the old tap to the new one. A length that comes during a fade waits for its end,
-/// so a drag through many sizes is a row of fades, each from where the last one ended.
-#[derive(Clone, Copy)]
-struct Taps<const N: usize> {
-    from: [usize; N],
-    to: [usize; N],
-    next: [usize; N],
-    /// From 0 at `from` to 1 at `to`.
-    fade: f32,
-    step: f32,
-}
-
-impl<const N: usize> Taps<N> {
-    fn new(taps: [usize; N]) -> Self {
-        Self {
-            from: taps,
-            to: taps,
-            next: taps,
-            fade: 1.0,
-            step: 1.0,
-        }
-    }
-
-    fn aim(&mut self, next: [usize; N], fade_frames: f32) {
-        self.next = next;
-        self.step = 1.0 / fade_frames;
-        if !self.is_fading() {
-            self.start();
-        }
-    }
-
-    fn start(&mut self) {
-        if self.next != self.to {
-            self.from = self.to;
-            self.to = self.next;
-            self.fade = 0.0;
-        }
-    }
-
-    fn is_fading(&self) -> bool {
-        self.from != self.to
-    }
-
-    /// The part of the new tap in this frame.
-    fn weight(&self) -> f32 {
-        if self.is_fading() { self.fade } else { 1.0 }
-    }
-
-    /// One frame along, after every read of the frame: a fade that ends here may start the
-    /// next one, between other taps.
-    fn advance(&mut self) {
-        if !self.is_fading() {
-            return;
-        }
-        self.fade += self.step;
-        if self.fade >= 1.0 {
-            self.from = self.to;
-            self.fade = 1.0;
-            self.start();
-        }
-    }
-
-    /// Takes the newest taps at once.
-    fn snap(&mut self) {
-        *self = Self::new(self.next);
-    }
-
-    /// The length of tap `index` now, between the two it fades between.
-    fn length(&self, index: usize) -> f32 {
-        let (from, to) = (self.from[index] as f32, self.to[index] as f32);
-        from + (to - from) * self.fade
-    }
-
-    /// Reads tap `index` of `line` at `position`, with `fade` of the new tap.
-    fn read(&self, line: &DelayLine, index: usize, position: usize, fade: f32) -> f32 {
-        let to = line.read(position, self.to[index]);
-        if fade >= 1.0 {
-            return to;
-        }
-        let from = line.read(position, self.from[index]);
-        from + (to - from) * fade
-    }
-}
-
-/// A one-pole filter in its trapezoidal form: stable at every cutoff, also while it moves.
-#[derive(Clone, Copy, Default)]
-struct OnePole {
-    memory: f32,
-}
-
-impl OnePole {
-    /// The factor of a cutoff: `g / (1 + g)` with `g = tan(π cutoff / sample rate)`.
-    fn factor(hz: f32, sample_rate: f32) -> f32 {
-        let hz = hz.max(1.0).min(HIGHEST_PART * sample_rate);
-        let g = (PI * hz / sample_rate).tan();
-        g / (1.0 + g)
-    }
-
-    /// The low pass of one sample.
-    fn low(&mut self, factor: f32, input: f32) -> f32 {
-        let step = (input - self.memory) * factor;
-        let low = step + self.memory;
-        self.memory = low + step;
-        low
-    }
-
-    /// The high pass of one sample.
-    fn high(&mut self, factor: f32, input: f32) -> f32 {
-        input - self.low(factor, input)
-    }
-}
-
 /// The sign of line `index` in the left and the right output, and in what the left and the
 /// right input put into it. Two rows of a Hadamard matrix: each line is in both sides, and the
 /// two sides are as different as sixteen lines allow.
@@ -296,15 +180,6 @@ fn line_loss(length: f32, decay: f32, part: f32, damped_cos: f32, sample_rate: f
     let root = (square * (1.0 - damped_cos) * (2.0 - square * (1.0 + damped_cos))).sqrt();
     let pole = (a / (b + root)).min(MOST_POLE);
     (gain, pole)
-}
-
-/// A sample of the input as the reverb takes it: held to [`INPUT_LIMIT`], and silence for
-/// anything that is not a number.
-fn held(sample: f32) -> f32 {
-    if sample.is_nan() {
-        return 0.0;
-    }
-    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
 fn frames_of(seconds: f32, sample_rate: f32) -> usize {
