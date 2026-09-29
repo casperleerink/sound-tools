@@ -3,7 +3,7 @@
 
 use sound_core::{
     AudioInput, AudioOutput, PeakLimiter, Peaks, Ports, PrepareConfig, ProcessContext, Processor,
-    Smoothed,
+    Smoothed, amplitude,
 };
 
 use crate::{LimiterState, Lookahead};
@@ -21,11 +21,6 @@ fn held(sample: f32) -> f32 {
         true => sample.clamp(-INPUT_LIMIT, INPUT_LIMIT),
         false => 0.0,
     }
-}
-
-/// The factor of a gain in dB. In f64, so that 0 dB is exactly 1.
-fn amplitude(db: f32) -> f32 {
-    10_f64.powf(f64::from(db) / 20.0) as f32
 }
 
 /// What the limiter shows on its card, from the audio thread: the peaks of what it sends out,
