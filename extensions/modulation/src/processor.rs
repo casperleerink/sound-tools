@@ -11,8 +11,8 @@
 //! six first-order allpass filters in a row: each turns the phase and keeps the level, and with
 //! the dry sound the turns make three notches. Feedback sends the wet sound round again: into
 //! the delay line, or into the first allpass filter a frame later. Both loops keep the level
-//! of what goes round (an allpass and a delay pass every frequency at 1, and the cubic never
-//! more), so a feedback under 1 always dies away, also while the LFO moves. Feedback raises the
+//! of what goes round (an allpass and a delay pass every frequency at 1, and the cubic
+//! passes none at more), so a feedback under 1 always dies away, also while the LFO moves. Feedback raises the
 //! peaks between the notches; the wet sound is scaled by `√(1 - g²)` so that a noise keeps its
 //! level at every feedback, and a mix means the same at every setting.
 //!
@@ -317,7 +317,7 @@ impl Modulation {
         self.sample_rate = sample_rate;
         self.ramp_frames = (RAMP_SECONDS * sample_rate).max(1.0);
         self.sweep_ramp_frames = (SWEEP_RAMP_SECONDS * sample_rate).max(1.0);
-        // Two frames more for the cubic, and one for the ramp between two runs of frames.
+        // Two frames past the delay for the cubic, and one to spare.
         let frames = (longest_ms() * sample_rate / 1_000.0).ceil() as usize + 3;
         self.channels = [(); CHANNELS].map(|_| Channel::new(frames));
         self.position = 0;

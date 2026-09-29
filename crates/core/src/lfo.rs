@@ -15,11 +15,13 @@ pub struct Lfo {
 impl Lfo {
     /// The value now, from -1 to 1, of the sine `offset` cycles behind: another channel of the
     /// same LFO, such as the right side of a stereo chorus.
+    #[inline]
     pub fn value(&self, offset: f32) -> f32 {
         (TAU * (self.phase - offset)).sin()
     }
 
     /// Moves `frames` along at `hz`.
+    #[inline]
     pub fn advance(&mut self, frames: usize, hz: f32, sample_rate: f32) {
         let step = frames as f32 * hz / sample_rate;
         self.phase = (self.phase + step).fract();

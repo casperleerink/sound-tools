@@ -11,10 +11,10 @@ pub struct DelayLine {
 }
 
 impl DelayLine {
-    /// Holds at least `frames` frames of delay. Allocates: make it on the control thread, or in
-    /// `prepare`.
+    /// Holds at least `frames` frames of delay, and at least 3, what a read between two frames
+    /// needs. Allocates: make it on the control thread, or in `prepare`.
     pub fn new(frames: usize) -> Self {
-        let length = (frames + 1).next_power_of_two();
+        let length = (frames.max(3) + 1).next_power_of_two();
         Self {
             buffer: vec![0.0; length],
             mask: length - 1,
@@ -27,6 +27,7 @@ impl DelayLine {
     }
 
     /// What was written `delay` frames before `position`.
+    #[inline]
     pub fn read(&self, position: usize, delay: usize) -> f32 {
         // The mask keeps the index inside the buffer, whose length is the mask plus one.
         self.buffer[position.wrapping_sub(delay) & self.mask]
@@ -39,9 +40,12 @@ impl DelayLine {
     /// rate of the sweep. It is exact on a whole frame.
     ///
     /// It reads one frame newer than the delay, so a delay under 2 frames reads 2: the frame at
-    /// `position` is not written yet.
+    /// `position` is not written yet. And two older, so a delay is held to 3 frames under what
+    /// the line holds.
+    #[inline]
     pub fn read_between(&self, position: usize, delay: f32) -> f32 {
-        let delay = delay.max(2.0);
+        // `max` first: it gives 2 for a delay that is not a number.
+        let delay = delay.max(2.0).min((self.buffer.len() - 3) as f32);
         let whole = delay as usize;
         let fraction = delay - whole as f32;
         let [newer, at, older, oldest] =
@@ -54,6 +58,7 @@ impl DelayLine {
         ((c3 * fraction + c2) * fraction + slope_at) * fraction + at
     }
 
+    #[inline]
     pub fn write(&mut self, position: usize, value: f32) {
         self.buffer[position & self.mask] = value;
     }
@@ -103,8 +108,20 @@ mod tests {
     }
 
     #[test]
+    fn a_delay_past_the_line_or_not_a_number_is_held_inside_it() {
+        let (line, position) = line_of((0..8).map(|index| index as f32));
+        assert_eq!(
+            line.read_between(position, f32::NAN),
+            line.read(position, 2)
+        );
+        let longest = line.read_between(position, (line.frames() - 3) as f32);
+        assert_eq!(line.read_between(position, f32::INFINITY), longest);
+        assert_eq!(line.read_between(position, 1e30), longest);
+    }
+
+    #[test]
     fn a_line_holds_a_power_of_two_past_its_frames() {
-        assert_eq!(DelayLine::new(1).frames(), 2);
+        assert_eq!(DelayLine::new(1).frames(), 4);
         assert_eq!(DelayLine::new(1000).frames(), 1024);
         assert_eq!(DelayLine::new(1024).frames(), 2048);
     }

@@ -85,6 +85,7 @@ fn no_edit_clicks() {
         ];
         let steady = crackle_of_both(&around_an_edit(base, base));
         println!("{mode:?}, no edit: crackle {steady:.2e}");
+        assert!(steady < CLICK / 100.0, "{mode:?}: {steady}");
         for (name, after) in edits {
             let heard = crackle_of_both(&around_an_edit(base, after));
             println!("{mode:?}, {name}: crackle {heard:.2e}");
