@@ -6,12 +6,14 @@
 
 mod clock;
 mod control;
+mod delay_line;
 mod device;
 mod engine;
 mod envelope;
 mod gain;
 mod graph;
 mod input;
+mod lfo;
 mod limiter;
 mod parameter;
 mod peaks;
@@ -25,6 +27,7 @@ pub use clock::{
     TICKS_PER_QUARTER, Tempo, TempoChange, TempoMap, Ticks, TimeSignature, TimeSignatures,
 };
 pub use control::{Edit, EngineConfig, EngineControl, EngineStopped, Node};
+pub use delay_line::DelayLine;
 pub use device::{
     DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming, monotonic_nanos,
 };
@@ -35,6 +38,7 @@ pub use graph::{Connection, Destination, GraphError, NodeId};
 pub use input::{
     CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputStream, capture,
 };
+pub use lfo::Lfo;
 pub use limiter::PeakLimiter;
 pub use parameter::Parameter;
 pub use peaks::Peaks;
