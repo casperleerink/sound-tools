@@ -36,8 +36,9 @@ use crate::{Mode, ModulationState};
 /// How long a change takes to arrive. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
 
-/// Depth and spread move where the delay is read, and a read that moves fast bends the pitch:
-/// over 20 ms a change of depth would chirp. So they glide for longer.
+/// Rate, depth and spread move where the delay is read, and a read that moves fast bends the
+/// pitch: over 20 ms a change of depth would chirp, and a rate that jumps would make the pitch
+/// jump. So they glide for longer.
 const SWEEP_RAMP_SECONDS: f32 = 0.1;
 
 /// The LFO is worked out this often, and the delays and factors glide in between.
@@ -260,14 +261,14 @@ impl Channel {
 
 pub struct Modulation {
     sample_rate: f32,
-    /// The frames a change takes, and a change of depth or spread.
+    /// The frames a change takes, and a change of rate, depth or spread.
     ramp_frames: f32,
     sweep_ramp_frames: f32,
     /// Where the delay line writes the next frame.
     position: usize,
     channels: [Channel; CHANNELS],
     lfo: Lfo,
-    rate_hz: f32,
+    rate_hz: Smoothed,
     depth: Smoothed,
     /// How far the right side is behind, in cycles: half the spread.
     lag: Smoothed,
@@ -297,7 +298,7 @@ impl Modulation {
             position: 0,
             channels: [(); CHANNELS].map(|_| Channel::new(1)),
             lfo: Lfo::default(),
-            rate_hz: state.rate_hz,
+            rate_hz: Smoothed::new(state.rate_hz),
             depth: Smoothed::new(0.0),
             lag: Smoothed::new(0.0),
             feedback: Smoothed::new(0.0),
@@ -328,7 +329,7 @@ impl Modulation {
     /// Sets every target from a record.
     fn aim(&mut self, state: &ModulationState) {
         let (ramp, sweep_ramp) = (self.ramp_frames, self.sweep_ramp_frames);
-        self.rate_hz = state.rate_hz;
+        self.rate_hz.set_target(state.rate_hz, sweep_ramp);
         self.depth.set_target(state.depth, sweep_ramp);
         self.lag.set_target(0.5 * state.spread, sweep_ramp);
         self.feedback
@@ -342,6 +343,7 @@ impl Modulation {
     fn smoothers(&mut self) -> impl Iterator<Item = &mut Smoothed> {
         let [chorus, flanger, phaser] = &mut self.modes;
         [
+            &mut self.rate_hz,
             &mut self.depth,
             &mut self.lag,
             &mut self.feedback,
@@ -364,7 +366,8 @@ impl Modulation {
     fn move_sweeps(&mut self, frames: usize) {
         let depth = self.depth.advance(frames);
         let lag = self.lag.advance(frames);
-        self.lfo.advance(frames, self.rate_hz, self.sample_rate);
+        let rate_hz = self.rate_hz.advance(frames);
+        self.lfo.advance(frames, rate_hz, self.sample_rate);
         let frames_per_ms = self.sample_rate / 1_000.0;
         let [chorus, flanger, phaser] = Mode::ALL.map(Swing::of);
         for (channel, lag) in self.channels.iter_mut().zip([0.0, lag]) {
@@ -414,7 +417,8 @@ impl Processor for Modulation {
             // output is already silent. The LFO goes on, so where it is does not depend on the
             // silence.
             self.snap();
-            self.lfo.advance(frames, self.rate_hz, self.sample_rate);
+            self.lfo
+                .advance(frames, self.rate_hz.current(), self.sample_rate);
             return;
         }
         let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);

@@ -94,6 +94,36 @@ fn no_edit_clicks() {
     }
 }
 
+/// A rate that changes where the delay moves fastest, as the LFO passes its middle at 1 s,
+/// glides from one pitch bend to the other: a jump of the rate would jump the pitch of the copy
+/// by 40 % at once.
+#[test]
+fn a_change_of_rate_where_the_delay_moves_fastest_does_not_click() {
+    let before = ModulationState {
+        mode: Mode::Chorus,
+        rate_hz: 0.5,
+        depth: 1.0,
+        feedback: 0.0,
+        mix: 1.0,
+        ..ModulationState::default()
+    };
+    let mut rig = Rig::new(before, sine(HZ, AMPLITUDE));
+    let settled = rig.render(SECOND);
+    rig.update(ModulationState {
+        rate_hz: 10.0,
+        ..before
+    });
+    let around = rig.render(SECOND / 5);
+    let [left, right] = [0, 1].map(|side| {
+        let mut window = settled[side][settled[side].len() - 6..].to_vec();
+        window.extend(&around[side]);
+        window
+    });
+    let heard = crackle(&left).max(crackle(&right));
+    println!("rate at the middle of the LFO: crackle {heard:.2e}");
+    assert!(heard < CLICK, "{heard}");
+}
+
 /// The measure hears a click: a step of a thousandth in the steady tone.
 #[test]
 fn a_step_of_a_thousandth_is_a_click() {
