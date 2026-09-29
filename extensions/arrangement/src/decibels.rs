@@ -56,10 +56,7 @@ impl Visitor<'_> for GainVisitor {
 }
 
 /// The factor a gain multiplies the samples by: 0 dB is exactly 1 and `-inf` exactly 0.
-pub fn amplitude(db: f32) -> f32 {
-    // In f64, so that 0 dB is exactly 1 and leaves every sample as it was.
-    10_f64.powf(f64::from(db) / 20.0) as f32
-}
+pub use sound_core::amplitude;
 
 /// Whether a gain can be saved and played: at most `max`, and a number or `-inf`.
 pub fn check(field: &str, db: f32, max: f32) -> Result<(), String> {
@@ -74,8 +71,6 @@ pub fn check(field: &str, db: f32, max: f32) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};
-
-    use super::amplitude;
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct Gain {
@@ -102,12 +97,5 @@ mod tests {
             wrong.to_string().contains(r#"or "-inf" for silence"#),
             "{wrong}"
         );
-    }
-
-    #[test]
-    fn zero_db_is_exactly_one_and_minus_inf_exactly_zero() {
-        assert_eq!(amplitude(0.0), 1.0);
-        assert_eq!(amplitude(f32::NEG_INFINITY), 0.0);
-        assert!((amplitude(-6.0) - 0.501_187).abs() < 1e-6);
     }
 }
