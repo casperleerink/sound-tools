@@ -99,8 +99,7 @@ fn settled(opened: &mut Opened<'_>) -> Vec<f32> {
 fn add_effect(opened: &mut Opened<'_>) {
     let trigger = opened.control(ADD_EFFECT);
     opened.click(trigger);
-    let row = opened.control(&plugin_item());
-    opened.click(row);
+    opened.click_effect_row(&plugin_item());
 }
 
 #[gpui::test]
