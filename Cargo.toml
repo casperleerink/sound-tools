@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/media", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/core", "crates/media", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -15,6 +15,7 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f", features = ["runtime_shaders", "font-kit", "wayland", "x11"] }
 arrangement = { path = "extensions/arrangement" }
 compressor = { path = "extensions/compressor" }
+delay = { path = "extensions/delay" }
 drum-pad = { path = "extensions/drum-pad" }
 eq = { path = "extensions/eq" }
 filter = { path = "extensions/filter" }
@@ -109,6 +110,7 @@ lyon_path = { opt-level = 3 }
 lyon_geom = { opt-level = 3 }
 arrangement = { opt-level = 3 }
 compressor = { opt-level = 3 }
+delay = { opt-level = 3 }
 drum-pad = { opt-level = 3 }
 eq = { opt-level = 3 }
 filter = { opt-level = 3 }
