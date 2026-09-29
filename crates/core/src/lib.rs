@@ -11,6 +11,7 @@ mod engine;
 mod envelope;
 mod graph;
 mod input;
+mod limiter;
 mod parameter;
 mod peaks;
 mod processor;
@@ -32,6 +33,7 @@ pub use graph::{Connection, Destination, GraphError, NodeId};
 pub use input::{
     CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputStream, capture,
 };
+pub use limiter::PeakLimiter;
 pub use parameter::Parameter;
 pub use peaks::Peaks;
 pub use processor::{

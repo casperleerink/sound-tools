@@ -1,6 +1,6 @@
 //! Rack section: every control of a device card and the mixer strip, in each of its states, as
 //! in `docs/mockups/components.png`: knob, volume, meter and gain
-//! reduction, toggle, segmented control, select and drag number, and device cards with their header and a
+//! reduction, the display of a limiter, toggle, segmented control, select and drag number, and device cards with their header and a
 //! display. The focus section beside it shows the focus ring of each, which one window can
 //! show only one at a time.
 //!
@@ -19,6 +19,7 @@ use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem, Trigger};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::limiter_display::{COLUMNS, LimiterHistory, POLLS_PER_COLUMN};
 use sound_ui::components::meter::{GainReduction, Level, Meter};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::split_button::SplitButton;
@@ -409,6 +410,40 @@ fn gain_reduction(cx: &App) -> AnyElement {
             };
             sample(caption, cx, GainReduction::new(db))
         }),
+    )
+}
+
+/// The display of the master's limiter and the Limiter effect: quiet, then a history of a
+/// sound pushed into a ceiling of -6 dB, louder towards the right, with the reduction.
+fn limiter_display(cx: &App) -> AnyElement {
+    let range = KnobRange::linear(-24., 0.);
+    let display = |id: &'static str, history: &LimiterHistory| {
+        history.display(id, -6., history.handle(-6., 0.), cx)
+    };
+    let mut pushed = LimiterHistory::new(range);
+    for column in 0..COLUMNS {
+        let loud = column as f32 / COLUMNS as f32;
+        let ceiling = 10_f32.powf(-6. / 20.);
+        let reduction = 1. + loud * 3. * (1. + (column as f32 * 0.9).sin().abs());
+        for _ in 0..POLLS_PER_COLUMN {
+            pushed.read(ceiling * (0.5 + 0.5 * loud.min(1.)), reduction);
+        }
+    }
+    block(
+        "Limiter display",
+        cx,
+        [
+            sample(
+                "at rest",
+                cx,
+                display("limiter-quiet", &LimiterHistory::new(range)),
+            ),
+            sample(
+                "pushed into the ceiling",
+                cx,
+                display("limiter-pushed", &pushed),
+            ),
+        ],
     )
 }
 
@@ -814,6 +849,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .child(volumes(&state, cx))
         .child(master_meter(&state, cx))
         .child(gain_reduction(cx))
+        .child(limiter_display(cx))
         .child(choices(&state, cx))
         .child(cards(&state, cx))
 }

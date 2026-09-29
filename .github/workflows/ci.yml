@@ -147,7 +147,7 @@ jobs:
       # locks or makes a system call inside Engine::process_block.
       - name: Realtime sanitizer
         run: |
-          cargo nextest run -p sound-core -p sound-media -p tone -p instrument -p filter -p eq -p reverb -p saturator -p compressor -p drum-pad -p sound-notes -p arrangement -p metronome -p midi -p plugin-host -p sampler --locked
+          cargo nextest run -p sound-core -p sound-media -p tone -p instrument -p filter -p eq -p reverb -p saturator -p compressor -p limiter -p drum-pad -p sound-notes -p arrangement -p metronome -p midi -p plugin-host -p sampler --locked
           # Real projects: the sequencer of every track into its synth, with live file edits,
           # a whole recording from the MIDI input into a clip, and tracks whose instrument is
           # a hosted CLAP or VST 3 plugin.

@@ -123,7 +123,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Track panel | drag a handle of a display | Change what it moves, as its knob does. Shift is finer, double click resets |
 | Track panel | click a segment, or left and right on it | Pick an option, such as the synth waveform or the filter type |
 | Track panel | the expand icon of a card | Show the controls the card hides. Not saved |
-| Track panel | the power icon of an effect card | Bypass the effect. On the limiter, the output may then clip |
+| Track panel | the power icon of an effect card | Bypass the effect. On the limiter of the master, the output may then clip |
 | Track panel | click the name on a card | Pick another instrument or effect for that slot |
 | Track panel | Add effect, at the end of the rack | Put an effect at the end of the chain |
 | Track panel | the close icon of an effect card | Remove it. Undo brings it back as it sounded |

@@ -19,6 +19,7 @@ gpui.workspace = true
 gpui_platform.workspace = true
 hound.workspace = true
 instrument.workspace = true
+limiter.workspace = true
 metronome.workspace = true
 midi.workspace = true
 plugin-host.workspace = true

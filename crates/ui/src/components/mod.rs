@@ -16,6 +16,7 @@ pub mod display;
 pub mod drag_number;
 pub mod gesture;
 pub mod knob;
+pub mod limiter_display;
 pub mod meter;
 pub mod pad;
 pub mod segmented_control;
