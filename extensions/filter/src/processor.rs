@@ -21,6 +21,7 @@ use std::f32::consts::{FRAC_1_SQRT_2, PI, TAU};
 
 use sound_core::{
     AudioInput, AudioOutput, CHANNELS, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
+    soft_clip,
 };
 
 use crate::{FilterState, FilterType, Slope};
@@ -49,13 +50,6 @@ const HIGHEST_PART: f32 = 0.45;
 /// While something moves, the factors are worked out again this often. Four times per block
 /// of the engine: a sweep has no steps anyone can hear, and a `tan` per frame is not needed.
 const FACTOR_FRAMES: usize = 16;
-
-/// The saturation after the drive gain is exactly clean up to full scale, then bends softly
-/// towards `KNEE + BEND`. So drive 0 leaves every sound up to full scale as it is, and the drive
-/// is one gain into one fixed curve: turning it up never makes the sound louder than the curve
-/// allows on the way.
-const KNEE: f32 = 1.0;
-const BEND: f32 = 0.5;
 
 /// Input louder than this, or not a number, is held to it before anything else, so no sample of
 /// anyone else's can make the filter's memory infinite. +36 dBFS: nothing real comes near it.
@@ -216,16 +210,6 @@ impl Section {
     fn is_silent(&self) -> bool {
         self.ic1 == 0.0 && self.ic2 == 0.0
     }
-}
-
-/// The saturation: clean up to [`KNEE`], then a soft bend that never passes `KNEE + BEND`.
-/// Its slope is 1 at the knee on both sides, so the bend starts without a corner.
-fn saturate(sample: f32) -> f32 {
-    let size = sample.abs();
-    if size <= KNEE {
-        return sample;
-    }
-    (KNEE + BEND * ((size - KNEE) / BEND).tanh()).copysign(sample)
 }
 
 /// A sample of the input as the filter takes it: held to [`INPUT_LIMIT`], and silence for
@@ -430,7 +414,7 @@ impl Processor for Filter {
                     [(left, left_in, left_out), (right, right_in, right_out)]
                 {
                     let dry = held(*input);
-                    let driven = saturate(dry * drive);
+                    let driven = soft_clip(dry * drive);
                     let [first, second] = sections;
                     let one = first.next(&factors[0], taps, level, driven);
                     let two = second.next(&factors[1], taps, 1.0, one);

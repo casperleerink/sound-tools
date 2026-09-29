@@ -162,7 +162,7 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 
 ## Built-in instruments and effects
 
-The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, EQ and Reverb all follow one pattern; `extensions/filter` is the reference.
+The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, EQ, Reverb and Saturator all follow one pattern; `extensions/filter` is the reference.
 
 - One extension per device, one tool with no children, found by port names.
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter` constant with range and default, which validation, the knobs, the reset and the doc tests all read.

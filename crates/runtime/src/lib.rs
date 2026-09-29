@@ -22,6 +22,7 @@ use plugin_host::{
 };
 use reverb::ReverbState;
 use sampler::SamplerState;
+use saturator::SaturatorState;
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
     ProjectError, Registry, SavedDestination, State, Ticks,
@@ -117,6 +118,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     plugin_host::register(&mut registry, plugins)?;
     reverb::register(&mut registry)?;
     sampler::register(&mut registry)?;
+    saturator::register(&mut registry)?;
     tone::register(&mut registry)?;
     registry.runtime_agent_doc(INSPECT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
@@ -141,6 +143,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     compressor::view::register(&mut views, &mut devices);
     eq::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
+    saturator::view::register(&mut views, &mut devices);
     sampler::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     devices.instruments(|| {
@@ -213,6 +216,18 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
                 Ok(())
             })
             .needs(reverb::EXTENSION, "This project does not load the reverb."),
+            DeviceOffer::new(
+                SaturatorState::TOOL,
+                saturator::view::NAME,
+                |_, slot, changes| {
+                    changes.create(slot.clone(), SaturatorState::default());
+                    Ok(())
+                },
+            )
+            .needs(
+                saturator::EXTENSION,
+                "This project does not load the saturator.",
+            ),
         ]
     });
     // What the picker says under its offers: that the scan of this machine is still running,

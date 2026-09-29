@@ -24,6 +24,7 @@ mod recording;
 mod recording_audio;
 mod reverb;
 mod sampler;
+mod saturator;
 mod scale;
 mod summary;
 mod support;

@@ -5294,6 +5294,7 @@ dependencies = [
  "plugin-host",
  "reverb",
  "sampler",
+ "saturator",
  "serde_json",
  "sound-core",
  "sound-media",
@@ -5411,6 +5412,19 @@ dependencies = [
  "sound-notes",
  "sound-ui",
  "tempfile",
+]
+
+[[package]]
+name = "saturator"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "proptest 1.11.0",
+ "serde",
+ "serde_json",
+ "sound-core",
+ "sound-notes",
+ "sound-ui",
 ]
 
 [[package]]
