@@ -162,7 +162,7 @@ impl PeakLimiter {
                 }
             }
         }
-        self.position = (position + 1) % self.lookahead.max(1);
+        self.position = wrap(position + 1, self.lookahead.max(1));
         self.frame += 1;
         (delayed, gain)
     }
@@ -216,7 +216,7 @@ impl PeakLimiter {
         }
         // Gains at the back that are not lower than this one can never be the lowest again.
         while self.lowest_len > 0 {
-            let back = (self.lowest_start + self.lowest_len - 1) % capacity;
+            let back = wrap(self.lowest_start + self.lowest_len - 1, capacity);
             if self
                 .lowest
                 .get(back)
@@ -227,7 +227,7 @@ impl PeakLimiter {
                 break;
             }
         }
-        let back = (self.lowest_start + self.lowest_len) % capacity;
+        let back = wrap(self.lowest_start + self.lowest_len, capacity);
         if let Some(entry) = self.lowest.get_mut(back) {
             *entry = (frame, gain);
             self.lowest_len += 1;
@@ -240,11 +240,20 @@ impl PeakLimiter {
                 .get(self.lowest_start)
                 .is_some_and(|(at, _)| *at < oldest)
         {
-            self.lowest_start = (self.lowest_start + 1) % capacity;
+            self.lowest_start = wrap(self.lowest_start + 1, capacity);
             self.lowest_len -= 1;
         }
         self.lowest
             .get(self.lowest_start)
             .map_or(gain, |(_, lowest)| *lowest)
+    }
+}
+
+/// `index % length` for an index under twice the length, without a division: a division per
+/// frame was a large part of the cost of the limiter.
+fn wrap(index: usize, length: usize) -> usize {
+    match index >= length {
+        true => index - length,
+        false => index,
     }
 }
