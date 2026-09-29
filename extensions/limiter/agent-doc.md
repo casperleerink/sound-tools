@@ -1,6 +1,6 @@
 # Limiter: the built-in limiter effect
 
-`limiter` is an effect: it keeps a track under its ceiling. A peak that would go over is turned down at once, just enough, and the gain comes back with the release. Push the sound in with `gain_db` and the track gets louder while its peaks stay at the ceiling. It is the same limiter as the one at the end of the master, as a device you can put anywhere.
+`limiter` is an effect: nothing it sends out goes over its ceiling. The ceiling holds where the limiter is in `effects`: effects after it, and the pan of the track, can take the sound over it again, so put it last for a track that must stay under it. A peak that would go over is turned down at once, just enough, and the gain comes back with the release. Push the sound in with `gain_db` and the track gets louder while its peaks stay at the ceiling. It is the same limiter as the one at the end of the master, as a device you can put anywhere.
 
 Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the loops play through a limiter named `peaks`:
 
