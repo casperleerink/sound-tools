@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/media", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/core", "crates/media", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -23,6 +23,7 @@ instrument = { path = "extensions/instrument" }
 limiter = { path = "extensions/limiter" }
 metronome = { path = "extensions/metronome" }
 midi = { path = "extensions/midi" }
+modulation = { path = "extensions/modulation" }
 plugin-host = { path = "extensions/plugin-host" }
 reverb = { path = "extensions/reverb" }
 sampler = { path = "extensions/sampler" }
@@ -116,6 +117,7 @@ instrument = { opt-level = 3 }
 limiter = { opt-level = 3 }
 metronome = { opt-level = 3 }
 midi = { opt-level = 3 }
+modulation = { opt-level = 3 }
 plugin-host = { opt-level = 3 }
 reverb = { opt-level = 3 }
 runtime = { opt-level = 3 }
