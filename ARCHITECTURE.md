@@ -134,7 +134,7 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 - A track's chain is its instrument (the child named `instrument`), then the effects its `effects` list names, in that order. One list decides the order, so a reorder is one record and one undo step. Rejected: an order number in each effect record (two files per move, and ties).
 - Bypass is saved on the track's effect slot, not in the effect's record, so plugins and built-in effects share it. A bypassed effect leaves the chain and takes its latency with it.
 - Solo gives the other tracks the gains of a muted track in the same mixer. That is why the mixers moved from the tracks to the arrangement: only the owner of every track can see them all.
-- The master's limiter is code of the arrangement, fixed at the end, not a tool. Old projects get it without a file changing. Under its ceiling it is bit-transparent. Things connected to the device by hand and the click go around the master.
+- The master's limiter is code of the arrangement, fixed at the end, not a tool. Old projects get it without a file changing. Under its ceiling it is bit-transparent. Its DSP is `PeakLimiter` in the core, a per-frame helper like `Smoothed`, which the Limiter effect uses too, so both sound the same. The core itself limits nothing. Things connected to the device by hand and the click go around the master.
 - Clip rules: note starts count from the clip start and every note starts inside its clip (else the record does not load), so a note written with a project position is an error and not silence. Overlapping note clips all play. No note is ever stuck: an edit, move, delete or tempo change ends what it started, and `AllOff` ends everything, pedal included.
 - An audio clip has no length of its own; it plays at its file's speed, so a tempo change moves its start only. Overlapping audio clips: the highest `layer` is heard. The layer is in the record because file times are not stable across copies.
 - Every audio clip edge, hand-over and jump gets a short ramp or crossfade, so nothing clicks.
@@ -162,7 +162,7 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 
 ## Built-in instruments and effects
 
-The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, EQ, Reverb and Saturator all follow one pattern; `extensions/filter` is the reference.
+The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Reverb and Saturator all follow one pattern; `extensions/filter` is the reference.
 
 - One extension per device, one tool with no children, found by port names.
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter` constant with range and default, which validation, the knobs, the reset and the doc tests all read.
