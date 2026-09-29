@@ -3,27 +3,24 @@
 //! holds the card of the limiter, which is part of the master and cannot be taken off, so it has
 //! expand and power and no close.
 //!
-//! The limiter's display shows the last four seconds of what the master sent out, in green
-//! under the ceiling line, and how much the limiter took, hanging from the top. The handle at
-//! the right end of the ceiling line drags it up and down; the Ceiling knob is the way to it from
-//! the keys. Every control edits the record of the arrangement through the session, as one undo
-//! step, and a file edit of the same record shows at once.
-
-use std::collections::VecDeque;
+//! The display of the limiter is the one the Limiter effect has too: the last four seconds of
+//! what the master sent out under the ceiling line, and how much the limiter took. The Ceiling
+//! knob is the way to its handle from the keys. Every control edits the record of the
+//! arrangement through the session, as one undo step, and a file edit of the same record shows
+//! at once.
 
 use gpui::{
-    App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Pixels, Point,
-    SharedString, Task, Window, canvas, div, fill, point, prelude::*, px, size,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Point, SharedString,
+    Task, Window, div, prelude::*, px,
 };
 use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::device_card::{Column, DeviceCard};
-use sound_ui::components::display::{Axis, Display, Handle, INSET_HEIGHT};
+use sound_ui::components::display::Display;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
-use sound_ui::components::meter::GainReduction;
+use sound_ui::components::limiter_display::LimiterHistory;
 use sound_ui::components::volume::Volume;
-use sound_ui::metering::decibels;
 use sound_ui::{
     ActiveTheme, ControlEdit, Metering, Session, every_poll, weak_action, weak_callback,
 };
@@ -32,81 +29,10 @@ use super::layout::HEADER_WIDTH;
 use super::track_panel::{RACK_LEFT, RACK_TOP, ROW_TOP, TITLE_MIDDLE, VOLUME_LEFT};
 use crate::{ArrangementState, LimiterState, MasterState};
 
-/// The display of the limiter: its card is 352 pt with two columns of cells.
-const DISPLAY_WIDTH: f32 = 200.;
-/// Columns of the history, and the polls each one gathers: 50 columns of 80 ms, four seconds.
-const COLUMNS: usize = 50;
-const POLLS_PER_COLUMN: u32 = 5;
-/// Where the ceiling handle sits across the display.
-const HANDLE_ACROSS: f32 = 0.96;
-
 /// What the panel asks of the view that holds it.
 pub enum MasterPanelEvent {
     /// The close control.
     Close,
-}
-
-/// One column of the history: the loudest the master sent out and the most the limiter took,
-/// in dB, over its 80 ms.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Moment {
-    peak_db: f32,
-    reduction_db: f32,
-}
-
-impl Moment {
-    const QUIET: Self = Self {
-        peak_db: f32::NEG_INFINITY,
-        reduction_db: 0.0,
-    };
-
-    fn is_quiet(&self) -> bool {
-        self.peak_db < LimiterState::CEILING_DB.0 && self.reduction_db <= 0.0
-    }
-}
-
-/// The last four seconds, and the column being gathered.
-#[derive(Default)]
-struct History {
-    moments: VecDeque<Moment>,
-    gathering: Option<Moment>,
-    polls: u32,
-}
-
-impl History {
-    /// One poll. Whether a column was finished that changes what the display shows.
-    fn read(&mut self, peak: f32, reduction: f32) -> bool {
-        let now = Moment {
-            peak_db: decibels(peak),
-            // The reduction is kept as the factor the sound was above the output.
-            reduction_db: decibels(reduction).max(0.0),
-        };
-        let gathering = self.gathering.get_or_insert(Moment::QUIET);
-        gathering.peak_db = gathering.peak_db.max(now.peak_db);
-        gathering.reduction_db = gathering.reduction_db.max(now.reduction_db);
-        self.polls += 1;
-        if self.polls < POLLS_PER_COLUMN {
-            return false;
-        }
-        self.polls = 0;
-        let moment = self.gathering.take().unwrap_or(Moment::QUIET);
-        // At rest, a quiet column in a quiet history changes nothing and costs no frame.
-        if moment.is_quiet() && self.moments.iter().all(Moment::is_quiet) {
-            return false;
-        }
-        if self.moments.len() == COLUMNS {
-            self.moments.pop_front();
-        }
-        self.moments.push_back(moment);
-        true
-    }
-
-    /// The largest reduction of the last column, for the line under the display.
-    fn reduction_now(&self) -> f32 {
-        self.moments
-            .back()
-            .map_or(0.0, |moment| moment.reduction_db)
-    }
 }
 
 pub struct MasterPanel {
@@ -118,7 +44,7 @@ pub struct MasterPanel {
     expanded: bool,
     /// The meter of the volume: what the master sends out.
     metering: Metering,
-    history: History,
+    history: LimiterHistory,
     /// Not a tab stop. It tells whether the focus is inside the panel.
     focus_handle: FocusHandle,
     close_focus: FocusHandle,
@@ -151,7 +77,7 @@ impl MasterPanel {
             edit: ControlEdit::default(),
             expanded: false,
             metering: Metering::default(),
-            history: History::default(),
+            history: LimiterHistory::new(ceiling_range()),
             focus_handle: cx.focus_handle(),
             close_focus: cx.focus_handle().tab_stop(true),
             _metering: every_poll(cx, |panel: &mut Self, cx| panel.read_meters(cx)),
@@ -220,48 +146,21 @@ impl MasterPanel {
     /// The history under the ceiling line, whose handle drags the ceiling.
     fn display(&self, limiter: &LimiterState, cx: &mut Context<Self>) -> Display {
         let (min, max) = LimiterState::CEILING_DB;
-        let range = KnobRange::linear(min, max);
-        let ceiling = range.position(limiter.ceiling_db);
-        let handle = Handle::new(
-            "ceiling",
-            Axis::fixed(HANDLE_ACROSS),
-            Axis::new(
-                range,
-                limiter.ceiling_db,
-                LimiterState::default().ceiling_db,
-            ),
-        )
-        .on_change(weak_callback(
-            cx,
-            move |panel, change: ValueChange<Point<f32>>, cx| {
-                let set = |master: &mut MasterState, place: Point<f32>| {
-                    master.limiter.ceiling_db = place.y.clamp(min, max);
-                };
-                panel.apply(CEILING.undo_label, change, set, cx);
-            },
-        ));
-        let theme = cx.theme();
-        let colors = (theme.green, theme.gray_950);
-        let moments: Vec<Moment> = self.history.moments.iter().copied().collect();
-        let history = canvas(
-            |_, _, _| {},
-            move |bounds, (), window, _| paint_history(bounds, &moments, range, colors, window),
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .w(px(DISPLAY_WIDTH))
-        .h(px(INSET_HEIGHT));
-        let caption = format!(
-            "Ceiling {} dB · GR {}",
-            short(limiter.ceiling_db),
-            reduction_readout(self.history.reduction_now())
-        );
-        Display::new("limiter", DISPLAY_WIDTH)
-            .curve([point(0., ceiling), point(1., ceiling)])
-            .handle(handle)
-            .caption(caption)
-            .child(history)
+        let default = LimiterState::default().ceiling_db;
+        let handle = self
+            .history
+            .handle(limiter.ceiling_db, default)
+            .on_change(weak_callback(
+                cx,
+                move |panel, change: ValueChange<Point<f32>>, cx| {
+                    let set = |master: &mut MasterState, place: Point<f32>| {
+                        master.limiter.ceiling_db = place.y.clamp(min, max);
+                    };
+                    panel.apply(CEILING.undo_label, change, set, cx);
+                },
+            ));
+        self.history
+            .display("limiter", limiter.ceiling_db, handle, cx)
     }
 
     fn card(&self, master: &MasterState, cx: &mut Context<Self>) -> DeviceCard {
@@ -308,56 +207,10 @@ impl MasterPanel {
     }
 }
 
-/// The bars of the history: the peaks in green on the scale of the ceiling line, and the
-/// reduction hanging from the top, 24 dB for the whole height.
-fn paint_history(
-    bounds: Bounds<Pixels>,
-    moments: &[Moment],
-    range: KnobRange,
-    (green, reduction): (gpui::Hsla, gpui::Hsla),
-    window: &mut Window,
-) {
-    let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
-    let inset = 6.;
-    let step = (width - 2. * inset) / COLUMNS as f32;
-    let bar = (step - 1.).max(1.);
-    // The newest column at the right, as time goes.
-    let first = COLUMNS - moments.len();
-    for (index, moment) in moments.iter().enumerate() {
-        let x = inset + (first + index) as f32 * step;
-        let up = match moment.peak_db.is_finite() {
-            true => range.position(moment.peak_db),
-            false => 0.,
-        };
-        if up > 0. {
-            let top = height * (1. - up);
-            let body = Bounds::new(
-                bounds.origin + point(px(x), px(top)),
-                size(px(bar), px(height - top)),
-            );
-            window.paint_quad(fill(body, green));
-        }
-        // Narrower than the level and over it, so the two read apart where they meet under
-        // the ceiling.
-        let down = (moment.reduction_db / GainReduction::RANGE_DB).clamp(0., 1.) * height;
-        if down > 0. {
-            let thin = (bar / 3.).max(1.);
-            let left = x + (bar - thin) / 2.;
-            let body = Bounds::new(
-                bounds.origin + point(px(left), px(0.)),
-                size(px(thin), px(down)),
-            );
-            window.paint_quad(fill(body, reduction));
-        }
-    }
-}
-
-/// The reduction under the display, to a tenth of a dB: `0 dB`, `-4.1 dB`.
-fn reduction_readout(db: f32) -> String {
-    match db < 0.05 {
-        true => "0 dB".into(),
-        false => format!("-{db:.1} dB"),
-    }
+/// The travel of the ceiling, which is also the scale of the history.
+fn ceiling_range() -> KnobRange {
+    let (min, max) = LimiterState::CEILING_DB;
+    KnobRange::linear(min, max)
 }
 
 /// A knob of the limiter: a field of its record, its range and how it reads.
@@ -534,30 +387,3 @@ impl Render for MasterPanel {
 
 /// What the master row and its panel are called.
 pub const MASTER_NAME: &str = "Master";
-
-#[cfg(test)]
-mod tests {
-    use super::{COLUMNS, History, POLLS_PER_COLUMN};
-
-    #[test]
-    fn a_column_gathers_the_loudest_of_its_polls_and_rest_costs_nothing() {
-        let mut history = History::default();
-        // Silence from the start never draws.
-        for _ in 0..3 * POLLS_PER_COLUMN {
-            assert!(!history.read(0.0, 0.0));
-        }
-        let mut finished = Vec::new();
-        for poll in 0..POLLS_PER_COLUMN {
-            finished.push(history.read(0.1 * poll as f32, 2.0));
-        }
-        assert_eq!(finished.iter().filter(|done| **done).count(), 1);
-        let moment = history.moments[0];
-        assert!((moment.peak_db - 20.0 * 0.4_f32.log10()).abs() < 1e-4);
-        assert!((moment.reduction_db - 6.0206).abs() < 1e-3);
-        // Four seconds at most.
-        for _ in 0..(COLUMNS as u32 + 10) * POLLS_PER_COLUMN {
-            history.read(0.5, 1.0);
-        }
-        assert_eq!(history.moments.len(), COLUMNS);
-    }
-}
