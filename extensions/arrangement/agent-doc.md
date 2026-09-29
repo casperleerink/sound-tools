@@ -109,7 +109,7 @@ The sound of a track goes through its instrument, then through each effect in `e
 }
 ```
 
-An effect is any tool with an `audio` input and an `audio` output. Today that is the built-in `filter`, `compressor`, `limiter`, `eq`, `reverb`, `saturator`, `utility` and `modulation`, whose records are in `agent-docs/filter.md`, `agent-docs/compressor.md`, `agent-docs/limiter.md`, `agent-docs/eq.md`, `agent-docs/reverb.md`, `agent-docs/saturator.md`, `agent-docs/utility.md` and `agent-docs/modulation.md`, and the `plugin` tool, which is the same record as an instrument; `agent-docs/plugins.md` says where the ids come from. The file name is yours: lowercase letters, digits, `-` and `_`, and not `instrument`.
+An effect is any tool with an `audio` input and an `audio` output. Today that is the built-in `filter`, `compressor`, `limiter`, `eq`, `delay`, `reverb`, `saturator`, `utility` and `modulation`, whose records are in `agent-docs/filter.md`, `agent-docs/compressor.md`, `agent-docs/limiter.md`, `agent-docs/eq.md`, `agent-docs/delay.md`, `agent-docs/reverb.md`, `agent-docs/saturator.md`, `agent-docs/utility.md` and `agent-docs/modulation.md`, and the `plugin` tool, which is the same record as an instrument; `agent-docs/plugins.md` says where the ids come from. The file name is yours: lowercase letters, digits, `-` and `_`, and not `instrument`.
 
 How to:
 

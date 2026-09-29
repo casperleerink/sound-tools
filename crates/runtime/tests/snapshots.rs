@@ -44,6 +44,9 @@
 //! - `track-panel-reverb.png`: the synth and the built-in reverb after it.
 //! - `track-panel-saturator.png`: the synth and the built-in saturator after it, the tube curve
 //!   driven 18 dB. `WINDOW_SNAPSHOT_ONLY=saturator` renders it alone.
+//! - `track-panel-delay.png`: the synth and the built-in delay after it, synced, dotted.
+//! - `track-panel-delay-expanded.png`: the same with the delay expanded and free in ms: the
+//!   cuts and ping-pong.
 //! - `track-panel-all-effects.png`: the synth, the Filter, the Compressor, the EQ and the
 //!   Reverb, at the start of the rack. The test measures in the pixels that every card, the
 //!   mixer strip and the master panel share one card top, one height and the value lines of
@@ -97,6 +100,8 @@ use arrangement::view::{ArrangementView, NoteEditor};
 use arrangement::{Colour, TrackState};
 use compressor::CompressorState;
 use compressor::view::CompressorView;
+use delay::view::DelayView;
+use delay::{DelayState, Feel};
 use eq::view::EqView;
 use eq::{Band, EqState, Shape};
 use filter::FilterState;
@@ -637,6 +642,24 @@ fn add_saturator(project: &mut Project, track: &str) -> Result<()> {
     };
     changes.create(slot, sound);
     project.commit("Add Saturator", changes)?;
+    Ok(())
+}
+
+/// Puts a delay after the instrument of a track, as `Add effect` does: a dotted eighth.
+fn add_delay(project: &mut Project, track: &str) -> Result<()> {
+    let id = InstanceId::new(&format!("arrangement/{track}"))?;
+    let track = project
+        .resolve::<TrackState>(&id)
+        .context("the track is not there")?;
+    let mut changes = Changes::new();
+    let slot = arrangement::add_effect(project, &mut changes, &track, "Delay")?;
+    let sound = DelayState {
+        feel: Feel::Dotted,
+        feedback: 0.5,
+        ..DelayState::default()
+    };
+    changes.create(slot, sound);
+    project.commit("Add Delay", changes)?;
     Ok(())
 }
 
@@ -1503,6 +1526,47 @@ fn main() -> Result<()> {
     cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "track-panel-reverb-expanded")?;
+    drop(opened);
+
+    // The built-in delay after the synth, then expanded and free in ms.
+    let opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        add_delay(project, "bass")
+    })?;
+    opened.click_track_header(1., &mut cx)?;
+    save(&mut cx, &opened, "track-panel-delay")?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let card = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
+        let card = card.context("the delay has no card")?;
+        card.downcast::<DelayView>()
+            .map_err(|_| anyhow::anyhow!("the second card is not the delay"))
+    })?;
+    cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
+    let id = InstanceId::new("arrangement/bass/delay")?;
+    cx.update(|cx| {
+        opened.session.update(cx, |session, cx| {
+            let delay = session.project().resolve::<DelayState>(&id);
+            let delay = delay.context("the delay is not there")?;
+            let sound = session.project().state(&delay).copied();
+            let sound = sound.context("its state")?;
+            let free = DelayState {
+                sync: false,
+                time_ms: 120.0,
+                ..sound
+            };
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.set(&delay, free);
+                project.commit("Change sync", changes)
+            });
+            anyhow::Ok(())
+        })
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-delay-expanded")?;
     drop(opened);
 
     // The compressor after the filter, with the values of the mockup but a threshold under the

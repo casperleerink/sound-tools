@@ -26,6 +26,7 @@
 mod audio;
 mod clips;
 mod compressor;
+mod delay;
 mod drum_pad;
 mod editing;
 mod effects;

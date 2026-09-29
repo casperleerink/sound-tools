@@ -767,6 +767,15 @@ impl Opened<'_> {
         self.release(to);
     }
 
+    /// Clicks a row of the open effect picker that may be below the fold: the built-in effects
+    /// come first, and the list scrolls, so the menu is scrolled to its end first.
+    pub fn click_effect_row(&mut self, row: &str) {
+        let first = self.control("menu-filter");
+        self.scroll(first, 0., -2_000.);
+        let row = self.control(row);
+        self.click(row);
+    }
+
     /// A scroll of the wheel or the trackpad at a place. A negative `dy` goes down.
     pub fn scroll(&mut self, position: Point<Pixels>, dx: f32, dy: f32) {
         self.cx

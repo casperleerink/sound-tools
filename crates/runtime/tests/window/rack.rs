@@ -43,8 +43,7 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
         "menu-{}",
         PluginRecord::offer_key(PluginFormat::Clap, test_plugin_id(PluginFormat::Clap))
     );
-    let row = opened.control(&row);
-    opened.click(row);
+    opened.click_effect_row(&row);
     opened.project(|project| assert_eq!(project.problems(), []));
     assert_eq!(
         names(&mut opened),
