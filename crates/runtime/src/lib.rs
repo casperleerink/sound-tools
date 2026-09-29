@@ -12,6 +12,7 @@ use std::path::Path;
 use anyhow::Result;
 use arrangement::{ArrangementState, Colour, TrackKind};
 use compressor::CompressorState;
+use delay::DelayState;
 use drum_pad::DrumPadState;
 use eq::EqState;
 use filter::FilterState;
@@ -113,6 +114,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
     arrangement::register(&mut registry)?;
     compressor::register(&mut registry)?;
+    delay::register(&mut registry)?;
     drum_pad::register(&mut registry)?;
     eq::register(&mut registry)?;
     filter::register(&mut registry)?;
@@ -149,6 +151,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     compressor::view::register(&mut views, &mut devices);
     limiter::view::register(&mut views, &mut devices);
     eq::view::register(&mut views, &mut devices);
+    delay::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
     saturator::view::register(&mut views, &mut devices);
     utility::view::register(&mut views, &mut devices);
@@ -232,6 +235,11 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
                 Ok(())
             })
             .needs(eq::EXTENSION, "This project does not load the EQ."),
+            DeviceOffer::new(DelayState::TOOL, delay::view::NAME, |_, slot, changes| {
+                changes.create(slot.clone(), DelayState::default());
+                Ok(())
+            })
+            .needs(delay::EXTENSION, "This project does not load the delay."),
             DeviceOffer::new(ReverbState::TOOL, reverb::view::NAME, |_, slot, changes| {
                 changes.create(slot.clone(), ReverbState::default());
                 Ok(())

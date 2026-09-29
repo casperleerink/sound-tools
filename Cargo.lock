@@ -5318,6 +5318,7 @@ dependencies = [
  "anyhow",
  "arrangement",
  "compressor",
+ "delay",
  "drum-pad",
  "eq",
  "filter",

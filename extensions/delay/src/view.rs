@@ -154,7 +154,7 @@ fn time_readout(state: &DelayState) -> String {
 mod layout {
     use sound_ui::components::knob::{KnobRange, KnobScale};
 
-    /// Where the sound comes in.
+    /// Where the sound comes in, and the air after the last repeat drawn.
     pub const LEFT: f32 = 0.04;
     /// The gap to the first repeat at the shortest time, so it stays apart from the sound.
     pub const SHORTEST_GAP: f32 = 0.03;
@@ -217,7 +217,7 @@ fn repeats(state: &DelayState) -> Vec<Point<f32>> {
     let mut level = 1.0_f32;
     for number in 1..=MOST {
         let x = LEFT + gap * number as f32;
-        if x + HALF_WIDTH > 1. || level < LOWEST {
+        if x + HALF_WIDTH > 1. - LEFT || level < LOWEST {
             break;
         }
         curve.extend([

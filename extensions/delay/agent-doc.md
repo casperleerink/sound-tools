@@ -2,14 +2,14 @@
 
 `delay` is an effect: it repeats the sound of a track. Synced, the repeats fall on a note of the tempo, such as every eighth note, and follow the tempo when it changes. Free, they come after a time in ms. Each repeat is quieter than the one before by the feedback, and thinner and darker by the cuts. Ping-pong sends them from left to right and back.
 
-Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the keys play through a delay named `echo`:
+Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the lead plays through a delay named `echo`:
 
-```json state/arrangement/keys/instance.json
+```json state/arrangement/lead/instance.json
 {
   "tool": "arrangement.track",
   "state": {
-    "name": "Keys",
-    "colour": "lavender",
+    "name": "Lead",
+    "colour": "sky",
     "order": 1,
     "gain_db": 0.0,
     "pan": 0.0,
@@ -19,7 +19,7 @@ Like every effect it is two lines: the record in the track folder, and its file 
 }
 ```
 
-```json state/arrangement/keys/echo.json
+```json state/arrangement/lead/echo.json
 {
   "tool": "delay",
   "state": {

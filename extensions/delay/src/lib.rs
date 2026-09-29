@@ -242,7 +242,7 @@ pub fn delay_seconds(state: &DelayState, bpm: f64) -> f32 {
 /// The doc of the delay record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "delay",
-    when: "You put a delay on a track, or change one: echoes, repeats on the beat, a slapback, ping-pong",
+    when: "A delay on a track: echoes, a slapback, ping-pong",
     markdown: include_str!("../agent-doc.md"),
 };
 
