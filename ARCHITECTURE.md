@@ -162,7 +162,7 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 
 ## Built-in instruments and effects
 
-The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Reverb, Saturator, Utility and Modulation all follow one pattern; `extensions/filter` is the reference.
+The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Delay, Reverb, Saturator, Utility and Modulation all follow one pattern; `extensions/filter` is the reference.
 
 - One extension per device, one tool with no children, found by port names.
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter` constant with range and default, which validation, the knobs, the reset and the doc tests all read.
@@ -172,6 +172,8 @@ The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, Limi
 - Each effect has an exact response function, and tests hold the measured sound to it.
 - A gain in dB and the pan law are in `sound-core` (`amplitude`, `pan_gains`), so a pan means the same on a track, a drum pad and the Utility.
 - The card is drawn from shared UI components; every control goes through `ControlEdit`, one gesture per drag.
+- A time that follows the tempo, such as a synced Delay, reads the tempo of the transport where each block starts, so it follows a tempo change while playing and while stopped. The record saves the note, not the seconds.
+- A new delay time never moves a read position: the read fades over 20 ms from the old tap to the new one, so nothing clicks and no pitch slides. These taps and the one-pole filter live in `sound_core` (`dsp.rs`), next to its `DelayLine`, for every effect that needs them.
 - A lookahead or delay is reported as latency; latency is a choice, not a knob, because a latency that moves with a drag would make every track jump.
 - The Drum pad renders its sounds whole on a background thread and plays buffers on the audio thread. No sound is made inside an edit. Its default kit is not written into records, so a change to the kit changes how existing projects sound. Treat it like a change to a saved format.
 - The metronome is not project state: no tool, no record, no undo step. A tool would mean a file in `state/`, and turning the click on would rewrite a musical record.
