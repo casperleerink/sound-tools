@@ -201,6 +201,12 @@ impl LimiterView {
         }
     }
 
+    /// The most the limiter took in the last column of its display, in dB: what the line under
+    /// the display says.
+    pub fn reduction_db(&self) -> f32 {
+        self.history.reduction_now()
+    }
+
     fn change<V>(
         &mut self,
         label: &str,

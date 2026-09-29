@@ -5301,6 +5301,7 @@ dependencies = [
  "gpui_platform",
  "hound",
  "instrument",
+ "limiter",
  "metronome",
  "midi",
  "plugin-host",

@@ -16,6 +16,7 @@ use drum_pad::DrumPadState;
 use eq::EqState;
 use filter::FilterState;
 use instrument::SynthState;
+use limiter::LimiterState;
 use plugin_host::{
     PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK, WeakPlugins,
     default_search_paths,
@@ -115,6 +116,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     filter::register(&mut registry)?;
     fit_tempo::register(&mut registry)?;
     instrument::register(&mut registry)?;
+    limiter::register(&mut registry)?;
     plugin_host::register(&mut registry, plugins)?;
     reverb::register(&mut registry)?;
     sampler::register(&mut registry)?;
@@ -141,6 +143,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     drum_pad::view::register(&mut views, &mut devices);
     filter::view::register(&mut views, &mut devices);
     compressor::view::register(&mut views, &mut devices);
+    limiter::view::register(&mut views, &mut devices);
     eq::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
     saturator::view::register(&mut views, &mut devices);
@@ -205,6 +208,18 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             .needs(
                 compressor::EXTENSION,
                 "This project does not load the compressor.",
+            ),
+            DeviceOffer::new(
+                LimiterState::TOOL,
+                limiter::view::NAME,
+                |_, slot, changes| {
+                    changes.create(slot.clone(), LimiterState::default());
+                    Ok(())
+                },
+            )
+            .needs(
+                limiter::EXTENSION,
+                "This project does not load the limiter.",
             ),
             DeviceOffer::new(EqState::TOOL, eq::view::NAME, |_, slot, changes| {
                 changes.create(slot.clone(), EqState::default());

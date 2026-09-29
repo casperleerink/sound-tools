@@ -36,6 +36,8 @@
 //!   mockup, with the level of a playing chord on its curve and its gain reduction.
 //! - `track-panel-compressor-expanded.png`: the same with the compressor expanded: knee,
 //!   makeup, mix and lookahead.
+//! - `track-panel-limiter.png`: the synth and the built-in limiter pushing the bass 18 dB into
+//!   a ceiling of -6 dB, with four seconds of what it sent out and the reduction.
 //! - `track-panel-eq.png`: the synth and the built-in EQ after it, band 3 selected.
 //! - `track-panel-eq-expanded.png`: the same with the EQ expanded: the bands on and off, and
 //!   the output.
@@ -103,6 +105,8 @@ use gpui::{
     px, size,
 };
 use instrument::SynthState;
+use limiter::LimiterState;
+use limiter::view::LimiterView;
 use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand};
 use reverb::ReverbState;
 use reverb::view::ReverbView;
@@ -640,6 +644,19 @@ fn add_compressor(project: &mut Project, track: &str, sound: CompressorState) ->
     let slot = arrangement::add_effect(project, &mut changes, &track, "Compressor")?;
     changes.create(slot, sound);
     project.commit("Add Compressor", changes)?;
+    Ok(())
+}
+
+/// Puts a limiter after the effects of a track, as `Add effect` does.
+fn add_limiter(project: &mut Project, track: &str, sound: LimiterState) -> Result<()> {
+    let id = InstanceId::new(&format!("arrangement/{track}"))?;
+    let track = project
+        .resolve::<TrackState>(&id)
+        .context("the track is not there")?;
+    let mut changes = Changes::new();
+    let slot = arrangement::add_effect(project, &mut changes, &track, "Limiter")?;
+    changes.create(slot, sound);
+    project.commit("Add Limiter", changes)?;
     Ok(())
 }
 
@@ -1511,6 +1528,38 @@ fn main() -> Result<()> {
     cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "track-panel-compressor-expanded")?;
+    drop(opened);
+
+    // The limiter after the synth, pushing the bass, which peaks at -22 dB, into a ceiling of
+    // -6 dB, with four seconds of it on the display.
+    let opened = Opened::new(&mut cx, |project| {
+        piece(project)?;
+        let sound = LimiterState {
+            gain_db: 18.0,
+            ceiling_db: -6.0,
+            ..LimiterState::default()
+        };
+        add_limiter(project, "bass", sound)
+    })?;
+    let mut opened = opened;
+    opened.click_track_header(1., &mut cx)?;
+    let view = opened.arrangement_view(&mut cx)?;
+    let card = cx.update(|cx| {
+        let panel = view.read(cx).track_panel().cloned();
+        let panel = panel.context("the track panel did not open")?;
+        let card = panel.read(cx).device_views().nth(1).flatten().cloned();
+        let card = card.context("the limiter has no card")?;
+        card.downcast::<LimiterView>()
+            .map_err(|_| anyhow::anyhow!("the second card is not the limiter"))
+    })?;
+    opened.play_from(Ticks(0), &mut cx)?;
+    let poll = OFFLINE.sample_rate as f32 * sound_ui::POLL_INTERVAL.as_secs_f32();
+    for _ in 0..(4.2 * 1000. / 16.) as usize {
+        opened.advance(poll as usize, &mut cx);
+        cx.update(|cx| card.update(cx, |card, cx| card.read_meters(cx)));
+    }
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-limiter")?;
     drop(opened);
 
     // A track with the synth, the Filter, the Compressor, the EQ and the Reverb, at the start

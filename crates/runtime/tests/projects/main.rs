@@ -15,6 +15,7 @@ mod filter;
 mod fit;
 mod generated_take;
 mod latency;
+mod limiter;
 mod live;
 mod metronome;
 mod mixer;
