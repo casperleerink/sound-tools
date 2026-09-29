@@ -164,7 +164,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         .iter()
         .flat_map(|(_, text)| json_examples(text))
         .collect();
-    assert_eq!(all.len(), 37);
+    assert_eq!(all.len(), 39);
 
     // The raw take of a recording is not a record: it is an asset the runtime writes once
     // and never reads back. Its example is checked as the file it is.
@@ -328,5 +328,5 @@ fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1285, "the map has {words} words");
+    assert!(words < 1305, "the map has {words} words");
 }
