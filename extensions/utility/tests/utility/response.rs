@@ -135,16 +135,21 @@ fn every_record_does_what_its_matrix_says() {
     }
 }
 
-/// The pan of a utility is the pan of a track: a sound in the middle keeps its level, panned
-/// away one channel is exactly silent and the other 3 dB up.
+/// The pan of a utility is the pan law of a track: the middle is exactly one, panned away one
+/// channel is exactly silent and the other 3 dB up, and in between the power stays.
 #[test]
 fn the_pan_is_the_pan_law_of_a_track() {
-    for pan in [-1.0, -0.3, 0.0, 0.6, 1.0] {
-        let state = UtilityState {
+    let gains = |pan| {
+        let [[left, _], [_, right]] = matrix(&UtilityState {
             pan,
             ..UtilityState::default()
-        };
-        let [[left, _], [_, right]] = matrix(&state);
-        assert_eq!([left, right], sound_core::pan_gains(1.0, pan), "{pan}");
-    }
+        });
+        [left, right]
+    };
+    assert_eq!(gains(0.0), [1.0, 1.0]);
+    assert_eq!(gains(-1.0), [std::f32::consts::SQRT_2, 0.0]);
+    assert_eq!(gains(1.0), [0.0, std::f32::consts::SQRT_2]);
+    // √2 times the sine of 1/8 and of 3/8 of a quarter turn.
+    let [left, right] = gains(0.5);
+    assert!((left - 0.541_196).abs() < 1e-6 && (right - 1.306_563).abs() < 1e-6);
 }

@@ -6,7 +6,7 @@ use std::f64::consts::PI;
 
 use utility::UtilityState;
 
-use crate::support::{SAMPLE_RATE, measured};
+use crate::support::{measured, measured_at};
 
 fn bass_mono(hz: f32) -> UtilityState {
     UtilityState {
@@ -24,8 +24,8 @@ fn db(ratio: f64) -> f64 {
 /// `x² / (1 + j √2 x - x²)`, so `x⁴ / (1 + x⁴)` in all. The trapezoidal form is the analog filter
 /// with its frequencies bent by `tan(π f / sample rate)`, so `x` is the ratio of the bent
 /// frequencies.
-fn high_pass(hz: f64, crossover_hz: f64) -> f64 {
-    let bend = |hz: f64| (PI * hz / f64::from(SAMPLE_RATE)).tan();
+fn high_pass(hz: f64, crossover_hz: f64, sample_rate: u32) -> f64 {
+    let bend = |hz: f64| (PI * hz / f64::from(sample_rate)).tan();
     let x4 = (bend(hz) / bend(crossover_hz)).powi(4);
     x4 / (1.0 + x4)
 }
@@ -41,24 +41,28 @@ fn a_mono_sound_comes_out_at_its_own_level_at_every_frequency() {
     }
 }
 
+/// At the sample rates of a device, the side is where the formula says.
 #[test]
 fn the_side_follows_the_high_pass_of_the_crossover() {
-    for crossover_hz in [50.0, 120.0, 500.0] {
-        for hz in [25.0, 60.0, 120.0, 250.0, 500.0, 2_000.0] {
-            let [left, right] = measured(bass_mono(crossover_hz as f32), hz, [0.5, -0.5]);
-            let expected = 0.5 * high_pass(hz, crossover_hz);
-            for heard in [left, right] {
-                let off = (heard - expected).abs();
-                assert!(
-                    off < 1e-4 || db(heard / expected).abs() < 0.05,
-                    "{crossover_hz} Hz crossover at {hz} Hz: {heard} where {expected}"
-                );
+    for sample_rate in [44_100, 48_000, 96_000] {
+        for crossover_hz in [50.0, 120.0, 500.0] {
+            for hz in [25.0, 60.0, 120.0, 250.0, 500.0, 2_000.0] {
+                let state = bass_mono(crossover_hz as f32);
+                let [left, right] = measured_at(state, hz, [0.5, -0.5], sample_rate);
+                let expected = 0.5 * high_pass(hz, crossover_hz, sample_rate);
+                for heard in [left, right] {
+                    let off = (heard - expected).abs();
+                    assert!(
+                        off < 1e-4 || db(heard / expected).abs() < 0.05,
+                        "{sample_rate}: {crossover_hz} Hz crossover at {hz} Hz: {heard} where {expected}"
+                    );
+                }
             }
         }
     }
     // At the crossover the side is half as loud, 6 dB down, and three octaves under it 72 dB.
-    assert!((db(high_pass(120.0, 120.0)) + 6.02).abs() < 0.01);
-    assert!(db(high_pass(15.0, 120.0)) < -70.0);
+    assert!((db(high_pass(120.0, 120.0, 48_000)) + 6.02).abs() < 0.01);
+    assert!(db(high_pass(15.0, 120.0, 48_000)) < -70.0);
 }
 
 /// A sound only on the left: the bass comes from both sides, the highs only from the left.

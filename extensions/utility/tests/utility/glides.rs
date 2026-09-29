@@ -148,6 +148,8 @@ fn a_glide_takes_twenty_milliseconds() {
     });
     let [left, right] = rig.render(SAMPLE_RATE as usize / 10);
     assert!(peak(&left[..480]) > 0.1);
+    // Still on its way down near the end of the 960 frames of 20 ms, gone after them.
+    assert!(peak(&left[640..900]).max(peak(&right[640..900])) > 0.01);
     for channel in [&left, &right] {
         assert!(channel[960..].iter().all(|sample| *sample == 0.0));
     }

@@ -38,8 +38,9 @@ const FACTOR_FRAMES: usize = 16;
 const HIGHEST_PART: f32 = 0.45;
 
 /// Sound louder than this, or not a number, is held to it on its way into the crossover, so no
-/// sample of anyone else's can make its memory infinite. +36 dBFS: nothing real comes near it.
-const INPUT_LIMIT: f32 = 64.0;
+/// sample of anyone else's can make its memory infinite. +120 dBFS: far above what a chain of
+/// utilities at their most gain can make, so only what is broken is held.
+const INPUT_LIMIT: f32 = 1e6;
 
 /// While the input is silent, a memory smaller than this is let go of: -180 dB. So a crossover
 /// after a sound that ended comes to rest and does no work.
@@ -328,9 +329,12 @@ impl Processor for Utility {
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
         let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
-        if self.passes_through() {
+        let crossover = self.crossover_is_heard();
+        if !crossover {
             // A frequency set while bass mono is off is where it starts when it is turned on.
             self.octaves.snap();
+        }
+        if self.passes_through() {
             let channels = [(left_in, left_out), (right_in, right_out)];
             for (input, output) in channels {
                 output
@@ -348,7 +352,6 @@ impl Processor for Utility {
             self.crossover = Crossover::default();
             return;
         }
-        let crossover = self.crossover_is_heard();
         let chunks = left_in
             .chunks(FACTOR_FRAMES)
             .zip(right_in.chunks(FACTOR_FRAMES))
