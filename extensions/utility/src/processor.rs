@@ -37,10 +37,10 @@ const FACTOR_FRAMES: usize = 16;
 /// its factors would run away.
 const HIGHEST_PART: f32 = 0.45;
 
-/// Sound louder than this, or not a number, is held to it on its way into the crossover, so no
-/// sample of anyone else's can make its memory infinite. +120 dBFS: far above what a chain of
-/// utilities at their most gain can make, so only what is broken is held.
-const INPUT_LIMIT: f32 = 1e6;
+/// Input louder than this, or not a number, is held to it once the utility changes anything, as
+/// the other effects hold theirs, so no sample of anyone else's can make the memory of the
+/// crossover infinite or pass on what is not a number. +36 dBFS: nothing real comes near it.
+const INPUT_LIMIT: f32 = 64.0;
 
 /// While the input is silent, a memory smaller than this is let go of: -180 dB. So a crossover
 /// after a sound that ended comes to rest and does no work.
@@ -191,7 +191,7 @@ impl Crossover {
     }
 }
 
-/// A sample as the crossover takes it: held to [`INPUT_LIMIT`], and silence for anything that
+/// A sample as the utility takes it: held to [`INPUT_LIMIT`], and silence for anything that
 /// is not a number.
 fn held(sample: f32) -> f32 {
     if sample.is_nan() {
@@ -371,7 +371,7 @@ impl Processor for Utility {
                     .mix
                     .each_mut()
                     .map(|row| row.each_mut().map(|part| part.advance(1)));
-                let (left_in, right_in) = (*left_in, *right_in);
+                let (left_in, right_in) = (held(*left_in), held(*right_in));
                 let mut sound = [
                     left[0] * left_in + left[1] * right_in,
                     right[0] * left_in + right[1] * right_in,
@@ -380,7 +380,7 @@ impl Processor for Utility {
                     let heard = self.bass_mono.advance(1);
                     let mid = (sound[0] + sound[1]) * 0.5;
                     let side = (sound[0] - sound[1]) * 0.5;
-                    let through = self.crossover.next(&self.factors, held(mid), held(side));
+                    let through = self.crossover.next(&self.factors, mid, side);
                     let (mid_through, side_through) = through;
                     let mid = mid + heard * (mid_through - mid);
                     let side = side + heard * (side_through - side);

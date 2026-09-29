@@ -127,10 +127,12 @@ fn a_sound_that_is_not_a_number_does_not_poison_the_crossover() {
         })
     };
     let mut rig = Rig::new(state, signal);
-    rig.render(SAMPLE_RATE as usize / 2);
+    let [first_left, first_right] = rig.render(SAMPLE_RATE as usize / 2);
     let [left, right] = rig.render(SAMPLE_RATE as usize / 10);
-    for channel in [&left, &right] {
+    for channel in [&first_left, &first_right, &left, &right] {
         assert!(channel.iter().all(|sample| sample.is_finite()));
+    }
+    for channel in [&left, &right] {
         assert!((peak(channel) - 0.5).abs() < 0.01, "{}", peak(channel));
     }
 }
