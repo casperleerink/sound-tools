@@ -318,11 +318,12 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 /// section: the whole agent doc was 2030 words before the split, the map was about 960. Each
 /// built-in effect adds a line of about 20 words: with the Filter, the EQ, the Reverb and the
 /// Compressor it is about 1130, with the doc of audio about 1150, with the Sampler about 1170,
-/// with the Drum pad about 1200, with the Saturator about 1230, with the Limiter about 1255, and with the Utility about 1280.
+/// with the Drum pad about 1200, with the Saturator about 1230, with the Limiter about 1255,
+/// and with the Utility about 1280.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1265, "the map has {words} words");
+    assert!(words < 1285, "the map has {words} words");
 }

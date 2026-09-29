@@ -246,11 +246,18 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
                 saturator::EXTENSION,
                 "This project does not load the saturator.",
             ),
-            DeviceOffer::new(UtilityState::TOOL, utility::view::NAME, |_, slot, changes| {
-                changes.create(slot.clone(), UtilityState::default());
-                Ok(())
-            })
-            .needs(utility::EXTENSION, "This project does not load the utility."),
+            DeviceOffer::new(
+                UtilityState::TOOL,
+                utility::view::NAME,
+                |_, slot, changes| {
+                    changes.create(slot.clone(), UtilityState::default());
+                    Ok(())
+                },
+            )
+            .needs(
+                utility::EXTENSION,
+                "This project does not load the utility.",
+            ),
         ]
     });
     // What the picker says under its offers: that the scan of this machine is still running,
