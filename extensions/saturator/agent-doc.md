@@ -2,33 +2,27 @@
 
 `saturator` is an effect: it drives the sound of a track into a curve that rounds its peaks off. A little drive makes a sound warmer and denser, a lot makes it distorted. The level stays where it was as the drive goes up, so the drive changes the colour and not the loudness. A tone tilt after the curve makes the result darker or brighter.
 
-Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the bass plays through a saturator named `warm`:
+Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the organ plays through a saturator named `heat`:
 
-```json state/arrangement/bass/instance.json
+```json state/arrangement/organ/instance.json
 {
   "tool": "arrangement.track",
   "state": {
-    "name": "Bass",
+    "name": "Organ",
     "colour": "peach",
     "order": 1,
     "gain_db": 0.0,
     "pan": 0.0,
     "mute": false,
-    "effects": ["warm"]
+    "effects": ["heat"]
   }
 }
 ```
 
-```json state/arrangement/bass/warm.json
+```json state/arrangement/organ/heat.json
 {
   "tool": "saturator",
-  "state": {
-    "curve": "soft",
-    "drive_db": 6.0,
-    "tone_db": 0.0,
-    "output_db": 0.0,
-    "mix": 1.0
-  }
+  "state": {"curve": "soft", "drive_db": 6.0, "tone_db": 0.0, "output_db": 0.0, "mix": 1.0}
 }
 ```
 

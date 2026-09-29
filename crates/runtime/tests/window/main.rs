@@ -40,6 +40,7 @@ mod recording;
 mod recording_audio;
 mod reverb;
 mod sampler;
+mod saturator;
 mod several_notes;
 mod shell;
 mod support;

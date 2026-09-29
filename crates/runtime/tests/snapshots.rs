@@ -40,6 +40,8 @@
 //! - `track-panel-eq-expanded.png`: the same with the EQ expanded: the bands on and off, and
 //!   the output.
 //! - `track-panel-reverb.png`: the synth and the built-in reverb after it.
+//! - `track-panel-saturator.png`: the synth and the built-in saturator after it, the tube curve
+//!   driven 18 dB. `WINDOW_SNAPSHOT_ONLY=saturator` renders it alone.
 //! - `track-panel-all-effects.png`: the synth and all four built-in effects, at the start of
 //!   the rack. The test measures in the pixels that every card, the mixer strip and the master
 //!   panel share one card top, one height and the value lines of both rows of cells.
@@ -105,6 +107,7 @@ use reverb::ReverbState;
 use reverb::view::ReverbView;
 use runtime::window::Shell;
 use runtime::{OFFLINE, main_arrangement, open_or_create_with, views};
+use saturator::{Curve, SaturatorState};
 use sound_core::{
     Changes, Engine, Instance, InstanceId, Project, Tempo, TempoChange, TempoMap, Ticks,
     TimeSignature,
@@ -605,6 +608,27 @@ fn add_reverb(project: &mut Project, track: &str) -> Result<()> {
     Ok(())
 }
 
+/// Puts a saturator after the instrument of a track, as `Add effect` does, driven so that its
+/// curve bends well inside the display.
+fn add_saturator(project: &mut Project, track: &str) -> Result<()> {
+    let id = InstanceId::new(&format!("arrangement/{track}"))?;
+    let track = project
+        .resolve::<TrackState>(&id)
+        .context("the track is not there")?;
+    let mut changes = Changes::new();
+    let slot = arrangement::add_effect(project, &mut changes, &track, "Saturator")?;
+    let sound = SaturatorState {
+        curve: Curve::Tube,
+        drive_db: 18.0,
+        tone_db: -2.0,
+        mix: 0.8,
+        ..SaturatorState::default()
+    };
+    changes.create(slot, sound);
+    project.commit("Add Saturator", changes)?;
+    Ok(())
+}
+
 /// Puts a compressor after the effects of a track, as `Add effect` does.
 fn add_compressor(project: &mut Project, track: &str, sound: CompressorState) -> Result<()> {
     let id = InstanceId::new(&format!("arrangement/{track}"))?;
@@ -920,6 +944,15 @@ fn main() -> Result<()> {
     }
     if runs("drums") {
         drums::snapshots(&mut cx, &save)?;
+    }
+    if runs("saturator") {
+        let opened = Opened::new(&mut cx, |project| {
+            piece(project)?;
+            add_saturator(project, "bass")
+        })?;
+        opened.click_track_header(1., &mut cx)?;
+        save(&mut cx, &opened, "track-panel-saturator")?;
+        drop(opened);
     }
     if only.is_some() {
         return Ok(());

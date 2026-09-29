@@ -5294,6 +5294,7 @@ dependencies = [
  "plugin-host",
  "reverb",
  "sampler",
+ "saturator",
  "serde_json",
  "sound-core",
  "sound-media",

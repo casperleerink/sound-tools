@@ -8,13 +8,7 @@
 //! ```json
 //! {
 //!   "tool": "saturator",
-//!   "state": {
-//!     "curve": "soft",
-//!     "drive_db": 6.0,
-//!     "tone_db": 0.0,
-//!     "output_db": 0.0,
-//!     "mix": 1.0
-//!   }
+//!   "state": {"curve": "soft", "drive_db": 6.0, "tone_db": 0.0, "output_db": 0.0, "mix": 1.0}
 //! }
 //! ```
 //!
