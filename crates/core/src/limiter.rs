@@ -106,7 +106,8 @@ impl PeakLimiter {
     /// delay starts again from silence and with no reduction.
     pub fn set_lookahead(&mut self, seconds: f32) {
         let frames = (seconds * self.sample_rate).round() as usize;
-        let lookahead = frames.min(self.delay[0].len());
+        // One frame under the room: the queue of lowest gains holds a lookahead and two more.
+        let lookahead = frames.min(self.delay[0].len().saturating_sub(1));
         if lookahead != self.lookahead {
             self.lookahead = lookahead;
             self.position = 0;
