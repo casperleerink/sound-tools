@@ -42,9 +42,10 @@
 //! - `track-panel-reverb.png`: the synth and the built-in reverb after it.
 //! - `track-panel-saturator.png`: the synth and the built-in saturator after it, the tube curve
 //!   driven 18 dB. `WINDOW_SNAPSHOT_ONLY=saturator` renders it alone.
-//! - `track-panel-all-effects.png`: the synth and all four built-in effects, at the start of
-//!   the rack. The test measures in the pixels that every card, the mixer strip and the master
-//!   panel share one card top, one height and the value lines of both rows of cells.
+//! - `track-panel-all-effects.png`: the synth, the Filter, the Compressor, the EQ and the
+//!   Reverb, at the start of the rack. The test measures in the pixels that every card, the
+//!   mixer strip and the master panel share one card top, one height and the value lines of
+//!   both rows of cells.
 //! - `track-panel-all-effects-end.png`: the same scrolled to the end of the rack.
 //! - `track-panel-reverb-expanded.png`: the same with the reverb expanded: the cuts, diffusion,
 //!   freeze, pre-delay and decay.
@@ -1512,9 +1513,9 @@ fn main() -> Result<()> {
     save(&mut cx, &opened, "track-panel-compressor-expanded")?;
     drop(opened);
 
-    // A track with the synth and all four built-in effects, at the start of the rack and
-    // scrolled to its end: every card, the mixer strip and the master panel above share one
-    // card top, one height and the two value lines, measured in the pixels.
+    // A track with the synth, the Filter, the Compressor, the EQ and the Reverb, at the start
+    // of the rack and scrolled to its end: every card, the mixer strip and the master panel
+    // above share one card top, one height and the two value lines, measured in the pixels.
     let opened = Opened::new(&mut cx, |project| {
         piece(project)?;
         add_filter(project, "bass")?;

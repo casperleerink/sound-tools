@@ -204,11 +204,12 @@ fn tilt(tone_db: f32, sample_rate: f32) -> (f32, f32, f32) {
 /// line of slope 1, so this is the drive and the automatic gain, the DC blocker, the tone, the
 /// output and the mix.
 ///
-/// This is the exact response of the processor up to 0.45 of the sample rate, not a drawing of
-/// one: the tone and the DC blocker are one-pole filters in the trapezoidal form, which is the
-/// analog filter with its frequencies bent by `tan(π f / sample rate)`. The oversampling is flat
-/// to 0.001 dB there, and the dry sound waits as long as the saturated one. The tests hold the
-/// measured sound to it.
+/// This is the exact response of the processor up to 20 kHz at 44.1 kHz and above, not a
+/// drawing of one: the tone and the DC blocker are one-pole filters in the trapezoidal form,
+/// which is the analog filter with its frequencies bent by `tan(π f / sample rate)`. The
+/// oversampling is flat to 0.001 dB up to 0.45 of the sample rate and to 0.01 dB at 20 kHz at
+/// 44.1 kHz, and the dry sound waits as long as the saturated one. The tests hold the measured
+/// sound to it.
 pub fn response(state: &SaturatorState, hz: f32, sample_rate: f32) -> f32 {
     let at = (f64::from(PI) * f64::from(hz) / f64::from(sample_rate)).tan();
     // A one-pole low pass at a bent corner, as a complex number: `1 / (1 + j at / corner)`.
@@ -324,12 +325,14 @@ pub struct Saturator {
     mix: Smoothed,
     /// The automatic gain for where the drive and the weights are now.
     level: f32,
-    /// The factors of the DC blocker and of the tone crossover, and the gains of the tone below
-    /// and above it.
+    /// The factors of the DC blocker and of the tone crossover.
     dc_factor: f32,
     tone_factor: f32,
-    below: f32,
-    above: f32,
+    /// The gains of the tone below and above its crossover at the end of the last run of
+    /// frames, and where they are going in the run now. They move frame by frame inside a run,
+    /// so a glide of the tone makes no step.
+    gains: [f32; 2],
+    gains_target: [f32; 2],
     /// Whether the factors have to be worked out again although nothing glides: after an update
     /// that snapped, and before the first block.
     stale: bool,
@@ -359,8 +362,8 @@ impl Saturator {
             level: 1.0,
             dc_factor: one_pole_factor(bent(DC_HZ, sample_rate)),
             tone_factor: 0.0,
-            below: 1.0,
-            above: 1.0,
+            gains: [1.0; 2],
+            gains_target: [1.0; 2],
             stale: true,
             channels: [Channel::new(); CHANNELS],
             write: 0,
@@ -409,13 +412,18 @@ impl Saturator {
 
     /// Moves the tone `frames` along, and works out its factors when it moves.
     fn move_tone(&mut self, frames: usize) {
+        self.gains = self.gains_target;
         if !self.stale && !self.tone.is_moving() {
             return;
         }
         let tone = self.tone.advance(frames);
         let (crossover, below, above) = tilt(tone, self.sample_rate);
         self.tone_factor = one_pole_factor(crossover);
-        (self.below, self.above) = (below, above);
+        self.gains_target = [below, above];
+        // After a snap there is nothing to glide from.
+        if self.stale {
+            self.gains = self.gains_target;
+        }
     }
 
     /// Moves everything but the tone one frame along, and works out the automatic gain for
@@ -534,13 +542,16 @@ impl Processor for Saturator {
                     None => shape_all_blended(four, moves),
                 }
                 channel.oversampler.down(&self.kernels, four, frames);
-                let (below, above) = (self.below, self.above);
+                let ([below, above], [to_below, to_above]) = (self.gains, self.gains_target);
                 let frames = frames.iter().zip(output.iter_mut()).zip(moves.iter());
                 for (index, ((curved, output), frame)) in frames.enumerate() {
                     let delayed = self.write + index + DRY_FRAMES - DELAY_FRAMES;
                     let dry = channel.dry[delayed % DRY_FRAMES];
                     let blocked = curved - channel.dc.low_pass(self.dc_factor, *curved);
                     let low = channel.tone.low_pass(self.tone_factor, blocked);
+                    let along = (index + 1) as f32 / length as f32;
+                    let below = below + (to_below - below) * along;
+                    let above = above + (to_above - above) * along;
                     let wet = frame.output * (below * low + above * (blocked - low));
                     *output = dry + frame.mix * (wet - dry);
                 }

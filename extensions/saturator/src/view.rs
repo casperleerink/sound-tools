@@ -1,5 +1,5 @@
-//! The card of the saturator: the curve from what goes in to what comes out, with a handle at
-//! its bend and the curves at its top, then Drive, Tone, Output and Mix. The rack gives the view
+//! The card of the saturator: the curve from the level that goes in to the level that comes
+//! out, in dBFS, with a handle at its bend and the curves at its top, then Drive, Tone, Output and Mix. The rack gives the view
 //! a [`CardFrame`]: the picker of the slot as the title, and the power and close icons.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
@@ -28,6 +28,14 @@ const DISPLAY_WIDTH: f32 = 200.;
 
 /// Points of the curve across the display.
 const CURVE_POINTS: usize = 96;
+
+/// The display shows levels from here to there, in dBFS, the input across and the output up.
+/// The bottom is under the bend at the most drive, and the top leaves room for a sound over
+/// full scale and for the output turned up.
+const LEVELS_DB: (f32, f32) = (-48., 6.);
+
+/// The level a sine keeps at every drive, which the automatic gain holds to: a peak of 0.25.
+const REFERENCE_DB: f32 = -12.;
 
 /// Registers the view of the `saturator` tool and what a rack calls one.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -104,31 +112,43 @@ fn auto_gain_readout(state: &SaturatorState) -> String {
     format!("Auto gain {} dB", short((db * 10.).round() / 10.))
 }
 
-/// Where a sample from -1 to 1 is on the display, across or up, from 0 to 1.
-fn place(sample: f32) -> f32 {
-    ((sample + 1.) / 2.).clamp(0., 1.)
+/// The levels across and up the display.
+const LEVELS: KnobRange = KnobRange::linear(LEVELS_DB.0, LEVELS_DB.1);
+
+/// Where a level in dBFS is on the display, across or up, from 0 to 1.
+fn place(db: f32) -> f32 {
+    LEVELS.position(db)
 }
 
-/// What comes out for every level that goes in, from -1 at the left to 1 at the right.
+/// The level in dBFS that comes out of a sine that goes in at `input_db`: the middle of its two
+/// peaks, so a curve that leans shows the level it gives and not one side of it.
+fn level_out(state: &SaturatorState, input_db: f32) -> f32 {
+    let peak = 10_f32.powf(input_db / 20.);
+    let out = (transfer(state, peak) - transfer(state, -peak)) / 2.;
+    20. * out.max(1e-9).log10()
+}
+
+/// What comes out for every level that goes in.
 fn curve(state: &SaturatorState) -> Vec<Point<f32>> {
+    let (bottom, top) = LEVELS_DB;
     (0..=CURVE_POINTS)
         .map(|step| {
-            let x = step as f32 / CURVE_POINTS as f32;
-            point(x, place(transfer(state, 2. * x - 1.)))
+            let input_db = bottom + (top - bottom) * step as f32 / CURVE_POINTS as f32;
+            point(place(input_db), place(level_out(state, input_db)))
         })
         .collect()
 }
 
-/// The input level at the bend: where the drive takes it to full scale, and every curve has
-/// bent. A drive of `d` dB puts it at `-d` dBFS.
+/// The input level at the bend, in dBFS: where the drive takes a sound to full scale, and
+/// every curve has bent. A drive of `d` dB puts it at `-d` dBFS, so the handle travels in dB of
+/// drive.
 fn bend_of(drive_db: f32) -> f32 {
-    10_f32.powf(-drive_db / 20.)
+    -drive_db
 }
 
 /// The drive that puts the bend at an input level, to a tenth of a dB, inside its range.
-fn drive_at(bend: f32) -> f32 {
-    let drive_db = -20. * bend.max(f32::MIN_POSITIVE).log10();
-    ((drive_db * 10.).round() / 10.).clamp(DRIVE.min, DRIVE.max)
+fn drive_at(bend_db: f32) -> f32 {
+    ((-bend_db * 10.).round() / 10.).clamp(DRIVE.min, DRIVE.max)
 }
 
 pub struct SaturatorView {
@@ -205,9 +225,8 @@ impl SaturatorView {
     /// earlier, so more of the sound is bent.
     fn handle(&self, state: &SaturatorState, cx: &mut Context<Self>) -> Handle {
         let bend = bend_of(state.drive_db);
-        let across = KnobRange::linear(-1., 1.);
-        let x = Axis::new(across, bend, bend_of(DRIVE.default));
-        let y = Axis::fixed(place(transfer(state, bend)));
+        let x = Axis::new(LEVELS, bend, bend_of(DRIVE.default));
+        let y = Axis::fixed(place(level_out(state, bend)));
         Handle::new("drive", x, y).on_change(weak_callback(
             cx,
             |view, change: ValueChange<Point<f32>>, cx| {
@@ -235,7 +254,11 @@ impl SaturatorView {
             .curve(curve(state))
             // The sound as it came in, for the eye to hold the curve to.
             .dashed([point(0., 0.), point(1., 1.)])
-            .grid(vec![place(0.)], vec![place(0.)])
+            .grid(
+                vec![place(REFERENCE_DB), place(0.)],
+                vec![place(REFERENCE_DB)],
+            )
+            .zero_line(place(0.))
             .handle(self.handle(state, cx))
             .caption(auto_gain_readout(state))
             .child(curves)
@@ -310,7 +333,28 @@ mod tests {
         for drive_db in [DRIVE.min, 0.5, DRIVE.default, 12.0, 30.1, DRIVE.max] {
             assert_eq!(drive_at(bend_of(drive_db)), drive_db);
         }
-        assert_eq!(drive_at(2.0), DRIVE.min);
-        assert_eq!(drive_at(-1.0), DRIVE.max);
+        assert_eq!(drive_at(LEVELS_DB.1), DRIVE.min);
+        assert_eq!(drive_at(LEVELS_DB.0), DRIVE.max);
+    }
+
+    /// The automatic gain keeps a sine at the reference level where it was, so the curve goes
+    /// through the reference on the diagonal at every drive.
+    #[test]
+    fn the_curve_goes_through_the_reference_level() {
+        for curve in Curve::ALL {
+            for drive_db in [DRIVE.min, DRIVE.default, DRIVE.max] {
+                let state = SaturatorState {
+                    curve,
+                    drive_db,
+                    ..SaturatorState::default()
+                };
+                let reference = 20. * 0.25_f32.log10();
+                let out = level_out(&state, reference);
+                assert!(
+                    (out - reference).abs() < 1e-3,
+                    "{curve:?} {drive_db}: {out}"
+                );
+            }
+        }
     }
 }

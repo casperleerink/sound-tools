@@ -8,7 +8,7 @@
 //! the dry sound it is mixed with, and the delay is reported as the latency of the saturator.
 //!
 //! The first stage does the hard part: it keeps everything up to 0.45 of the sample rate and
-//! takes 90 dB off from 0.55 of it, so what the curve makes above there cannot fold back under
+//! takes 88 dB off from 0.55 of it, so what the curve makes above there cannot fold back under
 //! 0.45. The second stage, at twice the rate, has a wide band to fall in and is short.
 
 use std::f64::consts::PI;
@@ -29,25 +29,28 @@ const SECOND_TAPS: usize = 16;
 /// rate. The second stage gets one sample more at twice the rate, so the whole is whole frames.
 pub const DELAY_FRAMES: usize = FIRST_MIDDLE + SECOND_MIDDLE.div_ceil(2);
 
-/// The Kaiser window for about 90 dB of stop band. With the lengths above, the first stage
-/// falls from 0.45 to 0.55 of the rate it goes down to. The second, at four times that rate,
-/// keeps what the first lets through, under 0.1375 of its rate, and takes 90 dB off the images
+/// The Kaiser window for 88 dB of stop band. With the lengths above, the first stage falls
+/// from 0.45 to 0.55 of the rate it goes down to. The second, at four times that rate, keeps
+/// what the first lets through, under 0.1375 of its rate, and takes 88 dB off the images
 /// of the band under 0.45 of the sample rate, from 0.3875 of its rate up.
 const BETA: f64 = 8.96;
 
 /// A half band filter: a windowed sinc whose cutoff is a quarter of its rate. Its middle tap is
 /// one half and every other tap from there is zero, so only the taps at odd distances from the
-/// middle are kept, at the end of `taps`.
+/// middle are kept, at the end of `taps`. `MIDDLE` is the place of the middle tap.
 #[derive(Clone, Copy)]
-struct HalfBand<const TAPS: usize> {
+struct HalfBand<const MIDDLE: usize, const TAPS: usize> {
     taps: [f32; TAPS],
-    middle: usize,
 }
 
-impl<const TAPS: usize> HalfBand<TAPS> {
+impl<const MIDDLE: usize, const TAPS: usize> HalfBand<MIDDLE, TAPS> {
     /// The filter is symmetric, so the order of the taps does not matter. Their sum is exactly
     /// one half, so the gain at 0 Hz is exactly 1.
-    fn new(middle: usize) -> Self {
+    fn new() -> Self {
+        // What the places of the plain and the middle samples in `Up` and `Down` rely on, and
+        // `dot`: an odd middle, every tap kept, and whole runs of eight.
+        const { assert!(!MIDDLE.is_multiple_of(2) && MIDDLE < TAPS && TAPS.is_multiple_of(8)) };
+        let middle = MIDDLE;
         let kept = middle + 1;
         let mut taps = [0.0_f64; TAPS];
         for (index, tap) in taps[TAPS - kept..].iter_mut().enumerate() {
@@ -58,7 +61,7 @@ impl<const TAPS: usize> HalfBand<TAPS> {
         }
         let sum: f64 = taps.iter().sum();
         let taps = taps.map(|tap| (tap * 0.5 / sum) as f32);
-        Self { taps, middle }
+        Self { taps }
     }
 }
 
@@ -96,6 +99,7 @@ struct History<const TAPS: usize, const TWICE: usize> {
 
 impl<const TAPS: usize, const TWICE: usize> History<TAPS, TWICE> {
     const fn new() -> Self {
+        const { assert!(TWICE == 2 * TAPS) };
         Self {
             samples: [0.0; TWICE],
             next: 0,
@@ -127,10 +131,14 @@ impl<const TAPS: usize, const TWICE: usize> Up<TAPS, TWICE> {
     /// The input with a zero after each sample, filtered, times 2 for the zeros. At the even
     /// places only the taps at odd distances meet a sample; at the odd places only the middle
     /// one does, which is one half: the input as it was, `(middle - 1) / 2` samples ago.
-    fn next(&mut self, filter: &HalfBand<TAPS>, sample: f32) -> [f32; 2] {
+    fn next<const MIDDLE: usize>(
+        &mut self,
+        filter: &HalfBand<MIDDLE, TAPS>,
+        sample: f32,
+    ) -> [f32; 2] {
         let recent = self.history.push(sample);
         let filtered = 2.0 * dot(&filter.taps, recent);
-        let plain = recent[TAPS - 1 - (filter.middle - 1) / 2];
+        let plain = recent[TAPS - 1 - (MIDDLE - 1) / 2];
         [filtered, plain]
     }
 }
@@ -152,24 +160,28 @@ impl<const TAPS: usize, const TWICE: usize> Down<TAPS, TWICE> {
 
     /// The filter at every even place of the input: the taps at odd distances meet the even
     /// samples, and the middle one meets an odd sample, `(middle + 1) / 2` pairs ago.
-    fn next(&mut self, filter: &HalfBand<TAPS>, [even, odd]: [f32; 2]) -> f32 {
+    fn next<const MIDDLE: usize>(
+        &mut self,
+        filter: &HalfBand<MIDDLE, TAPS>,
+        [even, odd]: [f32; 2],
+    ) -> f32 {
         let filtered = dot(&filter.taps, self.even.push(even));
-        let middle = self.odd.push(odd)[TAPS - 1 - filter.middle.div_ceil(2)];
+        let middle = self.odd.push(odd)[TAPS - 1 - MIDDLE.div_ceil(2)];
         filtered + 0.5 * middle
     }
 }
 
 /// The taps of both stages, the same for every channel.
 pub struct Kernels {
-    first: HalfBand<FIRST_TAPS>,
-    second: HalfBand<SECOND_TAPS>,
+    first: HalfBand<FIRST_MIDDLE, FIRST_TAPS>,
+    second: HalfBand<SECOND_MIDDLE, SECOND_TAPS>,
 }
 
 impl Kernels {
     pub fn new() -> Self {
         Self {
-            first: HalfBand::new(FIRST_MIDDLE),
-            second: HalfBand::new(SECOND_MIDDLE),
+            first: HalfBand::new(),
+            second: HalfBand::new(),
         }
     }
 }
@@ -225,11 +237,14 @@ mod tests {
     use super::*;
 
     /// The gain of a half band filter at a part of its rate, from all its taps.
-    fn gain<const TAPS: usize>(filter: &HalfBand<TAPS>, at: f64) -> f64 {
+    fn gain<const MIDDLE: usize, const TAPS: usize>(
+        filter: &HalfBand<MIDDLE, TAPS>,
+        at: f64,
+    ) -> f64 {
         let (mut real, mut imaginary) = (0.5, 0.0);
-        let kept = &filter.taps[TAPS - filter.middle - 1..];
+        let kept = &filter.taps[TAPS - MIDDLE - 1..];
         for (index, tap) in kept.iter().enumerate() {
-            let angle = 2.0 * PI * at * (2.0 * index as f64 - filter.middle as f64);
+            let angle = 2.0 * PI * at * (2.0 * index as f64 - MIDDLE as f64);
             real += f64::from(*tap) * angle.cos();
             imaginary += f64::from(*tap) * angle.sin();
         }
@@ -237,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn both_stages_keep_the_pass_band_and_take_ninety_db_off_the_stop_band() {
+    fn both_stages_keep_the_pass_band_and_take_88_db_off_the_stop_band() {
         let Kernels { first, second } = Kernels::new();
         let first = |at| gain(&first, at);
         let second = |at| gain(&second, at);
