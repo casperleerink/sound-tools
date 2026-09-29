@@ -5319,6 +5319,7 @@ dependencies = [
  "test-vst3-plugin",
  "thiserror 2.0.20",
  "tone",
+ "utility",
 ]
 
 [[package]]

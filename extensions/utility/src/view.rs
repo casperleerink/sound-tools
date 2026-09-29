@@ -86,6 +86,15 @@ impl Control {
     fn bipolar(&self) -> bool {
         !matches!(self.unit, Unit::Hertz)
     }
+
+    /// The name of the knob: its field. Pan is `utility-pan`, because the mixer strip of the
+    /// track, in the same panel, has a `pan` of its own, and a test finds a control by its name.
+    fn id(&self) -> &'static str {
+        match self.unit {
+            Unit::Pan => "utility-pan",
+            _ => self.parameter.field,
+        }
+    }
 }
 
 const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", Unit::Decibels);
@@ -109,8 +118,9 @@ struct Switch {
     set: fn(&mut UtilityState, bool),
 }
 
+/// `utility-mute`, apart from the `mute` of the track in the same panel.
 const MUTE: Switch = Switch {
-    id: "mute",
+    id: "utility-mute",
     face: Some("M"),
     label: "Mute",
     undo_label: "Change mute",
@@ -306,7 +316,7 @@ impl UtilityView {
         cx: &mut Context<Self>,
     ) -> Knob {
         let value = (control.parameter.get)(state);
-        Knob::new(control.parameter.field)
+        Knob::new(control.id())
             .range(control.scale)
             .bipolar(control.bipolar())
             .value(value)

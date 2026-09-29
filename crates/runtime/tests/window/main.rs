@@ -48,4 +48,5 @@ mod support;
 mod track_order;
 mod track_panel;
 mod transport;
+mod utility;
 mod velocity;
