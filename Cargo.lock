@@ -3397,6 +3397,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "limiter"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "proptest 1.11.0",
+ "serde",
+ "sound-core",
+ "sound-notes",
+ "sound-ui",
+]
+
+[[package]]
 name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
