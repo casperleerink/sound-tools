@@ -15,6 +15,7 @@ mod parameter;
 mod peaks;
 mod processor;
 mod project;
+mod saturation;
 mod transport;
 
 pub use clock::{
@@ -46,4 +47,5 @@ pub use project::{
     Project, ProjectError, ProjectEvent, ProjectFile, Registry, RegistryError, SavedConnection,
     SavedDestination, State, StorageError, ToolRegistration, Was,
 };
+pub use saturation::soft_clip;
 pub use transport::Transport;
