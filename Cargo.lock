@@ -5414,6 +5414,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "saturator"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "proptest 1.11.0",
+ "serde",
+ "serde_json",
+ "sound-core",
+ "sound-notes",
+ "sound-ui",
+]
+
+[[package]]
 name = "scheduler"
 version = "0.1.0"
 source = "git+https://github.com/zed-industries/zed?rev=7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f#7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f"

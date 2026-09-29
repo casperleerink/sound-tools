@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/media", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/metronome", "extensions/midi", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/tone", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/core", "crates/media", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/metronome", "extensions/midi", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -25,6 +25,7 @@ midi = { path = "extensions/midi" }
 plugin-host = { path = "extensions/plugin-host" }
 reverb = { path = "extensions/reverb" }
 sampler = { path = "extensions/sampler" }
+saturator = { path = "extensions/saturator" }
 test-clap-plugin = { path = "tooling/test-clap-plugin" }
 test-plugin-support = { path = "tooling/test-plugin-support" }
 test-vst3-plugin = { path = "tooling/test-vst3-plugin" }
@@ -116,6 +117,7 @@ plugin-host = { opt-level = 3 }
 reverb = { opt-level = 3 }
 runtime = { opt-level = 3 }
 sampler = { opt-level = 3 }
+saturator = { opt-level = 3 }
 sound-core = { opt-level = 3 }
 sound-media = { opt-level = 3 }
 sound-notes = { opt-level = 3 }
