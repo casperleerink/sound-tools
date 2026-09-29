@@ -34,6 +34,7 @@ mod filter;
 mod fit;
 mod instruments;
 mod limiter;
+mod modulation;
 mod notes;
 mod piece;
 mod rack;

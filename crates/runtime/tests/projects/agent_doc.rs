@@ -67,6 +67,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "agent-docs/fit-tempo.md",
             "agent-docs/instrument.md",
             "agent-docs/limiter.md",
+            "agent-docs/modulation.md",
             "agent-docs/plugins.md",
             "agent-docs/reverb.md",
             "agent-docs/sampler.md",
@@ -258,6 +259,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "arrangement/beat/instrument",
             "arrangement/drums",
             "arrangement/drums/glue",
+            "arrangement/guitar",
+            "arrangement/guitar/swirl",
             "arrangement/kalimba",
             "arrangement/kalimba/instrument",
             "arrangement/keys",
@@ -319,7 +322,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 /// built-in effect adds a line of about 20 words: with the Filter, the EQ, the Reverb and the
 /// Compressor it is about 1130, with the doc of audio about 1150, with the Sampler about 1170,
 /// with the Drum pad about 1200, with the Saturator about 1230, with the Limiter about 1255,
-/// and with the Utility about 1280.
+/// with the Utility about 1280, and with the Modulation about 1300.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();

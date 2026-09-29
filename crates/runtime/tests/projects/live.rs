@@ -36,6 +36,7 @@ fn the_default_project_is_a_small_musical_template() {
             "fit-tempo",
             "instrument",
             "limiter",
+            "modulation",
             "plugin-host",
             "reverb",
             "sampler",

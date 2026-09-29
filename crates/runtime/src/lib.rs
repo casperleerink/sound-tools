@@ -17,6 +17,7 @@ use eq::EqState;
 use filter::FilterState;
 use instrument::SynthState;
 use limiter::LimiterState;
+use modulation::ModulationState;
 use plugin_host::{
     PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK, WeakPlugins,
     default_search_paths,
@@ -118,6 +119,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     fit_tempo::register(&mut registry)?;
     instrument::register(&mut registry)?;
     limiter::register(&mut registry)?;
+    modulation::register(&mut registry)?;
     plugin_host::register(&mut registry, plugins)?;
     reverb::register(&mut registry)?;
     sampler::register(&mut registry)?;
@@ -150,6 +152,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     reverb::view::register(&mut views, &mut devices);
     saturator::view::register(&mut views, &mut devices);
     utility::view::register(&mut views, &mut devices);
+    modulation::view::register(&mut views, &mut devices);
     sampler::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     devices.instruments(|| {
@@ -257,6 +260,18 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             .needs(
                 utility::EXTENSION,
                 "This project does not load the utility.",
+            ),
+            DeviceOffer::new(
+                ModulationState::TOOL,
+                modulation::view::NAME,
+                |_, slot, changes| {
+                    changes.create(slot.clone(), ModulationState::default());
+                    Ok(())
+                },
+            )
+            .needs(
+                modulation::EXTENSION,
+                "This project does not load the modulation.",
             ),
         ]
     });

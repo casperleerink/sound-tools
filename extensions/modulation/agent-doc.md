@@ -2,13 +2,13 @@
 
 `modulation` is an effect with three modes. Each moves the sound with an LFO. A `chorus` adds a copy of the sound whose pitch wobbles a little, which makes it wider and thicker. A `flanger` adds a copy only a few ms behind, which makes a comb of notches that sweeps up and down: the jet sound. A `phaser` sweeps three wide notches through the sound: softer and rounder than a flanger. The other fields mean the same in every mode.
 
-Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the organ plays through a modulation named `swirl`:
+Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the guitar plays through a modulation named `swirl`:
 
-```json state/arrangement/organ/instance.json
+```json state/arrangement/guitar/instance.json
 {
   "tool": "arrangement.track",
   "state": {
-    "name": "Organ",
+    "name": "Guitar",
     "colour": "teal",
     "order": 1,
     "gain_db": 0.0,
@@ -19,17 +19,10 @@ Like every effect it is two lines: the record in the track folder, and its file 
 }
 ```
 
-```json state/arrangement/organ/swirl.json
+```json state/arrangement/guitar/swirl.json
 {
   "tool": "modulation",
-  "state": {
-    "mode": "chorus",
-    "rate_hz": 0.5,
-    "depth": 0.5,
-    "feedback": 0.2,
-    "spread": 0.5,
-    "mix": 0.5
-  }
+  "state": {"mode": "chorus", "rate_hz": 0.5, "depth": 0.5, "feedback": 0.2, "spread": 0.5, "mix": 0.5}
 }
 ```
 

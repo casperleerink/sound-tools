@@ -9,14 +9,7 @@
 //! ```json
 //! {
 //!   "tool": "modulation",
-//!   "state": {
-//!     "mode": "chorus",
-//!     "rate_hz": 0.5,
-//!     "depth": 0.5,
-//!     "feedback": 0.2,
-//!     "spread": 0.5,
-//!     "mix": 0.5
-//!   }
+//!   "state": {"mode": "chorus", "rate_hz": 0.5, "depth": 0.5, "feedback": 0.2, "spread": 0.5, "mix": 0.5}
 //! }
 //! ```
 //!
@@ -150,7 +143,7 @@ impl State for ModulationState {
 /// The doc of the modulation record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "modulation",
-    when: "You put a chorus, a flanger or a phaser on a track, or change one: wider, swirling, a jet sweep",
+    when: "A chorus, flanger or phaser on a track: wider, swirling, a jet sweep",
     markdown: include_str!("../agent-doc.md"),
 };
 
