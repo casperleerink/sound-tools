@@ -48,8 +48,11 @@ fn full_scale_noise_at_the_most_feedback_stays_bounded_and_does_not_grow() {
                     let late = rig.render(SECOND);
                     assert_bounded(&label, &early);
                     assert_bounded(&label, &late);
-                    let growth = db(rms(&late[0])) - db(rms(&early[0]));
-                    assert!(growth.abs() < 1.0, "{label}: {growth:+.2} dB");
+                    // Each side: in ping-pong the right line is a path of its own.
+                    for channel in 0..2 {
+                        let growth = db(rms(&late[channel])) - db(rms(&early[channel]));
+                        assert!(growth.abs() < 1.0, "{label}, {channel}: {growth:+.2} dB");
+                    }
                     loudest = loudest.max(peak(&late[0])).max(peak(&late[1]));
                 }
             }

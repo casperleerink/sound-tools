@@ -510,8 +510,8 @@ mod tests {
         assert_eq!(division_at(DIVISIONS.value(1.)), Division::Whole);
     }
 
-    /// The handle is on the second repeat, at every time and feedback, synced or not, and the
-    /// repeats are inside the display from left to right.
+    /// The handle is on the second repeat, at every time and at every feedback that draws one,
+    /// synced or not, and the repeats are inside the display from left to right.
     #[test]
     fn the_handle_is_on_the_second_repeat() {
         use layout::{GAP_ZONE, LEFT, SHORTEST_GAP};
