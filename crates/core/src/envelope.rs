@@ -13,6 +13,34 @@ const ATTACK_OVERSHOOT: f64 = 0.3;
 /// no sustain ends when it falls below this.
 pub const ENVELOPE_FLOOR: f64 = 0.001;
 
+/// How each stage of a [`curved`](Envelope::curved) envelope bends, from 0, a straight line, to
+/// 1, a strong exponential curve: fast at first and slow near its end, like the release of an
+/// analog envelope. The value between gives the curve in between.
+///
+/// A curve is a stage that aims past its end, reached in exactly the stage time. At 1 it aims
+/// 0.1 % of its distance past, as the release of [`Envelope::new`] does, at 0.5 as far again
+/// as its distance, and at 0 a thousand times its distance, which is straight to within
+/// 0.02 % of full level.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EnvelopeCurves {
+    pub attack: f32,
+    pub decay: f32,
+    pub release: f32,
+}
+
+impl EnvelopeCurves {
+    pub const LINEAR: Self = Self {
+        attack: 0.0,
+        decay: 0.0,
+        release: 0.0,
+    };
+
+    /// How far past its end a stage with this curve aims, as a part of its distance.
+    fn overshoot(curve: f32) -> f64 {
+        ENVELOPE_FLOOR.powf(2.0 * f64::from(curve.clamp(0.0, 1.0)) - 1.0)
+    }
+}
+
 /// The envelope at one sample rate, as per-frame factors. Each stage is `level * coefficient +
 /// base`: a curve toward a point a little past its target. In `f64`: in `f32` a decay of 0.4 s
 /// came 9 frames late in 19200, a slow pole losing its last digits.
@@ -24,18 +52,61 @@ pub struct Envelope {
     attack_coefficient: f64,
     attack_base: f64,
     decay_coefficient: f64,
+    /// What the decay moves toward the sustain each frame on top of its curve, so it aims past
+    /// the sustain and stops on it. 0 for the analog shape of [`new`](Self::new), which glides
+    /// toward the sustain and never quite reaches it.
+    decay_drop: f64,
     sustain: f64,
     release_coefficient: f64,
     release_base: f64,
 }
 
 impl Envelope {
-    /// Times in seconds, `sustain` as a part of full level. A time under one frame takes one.
+    /// The analog shape the synth and the Sampler play. Times in seconds, `sustain` as a part
+    /// of full level. A time under one frame takes one.
+    ///
+    /// The attack aims 30 % past full level and reaches it in the attack time. The release aims
+    /// 0.1 % of full level below silence and reaches silence in the release time from full
+    /// level. The decay glides toward the sustain and is within 0.1 % of the way there after
+    /// `ln 1000 / ln 1001` of the decay time.
     pub fn new(
         attack_seconds: f32,
         decay_seconds: f32,
         sustain: f32,
         release_seconds: f32,
+        sample_rate: f32,
+    ) -> Self {
+        let overshoots = [ATTACK_OVERSHOOT, ENVELOPE_FLOOR, ENVELOPE_FLOOR];
+        let times = [attack_seconds, decay_seconds, release_seconds];
+        Self {
+            decay_drop: 0.0,
+            ..Self::aiming_past(times, sustain, overshoots, sample_rate)
+        }
+    }
+
+    /// An envelope whose stages bend as `curves` says. Each stage reaches its end in exactly
+    /// its time: the attack full level, the decay the sustain, and the release silence from
+    /// full level.
+    pub fn curved(
+        attack_seconds: f32,
+        decay_seconds: f32,
+        sustain: f32,
+        release_seconds: f32,
+        curves: EnvelopeCurves,
+        sample_rate: f32,
+    ) -> Self {
+        let overshoots =
+            [curves.attack, curves.decay, curves.release].map(EnvelopeCurves::overshoot);
+        let times = [attack_seconds, decay_seconds, release_seconds];
+        Self::aiming_past(times, sustain, overshoots, sample_rate)
+    }
+
+    /// Each stage of `times`, attack, decay and release, aims the matching part of
+    /// `overshoots` of its distance past its end, and gets there in its time.
+    fn aiming_past(
+        [attack_seconds, decay_seconds, release_seconds]: [f32; 3],
+        sustain: f32,
+        [attack_overshoot, decay_overshoot, release_overshoot]: [f64; 3],
         sample_rate: f32,
     ) -> Self {
         // The factor that covers a distance of 1 in `seconds`, when the curve aims `overshoot`
@@ -44,15 +115,18 @@ impl Envelope {
             let frames = (f64::from(seconds) * f64::from(sample_rate)).max(1.0);
             (-((1.0 + overshoot) / overshoot).ln() / frames).exp()
         };
-        let attack_coefficient = coefficient(attack_seconds, ATTACK_OVERSHOOT);
-        let release_coefficient = coefficient(release_seconds, ENVELOPE_FLOOR);
+        let attack_coefficient = coefficient(attack_seconds, attack_overshoot);
+        let decay_coefficient = coefficient(decay_seconds, decay_overshoot);
+        let release_coefficient = coefficient(release_seconds, release_overshoot);
+        let sustain = f64::from(sustain);
         Self {
             attack_coefficient,
-            attack_base: (1.0 + ATTACK_OVERSHOOT) * (1.0 - attack_coefficient),
-            decay_coefficient: coefficient(decay_seconds, ENVELOPE_FLOOR),
-            sustain: f64::from(sustain),
+            attack_base: (1.0 + attack_overshoot) * (1.0 - attack_coefficient),
+            decay_coefficient,
+            decay_drop: decay_overshoot * (1.0 - sustain) * (1.0 - decay_coefficient),
+            sustain,
             release_coefficient,
-            release_base: -ENVELOPE_FLOOR * (1.0 - release_coefficient),
+            release_base: -release_overshoot * (1.0 - release_coefficient),
         }
     }
 }
@@ -122,7 +196,15 @@ impl EnvelopeState {
             }
             EnvelopeStage::Decay => {
                 let above = self.level - envelope.sustain;
-                self.level = envelope.sustain + above * envelope.decay_coefficient;
+                // The drop points toward the sustain, also from below it after a sustain edit.
+                let next = above * envelope.decay_coefficient - envelope.decay_drop.copysign(above);
+                // A curve that aims past the sustain stops on it.
+                let next = if (next < 0.0) == (above < 0.0) {
+                    next
+                } else {
+                    0.0
+                };
+                self.level = envelope.sustain + next;
                 // A pluck: with no sustain a held voice ends here, and not at its release.
                 if self.level < ENVELOPE_FLOOR && envelope.sustain < ENVELOPE_FLOOR {
                     *self = Self::IDLE;
