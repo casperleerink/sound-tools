@@ -32,16 +32,17 @@ use vst3::{ComPtr, ComWrapper};
 
 use super::context::{Handler, HostContext, as_handler, as_unknown};
 use super::module::Module;
-use super::process::{ParameterChange, PedalTarget, Vst3Processor, process_mode};
+use super::process::{ControlTargets, ParameterChange, Vst3Processor, normalized, process_mode};
 use super::stream::{MemoryStream, as_stream};
 use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
-use crate::processor::Started;
+use crate::processor::{Control, Started};
 use crate::scan::ScannedPlugin;
 use crate::{PluginProblem, processor::not_ours};
 
 use sound_core::PrepareConfig;
+use sound_notes::Pedal;
 
 /// What a state asset of a VST 3 plugin holds. VST 3 keeps two states, the component's and the
 /// controller's, and a preset file holds both, so this file holds both as well.
@@ -156,7 +157,8 @@ pub fn load(
         // After `setActive`, which is when a plugin's latency is settled.
         let latency = not_ours(|| processor.getLatencySamples());
 
-        let pedal = Arc::new(PedalTarget::new(pedal_parameter(controller.as_ref())));
+        let targets = ControlTargets::new(|control| mapped_parameter(controller.as_ref(), control));
+        let targets = Arc::new(targets);
         // What the processor holds now, as far as the host can know: the values the controller
         // shows once the state is read. `kParamValuesChanged` is answered against these.
         let values = controller
@@ -172,7 +174,7 @@ pub fn load(
             live.clone(),
             &buses.inputs,
             &buses.outputs,
-            pedal.clone(),
+            targets.clone(),
             joined.handler.clone(),
             mode,
             latency,
@@ -180,7 +182,7 @@ pub fn load(
         // The pedal is only missing from a plugin that has somewhere to take notes. A plugin
         // with no event input bus, which is what an ordinary effect is, has no pedal to miss,
         // and this host cannot ask what a record is for.
-        let notes = match (buses.takes_notes, pedal.get()) {
+        let notes = match (buses.takes_notes, targets.get(Control::Pedal(Pedal::UP))) {
             (true, None) => vec![PluginProblem::NoPedal {
                 plugin_id: plugin_id.clone(),
             }],
@@ -202,7 +204,7 @@ pub fn load(
                 edited: ends.edited,
                 live,
                 processor,
-                pedal,
+                targets,
                 takes_notes: buses.takes_notes,
                 values,
                 mode,
@@ -292,10 +294,10 @@ pub struct Vst3Plugin {
     /// deactivated: the two ends would be in different hands.
     live: Arc<()>,
     /// What a new audio side is made of when the plugin is started again: the plugin's
-    /// processor interface, the parameter the pedal goes to and the process mode. The buses are
-    /// read again then, because a change of them is one reason to start again.
+    /// processor interface, the parameters the controls go to and the process mode. The buses
+    /// are read again then, because a change of them is one reason to start again.
     processor: ComPtr<IAudioProcessor>,
-    pedal: Arc<PedalTarget>,
+    targets: Arc<ControlTargets>,
     /// Whether the plugin has an event input, so that a pedal it no longer maps is worth saying.
     takes_notes: bool,
     /// The value of every parameter the processor was last given or reported, as far as the
@@ -356,24 +358,28 @@ impl LoadedPlugin for Vst3Plugin {
             self.follow_the_controller();
         }
         // `kMidiCCAssignmentChanged`: "The host has to rebuild the MIDI-CC => parameter
-        // mapping". The audio side reads the pedal's parameter for every move, so from the
-        // next block the pedal goes where the plugin says now.
+        // mapping". The audio side reads a control's parameter for every move, so from the
+        // next block each control goes where the plugin says now.
         let mut pedal_unmapped = false;
         if self.joined.handler.take_midi_mapping_changed() {
-            // SAFETY: the controller came from the plugin and is alive.
-            let now = unsafe { pedal_parameter(self.joined.controller.as_ref()) };
-            let before = self.pedal.get();
-            pedal_unmapped = self.takes_notes && now.is_none() && before.is_some();
-            self.pedal.set(now);
-            // A pedal held on the parameter it leaves would stay down there for good, so that
-            // parameter is let go of, the way an edit is.
-            if let Some(before) = before
-                && now != Some(before)
-            {
-                self.joined.handler.keep_edit(ParameterChange {
-                    id: before,
-                    value: 0.0,
-                });
+            for rest in Control::REST {
+                // SAFETY: the controller came from the plugin and is alive.
+                let now = unsafe { mapped_parameter(self.joined.controller.as_ref(), rest) };
+                let before = self.targets.get(rest);
+                self.targets.set(rest, now);
+                if matches!(rest, Control::Pedal(_)) {
+                    pedal_unmapped = self.takes_notes && now.is_none() && before.is_some();
+                }
+                // A pedal held down or a wheel moved on the parameter it leaves would stay there
+                // for good, so that parameter is put back at rest, the way an edit is.
+                if let Some(before) = before
+                    && now != Some(before)
+                {
+                    self.joined.handler.keep_edit(ParameterChange {
+                        id: before,
+                        value: normalized(rest),
+                    });
+                }
             }
         }
         // The other way: what the composer changed in the plugin's own window goes to the
@@ -493,7 +499,7 @@ impl LoadedPlugin for Vst3Plugin {
             self.live.clone(),
             &buses.inputs,
             &buses.outputs,
-            self.pedal.clone(),
+            self.targets.clone(),
             self.joined.handler.clone(),
             self.mode,
             latency,
@@ -723,24 +729,26 @@ fn speakers(channels: usize) -> SpeakerArrangement {
     }
 }
 
-/// The parameter the plugin maps the sustain pedal to. VST 3 has no MIDI controller event:
+/// The parameter the plugin maps a control to. VST 3 has no MIDI controller event:
 /// `IMidiMapping` is how the format says a host sends one, as a parameter change.
 ///
 /// # Safety
 ///
 /// The controller must be alive.
-unsafe fn pedal_parameter(controller: Option<&ComPtr<IEditController>>) -> Option<ParamID> {
+unsafe fn mapped_parameter(
+    controller: Option<&ComPtr<IEditController>>,
+    control: Control,
+) -> Option<ParamID> {
+    let number = match control {
+        Control::Pedal(_) => ControllerNumbers_::kCtrlSustainOnOff,
+        Control::Bend(_) => ControllerNumbers_::kPitchBend,
+        Control::ModWheel(_) => ControllerNumbers_::kCtrlModWheel,
+        Control::Pressure(_) => ControllerNumbers_::kAfterTouch,
+    };
     let mapping = controller?.cast::<IMidiMapping>()?;
     let mut id: ParamID = 0;
     // SAFETY: the caller keeps the contract, and `id` is written only when the call works.
-    let result = unsafe {
-        mapping.getMidiControllerAssignment(
-            0,
-            0,
-            ControllerNumbers_::kCtrlSustainOnOff as i16,
-            &mut id,
-        )
-    };
+    let result = unsafe { mapping.getMidiControllerAssignment(0, 0, number as i16, &mut id) };
     (result == kResultOk).then_some(id)
 }
 

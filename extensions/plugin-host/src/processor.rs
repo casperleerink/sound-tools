@@ -13,8 +13,9 @@
 //! not a track that goes silent.
 //!
 //! The translation is here and not in a backend: both formats need the same list of keys that
-//! are down, the same expansion of `AllOff` and the same bound on how many events one block may
-//! carry. A backend only says how one event is written down, through [`Started::push`].
+//! are down, the same memory of where the pedal and the wheels stand, the same expansion of
+//! `AllOff` and the same bound on how many events one block may carry. A backend only says how
+//! one event is written down, through [`Started::push`].
 //!
 //! Nothing here allocates, locks or makes a system call. Every buffer is made when the plugin
 //! is loaded. What the plugin does inside its own calls is not ours: the realtime sanitizer is
@@ -30,22 +31,61 @@ use sound_core::{
     AudioInput, AudioOutput, CHANNELS, EventInput, Ports, PrepareConfig, ProcessContext, Processor,
     Timed,
 };
-use sound_notes::{NoteEvent, Pedal};
+use sound_notes::{Amount, Bend, NoteEvent, Pedal};
 
-/// How many events one block can carry into the plugin. An `AllOff` alone can be 129 of them.
+/// How many events one block can carry into the plugin. An `AllOff` alone can be 132 of them.
 /// Anything above this is counted and dropped, never allocated.
 pub const EVENT_CAPACITY: usize = 512;
 
-/// MIDI channel 1, controller 64: the sustain pedal. The value goes through as it was played.
-pub const SUSTAIN_CONTROLLER: u8 = 64;
-
 /// One thing to tell the plugin, at a frame offset in the block. This is the note contract with
-/// `AllOff` already expanded into the keys that are really down.
+/// `AllOff` already expanded into the keys that are really down and the controls that moved.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PluginEvent {
     On { key: u8, velocity: u8 },
     Off { key: u8 },
+    Control(Control),
+}
+
+/// A control of the whole instrument and where it stands: the sustain pedal, a wheel or the key
+/// pressure. Each format has one way in for each of them, which a plugin may not offer, see
+/// [`Started::takes`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Control {
     Pedal(Pedal),
+    Bend(Bend),
+    ModWheel(Amount),
+    Pressure(Amount),
+}
+
+impl Control {
+    /// Every control at rest, one of each in the order of [`Self::index`]. It is where a plugin
+    /// stands before it hears any of them, and where `AllOff` puts it back.
+    pub const REST: [Self; 4] = [
+        Self::Pedal(Pedal::UP),
+        Self::Bend(Bend::MIDDLE),
+        Self::ModWheel(Amount::NONE),
+        Self::Pressure(Amount::NONE),
+    ];
+
+    /// Which control this is, as its place in [`Self::REST`], for a table with one entry each.
+    pub fn index(self) -> usize {
+        match self {
+            Self::Pedal(_) => 0,
+            Self::Bend(_) => 1,
+            Self::ModWheel(_) => 2,
+            Self::Pressure(_) => 3,
+        }
+    }
+
+    /// Where it stands as MIDI sends it: 0 to 127, and for the bend 0 to 16383 with the middle
+    /// at 8192.
+    pub fn midi_value(self) -> u16 {
+        match self {
+            Self::Pedal(pedal) => u16::from(pedal.value()),
+            Self::Bend(bend) => (i32::from(bend.value()) + 8192) as u16,
+            Self::ModWheel(amount) | Self::Pressure(amount) => u16::from(amount.value()),
+        }
+    }
 }
 
 /// A plugin that is loaded and started, seen from the audio thread. One implementation per
@@ -54,9 +94,10 @@ pub enum PluginEvent {
 /// No call of this trait may allocate, lock or make a system call in our own code. A call into
 /// the plugin itself is wrapped in [`not_ours`].
 pub trait Started: Send {
-    /// Whether the sustain pedal reaches this plugin. A plugin that offers no way to receive it
-    /// gets the notes and not the pedal, and its record says so.
-    fn takes_pedal(&self) -> bool;
+    /// Whether this control reaches the plugin; only which control it is counts, not where it
+    /// stands. A plugin that offers no way to receive one gets the notes and not that control.
+    /// For the pedal its record says so.
+    fn takes(&self, control: Control) -> bool;
 
     /// How many frames late the plugin plays, as it said when it was activated.
     fn latency(&self) -> u32;
@@ -138,6 +179,10 @@ pub struct HostedPlugin {
     /// The keys this processor has sent a note on for and no note off yet, so an `AllOff` ends
     /// exactly those. A plugin need not understand a note off that matches every key.
     keys_down: [bool; 128],
+    /// Where each control stands as the plugin last heard it, by [`Control::index`], so an
+    /// `AllOff` puts back only what moved. Kept when the plugin changes: one started again keeps
+    /// what it heard, and telling a new one "at rest" once more costs nothing.
+    controls: [Control; 4],
 }
 
 /// What the control side sends: the plugin to play, or nothing. The one that was there rides
@@ -155,6 +200,7 @@ impl HostedPlugin {
             plugin: None,
             failed: false,
             keys_down: [false; 128],
+            controls: Control::REST,
         }
     }
 }
@@ -213,7 +259,8 @@ impl Processor for HostedPlugin {
             return;
         };
         // More events in one block than the plugin's buffer holds. Counted, never allocated.
-        for _ in 0..translate(plugin, events, &mut self.keys_down) {
+        let dropped = translate(plugin, events, &mut self.keys_down, &mut self.controls);
+        for _ in 0..dropped {
             context.event_outputs.count_dropped();
         }
         if !plugin.run(frames, input, &mut left[..frames], &mut right[..frames]) {
@@ -233,12 +280,22 @@ fn translate(
     plugin: &mut dyn Started,
     events: &[Timed<NoteEvent>],
     keys_down: &mut [bool; 128],
+    controls: &mut [Control; 4],
 ) -> u64 {
     plugin.begin_block();
     let mut dropped = 0;
     for timed in events {
         let time = timed.offset as u32;
+        let mut control = |control: Control| {
+            if !send_control(plugin, time, control, controls) {
+                dropped += 1;
+            }
+        };
         match timed.event {
+            NoteEvent::Pedal(pedal) => control(Control::Pedal(pedal)),
+            NoteEvent::Bend(bend) => control(Control::Bend(bend)),
+            NoteEvent::ModWheel(amount) => control(Control::ModWheel(amount)),
+            NoteEvent::Pressure(amount) => control(Control::Pressure(amount)),
             // A key is noted as down only when its event really reached the plugin. A note on
             // that did not fit must not be ended by a later `AllOff`, and a note off that did
             // not fit leaves its key down so that a later `AllOff` does end it.
@@ -260,16 +317,9 @@ fn translate(
                     false => dropped += 1,
                 }
             }
-            NoteEvent::Pedal(pedal) => {
-                if plugin.takes_pedal() && !plugin.push(time, PluginEvent::Pedal(pedal)) {
-                    dropped += 1;
-                }
-            }
-            // Not passed on yet: VST 3 takes each wheel as a parameter the plugin maps, like the
-            // pedal, and that mapping is its own change.
-            NoteEvent::Bend(_) | NoteEvent::ModWheel(_) | NoteEvent::Pressure(_) => {}
             // The contract's "release everything". Both formats have a note off that matches
-            // every key, and not every plugin handles one, so the exact keys go out instead.
+            // every key, and not every plugin handles one, so the exact keys go out instead,
+            // and then every control that is not at rest.
             NoteEvent::AllOff => {
                 for key in 0..128_u8 {
                     if !keys_down[usize::from(key)] {
@@ -280,13 +330,35 @@ fn translate(
                         false => dropped += 1,
                     }
                 }
-                if plugin.takes_pedal() && !plugin.push(time, PluginEvent::Pedal(Pedal::UP)) {
-                    dropped += 1;
+                for rest in Control::REST {
+                    if controls[rest.index()] != rest && !send_control(plugin, time, rest, controls)
+                    {
+                        dropped += 1;
+                    }
                 }
             }
         }
     }
     dropped
+}
+
+/// Tells the plugin where a control stands, when it takes that control. It is noted as heard
+/// only when it really reached the plugin, so a move that did not fit is put back by a later
+/// `AllOff` all the same. `false` says there was no room.
+fn send_control(
+    plugin: &mut dyn Started,
+    time: u32,
+    control: Control,
+    controls: &mut [Control; 4],
+) -> bool {
+    if !plugin.takes(control) {
+        return true;
+    }
+    let sent = plugin.push(time, PluginEvent::Control(control));
+    if sent {
+        controls[control.index()] = control;
+    }
+    sent
 }
 
 #[cfg(test)]
@@ -302,7 +374,7 @@ mod tests {
     }
 
     impl Started for Full {
-        fn takes_pedal(&self) -> bool {
+        fn takes(&self, _control: Control) -> bool {
             true
         }
 
@@ -335,70 +407,145 @@ mod tests {
         fn stop(&mut self) {}
     }
 
-    fn on(key: u8) -> Timed<NoteEvent> {
-        Timed {
-            offset: 0,
-            event: NoteEvent::On {
-                pitch: Pitch::new(key).expect("a pitch"),
-                velocity: Velocity::new(100).expect("a velocity"),
-            },
+    /// The wrapper's memory next to a [`Full`] plugin, one block at a time.
+    struct Wrapper {
+        plugin: Full,
+        keys_down: [bool; 128],
+        controls: [Control; 4],
+    }
+
+    impl Wrapper {
+        fn with_room(room: usize) -> Self {
+            Self {
+                plugin: Full {
+                    room,
+                    taken: Vec::new(),
+                },
+                keys_down: [false; 128],
+                controls: Control::REST,
+            }
+        }
+
+        /// One block of `events`, all at offset 0. Gives how many did not fit.
+        fn play(&mut self, events: &[NoteEvent]) -> u64 {
+            let events: Vec<_> = events
+                .iter()
+                .map(|event| Timed {
+                    offset: 0,
+                    event: *event,
+                })
+                .collect();
+            translate(
+                &mut self.plugin,
+                &events,
+                &mut self.keys_down,
+                &mut self.controls,
+            )
+        }
+
+        fn taken(&self) -> Vec<PluginEvent> {
+            self.plugin.taken.iter().map(|(_, event)| *event).collect()
         }
     }
 
-    fn off(key: u8) -> Timed<NoteEvent> {
-        Timed {
-            offset: 0,
-            event: NoteEvent::Off {
-                pitch: Pitch::new(key).expect("a pitch"),
-            },
+    fn on(key: u8) -> NoteEvent {
+        NoteEvent::On {
+            pitch: Pitch::new(key).expect("a pitch"),
+            velocity: Velocity::new(100).expect("a velocity"),
         }
     }
 
-    fn all_off() -> Timed<NoteEvent> {
-        Timed {
-            offset: 0,
-            event: NoteEvent::AllOff,
+    fn off(key: u8) -> NoteEvent {
+        NoteEvent::Off {
+            pitch: Pitch::new(key).expect("a pitch"),
         }
+    }
+
+    fn bend(value: i16) -> Bend {
+        Bend::new(value).expect("a bend")
     }
 
     /// A note off that did not fit leaves its key down, so the `AllOff` of a stop still ends
     /// it. Forgetting the key here is a note that sounds for ever.
     #[test]
     fn a_note_off_that_did_not_fit_is_still_ended_by_all_off() {
-        let mut plugin = Full {
-            room: 1,
-            taken: Vec::new(),
-        };
-        let mut keys_down = [false; 128];
-        assert_eq!(translate(&mut plugin, &[on(60)], &mut keys_down), 0);
-        assert_eq!(translate(&mut plugin, &[off(60)], &mut keys_down), 0);
+        let mut wrapper = Wrapper::with_room(1);
+        assert_eq!(wrapper.play(&[on(60)]), 0);
+        assert_eq!(wrapper.play(&[off(60)]), 0);
         // Now with no room: the note off is counted and the key stays down.
-        assert_eq!(translate(&mut plugin, &[on(60)], &mut keys_down), 0);
-        plugin.room = 0;
-        assert_eq!(translate(&mut plugin, &[off(60)], &mut keys_down), 1);
-        plugin.room = 8;
-        assert_eq!(translate(&mut plugin, &[all_off()], &mut keys_down), 0);
-        assert_eq!(
-            plugin.taken,
-            [
-                (0, PluginEvent::Off { key: 60 }),
-                (0, PluginEvent::Pedal(Pedal::UP)),
-            ]
-        );
+        assert_eq!(wrapper.play(&[on(60)]), 0);
+        wrapper.plugin.room = 0;
+        assert_eq!(wrapper.play(&[off(60)]), 1);
+        wrapper.plugin.room = 8;
+        assert_eq!(wrapper.play(&[NoteEvent::AllOff]), 0);
+        assert_eq!(wrapper.taken(), [PluginEvent::Off { key: 60 }]);
     }
 
     /// A note on that did not fit never reached the plugin, so an `AllOff` must not send a
     /// note off for a note the plugin never started.
     #[test]
     fn a_note_on_that_did_not_fit_is_not_ended_by_all_off() {
-        let mut plugin = Full {
-            room: 0,
-            taken: Vec::new(),
-        };
-        let mut keys_down = [false; 128];
-        assert_eq!(translate(&mut plugin, &[on(60)], &mut keys_down), 1);
-        plugin.room = 8;
-        assert_eq!(translate(&mut plugin, &[all_off()], &mut keys_down), 0);
-        assert_eq!(plugin.taken, [(0, PluginEvent::Pedal(Pedal::UP))]);
+        let mut wrapper = Wrapper::with_room(0);
+        assert_eq!(wrapper.play(&[on(60)]), 1);
+        wrapper.plugin.room = 8;
+        assert_eq!(wrapper.play(&[NoteEvent::AllOff]), 0);
+        assert_eq!(wrapper.taken(), []);
+    }
+
+    /// `AllOff` puts back exactly the controls that are not at rest, after the keys. One that
+    /// moved and came back needs nothing.
+    #[test]
+    fn all_off_puts_back_only_the_controls_that_moved() {
+        let mut wrapper = Wrapper::with_room(16);
+        let moved = [
+            on(60),
+            NoteEvent::Pedal(Pedal::new(127).expect("a pedal")),
+            NoteEvent::Bend(bend(-4000)),
+            NoteEvent::ModWheel(Amount::new(90).expect("an amount")),
+            NoteEvent::ModWheel(Amount::NONE),
+        ];
+        assert_eq!(wrapper.play(&moved), 0);
+        assert_eq!(wrapper.play(&[NoteEvent::AllOff]), 0);
+        assert_eq!(
+            wrapper.taken(),
+            [
+                PluginEvent::Off { key: 60 },
+                PluginEvent::Control(Control::Pedal(Pedal::UP)),
+                PluginEvent::Control(Control::Bend(Bend::MIDDLE)),
+            ]
+        );
+        // Everything is at rest now, so a second one sends nothing.
+        assert_eq!(wrapper.play(&[NoteEvent::AllOff]), 0);
+        assert_eq!(wrapper.taken(), []);
+    }
+
+    /// A wheel move that did not fit never reached the plugin, so the plugin stands where it
+    /// heard it last, and `AllOff` puts back that.
+    #[test]
+    fn a_wheel_move_that_did_not_fit_is_not_noted_as_heard() {
+        let mut wrapper = Wrapper::with_room(1);
+        assert_eq!(wrapper.play(&[NoteEvent::Bend(bend(8191))]), 0);
+        wrapper.plugin.room = 0;
+        assert_eq!(wrapper.play(&[NoteEvent::Bend(Bend::MIDDLE)]), 1);
+        wrapper.plugin.room = 8;
+        assert_eq!(wrapper.play(&[NoteEvent::AllOff]), 0);
+        assert_eq!(
+            wrapper.taken(),
+            [PluginEvent::Control(Control::Bend(Bend::MIDDLE))]
+        );
+    }
+
+    #[test]
+    fn the_bend_goes_as_fourteen_bits_with_the_middle_at_8192() {
+        assert_eq!(Control::Bend(bend(-8192)).midi_value(), 0);
+        assert_eq!(Control::Bend(Bend::MIDDLE).midi_value(), 8192);
+        assert_eq!(Control::Bend(bend(8191)).midi_value(), 16383);
+    }
+
+    #[test]
+    fn every_control_at_rest_has_its_own_place() {
+        for (index, rest) in Control::REST.into_iter().enumerate() {
+            assert_eq!(rest.index(), index);
+        }
     }
 }

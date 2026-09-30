@@ -22,10 +22,12 @@ use vst3::Steinberg::{int32, kInvalidArgument, kResultFalse, kResultOk, kResultT
 use vst3::{Class, ComPtr, ComWrapper};
 
 use super::context::Handler;
-use crate::processor::{EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours};
+use crate::processor::{
+    Control, EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours,
+};
 
-/// How many parameters one block may carry, in each direction. The pedal is the only one this
-/// host sends; a plugin that reports more than this while it plays loses the rest until the
+/// How many parameters one block may carry, in each direction. The pedal, the wheels and the
+/// key pressure are the only ones this host sends; a plugin that reports more than this while it plays loses the rest until the
 /// next block, which the composer hears as nothing at all.
 const PARAMETER_CAPACITY: usize = 64;
 
@@ -50,28 +52,42 @@ pub struct ParameterChange {
     pub value: ParamValue,
 }
 
-/// The parameter the sustain pedal goes to, shared by the two sides of a plugin. The control
-/// side looks it up again when the plugin moves it (`kMidiCCAssignmentChanged`), and the audio
-/// side reads it for every pedal move. An atomic, so neither side ever waits for the other.
-pub struct PedalTarget(AtomicU64);
+/// The parameters the pedal, the wheels and the key pressure go to, one per [`Control`], shared
+/// by the two sides of a plugin. The control side looks them up again when the plugin moves
+/// them (`kMidiCCAssignmentChanged`), and the audio side reads one for every move. Atomics, so
+/// neither side ever waits for the other.
+pub struct ControlTargets([AtomicU64; 4]);
 
-/// What [`PedalTarget`] holds while the plugin maps the pedal to nothing. A parameter id is 32
-/// bits, so no id is this.
-const NO_PEDAL: u64 = u64::MAX;
+/// What a target holds while the plugin maps its control to nothing. A parameter id is 32 bits,
+/// so no id is this.
+const NOWHERE: u64 = u64::MAX;
 
-impl PedalTarget {
-    pub fn new(id: Option<ParamID>) -> Self {
-        Self(AtomicU64::new(id.map_or(NO_PEDAL, u64::from)))
+impl ControlTargets {
+    /// `parameter` says where the plugin maps each control now.
+    pub fn new(parameter: impl Fn(Control) -> Option<ParamID>) -> Self {
+        Self(
+            Control::REST
+                .map(|control| AtomicU64::new(parameter(control).map_or(NOWHERE, u64::from))),
+        )
     }
 
-    pub fn get(&self) -> Option<ParamID> {
-        ParamID::try_from(self.0.load(Ordering::Acquire)).ok()
+    pub fn get(&self, control: Control) -> Option<ParamID> {
+        ParamID::try_from(self.0[control.index()].load(Ordering::Acquire)).ok()
     }
 
-    pub fn set(&self, id: Option<ParamID>) {
-        self.0
-            .store(id.map_or(NO_PEDAL, u64::from), Ordering::Release);
+    pub fn set(&self, control: Control, id: Option<ParamID>) {
+        self.0[control.index()].store(id.map_or(NOWHERE, u64::from), Ordering::Release);
     }
+}
+
+/// Where a control stands as a VST 3 parameter, 0 to 1: its MIDI value over the most it can be.
+/// So the bend's middle is a little over a half, 8192 / 16383.
+pub fn normalized(control: Control) -> ParamValue {
+    let most = match control {
+        Control::Bend(_) => 16383.0,
+        Control::Pedal(_) | Control::ModWheel(_) | Control::Pressure(_) => 127.0,
+    };
+    f64::from(control.midi_value()) / most
 }
 
 /// The control side's ends of the two rings of an audio side: what the plugin changed by
@@ -104,9 +120,10 @@ pub struct Vst3Processor {
     output_changes_pointer: *mut IParameterChanges,
     input_buses: Buses,
     output_buses: Buses,
-    /// The parameter the plugin maps the sustain pedal to, when it maps one. VST 3 has no MIDI
-    /// controller event: `IMidiMapping` is the way the format intends, see `plugin.rs`.
-    pedal: Arc<PedalTarget>,
+    /// The parameters the plugin maps the pedal, the wheels and the key pressure to, where it
+    /// maps them. VST 3 has no MIDI controller event: `IMidiMapping` is the way the format
+    /// intends, see `plugin.rs`.
+    targets: Arc<ControlTargets>,
     /// What the plugin changed by itself, on its way to the control thread.
     reports: rtrb::Producer<ParameterChange>,
     /// What the composer changed in the plugin's own window, on its way here. The host's thread
@@ -139,7 +156,7 @@ impl Vst3Processor {
         live: Arc<()>,
         input_channels: &[usize],
         output_channels: &[usize],
-        pedal: Arc<PedalTarget>,
+        targets: Arc<ControlTargets>,
         handler: ComWrapper<Handler>,
         mode: int32,
         latency: u32,
@@ -170,7 +187,7 @@ impl Vst3Processor {
             output_changes,
             input_buses: Buses::new(input_channels),
             output_buses: Buses::new(output_channels),
-            pedal,
+            targets,
             reports,
             edits,
             handler,
@@ -198,8 +215,8 @@ impl Drop for Vst3Processor {
 }
 
 impl Started for Vst3Processor {
-    fn takes_pedal(&self) -> bool {
-        self.pedal.get().is_some()
+    fn takes(&self, control: Control) -> bool {
+        self.targets.get(control).is_some()
     }
 
     fn latency(&self) -> u32 {
@@ -233,14 +250,12 @@ impl Started for Vst3Processor {
         match event {
             PluginEvent::On { key, velocity } => self.events.push(note_on(offset, key, velocity)),
             PluginEvent::Off { key } => self.events.push(note_off(offset, key)),
-            // A VST 3 plugin has no MIDI controller event. The pedal goes as the parameter the
+            // A VST 3 plugin has no MIDI controller event. A control goes as the parameter the
             // plugin's own MIDI mapping names, with its value as a number from 0 to 1.
-            PluginEvent::Pedal(pedal) => match self.pedal.get() {
-                Some(id) => self.input_changes.add(
-                    id,
-                    offset as int32,
-                    f64::from(pedal.value()) / f64::from(u8::MAX >> 1),
-                ),
+            PluginEvent::Control(control) => match self.targets.get(control) {
+                Some(id) => self
+                    .input_changes
+                    .add(id, offset as int32, normalized(control)),
                 None => true,
             },
         }
@@ -636,11 +651,11 @@ impl HostParameterQueue {
     /// last point instead of being refused, so the value the block ends on is always the one
     /// the composer played. Refusing it would leave a pedal that came up in a block full of
     /// pedal moves holding for ever, `AllOff` and all: the plugin would never hear it go up.
-    /// The points in between are what is lost, which is a pedal that moves in smaller steps
-    /// than this block could carry.
+    /// The same for a wheel. The points in between are what is lost, which is a control that
+    /// moves in smaller steps than this block could carry.
     ///
-    /// It never says no, so nothing above counts a pedal move as an event that was dropped: the
-    /// value did reach the plugin, at a frame a little later than it was played.
+    /// It never says no, so nothing above counts a control move as an event that was dropped:
+    /// the value did reach the plugin, at a frame a little later than it was played.
     fn add(&self, offset: int32, value: ParamValue) -> bool {
         let mut points = self.points.borrow_mut();
         if points.len() == POINT_CAPACITY {
@@ -706,18 +721,25 @@ impl IParamValueQueueTrait for HostParameterQueue {
     }
 }
 
-/// The value a sustain pedal of 0 to 127 becomes for a VST 3 parameter, which is 0 to 1. MIDI
-/// controllers are seven bits, so the divisor is 127.
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sound_notes::{Amount, Bend, Pedal};
 
+    /// Every control reaches its parameter as the whole range from 0 to 1.
     #[test]
-    fn the_pedal_reaches_a_parameter_as_its_whole_range() {
-        let of = |value: u8| f64::from(value) / f64::from(u8::MAX >> 1);
-        assert_eq!(of(0), 0.0);
-        assert_eq!(of(127), 1.0);
-        assert!((of(64) - 0.503_937).abs() < 1e-6);
+    fn a_control_reaches_a_parameter_as_its_whole_range() {
+        let pedal = |value| normalized(Control::Pedal(Pedal::new(value).unwrap()));
+        assert_eq!(pedal(0), 0.0);
+        assert_eq!(pedal(127), 1.0);
+        assert!((pedal(64) - 0.503_937).abs() < 1e-6);
+        let bend = |value| normalized(Control::Bend(Bend::new(value).unwrap()));
+        assert_eq!(bend(-8192), 0.0);
+        assert_eq!(bend(0), 8192.0 / 16383.0);
+        assert_eq!(bend(8191), 1.0);
+        let amount = Amount::new(127).unwrap();
+        assert_eq!(normalized(Control::ModWheel(amount)), 1.0);
+        assert_eq!(normalized(Control::Pressure(Amount::NONE)), 0.0);
     }
 
     #[test]
