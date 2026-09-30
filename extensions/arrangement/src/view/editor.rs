@@ -52,6 +52,9 @@ pub enum EditorEvent {
     Close,
 }
 
+/// How far the pointer moves before a press in an expression lane draws or erases, in pixels.
+const DRAG_THRESHOLD: f32 = 3.0;
+
 /// How far the alt arrows move the velocity of the selected notes.
 const VELOCITY_STEP: i64 = 10;
 
@@ -714,18 +717,31 @@ impl NoteEditor {
                 drawn,
                 last,
             } => {
+                // A hand that moves a little during a click draws nothing.
+                let still =
+                    (x - last.0).abs() < DRAG_THRESHOLD && (y - last.1).abs() < DRAG_THRESHOLD;
+                if drawn.is_empty() && still {
+                    return;
+                }
                 drawn.extend(drawn_between(&viewport, clip, grid, *last, (x, y)));
                 *last = (x, y);
                 (*lane, &*origin, LaneEdit::Draw(drawn))
             }
             NoteDragKind::EraseLane { lane, origin, from } => {
+                if !drag.begun && (x - viewport.x_of(*from)).abs() < DRAG_THRESHOLD {
+                    return;
+                }
                 let to = viewport.tick_at(x);
                 let (from, to) = match grid.snaps() {
                     true => (grid.snap(*from), grid.snap(to)),
                     false => (*from, to),
                 };
                 let (first, last) = ordered(from, to);
-                let ticks = first.saturating_sub(clip.start)..=last.saturating_sub(clip.start);
+                // In ticks of the clip. All of it before the clip erases nothing.
+                let ticks = match last.0.checked_sub(clip.start.0) {
+                    Some(end) => first.saturating_sub(clip.start)..=Ticks(end),
+                    None => Ticks(1)..=Ticks(0),
+                };
                 (*lane, &*origin, LaneEdit::Erase(ticks))
             }
             _ => return,

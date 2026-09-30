@@ -135,6 +135,27 @@ fn a_drag_with_alt_erases_the_points_it_covers(cx: &mut TestAppContext) {
     opened.drag_with(from, to, alt);
     assert_eq!(bend(&mut opened), [(0, 0), (BAR + 960, 0)]);
     one_undo_step(&mut opened, "Erase bend", &before);
+
+    // Left of the clip there is nothing to erase: its first point stays.
+    let (from, to) = (
+        opened.in_lane_at(BAR - 960, height(0)),
+        opened.in_lane_at(BAR - 480, height(0)),
+    );
+    opened.drag_with(from, to, alt);
+    assert_eq!(bend(&mut opened), [(0, 0), (BAR + 960, 0)]);
+    assert_eq!(opened.undo_label().as_deref(), Some("Erase bend"));
+}
+
+/// A hand that moves a pixel during a click draws nothing and makes no undo step.
+#[gpui::test]
+fn a_click_that_moves_a_little_draws_nothing(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let place = opened.in_lane_at(BAR + 500, height(6000));
+    opened.press(place);
+    opened.drag_to(place + gpui::point(gpui::px(1.), gpui::px(1.)));
+    opened.release(place);
+    assert_eq!(bend(&mut opened), [(0, 0), (BAR, 4096), (BAR + 960, 0)]);
+    assert_eq!(opened.undo_label(), None);
 }
 
 /// A double click clears the lane, and one on an empty lane is no undo step.

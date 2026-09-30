@@ -12,7 +12,7 @@ use std::iter::once;
 use std::ops::{Range, RangeInclusive};
 
 use sound_core::Ticks;
-use sound_notes::{Clip, LaneValue, Point, thinned};
+use sound_notes::{Clip, LaneValue, Point, cut, thinned};
 
 use super::layout::Viewport;
 use super::roll::{VELOCITY_BOTTOM, VELOCITY_HEIGHT, VELOCITY_TOP};
@@ -104,12 +104,13 @@ impl LaneEdit<'_> {
 
 impl Lane {
     /// `clip` with this lane of `origin` changed by `edit`. The rest of `clip` stays as it is,
-    /// also what changed in it since `origin`.
+    /// also what changed in it since `origin`, and the lane fits it when it got shorter.
     pub fn edit(self, clip: &mut Clip, origin: &Clip, edit: &LaneEdit) {
+        let inside = Ticks(0)..clip.length.ticks();
         match self {
-            Self::Bend => clip.bend = edit.applied(&origin.bend),
-            Self::ModWheel => clip.mod_wheel = edit.applied(&origin.mod_wheel),
-            Self::Pressure => clip.pressure = edit.applied(&origin.pressure),
+            Self::Bend => clip.bend = cut(&edit.applied(&origin.bend), inside),
+            Self::ModWheel => clip.mod_wheel = cut(&edit.applied(&origin.mod_wheel), inside),
+            Self::Pressure => clip.pressure = cut(&edit.applied(&origin.pressure), inside),
         }
     }
 
@@ -214,7 +215,11 @@ pub fn drawn_between(
     };
     let ticks: Vec<Ticks> = if grid.snaps() {
         let last = viewport.tick_at(right.0);
-        let mut line = grid.floor(viewport.tick_at(left.0));
+        let first = viewport.tick_at(left.0);
+        let mut line = grid.floor(first);
+        if line < first {
+            line = grid.next_line(line);
+        }
         let mut lines = vec![grid.snap(viewport.tick_at(to.0))];
         while line <= last {
             lines.push(line);
@@ -300,6 +305,11 @@ mod tests {
         let drawn = drawn_between(&viewport, &clip, &grid, (x(0), 10.0), (x(700), 30.0));
         let ticks: Vec<u64> = drawn.iter().map(|(tick, _)| tick.0).collect();
         assert_eq!(ticks, [720, 0, 240, 480]);
+        // A small move inside a cell draws only the line nearest the pointer, not the one it
+        // did not cross.
+        let small = drawn_between(&viewport, &clip, &grid, (x(230), 10.0), (x(235), 10.0));
+        let ticks: Vec<u64> = small.iter().map(|(tick, _)| tick.0).collect();
+        assert_eq!(ticks, [240]);
         let (_, height) = drawn[2];
         assert!((height - (10.0 + 20.0 * 240.0 / 700.0)).abs() < 0.01);
         // Left of the clip draws nothing there.
