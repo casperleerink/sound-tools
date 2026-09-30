@@ -86,8 +86,8 @@ impl Lfo {
     ///
     /// While the project plays it also puts the phase where the project is: a cycle starts on
     /// every multiple of `quarters` from the project start, the same on every play, and the
-    /// sample and hold levels are the same at the same place. While it is stopped, and in the
-    /// few blocks after a play or a seek in a project with latency, the LFO runs on at the rate.
+    /// sample and hold levels are the same at the same place. While it is stopped the LFO runs
+    /// on at the rate.
     pub fn sync(&mut self, transport: &Transport, quarters: f32) -> f32 {
         let quarters = f64::from(quarters);
         if let Some(position) = transport.quarters() {
@@ -101,7 +101,7 @@ impl Lfo {
                 (whole + 1.0, 0.0)
             };
             self.phase = phase;
-            self.cycle = whole as u64 as u32;
+            self.cycle = whole as i64 as u32;
         }
         let bpm = transport.clock.tempo_at(transport.tick_range.start).bpm();
         (bpm / 60.0 / quarters) as f32

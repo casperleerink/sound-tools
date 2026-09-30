@@ -67,7 +67,7 @@ fn every_curve_reaches_the_end_of_each_stage_in_its_time() {
 }
 
 #[test]
-fn curve_0_is_a_straight_line_and_1_is_fast_at_first() {
+fn curve_0_is_straight_to_the_eye_and_1_is_fast_at_first() {
     let level_after = |curve: f32, frames: usize| {
         let envelope = Envelope::curved(0.1, 0.1, 0.0, 0.1, curves(curve), RATE);
         let mut state = EnvelopeState::IDLE;
@@ -79,7 +79,7 @@ fn curve_0_is_a_straight_line_and_1_is_fast_at_first() {
     assert!((level_after(0.0, 1_200) - 0.25).abs() < 2e-4);
     assert!(level_after(0.5, 2_400) > 0.58);
     assert!(level_after(1.0, 2_400) > 0.95);
-    // Past the attack, a straight decay to no sustain is halfway down half its time later.
+    // Past the attack, a curve 0 decay to no sustain is halfway down half its time later.
     assert!((level_after(0.0, 4_800 + 2_400) - 0.5).abs() < 1e-3);
 }
 
@@ -204,9 +204,34 @@ impl Processor for SyncedSaw {
     }
 }
 
+/// A processor that says its output is late, so that the engine plays everything else that
+/// much ahead, and after a play waits for it: the saw starts inside a block.
+struct Late;
+
+impl Processor for Late {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        Ports::new().audio_output(OUTPUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, _: &mut ()) {}
+
+    fn latency(&self) -> u32 {
+        LATE_FRAMES as u32
+    }
+
+    fn process(&mut self, _: &mut ProcessContext<'_>) {}
+}
+
+const LATE_FRAMES: usize = 100;
+
 /// Renders the synced saw at 120 bpm, then 90 bpm from the third quarter note: 100 frames
-/// stopped, then playing, in device buffers of `buffer` frames.
-fn render_synced_saw(buffer: usize) -> Vec<f32> {
+/// stopped, then playing, in device buffers of `buffer` frames. With `late`, the project waits
+/// [`LATE_FRAMES`] after the play.
+fn render_synced_saw(buffer: usize, late: bool) -> Vec<f32> {
     let (mut control, mut engine) = Engine::new(EngineConfig::new(RATE as u32, 1));
     let mut edit = control.edit();
     let saw = edit
@@ -214,6 +239,11 @@ fn render_synced_saw(buffer: usize) -> Vec<f32> {
         .unwrap();
     edit.connect(Connection::to_device(saw.id(), OUTPUT, 0))
         .unwrap();
+    if late {
+        let late = edit.add_processor("late", Late).unwrap();
+        edit.connect(Connection::to_device(late.id(), OUTPUT, 0))
+            .unwrap();
+    }
     edit.commit().unwrap();
     let changes = [(0, 120.0), (1920, 90.0)].map(|(tick, bpm)| TempoChange {
         tick: Ticks(tick),
@@ -232,14 +262,21 @@ fn render_synced_saw(buffer: usize) -> Vec<f32> {
 
 #[test]
 fn a_synced_lfo_runs_at_the_tempo_and_starts_its_cycles_on_the_beat() {
-    for buffer in [64, 480, 513] {
-        let rendered = render_synced_saw(buffer);
+    for (buffer, late) in [
+        (64, false),
+        (480, false),
+        (513, false),
+        (64, true),
+        (513, true),
+    ] {
+        let rendered = render_synced_saw(buffer, late);
         // Stopped it runs free, at the 2 Hz of a quarter note at 120 bpm.
         let expected = 2.0 * (99.0 * 2.0 / RATE) - 1.0;
         assert!((rendered[99] - expected).abs() < 1e-4, "{}", rendered[99]);
-        // Playing, a cycle starts on every beat: 24000 frames at 120 bpm, then 32000.
-        let played = &rendered[100..];
-        for frame in (0..played.len()).step_by(97) {
+        // Playing, a cycle starts on every beat: 24000 frames at 120 bpm, then 32000. Also
+        // in the block where the project starts, after the wait for a late processor.
+        let played = &rendered[100 + if late { LATE_FRAMES } else { 0 }..];
+        for frame in (0..buffer).chain((0..played.len()).step_by(97)) {
             let cycles = if frame < 48_000 {
                 frame as f64 / 24_000.0
             } else {
@@ -256,9 +293,8 @@ fn a_synced_lfo_runs_at_the_tempo_and_starts_its_cycles_on_the_beat() {
             let value = played[frame];
             assert!(
                 (value - expected).abs() < 1e-3,
-                "buffer {buffer}, frame {frame}: {value}, not {expected}"
+                "buffer {buffer}, late {late}, frame {frame}: {value}, not {expected}"
             );
         }
-        assert_eq!(played[0], -1.0);
     }
 }

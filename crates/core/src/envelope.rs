@@ -13,7 +13,7 @@ const ATTACK_OVERSHOOT: f64 = 0.3;
 /// no sustain ends when it falls below this.
 pub const ENVELOPE_FLOOR: f64 = 0.001;
 
-/// How each stage of a [`curved`](Envelope::curved) envelope bends, from 0, a straight line, to
+/// How each stage of a [`curved`](Envelope::curved) envelope bends, from 0, straight to the eye, to
 /// 1, a strong exponential curve: fast at first and slow near its end, like the release of an
 /// analog envelope. The value between gives the curve in between.
 ///
