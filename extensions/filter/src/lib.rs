@@ -37,66 +37,15 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
-pub use processor::{Filter, MAX_Q, response};
+pub use processor::{Filter, response};
+pub use sound_core::SVF_MAX_Q as MAX_Q;
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "filter";
 
-/// Which part of the sound the filter lets through.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FilterType {
-    /// What is below the cutoff.
-    LowPass,
-    /// A band around the cutoff. Resonance makes it narrower.
-    BandPass,
-    /// What is above the cutoff.
-    HighPass,
-    /// Everything but a band around the cutoff. Resonance makes the gap narrower.
-    Notch,
-}
-
-impl FilterType {
-    pub const ALL: [Self; 4] = [Self::LowPass, Self::BandPass, Self::HighPass, Self::Notch];
-}
-
-/// How steeply the filter cuts past the cutoff, in dB per octave. Saved as the number, `12` or
-/// `24`, and nothing else loads.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "u8", into = "u8")]
-pub enum Slope {
-    Twelve,
-    TwentyFour,
-}
-
-impl Slope {
-    pub const ALL: [Self; 2] = [Self::Twelve, Self::TwentyFour];
-
-    pub const fn db_per_octave(self) -> u8 {
-        match self {
-            Self::Twelve => 12,
-            Self::TwentyFour => 24,
-        }
-    }
-}
-
-impl TryFrom<u8> for Slope {
-    type Error = String;
-
-    fn try_from(db: u8) -> Result<Self, String> {
-        match db {
-            12 => Ok(Self::Twelve),
-            24 => Ok(Self::TwentyFour),
-            _ => Err(format!("slope must be 12 or 24, not {db}")),
-        }
-    }
-}
-
-impl From<Slope> for u8 {
-    fn from(slope: Slope) -> Self {
-        slope.db_per_octave()
-    }
-}
+/// The type and the slope are those of the state variable filter of the SDK, which the
+/// Wavetable synth plays too. `Slope` is the name this record has always used.
+pub use sound_core::{FilterSlope as Slope, FilterType};
 
 /// The saved state. It is small and `Copy`, so it is also the update the processor gets. The
 /// filter's memory and the phase of its LFO are runtime state and are not saved.

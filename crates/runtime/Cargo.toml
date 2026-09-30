@@ -35,6 +35,7 @@ sound-ui.workspace = true
 thiserror.workspace = true
 tone.workspace = true
 utility.workspace = true
+wavetable.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

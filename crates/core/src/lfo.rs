@@ -4,10 +4,14 @@
 
 use std::f32::consts::TAU;
 
+use serde::{Deserialize, Serialize};
+
 use crate::Transport;
 
 /// The wave of an LFO, from -1 to 1. The caller's, like the rate: it may change at any time.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Saved in snake case, `"saw_up"`, for a record that lets a composer pick it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LfoShape {
     /// Starts at 0 and rises to 1 a quarter cycle later.
     #[default]
@@ -23,6 +27,17 @@ pub enum LfoShape {
     /// A new random level at the start of every cycle, held until the next. The level follows
     /// from the seed of the LFO and the count of the cycle, so a render is the same every time.
     SampleAndHold,
+}
+
+impl LfoShape {
+    pub const ALL: [Self; 6] = [
+        Self::Sine,
+        Self::Triangle,
+        Self::SawUp,
+        Self::SawDown,
+        Self::Square,
+        Self::SampleAndHold,
+    ];
 }
 
 /// Where an LFO is, in cycles from 0 to 1. It starts at 0 when it is made, so a render is the

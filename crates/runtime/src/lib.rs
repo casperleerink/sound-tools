@@ -128,6 +128,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     saturator::register(&mut registry)?;
     tone::register(&mut registry)?;
     utility::register(&mut registry)?;
+    wavetable::register(&mut registry)?;
     registry.runtime_agent_doc(INSPECT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.

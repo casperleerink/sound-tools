@@ -3,3 +3,7 @@ extend-exclude = ["experiments/*/results", "*.svg", "Cargo.lock"]
 
 [default.extend-identifiers]
 PNGs = "PNGs"
+
+[default.extend-words]
+# A peak in the spectrum of a voice, which makes a vowel.
+formant = "formant"

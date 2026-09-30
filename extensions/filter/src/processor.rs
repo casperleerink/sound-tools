@@ -1,51 +1,19 @@
 //! The filter processor: a drive stage, two state variable filter sections, and the mix.
 //!
-//! Each section is the state variable filter in its trapezoidal form (Simper, "Solving the
-//! continuous SVF equations using trapezoidal integration and equivalent currents", 2013). It
-//! is linear and stable for every cutoff and every resonance, also while they move, which is
-//! what an analog filter of this shape does too: no setting blows up. At 12 dB per octave one
-//! section plays. At 24 dB the second follows the first, and the two are the sections of a
-//! fourth order Butterworth filter at resonance 0, so the cutoff is at -3 dB for both slopes.
-//!
-//! The resonance is in the first section only. The second has a fixed Q that never boosts, so a
-//! glide between the slopes never rings at a Q that neither end has. As resonance rises, the low
-//! and high pass get quieter by the square root of how far their Q rose, as an analog ladder
-//! loses its bass: the peak of full resonance is about +12 dB and not +26.
-//!
-//! Every section gives low, band, high pass and notch at once from one memory. The type is a
-//! weight for each, so a change of type is a glide between them and not a switch, and so is a
-//! change of slope: both sections always run and the output glides from the first to the
-//! second. Nothing that a composer or an agent changes jumps.
-
-use std::f32::consts::{FRAC_1_SQRT_2, PI};
+//! The two sections are the state variable filter of the SDK, `SvfSection`, which says how
+//! they sound. Both always run and the output glides from the first to the second, and the type
+//! is a weight for each output of a section, so a change of type or slope is a glide and not a
+//! switch. Nothing that a composer or an agent changes jumps.
 
 use sound_core::{
     AudioInput, AudioOutput, CHANNELS, Lfo, LfoShape, Ports, PrepareConfig, ProcessContext,
-    Processor, Smoothed, soft_clip,
+    Processor, Smoothed, SvfFactors, SvfSection, soft_clip, svf_response,
 };
 
-use crate::{FilterState, FilterType, Slope};
+use crate::FilterState;
 
 /// How long a change takes to arrive. A jump would click, or step in the sound.
 const RAMP_SECONDS: f32 = 0.02;
-
-/// The Q of the first section at resonance 1. With the level that the resonance takes from the
-/// low and high pass, the peak at the cutoff is +11.5 dB at 12 dB per octave and +8.8 dB at 24.
-/// It rings, and it never runs away.
-pub const MAX_Q: f32 = 20.0;
-
-/// The Q of one section at resonance 0: a second order Butterworth filter.
-const BUTTERWORTH_Q: f32 = FRAC_1_SQRT_2;
-
-/// The Qs of the two sections of a fourth order Butterworth filter, `1 / (2 cos(π/8))` and
-/// `1 / (2 cos(3π/8))`. Their product is `1/√2`, so the cutoff is at -3 dB here too.
-const BUTTERWORTH_4: [f32; 2] = [0.541_196_1, 1.306_563];
-
-/// A cutoff the LFO pushes past the ends of the range stays inside it, and under a part of the
-/// sample rate, below the Nyquist frequency where the filter's factors would run away.
-const LOWEST_HZ: f32 = 20.0;
-const HIGHEST_HZ: f32 = 20_000.0;
-const HIGHEST_PART: f32 = 0.45;
 
 /// While something moves, the factors are worked out again this often. Four times per block
 /// of the engine: a sweep has no steps anyone can hear, and a `tan` per frame is not needed.
@@ -55,161 +23,24 @@ const FACTOR_FRAMES: usize = 16;
 /// anyone else's can make the filter's memory infinite. +36 dBFS: nothing real comes near it.
 const INPUT_LIMIT: f32 = 64.0;
 
-/// While the input is silent, a memory smaller than this is let go of: -180 dB, far under
-/// anything audible. So a filter after a sound that ended comes to rest and does no work, also
-/// after the slow ring of a low cutoff at full resonance.
-const REST: f32 = 1e-9;
-
-/// The first section at a resonance, with `slope` from 0 (12 dB per octave) to 1 (24 dB): its
-/// Q, and the level of its low and high pass. Resonance raises the Q from its Butterworth value
-/// on a ratio, so equal steps of resonance are equal steps of the peak in dB. The Butterworth
-/// value glides between the one of a single section and its place in the fourth order filter.
-/// The level is `sqrt(butterworth / q)`, so the peak rises by half as many dB as the Q.
-fn first_section(resonance: f32, slope: f32) -> (f32, f32) {
-    let butterworth = BUTTERWORTH_Q + (BUTTERWORTH_4[1] - BUTTERWORTH_Q) * slope;
-    let rise = (MAX_Q / butterworth).powf(resonance);
-    (butterworth * rise, 1.0 / rise.sqrt())
-}
-
-/// The Q of the second section: fixed, and below the one that would boost at the cutoff.
-const SECOND_Q: f32 = BUTTERWORTH_4[0];
-
-/// How much of the low, band and high pass and of the notch of a section the type takes.
-fn taps(kind: FilterType) -> [f32; 4] {
-    match kind {
-        FilterType::LowPass => [1.0, 0.0, 0.0, 0.0],
-        FilterType::BandPass => [0.0, 1.0, 0.0, 0.0],
-        FilterType::HighPass => [0.0, 0.0, 1.0, 0.0],
-        FilterType::Notch => [0.0, 0.0, 0.0, 1.0],
-    }
-}
-
-fn slope_weight(slope: Slope) -> f32 {
-    match slope {
-        Slope::Twelve => 0.0,
-        Slope::TwentyFour => 1.0,
-    }
-}
-
-/// The cutoff the filter really uses: inside what the sample rate allows.
-fn usable_hz(hz: f32, sample_rate: f32) -> f32 {
-    // Not `clamp`: it panics when the bounds cross, and nothing may panic on the audio thread.
-    hz.max(LOWEST_HZ)
-        .min(HIGHEST_HZ.min(HIGHEST_PART * sample_rate))
-}
-
 /// The gain at `hz` of a filter with this record, as a factor, once every change has arrived:
 /// what a quiet steady sine comes out with, at the cutoff the record says and with its mix.
 /// Drive is left out, because what it does depends on the level; a quiet sound gets its gain.
 ///
-/// This is the exact response of the processor, not a drawing of one: the trapezoidal form is
-/// the analog filter with its frequencies bent by `tan(π f / sample rate)`, so the analog
-/// response at the bent frequency is the answer. The card draws it and the tests hold the
-/// measured sound to it.
+/// This is the exact response of the processor, not a drawing of one: see [`svf_response`].
+/// The card draws it and the tests hold the measured sound to it.
 pub fn response(state: &FilterState, hz: f32, sample_rate: f32) -> f32 {
-    let bend = |hz: f32| (f64::from(PI) * f64::from(hz) / f64::from(sample_rate)).tan();
-    let cutoff = usable_hz(state.cutoff_hz, sample_rate);
-    let at = bend(hz.min(0.499 * sample_rate)) / bend(cutoff);
-    let taps = taps(state.kind).map(f64::from);
-    let (q, level) = first_section(state.resonance, slope_weight(state.slope));
-    let one = section_response(taps, f64::from(q), f64::from(level), at);
-    let filtered = match state.slope {
-        Slope::Twelve => one,
-        Slope::TwentyFour => {
-            let second = section_response(taps, f64::from(SECOND_Q), 1.0, at);
-            multiply(one, second)
-        }
-    };
+    let filtered = svf_response(
+        state.kind,
+        state.slope,
+        state.cutoff_hz,
+        state.resonance,
+        hz,
+        sample_rate,
+    );
     let mix = f64::from(state.mix);
     let (real, imaginary) = (mix * filtered.0 + (1.0 - mix), mix * filtered.1);
     real.hypot(imaginary) as f32
-}
-
-/// One section at `at` times its cutoff, as a complex number: `(level (low + high s²) + band k s
-/// + notch (s² + 1)) / (s² + k s + 1)` with `s = j at` and `k = 1 / q`. The band is scaled by
-/// `k`, so its peak is 1.
-fn section_response([low, band, high, notch]: [f64; 4], q: f64, level: f64, at: f64) -> (f64, f64) {
-    let k = 1.0 / q;
-    let square = at * at;
-    let numerator = (
-        level * (low - high * square) + notch * (1.0 - square),
-        band * k * at,
-    );
-    let denominator = (1.0 - at * at, k * at);
-    let size = denominator.0 * denominator.0 + denominator.1 * denominator.1;
-    (
-        (numerator.0 * denominator.0 + numerator.1 * denominator.1) / size,
-        (numerator.1 * denominator.0 - numerator.0 * denominator.1) / size,
-    )
-}
-
-fn multiply(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
-    (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
-}
-
-/// The factors of one section for one cutoff and Q.
-#[derive(Copy, Clone, Default)]
-struct Factors {
-    k: f32,
-    a1: f32,
-    a2: f32,
-    a3: f32,
-}
-
-impl Factors {
-    /// `g` is `tan(π cutoff / sample rate)`.
-    fn new(g: f32, q: f32) -> Self {
-        let k = 1.0 / q;
-        let a1 = 1.0 / (1.0 + g * (g + k));
-        let a2 = g * a1;
-        Self {
-            k,
-            a1,
-            a2,
-            a3: g * a2,
-        }
-    }
-}
-
-/// The memory of one section: the two integrators.
-#[derive(Copy, Clone, Default)]
-struct Section {
-    ic1: f32,
-    ic2: f32,
-}
-
-impl Section {
-    /// One frame. Returns the mix of low, band and high pass and notch that `taps` asks for,
-    /// with the low and the high pass at `level`.
-    fn next(
-        &mut self,
-        factors: &Factors,
-        [low, band, high, notch]: [f32; 4],
-        level: f32,
-        input: f32,
-    ) -> f32 {
-        let Factors { k, a1, a2, a3 } = *factors;
-        let v3 = input - self.ic2;
-        let v1 = a1 * self.ic1 + a2 * v3;
-        let v2 = self.ic2 + a2 * self.ic1 + a3 * v3;
-        self.ic1 = 2.0 * v1 - self.ic1;
-        self.ic2 = 2.0 * v2 - self.ic2;
-        let high_pass = input - k * v1 - v2;
-        let band_pass = k * v1;
-        level * (low * v2 + high * high_pass) + band * band_pass + notch * (input - band_pass)
-    }
-
-    fn settle(&mut self) {
-        for memory in [&mut self.ic1, &mut self.ic2] {
-            if memory.abs() < REST {
-                *memory = 0.0;
-            }
-        }
-    }
-
-    fn is_silent(&self) -> bool {
-        self.ic1 == 0.0 && self.ic2 == 0.0
-    }
 }
 
 /// A sample of the input as the filter takes it: held to [`INPUT_LIMIT`], and silence for
@@ -241,14 +72,14 @@ pub struct Filter {
     /// Whether the factors have to be worked out again although nothing glides: after an
     /// update that snapped, and before the first block.
     stale: bool,
-    factors: [Factors; 2],
+    factors: [SvfFactors; 2],
     /// The level of the low and high pass of the first section, at the end of the last run of
     /// frames, and where it is going in the run now. It moves with the resonance, frame by
     /// frame inside a run, so it makes no step.
     level: f32,
     level_target: f32,
     /// The two sections of each channel, left first.
-    sections: [[Section; 2]; CHANNELS],
+    sections: [[SvfSection; 2]; CHANNELS],
 }
 
 impl Filter {
@@ -270,10 +101,10 @@ impl Filter {
             lfo_rate_hz: state.lfo_rate_hz,
             lfo: Lfo::default(),
             stale: true,
-            factors: [Factors::default(); 2],
+            factors: [SvfFactors::default(); 2],
             level: 1.0,
             level_target: 1.0,
-            sections: [[Section::default(); 2]; CHANNELS],
+            sections: [[SvfSection::default(); 2]; CHANNELS],
         };
         filter.aim(&state);
         filter.snap();
@@ -285,8 +116,8 @@ impl Filter {
         let ramp = self.ramp_frames;
         self.octaves.set_target(state.cutoff_hz.log2(), ramp);
         self.resonance.set_target(state.resonance, ramp);
-        self.slope.set_target(slope_weight(state.slope), ramp);
-        for (tap, target) in self.taps.iter_mut().zip(taps(state.kind)) {
+        self.slope.set_target(state.slope.weight(), ramp);
+        for (tap, target) in self.taps.iter_mut().zip(state.kind.taps()) {
             tap.set_target(target, ramp);
         }
         self.drive
@@ -338,10 +169,9 @@ impl Filter {
         if !changes {
             return;
         }
-        let hz = usable_hz((cutoff + depth * lfo).exp2(), self.sample_rate);
-        let g = (PI * hz / self.sample_rate).tan();
-        let (q, level) = first_section(resonance, slope);
-        self.factors = [Factors::new(g, q), Factors::new(g, SECOND_Q)];
+        let hz = (cutoff + depth * lfo).exp2();
+        let (factors, level) = SvfFactors::sections(hz, resonance, slope, self.sample_rate);
+        self.factors = factors;
         self.level_target = level;
         // After a snap there is nothing to glide from.
         if std::mem::take(&mut self.stale) {
@@ -350,7 +180,7 @@ impl Filter {
     }
 
     fn is_resting(&self) -> bool {
-        self.sections.iter().flatten().all(Section::is_silent)
+        self.sections.iter().flatten().all(SvfSection::is_silent)
     }
 }
 
@@ -420,7 +250,10 @@ impl Processor for Filter {
             }
         }
         if silent_input {
-            self.sections.iter_mut().flatten().for_each(Section::settle);
+            self.sections
+                .iter_mut()
+                .flatten()
+                .for_each(SvfSection::settle);
         }
     }
 }
@@ -428,6 +261,7 @@ impl Processor for Filter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Slope;
 
     #[test]
     fn the_cutoff_is_at_minus_three_db_for_both_slopes_at_resonance_zero() {
@@ -440,18 +274,5 @@ mod tests {
             let db = 20.0 * response(&state, state.cutoff_hz, 48_000.0).log10();
             assert!((db + 3.0103).abs() < 0.001, "{slope:?}: {db}");
         }
-    }
-
-    /// Full resonance: the Q of the first section is `MAX_Q` and its level takes half of that
-    /// rise in dB back, so the peak of one section is `sqrt(q0 MAX_Q)`, +11.5 dB.
-    #[test]
-    fn full_resonance_peaks_at_the_root_of_its_rise() {
-        let state = FilterState {
-            resonance: 1.0,
-            ..FilterState::default()
-        };
-        let peak = response(&state, state.cutoff_hz, 48_000.0);
-        let expected = (BUTTERWORTH_Q * MAX_Q).sqrt();
-        assert!((peak - expected).abs() < 0.001, "{peak}");
     }
 }

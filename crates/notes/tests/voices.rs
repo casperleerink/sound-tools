@@ -120,6 +120,22 @@ fn a_cut_voice_sounds_out_beside_the_new_note() {
     assert_eq!(voices.newest().map(|voice| voice.pitch), Some(65.0));
 }
 
+/// A lower polyphony cuts the oldest notes until the rest fit, and holds from then on.
+#[test]
+fn a_lower_polyphony_cuts_the_oldest_notes() {
+    let mut voices = voices::<4>(4);
+    on(&mut voices, 60, 100);
+    on(&mut voices, 62, 100);
+    on(&mut voices, 64, 100);
+    voices.set_polyphony(2);
+    assert_eq!(held(&voices), [62.0, 64.0]);
+    on(&mut voices, 65, 100);
+    assert_eq!(held(&voices), [64.0, 65.0]);
+    // A higher one cuts nothing.
+    voices.set_polyphony(4);
+    assert_eq!(held(&voices), [64.0, 65.0]);
+}
+
 #[test]
 fn the_pedal_holds_a_released_key_until_it_comes_up() {
     let mut voices = voices::<4>(4);
