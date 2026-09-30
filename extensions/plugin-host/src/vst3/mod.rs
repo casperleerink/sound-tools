@@ -14,8 +14,8 @@
 //!   built holds for both.
 //! - `IEditController` is the interface side. It may be the same object or a second one, and
 //!   the two are joined by `IConnectionPoint`. It is what knows the MIDI mapping, which is how
-//!   the sustain pedal reaches a VST 3 plugin, and it is what makes the plugin's own window
-//!   (`IPlugView`, in `view.rs`). Main thread, like the window.
+//!   the sustain pedal and the wheels reach a VST 3 plugin, and it is what makes the plugin's
+//!   own window (`IPlugView`, in `view.rs`). Main thread, like the window.
 //!
 //! VST 3 has no MIDI controller event. The format's own answer is `IMidiMapping`: the
 //! controller asks which parameter a MIDI controller number is mapped to, and the host sends

@@ -1,11 +1,13 @@
 //! A hosted plugin plays: the notes land on the frames they were sent on, and the sustain
-//! pedal reaches the plugin with its value.
+//! pedal, the wheels and the key pressure reach the plugin with their values.
 
 use plugin_host::PluginFormat;
 use sound_core::MAX_BLOCK;
+use test_plugin_support::Wheel;
 
 use crate::support::{
     FORMATS, Harness, Played, record, tell_the_plugin, tell_the_plugin_to_go_silent,
+    tell_the_plugin_to_map_no_wheels, tell_the_plugin_to_show,
 };
 
 #[test]
@@ -114,6 +116,134 @@ fn all_off_ends_everything(format: PluginFormat) {
     assert_eq!(right[256], 0.0, "{format:?}");
 }
 
+const WHEELS: [Wheel; 3] = [Wheel::Bend, Wheel::ModWheel, Wheel::Pressure];
+
+/// The name the test plugin knows a wheel by, for its right channel.
+fn name(wheel: Wheel) -> &'static str {
+    match wheel {
+        Wheel::Bend => "bend",
+        Wheel::ModWheel => "mod_wheel",
+        Wheel::Pressure => "pressure",
+    }
+}
+
+/// Two moves of a wheel a test plays, far apart. The bend goes to both ends.
+fn moves(wheel: Wheel) -> [i16; 2] {
+    match wheel {
+        Wheel::Bend => [8191, -8192],
+        Wheel::ModWheel | Wheel::Pressure => [127, 40],
+    }
+}
+
+fn played(wheel: Wheel, frame: u64, value: i16) -> Played {
+    let amount = value as u8;
+    match wheel {
+        Wheel::Bend => Played::Bend { frame, value },
+        Wheel::ModWheel => Played::ModWheel {
+            frame,
+            value: amount,
+        },
+        Wheel::Pressure => Played::Pressure {
+            frame,
+            value: amount,
+        },
+    }
+}
+
+/// What the test plugin shows in its right channel for a wheel at `value`: the MIDI value over
+/// the most it can be.
+fn heard(wheel: Wheel, value: i16) -> f32 {
+    let heard = match wheel {
+        Wheel::Bend => f64::from(value + 8192) / 16383.0,
+        Wheel::ModWheel | Wheel::Pressure => f64::from(value) / 127.0,
+    };
+    heard as f32
+}
+
+/// The bend wheel, the mod wheel and the key pressure reach the plugin on the frames they
+/// were played on: a VST 3 plugin as the parameters it maps them to, a CLAP one as MIDI.
+#[test]
+fn each_wheel_reaches_the_plugin_with_its_value_on_its_frame() {
+    for format in FORMATS {
+        for wheel in WHEELS {
+            wheel_on_its_frames(format, wheel);
+        }
+    }
+}
+
+fn wheel_on_its_frames(format: PluginFormat, wheel: Wheel) {
+    tell_the_plugin_to_show(name(wheel));
+    let [first, second] = moves(wheel);
+    let mut harness = Harness::new();
+    harness.add_track(
+        record(format, "piano"),
+        vec![played(wheel, 64, first), played(wheel, 256, second)],
+    );
+    let right = harness.play(512).right();
+    assert_eq!(right[63], wheel.rest() as f32, "{format:?} {wheel:?}");
+    assert_eq!(right[64], heard(wheel, first), "{format:?} {wheel:?}");
+    assert_eq!(right[255], heard(wheel, first), "{format:?} {wheel:?}");
+    assert_eq!(right[256], heard(wheel, second), "{format:?} {wheel:?}");
+}
+
+/// The plugin has no idea the transport stopped. The contract's `AllOff` puts a wheel that
+/// moved back at rest, so no bend is ever stuck in a plugin.
+#[test]
+fn all_off_puts_a_moved_wheel_back_at_rest() {
+    for format in FORMATS {
+        for wheel in WHEELS {
+            all_off_puts_the_wheel_back(format, wheel);
+        }
+    }
+}
+
+fn all_off_puts_the_wheel_back(format: PluginFormat, wheel: Wheel) {
+    tell_the_plugin_to_show(name(wheel));
+    let [value, _] = moves(wheel);
+    let mut harness = Harness::new();
+    harness.add_track(
+        record(format, "piano"),
+        vec![played(wheel, 0, value), Played::AllOff { frame: 256 }],
+    );
+    let right = harness.play(512).right();
+    let rest = wheel.rest() as f32;
+    assert_eq!(right[255], heard(wheel, value), "{format:?} {wheel:?}");
+    assert_eq!(right[256], rest, "{format:?} {wheel:?}");
+    assert_eq!(right[511], rest, "{format:?} {wheel:?}");
+}
+
+/// A VST 3 plugin that maps no parameter to a wheel is not sent that wheel, and nothing is
+/// wrong: its notes play and nothing is reported. The plugin would hear a point on the
+/// parameter it keeps for the wheel, so a host that sent one anyway would move it.
+#[test]
+fn a_wheel_the_vst3_plugin_does_not_map_is_not_sent() {
+    tell_the_plugin_to_map_no_wheels();
+    for wheel in WHEELS {
+        tell_the_plugin_to_show(name(wheel));
+        let [value, _] = moves(wheel);
+        let mut harness = Harness::new();
+        harness.add_track(
+            record(PluginFormat::Vst3, "piano"),
+            vec![
+                Played::On {
+                    frame: 0,
+                    pitch: 60,
+                    velocity: 100,
+                },
+                played(wheel, 64, value),
+            ],
+        );
+        let render = harness.play(512);
+        let rest = wheel.rest() as f32;
+        assert!(
+            render.right().iter().all(|sample| *sample == rest),
+            "{wheel:?}"
+        );
+        assert_eq!(render.first_sound(), Some(0), "{wheel:?}");
+        assert_eq!(harness.problems(), Vec::<String>::new(), "{wheel:?}");
+    }
+}
+
 /// The realtime sanitizer runs over this whole render. It aborts on an allocation, a lock or a
 /// system call anywhere in our own `process`, including the wrapper around the plugin.
 #[test]
@@ -137,6 +267,10 @@ fn no_allocation_while_it_plays(format: PluginFormat) {
                 Played::Pedal {
                     frame: index * 13 + 3,
                     value: (index % 128) as u8,
+                },
+                Played::Bend {
+                    frame: index * 13 + 5,
+                    value: (index as i16 * 256) - 8192,
                 },
                 Played::Off {
                     frame: index * 13 + 7,

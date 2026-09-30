@@ -10,7 +10,7 @@ use sound_core::{
     InstanceId, OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, Project, Registry,
     State,
 };
-use sound_notes::{NOTES_INPUT, NoteEvent, Pedal, Pitch, Velocity};
+use sound_notes::{Amount, Bend, NOTES_INPUT, NoteEvent, Pedal, Pitch, Velocity};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 
@@ -70,6 +70,9 @@ pub enum Played {
     On { frame: u64, pitch: u8, velocity: u8 },
     Off { frame: u64, pitch: u8 },
     Pedal { frame: u64, value: u8 },
+    Bend { frame: u64, value: i16 },
+    ModWheel { frame: u64, value: u8 },
+    Pressure { frame: u64, value: u8 },
     AllOff { frame: u64 },
 }
 
@@ -79,6 +82,9 @@ impl Played {
             Self::On { frame, .. }
             | Self::Off { frame, .. }
             | Self::Pedal { frame, .. }
+            | Self::Bend { frame, .. }
+            | Self::ModWheel { frame, .. }
+            | Self::Pressure { frame, .. }
             | Self::AllOff { frame } => frame,
         }
     }
@@ -95,6 +101,13 @@ impl Played {
                 pitch: Pitch::new(pitch).expect("a pitch"),
             },
             Self::Pedal { value, .. } => NoteEvent::Pedal(Pedal::new(value).expect("a pedal")),
+            Self::Bend { value, .. } => NoteEvent::Bend(Bend::new(value).expect("a bend")),
+            Self::ModWheel { value, .. } => {
+                NoteEvent::ModWheel(Amount::new(value).expect("an amount"))
+            }
+            Self::Pressure { value, .. } => {
+                NoteEvent::Pressure(Amount::new(value).expect("an amount"))
+            }
             Self::AllOff { .. } => NoteEvent::AllOff,
         }
     }
@@ -353,6 +366,21 @@ pub fn tell_the_plugin_that_its_controller_fails() {
 pub fn tell_the_plugin_to_write_its_header_last() {
     // SAFETY: as above.
     unsafe { std::env::set_var(test_plugin_support::HEADER_LAST_VARIABLE, "1") };
+}
+
+/// Makes the test plugin show a wheel or the key pressure in its right channel instead of the
+/// pedal: `bend`, `mod_wheel` or `pressure`, see `test_plugin_support::SHOW_VARIABLE`. Same
+/// rules as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_show(wheel: &str) {
+    // SAFETY: as above.
+    unsafe { std::env::set_var(test_plugin_support::SHOW_VARIABLE, wheel) };
+}
+
+/// Makes the VST 3 test plugin map no parameter to the wheels or the key pressure. Same rules
+/// as [`tell_the_plugin`].
+pub fn tell_the_plugin_to_map_no_wheels() {
+    // SAFETY: as above.
+    unsafe { std::env::set_var(test_plugin_support::NO_WHEELS_VARIABLE, "1") };
 }
 
 /// Makes the test plugin close its own window as soon as the host has shown it, which is what
