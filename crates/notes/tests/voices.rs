@@ -171,6 +171,17 @@ fn mono_plays_the_last_key_held() {
 }
 
 #[test]
+fn going_to_mono_cuts_every_note_but_the_newest() {
+    let mut voices = voices::<4>(4);
+    on(&mut voices, 60, 100);
+    on(&mut voices, 64, 100);
+    voices.set_mono(true);
+    assert_eq!(held(&voices), [64.0]);
+    on(&mut voices, 67, 100);
+    assert_eq!(held(&voices), [67.0]);
+}
+
+#[test]
 fn a_legato_moves_the_note_and_does_not_start_it_again() {
     let mut voices = voices::<4>(4);
     voices.set_mono(true);

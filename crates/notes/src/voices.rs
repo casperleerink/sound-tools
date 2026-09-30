@@ -84,6 +84,11 @@ impl<V: Voice> Slot<V> {
         self.voice.release();
     }
 
+    fn cut(&mut self) {
+        self.cut = true;
+        self.voice.cut();
+    }
+
     /// The key came up. With the pedal down the note sounds on until the pedal comes up.
     fn key_up(&mut self, pedal_is_down: bool) {
         if pedal_is_down && self.held != Key::Up {
@@ -94,7 +99,7 @@ impl<V: Voice> Slot<V> {
     }
 }
 
-/// The first of `slots` for which `quietness` is lowest, with its index.
+/// The quietest of `slots`, the first of them when several are as quiet.
 fn quietest<'a, V: Voice + 'a>(
     slots: impl Iterator<Item = (usize, &'a Slot<V>)>,
 ) -> Option<(usize, &'a Slot<V>)> {
@@ -136,6 +141,7 @@ pub struct Voices<V, const N: usize> {
 impl<V: Voice + Clone, const N: usize> Voices<V, N> {
     /// `N` copies of `idle`, of which `polyphony`, from 1 to `N`, play at once.
     pub fn new(idle: V, polyphony: usize) -> Self {
+        const { assert!(N > 0, "an instrument needs at least one voice") };
         Self {
             slots: std::array::from_fn(|_| Slot {
                 voice: idle.clone(),
@@ -157,7 +163,14 @@ impl<V: Voice + Clone, const N: usize> Voices<V, N> {
 }
 
 impl<V: Voice, const N: usize> Voices<V, N> {
+    /// To mono, every note but the newest is cut, so only one plays on.
     pub fn set_mono(&mut self, mono: bool) {
+        if mono && !self.mono {
+            let newest = self.newest;
+            let slots = self.slots.iter_mut().enumerate();
+            let others = slots.filter(|(index, slot)| Some(*index) != newest && slot.is_playing());
+            others.for_each(|(_, slot)| slot.cut());
+        }
         self.mono = mono;
     }
 
@@ -196,10 +209,8 @@ impl<V: Voice, const N: usize> Voices<V, N> {
 
     /// Cuts every voice that sounds, such as when the sound they play is replaced.
     pub fn cut_all(&mut self) {
-        for slot in self.slots.iter_mut().filter(|slot| !slot.is_idle()) {
-            slot.cut = true;
-            slot.voice.cut();
-        }
+        let sounding = self.slots.iter_mut().filter(|slot| !slot.is_idle());
+        sounding.for_each(Slot::cut);
     }
 
     /// Follows one event. The wheels and the pressure are not notes and change nothing here.
@@ -312,9 +323,7 @@ impl<V: Voice, const N: usize> Voices<V, N> {
             let released = playing().filter(|(_, slot)| slot.held == Key::Up);
             let oldest = || playing().min_by_key(|(_, slot)| slot.started);
             if let Some((index, _)) = quietest(released).or_else(oldest) {
-                let slot = &mut self.slots[index];
-                slot.cut = true;
-                slot.voice.cut();
+                self.slots[index].cut();
             }
         }
         let slots = self.slots.iter().enumerate();
