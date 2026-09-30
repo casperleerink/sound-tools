@@ -2223,6 +2223,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "image",
+ "sound-core",
  "sound-media",
  "sound-ui",
 ]

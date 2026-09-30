@@ -179,10 +179,8 @@ impl RenderOnce for Select {
                 window.focus(&menu_focus, cx);
             }
         };
-        let close_outside = {
-            let state = state.clone();
-            move |_: &MouseDownEvent, window: &mut Window, cx: &mut App| close(&state, window, cx)
-        };
+        let close_outside =
+            move |_: &MouseDownEvent, window: &mut Window, cx: &mut App| close(&state, window, cx);
         // For tests, which find a select by its id: `select-<id>`.
         let selector = self.id.clone();
 
