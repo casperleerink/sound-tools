@@ -1,8 +1,9 @@
 //! The note contract: what a tool that sends notes and a tool that plays them agree on.
 //!
 //! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and
-//! [`Clip`], the saved [`RawTake`] a recording writes and a fit reads, the realtime
-//! [`NoteEvent`] with the wheels an instrument follows ([`Expression`]), and the port names of
+//! [`Clip`] with its expression lanes ([`Point`]), the saved [`RawTake`] a recording writes and
+//! a fit reads, the realtime [`NoteEvent`] with the wheels an instrument follows
+//! ([`Expression`]), and the port names of
 //! an instrument and an effect. The port names live here and not in a crate of their own,
 //! because both sides of a track already read this one.
 //!
@@ -22,12 +23,14 @@
 //! stuck" a property of the contract and not of every sender.
 
 mod expression;
+mod lane;
 mod take;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{Place, State, Ticks};
 
 pub use expression::{Expression, Wheels};
+pub use lane::{LaneValue, Point, cut, thinned, value_at};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };
@@ -212,7 +215,10 @@ impl From<Pedal> for u8 {
 
 /// Where the pitch bend wheel stands, -8192 to 8191, with 0 in the middle: MIDI's 14 bits with
 /// the middle moved to 0. How far a full bend goes is the instrument's choice.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(try_from = "i64", into = "i16")]
 pub struct Bend(i16);
 
 impl Bend {
@@ -253,9 +259,18 @@ impl TryFrom<i64> for Bend {
     }
 }
 
+impl From<Bend> for i16 {
+    fn from(bend: Bend) -> i16 {
+        bend.0
+    }
+}
+
 /// How far the modulation wheel is turned or how hard the keys are pressed, 0 to 127, as MIDI
 /// sends it. What it does is the instrument's choice.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(try_from = "i64", into = "u8")]
 pub struct Amount(u8);
 
 impl Amount {
@@ -289,6 +304,12 @@ impl TryFrom<i64> for Amount {
             Ok(value @ 0..=127) => Ok(Self(value)),
             _ => Err(NoteError::Amount(value)),
         }
+    }
+}
+
+impl From<Amount> for u8 {
+    fn from(amount: Amount) -> u8 {
+        amount.0
     }
 }
 
@@ -388,6 +409,9 @@ pub struct PlacedPedal {
 /// - A note that is longer than the rest of the clip ends where the clip ends.
 /// - `pedal` is the sustain pedal as it was played, and follows the same rules as the notes.
 ///   A clip that was not recorded leaves it out, and is written back without it.
+/// - `bend`, `mod_wheel` and `pressure` are the expression lanes: points inside the clip, in
+///   tick order, one per tick, read with [`value_at`]. An empty lane is left out of the file
+///   and moves nothing; a lane with points holds for the whole clip, and ends with it.
 /// - `take` names the raw take this clip was recorded from, when it was recorded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -399,6 +423,15 @@ pub struct Clip {
     /// and is written back byte for byte as it was.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pedal: Vec<PedalChange>,
+    /// The bend wheel. Left out when empty, like the pedal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bend: Vec<Point<Bend>>,
+    /// The modulation wheel.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mod_wheel: Vec<Point<Amount>>,
+    /// The key pressure.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pressure: Vec<Point<Amount>>,
     /// The raw take this clip came from: a saved reference, the name of a file under
     /// `assets/takes/` without `.json`. It owns nothing and keeps nothing alive, like every
     /// other reference. A clip that was not recorded leaves it out.
@@ -411,13 +444,16 @@ pub struct Clip {
 }
 
 impl Clip {
-    /// A clip with notes, no pedal and no take, which is every clip that was not recorded.
+    /// A clip with notes, no pedal, no lanes and no take.
     pub fn new(start: Ticks, length: Length, notes: Vec<Note>) -> Self {
         Self {
             start,
             length,
             notes,
             pedal: Vec::new(),
+            bend: Vec::new(),
+            mod_wheel: Vec::new(),
+            pressure: Vec::new(),
             take: None,
         }
     }
@@ -456,12 +492,16 @@ impl Clip {
         })
     }
 
-    /// Sets the length and drops the notes and pedal moves that would start outside, which a
-    /// clip cannot hold.
+    /// Sets the length and drops the notes, pedal moves and lane points that would start
+    /// outside, which a clip cannot hold. A lane keeps the value it had at the new end.
     pub fn set_length(&mut self, length: Length) {
+        let inside = Ticks(0)..length.ticks();
         self.length = length;
         self.notes.retain(|note| note.start < length.ticks());
         self.pedal.retain(|change| change.start < length.ticks());
+        self.bend = cut(&self.bend, inside.clone());
+        self.mod_wheel = cut(&self.mod_wheel, inside.clone());
+        self.pressure = cut(&self.pressure, inside);
     }
 }
 
@@ -486,6 +526,9 @@ impl State for Clip {
         if let Some((index, change)) = pedal.find(|(_, change)| change.start >= length) {
             return Err(inside("pedal", "pedal", index, change.start));
         }
+        lane::check("bend", &self.bend, length)?;
+        lane::check("mod_wheel", &self.mod_wheel, length)?;
+        lane::check("pressure", &self.pressure, length)?;
         match &self.take {
             Some(take) if !Self::is_valid_take_name(take) => Err(format!(
                 "take must be the name of a file under assets/takes/ without `.json`: lowercase letters, digits, `-` and `_`, not {take:?}"

@@ -322,6 +322,7 @@ fn the_raw_take_holds_what_was_played_in_real_time() {
                 sounded_us: 0,
                 value,
             },
+            other => other,
         })
         .collect();
     assert_eq!(
@@ -353,14 +354,7 @@ fn the_raw_take_holds_what_was_played_in_real_time() {
         ]
     );
     // The times are real and in order, counted from the start of the recording.
-    let times: Vec<u64> = raw
-        .events
-        .iter()
-        .map(|event| match *event {
-            RawEvent::On { time_us, .. } | RawEvent::Off { time_us, .. } => time_us,
-            RawEvent::Pedal { time_us, .. } => time_us,
-        })
-        .collect();
+    let times: Vec<u64> = raw.events.iter().map(|event| event.time_us()).collect();
     assert!(times.windows(2).all(|pair| pair[0] <= pair[1]), "{times:?}");
     assert!(!recorder.clip().notes.is_empty());
 }
