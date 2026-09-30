@@ -581,13 +581,29 @@ impl TestToneAudio<'_> {
         self.host.request_callback();
     }
 
-    /// Raw MIDI. Only controller 64, the sustain pedal, means anything here.
+    /// Raw MIDI: the sustain pedal, the bend and mod wheels and the channel pressure. The rest
+    /// means nothing here.
     fn midi(&mut self, data: [u8; 3]) {
-        let is_controller = data[0] & 0xF0 == 0xB0;
-        if !is_controller || data[1] != 64 {
-            return;
+        let seven_bits = |byte: u8| f64::from(byte) / 127.0;
+        match (data[0] & 0xF0, data[1]) {
+            (0xE0, _) => {
+                let value = u16::from(data[1]) | u16::from(data[2]) << 7;
+                self.tone
+                    .wheel(support::Wheel::Bend, f64::from(value) / 16383.0);
+            }
+            (0xB0, 1) => self
+                .tone
+                .wheel(support::Wheel::ModWheel, seven_bits(data[2])),
+            (0xD0, _) => self
+                .tone
+                .wheel(support::Wheel::Pressure, seven_bits(data[1])),
+            (0xB0, 64) => self.pedal(data[2]),
+            _ => {}
         }
-        if !self.tone.pedal(data[2]) {
+    }
+
+    fn pedal(&mut self, value: u8) {
+        if !self.tone.pedal(value) {
             return;
         }
         // The transpose changed, which is a change of the plugin's own state. Only the main

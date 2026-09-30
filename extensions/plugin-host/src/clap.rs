@@ -31,7 +31,7 @@ use sound_core::{MAX_BLOCK, PrepareConfig};
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
 use crate::host::{HOST_NAME, HOST_URL, HOST_VENDOR, HOST_VERSION};
 use crate::processor::{
-    EVENT_CAPACITY, PluginEvent, SUSTAIN_CONTROLLER, Started, copy_in, copy_out, not_ours,
+    Control, EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours,
 };
 use crate::scan::ScannedPlugin;
 use crate::window::WindowSize;
@@ -524,7 +524,8 @@ impl PluginGui for ClapPlugin {
 struct ClapStarted {
     audio: PluginAudioProcessor<SoundToolsHost>,
     dialect: Dialect,
-    /// Whether the note port takes MIDI, which is the only way to send the sustain pedal.
+    /// Whether the note port takes MIDI, which is the only way to send the pedal, the wheels
+    /// and the key pressure.
     takes_midi: bool,
     input_ports: AudioPorts,
     output_ports: AudioPorts,
@@ -543,7 +544,8 @@ struct ClapStarted {
 /// Which events the plugin's note port takes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Dialect {
-    /// CLAP note events. The sustain pedal still needs MIDI, which has no note event for it.
+    /// CLAP note events. The pedal, the wheels and the key pressure still need MIDI, see
+    /// [`midi`].
     Clap,
     Midi,
 }
@@ -582,7 +584,7 @@ impl Drop for ClapStarted {
 }
 
 impl Started for ClapStarted {
-    fn takes_pedal(&self) -> bool {
+    fn takes(&self, _control: Control) -> bool {
         self.takes_midi
     }
 
@@ -621,11 +623,9 @@ impl Started for ClapStarted {
                 self.input_events
                     .push(&MidiEvent::new(offset, 0, [0x80, key, 64]));
             }
-            // The pedal always goes as raw MIDI, with its value: CLAP note events have no
-            // sustain, so a plugin whose note port takes none does not get it at all.
-            (PluginEvent::Pedal(pedal), _) => {
-                let data = [0xB0, SUSTAIN_CONTROLLER, pedal.value()];
-                self.input_events.push(&MidiEvent::new(offset, 0, data));
+            (PluginEvent::Control(control), _) => {
+                self.input_events
+                    .push(&MidiEvent::new(offset, 0, midi(control)));
             }
         }
         true
@@ -696,6 +696,23 @@ impl Started for ClapStarted {
     fn stop(&mut self) {
         // The plugin's own `stop_processing` runs in here.
         not_ours(|| self.audio.ensure_processing_stopped());
+    }
+}
+
+/// A control as a MIDI message on channel 1, with its value as it was played. It always goes as
+/// raw MIDI: CLAP note events have no sustain and no channel-wide bend, mod wheel or pressure,
+/// so a plugin whose note port takes no MIDI does not get them at all.
+fn midi(control: Control) -> [u8; 3] {
+    // Controller 64 is the sustain pedal and controller 1 the mod wheel.
+    match control {
+        Control::Pedal(pedal) => [0xB0, 64, pedal.value()],
+        Control::Bend(_) => {
+            let value = control.midi_value();
+            [0xE0, (value & 0x7F) as u8, (value >> 7) as u8]
+        }
+        Control::ModWheel(amount) => [0xB0, 1, amount.value()],
+        // Channel pressure has one data byte.
+        Control::Pressure(amount) => [0xD0, amount.value(), 0],
     }
 }
 
