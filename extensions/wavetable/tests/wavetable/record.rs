@@ -45,7 +45,7 @@ fn a_value_out_of_range_or_a_field_that_does_not_exist_does_not_load() {
             r#"{"matrix": [{"source": "key", "destination": "pan", "amount": 3.0}]}"#,
             "matrix[0].amount",
         ),
-        (r#"{"osc_1": {"postion": 0.5}}"#, "postion"),
+        (r#"{"osc_1": {"pitch": 0.5}}"#, "pitch"),
         (r#"{"sub": {"octave": -3}}"#, "octave"),
         (r#"{"filter_1": {"slope": 18}}"#, "slope"),
         (r#"{"osc_1": {"table": "nope"}}"#, "table"),
