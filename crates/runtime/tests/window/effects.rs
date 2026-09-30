@@ -250,7 +250,7 @@ fn a_panel_opened_while_the_scan_runs_offers_the_effects_when_it_ends(cx: &mut T
     opened.click(trigger);
     assert_eq!(opened.find(&plugin_item()), None);
     assert!(
-        opened.find("menu-note-1").is_some(),
+        opened.find("menu-note-0").is_some(),
         "no line about the scan"
     );
     opened.keys("escape");

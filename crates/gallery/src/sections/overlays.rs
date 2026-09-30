@@ -57,12 +57,7 @@ fn models() -> Vec<MenuItem> {
 
 fn menu_entries() -> Vec<MenuEntry> {
     vec![
-        MenuEntry::Group(
-            MenuGroup::new()
-                .label("Model")
-                .max_height(180.)
-                .items(models()),
-        ),
+        MenuEntry::Group(MenuGroup::new().label("Model").items(models())),
         MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().label("Effort").items([
             MenuItem::new("low", "low"),
@@ -102,6 +97,7 @@ fn install(window: &mut Window, cx: &mut App) {
             .selected("opus-5")
             .align(Align::Start)
             .width(300.)
+            .max_height(260.)
     });
     let split = add_track_button("split", cx);
     let split_open = add_track_button("split-open", cx);

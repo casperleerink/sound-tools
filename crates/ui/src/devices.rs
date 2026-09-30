@@ -25,6 +25,10 @@ pub struct DeviceOffer {
     pub name: SharedString,
     /// A quiet second line, such as who made the plugin.
     pub detail: Option<SharedString>,
+    /// Where a picker lists it.
+    pub group: OfferGroup,
+    /// The icon a picker shows beside the name, from `crates/ui/assets/icons`.
+    pub icon: SharedString,
     /// The extension whose tool this offer writes. A project that does not enable it cannot
     /// load what the offer writes, so a picker shows the offer and does not take it.
     pub needs: Option<Needs>,
@@ -32,18 +36,28 @@ pub struct DeviceOffer {
 }
 
 impl DeviceOffer {
+    /// An offer with the plug icon, which is what a plugin shows. A built-in device names its
+    /// own with [`Self::icon`].
     pub fn new(
         key: impl Into<SharedString>,
         name: impl Into<SharedString>,
+        group: OfferGroup,
         write: impl Fn(&Project, &InstanceId, &mut Changes) -> Result<(), ProjectError> + 'static,
     ) -> Self {
         Self {
             key: key.into(),
             name: name.into(),
             detail: None,
+            group,
+            icon: "device-plugin".into(),
             needs: None,
             write: Rc::new(write),
         }
+    }
+
+    pub fn icon(mut self, icon: impl Into<SharedString>) -> Self {
+        self.icon = icon.into();
+        self
     }
 
     pub fn with_detail(mut self, detail: impl Into<SharedString>) -> Self {
@@ -84,6 +98,31 @@ impl DeviceOffer {
         changes: &mut Changes,
     ) -> Result<(), ProjectError> {
         (self.write)(project, slot, changes)
+    }
+}
+
+/// The groups of a picker, in the order it lists them. Built-in instruments are one group;
+/// built-in effects are grouped by what they do to the sound. Plugins come last.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OfferGroup {
+    BuiltIn,
+    Tone,
+    Dynamics,
+    Space,
+    Mix,
+    Plugins,
+}
+
+impl OfferGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::BuiltIn => "Built-in",
+            Self::Tone => "Tone",
+            Self::Dynamics => "Dynamics",
+            Self::Space => "Space",
+            Self::Mix => "Mix",
+            Self::Plugins => "Plugins",
+        }
     }
 }
 

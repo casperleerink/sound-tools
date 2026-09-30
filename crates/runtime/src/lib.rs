@@ -30,7 +30,7 @@ use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
     ProjectError, Registry, SavedDestination, State, Ticks,
 };
-use sound_ui::{DeviceOffer, Devices, Views};
+use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
 use utility::UtilityState;
 use wavetable::WavetableState;
 
@@ -163,138 +163,102 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     devices.instruments(|| {
         vec![
-            DeviceOffer::new(
-                SynthState::TOOL,
+            built_in::<SynthState>(
                 instrument::view::NAME,
-                |_, slot, changes| {
-                    changes.create(slot.clone(), SynthState::default());
-                    Ok(())
-                },
-            )
-            .needs(
+                OfferGroup::BuiltIn,
+                "device-synth",
                 instrument::EXTENSION,
                 "This project does not load the synth.",
             ),
-            DeviceOffer::new(
-                WavetableState::TOOL,
+            built_in::<WavetableState>(
                 wavetable::view::NAME,
-                |_, slot, changes| {
-                    changes.create(slot.clone(), WavetableState::default());
-                    Ok(())
-                },
-            )
-            .needs(
+                OfferGroup::BuiltIn,
+                "device-wavetable",
                 wavetable::EXTENSION,
                 "This project does not load the Wavetable.",
             ),
-            DeviceOffer::new(
-                SamplerState::TOOL,
+            built_in::<SamplerState>(
                 sampler::view::NAME,
-                |_, slot, changes| {
-                    changes.create(slot.clone(), SamplerState::default());
-                    Ok(())
-                },
-            )
-            .needs(
+                OfferGroup::BuiltIn,
+                "device-sampler",
                 sampler::EXTENSION,
                 "This project does not load the sampler.",
             ),
-            DeviceOffer::new(
-                DrumPadState::TOOL,
+            built_in::<DrumPadState>(
                 drum_pad::view::NAME,
-                |_, slot, changes| {
-                    changes.create(slot.clone(), DrumPadState::default());
-                    Ok(())
-                },
-            )
-            .needs(
+                OfferGroup::BuiltIn,
+                "device-drum-pad",
                 drum_pad::EXTENSION,
                 "This project does not load the Drum pad.",
             ),
         ]
     });
-    // The built-in effects come before the plugins of this Mac in the list.
+    // The built-in effects come before the plugins of this Mac in the list, in the order a
+    // picker shows them.
     devices.effects(|| {
         vec![
-            DeviceOffer::new(FilterState::TOOL, filter::view::NAME, |_, slot, changes| {
-                changes.create(slot.clone(), FilterState::default());
-                Ok(())
-            })
-            .needs(filter::EXTENSION, "This project does not load the filter."),
-            DeviceOffer::new(
-                CompressorState::TOOL,
-                compressor::view::NAME,
-                |_, slot, changes| {
-                    changes.create(slot.clone(), CompressorState::default());
-                    Ok(())
-                },
-            )
-            .needs(
-                compressor::EXTENSION,
-                "This project does not load the compressor.",
+            built_in::<EqState>(
+                eq::view::NAME,
+                OfferGroup::Tone,
+                "device-eq",
+                eq::EXTENSION,
+                "This project does not load the EQ.",
             ),
-            DeviceOffer::new(
-                LimiterState::TOOL,
-                limiter::view::NAME,
-                |_, slot, changes| {
-                    changes.create(slot.clone(), LimiterState::default());
-                    Ok(())
-                },
-            )
-            .needs(
-                limiter::EXTENSION,
-                "This project does not load the limiter.",
+            built_in::<FilterState>(
+                filter::view::NAME,
+                OfferGroup::Tone,
+                "device-filter",
+                filter::EXTENSION,
+                "This project does not load the filter.",
             ),
-            DeviceOffer::new(EqState::TOOL, eq::view::NAME, |_, slot, changes| {
-                changes.create(slot.clone(), EqState::default());
-                Ok(())
-            })
-            .needs(eq::EXTENSION, "This project does not load the EQ."),
-            DeviceOffer::new(DelayState::TOOL, delay::view::NAME, |_, slot, changes| {
-                changes.create(slot.clone(), DelayState::default());
-                Ok(())
-            })
-            .needs(delay::EXTENSION, "This project does not load the delay."),
-            DeviceOffer::new(ReverbState::TOOL, reverb::view::NAME, |_, slot, changes| {
-                changes.create(slot.clone(), ReverbState::default());
-                Ok(())
-            })
-            .needs(reverb::EXTENSION, "This project does not load the reverb."),
-            DeviceOffer::new(
-                SaturatorState::TOOL,
+            built_in::<SaturatorState>(
                 saturator::view::NAME,
-                |_, slot, changes| {
-                    changes.create(slot.clone(), SaturatorState::default());
-                    Ok(())
-                },
-            )
-            .needs(
+                OfferGroup::Tone,
+                "device-saturator",
                 saturator::EXTENSION,
                 "This project does not load the saturator.",
             ),
-            DeviceOffer::new(
-                UtilityState::TOOL,
-                utility::view::NAME,
-                |_, slot, changes| {
-                    changes.create(slot.clone(), UtilityState::default());
-                    Ok(())
-                },
-            )
-            .needs(
-                utility::EXTENSION,
-                "This project does not load the utility.",
+            built_in::<CompressorState>(
+                compressor::view::NAME,
+                OfferGroup::Dynamics,
+                "device-compressor",
+                compressor::EXTENSION,
+                "This project does not load the compressor.",
             ),
-            DeviceOffer::new(
-                ModulationState::TOOL,
+            built_in::<LimiterState>(
+                limiter::view::NAME,
+                OfferGroup::Dynamics,
+                "device-limiter",
+                limiter::EXTENSION,
+                "This project does not load the limiter.",
+            ),
+            built_in::<ModulationState>(
                 modulation::view::NAME,
-                |_, slot, changes| {
-                    changes.create(slot.clone(), ModulationState::default());
-                    Ok(())
-                },
-            )
-            .needs(
+                OfferGroup::Space,
+                "device-modulation",
                 modulation::EXTENSION,
                 "This project does not load the modulation.",
+            ),
+            built_in::<DelayState>(
+                delay::view::NAME,
+                OfferGroup::Space,
+                "device-delay",
+                delay::EXTENSION,
+                "This project does not load the delay.",
+            ),
+            built_in::<ReverbState>(
+                reverb::view::NAME,
+                OfferGroup::Space,
+                "device-reverb",
+                reverb::EXTENSION,
+                "This project does not load the reverb.",
+            ),
+            built_in::<UtilityState>(
+                utility::view::NAME,
+                OfferGroup::Mix,
+                "device-utility",
+                utility::EXTENSION,
+                "This project does not load the utility.",
             ),
         ]
     });
@@ -342,6 +306,23 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     (views, devices)
 }
 
+/// A built-in device at its defaults, which a project that does not enable `extension` shows
+/// and does not take.
+fn built_in<S: State + Default>(
+    name: &'static str,
+    group: OfferGroup,
+    icon: &'static str,
+    extension: &'static str,
+    reason: &'static str,
+) -> DeviceOffer {
+    DeviceOffer::new(S::TOOL, name, group, |_, slot, changes| {
+        changes.create(slot.clone(), S::default());
+        Ok(())
+    })
+    .icon(icon)
+    .needs(extension, reason)
+}
+
 /// The plugins `list` gives, as offers for a picker. Each writes the record of that plugin
 /// into the slot it is picked for, with a state file of its own.
 fn plugin_offers(
@@ -358,6 +339,7 @@ fn plugin_offers(
             let offer = DeviceOffer::new(
                 found.offer_key(),
                 found.name.clone(),
+                OfferGroup::Plugins,
                 move |project, slot, changes| {
                     // A state file of its own that no plugin has ever written into, so a
                     // plugin that is picked never comes up holding the sound an older one
