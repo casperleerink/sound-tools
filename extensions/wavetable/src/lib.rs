@@ -21,13 +21,14 @@
 //! ```
 //!
 //! [`state`] is the record and its `Parameter` constants, [`Table`] the built-in tables and
-//! [`Wavetable`] their frames, for a view to draw. This crate has no view yet.
+//! [`Wavetable`] their frames, which [`view`] draws on the card of the synth.
 
 mod dsp;
 mod matrix;
 pub mod state;
 mod synth;
 mod tables;
+pub mod view;
 mod voice;
 
 use sound_core::{

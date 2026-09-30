@@ -6974,11 +6974,13 @@ dependencies = [
 name = "wavetable"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "realfft",
  "serde",
  "serde_json",
  "sound-core",
  "sound-notes",
+ "sound-ui",
  "tempfile",
 ]
 

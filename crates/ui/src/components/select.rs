@@ -189,11 +189,10 @@ impl RenderOnce for Select {
         self.base
             .relative()
             .flex()
-            .min_w_0()
+            .flex_none()
             .child(
                 select_trigger(self.id, cx)
                     .debug_selector(move || format!("select-{selector}"))
-                    .min_w_0()
                     .when_some(trigger_width, |trigger, width| trigger.w(px(width)))
                     .track_focus(&trigger_focus)
                     .border_1()
