@@ -116,6 +116,16 @@ impl Grid {
         self.snap.unit_in(self.time_signatures.bar_at(tick))
     }
 
+    /// Whether shapes land on grid lines: snap is on and cmd is not held.
+    pub fn snaps(&self) -> bool {
+        !self.free && self.snap != Snap::Off
+    }
+
+    /// The first grid line after `tick`.
+    pub fn next_line(&self, tick: Ticks) -> Ticks {
+        self.lines_around(tick).1
+    }
+
     /// The grid line at or before `tick`: the grid cell that a pointer is in.
     pub fn floor(&self, tick: Ticks) -> Ticks {
         self.lines_around(tick).0

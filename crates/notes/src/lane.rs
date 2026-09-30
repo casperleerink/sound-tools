@@ -25,6 +25,9 @@ pub struct Point<V> {
 pub trait LaneValue: Copy + Eq + Debug {
     /// Where the lane stands when no clip moves it, as after an `AllOff`.
     const REST: Self;
+    /// The lowest and the highest value, as numbers.
+    const LOWEST: i32;
+    const HIGHEST: i32;
     /// How far a recorded lane may pass from a point it drops when it is thinned: one step of
     /// what a keyboard sends.
     const STEP: i32;
@@ -37,6 +40,8 @@ pub trait LaneValue: Copy + Eq + Debug {
 
 impl LaneValue for Bend {
     const REST: Self = Self::MIDDLE;
+    const LOWEST: i32 = -8192;
+    const HIGHEST: i32 = 8191;
     /// One step of the coarse half of MIDI's bend, 128 of 16384: most keyboards send the bend in
     /// those steps, and it is 3 cents at a bend of two semitones. A step of 1 would keep nearly
     /// every point of a recorded bend.
@@ -53,6 +58,8 @@ impl LaneValue for Bend {
 
 impl LaneValue for Amount {
     const REST: Self = Self::NONE;
+    const LOWEST: i32 = 0;
+    const HIGHEST: i32 = 127;
     const STEP: i32 = 1;
 
     fn number(self) -> i32 {
