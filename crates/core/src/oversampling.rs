@@ -228,8 +228,10 @@ impl Oversampler {
         }
     }
 
-    /// Frames up to four times the rate: four samples for each, in order, into `four`.
+    /// Frames up to four times the rate: four samples for each, in order, into `four`, which is
+    /// four times as long as `frames`.
     pub fn up(&mut self, filters: &OversamplingFilters, frames: &[f32], four: &mut [f32]) {
+        debug_assert_eq!(four.len(), Self::FACTOR * frames.len());
         for (sample, four) in frames.iter().zip(four.chunks_exact_mut(4)) {
             let [early, late] = self.first_up.next(&filters.first, *sample);
             let twice = [std::mem::replace(&mut self.held, late), early];
@@ -239,8 +241,10 @@ impl Oversampler {
         }
     }
 
-    /// Four samples for each frame down to the rate of the frames again.
+    /// Four samples for each frame down to the rate of the frames again: `four` is four times
+    /// as long as `frames`.
     pub fn down(&mut self, filters: &OversamplingFilters, four: &[f32], frames: &mut [f32]) {
+        debug_assert_eq!(four.len(), Self::FACTOR * frames.len());
         for (four, frame) in four.chunks_exact(4).zip(frames) {
             let mut twice = [0.0; 2];
             for (two, sample) in four.chunks_exact(2).zip(&mut twice) {
