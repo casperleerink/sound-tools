@@ -12,7 +12,9 @@
 //!   goes down, and reports it in the block's output parameter changes, which is how a VST 3
 //!   plugin tells a host that its state changed. There is no `mark_dirty` in this format.
 //! - `Sustain`, which `IMidiMapping` maps MIDI controller 64 to. That is how the format says a
-//!   host sends the sustain pedal, and it is what the host under test uses.
+//!   host sends the sustain pedal, and it is what the host under test uses. `Bend`, `Mod wheel`
+//!   and `Pressure` are mapped the same way, to the bend wheel, controller 1 and the channel
+//!   pressure.
 //!
 //! And more, for what a test needs to make it do: see the constants below. A few keys are not
 //! played but ask the host for something through `restartComponent`, one flag each
@@ -88,6 +90,12 @@ const ASK: ParamID = 5;
 /// `test_plugin_support::MOVE_PEDAL_KEY`.
 const MOVED_SUSTAIN: ParamID = 6;
 
+/// Where the plugin hears the bend wheel, the mod wheel and the channel pressure, unless it was
+/// told to map none of them (`test_plugin_support::NO_WHEELS_VARIABLE`).
+const BEND: ParamID = 7;
+const MOD_WHEEL: ParamID = 8;
+const PRESSURE: ParamID = 9;
+
 /// Where the plugin hears the sustain pedal: on [`SUSTAIN`], on [`MOVED_SUSTAIN`], or nowhere.
 const PEDAL_ON_SUSTAIN: u8 = 0;
 const PEDAL_MOVED: u8 = 1;
@@ -103,8 +111,16 @@ const NO_LATENCY_WANTED: u32 = u32::MAX;
 /// How many semitones the transpose parameter covers, so that a normalized value is exact.
 const TRANSPOSE_RANGE: f64 = 63.0;
 
-/// How many pedal points one block may carry. Fixed, so `process` never allocates.
-const PEDAL_POINTS: usize = 32;
+/// How many points of the pedal and the wheels one block may carry, all of them together.
+/// Fixed, so `process` never allocates.
+const CONTROL_POINTS: usize = 128;
+
+/// One point of the pedal or of a wheel, as the plugin heard it.
+#[derive(Copy, Clone)]
+enum Heard {
+    Pedal(u8),
+    Wheel(support::Wheel, ParamValue),
+}
 
 /// The level the plugin plays at until its controller state says another, and the one it drops
 /// to when it is keeping a controller state and the pedal transposes it. Hundredths.
@@ -308,7 +324,7 @@ impl TestTone {
 
 /// Every parameter, in the order `getParameterInfo` lists them, and whether it is only ever set
 /// by the plugin, which a host must never send.
-const PARAMETERS: [(ParamID, &str, &str, ParamValue, bool); 7] = [
+const PARAMETERS: [(ParamID, &str, &str, ParamValue, bool); 10] = [
     (TRANSPOSE, "Transpose", "st", 0.0, false),
     (SUSTAIN, "Sustain", "", 0.0, false),
     (LEVEL, "Level", "", 1.0, false),
@@ -316,6 +332,9 @@ const PARAMETERS: [(ParamID, &str, &str, ParamValue, bool); 7] = [
     (LATENCY, "Latency", "", 0.0, true),
     (ASK, "Ask", "", 0.0, true),
     (MOVED_SUSTAIN, "Moved sustain", "", 0.0, false),
+    (BEND, "Bend", "", 8192.0 / 16383.0, false),
+    (MOD_WHEEL, "Mod wheel", "", 0.0, false),
+    (PRESSURE, "Pressure", "", 0.0, false),
 ];
 
 impl IPluginBaseTrait for TestTone {
@@ -647,11 +666,12 @@ impl IAudioProcessorTrait for TestTone {
             let frames = right.len();
             let left = &mut left[..frames];
 
-            // The pedal comes as points of the parameter the MIDI mapping names, and the
-            // notes as events. Both lists are in time order, so they are walked together and
-            // each one sounds from exactly the frame it carries, as in the CLAP plugin.
-            let mut pedal = [(0_i32, 0_u8); PEDAL_POINTS];
-            let mut pedal_count = 0;
+            // The pedal and the wheels come as points of the parameters the MIDI mapping
+            // names, and the notes as events. The points are put in time order across all of
+            // them, and then walked together with the events, so each one sounds from exactly
+            // the frame it carries, as in the CLAP plugin.
+            let mut points = [(0_i32, Heard::Pedal(0)); CONTROL_POINTS];
+            let mut point_count = 0;
             if let Some(changes) = ComRef::from_raw(data.inputParameterChanges) {
                 for index in 0..changes.getParameterCount() {
                     let Some(queue) = ComRef::from_raw(changes.getParameterData(index)) else {
@@ -681,36 +701,44 @@ impl IAudioProcessorTrait for TestTone {
                         PEDAL_MOVED => Some(MOVED_SUSTAIN),
                         _ => None,
                     };
-                    if Some(id) != pedal_id {
-                        if id == SUSTAIN || id == MOVED_SUSTAIN {
-                            for point in 0..queue.getPointCount() {
-                                let (mut offset, mut value) = (0, 0.0);
-                                if queue.getPoint(point, &mut offset, &mut value) == kResultOk {
-                                    let heard = (value * 127.0).round() as u8;
-                                    let line = format!("unmapped_pedal[{heard}]");
-                                    support::log(&line, self.plugin, audio.processed);
-                                }
-                            }
+                    let heard = |value: ParamValue| match id {
+                        BEND => Some(Heard::Wheel(support::Wheel::Bend, value)),
+                        MOD_WHEEL => Some(Heard::Wheel(support::Wheel::ModWheel, value)),
+                        PRESSURE => Some(Heard::Wheel(support::Wheel::Pressure, value)),
+                        id if Some(id) == pedal_id => {
+                            Some(Heard::Pedal((value * 127.0).round() as u8))
                         }
-                        continue;
-                    }
+                        _ => None,
+                    };
                     for point in 0..queue.getPointCount() {
                         let (mut offset, mut value) = (0, 0.0);
                         if queue.getPoint(point, &mut offset, &mut value) != kResultOk {
                             continue;
                         }
-                        if pedal_count == PEDAL_POINTS {
+                        let Some(heard) = heard(value) else {
+                            if id == SUSTAIN || id == MOVED_SUSTAIN {
+                                let heard = (value * 127.0).round() as u8;
+                                let line = format!("unmapped_pedal[{heard}]");
+                                support::log(&line, self.plugin, audio.processed);
+                            }
+                            continue;
+                        };
+                        if point_count == CONTROL_POINTS {
                             break;
                         }
-                        pedal[pedal_count] = (offset, (value * 127.0).round() as u8);
-                        pedal_count += 1;
+                        // After every point at or before its frame, so two of one frame keep
+                        // their order. Moving a few points in place allocates nothing.
+                        let at = points[..point_count].partition_point(|point| point.0 <= offset);
+                        points.copy_within(at..point_count, at + 1);
+                        points[at] = (offset, heard);
+                        point_count += 1;
                     }
                 }
             }
 
             let events = ComRef::from_raw(data.inputEvents);
             let event_count = events.map_or(0, |events| events.getEventCount());
-            let (mut next_event, mut next_pedal, mut played) = (0, 0, 0);
+            let (mut next_event, mut next_point, mut played) = (0, 0, 0);
             let mut transposed = false;
             let mut latency_asked = None;
             let mut asked = None;
@@ -723,22 +751,27 @@ impl IAudioProcessorTrait for TestTone {
                             .then_some((event.sampleOffset.max(0), event))
                     })
                     .flatten();
-                let pedal_at = (next_pedal < pedal_count).then(|| pedal[next_pedal]);
-                let at = match (event_at, pedal_at) {
+                let point_at = (next_point < point_count).then(|| points[next_point]);
+                let at = match (event_at, point_at) {
                     (None, None) => break,
                     (Some((offset, _)), None) => offset,
                     (None, Some((offset, _))) => offset,
                     (Some((event, _)), Some((point, _))) => event.min(point),
                 };
                 let at = (at as usize).min(frames);
-                // Everything up to here, with the voices and the pedal as they were.
+                // Everything up to here, with the voices, the pedal and the wheels as they were.
                 audio
                     .tone
                     .render(&mut left[played..at], &mut right[played..at]);
                 played = at;
-                if pedal_at.is_some_and(|(offset, _)| offset as usize <= at) {
-                    transposed |= audio.tone.pedal(pedal[next_pedal].1);
-                    next_pedal += 1;
+                if let Some((offset, heard)) = point_at
+                    && offset as usize <= at
+                {
+                    match heard {
+                        Heard::Pedal(value) => transposed |= audio.tone.pedal(value),
+                        Heard::Wheel(wheel, value) => audio.tone.wheel(wheel, value),
+                    }
+                    next_point += 1;
                     continue;
                 }
                 let Some((_, event)) = event_at else {
@@ -1287,8 +1320,8 @@ impl IPlugViewTrait for TestView {
     }
 }
 
-/// How a VST 3 plugin says where a MIDI controller goes: to a parameter. Controller 64, the
-/// sustain pedal, is the only one this plugin takes.
+/// How a VST 3 plugin says where a MIDI controller goes: to a parameter. The sustain pedal, the
+/// bend wheel, the mod wheel and the channel pressure are the ones this plugin takes.
 impl IMidiMappingTrait for TestTone {
     unsafe fn getMidiControllerAssignment(
         &self,
@@ -1297,22 +1330,31 @@ impl IMidiMappingTrait for TestTone {
         controller: i16,
         id: *mut ParamID,
     ) -> tresult {
-        // Told to take no pedal, this plugin maps no parameter to any controller, which is
-        // what a VST 3 plugin that cannot be sent the pedal looks like. So is one that moved
-        // its pedal to nothing.
-        let mapped = match self.pedal_at.load(Ordering::Acquire) {
-            PEDAL_ON_SUSTAIN => Some(SUSTAIN),
-            PEDAL_MOVED => Some(MOVED_SUSTAIN),
+        const SUSTAIN_PEDAL: i16 = ControllerNumbers_::kCtrlSustainOnOff as i16;
+        const BEND_WHEEL: i16 = ControllerNumbers_::kPitchBend as i16;
+        const MOD_WHEEL_CONTROLLER: i16 = ControllerNumbers_::kCtrlModWheel as i16;
+        const CHANNEL_PRESSURE: i16 = ControllerNumbers_::kAfterTouch as i16;
+        let wheels = !support::told_to(support::NO_WHEELS_VARIABLE);
+        // Told to take no pedal, this plugin maps no parameter to controller 64, which is what
+        // a VST 3 plugin that cannot be sent the pedal looks like. So is one that moved its
+        // pedal to nothing.
+        let mapped = match controller {
+            SUSTAIN_PEDAL if !support::takes_no_pedal() => {
+                match self.pedal_at.load(Ordering::Acquire) {
+                    PEDAL_ON_SUSTAIN => Some(SUSTAIN),
+                    PEDAL_MOVED => Some(MOVED_SUSTAIN),
+                    _ => None,
+                }
+            }
+            BEND_WHEEL if wheels => Some(BEND),
+            MOD_WHEEL_CONTROLLER if wheels => Some(MOD_WHEEL),
+            CHANNEL_PRESSURE if wheels => Some(PRESSURE),
             _ => None,
         };
         let Some(mapped) = mapped else {
             return kResultFalse;
         };
-        if bus != 0
-            || controller != ControllerNumbers_::kCtrlSustainOnOff as i16
-            || id.is_null()
-            || support::takes_no_pedal()
-        {
+        if bus != 0 || id.is_null() {
             return kResultFalse;
         }
         // SAFETY: the caller gave a place to write one parameter id.
