@@ -16,6 +16,7 @@ mod graph;
 mod input;
 mod lfo;
 mod limiter;
+mod oversampling;
 mod parameter;
 mod peaks;
 mod processor;
@@ -42,6 +43,7 @@ pub use input::{
 };
 pub use lfo::{Lfo, LfoShape};
 pub use limiter::PeakLimiter;
+pub use oversampling::{Oversampler, OversamplingFilters};
 pub use parameter::Parameter;
 pub use peaks::Peaks;
 pub use processor::{

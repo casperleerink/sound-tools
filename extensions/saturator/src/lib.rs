@@ -18,7 +18,6 @@
 //!
 //! [`view`] is the card of the saturator, and the only module here that uses GPUI.
 
-mod oversampling;
 mod processor;
 pub mod view;
 

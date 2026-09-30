@@ -6,6 +6,10 @@
 //! an instrument and an effect. The port names live here and not in a crate of their own,
 //! because both sides of a track already read this one.
 //!
+//! It also holds how the bundled instruments play notes, [`Voices`] and [`Wheels`], so they
+//! all play them the same way. Extensions never depend on each other, so this is the one place
+//! they share.
+//!
 //! Rules for a sender of notes, which no type enforces:
 //!
 //! - Send [`NoteEvent::AllOff`] at offset 0 when the transport says `stopped_playing` or
@@ -23,6 +27,7 @@
 
 mod expression;
 mod take;
+mod voices;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{Place, State, Ticks};
@@ -31,6 +36,7 @@ pub use expression::{Expression, Wheels};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };
+pub use voices::{Voice, Voices, frequency_hz};
 
 /// The event input of an instrument. It carries [`NoteEvent`].
 pub const NOTES_INPUT: &str = "notes";
@@ -89,7 +95,7 @@ impl Pitch {
 
     /// Twelve equal steps per octave, with A4 at 440 Hz.
     pub fn frequency_hz(self) -> f32 {
-        440.0 * ((f32::from(self.0) - 69.0) / 12.0).exp2()
+        frequency_hz(f32::from(self.0))
     }
 
     /// The name of the note in the app: `C4` is 60, `A4` is 69, `C#4` is 61, `C-1` is 0.

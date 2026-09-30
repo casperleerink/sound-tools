@@ -316,7 +316,7 @@ pub struct Handler {
     /// The plugin changed the values of its parameters as a whole, as a preset it loaded itself
     /// does, so the processor may no longer hold what the controller shows.
     values_changed: AtomicBool,
-    /// The plugin moved its MIDI controller mapping, which is where the sustain pedal goes.
+    /// The plugin moved its MIDI controller mapping, which is where the pedal and the wheels go.
     midi_mapping_changed: AtomicBool,
     /// The plugin changed which parameters it has, so the host lists them again.
     ids_changed: AtomicBool,
@@ -442,7 +442,7 @@ impl IComponentHandlerTrait for Handler {
     ///   processor are compared with the controller's, and what differs is sent. The state is
     ///   saved as well, because it changed.
     /// - `kMidiCCAssignmentChanged`, "The host has to rebuild the MIDI-CC => parameter
-    ///   mapping": the sustain pedal's parameter is looked up again.
+    ///   mapping": the parameters of the pedal and the wheels are looked up again.
     /// - `kParamIDMappingChanged`: the host lists the parameters again, so the values it
     ///   compares for `kParamValuesChanged` are the plugin's parameters as they are now.
     /// - Nothing for the rest. `kPrefetchableSupportChanged` asks for a deactivate so that the
