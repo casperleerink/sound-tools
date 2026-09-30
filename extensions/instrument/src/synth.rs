@@ -9,12 +9,11 @@ use sound_core::{
     AudioOutput, Envelope, EnvelopeState, EventInput, Ports, PrepareConfig, ProcessContext,
     Processor, Smoothed,
 };
-use sound_notes::{NoteEvent, Pedal, Pitch, Velocity, Wheels};
+use sound_notes::{NoteEvent, Velocity, Voice as _, Voices, Wheels, frequency_hz};
 
 use crate::{SynthState, Waveform};
 
-/// Notes that sound at once. One more note takes over a voice: the quietest released one, or
-/// the oldest held one when none is released.
+/// Notes that sound at once. One more note takes over a voice in place, as [`Voices`] picks it.
 pub const VOICES: usize = 16;
 
 /// How long gain, cutoff and resonance take to reach a new value.
@@ -81,16 +80,9 @@ impl FilterFactors {
 
 #[derive(Copy, Clone)]
 struct Voice {
-    /// The key of this note is up and only the sustain pedal keeps it sounding. It is released
-    /// when the pedal comes up.
-    sustained: bool,
-    /// None until the first note.
-    pitch: Option<Pitch>,
-    /// The count of the note on that started this voice. The lowest is the oldest.
-    started: u64,
     /// In cycles, from 0 to 1.
     phase: f32,
-    /// The phase step of the pitch of the key, before the wheels move it.
+    /// The phase step of the pitch of the note, before the wheels move it.
     key_step: f32,
     /// From the velocity.
     amplitude: f32,
@@ -116,17 +108,9 @@ fn sawtooth(phase: f32, phase_step: f32) -> f32 {
     2.0 * phase - 1.0 - step_correction(phase, phase_step)
 }
 
-impl Voice {
-    const IDLE: Self = Self {
-        sustained: false,
-        pitch: None,
-        started: 0,
-        phase: 0.0,
-        key_step: 0.0,
-        amplitude: 0.0,
-        envelope: EnvelopeState::IDLE,
-        filter_state: [0.0; 2],
-    };
+/// The sample rate is what a voice reads from the synth to start or move.
+impl sound_notes::Voice for Voice {
+    type Context = f32;
 
     fn is_idle(&self) -> bool {
         self.envelope.is_idle()
@@ -136,26 +120,11 @@ impl Voice {
         self.envelope.level as f32 * self.amplitude
     }
 
-    fn is_held(&self) -> bool {
-        self.envelope.is_held()
-    }
-
     fn release(&mut self) {
-        self.sustained = false;
         self.envelope.release();
     }
 
-    /// The key came up. With the pedal down the note sounds on until the pedal comes up.
-    fn key_up(&mut self, pedal_is_down: bool) {
-        if pedal_is_down && self.is_held() {
-            self.sustained = true;
-        } else {
-            self.release();
-        }
-    }
-
-    fn start(&mut self, pitch: Pitch, velocity: Velocity, started: u64, sample_rate: f32) {
-        self.sustained = false;
+    fn start(&mut self, pitch: f32, velocity: Velocity, sample_rate: &f32) {
         let amplitude = (f32::from(velocity.value()) / 127.0).powi(2);
         if self.is_idle() {
             self.phase = START_PHASE;
@@ -169,11 +138,23 @@ impl Voice {
             self.envelope.level *= loudness;
         }
         self.envelope.start();
-        self.pitch = Some(pitch);
-        self.started = started;
         self.amplitude = amplitude;
-        self.key_step = pitch.frequency_hz() / sample_rate;
+        self.set_pitch(pitch, sample_rate);
     }
+
+    fn set_pitch(&mut self, pitch: f32, sample_rate: &f32) {
+        self.key_step = frequency_hz(pitch) / sample_rate;
+    }
+}
+
+impl Voice {
+    const IDLE: Self = Self {
+        phase: 0.0,
+        key_step: 0.0,
+        amplitude: 0.0,
+        envelope: EnvelopeState::IDLE,
+        filter_state: [0.0; 2],
+    };
 
     /// Adds this voice to `output`, at `pitch_ratio` times the pitch of its key. `SQUARE` picks
     /// the waveform at compile time, so the frame loop has no waveform branch.
@@ -225,11 +206,7 @@ pub struct Synth {
     /// For the current cutoff and resonance. The tangent in it is worth keeping between blocks.
     filter: FilterFactors,
     gain: Smoothed,
-    voices: [Voice; VOICES],
-    notes_started: u64,
-    /// Where the sustain pedal stands. Up after every `AllOff`, so a stop, a seek or an edit
-    /// can leave no note hanging under a pedal nobody will lift.
-    pedal: Pedal,
+    voices: Voices<Voice, VOICES>,
     /// The bend and the vibrato of every voice. At rest after every `AllOff`, like the pedal.
     wheels: Wheels,
 }
@@ -247,79 +224,14 @@ impl Synth {
             resonance: Smoothed::new(state.resonance),
             filter: FilterFactors::default(),
             gain: Smoothed::new(state.gain),
-            voices: [Voice::IDLE; VOICES],
-            notes_started: 0,
-            pedal: Pedal::UP,
+            voices: Voices::new(Voice::IDLE, VOICES),
             wheels: Wheels::default(),
         }
     }
 
-    /// Voices that sound, held or in their release.
-    fn active_voices(&self) -> usize {
-        VOICES - self.voices.iter().filter(|voice| voice.is_idle()).count()
-    }
-
     fn handle(&mut self, event: NoteEvent) {
         self.wheels.follow(event);
-        match event {
-            NoteEvent::On { pitch, velocity } => {
-                self.notes_started += 1;
-                let (started, sample_rate) = (self.notes_started, self.sample_rate);
-                self.voice_for_a_new_note()
-                    .start(pitch, velocity, started, sample_rate);
-            }
-            NoteEvent::Off { pitch } => {
-                let of_this_pitch = |voice: &&mut Voice| voice.pitch == Some(pitch);
-                let pedal_is_down = self.pedal.is_down();
-                self.voices
-                    .iter_mut()
-                    .filter(of_this_pitch)
-                    .for_each(|voice| voice.key_up(pedal_is_down));
-            }
-            NoteEvent::Pedal(value) => {
-                // Half pedal is kept as it was played but not acted on: this synth has one
-                // damper. A piano plugin that knows more gets the value it was given.
-                if self.pedal.is_down() && !value.is_down() {
-                    let sustained = self.voices.iter_mut().filter(|voice| voice.sustained);
-                    sustained.for_each(Voice::release);
-                }
-                self.pedal = value;
-            }
-            NoteEvent::AllOff => {
-                self.pedal = Pedal::UP;
-                self.voices.iter_mut().for_each(Voice::release);
-            }
-            // The wheels followed above, and the pressure does nothing here.
-            NoteEvent::Bend(_) | NoteEvent::ModWheel(_) | NoteEvent::Pressure(_) => {}
-        }
-    }
-
-    /// Where the pedal stands. For tests and for an interface that shows it.
-    pub fn pedal(&self) -> Pedal {
-        self.pedal
-    }
-
-    fn voice_for_a_new_note(&mut self) -> &mut Voice {
-        let voices = &self.voices;
-        let idle = voices.iter().position(Voice::is_idle);
-        let quietest_released = || {
-            let released = voices
-                .iter()
-                .enumerate()
-                .filter(|(_, voice)| !voice.is_held());
-            released
-                .min_by(|(_, a), (_, b)| a.loudness().total_cmp(&b.loudness()))
-                .map(|(index, _)| index)
-        };
-        let oldest = || {
-            let oldest = voices
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, voice)| voice.started);
-            oldest.map_or(0, |(index, _)| index)
-        };
-        let index = idle.or_else(quietest_released).unwrap_or_else(oldest);
-        &mut self.voices[index]
+        self.voices.handle(event, &self.sample_rate);
     }
 
     /// Moves cutoff and resonance along their ramps and works out the filter for where they are.
@@ -349,6 +261,7 @@ impl Synth {
                 Waveform::Square => voice.render::<true>(output, filter, envelope, pitch_ratio),
             }
         }
+        self.voices.glide(frames, &self.sample_rate);
         let gain_before = self.gain.current();
         let gain_step = (self.gain.advance(frames) - gain_before) / frames as f32;
         for (frame, sample) in output.iter_mut().enumerate() {
@@ -380,7 +293,7 @@ impl Processor for Synth {
             .set_target(self.state.cutoff_hz.log2(), ramp_frames);
         self.resonance.set_target(self.state.resonance, ramp_frames);
         self.gain.set_target(self.state.gain, ramp_frames);
-        if self.active_voices() == 0 {
+        if self.voices.is_idle() {
             // Nothing sounds, so there is nothing to smooth. The next note starts on the new values.
             self.cutoff_octaves.snap();
             self.resonance.snap();
@@ -391,7 +304,7 @@ impl Processor for Synth {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let events = context.event_inputs.get(Self::NOTES);
-        if events.is_empty() && self.active_voices() == 0 {
+        if events.is_empty() && self.voices.is_idle() {
             return;
         }
         // The synth is one voice bank in the middle. It renders once, into the left channel,
