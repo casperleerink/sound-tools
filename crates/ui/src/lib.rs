@@ -16,7 +16,9 @@ pub mod waveforms;
 
 pub use assets::Assets;
 pub use control_edit::{ControlEdit, weak_action, weak_callback};
-pub use devices::{DeviceLabel, DeviceOffer, Devices, Needs, Slot, extension_is_enabled};
+pub use devices::{
+    DeviceLabel, DeviceOffer, Devices, Needs, OfferGroup, Slot, extension_is_enabled,
+};
 pub use focus::KeyboardFocus;
 pub use metering::{Metering, every_poll};
 pub use recording::{InputLevels, LiveSound, LiveTake, Recording};

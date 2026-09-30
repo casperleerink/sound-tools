@@ -87,8 +87,10 @@ pub(crate) struct RackState {
 }
 
 fn picker(name: &'static str, cx: &mut App) -> Entity<DropdownMenu> {
-    let items = ["Synth", "Filter", "Compressor", "EQ", "Reverb"]
-        .map(|device| MenuItem::new(device.to_lowercase(), device));
+    let items = ["Synth", "Filter", "Compressor", "EQ", "Reverb"].map(|device| {
+        let value = device.to_lowercase();
+        MenuItem::new(value.clone(), device).icon(format!("device-{value}"))
+    });
     cx.new(|cx| {
         DropdownMenu::new(
             name,

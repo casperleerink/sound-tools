@@ -138,6 +138,10 @@ impl Render for DragPreview {
 const EMPTY_SLOT: &str = "No instrument";
 const EMPTY_EFFECT_SLOT: &str = "No effect";
 
+/// How tall a menu of offers grows before it scrolls: every built-in effect fits, and the
+/// plugins of this machine scroll into view under them.
+const OFFERS_HEIGHT: f32 = 480.;
+
 /// What the control at the end of the rack says.
 const ADD_EFFECT: &str = "Add effect";
 
@@ -157,7 +161,8 @@ fn effect_picker(slot: &InstanceId) -> SharedString {
     format!("effect-picker-{}", slot.name()).into()
 }
 
-/// The menu of offers for a slot, and the quiet lines under them.
+/// The menu of offers for a slot, one group each in the order of [`sound_ui::OfferGroup`], and the quiet
+/// lines under them.
 ///
 /// `picks_one` says whether the menu chooses what is in a slot, which is what a card does, or
 /// runs a command, which is what the control that adds an effect does. A command leaves no
@@ -165,35 +170,34 @@ fn effect_picker(slot: &InstanceId) -> SharedString {
 /// control held it.
 fn offer_entries(
     offers: &[DeviceOffer],
-    slot: Slot,
     picks_one: bool,
     session: &Entity<Session>,
     cx: &App,
 ) -> Vec<MenuEntry> {
     let project = session.read(cx).project();
-    let label = match slot {
-        Slot::Instrument => "Instrument",
-        Slot::Effect => "Effect",
+    let mut sorted: Vec<&DeviceOffer> = offers.iter().collect();
+    sorted.sort_by_key(|offer| offer.group);
+    let item = |offer: &&DeviceOffer| {
+        let item = MenuItem::new(offer.key.clone(), offer.name.clone())
+            .icon(offer.icon.clone())
+            .selectable(picks_one);
+        // An offer this project cannot load is shown and not taken, with why in words.
+        // Enabling an extension while the project runs is refused, and the file edit that
+        // does it is in the agent docs, not in front of a composer.
+        match (offer.is_enabled_in(project), &offer.needs, &offer.detail) {
+            (false, Some(needs), _) => item.disabled(true).description(needs.reason.clone()),
+            (_, _, Some(detail)) => item.description(detail.clone()),
+            _ => item,
+        }
     };
-    let mut entries = vec![MenuEntry::Group(
-        MenuGroup::new()
-            .label(label)
-            .max_height(320.)
-            .items(offers.iter().map(|offer| {
-                let item =
-                    MenuItem::new(offer.key.clone(), offer.name.clone()).selectable(picks_one);
-                // An offer this project cannot load is shown and not taken, with why in
-                // words. Enabling an extension while the project runs is refused, and the
-                // file edit that does it is in the agent docs, not in front of a composer.
-                match (offer.is_enabled_in(project), &offer.needs, &offer.detail) {
-                    (false, Some(needs), _) => {
-                        item.disabled(true).description(needs.reason.clone())
-                    }
-                    (_, _, Some(detail)) => item.description(detail.clone()),
-                    _ => item,
-                }
-            })),
-    )];
+    let groups = sorted.chunk_by(|a, b| a.group == b.group).map(|group| {
+        MenuEntry::Group(
+            MenuGroup::new()
+                .label(group[0].group.label())
+                .items(group.iter().map(item)),
+        )
+    });
+    let mut entries: Vec<MenuEntry> = groups.collect();
     // What a source of offers has to say under them: that it is still looking at this
     // machine, and what it owes whoever made what it offers.
     entries.extend(Devices::offer_notes(cx).into_iter().map(MenuEntry::Note));
@@ -227,7 +231,7 @@ impl Device {
         // Asked for once per card, not per frame: a source that has to look at this machine,
         // as the plugin host does, pays for it here.
         let offers = Devices::offered(kind, cx);
-        let entries = offer_entries(&offers, kind, true, session, cx);
+        let entries = offer_entries(&offers, true, session, cx);
         let label = device_label(session, &slot, kind, cx);
         let title = label.name.clone();
         let name = match kind {
@@ -238,7 +242,8 @@ impl Device {
             let mut picker = DropdownMenu::new(label.name, entries, cx)
                 .debug_name(name)
                 .trigger(Trigger::Title)
-                .width(280.);
+                .width(280.)
+                .max_height(OFFERS_HEIGHT);
             // The offer that is already there is marked, so the menu says what a card holds.
             if let Some(key) = label.key {
                 picker = picker.selected(key);
@@ -444,11 +449,12 @@ impl TrackPanel {
             .detach();
         let add_effect = cx.new(|cx| {
             let offers = Devices::offered(Slot::Effect, cx);
-            let entries = offer_entries(&offers, Slot::Effect, false, &session, cx);
+            let entries = offer_entries(&offers, false, &session, cx);
             DropdownMenu::new(ADD_EFFECT, entries, cx)
                 .debug_name("add-effect")
                 .trigger(Trigger::Ghost)
                 .width(280.)
+                .max_height(OFFERS_HEIGHT)
         });
         cx.subscribe(&add_effect, |panel: &mut TrackPanel, _, picked, cx| {
             panel.add_effect(&picked.0, cx);
@@ -669,13 +675,13 @@ impl TrackPanel {
         let session = self.session.clone();
         for device in &mut self.devices {
             device.offers = Devices::offered(device.kind, cx);
-            let entries = offer_entries(&device.offers, device.kind, true, &session, cx);
+            let entries = offer_entries(&device.offers, true, &session, cx);
             device
                 .picker
                 .update(cx, |picker, cx| picker.set_entries(entries, cx));
         }
         let effects = Devices::offered(Slot::Effect, cx);
-        let entries = offer_entries(&effects, Slot::Effect, false, &session, cx);
+        let entries = offer_entries(&effects, false, &session, cx);
         self.add_effect
             .update(cx, |add, cx| add.set_entries(entries, cx));
     }

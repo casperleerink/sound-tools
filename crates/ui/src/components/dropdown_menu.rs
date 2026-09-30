@@ -26,6 +26,8 @@ use crate::components::tooltip::Tooltip;
 use crate::theme::ActiveTheme;
 
 const ROW_HEIGHT: f32 = 32.;
+/// The rounded square an item icon sits on.
+const ICON_TILE: f32 = 24.;
 
 #[derive(Clone, Debug)]
 pub struct MenuItem {
@@ -95,8 +97,6 @@ impl MenuItem {
 pub struct MenuGroup {
     label: Option<SharedString>,
     items: Vec<MenuItem>,
-    /// Scroll the items past this height, leaving the rest of the menu in place.
-    max_height: Option<f32>,
 }
 
 impl MenuGroup {
@@ -106,11 +106,6 @@ impl MenuGroup {
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
-        self
-    }
-
-    pub fn max_height(mut self, height: f32) -> Self {
-        self.max_height = Some(height);
         self
     }
 
@@ -130,7 +125,8 @@ pub enum MenuEntry {
     Group(MenuGroup),
     Separator,
     /// A quiet line that is not an item: what a source of items is still doing, or what it has
-    /// to say about them. It cannot be picked and the keyboard skips it.
+    /// to say about them. It cannot be picked and the keyboard skips it. Notes sit under the
+    /// groups, and stay in view when the groups scroll.
     Note(SharedString),
 }
 
@@ -181,6 +177,7 @@ pub struct MenuList {
     entries: Vec<MenuEntry>,
     selected: Option<SharedString>,
     highlighted: usize,
+    max_height: Option<f32>,
     on_select: Option<SelectFn>,
 }
 
@@ -191,8 +188,15 @@ impl MenuList {
             entries,
             selected: None,
             highlighted: usize::MAX,
+            max_height: None,
             on_select: None,
         }
+    }
+
+    /// Scroll the groups past this height.
+    pub fn max_height(mut self, height: Option<f32>) -> Self {
+        self.max_height = height;
+        self
     }
 
     pub fn selected(mut self, value: Option<SharedString>) -> Self {
@@ -220,34 +224,30 @@ impl Styled for MenuList {
 impl RenderOnce for MenuList {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, hover, line, text) = (
+        let (muted, hover, line, text, tile) = (
             theme.gray_700,
             theme.alpha_at(0.10),
             theme.alpha_at(0.10),
             theme.gray_950,
+            theme.alpha_at(0.06),
         );
         let on_select = self.on_select;
         let selected = self.selected;
         let highlighted = self.highlighted;
         let mut index = 0;
+        let mut notes = Vec::new();
 
         let groups = self
             .entries
             .into_iter()
-            .enumerate()
-            .map(|(group_ix, entry)| match entry {
-                MenuEntry::Separator => div().h(px(1.)).mx(px(8.)).bg(line).into_any_element(),
-                MenuEntry::Note(note) => div()
-                    .id(("menu-note", group_ix))
-                    // What a test looks a quiet line up by, as a row is looked up by its value.
-                    .debug_selector(move || format!("menu-note-{group_ix}"))
-                    .px(px(12.))
-                    .py(px(6.))
-                    .text_size(px(11.))
-                    .line_height(px(15.))
-                    .text_color(muted)
-                    .child(note)
-                    .into_any_element(),
+            .filter_map(|entry| match entry {
+                MenuEntry::Separator => {
+                    Some(div().h(px(1.)).mx(px(8.)).bg(line).into_any_element())
+                }
+                MenuEntry::Note(note) => {
+                    notes.push(note);
+                    None
+                }
                 MenuEntry::Group(group) => {
                     let rows: Vec<_> = group
                         .items
@@ -265,10 +265,10 @@ impl RenderOnce for MenuList {
                                 .flex()
                                 .flex_none()
                                 .items_center()
-                                .gap(px(12.))
+                                .gap(px(10.))
                                 .min_h(px(ROW_HEIGHT))
                                 .py(px(4.))
-                                .pl(px(10.))
+                                .pl(px(if item.icon.is_some() { 6. } else { 10. }))
                                 .pr(px(8.))
                                 .rounded(px(8.))
                                 .text_size(px(14.))
@@ -280,7 +280,17 @@ impl RenderOnce for MenuList {
                                         .when(row_ix == highlighted, |d| d.bg(hover))
                                 })
                                 .when_some(item.icon.clone(), |d, name| {
-                                    d.child(Icon::new(name).size(16.).color(text))
+                                    d.child(
+                                        div()
+                                            .flex()
+                                            .flex_none()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(ICON_TILE))
+                                            .rounded(px(6.))
+                                            .bg(tile)
+                                            .child(Icon::new(name).size(16.).color(text)),
+                                    )
                                 })
                                 .child(
                                     div()
@@ -315,11 +325,12 @@ impl RenderOnce for MenuList {
                         })
                         .collect();
 
-                    div()
+                    let element = div()
                         .flex()
                         .flex_col()
                         .gap(px(2.))
-                        .p(px(8.))
+                        .px(px(8.))
+                        .py(px(4.))
                         .when_some(group.label, |d, label| {
                             d.child(
                                 div()
@@ -331,25 +342,41 @@ impl RenderOnce for MenuList {
                                     .child(label),
                             )
                         })
-                        .map(|d| match group.max_height {
-                            Some(height) => d.child(
-                                div()
-                                    .id(("menu-scroll", group_ix))
-                                    .overflow_y_scroll()
-                                    .max_h(px(height))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.))
-                                    .children(rows),
-                            ),
-                            None => d.children(rows),
-                        })
-                        .into_any_element()
+                        .children(rows)
+                        .into_any_element();
+                    Some(element)
                 }
             })
             .collect::<Vec<_>>();
+        let notes = notes.into_iter().enumerate().map(|(note_ix, note)| {
+            div()
+                .id(("menu-note", note_ix))
+                // What a test looks a quiet line up by, as a row is looked up by its value.
+                .debug_selector(move || format!("menu-note-{note_ix}"))
+                .px(px(12.))
+                .py(px(6.))
+                .text_size(px(11.))
+                .line_height(px(15.))
+                .text_color(muted)
+                .child(note)
+        });
 
-        self.base.flex().flex_col().children(groups)
+        // The groups are 4 pt apart and 8 pt from the edge of the menu.
+        let groups = div().flex().flex_col().py(px(4.)).children(groups);
+        let max_height = self.max_height;
+        self.base
+            .flex()
+            .flex_col()
+            .map(|d| match max_height {
+                Some(height) => d.child(
+                    groups
+                        .id("menu-scroll")
+                        .overflow_y_scroll()
+                        .max_h(px(height)),
+                ),
+                None => d.child(groups),
+            })
+            .children(notes)
     }
 }
 
@@ -466,6 +493,8 @@ pub struct DropdownMenu {
     side: Side,
     align: Align,
     width: f32,
+    /// Scroll the groups of the open menu past this height.
+    max_height: Option<f32>,
     trigger: Trigger,
     /// A trigger this wide, its label at the left and its chevron at the right. `None`: as
     /// wide as what it says.
@@ -491,6 +520,7 @@ impl DropdownMenu {
             side: Side::default(),
             align: Align::default(),
             width: 320.,
+            max_height: None,
             trigger: Trigger::Outline,
             trigger_width: None,
             debug_name: None,
@@ -520,6 +550,13 @@ impl DropdownMenu {
 
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
+        self
+    }
+
+    /// Scrolls the groups past this height, for a list that may be long, such as the plugins
+    /// of this machine. The notes under the groups stay in view.
+    pub fn max_height(mut self, height: f32) -> Self {
+        self.max_height = Some(height);
         self
     }
 
@@ -729,6 +766,7 @@ impl Render for DropdownMenu {
                             MenuList::new(self.entries.clone())
                                 .selected(self.selected.clone())
                                 .highlighted(self.highlighted)
+                                .max_height(self.max_height)
                                 .on_select(cx.processor(
                                     |this, value: SharedString, window, cx| {
                                         this.pick(value, window, cx)

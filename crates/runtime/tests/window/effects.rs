@@ -6,8 +6,9 @@
 
 use arrangement::ArrangementState;
 use arrangement::view::track_panel::remove_control;
-use gpui::TestAppContext;
+use gpui::{AssetSource, TestAppContext};
 use plugin_host::{PluginFormat, PluginRecord};
+use sound_ui::{Assets, Devices, Slot};
 
 use crate::support::{self, BAR, Opened, clip, id, note, test_plugin_id};
 
@@ -250,7 +251,7 @@ fn a_panel_opened_while_the_scan_runs_offers_the_effects_when_it_ends(cx: &mut T
     opened.click(trigger);
     assert_eq!(opened.find(&plugin_item()), None);
     assert!(
-        opened.find("menu-note-1").is_some(),
+        opened.find("menu-note-0").is_some(),
         "no line about the scan"
     );
     opened.keys("escape");
@@ -379,4 +380,24 @@ fn the_power_icon_bypasses_an_effect_as_one_undo_step(cx: &mut TestAppContext) {
     opened.edit(|project| project.apply_outside_changes(&[path]));
     assert_eq!(settled(&mut opened), plain);
     assert_eq!(opened.undo_label().as_deref(), Some("File change"));
+}
+
+/// Every offer of both pickers names an icon the app has: a misspelt name would show an empty
+/// tile and nothing else would say so.
+#[gpui::test]
+fn every_offer_names_an_icon_the_app_has(cx: &mut TestAppContext) {
+    let opened = support::open_with_test_plugin(cx, |_| {});
+    opened.cx.update(|_, cx| {
+        for slot in [Slot::Instrument, Slot::Effect] {
+            for offer in Devices::offered(slot, cx) {
+                let path = format!("icons/{}.svg", offer.icon);
+                let icon = Assets.load(&path).unwrap();
+                assert!(
+                    icon.is_some(),
+                    "{} names {path}, which is not there",
+                    offer.key
+                );
+            }
+        }
+    });
 }
