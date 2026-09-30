@@ -33,7 +33,7 @@ This file holds the technical decisions and the reasons for them: the model, the
 This is the main rule of the codebase.
 
 - The core has no track, clip, note, pitch, velocity, effect, plugin or audio file type, and depends on no bundled crate. `workspace-rules` checks this.
-- Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (saved `Note` and `Clip`, the realtime `NoteEvent` with the bend and mod wheels and key pressure, the raw MIDI take, the port names of instruments and effects) and `sound-media` (reading, resampling and pitching audio files).
+- Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (saved `Note` and `Clip`, the realtime `NoteEvent` with the bend and mod wheels and key pressure, the raw MIDI take, the port names of instruments and effects, and how the bundled instruments play notes: `Voices` and `Wheels`) and `sound-media` (reading, resampling and pitching audio files).
 - Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`. An effect has an audio input and output both named `audio`. So any tool with those ports fits a track slot, and the arrangement depends on no instrument, effect or plugin.
 - The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and agent request talks in bars and beats, so one clock in the core beats one per extension.
 - `extensions/tone` is a small non-musical tool. It is not in the default project; it proves the core rules hold for a tool shaped differently from the arrangement.
@@ -168,6 +168,7 @@ The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, Limi
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter` constant with range and default, which validation, the knobs, the reset and the doc tests all read.
 - Every change glides (about 20 ms, `Smoothed`), including choices, so no edit clicks.
 - What a processor uses per frame is in the SDK, next to `Smoothed`: `Envelope`, `Lfo`, `DelayLine`, and in `dsp.rs` the fading `Taps` of a delay line, `OnePole` and `held`. The filter and the Modulation share one LFO, the reverb, the Modulation and the Delay one delay line, the reverb and the Delay the taps, the cuts and the hold.
+- An instrument's notes go through `sound_notes::Voices`: which voice plays which key, voice stealing, the sustain pedal, `AllOff`, mono with legato, and glide. The instrument keeps the sound of a voice (`Voice`). The synth takes over a voice in place; the Sampler cuts it and fades it out beside the new note, because a sample cannot jump to its start without a click.
 - The Modulation glides rate, depth and spread over 100 ms: they move where its delay is read, and a read that moves fast bends the pitch.
 - Each effect has an exact response function, and tests hold the measured sound to it.
 - A gain in dB and the pan law are in `sound-core` (`amplitude`, `pan_gains`), so a pan means the same on a track, a drum pad and the Utility.

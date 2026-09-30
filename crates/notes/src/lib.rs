@@ -3,9 +3,12 @@
 //! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and
 //! [`Clip`], the saved [`RawTake`] a recording writes and a fit reads, the realtime
 //! [`NoteEvent`] with the wheels an instrument follows ([`Expression`]), and the port names of
-//! an instrument and an effect. It also holds what the bundled instruments share to play
-//! notes, [`Voices`] and [`Wheels`], so each of them plays notes the same way. The port names live here and not in a crate of their own,
+//! an instrument and an effect. The port names live here and not in a crate of their own,
 //! because both sides of a track already read this one.
+//!
+//! It also holds how the bundled instruments play notes, [`Voices`] and [`Wheels`], so they
+//! all play them the same way. Extensions never depend on each other, so this is the one place
+//! they share.
 //!
 //! Rules for a sender of notes, which no type enforces:
 //!
