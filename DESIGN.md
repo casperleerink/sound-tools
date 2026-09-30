@@ -27,6 +27,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - Two-finger scroll never changes a value. A control that took the gesture would change a sound while the composer scrolls past.
 - Interface state that is about how the composer works (zoom, snap, expanded cards, armed tracks) is not saved. A setting in a file would be one more thing an agent could change under the composer.
 - Our own look: plain parameter names, our own drawings on the displays. We learn from Ableton but copy no graphic, name or text of it.
+- Every built-in device has its own icon in the pickers: a line drawing of what it does to the sound, on the 24 pt grid of the other icons. A plugin shows a plug. The built-in instruments are one group; the built-in effects are grouped by what they do (Tone, Dynamics, Space, Mix), with the plugins last.
 
 ### Colour
 
