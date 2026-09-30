@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/media", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/core", "crates/media", "crates/notes", "crates/runtime", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -38,6 +38,7 @@ sound-notes = { path = "crates/notes" }
 sound-ui = { path = "crates/ui" }
 tone = { path = "extensions/tone" }
 utility = { path = "extensions/utility" }
+wavetable = { path = "extensions/wavetable" }
 anyhow = "1"
 cargo_metadata = "0.23"
 # CLAP hosting, and the test plugin the repository builds for CI. MIT OR Apache-2.0.
@@ -53,6 +54,8 @@ no_denormals = "0.3"
 # Raw events. The project groups them itself, see ARCHITECTURE.md "Project storage".
 notify = "8.2"
 proptest = "1"
+# The spectra of the Wavetable synth's tables, worked out on the control side. MIT.
+realfft = "3.5"
 # The `NSView` of a GPUI window, which a plugin embeds its own view in. Same version as gpui.
 raw-window-handle = "0.6"
 rtrb = "0.4"
@@ -132,6 +135,11 @@ test-clap-plugin = { opt-level = 3 }
 test-vst3-plugin = { opt-level = 3 }
 tone = { opt-level = 3 }
 utility = { opt-level = 3 }
+wavetable = { opt-level = 3 }
+# The FFT of the wavetables runs in the behaviour when a table is picked. Unoptimized it takes
+# a large part of a second.
+realfft = { opt-level = 3 }
+rustfft = { opt-level = 3 }
 
 [profile.dbg]
 inherits = "dev"
