@@ -5,6 +5,7 @@
 //! - `clips`: adding, moving, resizing, deleting and nudging clips in the arrangement.
 //! - `notes`: the note editor.
 //! - `several_notes`, `velocity`: several notes, copy and paste, and the velocity lane.
+//! - `lanes`: the bend, mod wheel and pressure lanes of the note editor.
 //! - `rack`: reordering the track rack.
 //! - `track_order`: moving tracks up and down by their headers and with alt and the arrows.
 //! - `track_panel`: the track panel and the view of the synth in it.
@@ -34,6 +35,7 @@ mod eq;
 mod filter;
 mod fit;
 mod instruments;
+mod lanes;
 mod limiter;
 mod modulation;
 mod notes;

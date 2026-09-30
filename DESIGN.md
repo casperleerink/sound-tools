@@ -39,7 +39,7 @@ Each colour has one meaning:
 - Peach: warning, files not live, and mute.
 - Red: record, the clip light of a meter, errors, an armed track, a take while it records.
 - Lavender: keyboard focus, the agent, and the ring where a drag or a dropped file lands.
-- Track colours: marks only. Dots, notes, velocity bars, the waveform of an audio clip. No control uses a track colour, because track colours include green, yellow, peach and red.
+- Track colours: marks only. Dots, notes, velocity bars, the line of a bend, mod wheel or pressure lane, the waveform of an audio clip. No control uses a track colour, because track colours include green, yellow, peach and red.
 
 A meter is the one place colour fills an area, because level is a signal. Otherwise only a toggle that is on is tinted, with its colour at low opacity.
 
@@ -151,5 +151,9 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Note editor | drag a velocity bar up or down | Change its velocity, and that of every selected note |
 | Note editor | drag across the velocity lane from off a bar | Draw: every bar passed gets the height of the pointer there |
 | Note editor | alt-up, alt-down | The velocity of the selected notes by 10 |
+| Note editor | the select left of the lane | Show the velocities, or the bend, mod wheel or pressure of the clip, one at a time. Not saved |
+| Note editor | drag across the bend, mod wheel or pressure lane | Draw its line: the points under the drag give way to the height of the pointer, one per snap step, or every few pixels with snap off or cmd. The bend has its middle line at 0 |
+| Note editor | alt-drag across that lane | Erase the points it covers |
+| Note editor | double click in that lane | Clear it: the lane plays at rest |
 | Note editor | click a key of the strip | Hear that pitch |
 | Note editor | escape or the close icon | Close the editor |
