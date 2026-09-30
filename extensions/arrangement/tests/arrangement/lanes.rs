@@ -140,6 +140,24 @@ fn a_note_starts_where_the_lanes_are() {
     }
 }
 
+/// A preview note starts where the lanes are too: on the first block after a play, the lanes
+/// go out before it.
+#[test]
+fn a_preview_starts_where_the_lanes_are() {
+    let mut bent = clip(0, 3840, vec![]);
+    bent.bend = vec![bend(0, -2000)];
+    let mut harness = Harness::new().and_clips_showing(Shows::BendOfLastOn, vec![bent]);
+    harness.project.engine().play();
+    let (pitch, velocity) = (
+        sound_notes::Pitch::new(60).unwrap(),
+        sound_notes::Velocity::new(100).unwrap(),
+    );
+    let track = crate::support::id("arrangement/piano");
+    arrangement::preview_note(&mut harness.project, &track, pitch, velocity).unwrap();
+    let output = harness.render(BUFFER);
+    assert_eq!(level_changes(&output), [(0, -2000.0)]);
+}
+
 /// An edit that takes a lane away while it plays puts it at rest at the next block.
 #[test]
 fn an_edit_that_removes_a_lane_puts_it_at_rest() {
