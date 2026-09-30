@@ -106,7 +106,7 @@ fn thinning_drops_the_points_on_a_straight_line() {
         .collect();
     assert_eq!(thinned(&ramp), [amount(0, 0), amount(1270, 127)]);
     // Up and down again keeps the top.
-    let mut peak = ramp.clone();
+    let mut peak = ramp;
     peak.extend(
         (0..127)
             .rev()

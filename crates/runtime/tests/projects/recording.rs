@@ -272,7 +272,7 @@ fn a_recorded_bend_is_in_the_take_and_the_clip_plays_it_back() {
     );
 
     let played = recorder.play_back(BAR);
-    let mut unbent = clip.clone();
+    let mut unbent = clip;
     unbent.bend.clear();
     let id = InstanceId::new(CLIP).unwrap();
     let instance = recorder.harness.project.resolve::<Clip>(&id).unwrap();
