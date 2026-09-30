@@ -17,15 +17,27 @@ pub const SAMPLE_RATE: u32 = 48_000;
 /// Counts allocations while it is armed, so a test can say that a block of audio made none.
 /// The realtime sanitizer cannot see inside a plugin's own call, and that is exactly where a
 /// buffer the host handed the plugin would grow.
+///
+/// Armed per thread: only the thread that renders is the audio thread. Another thread of the
+/// process, of the test runner or of a plugin, may allocate at any time, and counting it made
+/// the test fail now and then.
 pub struct CountingAllocator;
 
-static ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+thread_local! {
+    static ARMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 static ALLOCATIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether this thread is the one being counted. A thread that is ending has no flag left, and
+/// is not the one being counted.
+fn armed() -> bool {
+    ARMED.try_with(std::cell::Cell::get).unwrap_or(false)
+}
 
 // SAFETY: every call is handed to the system allocator unchanged. The counter only counts.
 unsafe impl std::alloc::GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
-        if ARMED.load(std::sync::atomic::Ordering::Relaxed) {
+        if armed() {
             ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         // SAFETY: the caller keeps the contract of `GlobalAlloc::alloc`.
@@ -43,7 +55,7 @@ unsafe impl std::alloc::GlobalAlloc for CountingAllocator {
         layout: std::alloc::Layout,
         new_size: usize,
     ) -> *mut u8 {
-        if ARMED.load(std::sync::atomic::Ordering::Relaxed) {
+        if armed() {
             ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         // SAFETY: the caller keeps the contract of `GlobalAlloc::realloc`.
@@ -51,12 +63,12 @@ unsafe impl std::alloc::GlobalAlloc for CountingAllocator {
     }
 }
 
-/// How many allocations happened anywhere in this process while `work` ran.
+/// How many allocations happened on this thread while `work` ran.
 pub fn allocations_during<T>(work: impl FnOnce() -> T) -> (T, u64) {
     ALLOCATIONS.store(0, std::sync::atomic::Ordering::Relaxed);
-    ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
+    ARMED.set(true);
     let value = work();
-    ARMED.store(false, std::sync::atomic::Ordering::Relaxed);
+    ARMED.set(false);
     (
         value,
         ALLOCATIONS.load(std::sync::atomic::Ordering::Relaxed),
