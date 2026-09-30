@@ -4,6 +4,8 @@
 //!   cutoff and the resonance of the first filter, and the gain.
 //! - `wavetable-oscillators.png`: the card expanded, at the start of the rack: the rest of the
 //!   first oscillator and the second, with its own wavetable.
+//! - `wavetable-filters.png`: the same scrolled on to the sub, the unison and both filters, the
+//!   second a high pass.
 //! - `wavetable-envelopes.png`: the same scrolled on to the envelopes, showing Env 2, and the
 //!   LFOs, showing a synced LFO 1.
 //! - `wavetable-matrix.png`: the same scrolled to the end: the voicing and a matrix of three
@@ -158,7 +160,9 @@ pub fn snapshots(
     });
     cx.run_until_parked();
     save(cx, &opened, "wavetable-oscillators")?;
-    scroll_rack(&opened, 1_735., cx)?;
+    scroll_rack(&opened, 1_100., cx)?;
+    save(cx, &opened, "wavetable-filters")?;
+    scroll_rack(&opened, 635., cx)?;
     save(cx, &opened, "wavetable-envelopes")?;
     scroll_rack(&opened, 10_000., cx)?;
     save(cx, &opened, "wavetable-matrix")?;
