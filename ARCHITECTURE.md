@@ -124,7 +124,7 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 - Latency compensation leads instead of delaying. Each processor sees the transport ahead by the latency between it and the device, so a sequencer before a 700-frame plugin sends notes 700 frames early. No delay lines and no maximum. Delaying after a track would also delay a keyboard played into it; leading keeps live playing at the cost of only that track's own chain. After play or seek the playhead waits for the longest latency. A render leaves that wait out, so tick 0 is frame 0 of the file.
 - Levels leave the audio thread through `Peaks`: atomics, no messages, no missed peak. Views read them once per poll and draw only when the reading changes.
 - An offline render tells processors it is offline (`PrepareConfig::offline`), so a plugin that streams samples from disk waits for them instead of playing silence.
-- Every render is deterministic: the same project gives the same bytes. Nothing random, LFOs start at phase 0, and the click is attached only by the window, never by `--render`, `--inspect` or `--headless`.
+- Every render is deterministic: the same project gives the same bytes. Nothing random: LFOs start at phase 0 and a sample and hold takes its levels from a seed. The click is attached only by the window, never by `--render`, `--inspect` or `--headless`.
 
 ## The arrangement
 
@@ -168,6 +168,7 @@ The synth (`extensions/instrument`), Sampler, Drum pad, Filter, Compressor, Limi
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter` constant with range and default, which validation, the knobs, the reset and the doc tests all read.
 - Every change glides (about 20 ms, `Smoothed`), including choices, so no edit clicks.
 - What a processor uses per frame is in the SDK, next to `Smoothed`: `Envelope`, `Lfo`, `DelayLine`, and in `dsp.rs` the fading `Taps` of a delay line, `OnePole` and `held`. The filter and the Modulation share one LFO, the reverb, the Modulation and the Delay one delay line, the reverb and the Delay the taps, the cuts and the hold.
+- The envelope and the LFO are also modulation sources. `Envelope::new` is the analog shape the synth and the Sampler play; `Envelope::curved` bends each stage from a straight line to a strong curve. The LFO has six shapes, including a sample and hold whose levels come from a seed and the cycle count, and `Lfo::sync` runs it at a note length of the tempo, with its cycles on the beat while the project plays.
 - The Modulation glides rate, depth and spread over 100 ms: they move where its delay is read, and a read that moves fast bends the pitch.
 - Each effect has an exact response function, and tests hold the measured sound to it.
 - A gain in dB and the pan law are in `sound-core` (`amplitude`, `pan_gains`), so a pan means the same on a track, a drum pad and the Utility.

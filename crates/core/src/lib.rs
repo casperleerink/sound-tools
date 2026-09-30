@@ -40,7 +40,7 @@ pub use graph::{Connection, Destination, GraphError, NodeId};
 pub use input::{
     CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputStream, capture,
 };
-pub use lfo::Lfo;
+pub use lfo::{Lfo, LfoShape};
 pub use limiter::PeakLimiter;
 pub use parameter::Parameter;
 pub use peaks::Peaks;
