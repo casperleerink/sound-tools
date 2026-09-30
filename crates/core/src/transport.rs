@@ -63,6 +63,23 @@ impl Transport<'_> {
         // device: it plays at once, late, rather than never.
         usize::try_from((frame - self.block_start).max(0)).ok()
     }
+
+    /// Where the first frame of this block is in quarter notes from the project start, with
+    /// the part of a tick it falls inside. `None` while stopped.
+    ///
+    /// While the device catches up after a play or a seek, the block starts before playback
+    /// does: counted back from where playback starts at the tempo there, so the project frames
+    /// of the block are in the right place. It may be below zero.
+    pub(crate) fn quarters(&self) -> Option<f64> {
+        if !self.playing {
+            return None;
+        }
+        let start = self.frame_range.start;
+        let early = (i128::from(start.0) - self.block_start) as f64;
+        let bpm = self.clock.tempo_at(self.tick_range.start).bpm();
+        let quarters_per_frame = bpm / 60.0 / f64::from(self.clock.sample_rate());
+        Some(self.clock.quarters_at(start) - early * quarters_per_frame)
+    }
 }
 
 /// The transport operations of ARCHITECTURE.md, as messages to the audio thread.

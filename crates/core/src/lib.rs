@@ -16,6 +16,7 @@ mod graph;
 mod input;
 mod lfo;
 mod limiter;
+mod oversampling;
 mod parameter;
 mod peaks;
 mod processor;
@@ -34,14 +35,15 @@ pub use device::{
 };
 pub use dsp::{OnePole, Taps, held};
 pub use engine::{Engine, EngineStatus};
-pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeStage, EnvelopeState};
+pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeCurves, EnvelopeStage, EnvelopeState};
 pub use gain::{amplitude, pan_gains};
 pub use graph::{Connection, Destination, GraphError, NodeId};
 pub use input::{
     CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputStream, capture,
 };
-pub use lfo::Lfo;
+pub use lfo::{Lfo, LfoShape};
 pub use limiter::PeakLimiter;
+pub use oversampling::{Oversampler, OversamplingFilters};
 pub use parameter::Parameter;
 pub use peaks::Peaks;
 pub use processor::{

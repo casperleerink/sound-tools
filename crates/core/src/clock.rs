@@ -770,6 +770,21 @@ impl Clock {
         Ticks(self.segment_before(count).tick_at(frame.0))
     }
 
+    /// Where `frame` is in quarter notes from the project start, with the part of a tick it
+    /// falls inside: exact where [`Self::tick_at`] rounds up to a whole tick.
+    pub(crate) fn quarters_at(&self, frame: Frames) -> f64 {
+        // The same segment as `tick_at`.
+        let count = self
+            .later
+            .partition_point(|segment| segment.frame < frame.0);
+        let segment = self.segment_before(count);
+        let (frames, ticks) = segment.frames_per_tick;
+        let since_start = (u128::from(frame.0) << SUB_FRAME_BITS).saturating_sub(segment.start);
+        let ticks_since_start =
+            since_start as f64 * ticks as f64 / (frames as f64 * (1_u64 << SUB_FRAME_BITS) as f64);
+        (segment.tick as f64 + ticks_since_start) / TICKS_PER_QUARTER as f64
+    }
+
     pub fn tempo_at(&self, tick: Ticks) -> Tempo {
         self.segment_of_tick(tick).bpm
     }

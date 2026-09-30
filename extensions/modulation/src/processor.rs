@@ -27,8 +27,8 @@ use std::f32::consts::PI;
 use std::f64::consts::TAU;
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, DelayLine, Lfo, Ports, PrepareConfig, ProcessContext,
-    Processor, Smoothed,
+    AudioInput, AudioOutput, CHANNELS, DelayLine, Lfo, LfoShape, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed,
 };
 
 use crate::{Mode, ModulationState};
@@ -371,7 +371,7 @@ impl Modulation {
         let frames_per_ms = self.sample_rate / 1_000.0;
         let [chorus, flanger, phaser] = Mode::ALL.map(Swing::of);
         for (channel, lag) in self.channels.iter_mut().zip([0.0, lag]) {
-            let lfo = self.lfo.value(lag);
+            let lfo = self.lfo.value(LfoShape::Sine, lag);
             channel.from = channel.to;
             channel.to = [
                 chorus.at(depth, lfo) * frames_per_ms,

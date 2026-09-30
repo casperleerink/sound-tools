@@ -16,13 +16,14 @@ use sound_core::{
     ProcessContext, Processor, Smoothed,
 };
 use sound_media::{Audio, SCRATCH_FRAMES, Varispeed, varispeed};
-use sound_notes::{NoteEvent, Pedal, Pitch, Velocity, Wheels};
+use sound_notes::{NoteEvent, Pitch, Velocity, Voice as _, Voices, Wheels};
 
 use crate::SamplerState;
 
-/// Notes that sound at once. One more note takes over a voice: the quietest released one, or
-/// the oldest held one when none is released. The voice it takes fades out over 5 ms next to
-/// the new note, in one of the slots kept for that.
+/// Notes that sound at once. One more note takes over a voice, as [`Voices`] picks it. A sample
+/// cannot take over in place as the synth's oscillator does: the new note starts at the start
+/// of the file, a step from where the old one was. So the voice it takes fades out over 5 ms
+/// next to the new note, in one of the slots kept for that.
 pub const VOICES: usize = 16;
 
 /// Voices that fade out after they were taken over or their sample was replaced. More than
@@ -110,15 +111,10 @@ enum Source {
 
 #[derive(Copy, Clone)]
 struct Voice {
-    /// The key of this note is up and only the sustain pedal keeps it sounding.
-    sustained: bool,
-    pitch: Option<Pitch>,
-    /// The count of the note on that started this voice. The lowest is the oldest.
-    started: u64,
     source: Source,
     /// Where the voice is in the file, in frames of the file.
     position: f64,
-    /// Frames of the file per frame of the engine: the pitch of the key and the rates, before
+    /// Frames of the file per frame of the engine: the pitch of the note and the rates, before
     /// the wheels move it.
     key_step: f64,
     /// Where the part of the file that plays ends, in frames of the file.
@@ -131,11 +127,61 @@ struct Voice {
     fading: bool,
 }
 
+/// Frames of the file per frame of the engine for a note at `pitch`.
+fn key_step(pitch: f32, settings: &Settings, sample_rate: f32) -> f64 {
+    let semitones = f64::from(pitch) - f64::from(settings.root.number());
+    let rates = settings.file_rate / f64::from(sample_rate.max(1.0));
+    (semitones / 12.0).exp2() * rates
+}
+
+/// A voice reads the record and the sample rate to start or move.
+impl sound_notes::Voice for Voice {
+    type Context = (Settings, f32);
+
+    fn is_idle(&self) -> bool {
+        self.envelope.is_idle()
+    }
+
+    fn loudness(&self) -> f32 {
+        self.envelope.level as f32 * self.amplitude * self.fade
+    }
+
+    fn start(&mut self, pitch: f32, velocity: Velocity, (settings, sample_rate): &(Settings, f32)) {
+        let played = f64::from(velocity.value()) / 127.0;
+        let amount = settings.velocity_to_volume;
+        *self = Voice {
+            source: Source::Current,
+            position: settings.start,
+            key_step: key_step(pitch, settings, *sample_rate),
+            end: settings.end,
+            amplitude: 1.0 - amount + amount * (played * played) as f32,
+            envelope: EnvelopeState {
+                stage: sound_core::EnvelopeStage::Attack,
+                level: 0.0,
+            },
+            fade: 1.0,
+            fading: false,
+        };
+    }
+
+    fn set_pitch(&mut self, pitch: f32, (settings, sample_rate): &(Settings, f32)) {
+        self.key_step = key_step(pitch, settings, *sample_rate);
+    }
+
+    fn release(&mut self) {
+        self.envelope.release();
+    }
+
+    /// Fades out over 5 ms.
+    fn cut(&mut self) {
+        if !self.is_idle() {
+            self.fading = true;
+        }
+    }
+}
+
 impl Voice {
     const IDLE: Self = Self {
-        sustained: false,
-        pitch: None,
-        started: 0,
         source: Source::Current,
         position: 0.0,
         key_step: 1.0,
@@ -145,43 +191,6 @@ impl Voice {
         fade: 1.0,
         fading: false,
     };
-
-    fn is_idle(&self) -> bool {
-        self.envelope.is_idle()
-    }
-
-    /// A voice that counts against the 16: it sounds and is not fading out.
-    fn is_sounding(&self) -> bool {
-        !self.is_idle() && !self.fading
-    }
-
-    fn is_held(&self) -> bool {
-        self.envelope.is_held()
-    }
-
-    fn loudness(&self) -> f32 {
-        self.envelope.level as f32 * self.amplitude * self.fade
-    }
-
-    fn release(&mut self) {
-        self.sustained = false;
-        self.envelope.release();
-    }
-
-    /// The key came up. With the pedal down the note sounds on until the pedal comes up.
-    fn key_up(&mut self, pedal_is_down: bool) {
-        if pedal_is_down && self.is_held() {
-            self.sustained = true;
-        } else {
-            self.release();
-        }
-    }
-
-    fn fade_out(&mut self) {
-        if !self.is_idle() {
-            self.fading = true;
-        }
-    }
 
     /// Adds this voice to `left` and `right`, the frames between two events, at `pitch_ratio`
     /// times the pitch of its key. `frames` holds the sample on its way; `scratch` the file
@@ -242,9 +251,8 @@ pub struct Sampler {
     sample_rate: f32,
     envelope: Envelope,
     gain: Smoothed,
-    voices: [Voice; SLOTS],
-    notes_started: u64,
-    pedal: Pedal,
+    /// Of the slots, `VOICES` play at once and the rest are for voices that fade out.
+    voices: Voices<Voice, SLOTS>,
     /// The bend and the vibrato of every voice. At rest after every `AllOff`, like the pedal.
     wheels: Wheels,
     filter: &'static Varispeed,
@@ -270,9 +278,7 @@ impl Sampler {
             sample_rate: 0.0,
             envelope: Envelope::default(),
             gain: Smoothed::new(settings.gain),
-            voices: [Voice::IDLE; SLOTS],
-            notes_started: 0,
-            pedal: Pedal::UP,
+            voices: Voices::new(Voice::IDLE, VOICES),
             wheels: Wheels::default(),
             // Made here, on the control side, so the audio thread only reads it.
             filter: varispeed(),
@@ -282,95 +288,13 @@ impl Sampler {
         }
     }
 
-    fn any_voice(&self) -> bool {
-        self.voices.iter().any(|voice| !voice.is_idle())
-    }
-
     fn handle(&mut self, event: NoteEvent) {
         self.wheels.follow(event);
-        match event {
-            NoteEvent::On { pitch, velocity } => self.start(pitch, velocity),
-            NoteEvent::Off { pitch } => {
-                let pedal_is_down = self.pedal.is_down();
-                let of_this_pitch = self
-                    .voices
-                    .iter_mut()
-                    .filter(|voice| voice.pitch == Some(pitch));
-                of_this_pitch.for_each(|voice| voice.key_up(pedal_is_down));
-            }
-            NoteEvent::Pedal(value) => {
-                if self.pedal.is_down() && !value.is_down() {
-                    let sustained = self.voices.iter_mut().filter(|voice| voice.sustained);
-                    sustained.for_each(Voice::release);
-                }
-                self.pedal = value;
-            }
-            NoteEvent::AllOff => {
-                self.pedal = Pedal::UP;
-                self.voices.iter_mut().for_each(Voice::release);
-            }
-            // The wheels followed above, and the pressure does nothing here.
-            NoteEvent::Bend(_) | NoteEvent::ModWheel(_) | NoteEvent::Pressure(_) => {}
-        }
-    }
-
-    fn start(&mut self, pitch: Pitch, velocity: Velocity) {
         let settings = self.settings;
-        if self.current.is_none() || settings.start >= settings.end {
-            return;
+        let playable = self.current.is_some() && settings.start < settings.end;
+        if playable || !matches!(event, NoteEvent::On { .. }) {
+            self.voices.handle(event, &(settings, self.sample_rate));
         }
-        let sounding = self.voices.iter().filter(|voice| voice.is_sounding());
-        if sounding.count() >= VOICES
-            && let Some(taken) = self.voice_to_take_over()
-        {
-            self.voices[taken].fade_out();
-        }
-        let slot = self.free_slot();
-        self.notes_started += 1;
-        let semitones = f64::from(pitch.number()) - f64::from(settings.root.number());
-        let rates = settings.file_rate / f64::from(self.sample_rate.max(1.0));
-        let played = f64::from(velocity.value()) / 127.0;
-        let amount = settings.velocity_to_volume;
-        self.voices[slot] = Voice {
-            sustained: false,
-            pitch: Some(pitch),
-            started: self.notes_started,
-            source: Source::Current,
-            position: settings.start,
-            key_step: (semitones / 12.0).exp2() * rates,
-            end: settings.end,
-            amplitude: 1.0 - amount + amount * (played * played) as f32,
-            envelope: EnvelopeState {
-                stage: sound_core::EnvelopeStage::Attack,
-                level: 0.0,
-            },
-            fade: 1.0,
-            fading: false,
-        };
-    }
-
-    /// The sounding voice a note takes over: the quietest released one, or else the oldest.
-    fn voice_to_take_over(&self) -> Option<usize> {
-        let sounding = || {
-            let voices = self.voices.iter().enumerate();
-            voices.filter(|(_, voice)| voice.is_sounding())
-        };
-        let released = sounding().filter(|(_, voice)| !voice.is_held());
-        let quietest = released.min_by(|(_, a), (_, b)| a.loudness().total_cmp(&b.loudness()));
-        let oldest = || sounding().min_by_key(|(_, voice)| voice.started);
-        quietest.or_else(oldest).map(|(index, _)| index)
-    }
-
-    /// An idle slot, or the fading voice closest to silence.
-    fn free_slot(&self) -> usize {
-        let voices = self.voices.iter().enumerate();
-        let idle = voices.clone().find(|(_, voice)| voice.is_idle());
-        let quietest = || {
-            voices
-                .filter(|(_, voice)| voice.fading)
-                .min_by(|(_, a), (_, b)| a.loudness().total_cmp(&b.loudness()))
-        };
-        idle.or_else(quietest).map_or(0, |(index, _)| index)
     }
 
     /// Renders the voices into the frames between two events, then the gain over them.
@@ -400,6 +324,7 @@ impl Sampler {
                 (self.filter, pitch_ratio),
             );
         }
+        self.voices.glide(count, &(self.settings, self.sample_rate));
         let gain_before = self.gain.current();
         let gain_step = (self.gain.advance(count) - gain_before) / count as f32;
         for (frame, (left, right)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
@@ -411,12 +336,8 @@ impl Sampler {
 
     /// Where the newest note that still sounds is in its file, for the card.
     fn show_position(&self) {
-        let newest = self
-            .voices
-            .iter()
-            .filter(|voice| voice.is_sounding() && voice.source == Source::Current)
-            .max_by_key(|voice| voice.started);
-        if let Some(voice) = newest {
+        // A voice that is not cut plays the current sample.
+        if let Some(voice) = self.voices.newest() {
             let seconds = (voice.position / self.settings.file_rate) as f32;
             // A peak of 0 is no peak, so the very first frame of a file shows as the smallest
             // place after it.
@@ -444,7 +365,7 @@ impl Processor for Sampler {
         self.envelope = envelope(&self.settings, self.sample_rate);
         self.gain
             .set_target(self.settings.gain, GLIDE_SECONDS * self.sample_rate);
-        if !self.any_voice() {
+        if self.voices.is_idle() {
             // Nothing sounds, so there is nothing to smooth.
             self.gain.snap();
         }
@@ -460,12 +381,10 @@ impl Processor for Sampler {
             match voice.source {
                 // A second new sample within 5 ms: these lose theirs, which goes back now.
                 Source::Previous => *voice = Voice::IDLE,
-                Source::Current => {
-                    voice.source = Source::Previous;
-                    voice.fade_out();
-                }
+                Source::Current => voice.source = Source::Previous,
             }
         }
+        self.voices.cut_all();
         // The current sample becomes the previous one, the new one comes in, and the one
         // before goes back to the control side inside the update, to be dropped there.
         std::mem::swap(&mut self.previous, &mut self.current);
@@ -474,7 +393,7 @@ impl Processor for Sampler {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let events = context.event_inputs.get(Self::NOTES);
-        if events.is_empty() && !self.any_voice() {
+        if events.is_empty() && self.voices.is_idle() {
             return;
         }
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);

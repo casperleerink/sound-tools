@@ -8,7 +8,8 @@
 //!   a note is audible from exactly the frame its note on arrived on, and a test can say which
 //!   frame that was.
 //! - The right channel is the sustain pedal as a number, `value / 127`. So a test reads the
-//!   pedal value the plugin received, not whether it was up or down.
+//!   pedal value the plugin received, not whether it was up or down. A test that sets
+//!   [`SHOW_VARIABLE`] reads a wheel or the key pressure there instead.
 //! - The saved state is one number, `semitones`, which transposes every note. A pedal value of
 //!   64 or more sets it to `value - 64` and says the state changed, which is how a test makes
 //!   a plugin change its own state without a window of its own. A pedal that comes up leaves it
@@ -206,6 +207,44 @@ pub const NO_PEDAL_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_NO_PEDAL";
 /// Whether this plugin takes notes and no pedal.
 pub fn takes_no_pedal() -> bool {
     told_to(NO_PEDAL_VARIABLE)
+}
+
+/// Makes the right channel show a wheel or the key pressure instead of the pedal: `bend`,
+/// `mod_wheel` or `pressure`. The value is the one the plugin received as a number from 0 to 1,
+/// as VST 3 has it: a MIDI value over the most it can be, so the bend's middle is 8192 / 16383.
+pub const SHOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SHOW";
+
+/// Makes the VST 3 plugin map no parameter to the wheels or the key pressure, only to the
+/// pedal, so a host has nowhere to send them. VST 3 only: a CLAP plugin that takes MIDI takes
+/// all of them.
+pub const NO_WHEELS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_NO_WHEELS";
+
+/// A wheel or the key pressure, as a test plugin hears it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Wheel {
+    Bend,
+    ModWheel,
+    Pressure,
+}
+
+impl Wheel {
+    /// Where each one stands before it moves, from 0 to 1: the bend in the middle.
+    pub fn rest(self) -> f64 {
+        match self {
+            Self::Bend => 8192.0 / 16383.0,
+            Self::ModWheel | Self::Pressure => 0.0,
+        }
+    }
+
+    /// The one [`SHOW_VARIABLE`] names, if it names one.
+    fn shown() -> Option<Self> {
+        match std::env::var(SHOW_VARIABLE).ok()?.as_str() {
+            "bend" => Some(Self::Bend),
+            "mod_wheel" => Some(Self::ModWheel),
+            "pressure" => Some(Self::Pressure),
+            _ => None,
+        }
+    }
 }
 
 /// Makes the VST 3 plugin's edit controller keep a state of its own: how loud it plays. One
@@ -459,6 +498,10 @@ pub struct Tone {
     voices: [Option<Voice>; VOICES],
     sample_rate: f32,
     pedal: u8,
+    /// Where each [`Wheel`] stands, from 0 to 1, in the order of its variants.
+    wheels: [f64; 3],
+    /// The wheel the right channel shows instead of the pedal, see [`SHOW_VARIABLE`].
+    shown: Option<Wheel>,
     semitones: i32,
     /// What the effect half adds to every sample, in hundredths. Part of the saved state.
     offset: i32,
@@ -476,6 +519,8 @@ impl Tone {
             voices: [None; VOICES],
             sample_rate,
             pedal: 0,
+            wheels: [Wheel::Bend, Wheel::ModWheel, Wheel::Pressure].map(Wheel::rest),
+            shown: Wheel::shown(),
             semitones: 0,
             offset: 0,
             latency: 0,
@@ -607,10 +652,19 @@ impl Tone {
         changed
     }
 
-    /// The left channel is the sum of the voices, the right one is the pedal as a number.
+    /// A wheel or the key pressure moved to `value`, from 0 to 1.
+    pub fn wheel(&mut self, wheel: Wheel, value: f64) {
+        self.wheels[wheel as usize] = value;
+    }
+
+    /// The left channel is the sum of the voices, the right one is the pedal as a number, or
+    /// the wheel a test asked for.
     pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
-        let pedal = f32::from(self.pedal) / 127.0;
-        right.fill(pedal);
+        let shown = match self.shown {
+            Some(wheel) => self.wheels[wheel as usize] as f32,
+            None => f32::from(self.pedal) / 127.0,
+        };
+        right.fill(shown);
         left.fill(0.0);
         for voice in self.voices.iter_mut().flatten() {
             for sample in left.iter_mut() {
