@@ -118,6 +118,8 @@ pub(crate) struct FilterBlock {
     pub resonance: f32,
     /// The gain into the saturation, as a factor.
     pub drive: Ramp,
+    /// From 0 without drive to 1 with it: how much of the saturated sound it takes.
+    pub saturated: Ramp,
     /// The weights of low, band and high pass and notch.
     pub taps: [Ramp; 4],
     /// From 0 at 12 dB per octave to 1 at 24.
@@ -269,6 +271,7 @@ struct FilterGlide {
     taps: [Smoothed; 4],
     slope: Smoothed,
     wet: Smoothed,
+    saturated: Smoothed,
     oversampled: Smoothed,
 }
 
@@ -281,6 +284,7 @@ impl FilterGlide {
             taps: [0.0; 4].map(Smoothed::new),
             slope: Smoothed::new(0.0),
             wet: Smoothed::new(0.0),
+            saturated: Smoothed::new(0.0),
             oversampled: Smoothed::new(0.0),
         }
     }
@@ -288,8 +292,10 @@ impl FilterGlide {
     fn aim(&mut self, filter: &Filter, any_driven: bool, ramp: f32) {
         self.cutoff.set_target(filter.cutoff_hz.log2(), ramp);
         self.resonance.set_target(filter.resonance, ramp);
-        let drive_db = if filter.on { filter.drive_db } else { 0.0 };
-        self.drive.set_target(amplitude(drive_db), ramp);
+        let driven = filter.on && filter.drive_db > 0.0;
+        self.drive.set_target(amplitude(filter.drive_db), ramp);
+        self.saturated
+            .set_target(if driven { 1.0 } else { 0.0 }, ramp);
         for (tap, target) in self.taps.iter_mut().zip(filter.kind.taps()) {
             tap.set_target(target, ramp);
         }
@@ -304,6 +310,7 @@ impl FilterGlide {
             cutoff: self.cutoff.advance(frames),
             resonance: self.resonance.advance(frames),
             drive: Ramp::advance(&mut self.drive, frames),
+            saturated: Ramp::advance(&mut self.saturated, frames),
             taps: self.taps.each_mut().map(|tap| Ramp::advance(tap, frames)),
             slope: Ramp::advance(&mut self.slope, frames),
             wet: Ramp::advance(&mut self.wet, frames),
@@ -318,6 +325,7 @@ impl FilterGlide {
             &mut self.drive,
             &mut self.slope,
             &mut self.wet,
+            &mut self.saturated,
             &mut self.oversampled,
         ]
         .into_iter()

@@ -742,7 +742,7 @@ impl FilterVoice {
         } else {
             self.driving = true;
             // Without drive of its own it only waits, as long as the drive of the other filter.
-            let clean = filter.drive.from == 1.0 && filter.drive.to == 1.0;
+            let clean = filter.saturated.is_zero();
             let mut four = [0.0; 4 * MAX_BLOCK];
             let four = &mut four[..4 * frames];
             for channel in 0..channels {
@@ -752,9 +752,10 @@ impl FilterVoice {
                 if !clean {
                     for (frame, chunk) in four.chunks_exact_mut(4).enumerate() {
                         let drive = filter.drive.at(frame, frames);
-                        chunk
-                            .iter_mut()
-                            .for_each(|sample| *sample = soft_clip(*sample * drive));
+                        let part = filter.saturated.at(frame, frames);
+                        for sample in chunk.iter_mut() {
+                            *sample += part * (soft_clip(*sample * drive) - *sample);
+                        }
                     }
                 }
                 let mut late = [0.0; MAX_BLOCK];
