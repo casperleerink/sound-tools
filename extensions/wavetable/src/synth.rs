@@ -119,13 +119,15 @@ pub(crate) struct FilterBlock {
     /// The gain into the saturation, as a factor.
     pub drive: Ramp,
     /// The weights of low, band and high pass and notch.
-    pub taps: [f32; 4],
+    pub taps: [Ramp; 4],
     /// From 0 at 12 dB per octave to 1 at 24.
     pub slope: Ramp,
     /// From 0 while the filter is off to 1 while it is on.
     pub wet: Ramp,
-    /// From 0 without drive to 1 with it.
-    pub driven: Ramp,
+    /// From 0 to 1 while any filter of the patch has drive: then both filters run at four
+    /// times the rate, the one without drive clean, so the two come out equally late and a
+    /// sum of them has no comb. Off, a filter still waits.
+    pub oversampled: Ramp,
 }
 
 const ROUTING_WEIGHTS: usize = 9;
@@ -267,7 +269,7 @@ struct FilterGlide {
     taps: [Smoothed; 4],
     slope: Smoothed,
     wet: Smoothed,
-    driven: Smoothed,
+    oversampled: Smoothed,
 }
 
 impl FilterGlide {
@@ -279,21 +281,22 @@ impl FilterGlide {
             taps: [0.0; 4].map(Smoothed::new),
             slope: Smoothed::new(0.0),
             wet: Smoothed::new(0.0),
-            driven: Smoothed::new(0.0),
+            oversampled: Smoothed::new(0.0),
         }
     }
 
-    fn aim(&mut self, filter: &Filter, ramp: f32) {
+    fn aim(&mut self, filter: &Filter, any_driven: bool, ramp: f32) {
         self.cutoff.set_target(filter.cutoff_hz.log2(), ramp);
         self.resonance.set_target(filter.resonance, ramp);
-        self.drive.set_target(amplitude(filter.drive_db), ramp);
+        let drive_db = if filter.on { filter.drive_db } else { 0.0 };
+        self.drive.set_target(amplitude(drive_db), ramp);
         for (tap, target) in self.taps.iter_mut().zip(filter.kind.taps()) {
             tap.set_target(target, ramp);
         }
         self.slope.set_target(filter.slope.weight(), ramp);
         self.wet.set_target(if filter.on { 1.0 } else { 0.0 }, ramp);
-        let driven = filter.on && filter.drive_db > 0.0;
-        self.driven.set_target(if driven { 1.0 } else { 0.0 }, ramp);
+        let oversampled = if any_driven { 1.0 } else { 0.0 };
+        self.oversampled.set_target(oversampled, ramp);
     }
 
     fn advance(&mut self, frames: usize) -> FilterBlock {
@@ -301,10 +304,10 @@ impl FilterGlide {
             cutoff: self.cutoff.advance(frames),
             resonance: self.resonance.advance(frames),
             drive: Ramp::advance(&mut self.drive, frames),
-            taps: self.taps.each_mut().map(|tap| tap.advance(frames)),
+            taps: self.taps.each_mut().map(|tap| Ramp::advance(tap, frames)),
             slope: Ramp::advance(&mut self.slope, frames),
             wet: Ramp::advance(&mut self.wet, frames),
-            driven: Ramp::advance(&mut self.driven, frames),
+            oversampled: Ramp::advance(&mut self.oversampled, frames),
         }
     }
 
@@ -315,7 +318,7 @@ impl FilterGlide {
             &mut self.drive,
             &mut self.slope,
             &mut self.wet,
-            &mut self.driven,
+            &mut self.oversampled,
         ]
         .into_iter()
         .chain(&mut self.taps)
@@ -349,8 +352,10 @@ impl Glides {
             };
             level.set_target(target, ramp);
         }
+        let driven = |filter: &&Filter| filter.on && filter.drive_db > 0.0;
+        let any_driven = state.filters().iter().any(driven);
         for (glide, filter) in self.filters.iter_mut().zip(state.filters()) {
-            glide.aim(filter, ramp);
+            glide.aim(filter, any_driven, ramp);
         }
         for (weight, target) in self.routing.iter_mut().zip(routing_weights(state.routing)) {
             weight.set_target(target, ramp);
@@ -589,6 +594,10 @@ impl WavetableSynth {
             random: 0.0,
         };
         self.voices.glide(frames, &start);
+        // A note that starts after these frames picks the free LFOs up where they are then.
+        for (lfo, hz) in self.free_lfos.iter_mut().zip(lfo_hz) {
+            lfo.advance(frames, hz, self.sample_rate);
+        }
         let gain = Ramp::advance(&mut self.glides.gain, frames);
         for (frame, (left, right)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
             let gain = gain.at(frame, frames);
@@ -648,8 +657,5 @@ impl Processor for WavetableSynth {
             self.handle(timed.event);
         }
         self.render([&mut left[rendered..], &mut right[rendered..]], lfo_hz);
-        for (lfo, hz) in self.free_lfos.iter_mut().zip(lfo_hz) {
-            lfo.advance(frames, hz, self.sample_rate);
-        }
     }
 }

@@ -79,11 +79,14 @@ struct FilterVoice {
     oversamplers: [Oversampler; 2],
     /// The level of the low and high pass of the first section, which moves with the resonance.
     level: f32,
+    /// The cutoff in octaves, the resonance and the slope the factors are for, so they are
+    /// worked out again only when one moves.
+    factors_for: [f32; 3],
+    factors: [SvfFactors; 2],
+    factors_level: f32,
     /// The oversamplers hold sound, so they are cleared once when the drive goes, and not
     /// every block: they are large.
     driving: bool,
-    /// Everything is as it starts, so a filter that is off clears itself only once.
-    resting: bool,
 }
 
 impl FilterVoice {
@@ -92,8 +95,10 @@ impl FilterVoice {
             sections: [[SvfSection::default(); 2]; 2],
             oversamplers: [Oversampler::new(); 2],
             level: 1.0,
+            factors_for: [f32::NAN; 3],
+            factors: [SvfFactors::default(); 2],
+            factors_level: 1.0,
             driving: false,
-            resting: true,
         }
     }
 }
@@ -135,6 +140,9 @@ pub(crate) struct Voice {
     last: Targets,
     /// Just started from silence: the first block starts where the routes put it.
     fresh: bool,
+    /// Its two sides have differed since it started, so it renders both until it ends: their
+    /// filters ring on apart.
+    stereo: bool,
 }
 
 /// A voice's work for one block: a channel each, only the left one while it is mono.
@@ -191,6 +199,7 @@ impl Voice {
             filters: [FilterVoice::start(), FilterVoice::start()],
             last: Targets::default(),
             fresh: true,
+            stereo: false,
         }
     }
 
@@ -208,12 +217,12 @@ impl Voice {
             self.last = targets;
         }
         let last = self.last;
-        let stereo = [last.unison, targets.unison]
+        self.stereo |= [last.unison, targets.unison]
             .iter()
             .flatten()
             .flatten()
             .any(|[left, right]| left != right);
-        let channels = if stereo { 2 } else { 1 };
+        let channels = if self.stereo { 2 } else { 1 };
 
         let mut oscillators = [[[0.0; MAX_BLOCK]; 2]; 2];
         let note_step = frequency_hz(self.pitch) * block.pitch_ratio / block.sample_rate;
@@ -452,6 +461,10 @@ struct Ramps {
 }
 
 impl Ramps {
+    fn copy_is_silent(&self, copy: usize) -> bool {
+        self.gains.iter().all(|gains| gains[copy] == [0.0; 2])
+    }
+
     fn is_silent(&self) -> bool {
         self.gains
             .iter()
@@ -547,9 +560,9 @@ impl OscillatorVoice {
     ) {
         let frames = block.frames;
         let most = ramps.effect.from.max(ramps.effect.to);
-        let fastest = steps
-            .iter()
-            .fold(0.0_f32, |fastest, step| fastest.max(*step));
+        let fastest = (0..MAX_UNISON)
+            .filter(|copy| !ramps.copy_is_silent(*copy))
+            .fold(0.0_f32, |fastest, copy| fastest.max(steps[copy]));
         // How much faster than the phase the effect reads at its fastest, and the setting of
         // the effect at each end of the block.
         let (speed, setting) = match oscillator.effect {
@@ -573,6 +586,8 @@ impl OscillatorVoice {
                 (drive(most), ramps.effect.map(drive))
             }
         };
+        // A new level takes over at the start of a block. Only harmonics between a quarter and
+        // a half of the sample rate come or go with it, so it is not crossfaded.
         let level = oscillator
             .table
             .level(Wavetable::level_for(fastest * speed));
@@ -590,25 +605,21 @@ impl OscillatorVoice {
         let [left, right] = output;
         let plain = |sample: f32, _| sample;
         let no_restart = |_| None;
-        match oscillator.effect {
-            Effect::None => {
-                copies.render::<1>([left, right], |phase, _| phase, plain, no_restart);
-                return;
-            }
-            Effect::Fm => {
-                let fm = |phase: f32, depth: f32| {
-                    let read = phase + depth * sine(phase);
-                    read - read.floor()
-                };
-                copies.render::<1>([left, right], fm, plain, no_restart);
-                return;
-            }
-            _ => {}
+        if oscillator.effect == Effect::None {
+            copies.render::<1>([left, right], |phase, _| phase, plain, no_restart);
+            return;
         }
         let mut four = [[0.0; 4 * MAX_BLOCK]; 2];
         let [four_left, four_right] = &mut four;
         let target = [&mut four_left[..], &mut four_right[..]];
         match oscillator.effect {
+            Effect::Fm => {
+                let fm = |phase: f32, depth: f32| {
+                    let read = phase + depth * sine(phase);
+                    read - read.floor()
+                };
+                copies.render::<4>(target, fm, plain, no_restart);
+            }
             Effect::Warp => {
                 let warp =
                     |phase: f32, squeeze: f32| phase * (1.0 + squeeze) / (1.0 + squeeze * phase);
@@ -627,7 +638,7 @@ impl OscillatorVoice {
                 let shape = |sample: f32, drive: f32| fold(sample * drive);
                 copies.render::<4>(target, |phase, _| phase, shape, no_restart);
             }
-            Effect::None | Effect::Fm => {}
+            Effect::None => {}
         }
         for (channel, output) in [left, right].into_iter().enumerate().take(channels) {
             let four = &four[channel][..4 * frames];
@@ -670,10 +681,10 @@ impl Copies<'_> {
     ) {
         let per_frame = 1.0 / self.count as f32;
         for copy in 0..MAX_UNISON {
-            let [from, to] = [self.ramps.gains[0][copy], self.ramps.gains[1][copy]];
-            if from == [0.0; 2] && to == [0.0; 2] {
+            if self.ramps.copy_is_silent(copy) {
                 continue;
             }
+            let [from, to] = [self.ramps.gains[0][copy], self.ramps.gains[1][copy]];
             let step = self.steps[copy] / FACTOR as f32;
             let mut phase = self.phases[copy];
             for frame in 0..self.count {
@@ -724,51 +735,51 @@ impl FilterVoice {
         buffer: &mut Buffer,
     ) {
         let frames = block.frames;
-        if filter.wet.is_zero() {
-            if !self.resting {
-                *self = Self::start();
-            }
-            return;
-        }
-        self.resting = false;
-        // While it is all the way on, which is nearly always, it keeps nothing of the dry sound.
-        let all_wet = filter.wet.from == 1.0 && filter.wet.to == 1.0;
-        let mut dry = [[0.0; MAX_BLOCK]; 2];
-        if !all_wet {
-            dry[..channels].copy_from_slice(&buffer[..channels]);
-        }
-        if filter.driven.is_zero() {
+        if filter.oversampled.is_zero() {
             if std::mem::take(&mut self.driving) {
                 self.oversamplers = [Oversampler::new(); 2];
             }
         } else {
             self.driving = true;
+            // Without drive of its own it only waits, as long as the drive of the other filter.
+            let clean = filter.drive.from == 1.0 && filter.drive.to == 1.0;
             let mut four = [0.0; 4 * MAX_BLOCK];
             let four = &mut four[..4 * frames];
             for channel in 0..channels {
                 let oversampler = &mut self.oversamplers[channel];
                 let samples = &mut buffer[channel][..frames];
                 oversampler.up(block.oversampling, samples, four);
-                for (frame, chunk) in four.chunks_exact_mut(4).enumerate() {
-                    let drive = filter.drive.at(frame, frames);
-                    chunk
-                        .iter_mut()
-                        .for_each(|sample| *sample = soft_clip(*sample * drive));
+                if !clean {
+                    for (frame, chunk) in four.chunks_exact_mut(4).enumerate() {
+                        let drive = filter.drive.at(frame, frames);
+                        chunk
+                            .iter_mut()
+                            .for_each(|sample| *sample = soft_clip(*sample * drive));
+                    }
                 }
-                let mut driven = [0.0; MAX_BLOCK];
-                oversampler.down(block.oversampling, four, &mut driven[..frames]);
-                // Into the driven sound over a fade, so turning the drive on does not click:
-                // it comes out later than the clean sound, by the delay of the oversampler.
+                let mut late = [0.0; MAX_BLOCK];
+                oversampler.down(block.oversampling, four, &mut late[..frames]);
+                // Into the late sound over a fade, so a drive turned on does not click.
                 for (frame, sample) in samples.iter_mut().enumerate() {
-                    let part = filter.driven.at(frame, frames);
-                    *sample += part * (driven[frame] - *sample);
+                    let part = filter.oversampled.at(frame, frames);
+                    *sample += part * (late[frame] - *sample);
                 }
             }
             if channels == 1 {
                 self.oversamplers[1] = self.oversamplers[0];
             }
         }
+        if filter.wet.is_zero() {
+            self.sections = [[SvfSection::default(); 2]; 2];
+            return;
+        }
 
+        // While it is all the way on, which is nearly always, it keeps nothing of the dry sound.
+        let all_wet = filter.wet.from == 1.0 && filter.wet.to == 1.0;
+        let mut dry = [[0.0; MAX_BLOCK]; 2];
+        if !all_wet {
+            dry[..channels].copy_from_slice(&buffer[..channels]);
+        }
         let cutoff = Ramp::new(last.cutoff[index], targets.cutoff[index]);
         let resonance = Ramp::new(last.resonance[index], targets.resonance[index]);
         let second_runs = !filter.slope.is_zero();
@@ -776,31 +787,32 @@ impl FilterVoice {
         while start < frames {
             let end = (start + FACTOR_FRAMES).min(frames);
             let at = |ramp: &Ramp| ramp.at(end - 1, frames);
-            let (factors, level) = SvfFactors::sections(
-                at(&cutoff).exp2(),
-                at(&resonance),
-                at(&filter.slope),
-                block.sample_rate,
-            );
-            let level_from = self.level;
+            let inputs = [at(&cutoff), at(&resonance), at(&filter.slope)];
+            if inputs != self.factors_for {
+                let [cutoff, resonance, slope] = inputs;
+                (self.factors, self.factors_level) =
+                    SvfFactors::sections(cutoff.exp2(), resonance, slope, block.sample_rate);
+                self.factors_for = inputs;
+            }
+            let (factors, level_to, level_from) = (self.factors, self.factors_level, self.level);
             for (channel, sections) in self.sections.iter_mut().enumerate().take(channels) {
                 let [first, second] = sections;
                 for frame in start..end {
                     let part = (frame + 1 - start) as f32 / (end - start) as f32;
-                    let level = level_from + (level - level_from) * part;
+                    let level = level_from + (level_to - level_from) * part;
+                    let taps = filter.taps.map(|tap| tap.at(frame, frames));
                     let input = buffer[channel][frame];
-                    let one = first.next(&factors[0], filter.taps, level, input);
-                    let slope = filter.slope.at(frame, frames);
+                    let one = first.next(&factors[0], taps, level, input);
                     let filtered = if second_runs {
-                        let two = second.next(&factors[1], filter.taps, 1.0, one);
-                        one + slope * (two - one)
+                        let two = second.next(&factors[1], taps, 1.0, one);
+                        one + filter.slope.at(frame, frames) * (two - one)
                     } else {
                         one
                     };
                     buffer[channel][frame] = filtered;
                 }
             }
-            self.level = level;
+            self.level = level_to;
             start = end;
         }
         if !second_runs {

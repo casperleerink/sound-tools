@@ -149,7 +149,7 @@ fn every_table_plays_and_its_position_sweeps_without_a_step() {
 }
 
 /// Up to C6 and at full amount, what every effect folds back stays 50 dB under its
-/// harmonics in the audible band. Sync, warp and fold run at four times the sample rate, and
+/// harmonics in the audible band. Every effect runs at four times the sample rate, and
 /// sync rounds off its jump.
 #[test]
 fn no_effect_aliases_up_to_c6() {

@@ -24,13 +24,14 @@ type Parameter<S> = sound_core::Parameter<S>;
 pub enum Effect {
     None,
     /// A sine at the pitch of the oscillator bends where it reads: brighter, then growling.
+    /// At four times the sample rate, like every effect.
     Fm,
     /// Reads the frame up to 16 times faster, starting again at every cycle, as a hard synced
-    /// oscillator does. At four times the sample rate, so the restart does not alias.
+    /// oscillator does. Its restart is rounded off, so it does not alias.
     Sync,
     /// Squeezes the start of each cycle and stretches its end, up to 8 times.
     Warp,
-    /// Drives the sound up to 8 times into a wavefolder. At four times the sample rate.
+    /// Drives the sound up to 8 times into a wavefolder.
     Fold,
 }
 

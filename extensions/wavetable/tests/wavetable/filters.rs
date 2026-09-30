@@ -190,3 +190,28 @@ fn the_drive_adds_harmonics_and_turning_it_on_does_not_click() {
     );
     assert!(after.iter().all(|sample| sample.abs() < 0.2));
 }
+
+/// Two low passes side by side, one with a little drive that the level never reaches: the
+/// sum sounds as with no drive at all. Were the driven one later than the other, their sum
+/// would cancel harmonics in a comb.
+#[test]
+fn a_drive_on_one_of_two_filters_side_by_side_makes_no_comb() {
+    let filter = Filter {
+        cutoff_hz: 4_000.0,
+        resonance: 0.0,
+        ..Filter::default()
+    };
+    let side_by_side = |drive_db| WavetableState {
+        filter_1: Filter { drive_db, ..filter },
+        filter_2: filter,
+        routing: Routing::Parallel,
+        ..plain(Oscillator::default())
+    };
+    let numbers: Vec<u32> = (1..=24).collect();
+    let clean = levels(&render(side_by_side(0.0)), &numbers);
+    let driven = levels(&render(side_by_side(0.5)), &numbers);
+    for ((number, clean), driven) in numbers.iter().zip(&clean).zip(&driven) {
+        let moved = db(driven / clean);
+        assert!(moved.abs() < 0.3, "harmonic {number}: {moved} dB");
+    }
+}
