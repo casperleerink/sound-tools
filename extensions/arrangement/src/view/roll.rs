@@ -31,8 +31,8 @@ pub const ROLL_HEIGHT: f32 = EDITOR_HEIGHT - RULER_HEIGHT - VELOCITY_HEIGHT;
 /// The width of a velocity bar.
 pub const VELOCITY_BAR_WIDTH: f32 = 3.0;
 /// Air in the lane above a bar of velocity 127, and under every bar.
-const VELOCITY_TOP: f32 = 8.0;
-const VELOCITY_BOTTOM: f32 = 4.0;
+pub(super) const VELOCITY_TOP: f32 = 8.0;
+pub(super) const VELOCITY_BOTTOM: f32 = 4.0;
 /// How far beside a bar a press still takes it, so a trackpad hits a bar of 3 pt.
 const VELOCITY_REACH: f32 = 4.0;
 /// The velocity of a note that is drawn. The lane changes it afterwards.
