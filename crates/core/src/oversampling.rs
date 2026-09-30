@@ -1,17 +1,24 @@
-//! Oversampling by four, in two stages of two, so that the harmonics the curve makes above the
-//! top of the hearing range are taken away before they fold back into it.
+//! Oversampling by four, in two stages of two, for a processor that bends its sound: a curve,
+//! the drive of a filter, the warp of an oscillator. A bend makes harmonics far above the top
+//! of the hearing range, and at the sample rate those fold back into it as tones that are not
+//! in tune with anything. At four times the rate they are taken away first, on the way down.
+//! Next to [`Smoothed`](crate::Smoothed), a helper a processor uses per frame. The core itself
+//! bends nothing.
 //!
 //! Each stage is a half band filter: a linear phase FIR filter whose cutoff is a quarter of its
 //! own rate, a windowed sinc (Kaiser window). Every other tap of it is zero and the middle one
 //! is one half, so a stage of two works out only half of its taps for each sample it makes. A
-//! linear phase filter delays every frequency alike, so the saturated sound stays in time with
-//! the dry sound it is mixed with, and the delay is reported as the latency of the saturator.
+//! linear phase filter delays every frequency alike, so the bent sound stays in time with a dry
+//! sound it is mixed with, once that waits [`Oversampler::DELAY_FRAMES`]. A processor reports
+//! the delay as its latency.
 //!
 //! The first stage does the hard part: it keeps everything up to 0.45 of the sample rate and
-//! takes 88 dB off from 0.55 of it, so what the curve makes above there cannot fold back under
+//! takes 88 dB off from 0.55 of it, so what the bend makes above there cannot fold back under
 //! 0.45. The second stage, at twice the rate, has a wide band to fall in and is short.
 
 use std::f64::consts::PI;
+
+use crate::MAX_BLOCK;
 
 /// The middle tap of the first stage, from its start. The filter is twice this plus one long,
 /// and delays by this many samples of its rate. Odd, so the taps at its ends are not zero.
@@ -23,11 +30,6 @@ const SECOND_MIDDLE: usize = 13;
 /// with zeros in front up to a multiple of eight: see [`dot`].
 const FIRST_TAPS: usize = 64;
 const SECOND_TAPS: usize = 16;
-
-/// How many frames the saturated sound comes out after the sound that went in: each stage
-/// delays by its middle twice, once on the way up and once on the way down, in samples of its
-/// rate. The second stage gets one sample more at twice the rate, so the whole is whole frames.
-pub const DELAY_FRAMES: usize = FIRST_MIDDLE + SECOND_MIDDLE.div_ceil(2);
 
 /// The Kaiser window for 88 dB of stop band. With the lengths above, the first stage falls
 /// from 0.45 to 0.55 of the rate it goes down to. The second, at four times that rate, keeps
@@ -171,13 +173,14 @@ impl<const TAPS: usize, const TWICE: usize> Down<TAPS, TWICE> {
     }
 }
 
-/// The taps of both stages, the same for every channel.
-pub struct Kernels {
+/// The filters of both stages, the same for every channel. Make them once, on the control
+/// side: they cost a few thousand multiplications.
+pub struct OversamplingFilters {
     first: HalfBand<FIRST_MIDDLE, FIRST_TAPS>,
     second: HalfBand<SECOND_MIDDLE, SECOND_TAPS>,
 }
 
-impl Kernels {
+impl OversamplingFilters {
     pub fn new() -> Self {
         Self {
             first: HalfBand::new(),
@@ -186,7 +189,14 @@ impl Kernels {
     }
 }
 
-/// The memory of one channel on its way up to four times the rate and down again.
+impl Default for OversamplingFilters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The memory of one channel on its way up to four times the rate and down again. `Copy` and
+/// free to make, so a voice or a channel keeps one by value.
 #[derive(Clone, Copy)]
 pub struct Oversampler {
     first_up: Up<FIRST_TAPS, { 2 * FIRST_TAPS }>,
@@ -199,6 +209,15 @@ pub struct Oversampler {
 }
 
 impl Oversampler {
+    /// How many samples at the higher rate there are for each frame.
+    pub const FACTOR: usize = 4;
+
+    /// How many frames the sound comes out after it went in, up and down again: each stage
+    /// delays by its middle twice, once on the way up and once on the way down, in samples of
+    /// its rate. The second stage gets one sample more at twice the rate, so the whole is whole
+    /// frames.
+    pub const DELAY_FRAMES: usize = FIRST_MIDDLE + SECOND_MIDDLE.div_ceil(2);
+
     pub const fn new() -> Self {
         Self {
             first_up: Up::new(),
@@ -209,26 +228,57 @@ impl Oversampler {
         }
     }
 
-    /// Frames up to four times the rate: four samples for each, in order.
-    pub fn up(&mut self, kernels: &Kernels, frames: &[f32], four: &mut [f32]) {
+    /// Frames up to four times the rate: four samples for each, in order, into `four`, which is
+    /// four times as long as `frames`.
+    pub fn up(&mut self, filters: &OversamplingFilters, frames: &[f32], four: &mut [f32]) {
+        debug_assert_eq!(four.len(), Self::FACTOR * frames.len());
         for (sample, four) in frames.iter().zip(four.chunks_exact_mut(4)) {
-            let [early, late] = self.first_up.next(&kernels.first, *sample);
+            let [early, late] = self.first_up.next(&filters.first, *sample);
             let twice = [std::mem::replace(&mut self.held, late), early];
             for (sample, two) in twice.into_iter().zip(four.chunks_exact_mut(2)) {
-                two.copy_from_slice(&self.second_up.next(&kernels.second, sample));
+                two.copy_from_slice(&self.second_up.next(&filters.second, sample));
             }
         }
     }
 
-    /// Four samples for each frame down to the rate of the frames again.
-    pub fn down(&mut self, kernels: &Kernels, four: &[f32], frames: &mut [f32]) {
+    /// Four samples for each frame down to the rate of the frames again: `four` is four times
+    /// as long as `frames`.
+    pub fn down(&mut self, filters: &OversamplingFilters, four: &[f32], frames: &mut [f32]) {
+        debug_assert_eq!(four.len(), Self::FACTOR * frames.len());
         for (four, frame) in four.chunks_exact(4).zip(frames) {
             let mut twice = [0.0; 2];
             for (two, sample) in four.chunks_exact(2).zip(&mut twice) {
-                *sample = self.second_down.next(&kernels.second, [two[0], two[1]]);
+                *sample = self.second_down.next(&filters.second, [two[0], two[1]]);
             }
-            *frame = self.first_down.next(&kernels.first, twice);
+            *frame = self.first_down.next(&filters.first, twice);
         }
+    }
+
+    /// Runs `each` on every sample of `frames` at four times the rate, in order: up, `each`,
+    /// and down again, in place. The frames come out [`Self::DELAY_FRAMES`] late. For work
+    /// that changes from frame to frame, such as a drive that glides, use [`Self::up`] and
+    /// [`Self::down`]: four samples for each frame.
+    pub fn run(
+        &mut self,
+        filters: &OversamplingFilters,
+        frames: &mut [f32],
+        mut each: impl FnMut(f32) -> f32,
+    ) {
+        let mut four = [0.0; 4 * MAX_BLOCK];
+        for frames in frames.chunks_mut(MAX_BLOCK) {
+            let four = &mut four[..4 * frames.len()];
+            self.up(filters, frames, four);
+            for sample in four.iter_mut() {
+                *sample = each(*sample);
+            }
+            self.down(filters, four, frames);
+        }
+    }
+}
+
+impl Default for Oversampler {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -253,7 +303,7 @@ mod tests {
 
     #[test]
     fn both_stages_keep_the_pass_band_and_take_88_db_off_the_stop_band() {
-        let Kernels { first, second } = Kernels::new();
+        let OversamplingFilters { first, second } = OversamplingFilters::new();
         let first = |at| gain(&first, at);
         let second = |at| gain(&second, at);
         let stages: [(&dyn Fn(f64) -> f64, f64, f64); 2] =
@@ -274,7 +324,7 @@ mod tests {
     /// any length make the same sound.
     #[test]
     fn a_frame_comes_out_the_delay_later() {
-        let kernels = Kernels::new();
+        let filters = OversamplingFilters::new();
         let mut oversampler = Oversampler::new();
         let mut input = [0.0_f32; 200];
         input[0] = 1.0;
@@ -284,8 +334,8 @@ mod tests {
         for length in [1, 64, 7, 64, 64].into_iter().cycle() {
             let end = (start + length).min(input.len());
             let four = &mut four[..4 * (end - start)];
-            oversampler.up(&kernels, &input[start..end], four);
-            oversampler.down(&kernels, four, &mut output[start..end]);
+            oversampler.up(&filters, &input[start..end], four);
+            oversampler.down(&filters, four, &mut output[start..end]);
             start = end;
             if start == input.len() {
                 break;
@@ -294,13 +344,47 @@ mod tests {
         let loudest = (0..output.len())
             .max_by(|a, b| output[*a].abs().total_cmp(&output[*b].abs()))
             .unwrap();
-        assert_eq!(loudest, DELAY_FRAMES);
+        assert_eq!(loudest, Oversampler::DELAY_FRAMES);
         let sum: f32 = output.iter().sum();
         assert!((sum - 1.0).abs() < 1e-5, "{sum}");
         // Symmetric around it: linear phase.
-        for offset in 1..DELAY_FRAMES {
-            let (before, after) = (output[DELAY_FRAMES - offset], output[DELAY_FRAMES + offset]);
+        for offset in 1..Oversampler::DELAY_FRAMES {
+            let (before, after) = (
+                output[Oversampler::DELAY_FRAMES - offset],
+                output[Oversampler::DELAY_FRAMES + offset],
+            );
             assert!((before - after).abs() < 1e-6, "{offset}: {before} {after}");
+        }
+    }
+
+    /// `run` is `up`, `each` on every sample and `down`, in blocks of any length.
+    #[test]
+    fn a_run_is_up_the_function_and_down() {
+        let filters = OversamplingFilters::new();
+        let input: Vec<f32> = (0..300)
+            .map(|frame| (frame as f32 * 0.05).sin() * 2.0)
+            .collect();
+        let curve = |sample: f32| sample.tanh();
+        let mut expected = vec![0.0; input.len()];
+        let mut four = vec![0.0; 4 * input.len()];
+        let mut oversampler = Oversampler::new();
+        oversampler.up(&filters, &input, &mut four);
+        four.iter_mut().for_each(|sample| *sample = curve(*sample));
+        oversampler.down(&filters, &four, &mut expected);
+        let mut oversampler = Oversampler::new();
+        let mut output = input.clone();
+        for block in output.chunks_mut(70) {
+            oversampler.run(&filters, block, curve);
+        }
+        assert_eq!(output, expected);
+        // A function that changes nothing gives the input back, the delay later, once the
+        // ring of the sudden start has passed.
+        let mut oversampler = Oversampler::new();
+        let mut output = input.clone();
+        oversampler.run(&filters, &mut output, |sample| sample);
+        let delayed = output[Oversampler::DELAY_FRAMES..].iter().zip(&input);
+        for (output, input) in delayed.skip(Oversampler::DELAY_FRAMES) {
+            assert!((output - input).abs() < 1e-4, "{output} {input}");
         }
     }
 }
