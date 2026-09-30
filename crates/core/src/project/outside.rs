@@ -26,16 +26,18 @@ impl Project {
     /// in [`Project::problems`]. The rest of the group still applies. The runtime's own writes
     /// change nothing here, because the files hold what the runtime last wrote.
     ///
-    /// Groups that follow each other within [`OUTSIDE_UNDO_WINDOW`], with no interface edit,
-    /// undo or redo in between, are one undo step.
+    /// Groups of one request (see [`Project::begin_request`]), or groups that follow each
+    /// other within [`OUTSIDE_UNDO_WINDOW`] when no request is open, are one undo step, as
+    /// long as no interface edit, undo or redo comes in between.
     ///
     /// [`OUTSIDE_UNDO_WINDOW`]: super::OUTSIDE_UNDO_WINDOW
     pub fn apply_outside_changes(&mut self, paths: &[PathBuf]) -> Result<usize, ProjectError> {
         self.apply_outside_changes_at(paths, Instant::now())
     }
 
-    /// [`Self::apply_outside_changes`] with the time of the change given, for tests of the
-    /// undo grouping.
+    /// [`Self::apply_outside_changes`] with the time the change was heard given. The watcher
+    /// gives the time it heard the first path of the group. Tests of the undo grouping give
+    /// their own.
     pub fn apply_outside_changes_at(
         &mut self,
         paths: &[PathBuf],
