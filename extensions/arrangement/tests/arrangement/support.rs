@@ -86,6 +86,8 @@ impl ProbeProcessor {
                 self.sustained = [0; 128];
                 self.pedal = Pedal::UP;
             }
+            // The level is the held pitches: the wheels do not move it.
+            NoteEvent::Bend(_) | NoteEvent::ModWheel(_) | NoteEvent::Pressure(_) => {}
         }
     }
 }

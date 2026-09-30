@@ -180,3 +180,7 @@ pub fn off(number: u8) -> Played {
 pub fn pedal(value: u8) -> Played {
     Played::Pedal(Pedal::new(value).unwrap())
 }
+
+pub fn bend(value: i16) -> Played {
+    Played::Bend(sound_notes::Bend::new(value).unwrap())
+}

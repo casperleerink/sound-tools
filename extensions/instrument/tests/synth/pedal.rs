@@ -33,6 +33,7 @@ fn played(pedal_moves: Vec<sound_notes::PedalChange>) -> Harness {
         Track {
             notes: vec![note(0, 960, 69, 100)],
             pedal: pedal_moves,
+            ..Track::default()
         },
     );
     changes.create(track.id().child("instrument").unwrap(), plain());
@@ -90,6 +91,7 @@ fn the_pedal_comes_up_before_a_new_note_and_that_note_is_not_held() {
         Track {
             notes: vec![note(0, 480, 69, 100), note(1920, 480, 72, 100)],
             pedal: vec![pedal(0, 127), pedal(960, 0)],
+            ..Track::default()
         },
     );
     changes.create(track.id().child("instrument").unwrap(), plain());

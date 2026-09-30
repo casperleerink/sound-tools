@@ -2,27 +2,32 @@
 //!
 //! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and
 //! [`Clip`], the saved [`RawTake`] a recording writes and a fit reads, the realtime
-//! [`NoteEvent`] and the port names of an instrument and an effect. The port names live here
-//! and not in a crate of their own, because both sides of a track already read this one.
+//! [`NoteEvent`] with the wheels an instrument follows ([`Expression`]), and the port names of
+//! an instrument and an effect. The port names live here and not in a crate of their own,
+//! because both sides of a track already read this one.
 //!
 //! Rules for a sender of notes, which no type enforces:
 //!
 //! - Send [`NoteEvent::AllOff`] at offset 0 when the transport says `stopped_playing` or
 //!   `jumped`, before the notes of that block. So no note is ever stuck, whoever sent it.
-//! - On one frame, send the pedal first, then the offs, then the ons. Else an off does not see
-//!   where the pedal stands, or the end of one note releases the next note of the same pitch.
+//! - On one frame, send the pedal and the wheels first, then the offs, then the ons. Else an
+//!   off does not see where the pedal stands, a note does not start where the wheels stand, or
+//!   the end of one note releases the next note of the same pitch.
 //! - A sender whose notes can change while they sound keeps a fixed list of what it started,
 //!   and sends the offs from that list. `extensions/arrangement/src/sequencer.rs` does this.
 //!
 //! A known limit, accepted: `AllOff` releases everything an instrument holds, also the keys
-//! held on a MIDI keyboard, because live input plays into the same port. That is what makes
-//! "no note is ever stuck" a property of the contract and not of every sender.
+//! held on a MIDI keyboard, because live input plays into the same port, and it puts the wheels
+//! back at rest while a hand may still hold one. That is what makes "no note and no bend is ever
+//! stuck" a property of the contract and not of every sender.
 
+mod expression;
 mod take;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{Place, State, Ticks};
 
+pub use expression::{Expression, Wheels};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };
@@ -53,6 +58,10 @@ pub enum NoteError {
     Length,
     #[error("pedal must be from 0 to 127, not {0}")]
     Pedal(i64),
+    #[error("bend must be from -8192 to 8191, not {0}")]
+    Bend(i64),
+    #[error("amount must be from 0 to 127, not {0}")]
+    Amount(i64),
 }
 
 /// A MIDI note number, 0 to 127. 60 is middle C and 69 is A4.
@@ -198,6 +207,88 @@ impl TryFrom<i64> for Pedal {
 impl From<Pedal> for u8 {
     fn from(pedal: Pedal) -> u8 {
         pedal.0
+    }
+}
+
+/// Where the pitch bend wheel stands, -8192 to 8191, with 0 in the middle: MIDI's 14 bits with
+/// the middle moved to 0. How far a full bend goes is the instrument's choice.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Bend(i16);
+
+impl Bend {
+    /// The wheel in the middle, where it springs back to: no bend.
+    pub const MIDDLE: Self = Self(0);
+
+    pub fn new(value: i16) -> Result<Self, NoteError> {
+        Self::try_from(i64::from(value))
+    }
+
+    /// The bend nearest to any number: -8192 below the range, 8191 above it.
+    pub fn nearest(value: i64) -> Self {
+        Self(value.clamp(-8192, 8191) as i16)
+    }
+
+    pub fn value(self) -> i16 {
+        self.0
+    }
+
+    /// From -1 all the way down to 1 all the way up. MIDI has one step more below the middle
+    /// than above it, so each side is divided by its own length and both ends are a full bend.
+    pub fn fraction(self) -> f32 {
+        match self.0 {
+            value if value < 0 => f32::from(value) / 8192.0,
+            value => f32::from(value) / 8191.0,
+        }
+    }
+}
+
+impl TryFrom<i64> for Bend {
+    type Error = NoteError;
+
+    fn try_from(value: i64) -> Result<Self, NoteError> {
+        match i16::try_from(value) {
+            Ok(value @ -8192..=8191) => Ok(Self(value)),
+            _ => Err(NoteError::Bend(value)),
+        }
+    }
+}
+
+/// How far the modulation wheel is turned or how hard the keys are pressed, 0 to 127, as MIDI
+/// sends it. What it does is the instrument's choice.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Amount(u8);
+
+impl Amount {
+    /// Nothing: the wheel all the way down, no pressure on the keys.
+    pub const NONE: Self = Self(0);
+
+    pub fn new(value: u8) -> Result<Self, NoteError> {
+        Self::try_from(i64::from(value))
+    }
+
+    /// The amount nearest to any number: 0 below the range, 127 above it.
+    pub fn nearest(value: i64) -> Self {
+        Self(value.clamp(0, 127) as u8)
+    }
+
+    pub fn value(self) -> u8 {
+        self.0
+    }
+
+    /// From 0 to 1.
+    pub fn fraction(self) -> f32 {
+        f32::from(self.0) / 127.0
+    }
+}
+
+impl TryFrom<i64> for Amount {
+    type Error = NoteError;
+
+    fn try_from(value: i64) -> Result<Self, NoteError> {
+        match u8::try_from(value) {
+            Ok(value @ 0..=127) => Ok(Self(value)),
+            _ => Err(NoteError::Amount(value)),
+        }
     }
 }
 
@@ -428,8 +519,16 @@ pub enum NoteEvent {
     /// Moves the sustain pedal. While it is down ([`Pedal::is_down`]) an `Off` does not
     /// release: the note sounds on until the pedal comes up.
     Pedal(Pedal),
-    /// Releases every held note and puts the pedal up, so a sender does not have to track what
-    /// it started. Send it when the transport says `stopped_playing` or `jumped`. Release tails
-    /// still sound.
+    /// Moves the pitch bend wheel. Every note of the instrument bends with it, the ones that
+    /// sound and the ones that start later, until it moves again.
+    Bend(Bend),
+    /// Moves the modulation wheel, MIDI controller 1. Like the bend it holds for every note.
+    ModWheel(Amount),
+    /// How hard the held keys are pressed, MIDI channel pressure. One value for the whole
+    /// instrument, like the wheels.
+    Pressure(Amount),
+    /// Releases every held note, puts the pedal up and the wheels and the pressure at rest
+    /// ([`Expression::REST`]), so a sender does not have to track what it started. Send it when
+    /// the transport says `stopped_playing` or `jumped`. Release tails still sound.
     AllOff,
 }

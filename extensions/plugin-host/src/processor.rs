@@ -265,6 +265,9 @@ fn translate(
                     dropped += 1;
                 }
             }
+            // Not passed on yet: VST 3 takes each wheel as a parameter the plugin maps, like the
+            // pedal, and that mapping is its own change.
+            NoteEvent::Bend(_) | NoteEvent::ModWheel(_) | NoteEvent::Pressure(_) => {}
             // The contract's "release everything". Both formats have a note off that matches
             // every key, and not every plugin handles one, so the exact keys go out instead.
             NoteEvent::AllOff => {

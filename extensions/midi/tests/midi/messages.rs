@@ -1,7 +1,7 @@
 //! Reading MIDI bytes: what this application uses and what it leaves alone.
 
 use midi::Played;
-use sound_notes::{NoteEvent, Pedal};
+use sound_notes::{Amount, Bend, NoteEvent, Pedal};
 
 use crate::support::{off, on, pedal, pitch};
 
@@ -37,14 +37,31 @@ fn a_note_on_of_velocity_zero_is_a_note_off() {
 }
 
 #[test]
+fn the_bend_the_mod_wheel_and_the_pressure_are_read() {
+    let bend = |value| Some(Played::Bend(Bend::new(value).unwrap()));
+    // The middle is 0x2000, sent as 7 low bits then 7 high bits.
+    assert_eq!(Played::from_bytes(&[0xE0, 0, 0x40]), bend(0));
+    assert_eq!(Played::from_bytes(&[0xE0, 0, 0]), bend(-8192));
+    assert_eq!(Played::from_bytes(&[0xE3, 0x7F, 0x7F]), bend(8191));
+    let amount = |value| Amount::new(value).unwrap();
+    assert_eq!(
+        Played::from_bytes(&[0xB0, 1, 90]),
+        Some(Played::ModWheel(amount(90)))
+    );
+    assert_eq!(
+        Played::from_bytes(&[0xD5, 80]),
+        Some(Played::Pressure(amount(80)))
+    );
+}
+
+#[test]
 fn other_controllers_and_messages_are_left_alone() {
-    let ignored: [&[u8]; 6] = [
-        &[0xB0, 1, 127], // mod wheel
-        &[0xE0, 0, 96],  // pitch bend
-        &[0xD0, 80],     // channel pressure
-        &[0xA0, 60, 80], // polyphonic key pressure
-        &[0xF8],         // MIDI clock
-        &[0xC0, 4],      // program change
+    let ignored: [&[u8]; 5] = [
+        &[0xB0, 33, 127], // the fine half of the mod wheel
+        &[0xB0, 7, 100],  // volume
+        &[0xA0, 60, 80],  // polyphonic key pressure
+        &[0xF8],          // MIDI clock
+        &[0xC0, 4],       // program change
     ];
     for bytes in ignored {
         assert_eq!(Played::from_bytes(bytes), None, "{bytes:?}");

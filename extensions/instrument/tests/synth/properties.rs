@@ -65,7 +65,7 @@ proptest! {
         let synth = edit.add_processor("synth", Synth::new(first)).unwrap();
         edit.connect(Connection::new(sequencer.id(), Sequencer::NOTES, synth.id(), Synth::NOTES)).unwrap();
         edit.connect(Connection::to_device(synth.id(), Synth::OUTPUT, 0)).unwrap();
-        edit.update(sequencer, Arc::new(Part { notes, pedal: Vec::new() })).unwrap();
+        edit.update(sequencer, Arc::new(Part { notes, ..Part::default() })).unwrap();
         edit.commit().unwrap();
         control.play();
 

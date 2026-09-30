@@ -4,7 +4,10 @@
 #![allow(clippy::unwrap_used)]
 
 use sound_core::{State, Ticks};
-use sound_notes::{Clip, Length, Note, NoteError, NoteEvent, Pedal, PedalChange, Pitch, Velocity};
+use sound_notes::{
+    Amount, Bend, Clip, Expression, Length, Note, NoteError, NoteEvent, Pedal, PedalChange, Pitch,
+    Velocity,
+};
 
 const LINE: &str = r#"{"start":0,"length":480,"pitch":60,"velocity":100}"#;
 
@@ -106,6 +109,46 @@ fn the_pedal_is_a_number_from_0_to_127_and_is_down_from_64() {
     assert_eq!(change.start, Ticks(480));
     assert_eq!(change.value.value(), 127);
     assert_eq!(serde_json::to_string(&change).unwrap(), line);
+}
+
+#[test]
+fn a_full_bend_is_one_either_way_and_the_middle_is_none() {
+    assert_eq!(Bend::MIDDLE.fraction(), 0.0);
+    assert_eq!(Bend::new(-8192).unwrap().fraction(), -1.0);
+    assert_eq!(Bend::new(8191).unwrap().fraction(), 1.0);
+    assert_eq!(Bend::new(8192), Err(NoteError::Bend(8192)));
+    assert_eq!(Bend::nearest(-9000).value(), -8192);
+    assert_eq!(Bend::nearest(9000).value(), 8191);
+    assert_eq!(Amount::NONE.fraction(), 0.0);
+    assert_eq!(Amount::new(127).unwrap().fraction(), 1.0);
+    assert_eq!(Amount::new(128), Err(NoteError::Amount(128)));
+    assert_eq!(Amount::nearest(-1).value(), 0);
+}
+
+#[test]
+fn the_expression_follows_the_wheels_and_all_off_puts_it_at_rest() {
+    let mut expression = Expression::REST;
+    let note: Note = serde_json::from_str(LINE).unwrap();
+    let bend = Bend::new(-4096).unwrap();
+    let amount = Amount::new(90).unwrap();
+    for event in [
+        NoteEvent::Bend(bend),
+        NoteEvent::ModWheel(amount),
+        NoteEvent::Pressure(amount),
+        note.on(),
+        NoteEvent::Pedal(Pedal::new(127).unwrap()),
+    ] {
+        expression.follow(event);
+    }
+    let moved = Expression {
+        bend,
+        mod_wheel: amount,
+        pressure: amount,
+    };
+    assert_eq!(expression, moved);
+    assert!(!expression.is_at_rest());
+    expression.follow(NoteEvent::AllOff);
+    assert!(expression.is_at_rest());
 }
 
 /// A clip of before the pedal existed loads and is written back byte for byte as it was, so
