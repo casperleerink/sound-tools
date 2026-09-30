@@ -174,6 +174,18 @@ impl<V: Voice, const N: usize> Voices<V, N> {
         self.mono = mono;
     }
 
+    /// How many notes may play at once in poly, from 1 to `N`. When fewer may play than do,
+    /// the oldest are cut until they fit, as going to mono cuts all but the newest.
+    pub fn set_polyphony(&mut self, polyphony: usize) {
+        self.polyphony = polyphony.clamp(1, N);
+        while self.slots.iter().filter(|slot| slot.is_playing()).count() > self.polyphony {
+            let playing = self.slots.iter_mut().filter(|slot| slot.is_playing());
+            if let Some(oldest) = playing.min_by_key(|slot| slot.started) {
+                oldest.cut();
+            }
+        }
+    }
+
     /// How long a glide takes, in frames. Zero for none.
     pub fn set_glide(&mut self, frames: f32) {
         self.glide_frames = frames.max(0.0);

@@ -179,6 +179,7 @@ impl EnvelopeState {
 
     /// One frame on: the level of this frame. It is idle, at level 0, once its release reaches
     /// silence, or when a held voice with no sustain has decayed.
+    #[inline]
     pub fn next(&mut self, envelope: &Envelope) -> f64 {
         match self.stage {
             EnvelopeStage::Attack => {
