@@ -9,7 +9,7 @@
 - **Undo.** The sidebar says where each request begins and ends, so one request is one undo step. The 15 s guess stays only for agents in a terminal.
 - **v1.** Both providers, one thread per project that resumes on reopen, tool steps folded behind "Worked for 12 s", no diffs, no attachments.
 - **Trade-off.** We own two protocol drivers. Claude's control messages are not documented, so we pin the CLI version and test against recorded transcripts.
-- **You decide.** (1) May the agent edit project files without asking, while commands ask? (2) Is the sidebar open by default at 360 pt? (3) Does Sound Tools stay free and open source? Selling it would need a deal with Anthropic and OpenAI for subscription sign-in.
+- **Decided.** Approvals are a user setting, with "Ask before commands" as the default. The sidebar collapses, and the app remembers whether it was open. Sound Tools stays open source, so the CLIs' own sign-in is allowed.
 
 ---
 
@@ -27,6 +27,10 @@ An agent sidebar on the left of the window. The composer talks to Claude Code or
 - Chat and interface state stay out of the project folder. The folder is only what the agent writes.
 - Credentials stay in each CLI's own store. The app never reads, stores or forwards tokens.
 - The hooman-studio runner (`~/hooman/hooman-studio/apps/runner`) is the reference for behaviour and edge cases. We port its logic to Rust and do not run it.
+- How much the agent may do without asking is a user setting (section 5).
+- The sidebar collapses. The app remembers whether it is open, per machine and not per project (section 6).
+- Sound Tools stays open source and local. That is what makes the Codex app-server sign-in allowed (section 2).
+- The two remembered settings live in the machine's support folder, never in a project. An agent that works in the project folder must not be able to give itself more access by editing a file there.
 
 ## What the spikes showed
 
@@ -98,7 +102,7 @@ Sign in:
 Terms (checked 2026-09-30, quotes in Sources):
 
 - Claude Code is proprietary. Running it inside a product requires the Commercial Terms, an unmodified binary, every built-in sign-in method kept, and each user paying under their own account. Third-party apps may not offer their own "Claude login" or touch tokens, but "an end user signing in to the unmodified Claude Code binary with their own Claude subscription" is allowed. Our design follows that line. In the UI we may write "runs Claude Code" in plain text, but we must not name a feature after it.
-- Codex app-server sign-in is allowed for "a local or open-source application" and "has never been permitted for commercial or hosted services", which need "Sign in with ChatGPT" (partner waitlist). Sound Tools is MIT and local, so we are fine today. Open decision (3) covers a paid version.
+- Codex app-server sign-in is allowed for "a local or open-source application" and "has never been permitted for commercial or hosted services", which need "Sign in with ChatGPT" (partner waitlist). Sound Tools is MIT and local, and it stays open source, so this sign-in is allowed. If that ever changes, Codex needs "Sign in with ChatGPT", and Claude needs a check with Anthropic sales.
 
 What the composer sees, in the sidebar, with nothing blocking the rest of the app:
 
@@ -180,13 +184,24 @@ Rejected:
 
 **Problems.** The sidebar reads `Project::problems()` when a turn begins and when it ends. If the turn left problems that were not there before, a peach line goes under the result ("2 files are not live") and expands to `path: message` lines. The agent docs already tell the agent to check `problems.txt`, so v1 sends nothing back automatically. The window's corner notice stays as it is.
 
-**Approvals.** Default modes (open decision 1): Claude `acceptEdits`, and Codex `workspace-write` with `on-request`. File edits in the project go ahead. Commands and anything outside the folder ask.
+**Approvals.** How much the agent may do without asking is a user setting with three choices. The mapping is the one the hooman runner already uses.
+
+| Setting | What the composer reads | Claude `--permission-mode` | Codex `approvalPolicy` / `sandbox` |
+| --- | --- | --- | --- |
+| Ask for everything | "Asks before every edit and command." | `default` | `untrusted` / `read-only` |
+| Ask before commands (default) | "Edits the project freely, asks before commands." | `acceptEdits` | `on-request` / `workspace-write` |
+| Never ask | "Does anything without asking. Undo and git are your safety net." | `bypassPermissions` | `never` / `danger-full-access` |
+
+- The setting is one `enum ApprovalMode` in the agent crate, saved in `support_folder()/agent/settings.json`. It applies to every project on the machine. It is not in the project, so the agent cannot change its own permissions by editing a project file.
+- The setting is in the composer's provider menu (the dropdown of the gallery mockup), next to the model, as one select.
+- A change applies from the next message. Codex takes it on `turn/start`. Claude takes it through the `set_permission_mode` control request; if that fails on the pinned version, restart the process with `--resume`. Record a fixture of the change for both providers in milestone 3.
+- Under "Never ask", the first message of a thread shows one quiet line above the composer ("The agent does anything without asking"), so the mode is never a surprise.
 
 - A request shows as the last item of the thread: one sentence of what the agent wants to do (for example "Run `cargo build`") and **Allow**, **Allow for this thread** and **Deny**, in lavender.
 - The buttons are tab stops with focus rings. Nothing is modal, and music and editing go on.
 - The answers map to Claude `allow` / `deny` (with the CLI's `permission_suggestions` scoped to the session for "this thread") and to Codex `accept` / `acceptForSession` / `decline`.
 - Claude's `AskUserQuestion` is disabled with `--disallowedTools`, so the agent asks in plain text. Codex `item/tool/requestUserInput` gets empty answers, and the agent then asks in text.
-- Rejected: **a modal dialog** (DESIGN.md says nothing blocks). Rejected as the default: **bypassing all approvals**. It is the other answer to decision 1.
+- Rejected: **a modal dialog** (DESIGN.md says nothing blocks). Rejected: **a setting per project or per thread.** One setting per machine is enough, and it keeps approvals out of the folder.
 
 ## 6. Scope of v1
 
@@ -196,7 +211,15 @@ In v1:
 - One visible thread per project, resumed on reopen, and **+** for a new one.
 - Streaming markdown answers, steps behind "Worked for", stop, inline approvals, the problems line, and one undo step per request.
 - A multi-line composer with history.
-- One key, cmd-L (proposed), shows the sidebar and focuses the composer; pressed again in the composer, it hides the sidebar. Escape in the composer gives the focus back to the arrangement. Whether the sidebar is open is interface state and is not saved.
+- The approval setting (section 5).
+- A collapsible sidebar:
+  - One sidebar icon in the title row, right of the traffic lights, opens and closes it.
+  - cmd-L (free today) opens it and focuses the composer. Pressed again in the composer, cmd-L closes it.
+  - Escape in the composer gives the focus back to the arrangement.
+  - Closed means gone, with no rail, and the arrangement takes the full width.
+  - While the sidebar is closed and a turn runs or an approval waits, the icon carries the small lavender `Indicator`, so a closed sidebar never hides a question.
+  - The app remembers open or closed for the machine, not the project, in `support_folder()` next to `last-project`. A first start opens it.
+  - This is an exception to DESIGN.md's "interface state is not saved". That rule keeps settings out of the project folder, where an agent could change them, and this one stays out of it too. Update the rule's wording in the same change.
 
 Later, in rough order of value:
 
@@ -218,7 +241,8 @@ Diffs come only if composers ask for them.
   - Also `install.rs`, `auth.rs`, `thread.rs` (the state built from events, and the store) and `view/` (sidebar, onboarding, message list, markdown, approval row).
 - Keep the drivers apart from the thread state. Tests can then feed `AgentEvent`s to the thread and view with no process.
 - The window gets a generic left panel slot: a GPUI global holding a constructor from `Entity<Session>` to `AnyView`, filled in `crates/runtime/src/lib.rs` where views are registered. `window.rs` names no agent type.
-- `MIN_WINDOW_WIDTH` grows so the arrangement keeps at least today's width with the sidebar open, or the sidebar hides below it. Pick one in milestone 3.
+- The runtime owns the open-or-closed flag and the title-row icon, because they are about the window's generic left panel. The agent crate gives the slot a way to say "working or waiting" for the icon's `Indicator`. The window code still names no agent type.
+- The sidebar has a fixed width of 360 pt. When the window is narrower than `MIN_WINDOW_WIDTH` plus 360, opening the sidebar makes the window wider, or leaves it as it is if the screen has no room; the arrangement then scrolls.
 - The multi-line `TextInput` and the markdown renderer are general, so they go in `crates/ui` with gallery entries. The sidebar is not general, so it stays in `crates/agent`.
 
 ## Risks and the spike that removes each
@@ -233,7 +257,8 @@ Diffs come only if composers ask for them.
 | R6 | The multi-line composer is the largest UI piece | Gallery spike: wrapping, up and down across wrapped lines, and growth to 8 lines, before the rest |
 | R7 | Parsing a long streaming message on every frame is too slow | Stream a 5 KB answer into a 200-message thread and check frame times in a release build |
 | R8 | The 69 MB `codex-app-server` asset may not sandbox commands alone | Run the Codex spike script against that asset; use it if a sandboxed command works |
-| R9 | Terms change, or Sound Tools is sold | Not a spike. Check both terms pages before each release, and open decision (3) |
+| R9 | Terms change, or Sound Tools stops being open source | Not a spike. Check both terms pages before each release |
+| R10 | Claude cannot change its permission mode on a running process | Record a `set_permission_mode` control request on the pinned version in milestone 3. If it fails, restart with `--resume` |
 
 ## Milestones
 
@@ -245,15 +270,18 @@ Each milestone ends green on the README checks, with docs updated in the same ch
    - Fixture tests: recorded JSONL of real runs (plain answer, file edit, approval, denied tool, interrupt, stale resume, process crash) for each provider, with `insta` snapshots of the `AgentEvent`s.
    - One `#[ignore]` live test per provider in a temp folder.
    - The Codex types deserialize every recorded message, and a test lists the schema methods we rely on.
-4. **Sidebar end to end, plain text.** The left panel slot, sidebar, `list`, the single-line composer as it is, send, stop, request boundaries, using a CLI found on PATH. Verify:
+4. **Sidebar end to end, plain text.** The left panel slot, the title-row icon, cmd-L, the remembered open-or-closed flag, the sidebar, `list`, the single-line composer as it is, send, stop and request boundaries, using a CLI found on PATH. Verify:
    - A window test in `crates/runtime/tests/window/` that feeds recorded events and checks the thread, the undo label and one undo step.
-   - A window snapshot at 1470 x 920 with the sidebar open.
+   - A window test with a temporary support folder: close the sidebar, reopen the window, and check it is still closed. cmd-L opens it with the composer focused.
+   - Window snapshots at 1470 x 920 with the sidebar open, and closed with the working indicator on the icon.
    - A manual run: open a project, ask "Add a bass line in bars 5 to 8 that follows the piano", see the clips appear, and check that one cmd-z removes all of it.
 5. **Install and sign in.** Pinned downloads, the onboarding states, and sign-in for both providers. Verify:
    - Unit tests of the install state machine (checksum mismatch, resume, removing an old version) against a local file.
    - Gallery states for every row of the table in section 2.
    - A manual run as a new macOS user with no CLIs: set up both providers, sign in, and send a message, with no terminal opened.
-6. **Chat quality.** Markdown, the multi-line composer with history, steps and "Worked for", approvals, the problems line, and the model picker. Verify:
+6. **Chat quality.** Markdown, the multi-line composer with history, steps and "Worked for", approvals and the approval setting, the problems line, and the model picker. Verify:
+   - A unit test that each `ApprovalMode` maps to the flags and params in the table of section 5. The mapping is one exhaustive `match`, so a new mode fails to compile until it is mapped.
+   - A manual run of each setting with each provider: "Ask for everything" asks before an edit, "Ask before commands" edits and asks before `cargo build`, "Never ask" asks nothing.
    - Unit tests of the markdown block model and of the composer's wrap and cursor math (pure functions).
    - Gallery snapshots for the composer (empty, 3 lines, full) and the sidebar (working, done with steps open, failed, approval, problems, long thread).
    - A manual run of an approval with Claude and with Codex.
