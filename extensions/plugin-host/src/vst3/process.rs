@@ -82,7 +82,7 @@ impl ControlTargets {
 
 /// Where a control stands as a VST 3 parameter, 0 to 1: its MIDI value over the most it can be.
 /// So the bend's middle is a little over a half, 8192 / 16383.
-pub fn normalized(control: Control) -> ParamValue {
+fn normalized(control: Control) -> ParamValue {
     let most = match control {
         Control::Bend(_) => 16383.0,
         Control::Pedal(_) | Control::ModWheel(_) | Control::Pressure(_) => 127.0,

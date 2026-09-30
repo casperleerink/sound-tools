@@ -32,7 +32,7 @@ use vst3::{ComPtr, ComWrapper};
 
 use super::context::{Handler, HostContext, as_handler, as_unknown};
 use super::module::Module;
-use super::process::{ControlTargets, ParameterChange, Vst3Processor, normalized, process_mode};
+use super::process::{ControlTargets, ParameterChange, Vst3Processor, process_mode};
 use super::stream::{MemoryStream, as_stream};
 use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
@@ -362,22 +362,26 @@ impl LoadedPlugin for Vst3Plugin {
         // next block each control goes where the plugin says now.
         let mut pedal_unmapped = false;
         if self.joined.handler.take_midi_mapping_changed() {
-            for rest in Control::REST {
+            for control in Control::REST {
                 // SAFETY: the controller came from the plugin and is alive.
-                let now = unsafe { mapped_parameter(self.joined.controller.as_ref(), rest) };
-                let before = self.targets.get(rest);
-                self.targets.set(rest, now);
-                if matches!(rest, Control::Pedal(_)) {
-                    pedal_unmapped = self.takes_notes && now.is_none() && before.is_some();
+                let now = unsafe { mapped_parameter(self.joined.controller.as_ref(), control) };
+                let before = self.targets.get(control);
+                self.targets.set(control, now);
+                if !matches!(control, Control::Pedal(_)) {
+                    // A wheel leaves its old parameter where it put it, as a knob a MIDI learn
+                    // moved stays where it was left. Putting it back at rest would move a
+                    // parameter the wheel may never have touched.
+                    continue;
                 }
-                // A pedal held down or a wheel moved on the parameter it leaves would stay there
-                // for good, so that parameter is put back at rest, the way an edit is.
+                pedal_unmapped = self.takes_notes && now.is_none() && before.is_some();
+                // A pedal held on the parameter it leaves would stay down there for good, so
+                // that parameter is let go of, the way an edit is.
                 if let Some(before) = before
                     && now != Some(before)
                 {
                     self.joined.handler.keep_edit(ParameterChange {
                         id: before,
-                        value: normalized(rest),
+                        value: 0.0,
                     });
                 }
             }
