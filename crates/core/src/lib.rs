@@ -22,6 +22,7 @@ mod peaks;
 mod processor;
 mod project;
 mod saturation;
+mod svf;
 mod transport;
 
 pub use clock::{
@@ -60,4 +61,5 @@ pub use project::{
     SavedDestination, State, StorageError, ToolRegistration, Was,
 };
 pub use saturation::soft_clip;
+pub use svf::{FilterSlope, FilterType, SVF_MAX_Q, SvfFactors, SvfSection, svf_response};
 pub use transport::Transport;
