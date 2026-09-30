@@ -13,9 +13,9 @@ const ATTACK_OVERSHOOT: f64 = 0.3;
 /// no sustain ends when it falls below this.
 pub const ENVELOPE_FLOOR: f64 = 0.001;
 
-/// How each stage of a [`curved`](Envelope::curved) envelope bends, from 0, straight to the eye, to
-/// 1, a strong exponential curve: fast at first and slow near its end, like the release of an
-/// analog envelope. The value between gives the curve in between.
+/// How each stage of a [`curved`](Envelope::curved) envelope bends, from 0, straight to the
+/// eye, to 1, a strong exponential curve: fast at first and slow near its end, like the release
+/// of an analog envelope. A value between gives a curve in between.
 ///
 /// A curve is a stage that aims past its end, reached in exactly the stage time. At 1 it aims
 /// 0.1 % of its distance past, as the release of [`Envelope::new`] does, at 0.5 as far again
@@ -29,12 +29,6 @@ pub struct EnvelopeCurves {
 }
 
 impl EnvelopeCurves {
-    pub const LINEAR: Self = Self {
-        attack: 0.0,
-        decay: 0.0,
-        release: 0.0,
-    };
-
     /// How far past its end a stage with this curve aims, as a part of its distance.
     fn overshoot(curve: f32) -> f64 {
         ENVELOPE_FLOOR.powf(2.0 * f64::from(curve.clamp(0.0, 1.0)) - 1.0)
