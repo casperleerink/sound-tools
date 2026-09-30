@@ -201,14 +201,15 @@ fn the_raw_take_file_holds_the_times_as_they_arrived_and_both_velocities() {
 }
 
 /// The wheels are in the raw take with both times, one message per line, and in the clip as
-/// lanes: a straight move of the bend is its two ends.
+/// lanes: a straight move of the bend is its two ends, after its rest.
 #[test]
 fn the_wheels_are_in_the_raw_take_and_thinned_in_its_clip() {
     let mut events = vec![event(0, 0, mod_wheel(64)), event(10, 0, pressure(20))];
-    events.extend((0..=8).map(|step| event(100 + step, 960 + step * 60, bend(step as i16 * 1000))));
+    // A move of the bend as a keyboard sends it: a message on every tick.
+    events.extend((0..=64).map(|step| event(100 + step, 960 + step, bend(step as i16 * 127))));
     let take = take(0, 3840, events);
     let raw = take.raw(&clock());
-    assert_eq!(raw.events.len(), 11);
+    assert_eq!(raw.events.len(), 67);
     assert_eq!(
         raw.events[2],
         RawEvent::Bend {
@@ -225,7 +226,9 @@ fn the_wheels_are_in_the_raw_take_and_thinned_in_its_clip() {
     let bends: Vec<(u64, i16)> = (clip.bend.iter())
         .map(|point| (point.tick.0, point.value.value()))
         .collect();
-    assert_eq!(bends, [(960, 0), (1440, 8000)]);
+    // At rest until it moves. The line from the rest to the first step up passes within one
+    // step of the rest, so thinning keeps no point at tick 960.
+    assert_eq!(bends, [(0, 0), (961, 127), (1024, 8128)]);
     assert_eq!(clip.mod_wheel.len(), 1);
     assert_eq!(clip.pressure.len(), 1);
     assert!(clip.notes.is_empty());

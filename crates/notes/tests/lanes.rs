@@ -208,7 +208,8 @@ fn a_take_holds_the_wheels_one_message_per_line() {
 }
 
 /// A take's wheels become thinned lanes: one point per tick, the last move of the tick, and a
-/// straight move is its two ends.
+/// straight move is its two ends. A wheel is at rest until its first move and holds each
+/// value until the next, so a note before a bend is not bent.
 #[test]
 fn the_wheels_of_a_take_become_thinned_lanes_of_its_clip() {
     // At the default 120 bpm a tick is 520.8 microseconds; these land on whole ticks.
@@ -219,12 +220,13 @@ fn the_wheels_of_a_take_become_thinned_lanes_of_its_clip() {
         wheel("pressure", tick_us(0) + 1, 20),
         wheel("mod_wheel", tick_us(480), 90),
     ];
+    // A bend that starts with a jump and then rises on every tick, as a keyboard sends it.
     events.extend(
-        (0..=64).map(|step: u64| wheel("bend", tick_us(960 + step * 10), step as i64 * 128)),
+        (0..64).map(|step: u64| wheel("bend", tick_us(960 + step), 512 + step as i64 * 120)),
     );
     events.push(RawEvent::On {
-        time_us: tick_us(960),
-        sounded_us: tick_us(960),
+        time_us: 0,
+        sounded_us: 0,
         pitch: 60,
         velocity: 100,
     });
@@ -236,8 +238,23 @@ fn the_wheels_of_a_take_become_thinned_lanes_of_its_clip() {
     let clock = sound_core::Clock::new(sound_core::TempoMap::default(), 48_000);
     let clip = take.clip(|time_us| clock.tick_at_micros(time_us)).unwrap();
     assert_eq!(clip.pressure, [amount(0, 20)]);
-    assert_eq!(clip.mod_wheel, [amount(480, 90)]);
-    assert_eq!(clip.bend, [bend(960, 0), bend(1600, 8191)]);
+    assert_eq!(
+        clip.mod_wheel,
+        [amount(0, 0), amount(479, 0), amount(480, 90)]
+    );
+    assert_eq!(
+        clip.bend,
+        [bend(0, 0), bend(959, 0), bend(960, 512), bend(1023, 8072)]
+    );
+    assert_eq!(value_at(&clip.bend, Ticks(480)), Some(Bend::MIDDLE));
     assert_eq!(clip.notes.len(), 1);
     assert_eq!(clip.validate(), Ok(()));
+}
+
+/// Thinning is one pass, so a long stream of the same value, which some keyboards send for the
+/// pressure, is two points at once.
+#[test]
+fn a_long_stream_thins_in_one_pass() {
+    let stream: Vec<Point<Amount>> = (0..1_000_000).map(|tick| amount(tick, 64)).collect();
+    assert_eq!(thinned(&stream), [amount(0, 64), amount(999_999, 64)]);
 }

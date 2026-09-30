@@ -151,7 +151,8 @@ fn recording_stops_and_a_second_take_is_a_take_of_its_own() {
     assert_eq!(second.start, from);
 }
 
-/// The wheels are in the take as they were played, and become lanes of its clip.
+/// The wheels are in the take as they were played, and become lanes of its clip. A wheel holds
+/// its value until it moves, so the note before the bend is not bent.
 #[test]
 fn the_wheels_are_in_the_take_and_become_lanes() {
     let take = recorded(
@@ -167,8 +168,40 @@ fn the_wheels_are_in_the_take_and_become_lanes() {
     assert_eq!(take.events.len(), 5);
     let clip = take.clip(&clock()).unwrap();
     assert_eq!(clip.notes.len(), 1);
-    let bend: Vec<i16> = clip.bend.iter().map(|point| point.value.value()).collect();
-    assert_eq!(bend, [4096]);
-    assert_eq!(clip.mod_wheel.len(), 1);
-    assert_eq!(clip.pressure.len(), 1);
+    let bend: Vec<(u64, i16)> = (clip.bend.iter())
+        .map(|point| (point.tick.0, point.value.value()))
+        .collect();
+    // The engine sounded the bend in the block at frame 3064, tick 122.56, and it was at rest
+    // before.
+    assert_eq!(bend, [(0, 0), (122, 0), (123, 4096)]);
+    assert_eq!(clip.mod_wheel.len(), 3);
+    assert_eq!(clip.pressure.len(), 3);
+}
+
+/// A wheel that is away from rest when recording begins is in the take from its first moment,
+/// so the clip starts where the hand was. One at rest adds nothing.
+#[test]
+fn a_wheel_held_when_recording_begins_is_in_the_take() {
+    let mut harness = Harness::new();
+    harness.input.send(mod_wheel(70));
+    harness.run(64, 64);
+    harness.poll();
+    harness.control.play();
+    harness.run(64, 64);
+    let from = harness.playhead();
+    harness.keyboard.start_recording(from);
+    harness.input.send(on(60, 88));
+    harness.run(640, 64);
+    harness.poll();
+    let until = harness.playhead();
+    let take = harness.keyboard.finish_recording(until).unwrap();
+    assert_eq!(take.events.len(), 2);
+    assert_eq!(take.events[0].time_us, 0);
+    assert_eq!(take.events[0].played, mod_wheel(70));
+    let clip = take.clip(&clock()).unwrap();
+    let wheel: Vec<(u64, u8)> = (clip.mod_wheel.iter())
+        .map(|point| (point.tick.0, point.value.value()))
+        .collect();
+    assert_eq!(wheel, [(0, 70)]);
+    assert!(clip.bend.is_empty() && clip.pressure.is_empty());
 }

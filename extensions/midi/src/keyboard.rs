@@ -9,7 +9,7 @@ use sound_core::{
     monotonic_nanos,
 };
 
-use sound_notes::{Expression, Pedal};
+use sound_notes::{Expression, NoteEvent, Pedal};
 
 use crate::keys::{Input, Keys, Played, Sounded};
 use crate::take::{Take, TakeEvent};
@@ -275,11 +275,26 @@ impl Keyboard {
     /// Starts recording from the playhead. Whatever the engine sounds from here on is in the
     /// take. A recording that was going on is dropped.
     pub fn start_recording(&mut self, at: Ticks) {
+        // A wheel away from rest is in the take from its first moment, so its clip starts
+        // where the hand was, as it does for the pedal.
+        let wheels = Expression::REST.moves_to(self.live_expression);
+        let wheels = wheels.filter_map(|event| match event {
+            NoteEvent::Bend(bend) => Some(Played::Bend(bend)),
+            NoteEvent::ModWheel(amount) => Some(Played::ModWheel(amount)),
+            NoteEvent::Pressure(amount) => Some(Played::Pressure(amount)),
+            _ => None,
+        });
         self.recording = Some(Recording {
             start: at,
             started_nanos: monotonic_nanos(),
             pedal_at_start: self.live_pedal,
-            events: Vec::new(),
+            events: wheels
+                .map(|played| TakeEvent {
+                    time_us: 0,
+                    tick: at,
+                    played,
+                })
+                .collect(),
         });
     }
 

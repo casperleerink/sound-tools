@@ -43,6 +43,7 @@ The app writes a take once, when the recording ends, and never opens the file ag
 - `start_us`, `end_us`: where the recording began and ended on the project timeline, in microseconds from the start of the piece. This is real time and it means the same whatever the tempo map does, which is why fitting the tempo can keep the take where it was heard.
 - `start_tick`, `end_tick`: the same two moments in ticks, under the tempo map of that moment. They are there to read. Do not compute from them: a tempo change makes them mean something else.
 - `pedal_at_start`: how far the sustain pedal was already pressed when the recording began, 0 to 127.
+- A wheel or the pressure that was away from rest when the recording began has a message at `time_us` 0. Without one it was at rest.
 - `events[].time_us`: microseconds from the moment recording began, taken when the message reached the app. This is the performance as it was played. The beat finder of a tempo fit works from these.
 - `events[].sounded_us`: microseconds from the same moment, when the engine really sounded the message, which is the start of the audio block that carried it, up to about 1.5 ms later. A clip that puts a note here renders what the composer heard.
 - `kind`: `on` a key went down, `off` a key came up, `pedal` the sustain pedal moved, `bend` the bend wheel moved, `mod_wheel` the modulation wheel moved, `pressure` the keys were pressed harder or softer.
