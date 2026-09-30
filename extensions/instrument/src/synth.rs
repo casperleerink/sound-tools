@@ -9,7 +9,7 @@ use sound_core::{
     AudioOutput, Envelope, EnvelopeState, EventInput, Ports, PrepareConfig, ProcessContext,
     Processor, Smoothed,
 };
-use sound_notes::{NoteEvent, Pedal, Pitch, Velocity};
+use sound_notes::{NoteEvent, Pedal, Pitch, Velocity, Wheels};
 
 use crate::{SynthState, Waveform};
 
@@ -90,7 +90,8 @@ struct Voice {
     started: u64,
     /// In cycles, from 0 to 1.
     phase: f32,
-    phase_step: f32,
+    /// The phase step of the pitch of the key, before the wheels move it.
+    key_step: f32,
     /// From the velocity.
     amplitude: f32,
     envelope: EnvelopeState,
@@ -121,7 +122,7 @@ impl Voice {
         pitch: None,
         started: 0,
         phase: 0.0,
-        phase_step: 0.0,
+        key_step: 0.0,
         amplitude: 0.0,
         envelope: EnvelopeState::IDLE,
         filter_state: [0.0; 2],
@@ -171,27 +172,29 @@ impl Voice {
         self.pitch = Some(pitch);
         self.started = started;
         self.amplitude = amplitude;
-        self.phase_step = (pitch.frequency_hz() / sample_rate).min(HIGHEST_PHASE_STEP);
+        self.key_step = pitch.frequency_hz() / sample_rate;
     }
 
-    /// Adds this voice to `output`. `SQUARE` picks the waveform at compile time, so the frame
-    /// loop has no waveform branch.
+    /// Adds this voice to `output`, at `pitch_ratio` times the pitch of its key. `SQUARE` picks
+    /// the waveform at compile time, so the frame loop has no waveform branch.
     fn render<const SQUARE: bool>(
         &mut self,
         output: &mut [f32],
         filter: &FilterFactors,
         envelope: &Envelope,
+        pitch_ratio: f32,
     ) {
+        let phase_step = (self.key_step * pitch_ratio).min(HIGHEST_PHASE_STEP);
         let [mut ic1, mut ic2] = self.filter_state;
         for sample in output {
-            let mut oscillator = sawtooth(self.phase, self.phase_step);
+            let mut oscillator = sawtooth(self.phase, phase_step);
             if SQUARE {
                 // A square is a sawtooth minus the same sawtooth half a cycle later.
                 let half_later = self.phase + 0.5;
                 let half_later = half_later - half_later.floor();
-                oscillator -= sawtooth(half_later, self.phase_step);
+                oscillator -= sawtooth(half_later, phase_step);
             }
-            self.phase += self.phase_step;
+            self.phase += phase_step;
             if self.phase >= 1.0 {
                 self.phase -= 1.0;
             }
@@ -227,6 +230,8 @@ pub struct Synth {
     /// Where the sustain pedal stands. Up after every `AllOff`, so a stop, a seek or an edit
     /// can leave no note hanging under a pedal nobody will lift.
     pedal: Pedal,
+    /// The bend and the vibrato of every voice. At rest after every `AllOff`, like the pedal.
+    wheels: Wheels,
 }
 
 impl Synth {
@@ -245,6 +250,7 @@ impl Synth {
             voices: [Voice::IDLE; VOICES],
             notes_started: 0,
             pedal: Pedal::UP,
+            wheels: Wheels::default(),
         }
     }
 
@@ -254,6 +260,7 @@ impl Synth {
     }
 
     fn handle(&mut self, event: NoteEvent) {
+        self.wheels.follow(event);
         match event {
             NoteEvent::On { pitch, velocity } => {
                 self.notes_started += 1;
@@ -282,6 +289,8 @@ impl Synth {
                 self.pedal = Pedal::UP;
                 self.voices.iter_mut().for_each(Voice::release);
             }
+            // The wheels followed above, and the pressure does nothing here.
+            NoteEvent::Bend(_) | NoteEvent::ModWheel(_) | NoteEvent::Pressure(_) => {}
         }
     }
 
@@ -332,10 +341,12 @@ impl Synth {
             self.move_filter(frames);
         }
         let filter = &self.filter;
+        let pitch_ratio = self.wheels.pitch_ratio(frames, self.sample_rate);
         for voice in self.voices.iter_mut().filter(|voice| !voice.is_idle()) {
+            let envelope = &self.envelope;
             match self.state.waveform {
-                Waveform::Saw => voice.render::<false>(output, filter, &self.envelope),
-                Waveform::Square => voice.render::<true>(output, filter, &self.envelope),
+                Waveform::Saw => voice.render::<false>(output, filter, envelope, pitch_ratio),
+                Waveform::Square => voice.render::<true>(output, filter, envelope, pitch_ratio),
             }
         }
         let gain_before = self.gain.current();

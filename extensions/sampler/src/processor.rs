@@ -16,7 +16,7 @@ use sound_core::{
     ProcessContext, Processor, Smoothed,
 };
 use sound_media::{Audio, SCRATCH_FRAMES, Varispeed, varispeed};
-use sound_notes::{NoteEvent, Pedal, Pitch, Velocity};
+use sound_notes::{NoteEvent, Pedal, Pitch, Velocity, Wheels};
 
 use crate::SamplerState;
 
@@ -118,8 +118,9 @@ struct Voice {
     source: Source,
     /// Where the voice is in the file, in frames of the file.
     position: f64,
-    /// Frames of the file per frame of the engine: the pitch of the key and the rates.
-    step: f64,
+    /// Frames of the file per frame of the engine: the pitch of the key and the rates, before
+    /// the wheels move it.
+    key_step: f64,
     /// Where the part of the file that plays ends, in frames of the file.
     end: f64,
     /// From the velocity.
@@ -137,7 +138,7 @@ impl Voice {
         started: 0,
         source: Source::Current,
         position: 0.0,
-        step: 1.0,
+        key_step: 1.0,
         end: 0.0,
         amplitude: 0.0,
         envelope: EnvelopeState::IDLE,
@@ -182,8 +183,9 @@ impl Voice {
         }
     }
 
-    /// Adds this voice to `left` and `right`, the frames between two events. `frames` holds the
-    /// sample on its way; `scratch` the file frames the filter reads.
+    /// Adds this voice to `left` and `right`, the frames between two events, at `pitch_ratio`
+    /// times the pitch of its key. `frames` holds the sample on its way; `scratch` the file
+    /// frames the filter reads.
     fn render(
         &mut self,
         audio: &Audio,
@@ -191,11 +193,12 @@ impl Voice {
         (frames, scratch): (&mut [[f32; 2]], &mut [[f32; 2]]),
         envelope: &Envelope,
         (edge_frames, fade_step): (f64, f32),
-        filter: &Varispeed,
+        (filter, pitch_ratio): (&Varispeed, f64),
     ) {
         let count = left.len().min(frames.len());
         let frames = &mut frames[..count];
-        filter.render(audio, self.position, self.step, frames, scratch);
+        let step = self.key_step * pitch_ratio;
+        filter.render(audio, self.position, step, frames, scratch);
         for (index, ((left, right), frame)) in left
             .iter_mut()
             .zip(right.iter_mut())
@@ -203,7 +206,7 @@ impl Voice {
             .enumerate()
         {
             // Engine frames from this one to the end of the part that plays.
-            let to_end = (self.end - (self.position + self.step * index as f64)) / self.step;
+            let to_end = (self.end - (self.position + step * index as f64)) / step;
             if to_end <= 0.0 {
                 self.envelope = EnvelopeState::IDLE;
                 break;
@@ -224,7 +227,7 @@ impl Voice {
             *left += frame[0] * gain;
             *right += frame[1] * gain;
         }
-        self.position += self.step * count as f64;
+        self.position += step * count as f64;
         if self.is_idle() {
             *self = Self::IDLE;
         }
@@ -242,6 +245,8 @@ pub struct Sampler {
     voices: [Voice; SLOTS],
     notes_started: u64,
     pedal: Pedal,
+    /// The bend and the vibrato of every voice. At rest after every `AllOff`, like the pedal.
+    wheels: Wheels,
     filter: &'static Varispeed,
     /// One stretch of one voice on its way into the output.
     frames: Box<[[f32; 2]]>,
@@ -268,6 +273,7 @@ impl Sampler {
             voices: [Voice::IDLE; SLOTS],
             notes_started: 0,
             pedal: Pedal::UP,
+            wheels: Wheels::default(),
             // Made here, on the control side, so the audio thread only reads it.
             filter: varispeed(),
             frames: vec![[0.0; 2]; MAX_BLOCK].into_boxed_slice(),
@@ -281,6 +287,7 @@ impl Sampler {
     }
 
     fn handle(&mut self, event: NoteEvent) {
+        self.wheels.follow(event);
         match event {
             NoteEvent::On { pitch, velocity } => self.start(pitch, velocity),
             NoteEvent::Off { pitch } => {
@@ -302,6 +309,8 @@ impl Sampler {
                 self.pedal = Pedal::UP;
                 self.voices.iter_mut().for_each(Voice::release);
             }
+            // The wheels followed above, and the pressure does nothing here.
+            NoteEvent::Bend(_) | NoteEvent::ModWheel(_) | NoteEvent::Pressure(_) => {}
         }
     }
 
@@ -328,7 +337,7 @@ impl Sampler {
             started: self.notes_started,
             source: Source::Current,
             position: settings.start,
-            step: (semitones / 12.0).exp2() * rates,
+            key_step: (semitones / 12.0).exp2() * rates,
             end: settings.end,
             amplitude: 1.0 - amount + amount * (played * played) as f32,
             envelope: EnvelopeState {
@@ -372,6 +381,7 @@ impl Sampler {
         }
         let edge_frames = (EDGE_SECONDS * f64::from(self.sample_rate)).max(1.0);
         let fade_step = 1.0 / (FADE_SECONDS * self.sample_rate).max(1.0);
+        let pitch_ratio = f64::from(self.wheels.pitch_ratio(count, self.sample_rate));
         for voice in self.voices.iter_mut().filter(|voice| !voice.is_idle()) {
             let audio = match voice.source {
                 Source::Current => self.current.as_deref(),
@@ -387,7 +397,7 @@ impl Sampler {
                 (&mut self.frames, &mut self.scratch),
                 &self.envelope,
                 (edge_frames, fade_step),
-                self.filter,
+                (self.filter, pitch_ratio),
             );
         }
         let gain_before = self.gain.current();

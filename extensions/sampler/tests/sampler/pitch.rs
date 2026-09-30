@@ -4,7 +4,9 @@
 use sampler::SamplerState;
 use sound_notes::Pitch;
 
-use crate::support::{Harness, SAMPLE_RATE, frequency, note, peak, sine};
+use crate::support::{
+    Harness, INSTRUMENT, SAMPLE_RATE, Track, frequency, id, note, peak, playing, sine,
+};
 
 /// The sine of the sample: A4, so the root is 69.
 const HZ: f64 = 440.0;
@@ -65,4 +67,33 @@ fn the_root_plays_the_file_as_it_is() {
     let played = harness.play(15_000);
     // After the attack of 1 ms, 48 frames: the envelope is at full level and the sustain is 1.
     assert_eq!(played[100..14_000], sample[100..14_000]);
+}
+
+/// The bend moves the note that sounds, two semitones either way at full bend, and the vibrato
+/// of the mod wheel is the synth's: both come from `sound_notes::Wheels`.
+#[test]
+fn a_full_bend_moves_the_note_two_semitones() {
+    let sample = sine(SAMPLE_RATE, HZ, 0.5, 3.0, 0.0);
+    let state = SamplerState {
+        root: Pitch::new(69).unwrap(),
+        ..SamplerState::default()
+    };
+    let mut harness = Harness::with_samples(&[("a4.wav", SAMPLE_RATE, sample)]);
+    let mut changes = sound_core::Changes::new();
+    // Bent up from the first frame, and down from tick 960, frame 24 000.
+    let track = Track {
+        notes: vec![note(0, 48_000, 69, 127)],
+        bend: vec![(0, 8191), (960, -8192)],
+    };
+    let track = changes.create(id("track"), track);
+    let sampler = playing("a4.wav", state);
+    changes.create(track.id().child(INSTRUMENT).unwrap(), sampler);
+    harness.project.commit("Add track", changes).unwrap();
+    let played = harness.play(48_000);
+    for (frames, semitones) in [(1_000..23_000, 2.0), (25_000..47_000, -2.0)] {
+        let measured = frequency(&played[frames]);
+        let expected = HZ * (semitones / 12.0_f64).exp2();
+        let cents = 1200.0 * (measured / expected).log2();
+        assert!(cents.abs() < 0.1, "{semitones}: {cents} cents");
+    }
 }

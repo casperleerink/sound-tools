@@ -11,19 +11,26 @@ use sound_core::{
     Ticks,
 };
 use sound_notes::{
-    AUDIO_OUTPUT, Length, NOTES_INPUT, Note, NoteEvent, Pedal, PedalChange, Pitch, Velocity,
+    AUDIO_OUTPUT, Amount, Bend, Length, NOTES_INPUT, Note, NoteEvent, Pedal, PedalChange, Pitch,
+    Velocity,
 };
 
 pub const SAMPLE_RATE: u32 = 48_000;
 
 /// The smallest owner of an instrument: its notes are in its own record.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Track {
     pub notes: Vec<Note>,
     /// Sustain pedal moves at their ticks, as a clip holds them.
     #[serde(default)]
     pub pedal: Vec<PedalChange>,
+    /// Bend wheel moves: tick and value, -8192 to 8191.
+    #[serde(default)]
+    pub bend: Vec<(u64, i16)>,
+    /// Mod wheel moves: tick and value, 0 to 127.
+    #[serde(default)]
+    pub mod_wheel: Vec<(u64, u8)>,
 }
 
 impl State for Track {
@@ -34,15 +41,16 @@ impl State for Track {
 /// The name of the child a track plays.
 pub const INSTRUMENT: &str = "instrument";
 
-/// Sends the notes of one immutable snapshot from the transport tick range. It keeps no list
-/// of held notes: when the transport stops or jumps it sends one `AllOff`.
-/// What the track sends: its notes and its pedal moves.
+/// What the track sends: its notes, its pedal moves and its wheel moves.
 #[derive(Default, PartialEq, Eq)]
 pub struct Part {
     pub notes: Vec<Note>,
     pub pedal: Vec<PedalChange>,
+    pub wheels: Vec<(Ticks, NoteEvent)>,
 }
 
+/// Sends the notes of one immutable snapshot from the transport tick range. It keeps no list
+/// of held notes: when the transport stops or jumps it sends one `AllOff`.
 #[derive(Default)]
 pub struct Sequencer(Arc<Part>);
 
@@ -71,11 +79,17 @@ impl Processor for Sequencer {
                 .event_outputs
                 .push(Self::NOTES, 0, NoteEvent::AllOff);
         }
-        // The pedal first, so an off on the same frame sees where it stands.
+        // The pedal and the wheels first, so an off on the same frame sees where the pedal
+        // stands and an on starts where the wheels stand.
         for change in &self.0.pedal {
             if let Some(offset) = transport.offset_of(change.start) {
                 let event = NoteEvent::Pedal(change.value);
                 context.event_outputs.push(Self::NOTES, offset, event);
+            }
+        }
+        for (tick, event) in &self.0.wheels {
+            if let Some(offset) = transport.offset_of(*tick) {
+                context.event_outputs.push(Self::NOTES, offset, *event);
             }
         }
         // All offs before all ons: on one frame, a note that ends must not end the note of
@@ -95,9 +109,18 @@ impl Processor for Sequencer {
 
 fn apply_track(state: &Track, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let sequencer = context.processor("sequencer", Sequencer::default)?;
+    let bends = (state.bend.iter()).map(|&(tick, value)| {
+        let bend = Bend::nearest(i64::from(value));
+        (Ticks(tick), NoteEvent::Bend(bend))
+    });
+    let mod_wheel = (state.mod_wheel.iter()).map(|&(tick, value)| {
+        let amount = Amount::nearest(i64::from(value));
+        (Ticks(tick), NoteEvent::ModWheel(amount))
+    });
     let part = Part {
         notes: state.notes.clone(),
         pedal: state.pedal.clone(),
+        wheels: bends.chain(mod_wheel).collect(),
     };
     context.update(sequencer, Arc::new(part))?;
     if let Some(notes) = context.child_input(INSTRUMENT, NOTES_INPUT) {
@@ -171,7 +194,7 @@ impl Harness {
             id(name),
             Track {
                 notes,
-                pedal: Vec::new(),
+                ..Track::default()
             },
         );
         changes.create(track.id().child(INSTRUMENT).unwrap(), synth);

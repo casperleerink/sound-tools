@@ -12,17 +12,20 @@ use sound_core::{
     Ticks,
 };
 use sound_media::AudioAsset;
-use sound_notes::{AUDIO_OUTPUT, Length, NOTES_INPUT, Note, NoteEvent, Pitch, Velocity};
+use sound_notes::{AUDIO_OUTPUT, Bend, Length, NOTES_INPUT, Note, NoteEvent, Pitch, Velocity};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 /// At 120 bpm, 960 ticks a beat: 25 frames a tick.
 pub const FRAMES_PER_TICK: u64 = 25;
 
 /// The smallest owner of an instrument: its notes are in its own record.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Track {
     pub notes: Vec<Note>,
+    /// Bend wheel moves: tick and value, -8192 to 8191.
+    #[serde(default)]
+    pub bend: Vec<(u64, i16)>,
 }
 
 impl State for Track {
@@ -32,17 +35,17 @@ impl State for Track {
 
 pub const INSTRUMENT: &str = "instrument";
 
-/// Sends the notes of one snapshot from the transport tick range, and one `AllOff` when the
-/// transport stops or jumps.
+/// Sends the notes and the bend of one snapshot from the transport tick range, and one `AllOff`
+/// when the transport stops or jumps.
 #[derive(Default)]
-pub struct Sequencer(Arc<Vec<Note>>);
+pub struct Sequencer(Arc<Track>);
 
 impl Sequencer {
     pub const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
 }
 
 impl Processor for Sequencer {
-    type Update = Arc<Vec<Note>>;
+    type Update = Arc<Track>;
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::NOTES)
@@ -50,7 +53,7 @@ impl Processor for Sequencer {
 
     fn prepare(&mut self, _: &PrepareConfig) {}
 
-    fn update(&mut self, update: &mut Arc<Vec<Note>>) {
+    fn update(&mut self, update: &mut Arc<Track>) {
         std::mem::swap(&mut self.0, update);
     }
 
@@ -61,12 +64,19 @@ impl Processor for Sequencer {
                 .event_outputs
                 .push(Self::NOTES, 0, NoteEvent::AllOff);
         }
-        for note in self.0.iter() {
+        // The bend first, so a note on the same frame starts bent.
+        for &(tick, value) in &self.0.bend {
+            if let Some(offset) = transport.offset_of(Ticks(tick)) {
+                let bend = NoteEvent::Bend(Bend::nearest(i64::from(value)));
+                context.event_outputs.push(Self::NOTES, offset, bend);
+            }
+        }
+        for note in &self.0.notes {
             if let Some(offset) = transport.offset_of(note.end()) {
                 context.event_outputs.push(Self::NOTES, offset, note.off());
             }
         }
-        for note in self.0.iter() {
+        for note in &self.0.notes {
             if let Some(offset) = transport.offset_of(note.start) {
                 context.event_outputs.push(Self::NOTES, offset, note.on());
             }
@@ -76,7 +86,7 @@ impl Processor for Sequencer {
 
 fn apply_track(state: &Track, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let sequencer = context.processor("sequencer", Sequencer::default)?;
-    context.update(sequencer, Arc::new(state.notes.clone()))?;
+    context.update(sequencer, Arc::new(state.clone()))?;
     if let Some(notes) = context.child_input(INSTRUMENT, NOTES_INPUT) {
         context.connect(OutputEndpoint::new(sequencer, Sequencer::NOTES).to(notes))?;
     }
@@ -175,7 +185,13 @@ impl Harness {
     /// One track named `track` with these notes and a sampler as its instrument.
     pub fn add_track(&mut self, notes: Vec<Note>, sampler: SamplerState) {
         let mut changes = Changes::new();
-        let track = changes.create(id("track"), Track { notes });
+        let track = changes.create(
+            id("track"),
+            Track {
+                notes,
+                ..Track::default()
+            },
+        );
         changes.create(track.id().child(INSTRUMENT).unwrap(), sampler);
         self.project.commit("Add track", changes).unwrap();
     }

@@ -234,8 +234,12 @@ impl DrumPad {
                     self.hit(pad, velocity);
                 }
             }
-            // A drum is struck and rings out: a note off and the pedal do nothing.
-            NoteEvent::Off { .. } | NoteEvent::Pedal(_) => {}
+            // A drum is struck and rings out: a note off, the pedal and the wheels do nothing.
+            NoteEvent::Off { .. }
+            | NoteEvent::Pedal(_)
+            | NoteEvent::Bend(_)
+            | NoteEvent::ModWheel(_)
+            | NoteEvent::Pressure(_) => {}
             // A stop or a jump of the transport: everything fades out.
             NoteEvent::AllOff => {
                 let fade_frames = self.fade_frames;
