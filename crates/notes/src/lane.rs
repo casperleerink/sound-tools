@@ -95,27 +95,33 @@ pub fn value_at<V: LaneValue>(points: &[Point<V>], tick: Ticks) -> Option<V> {
 /// The lane with every point dropped that the straight line through the points it keeps
 /// passes within [`LaneValue::STEP`] of. The first and the last point stay. So a recorded
 /// wheel is a small file, and it plays as it was played.
+///
+/// One pass: from the last kept point, the lines that pass every point since within a step
+/// have slopes between `lowest` and `highest`. A point whose own slope is outside them is the
+/// end of a line, and the point before it is kept. A minute of pressure is thinned as fast as
+/// it is read.
 pub fn thinned<V: LaneValue>(points: &[Point<V>]) -> Vec<Point<V>> {
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return Vec::new();
     };
     let mut kept = vec![*first];
-    let mut anchor = 0;
-    // Each point from the anchor on is kept only when the line from the anchor to the point
-    // after it would pass too far from one of the points in between.
-    for next in 2..points.len() {
-        let (Some(from), Some(to)) = (points.get(anchor), points.get(next)) else {
-            break;
+    let mut anchor = *first;
+    let (mut lowest, mut highest) = (f64::NEG_INFINITY, f64::INFINITY);
+    let slope = |from: &Point<V>, to: &Point<V>, offset: i32| {
+        let rise = f64::from(to.value.number() + offset - from.value.number());
+        rise / (to.tick.0 as f64 - from.tick.0 as f64)
+    };
+    for pair in points.windows(2) {
+        let [before, point] = pair else {
+            continue;
         };
-        let between = points.get(anchor + 1..next).unwrap_or_default();
-        let close = between.iter().all(|point| {
-            let on_line = from.towards(*to, point.tick).number();
-            (on_line - point.value.number()).abs() <= V::STEP
-        });
-        if !close {
-            anchor = next - 1;
-            kept.extend(points.get(anchor));
+        if !(lowest..=highest).contains(&slope(&anchor, point, 0)) {
+            anchor = *before;
+            kept.push(anchor);
+            (lowest, highest) = (f64::NEG_INFINITY, f64::INFINITY);
         }
+        lowest = lowest.max(slope(&anchor, point, -V::STEP));
+        highest = highest.min(slope(&anchor, point, V::STEP));
     }
     if points.len() > 1 {
         kept.push(*last);
