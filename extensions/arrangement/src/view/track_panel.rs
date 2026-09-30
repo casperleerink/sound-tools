@@ -140,7 +140,7 @@ const EMPTY_EFFECT_SLOT: &str = "No effect";
 
 /// How tall a menu of offers grows before it scrolls: every built-in effect fits, and the
 /// plugins of this machine scroll into view under them.
-const OFFERS_HEIGHT: f32 = 440.;
+const OFFERS_HEIGHT: f32 = 480.;
 
 /// What the control at the end of the rack says.
 const ADD_EFFECT: &str = "Add effect";

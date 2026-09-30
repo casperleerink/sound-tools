@@ -240,8 +240,7 @@ impl RenderOnce for MenuList {
         let groups = self
             .entries
             .into_iter()
-            .enumerate()
-            .filter_map(|(group_ix, entry)| match entry {
+            .filter_map(|entry| match entry {
                 MenuEntry::Separator => {
                     Some(div().h(px(1.)).mx(px(8.)).bg(line).into_any_element())
                 }
@@ -330,7 +329,8 @@ impl RenderOnce for MenuList {
                         .flex()
                         .flex_col()
                         .gap(px(2.))
-                        .p(px(8.))
+                        .px(px(8.))
+                        .py(px(4.))
                         .when_some(group.label, |d, label| {
                             d.child(
                                 div()
@@ -361,21 +361,20 @@ impl RenderOnce for MenuList {
                 .child(note)
         });
 
+        // The groups are 4 pt apart and 8 pt from the edge of the menu.
+        let groups = div().flex().flex_col().py(px(4.)).children(groups);
         let max_height = self.max_height;
         self.base
             .flex()
             .flex_col()
             .map(|d| match max_height {
                 Some(height) => d.child(
-                    div()
+                    groups
                         .id("menu-scroll")
                         .overflow_y_scroll()
-                        .max_h(px(height))
-                        .flex()
-                        .flex_col()
-                        .children(groups),
+                        .max_h(px(height)),
                 ),
-                None => d.children(groups),
+                None => d.child(groups),
             })
             .children(notes)
     }
