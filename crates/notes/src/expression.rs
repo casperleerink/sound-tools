@@ -1,7 +1,7 @@
 //! The wheels and the key pressure: where they stand, and what the bundled instruments do with
 //! them.
 
-use sound_core::Lfo;
+use sound_core::{Lfo, LfoShape};
 
 use crate::{Amount, Bend, NoteEvent};
 
@@ -72,7 +72,7 @@ impl Wheels {
     pub fn pitch_ratio(&mut self, frames: usize, sample_rate: f32) -> f32 {
         let bend = self.expression.bend.fraction() * Self::BEND_SEMITONES;
         let depth = self.expression.mod_wheel.fraction() * Self::VIBRATO_SEMITONES;
-        let vibrato = depth * self.vibrato.value(0.0);
+        let vibrato = depth * self.vibrato.value(LfoShape::Sine, 0.0);
         self.vibrato.advance(frames, Self::VIBRATO_HZ, sample_rate);
         ((bend + vibrato) / 12.0).exp2()
     }

@@ -20,8 +20,8 @@
 use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, Lfo, Ports, PrepareConfig, ProcessContext, Processor,
-    Smoothed, soft_clip,
+    AudioInput, AudioOutput, CHANNELS, Lfo, LfoShape, Ports, PrepareConfig, ProcessContext,
+    Processor, Smoothed, soft_clip,
 };
 
 use crate::{FilterState, FilterType, Slope};
@@ -332,7 +332,7 @@ impl Filter {
         let resonance = self.resonance.advance(frames);
         let slope = self.slope.advance(frames);
         let depth = self.lfo_depth.advance(frames);
-        let lfo = self.lfo.value(0.0);
+        let lfo = self.lfo.value(LfoShape::Sine, 0.0);
         self.lfo.advance(frames, self.lfo_rate_hz, self.sample_rate);
         self.level = self.level_target;
         if !changes {
