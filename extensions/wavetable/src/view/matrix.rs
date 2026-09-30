@@ -121,16 +121,26 @@ impl WavetableView {
             .child(source)
             .child(Icon::new("arrow-right").size(12.).color(muted))
             .child(destination)
-            .child(amount)
+            // The line and its number say what they are under the pointer, as the close icon
+            // does: the row has no room for a label line.
             .child(
                 div()
-                    .w(px(READOUT_WIDTH))
+                    .id(("route-amount-tip", index))
+                    .tooltip(|_, cx| Tooltip::new("Amount").view(cx))
                     .flex()
-                    .justify_end()
-                    .font(typography::tabular())
-                    .text_size(px(12.))
-                    .text_color(text)
-                    .child(amount_readout(route.amount)),
+                    .items_center()
+                    .gap(px(GAP))
+                    .child(amount)
+                    .child(
+                        div()
+                            .w(px(READOUT_WIDTH))
+                            .flex()
+                            .justify_end()
+                            .font(typography::tabular())
+                            .text_size(px(12.))
+                            .text_color(text)
+                            .child(amount_readout(route.amount)),
+                    ),
             )
             .child(
                 div()

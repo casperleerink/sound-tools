@@ -340,6 +340,8 @@ pub struct WavetableView {
     /// The remove buttons of the routes and the add button, which the keys reach.
     remove_focus: Vec<gpui::FocusHandle>,
     add_focus: gpui::FocusHandle,
+    /// How many routes the matrix had at the last change, which its rows are counted from.
+    routes: usize,
 }
 
 impl WavetableView {
@@ -351,7 +353,15 @@ impl WavetableView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.wavetable.id() => cx.notify(),
+            ProjectEvent::Changed(id) if id == view.wavetable.id() => {
+                // A route more or less, from outside during a drag of an amount: the rows
+                // moved, and the drag would go on on another route. It ends there.
+                let routes = view.routes(cx);
+                if std::mem::replace(&mut view.routes, routes) != routes {
+                    view.edit.finish(&view.session, cx);
+                }
+                cx.notify()
+            }
             // Deleted under a drag, from outside. The delete was the last write, so the
             // gesture finishes and does not cancel: a cancel would bring the record back.
             ProjectEvent::Deleted(id) if id == view.wavetable.id() => {
@@ -364,6 +374,11 @@ impl WavetableView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
+        let routes = session
+            .read(cx)
+            .project()
+            .state(&wavetable)
+            .map_or(0, |state| state.matrix.len());
         let remove_focus = (0..crate::MAX_ROUTES)
             .map(|_| cx.focus_handle().tab_stop(true))
             .collect();
@@ -377,7 +392,14 @@ impl WavetableView {
             lfo: LfoShown::default(),
             remove_focus,
             add_focus: cx.focus_handle().tab_stop(true),
+            routes,
         }
+    }
+
+    /// The routes the record has now.
+    fn routes(&self, cx: &gpui::App) -> usize {
+        let state = self.session.read(cx).project().state(&self.wavetable);
+        state.map_or(0, |state| state.matrix.len())
     }
 
     /// Shows or hides the sections, as the expand icon does.

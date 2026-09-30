@@ -5,7 +5,7 @@
 //!
 //! Only whether it is open, the keyboard highlight and the focus are kept, in element state
 //! under the id. Tab reaches the trigger; enter or space opens the list, up and down move in
-//! it, enter picks and escape closes, and the focus goes back to the trigger.
+//! it, enter picks and escape or tab closes, and the focus goes back to the trigger.
 
 use std::rc::Rc;
 
@@ -151,9 +151,12 @@ impl RenderOnce for Select {
                             });
                         }
                     }
+                    // Tab goes on to the next control, and the list closes behind it.
+                    "tab" => return close(&state, window, cx),
                     "enter" => {
                         let row = flat(&entries)
                             .get(highlighted)
+                            .filter(|item| !item.is_disabled())
                             .map(|item| item.value.clone());
                         match row {
                             Some(row) => pick(row, window, cx),
