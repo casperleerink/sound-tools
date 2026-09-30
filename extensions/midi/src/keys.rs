@@ -18,7 +18,7 @@ use sound_core::{
     EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor, Ticks,
     monotonic_nanos,
 };
-use sound_notes::{NoteEvent, Pedal, Pitch, Velocity};
+use sound_notes::{Amount, Bend, Expression, NoteEvent, Pedal, Pitch, Velocity};
 
 /// Messages the input ring holds. A keyboard sends a few hundred a second at most, and the
 /// audio thread empties the ring every block, so this is far more than a burst needs.
@@ -29,8 +29,8 @@ pub const REPORT_CAPACITY: usize = 4096;
 
 /// One message from a keyboard, as far as this application cares.
 ///
-/// Everything else is left out on purpose: no pitch bend, no mod wheel, no aftertouch, no
-/// other controller, no channel. All inputs and all channels are merged.
+/// Everything else is left out on purpose: no other controller, no pressure per key, no
+/// channel. All inputs and all channels are merged.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Played {
     On {
@@ -44,6 +44,10 @@ pub enum Played {
         velocity: u8,
     },
     Pedal(Pedal),
+    Bend(Bend),
+    ModWheel(Amount),
+    /// Channel pressure, also called aftertouch.
+    Pressure(Amount),
 }
 
 impl Played {
@@ -68,6 +72,18 @@ impl Played {
             MidiMessage::ControlChange(_, ControlFunction::DAMPER_PEDAL, value) => {
                 Some(Self::Pedal(Pedal::new(u8::from(value)).ok()?))
             }
+            // Only the coarse half of the wheel: the fine half (controller 33) is 1/128 of one
+            // step, and few keyboards send it.
+            MidiMessage::ControlChange(_, ControlFunction::MODULATION_WHEEL, value) => {
+                Some(Self::ModWheel(Amount::new(u8::from(value)).ok()?))
+            }
+            // MIDI sends 0 to 16383 with the middle at 8192.
+            MidiMessage::PitchBendChange(_, bend) => Some(Self::Bend(
+                Bend::new(i16::try_from(u16::from(bend)).ok()? - 8192).ok()?,
+            )),
+            MidiMessage::ChannelPressure(_, pressure) => {
+                Some(Self::Pressure(Amount::new(u8::from(pressure)).ok()?))
+            }
             _ => None,
         }
     }
@@ -78,6 +94,9 @@ impl Played {
             Self::On { pitch, velocity } => NoteEvent::On { pitch, velocity },
             Self::Off { pitch, .. } => NoteEvent::Off { pitch },
             Self::Pedal(value) => NoteEvent::Pedal(value),
+            Self::Bend(bend) => NoteEvent::Bend(bend),
+            Self::ModWheel(amount) => NoteEvent::ModWheel(amount),
+            Self::Pressure(amount) => NoteEvent::Pressure(amount),
         }
     }
 }
@@ -209,10 +228,12 @@ pub struct Keys {
     release: Arc<Release>,
     /// The release this processor took. It tells the control side it is out.
     taken: u64,
-    /// The pitches the live input holds, and whether it holds the pedal. This is the only
-    /// place that knows, so this is the only place that can release it.
+    /// The pitches the live input holds, whether it holds the pedal, and where it left the
+    /// wheels. This is the only place that knows, so this is the only place that can release
+    /// it.
     held: [bool; 128],
     pedal_is_down: bool,
+    expression: Expression,
     /// A release that is not out yet, because the event buffer of a block filled up.
     releasing: bool,
 }
@@ -235,6 +256,7 @@ impl Keys {
             taken: 0,
             held: [false; 128],
             pedal_is_down: false,
+            expression: Expression::REST,
             releasing: false,
         };
         let shared = Shared {
@@ -245,8 +267,8 @@ impl Keys {
         (keys, Input(Arc::new(shared)), read_reports, lost_reports)
     }
 
-    /// Sends the pedal up and an off for every pitch the live input holds. The pedal goes
-    /// first, else the offs would latch under it and nothing would be released.
+    /// Sends the pedal up, the wheels to rest and an off for every pitch the live input holds.
+    /// The pedal goes first, else the offs would latch under it and nothing would be released.
     ///
     /// What does not fit in this block is sent in the next one: the state of a pitch is
     /// cleared only when its off is out.
@@ -256,6 +278,20 @@ impl Keys {
                 return;
             }
             self.pedal_is_down = false;
+        }
+        if !self.expression.is_at_rest() {
+            let rest = Expression::REST;
+            for event in [
+                NoteEvent::Bend(rest.bend),
+                NoteEvent::ModWheel(rest.mod_wheel),
+                NoteEvent::Pressure(rest.pressure),
+            ] {
+                // Sent again in full next block: a wheel that is already at rest stays there.
+                if !event_outputs.push(Self::NOTES, 0, event) {
+                    return;
+                }
+            }
+            self.expression = rest;
         }
         for pitch in 0..self.held.len() {
             if !self.held[pitch] {
@@ -281,6 +317,9 @@ impl Keys {
             Played::On { pitch, .. } => self.held[usize::from(pitch.number())] = true,
             Played::Off { pitch, .. } => self.held[usize::from(pitch.number())] = false,
             Played::Pedal(value) => self.pedal_is_down = value.is_down(),
+            Played::Bend(_) | Played::ModWheel(_) | Played::Pressure(_) => {
+                self.expression.follow(played.event());
+            }
         }
     }
 }

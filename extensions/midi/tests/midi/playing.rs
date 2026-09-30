@@ -3,9 +3,9 @@
 
 use midi::INPUT_CAPACITY;
 use sound_core::Ticks;
-use sound_notes::{NoteEvent, Pedal};
+use sound_notes::{Amount, Bend, NoteEvent, Pedal};
 
-use crate::support::{Harness, off, on, pedal, pitch};
+use crate::support::{Harness, bend, off, on, pedal, pitch};
 
 #[test]
 fn a_key_sounds_at_the_start_of_the_next_block() {
@@ -214,4 +214,26 @@ fn a_message_that_is_lost_releases_what_is_held() {
     harness.run(64, 64);
     let heard = harness.heard();
     assert_eq!(heard[0], (64, NoteEvent::Off { pitch: pitch(60) }));
+}
+
+/// A wheel left away from rest is held like a key: switching the track puts it back at rest in
+/// the instrument it bent, and that instrument is not left out of tune.
+#[test]
+fn switching_the_port_puts_a_moved_wheel_back_at_rest() {
+    let mut harness = Harness::new();
+    harness.input.send(bend(4096));
+    harness.run(64, 64);
+    assert_eq!(harness.heard().len(), 1);
+
+    let other = harness.add_ears();
+    harness.wire(Some(other));
+    assert_eq!(
+        harness.heard(),
+        [
+            (64, NoteEvent::Bend(Bend::MIDDLE)),
+            (64, NoteEvent::ModWheel(Amount::NONE)),
+            (64, NoteEvent::Pressure(Amount::NONE)),
+        ]
+    );
+    assert_eq!(harness.heard_by(other), []);
 }

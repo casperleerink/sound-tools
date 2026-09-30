@@ -3,7 +3,7 @@
 
 use sound_core::Ticks;
 
-use crate::support::{Harness, TICK, off, on, pedal};
+use crate::support::{Harness, TICK, bend, off, on, pedal};
 
 /// The clock the harness plays by: 120 bpm in 4/4 at 48 kHz.
 fn clock() -> sound_core::Clock {
@@ -149,4 +149,16 @@ fn recording_stops_and_a_second_take_is_a_take_of_its_own() {
     let second = harness.keyboard.finish_recording(until).unwrap();
     assert_eq!(second.events.len(), 1);
     assert_eq!(second.start, from);
+}
+
+/// A clip does not hold the wheels yet, so a take leaves them out and the take of a bent note is
+/// the note.
+#[test]
+fn the_wheels_are_left_out_of_the_take() {
+    let take = recorded(
+        &[(2400, on(60, 88)), (3000, bend(4096)), (4800, off(60))],
+        9600,
+    );
+    assert_eq!(take.events.len(), 2);
+    assert_eq!(take.clip(&clock()).unwrap().notes.len(), 1);
 }

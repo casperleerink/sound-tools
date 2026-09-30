@@ -9,7 +9,7 @@ use sound_core::{
     monotonic_nanos,
 };
 
-use sound_notes::Pedal;
+use sound_notes::{Expression, Pedal};
 
 use crate::keys::{Input, Keys, Played, Sounded};
 use crate::take::{Take, TakeEvent};
@@ -114,6 +114,8 @@ pub struct Keyboard {
     /// The pitches the live input holds, one bit each, as the reports have it. It is what the
     /// processor holds, so this side can tell whether a release is needed at all.
     live_notes: u128,
+    /// Where the wheels stand, as the reports have it. Away from rest is held like a key.
+    live_expression: Expression,
     /// Reports that were lost. Then this side does not know what is held, and a release is
     /// sent whether the mirror says so or not.
     seen_lost_reports: u64,
@@ -137,6 +139,7 @@ impl Keyboard {
             latency: Latency::default(),
             live_pedal: Pedal::UP,
             live_notes: 0,
+            live_expression: Expression::REST,
             seen_lost_reports: 0,
         })
     }
@@ -174,11 +177,12 @@ impl Keyboard {
         Ok(())
     }
 
-    /// Whether the live input may be holding a note or the pedal. It is what the reports say,
-    /// and "yes" whenever a report was lost, because then this side does not know.
+    /// Whether the live input may be holding a note, the pedal or a wheel. It is what the
+    /// reports say, and "yes" whenever a report was lost, because then this side does not know.
     fn holds_anything(&self) -> bool {
         self.live_notes != 0
             || self.live_pedal.is_down()
+            || !self.live_expression.is_at_rest()
             || self.lost_reports.load(Ordering::Relaxed) != self.seen_lost_reports
     }
 
@@ -244,6 +248,11 @@ impl Keyboard {
                 Played::On { pitch, .. } => self.live_notes |= 1 << pitch.number(),
                 Played::Off { pitch, .. } => self.live_notes &= !(1 << pitch.number()),
                 Played::Pedal(value) => self.live_pedal = value,
+                Played::Bend(_) | Played::ModWheel(_) | Played::Pressure(_) => {
+                    self.live_expression.follow(sounded.arrived.played.event());
+                    // A clip does not hold the wheels yet, so a take does not either.
+                    continue;
+                }
             }
             let Some(recording) = &mut self.recording else {
                 continue;
