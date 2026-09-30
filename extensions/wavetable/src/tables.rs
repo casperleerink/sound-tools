@@ -21,7 +21,7 @@ use crate::dsp::fold;
 pub const FRAME_LENGTH: usize = 2048;
 
 /// The most frames a table has.
-pub const MAX_FRAMES: usize = 256;
+const MAX_FRAMES: usize = 256;
 
 /// The harmonics a frame holds at full resolution: all under half its samples.
 const HARMONICS: usize = FRAME_LENGTH / 2 - 1;

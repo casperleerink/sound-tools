@@ -228,7 +228,7 @@ pub struct Unison {
 pub const UNISON_VOICES: Parameter<Unison> = Parameter {
     field: "voices",
     min: 1.0,
-    max: 8.0,
+    max: crate::synth::MAX_UNISON as f32,
     default: 1.0,
     get: |unison| f32::from(unison.voices),
     set: |unison, value| unison.voices = value as u8,
@@ -506,6 +506,10 @@ impl Default for LfoSettings {
 pub enum VoiceMode {
     Poly,
     Mono,
+}
+
+impl VoiceMode {
+    pub const ALL: [Self; 2] = [Self::Poly, Self::Mono];
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]

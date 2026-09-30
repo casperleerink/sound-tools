@@ -36,10 +36,11 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
+use crate::synth::{Update, WavetableSynth};
+
 pub use matrix::{Destination, KEY_SEMITONES, MAX_ROUTES, ROUTE_AMOUNT, Route, Source};
 pub use state::WavetableState;
-pub use synth::{MAX_UNISON, Update, VOICES, WavetableSynth};
-pub use tables::{Category, FRAME_LENGTH, MAX_FRAMES, Table, Wavetable, wavetable};
+pub use tables::{Category, FRAME_LENGTH, Table, Wavetable, wavetable};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "wavetable";
@@ -152,7 +153,7 @@ mod tests {
             names(&Destination::ALL),
             names(&LfoShape::ALL),
             names(&Routing::ALL),
-            names(&[VoiceMode::Poly, VoiceMode::Mono]),
+            names(&VoiceMode::ALL),
             names(&FilterType::ALL),
         ];
         for name in all.iter().flatten() {

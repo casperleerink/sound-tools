@@ -21,10 +21,10 @@ use crate::tables::Wavetable;
 use crate::voice::{NoteStart, Voice};
 
 /// Notes that sound at once, at most. The polyphony of a record picks how many of them play.
-pub const VOICES: usize = 16;
+pub(crate) const VOICES: usize = 16;
 
 /// Unison copies of each oscillator, at most.
-pub const MAX_UNISON: usize = 8;
+pub(crate) const MAX_UNISON: usize = 8;
 
 /// While a cutoff or a resonance moves, a voice works its filter out again this often. Four
 /// times per block of the engine: a sweep has no steps anyone can hear.
@@ -146,7 +146,7 @@ fn routing_weights(routing: Routing) -> [f32; ROUTING_WEIGHTS] {
 }
 
 /// What the processor gets from the behaviour: the record and the tables it names.
-pub struct Update {
+pub(crate) struct Update {
     pub(crate) state: WavetableState,
     pub(crate) tables: [Option<Arc<Wavetable>>; 2],
 }
@@ -407,7 +407,7 @@ fn envelopes(state: &WavetableState, sample_rate: f32) -> [Envelope; 3] {
 /// The seeds of the free-running LFOs, far from those of the notes, which count up from 0.
 const FREE_SEEDS: [u32; 2] = [u32::MAX, u32::MAX - 1];
 
-pub struct WavetableSynth {
+pub(crate) struct WavetableSynth {
     state: WavetableState,
     /// Zero until `prepare` runs.
     sample_rate: f32,
