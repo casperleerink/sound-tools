@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use super::file::{ProjectFile, SavedConnection};
 use super::instance::{Instance, InstanceId, Record, State};
-use super::{Project, ProjectError, Source};
+use super::{GROUPING_WINDOW, Project, ProjectError, Source};
 use crate::clock::TempoMap;
 
 #[derive(Clone)]
@@ -178,21 +178,30 @@ enum Side {
     After,
 }
 
-/// Groups of outside file changes that follow each other within this time are one undo step.
+/// Groups of outside file changes that follow each other within this time are one undo step,
+/// when no request is open (see [`Project::begin_request`]).
 ///
 /// An agent writes the files of one request seconds apart, far more than the quiet window
 /// that groups them for live apply. Without this, undo of a track that an agent added takes
-/// one step per file. It is a heuristic: the second milestone replaces it with the real
-/// boundaries of an agent request.
+/// one step per file. It is a heuristic for an agent that cannot say where its request begins
+/// and ends, such as one in a terminal.
 pub const OUTSIDE_UNDO_WINDOW: Duration = Duration::from_secs(15);
+
+/// A request of [`Project::begin_request`], until the watcher is quiet after its end.
+struct Request {
+    label: String,
+    /// When [`Project::end_request`] was called.
+    ended: Option<Instant>,
+}
 
 #[derive(Default)]
 pub(crate) struct History {
     undo: Vec<Step>,
     redo: Vec<Step>,
     /// When the step on top of `undo` is an outside step and nothing came after it: when its
-    /// last group was applied. An interface edit, an undo and a redo all clear it.
+    /// last group was heard. An interface edit, an undo and a redo all clear it.
     last_outside: Option<Instant>,
+    request: Option<Request>,
     /// The committed state of every record that an open edit has published over: what it was
     /// before the first publish, or what a file change, an undo or a redo made of it since.
     /// The live state of such a record is the middle of a gesture, which no undo step may
@@ -272,13 +281,28 @@ impl History {
         }
     }
 
-    /// A group of outside changes, applied at `at`. It joins the step on top when that is an
-    /// outside step from less than [`OUTSIDE_UNDO_WINDOW`] before, with nothing in between.
-    /// The joined step keeps its older before side and takes the newer after side.
+    /// A group of outside changes, heard at `at`. It joins the step on top when that is an
+    /// outside step with nothing in between, of the open request or from less than
+    /// [`OUTSIDE_UNDO_WINDOW`] before. The joined step keeps its older before side and takes
+    /// the newer after side.
     pub fn push_outside(&mut self, label: &str, applied: Applied, at: Instant) {
-        let recent = self
-            .last_outside
-            .is_some_and(|last| at.saturating_duration_since(last) < OUTSIDE_UNDO_WINDOW);
+        let quiet_since_end = self
+            .request
+            .as_ref()
+            .and_then(|request| request.ended)
+            .is_some_and(|ended| at.saturating_duration_since(ended) >= GROUPING_WINDOW);
+        if quiet_since_end {
+            self.request = None;
+            self.last_outside = None;
+        }
+        let recent = self.last_outside.is_some_and(|last| {
+            self.request.is_some() || at.saturating_duration_since(last) < OUTSIDE_UNDO_WINDOW
+        });
+        let label = self
+            .request
+            .as_ref()
+            .map_or(label, |request| request.label.as_str())
+            .to_string();
         match self.undo.last_mut().filter(|_| recent) {
             Some(step) => {
                 step.absorb(applied);
@@ -292,7 +316,7 @@ impl History {
             }
             None => {
                 let mut step = Step {
-                    label: label.to_string(),
+                    label,
                     ..Step::default()
                 };
                 step.absorb(applied);
@@ -320,6 +344,34 @@ pub struct Edit {
 }
 
 impl Project {
+    /// Begins a request: until it ends, every outside change joins one undo step named
+    /// `label`, however far apart the changes are. For an agent that knows where a request
+    /// begins and ends. An interface edit, an undo or a redo still ends the step, and the
+    /// changes of the request after it make a new step with the same label. A request that is
+    /// still open is replaced.
+    pub fn begin_request(&mut self, label: &str) {
+        self.history.request = Some(Request {
+            label: label.to_string(),
+            ended: None,
+        });
+        // The request starts its own step, even right after other outside changes.
+        self.history.last_outside = None;
+    }
+
+    /// Ends the request. Outside changes heard less than [`GROUPING_WINDOW`] later still join
+    /// its step, because the watcher may hear the last write of a request only after the
+    /// request has ended. Later changes follow [`OUTSIDE_UNDO_WINDOW`] again, in a new step.
+    pub fn end_request(&mut self) {
+        self.end_request_at(Instant::now());
+    }
+
+    /// [`Self::end_request`] with the time of the end given, for tests of the undo grouping.
+    pub fn end_request_at(&mut self, at: Instant) {
+        if let Some(request) = &mut self.history.request {
+            request.ended = Some(at);
+        }
+    }
+
     /// Begins an edit. `label` names the undo step, for example "Change frequency".
     pub fn begin(&self, label: &str) -> Edit {
         Edit {
