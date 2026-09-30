@@ -7,6 +7,7 @@
 mod audio;
 mod effects;
 mod held_notes;
+mod lanes;
 mod live_edits;
 mod master;
 mod mixer;
