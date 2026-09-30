@@ -11,10 +11,11 @@
 //! What is only about the interface is here: the label, the unit, the travel of the knob, the
 //! name of the undo step and whether the card is expanded.
 
-use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
+use gpui::{Context, Entity, Point, SharedString, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
+use sound_ui::components::curves::{Adsr, EnvelopeHandle, envelope_display};
 use sound_ui::components::device_card::{CardFrame, Column};
-use sound_ui::components::display::{Axis, Display, Handle};
+use sound_ui::components::display::Display;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, KnobScale, short};
 use sound_ui::components::segmented_control::SegmentedControl;
@@ -129,49 +130,6 @@ fn readout(unit: Unit, value: f32) -> String {
 /// The width of the display: the synth card is 352 pt, with two columns of cells.
 const DISPLAY_WIDTH: f32 = 200.;
 
-/// Where the envelope sits in its display, as places from 0 to 1, `y` up.
-///
-/// Each time has a zone of its own across, on the travel of its knob: any time from 1 ms to
-/// 10 s shows, and its handle moves as its knob turns. A stage starts where the one before it
-/// ends, so the axis of its handle is the knob's range moved along by that place.
-mod envelope {
-    use sound_ui::components::knob::KnobRange;
-
-    /// Where the attack starts.
-    pub const LEFT: f32 = 0.04;
-    /// The zone of one time.
-    pub const ZONE: f32 = 0.28;
-    /// How long a held note is drawn at the sustain level.
-    pub const HOLD: f32 = 0.1;
-    /// Full level and silence, clear of the edges so a handle there can be taken.
-    pub const TOP: f32 = 0.88;
-    pub const BOTTOM: f32 = 0.08;
-
-    /// The range of a time whose zone starts at `start`: `time.position(value)` of the knob,
-    /// squeezed into the zone and moved to its start. A logarithmic range stays one when it is
-    /// stretched and moved, with other ends.
-    pub fn time_axis(time: KnobRange, start: f32) -> KnobRange {
-        let ratio = time.max / time.min;
-        let min = time.min * ratio.powf(-start / ZONE);
-        KnobRange::logarithmic(min, min * ratio.powf(1. / ZONE))
-    }
-
-    /// The range of the sustain level, from silence at `BOTTOM` to full level at `TOP`.
-    pub fn level_axis() -> KnobRange {
-        let min = -BOTTOM / (TOP - BOTTOM);
-        KnobRange::linear(min, min + 1. / (TOP - BOTTOM))
-    }
-
-    /// The places of the stages: the peak after the attack, the end of the decay, the end of
-    /// the hold and the end of the release.
-    pub fn stages(time: KnobRange, attack: f32, decay: f32, release: f32) -> [f32; 4] {
-        let peak = LEFT + ZONE * time.position(attack);
-        let decayed = peak + ZONE * time.position(decay);
-        let held = decayed + HOLD;
-        [peak, decayed, held, held + ZONE * time.position(release)]
-    }
-}
-
 pub struct SynthView {
     session: Entity<Session>,
     synth: Instance<SynthState>,
@@ -237,82 +195,61 @@ impl SynthView {
             }))
     }
 
-    /// A handle that moves one time sideways, at a fixed height. It edits what its knob edits.
-    fn time_handle(
-        &self,
-        control: &'static Control,
-        (start, height): (f32, f32),
-        state: &SynthState,
-        cx: &mut Context<Self>,
-    ) -> Handle {
-        let parameter = control.parameter;
-        let x = Axis::new(
-            envelope::time_axis(control.range(), start),
-            (parameter.get)(state),
-            parameter.default,
-        );
-        let id = control.label.to_lowercase();
-        Handle::new(SharedString::from(id), x, Axis::fixed(height)).on_change(weak_callback(
-            cx,
-            move |view, change: ValueChange<Point<f32>>, cx| {
-                let (session, synth) = (&view.session, &view.synth);
-                let set = |state: &mut SynthState, place: Point<f32>| {
-                    (parameter.set)(state, control.clamp(place.x))
-                };
-                view.edit
-                    .apply(session, synth, control.undo_label, change, set, cx);
-            },
-        ))
-    }
-
-    /// The envelope, with a handle at the end of each stage, and the waveform at its top.
+    /// The envelope, with a handle at the end of each stage, and the waveform at its top. A
+    /// handle edits the field its knob edits, under the same name, and the corner after the
+    /// decay moves the decay and the sustain in one undo step.
     fn display(&self, state: &SynthState, cx: &mut Context<Self>) -> Display {
-        use envelope::{BOTTOM, LEFT, TOP};
-        let time = ATTACK_KNOB.range();
-        let (attack, decay) = (state.attack_seconds, state.decay_seconds);
-        let (sustain, release) = (state.sustain, state.release_seconds);
-        let [peak, decayed, held, released] = envelope::stages(time, attack, decay, release);
-        let level = BOTTOM + sustain.clamp(0., 1.) * (TOP - BOTTOM);
-        let curve = [
-            point(LEFT, BOTTOM),
-            point(peak, TOP),
-            point(decayed, level),
-            point(held, level),
-            point(released, BOTTOM),
-        ];
-        // The corner after the decay moves two values: its time sideways, the sustain level up
-        // and down. One drag of it is one undo step.
-        let corner = Handle::new(
-            "decay",
-            Axis::new(envelope::time_axis(time, peak), decay, DECAY.default),
-            Axis::new(envelope::level_axis(), sustain, SUSTAIN.default),
-        )
-        .on_change(weak_callback(
+        let adsr = Adsr {
+            attack: state.attack_seconds,
+            decay: state.decay_seconds,
+            sustain: state.sustain,
+            release: state.release_seconds,
+        };
+        let defaults = Adsr {
+            attack: ATTACK.default,
+            decay: DECAY.default,
+            sustain: SUSTAIN.default,
+            release: RELEASE.default,
+        };
+        let on_change = weak_callback(
             cx,
-            |view, change: ValueChange<Point<f32>>, cx| {
+            |view, (handle, change): (EnvelopeHandle, ValueChange<Point<f32>>), cx| {
                 let (session, synth) = (&view.session, &view.synth);
-                let set = |state: &mut SynthState, place: Point<f32>| {
-                    state.decay_seconds = DECAY_KNOB.clamp(place.x);
-                    state.sustain = SUSTAIN_KNOB.clamp(place.y);
+                let (label, set): (_, fn(&mut SynthState, Point<f32>)) = match handle {
+                    EnvelopeHandle::Attack => (ATTACK_KNOB.undo_label, |state, place| {
+                        state.attack_seconds = ATTACK_KNOB.clamp(place.x)
+                    }),
+                    EnvelopeHandle::Decay => ("Change decay and sustain", |state, place| {
+                        state.decay_seconds = DECAY_KNOB.clamp(place.x);
+                        state.sustain = SUSTAIN_KNOB.clamp(place.y);
+                    }),
+                    EnvelopeHandle::Release => (RELEASE_KNOB.undo_label, |state, place| {
+                        state.release_seconds = RELEASE_KNOB.clamp(place.x)
+                    }),
                 };
-                let label = "Change decay and sustain";
                 view.edit.apply(session, synth, label, change, set, cx);
             },
-        ));
+        );
         let caption = format!(
             "A {} · D {} · S {} · R {}",
-            readout(Unit::Seconds, attack),
-            readout(Unit::Seconds, decay),
-            readout(Unit::Part, sustain),
-            readout(Unit::Seconds, release),
+            readout(Unit::Seconds, adsr.attack),
+            readout(Unit::Seconds, adsr.decay),
+            readout(Unit::Part, adsr.sustain),
+            readout(Unit::Seconds, adsr.release),
         );
-        Display::new("envelope", DISPLAY_WIDTH)
-            .curve(curve)
-            .handle(self.time_handle(&ATTACK_KNOB, (LEFT, TOP), state, cx))
-            .handle(corner)
-            .handle(self.time_handle(&RELEASE_KNOB, (held, BOTTOM), state, cx))
-            .caption(caption)
-            .child(div().ml_auto().child(self.waveform(state, cx)))
+        // The synth's own stages are drawn straight.
+        let straight = [0.; 3];
+        let time = ATTACK_KNOB.range();
+        envelope_display(
+            "envelope",
+            DISPLAY_WIDTH,
+            time,
+            (adsr, defaults),
+            straight,
+            on_change,
+        )
+        .caption(caption)
+        .child(div().ml_auto().child(self.waveform(state, cx)))
     }
 
     fn waveform(&self, state: &SynthState, cx: &mut Context<Self>) -> SegmentedControl {
@@ -422,36 +359,5 @@ mod tests {
                 assert_eq!(back, value, "{}", parameter.field);
             }
         }
-    }
-
-    /// A handle at the place of a time gives that time back, with the digits its knob gives.
-    #[test]
-    fn a_time_handle_is_where_its_knob_says_and_gives_its_value_back() {
-        let time = ATTACK_KNOB.range();
-        for start in [envelope::LEFT, 0.3, 0.62] {
-            let axis = envelope::time_axis(time, start);
-            for value in [0.001, 0.005, 0.2, 1.5, 10.0] {
-                let place = axis.position(value);
-                let expected = start + envelope::ZONE * time.position(value);
-                assert!((place - expected).abs() < 1e-4, "{start} {value}: {place}");
-                assert!((axis.value(place) - value).abs() <= value * 1e-3, "{value}");
-            }
-        }
-    }
-
-    #[test]
-    fn the_sustain_handle_runs_from_silence_to_full_level() {
-        let level = envelope::level_axis();
-        assert!((level.position(0.) - envelope::BOTTOM).abs() < 1e-6);
-        assert!((level.position(1.) - envelope::TOP).abs() < 1e-6);
-        assert_eq!(level.value(level.position(0.25)), 0.25);
-    }
-
-    /// The longest envelope still fits the display.
-    #[test]
-    fn every_envelope_fits_its_display() {
-        let time = ATTACK_KNOB.range();
-        let [_, _, _, end] = envelope::stages(time, 10., 10., 10.);
-        assert!(end <= 1., "{end}");
     }
 }

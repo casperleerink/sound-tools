@@ -11,6 +11,7 @@ pub mod notice;
 pub(crate) mod paint;
 
 pub mod cell;
+pub mod curves;
 pub mod device_card;
 pub mod display;
 pub mod drag_number;
@@ -20,6 +21,8 @@ pub mod limiter_display;
 pub mod meter;
 pub mod pad;
 pub mod segmented_control;
+pub mod select;
+pub mod slider;
 pub mod text_input;
 pub mod toggle;
 pub mod volume;

@@ -33,6 +33,14 @@ impl EnvelopeCurves {
     fn overshoot(curve: f32) -> f64 {
         ENVELOPE_FLOOR.powf(2.0 * f64::from(curve.clamp(0.0, 1.0)) - 1.0)
     }
+
+    /// How far a stage with this curve is on its way after `part` of its time, both from 0 to
+    /// 1: the shape of the stage, for a view to draw.
+    pub fn progress(curve: f32, part: f32) -> f32 {
+        let overshoot = Self::overshoot(curve);
+        let left = (overshoot / (1.0 + overshoot)).powf(f64::from(part.clamp(0.0, 1.0)));
+        ((1.0 + overshoot) * (1.0 - left)) as f32
+    }
 }
 
 /// The envelope at one sample rate, as per-frame factors. Each stage is `level * coefficient +
@@ -235,6 +243,33 @@ mod tests {
                 done(state)
             })
             .unwrap_or(0)
+    }
+
+    /// The shape a view draws is the attack the envelope plays.
+    #[test]
+    fn the_progress_of_a_stage_is_where_the_envelope_is() {
+        for curve in [0.0, 0.5, 1.0] {
+            let curves = EnvelopeCurves {
+                attack: curve,
+                decay: curve,
+                release: curve,
+            };
+            let envelope = Envelope::curved(0.1, 0.1, 0.5, 0.1, curves, RATE);
+            let mut state = EnvelopeState::IDLE;
+            state.start();
+            for frame in 1..=4_800 {
+                let level = state.next(&envelope) as f32;
+                if frame % 480 == 0 {
+                    let drawn = EnvelopeCurves::progress(curve, frame as f32 / 4_800.);
+                    assert!(
+                        (level - drawn).abs() < 1e-3,
+                        "{curve} {frame}: {level} {drawn}"
+                    );
+                }
+            }
+        }
+        assert!((EnvelopeCurves::progress(0.0, 0.5) - 0.5).abs() < 1e-3);
+        assert_eq!(EnvelopeCurves::progress(1.0, 1.0), 1.0);
     }
 
     #[test]

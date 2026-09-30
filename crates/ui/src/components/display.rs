@@ -13,6 +13,9 @@
 //!
 //! A handle may carry a number, such as the band of an EQ: its dot is then larger, with the
 //! number in it, and [`Handle::on_press`] hears every press on it, so that a click selects it.
+//! A handle may also be the whole display, with no dot ([`Handle::area`]): a drag anywhere on
+//! it moves the value, as the position of a wavetable moves. The controls at the top of the
+//! display stay above it.
 //!
 //! The display knows no device. The owner gives the curve as points on the display and the
 //! handles with their values, and hears what a handle moves.
@@ -48,6 +51,8 @@ const HANDLE: f32 = 10.;
 /// The dot of a handle with a number in it.
 const NUMBERED_HANDLE: f32 = 16.;
 const HANDLE_RING: f32 = 1.5;
+/// The quiet lines behind the curve, such as the frames of a wavetable.
+const LINE_WIDTH: f32 = 1.;
 /// The target of a handle is larger than its dot: a trackpad is not a mouse.
 const HANDLE_TARGET: f32 = 18.;
 /// A full-scale waveform stops this far from the top and the bottom of the display.
@@ -105,6 +110,7 @@ pub struct Handle {
     hollow: bool,
     label: Option<SharedString>,
     dimmed: bool,
+    area: bool,
     on_press: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     on_change: Option<ChangeHandler<HandleValues>>,
 }
@@ -118,6 +124,7 @@ impl Handle {
             hollow: false,
             label: None,
             dimmed: false,
+            area: false,
             on_press: None,
             on_change: None,
         }
@@ -139,6 +146,14 @@ impl Handle {
     /// drag does.
     pub fn on_press(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_press = Some(Rc::new(f));
+        self
+    }
+
+    /// A handle that is the whole display, with no dot: a drag anywhere on it moves what it
+    /// moves, from where that is. Under the controls at the top of the display and the other
+    /// handles.
+    pub fn area(mut self) -> Self {
+        self.area = true;
         self
     }
 
@@ -172,6 +187,10 @@ pub struct Display {
     marks: Vec<Point<f32>>,
     /// A second line, dashed and not filled, from left to right.
     dashed: Vec<Point<f32>>,
+    /// Quiet lines behind the curve.
+    lines: Vec<Vec<Point<f32>>>,
+    /// Whether the curve is filled down to the bottom.
+    filled: bool,
     waveform: Waveform,
     handles: Vec<Handle>,
     caption: Option<SharedString>,
@@ -191,6 +210,8 @@ impl Display {
             zero: None,
             marks: Vec::new(),
             dashed: Vec::new(),
+            lines: Vec::new(),
+            filled: true,
             waveform: Waveform::default(),
             handles: Vec::new(),
             caption: None,
@@ -247,6 +268,19 @@ impl Display {
         self
     }
 
+    /// Quiet lines behind the curve and not filled, each from left to right, such as the
+    /// frames of a wavetable around the one that plays.
+    pub fn lines(mut self, lines: impl IntoIterator<Item = Vec<Point<f32>>>) -> Self {
+        self.lines = lines.into_iter().collect();
+        self
+    }
+
+    /// Whether the curve is filled down to the bottom, as a level is. A wave is not.
+    pub fn filled(mut self, filled: bool) -> Self {
+        self.filled = filled;
+        self
+    }
+
     pub fn handle(mut self, handle: Handle) -> Self {
         self.handles.push(handle);
         self
@@ -294,6 +328,7 @@ struct Ink {
     grid: Hsla,
     zero: Hsla,
     thin: Hsla,
+    line: Hsla,
     waveform: Hsla,
     shade: Hsla,
     signal: Hsla,
@@ -317,6 +352,8 @@ struct Drawing {
     zero: Option<f32>,
     marks: Vec<Point<f32>>,
     dashed: Vec<Point<f32>>,
+    lines: Vec<Vec<Point<f32>>>,
+    filled: bool,
     waveform: Waveform,
 }
 
@@ -353,6 +390,8 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
         zero,
         marks,
         dashed,
+        lines,
+        filled,
         waveform,
     } = drawing;
     let mask = ContentMask { bounds };
@@ -387,9 +426,20 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
         if let Some(path) = stroke(bounds, dashed, THIN_WIDTH, Some(DASH)) {
             window.paint_path(path, ink.thin);
         }
+        for line in lines {
+            if let Some(path) = stroke(bounds, line, LINE_WIDTH, None) {
+                window.paint_path(path, ink.line);
+            }
+        }
         let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
             return;
         };
+        if !filled {
+            if let Some(stroke) = stroke(bounds, curve, CURVE_WIDTH, None) {
+                window.paint_path(stroke, ink.curve);
+            }
+            return;
+        }
         let mut area = PathBuilder::fill();
         area.move_to(at(bounds, point(first.x, 0.)));
         for place in curve {
@@ -496,13 +546,18 @@ fn handle_element(
         None => HANDLE,
     };
     let on_press = handle.on_press;
+    let area = handle.area;
     div()
         .id(handle.id)
         .debug_selector(move || format!("handle-{selector}"))
         .absolute()
-        .left(px(place.x * width - HANDLE_TARGET / 2.))
-        .top(px((1. - place.y) * height - HANDLE_TARGET / 2.))
-        .size(px(HANDLE_TARGET))
+        .map(|target| match area {
+            true => target.top_0().left_0().w(px(width)).h(px(height)),
+            false => target
+                .left(px(place.x * width - HANDLE_TARGET / 2.))
+                .top(px((1. - place.y) * height - HANDLE_TARGET / 2.))
+                .size(px(HANDLE_TARGET)),
+        })
         .flex()
         .items_center()
         .justify_center()
@@ -510,25 +565,27 @@ fn handle_element(
         .when(hides_under_files, |d| {
             d.group_drag_over::<ExternalPaths>(INSET_GROUP, |style| style.opacity(0.))
         })
-        .child(
-            div()
-                .size(px(dot))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .bg(fill)
-                .border(px(HANDLE_RING))
-                .border_color(border)
-                .font(typography::tabular())
-                .text_size(px(10.))
-                .line_height(px(10.))
-                .font_weight(gpui::FontWeight::MEDIUM)
-                // The number is in the colour of the ring on a full dot, and of the dot on a
-                // hollow one: always the other of the two.
-                .text_color(border)
-                .children(handle.label),
-        )
+        .when(!area, |target| {
+            target.child(
+                div()
+                    .size(px(dot))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(fill)
+                    .border(px(HANDLE_RING))
+                    .border_color(border)
+                    .font(typography::tabular())
+                    .text_size(px(10.))
+                    .line_height(px(10.))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    // The number is in the colour of the ring on a full dot, and of the dot on a
+                    // hollow one: always the other of the two.
+                    .text_color(border)
+                    .children(handle.label),
+            )
+        })
         // A handle that does not drag still hears its presses. One that drags hears them in
         // its own listener, before the drag, which stops the press there.
         .when_some(
@@ -593,6 +650,7 @@ impl RenderOnce for Display {
             grid: theme.alpha_at(0.04),
             zero: theme.alpha_at(0.08),
             thin: theme.gray_950.opacity(0.5),
+            line: theme.alpha_at(0.16),
             waveform: theme.alpha_at(0.30),
             shade: theme.gray_50.opacity(0.72),
             signal: theme.green,
@@ -605,6 +663,8 @@ impl RenderOnce for Display {
             zero: self.zero,
             marks: self.marks,
             dashed: self.dashed,
+            lines: self.lines,
+            filled: self.filled,
             waveform: self.waveform,
         };
         let drawing = canvas(
@@ -615,15 +675,30 @@ impl RenderOnce for Display {
         .top_0()
         .left_0()
         .size_full();
-        let area = (self.width, INSET_HEIGHT);
-        let handles: Vec<_> = self
-            .handles
-            .into_iter()
-            .map(|handle| {
-                let hides = self.takes_files;
-                handle_element(&self.id, handle, hides, area, handle_colors, window, cx)
-            })
-            .collect();
+        let size = (self.width, INSET_HEIGHT);
+        let (areas, handles): (Vec<_>, Vec<_>) =
+            self.handles.into_iter().partition(|handle| handle.area);
+        let mut element = |handle| {
+            let hides = self.takes_files;
+            handle_element(&self.id, handle, hides, size, handle_colors, window, cx)
+        };
+        let areas: Vec<_> = areas.into_iter().map(&mut element).collect();
+        let handles: Vec<_> = handles.into_iter().map(&mut element).collect();
+        // Over an area, a control at the top takes its own presses and not the area under it.
+        // A scroll still goes past it to the rack.
+        let controls: Vec<AnyElement> = match areas.is_empty() {
+            true => self.children,
+            false => self
+                .children
+                .into_iter()
+                .map(|control| {
+                    div()
+                        .block_mouse_except_scroll()
+                        .child(control)
+                        .into_any_element()
+                })
+                .collect(),
+        };
 
         self.base
             .id(self.id)
@@ -639,6 +714,7 @@ impl RenderOnce for Display {
                     .rounded(px(6.))
                     .bg(inset)
                     .child(drawing)
+                    .children(areas)
                     .child(
                         div()
                             .absolute()
@@ -648,7 +724,7 @@ impl RenderOnce for Display {
                             .p(px(6.))
                             .flex()
                             .items_start()
-                            .children(self.children),
+                            .children(controls),
                     )
                     .children(handles)
                     .children(self.overlays),

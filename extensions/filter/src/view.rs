@@ -9,9 +9,12 @@
 //! here: the label, the unit, the travel of a knob, the name of the undo step and whether the
 //! card is expanded.
 
-use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
+use gpui::{Context, Entity, Point, SharedString, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::cell::Cell;
+use sound_ui::components::curves::{
+    DRAWN_AT, RESPONSE_CAPTION, resonance_travel, response_curve, response_decades, response_height,
+};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
@@ -30,17 +33,6 @@ pub const NAME: &str = "Filter";
 /// The width of the display. With it and two columns of cells the card is 352 pt, as DESIGN.md
 /// gives the filter.
 const DISPLAY_WIDTH: f32 = 200.;
-
-/// The display shows gains from here to there, in dB. The top leaves room for the peak of full
-/// resonance, +11.5 dB.
-const DISPLAY_DB: (f32, f32) = (-36., 18.);
-
-/// The sample rate the curve is drawn for. The curve of another rate differs only near the top
-/// of the scale, where the display has no room to show it.
-const DRAWN_AT: f32 = 48_000.;
-
-/// Points of the curve across the display.
-const CURVE_POINTS: usize = 96;
 
 /// Registers the view of the `filter` tool and what a rack calls one.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -133,51 +125,6 @@ fn readout(unit: Unit, value: f32) -> String {
         Unit::Part => format!("{}%", short(value * 100.0)),
         Unit::Octaves => format!("{} oct", short(value)),
     }
-}
-
-/// Where a gain in dB is on the display, from 0 at the bottom to 1 at the top.
-fn height_of(db: f32) -> f32 {
-    let (bottom, top) = DISPLAY_DB;
-    ((db - bottom) / (top - bottom)).clamp(0., 1.)
-}
-
-/// The response curve across the display, which spans the range of the cutoff.
-fn curve(state: &FilterState) -> Vec<Point<f32>> {
-    let across = CUTOFF_KNOB.scale;
-    (0..=CURVE_POINTS)
-        .map(|step| {
-            let x = step as f32 / CURVE_POINTS as f32;
-            let gain = response(state, across.value(x), DRAWN_AT);
-            point(x, height_of(20. * gain.max(1e-6).log10()))
-        })
-        .collect()
-}
-
-/// Up and down on the display is resonance, placed so that the handle sits on the peak of a
-/// low or high pass: its gain at the cutoff is the product of the Qs of the sections, which is
-/// a straight line in dB over resonance. So the handle is where the curve is, and the range of
-/// its travel is that line stretched over the height of the display.
-fn resonance_travel(slope: Slope) -> KnobRange {
-    let db_at = |resonance| {
-        let state = FilterState {
-            resonance,
-            slope,
-            mix: 1.,
-            kind: FilterType::LowPass,
-            ..FilterState::default()
-        };
-        20. * response(&state, state.cutoff_hz, DRAWN_AT).log10()
-    };
-    let (at_none, at_full) = (height_of(db_at(0.)), height_of(db_at(1.)));
-    let per_resonance = at_full - at_none;
-    KnobRange::linear(-at_none / per_resonance, (1. - at_none) / per_resonance)
-}
-
-/// The places across of 100 Hz, 1 kHz and 10 kHz, the scale under the display.
-fn decades() -> Vec<f32> {
-    [100., 1_000., 10_000.]
-        .map(|hz| CUTOFF_KNOB.scale.position(hz))
-        .to_vec()
 }
 
 pub struct FilterView {
@@ -288,11 +235,11 @@ impl FilterView {
                 }
             }));
         Display::new("display", DISPLAY_WIDTH)
-            .curve(curve(state))
-            .grid(decades(), Vec::new())
-            .zero_line(height_of(0.))
+            .curve(response_curve(|hz| response(state, hz, DRAWN_AT)))
+            .grid(response_decades(), Vec::new())
+            .zero_line(response_height(0.))
             .handle(self.handle(state, cx))
-            .caption("100 · 1k · 10k")
+            .caption(RESPONSE_CAPTION)
             .child(types)
     }
 
@@ -374,24 +321,6 @@ mod tests {
             for value in [parameter.min, parameter.default, parameter.max] {
                 let back = range.value(range.position(value));
                 assert_eq!(back, value, "{}", parameter.field);
-            }
-        }
-    }
-
-    /// The handle sits on the peak of a low pass, at every resonance and both slopes.
-    #[test]
-    fn the_handle_is_on_the_curve_at_the_cutoff() {
-        for slope in Slope::ALL {
-            for resonance in [0., 0.3, 0.7, 1.] {
-                let state = FilterState {
-                    resonance,
-                    slope,
-                    ..FilterState::default()
-                };
-                let handle = resonance_travel(slope).position(resonance);
-                let gain = response(&state, state.cutoff_hz, DRAWN_AT);
-                let curve = height_of(20. * gain.log10());
-                assert!((handle - curve).abs() < 1e-4, "{slope:?} {resonance}");
             }
         }
     }
