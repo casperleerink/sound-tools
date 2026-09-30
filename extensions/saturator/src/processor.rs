@@ -4,7 +4,7 @@
 //! A curve bends every peak it rounds off into harmonics, and a hard bend makes them far above
 //! the top of hearing. At the sample rate those fold back as tones that are not in tune with
 //! anything. So the curve runs at four times the rate, between two stages of oversampling that
-//! take the high harmonics away first, see [`oversampling`](crate::oversampling). The dry sound
+//! take the high harmonics away first, see [`Oversampler`]. The dry sound
 //! waits in a delay as long as the oversampling, so the two stay in phase in the mix.
 //!
 //! The automatic gain turns the saturated sound down by what the drive adds to a sine at
@@ -16,17 +16,15 @@
 
 use std::f32::consts::PI;
 
-use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
-    soft_clip,
-};
-
-use crate::oversampling::{DELAY_FRAMES, Kernels, Oversampler};
 use crate::{Curve, SaturatorState};
+use sound_core::{
+    AudioInput, AudioOutput, CHANNELS, Oversampler, OversamplingFilters, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, soft_clip,
+};
 
 /// How many frames the saturator delays the sound, at every sample rate: 1.3 ms at 48 kHz. It
 /// is reported as its latency, so the track stays in time.
-pub const LATENCY: u32 = DELAY_FRAMES as u32;
+pub const LATENCY: u32 = Oversampler::DELAY_FRAMES as u32;
 
 /// How long a change takes to arrive. A jump would click, or step in the sound.
 const RAMP_SECONDS: f32 = 0.02;
@@ -64,7 +62,7 @@ const REST: f32 = 1e-9;
 
 /// Frames of silent input after which the dry delay and the oversampling hold only zeros: more
 /// than the delay and the memory of every stage.
-const QUIET_FRAMES: usize = 2 * DELAY_FRAMES + 32;
+const QUIET_FRAMES: usize = 2 * Oversampler::DELAY_FRAMES + 32;
 
 /// The dry sound waits this many frames at most: a power of two over the latency.
 const DRY_FRAMES: usize = 128;
@@ -314,7 +312,7 @@ pub struct Saturator {
     sample_rate: f32,
     /// The frames a change takes.
     ramp_frames: f32,
-    kernels: Kernels,
+    filters: OversamplingFilters,
     /// The gain into the curve, as a factor.
     drive: Smoothed,
     /// The weight of each curve, in the order of [`Curve::ALL`].
@@ -353,7 +351,7 @@ impl Saturator {
         let mut saturator = Self {
             sample_rate,
             ramp_frames: 1.0,
-            kernels: Kernels::new(),
+            filters: OversamplingFilters::new(),
             drive: Smoothed::new(1.0),
             weights: [0.0; 4].map(Smoothed::new),
             tone: Smoothed::new(0.0),
@@ -533,7 +531,7 @@ impl Processor for Saturator {
                     *frame = held(*input);
                     channel.dry[(self.write + index) % DRY_FRAMES] = *frame;
                 }
-                channel.oversampler.up(&self.kernels, frames, four);
+                channel.oversampler.up(&self.filters, frames, four);
                 match steady {
                     Some(Curve::Soft) => shape_all(four, moves, tanh),
                     Some(Curve::Tape) => shape_all(four, moves, tape),
@@ -541,11 +539,11 @@ impl Processor for Saturator {
                     Some(Curve::Clip) => shape_all(four, moves, soft_clip),
                     None => shape_all_blended(four, moves),
                 }
-                channel.oversampler.down(&self.kernels, four, frames);
+                channel.oversampler.down(&self.filters, four, frames);
                 let ([below, above], [to_below, to_above]) = (self.gains, self.gains_target);
                 let frames = frames.iter().zip(output.iter_mut()).zip(moves.iter());
                 for (index, ((curved, output), frame)) in frames.enumerate() {
-                    let delayed = self.write + index + DRY_FRAMES - DELAY_FRAMES;
+                    let delayed = self.write + index + DRY_FRAMES - Oversampler::DELAY_FRAMES;
                     let dry = channel.dry[delayed % DRY_FRAMES];
                     let blocked = curved - channel.dc.low_pass(self.dc_factor, *curved);
                     let low = channel.tone.low_pass(self.tone_factor, blocked);
