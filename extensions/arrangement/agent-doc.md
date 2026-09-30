@@ -71,6 +71,37 @@ A clip the composer recorded from a keyboard has a `pedal` list as well. Leave i
 - The pedal is not shown in the note editor yet. Edit it here.
 - `take`: the raw take this clip was recorded from, the file `assets/takes/take-1.json`. Keep the field as it is when you change the clip, move its file or copy it: it is the only way back to what the composer played. Read `agent-docs/takes.md` before you touch anything under `assets/takes/`.
 
+## Bend, mod wheel and pressure: the lanes of a clip
+
+A clip may move the bend wheel, the modulation wheel and the key pressure of its instrument, each with a lane of points. A recorded clip has a lane for every wheel that moved while recording.
+
+```json state/arrangement/lead/slide.json
+{
+  "tool": "arrangement.clip",
+  "state": {
+    "start": 0,
+    "length": 3840,
+    "notes": [{"start": 0, "length": 3840, "pitch": 64, "velocity": 90}],
+    "bend": [
+      {"tick": 0, "value": 0},
+      {"tick": 480, "value": 8191},
+      {"tick": 1920, "value": 8191},
+      {"tick": 2400, "value": 0}
+    ],
+    "mod_wheel": [{"tick": 1920, "value": 0}, {"tick": 3839, "value": 100}]
+  }
+}
+```
+
+This note slides up over an eighth, stays up, and comes back down in the third beat, while a vibrato grows over the second half of the bar.
+
+- `bend`, `mod_wheel`, `pressure`: each a list of points. Leave out a lane you do not use.
+- `tick`: where the point is, in ticks from the start of the clip, like a note start. Every point is inside the clip, below its `length`, and the points of a lane are in tick order with at most one per tick. Else the file does not load.
+- `value` of a bend: -8192 to 8191, 0 in the middle. The built-in synth and Sampler bend two semitones either way at the ends, so a semitone up is 4096. `value` of a mod wheel or pressure: 0 to 127. The synth and the Sampler add a vibrato with the mod wheel. No built-in instrument uses the pressure.
+- Between two points the value moves in a straight line. Before the first point it holds the first value, and after the last point it holds the last value until the clip ends. So a sudden move is two points a tick apart.
+- Where no clip has points, a lane is at rest: bend 0, mod wheel 0, pressure 0. It goes back there when its clip ends.
+- Clips on one track that overlap and both have points in one lane: the clip that starts later is heard in that lane.
+
 ## A track: `arrangement.track`
 
 ```json state/arrangement/piano/instance.json

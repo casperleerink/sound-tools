@@ -1,7 +1,8 @@
 //! The note editor: the notes of one clip as a piano roll, in a panel below the timeline, with
-//! the velocity lane at its bottom. Notes are added, selected, moved, resized, copied, pasted
-//! and deleted here, their velocities are dragged and drawn in the lane, and a note that is
-//! touched sounds for a moment through the instrument of its track.
+//! a lane at its bottom. Notes are added, selected, moved, resized, copied, pasted and deleted
+//! here, and a note that is touched sounds for a moment through the instrument of its track.
+//! The lane shows the velocities, which are dragged and drawn there, or one expression lane of
+//! the clip, which is drawn, erased and cleared there ([`super::lanes`]).
 //!
 //! All positions and what a drag does to a note come from [`super::roll`]. The editor keeps
 //! no copy of the clip: it reads it when it paints and when a mouse event arrives. The selected
@@ -9,22 +10,27 @@
 //! and follow the rules of the clips: a click, shift-click and cmd-click, and a rectangle.
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Entity,
     EventEmitter, FocusHandle, Focusable, FontWeight, Hitbox, HitboxBehavior, Hsla, KeyDownEvent,
-    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels,
-    Point, ScrollWheelEvent, SharedString, Subscription, Window, canvas, div, fill, point,
+    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PinchEvent,
+    Pixels, Point, ScrollWheelEvent, SharedString, Subscription, Window, canvas, div, fill, point,
     prelude::*, px, quad, size,
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent, Ticks};
 use sound_notes::{Clip, Note, Pitch, Velocity};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::components::dropdown_menu::{
+    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
+};
 use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 
 use super::clipboard::{Copied, CopiedNotes, SharedClipboard};
 use super::gesture::Zone;
+use super::lanes::{Lane, LaneEdit, Shown, drawn_between};
 use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, RulerBar, Viewport};
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
@@ -45,6 +51,9 @@ pub enum EditorEvent {
     /// Escape or the close control.
     Close,
 }
+
+/// How far the pointer moves before a press in an expression lane draws or erases, in pixels.
+const DRAG_THRESHOLD: f32 = 3.0;
 
 /// How far the alt arrows move the velocity of the selected notes.
 const VELOCITY_STEP: i64 = 10;
@@ -68,6 +77,21 @@ enum NoteDragKind {
     /// Across the lane: every bar the pointer passes gets the velocity of its height there.
     /// `last` is where the pointer was at the last mouse move, in the lane.
     DrawVelocity { last: (f32, f32) },
+    /// Across an expression lane: the line the pointer draws, as its height at each tick of
+    /// the clip it passed, over the lane of the clip at mouse down.
+    DrawLane {
+        lane: Lane,
+        origin: Clip,
+        drawn: BTreeMap<Ticks, f32>,
+        last: (f32, f32),
+    },
+    /// Alt across an expression lane: the points between the tick of the press and the pointer
+    /// go, from the lane of the clip at mouse down.
+    EraseLane {
+        lane: Lane,
+        origin: Clip,
+        from: Ticks,
+    },
 }
 
 impl NoteDragKind {
@@ -78,6 +102,8 @@ impl NoteDragKind {
             Self::Resize { .. } => "Resize note",
             Self::Velocity { .. } => plural(count, "Change velocity", "Change velocities"),
             Self::DrawVelocity { .. } => "Draw velocities",
+            Self::DrawLane { lane, drawn, .. } => lane.label(&LaneEdit::Draw(drawn)),
+            Self::EraseLane { lane, .. } => lane.label(&LaneEdit::Erase(Ticks(0)..=Ticks(0))),
         }
     }
 }
@@ -100,7 +126,8 @@ enum OnRelease {
 
 struct NoteDrag {
     kind: NoteDragKind,
-    /// The notes it changes. Empty for a draw in the lane, which finds its bars per move.
+    /// The notes it changes. Empty for a draw in the lane, which finds its bars per move, and
+    /// for a gesture in an expression lane.
     notes: Vec<Tracked>,
     /// Whether the gesture of the session is open. It opens with the first change, so a plain
     /// click on a note is no undo step.
@@ -150,6 +177,10 @@ pub struct NoteEditor {
     before_click: Selection<Note>,
     drag: Option<NoteDrag>,
     marquee: Option<Marquee>,
+    /// What the lane at the bottom shows. Kept when another clip opens.
+    shown: Shown,
+    /// The select left of the lane that picks what it shows.
+    lane_menu: Entity<DropdownMenu>,
     /// What the pointer is over, so the cursor says what a drag from there does.
     hover: Hover,
     focus_handle: FocusHandle,
@@ -166,6 +197,8 @@ enum Hover {
     Edge,
     /// A bar of the lane: a drag changes its velocity.
     Bar,
+    /// An expression lane: a drag draws.
+    Draw,
 }
 
 impl EventEmitter<EditorEvent> for NoteEditor {}
@@ -209,6 +242,23 @@ impl NoteEditor {
             }
         })
         .detach();
+        let lane_menu = cx.new(|cx| {
+            let items = Shown::ALL.map(|(_, value, label)| MenuItem::new(value, label));
+            let entries = vec![MenuEntry::Group(
+                MenuGroup::new().label("Lane").items(items),
+            )];
+            DropdownMenu::new("Lane", entries, cx)
+                .debug_name("editor-lane")
+                .trigger(Trigger::Select)
+                .width(160.)
+                .selected(Shown::default().value())
+        });
+        cx.subscribe(&lane_menu, |editor, _, picked: &MenuPicked, cx| {
+            if let Some(shown) = Shown::from_value(&picked.0) {
+                editor.show(shown, cx);
+            }
+        })
+        .detach();
         let mut editor = Self {
             session,
             clip: clip.clone(),
@@ -224,6 +274,8 @@ impl NoteEditor {
             before_click: Selection::default(),
             drag: None,
             marquee: None,
+            shown: Shown::default(),
+            lane_menu,
             hover: Hover::Nothing,
             focus_handle,
             keyboard_focus: KeyboardFocus::default(),
@@ -240,6 +292,23 @@ impl NoteEditor {
 
     pub fn viewport(&self) -> Viewport {
         self.viewport
+    }
+
+    /// What the lane at the bottom shows.
+    pub fn shown(&self) -> Shown {
+        self.shown
+    }
+
+    /// Shows the velocities or an expression lane. A drag in the lane ends first.
+    pub fn show(&mut self, shown: Shown, cx: &mut Context<Self>) {
+        if self.shown != shown {
+            self.end_drag(cx);
+            self.shown = shown;
+            let value = shown.value();
+            self.lane_menu
+                .update(cx, |menu, cx| menu.set_selected(value, cx));
+            cx.notify();
+        }
     }
 
     pub(super) fn painted(&self) -> Rc<Cell<Viewport>> {
@@ -448,8 +517,10 @@ impl NoteEditor {
             return;
         }
         if y >= ROLL_HEIGHT {
-            if x >= 0.0 {
-                self.press_lane(event.modifiers, x, y - ROLL_HEIGHT, cx);
+            match self.shown {
+                _ if x < 0.0 => {}
+                Shown::Velocity => self.press_lane(event.modifiers, x, y - ROLL_HEIGHT, cx),
+                Shown::Lane(lane) => self.press_expression(lane, event, x, y - ROLL_HEIGHT, cx),
             }
             return;
         }
@@ -582,6 +653,116 @@ impl NoteEditor {
         self.press_note(note, NoteDragKind::Velocity { grab: y }, modifiers, cx);
     }
 
+    /// A press in an expression lane, at `y` from its top. A drag from it draws the line of the
+    /// pointer, with alt it erases, and a double click clears the lane. A press alone changes
+    /// nothing, so the first click of a double click is no undo step.
+    fn press_expression(
+        &mut self,
+        lane: Lane,
+        event: &MouseDownEvent,
+        x: f32,
+        y: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.session.read(cx).project();
+        let Some(origin) = project.state(&self.clip).cloned() else {
+            return;
+        };
+        if event.click_count == 2 {
+            if !lane.is_empty(&origin) {
+                let mut cleared = origin.clone();
+                lane.edit(&mut cleared, &origin, &LaneEdit::Clear);
+                self.commit(lane.label(&LaneEdit::Clear), cleared, cx);
+            }
+            return;
+        }
+        let kind = match event.modifiers.alt {
+            true => NoteDragKind::EraseLane {
+                lane,
+                origin,
+                from: self.painted.get().tick_at(x),
+            },
+            false => NoteDragKind::DrawLane {
+                lane,
+                origin,
+                drawn: BTreeMap::new(),
+                last: (x, y),
+            },
+        };
+        self.drag = Some(NoteDrag {
+            kind,
+            notes: Vec::new(),
+            begun: false,
+            on_release: None,
+            at_press: self.selection.clone(),
+        });
+    }
+
+    /// One mouse move of a gesture in an expression lane, into the gesture of the session,
+    /// which opens with the first change.
+    fn drag_expression(
+        &mut self,
+        drag: &mut NoteDrag,
+        clip: &Clip,
+        (x, y): (f32, f32),
+        grid: &Grid,
+        cx: &mut Context<Self>,
+    ) {
+        let viewport = self.painted.get();
+        let label = drag.kind.label(0);
+        let (lane, origin, edit) = match &mut drag.kind {
+            NoteDragKind::DrawLane {
+                lane,
+                origin,
+                drawn,
+                last,
+            } => {
+                // A hand that moves a little during a click draws nothing.
+                let still =
+                    (x - last.0).abs() < DRAG_THRESHOLD && (y - last.1).abs() < DRAG_THRESHOLD;
+                if drawn.is_empty() && still {
+                    return;
+                }
+                drawn.extend(drawn_between(&viewport, clip, grid, *last, (x, y)));
+                *last = (x, y);
+                (*lane, &*origin, LaneEdit::Draw(drawn))
+            }
+            NoteDragKind::EraseLane { lane, origin, from } => {
+                if !drag.begun && (x - viewport.x_of(*from)).abs() < DRAG_THRESHOLD {
+                    return;
+                }
+                let to = viewport.tick_at(x);
+                let (from, to) = match grid.snaps() {
+                    true => (grid.snap(*from), grid.snap(to)),
+                    false => (*from, to),
+                };
+                let (first, last) = ordered(from, to);
+                // In ticks of the clip. All of it before the clip erases nothing.
+                let ticks = match last.0.checked_sub(clip.start.0) {
+                    Some(end) => first.saturating_sub(clip.start)..=Ticks(end),
+                    None => Ticks(1)..=Ticks(0),
+                };
+                (*lane, &*origin, LaneEdit::Erase(ticks))
+            }
+            _ => return,
+        };
+        let mut next = clip.clone();
+        lane.edit(&mut next, origin, &edit);
+        if next == *clip {
+            return;
+        }
+        let begun = std::mem::replace(&mut drag.begun, true);
+        let instance = self.clip.clone();
+        self.session.update(cx, |session, cx| {
+            if !begun {
+                session.begin_gesture(label, cx);
+            }
+            session.gesture(cx, |project, edit_of| {
+                project.update(edit_of, &instance, |clip| lane.edit(clip, origin, &edit))
+            })
+        });
+    }
+
     /// A double click on empty space inside the clip adds a note of one unit of the grid, which
     /// a drag of the second press draws longer. Outside the clip there is nothing to add into.
     fn draw_note(
@@ -695,6 +876,14 @@ impl NoteEditor {
             self.drag = Some(drag);
             return self.end_drag(cx);
         };
+        if matches!(
+            drag.kind,
+            NoteDragKind::DrawLane { .. } | NoteDragKind::EraseLane { .. }
+        ) {
+            self.drag_expression(&mut drag, &clip, (x, y - ROLL_HEIGHT), &grid, cx);
+            self.drag = Some(drag);
+            return;
+        }
         if let NoteDragKind::DrawVelocity { last } = &mut drag.kind {
             let lane_y = y - ROLL_HEIGHT;
             let changes = drawn_velocities(&viewport, &clip, *last, (x, lane_y));
@@ -749,7 +938,9 @@ impl NoteEditor {
                 });
                 moved.collect()
             }
-            NoteDragKind::DrawVelocity { .. } => Vec::new(),
+            NoteDragKind::DrawVelocity { .. }
+            | NoteDragKind::DrawLane { .. }
+            | NoteDragKind::EraseLane { .. } => Vec::new(),
         };
         let changes: Vec<(usize, Note, Note)> = indices
             .into_iter()
@@ -869,6 +1060,7 @@ impl NoteEditor {
         let project = self.session.read(cx).project();
         let viewport = self.painted.get();
         let hover = match project.state(&self.clip) {
+            Some(_) if x >= 0.0 && y >= ROLL_HEIGHT && self.shown != Shown::Velocity => Hover::Draw,
             Some(clip) if x >= 0.0 && y >= ROLL_HEIGHT => {
                 match velocity_bars_at(&viewport, clip, x).is_empty() {
                     true => Hover::Nothing,
@@ -891,6 +1083,7 @@ impl NoteEditor {
         let hover = match self.drag.as_ref().map(|drag| &drag.kind) {
             Some(NoteDragKind::Resize { .. }) => Hover::Edge,
             Some(NoteDragKind::Velocity { .. } | NoteDragKind::DrawVelocity { .. }) => Hover::Bar,
+            Some(NoteDragKind::DrawLane { .. } | NoteDragKind::EraseLane { .. }) => Hover::Draw,
             Some(_) => Hover::Nothing,
             None => self.hover,
         };
@@ -898,6 +1091,7 @@ impl NoteEditor {
             Hover::Nothing => None,
             Hover::Edge => Some(CursorStyle::ResizeLeftRight),
             Hover::Bar => Some(CursorStyle::ResizeUpDown),
+            Hover::Draw => Some(CursorStyle::Crosshair),
         }
     }
 
@@ -1199,12 +1393,23 @@ impl NoteEditor {
             notes: visible
                 .map(|note| (note_rect(&viewport, clip, note), selected(note)))
                 .collect(),
-            velocities: clip
-                .notes
-                .iter()
-                .filter(in_time)
-                .map(|note| (velocity_bar(&viewport, clip, note), selected(note)))
-                .collect(),
+            velocities: match self.shown {
+                Shown::Velocity => clip
+                    .notes
+                    .iter()
+                    .filter(in_time)
+                    .map(|note| (velocity_bar(&viewport, clip, note), selected(note)))
+                    .collect(),
+                Shown::Lane(_) => Vec::new(),
+            },
+            line: match self.shown {
+                Shown::Velocity => Vec::new(),
+                Shown::Lane(lane) => lane.line(&viewport, clip, ticks.clone()),
+            },
+            middle: match self.shown {
+                Shown::Velocity => None,
+                Shown::Lane(lane) => lane.middle(),
+            },
             marquee: self.marquee_rect(&viewport),
         })
     }
@@ -1282,6 +1487,10 @@ struct RollScene {
     notes: Vec<(Rect, bool)>,
     /// The bars of the lane, in its coordinates, and whether the note of each is selected.
     velocities: Vec<(Rect, bool)>,
+    /// The line of the expression lane that shows, in its coordinates.
+    line: Vec<(f32, f32)>,
+    /// The height of the rest of that lane when it is not the bottom: the middle of the bend.
+    middle: Option<f32>,
     /// The rectangle of a drag on empty space.
     marquee: Option<Rect>,
 }
@@ -1409,19 +1618,30 @@ fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx
                 window.paint_quad(fill(placed(*rect, lane.origin), color));
             }
         }
+        // An expression lane: its rest when that is the middle, and its line in the track
+        // colour, as a note is.
+        if let Some(middle) = scene.middle {
+            let rest = Bounds::new(
+                lane.origin + point(px(0.), px(middle.round())),
+                size(px(width), px(1.)),
+            );
+            window.paint_quad(fill(rest, hairline));
+        }
+        let mut path = PathBuilder::stroke(px(1.5));
+        for (index, (x, y)) in scene.line.iter().enumerate() {
+            let at = lane.origin + point(px(*x), px(*y));
+            match index {
+                0 => path.move_to(at),
+                _ => path.line_to(at),
+            }
+        }
+        // A path that does not tessellate paints nothing, which is all there is to do about it.
+        if scene.line.len() > 1
+            && let Ok(path) = path.build()
+        {
+            window.paint_path(path, scene.accent);
+        }
     });
-    let lane_label = bounds.origin + point(px(24.), px(RULER_HEIGHT + height + 19.));
-    let (weight, fit) = (FontWeight::NORMAL, Fit::Truncate(HEADER_WIDTH - 48.));
-    paint_text(
-        "Velocity".into(),
-        lane_label,
-        12.,
-        weight,
-        label,
-        fit,
-        window,
-        cx,
-    );
 
     window.with_content_mask(Some(ContentMask { bounds: keys }), |window| {
         for pitch in pitches.clone() {
@@ -1525,6 +1745,14 @@ impl Render for NoteEditor {
                     .top(px(4.))
                     .left(px(HEADER_WIDTH - 8. - 24.))
                     .child(close),
+            )
+            // The select of the lane, left of it, in the middle of its height.
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px((VELOCITY_HEIGHT - 24.) / 2.))
+                    .left(px(16.))
+                    .child(self.lane_menu.clone()),
             )
     }
 }

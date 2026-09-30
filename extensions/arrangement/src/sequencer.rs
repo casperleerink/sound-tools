@@ -4,15 +4,20 @@
 //! The rule that shapes this file: a note that started always gets its off. The processor keeps
 //! a fixed list of the notes it started, with the tick of their off. Offs come from that list
 //! and never from the snapshot, so they arrive also when the clip changed, moved or went away
-//! while the note sounded.
+//! while the note sounded. The pedal and the lanes work the same way: the processor keeps what
+//! it sent and sends what the snapshot wants when that is something else.
 
+use std::iter::once;
 use std::ops::Range;
 use std::sync::Arc;
 
 use sound_core::{
     EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor, Ticks, Transport,
 };
-use sound_notes::{Clip, NoteEvent, Pedal, Pitch, PlacedNote, PlacedPedal, Velocity};
+use sound_notes::{
+    Amount, Bend, Clip, Expression, LaneValue, NoteEvent, Pedal, Pitch, PlacedNote, PlacedPedal,
+    Point, Velocity,
+};
 
 /// How long a preview note sounds. Its off comes from the processor after this time, so no
 /// interface can leave one sounding.
@@ -23,16 +28,25 @@ pub const PREVIEW_SECONDS: f32 = 0.3;
 pub const HELD_CAPACITY: usize = 128;
 
 /// Every note of a track at its place on the timeline, sorted by start and then pitch, so a
-/// block finds its notes with one binary search. The sustain pedal is kept the same way.
+/// block finds its notes with one binary search. The sustain pedal and the lanes are kept the
+/// same way.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct TrackSnapshot {
     notes: Vec<PlacedNote>,
     pedal: Vec<PlacedPedal>,
+    bend: PlayedLane<Bend>,
+    mod_wheel: PlayedLane<Amount>,
+    pressure: PlayedLane<Amount>,
 }
 
 impl TrackSnapshot {
-    /// Clips may overlap: the notes and the pedal moves of all of them play.
+    /// Clips may overlap: the notes and the pedal moves of all of them play. A lane has one
+    /// owner at a time, see [`PlayedLane::new`].
     pub fn new<'a>(clips: impl IntoIterator<Item = &'a Clip>) -> Self {
+        let clips: Vec<&Clip> = clips.into_iter().collect();
+        let bend = PlayedLane::new(&clips, |clip| &clip.bend);
+        let mod_wheel = PlayedLane::new(&clips, |clip| &clip.mod_wheel);
+        let pressure = PlayedLane::new(&clips, |clip| &clip.pressure);
         let mut notes = Vec::new();
         let mut pedal = Vec::new();
         let mut own = Vec::new();
@@ -56,7 +70,13 @@ impl TrackSnapshot {
         // The whole note is the key, so the same clips always give the same order.
         notes.sort_unstable_by_key(|note| (note.start, note.pitch, note.end, note.velocity));
         one_per_tick(&mut pedal);
-        Self { notes, pedal }
+        Self {
+            notes,
+            pedal,
+            bend,
+            mod_wheel,
+            pressure,
+        }
     }
 
     pub fn notes(&self) -> &[PlacedNote] {
@@ -93,6 +113,15 @@ impl TrackSnapshot {
             .map_or(Pedal::UP, |change| change.value)
     }
 
+    /// Where the lanes stand at `tick`.
+    pub fn expression_at(&self, tick: Ticks) -> Expression {
+        Expression {
+            bend: self.bend.at(tick),
+            mod_wheel: self.mod_wheel.at(tick),
+            pressure: self.pressure.at(tick),
+        }
+    }
+
     /// Where the note that started at `start` with `pitch` ends now. `None` when it is gone.
     /// Of several such notes, in clips that overlap, the last end.
     fn end_of(&self, start: Ticks, pitch: Pitch) -> Option<Ticks> {
@@ -103,6 +132,86 @@ impl TrackSnapshot {
         same.take_while(|note| (note.start, note.pitch) == (start, pitch))
             .map(|note| note.end)
             .max()
+    }
+}
+
+/// One expression lane of a track as it plays: stretches of straight line on the project
+/// timeline, in time order and never overlapping, from the clips that own the lane. Outside
+/// them the lane is at rest.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PlayedLane<V> {
+    pieces: Vec<Piece<V>>,
+}
+
+/// A stretch of a lane: from, up to, and the line it follows there, as two points on the
+/// project timeline. Where a clip holds its first or last value the two points are the same.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct Piece<V> {
+    from: Ticks,
+    to: Ticks,
+    line: [Point<V>; 2],
+}
+
+impl<V: LaneValue> PlayedLane<V> {
+    /// The lane `points` of `clips`. Where clips with points in it overlap, the one that
+    /// started last owns the lane, and of two that start together the later one in `clips`. A
+    /// clip without points owns nothing.
+    fn new(clips: &[&Clip], points: fn(&Clip) -> &Vec<Point<V>>) -> Self {
+        let clips: Vec<_> = clips
+            .iter()
+            .map(|clip| (clip.start, clip.end(), points(clip)))
+            .filter(|(.., points)| !points.is_empty())
+            .collect();
+        let mut edges: Vec<Ticks> = clips
+            .iter()
+            .flat_map(|(start, end, _)| [*start, *end])
+            .collect();
+        edges.sort_unstable();
+        edges.dedup();
+        let mut pieces = Vec::new();
+        for span in edges.windows(2) {
+            let &[from, to] = span else {
+                continue;
+            };
+            let holding = clips.iter().enumerate();
+            let holding = holding.filter(|(_, (start, end, _))| *start <= from && from < *end);
+            let Some((_, (start, _, points))) =
+                holding.max_by_key(|(index, (start, ..))| (*start, *index))
+            else {
+                continue;
+            };
+            let placed = |point: &Point<V>| Point {
+                tick: *start + point.tick,
+                value: point.value,
+            };
+            let (Some(first), Some(last)) = (points.first(), points.last()) else {
+                continue;
+            };
+            let (first, last) = (placed(first), placed(last));
+            let between = points.windows(2).filter_map(|pair| match pair {
+                [before, after] => Some([placed(before), placed(after)]),
+                _ => None,
+            });
+            let lines = once((Ticks(0), [first, first]))
+                .chain(between.map(|line| (line[0].tick, line)))
+                .chain(once((last.tick, [last, last])));
+            let mut lines = lines.peekable();
+            while let Some((line_from, line)) = lines.next() {
+                let line_to = lines.peek().map_or(Ticks(u64::MAX), |(next, _)| *next);
+                let (from, to) = (line_from.max(from), line_to.min(to));
+                if from < to {
+                    pieces.push(Piece { from, to, line });
+                }
+            }
+        }
+        Self { pieces }
+    }
+
+    /// Where the lane stands at `tick`.
+    fn at(&self, tick: Ticks) -> V {
+        let index = self.pieces.partition_point(|piece| piece.to <= tick);
+        let piece = self.pieces.get(index).filter(|piece| piece.from <= tick);
+        piece.map_or(V::REST, |piece| piece.line[0].towards(piece.line[1], tick))
     }
 }
 
@@ -160,6 +269,9 @@ pub struct Sequencer {
     /// the snapshot, so a seek into a held pedal, and an edit that removes one, both arrive
     /// with no case of their own.
     sent_pedal: Pedal,
+    /// Where this sequencer last put the wheels and the pressure, compared with the lanes of
+    /// the snapshot every block as the pedal is.
+    sent_expression: Expression,
 }
 
 impl Sequencer {
@@ -176,6 +288,7 @@ impl Default for Sequencer {
             previewed: None,
             preview_frames: 0,
             sent_pedal: Pedal::UP,
+            sent_expression: Expression::REST,
         }
     }
 }
@@ -219,6 +332,7 @@ impl Processor for Sequencer {
             previewed,
             preview_frames,
             sent_pedal,
+            sent_expression,
         } = self;
         let mut sender = Sender {
             event_outputs,
@@ -231,18 +345,10 @@ impl Processor for Sequencer {
             sender.send(0, NoteEvent::AllOff);
             held.clear();
             *previewed = None;
-            // `AllOff` puts the pedal of the instrument up as well.
+            // `AllOff` puts the pedal of the instrument up and its lanes at rest as well.
             *sent_pedal = Pedal::UP;
+            *sent_expression = Expression::REST;
         }
-        preview(
-            preview_wanted,
-            previewed,
-            *preview_frames,
-            context.frames,
-            held,
-            &mut sender,
-        );
-
         // The pedal, before the notes of this block: an off at the first tick of the block must
         // see the pedal the clips ask for. Only while playing, because the pedal of a stopped
         // project would hold what a keyboard plays into the same instrument.
@@ -260,6 +366,30 @@ impl Processor for Sequencer {
                 }
             }
         }
+
+        // The lanes, once per block and only what moved, at its start and before its notes. The
+        // value is the one at the last tick of the block, so a note that starts in the block
+        // starts where the lanes are going, also at the start of a clip. A seek, a play from
+        // the middle of a clip and the end of a clip need no case of their own, as for the
+        // pedal. Only while playing, for the same reason as the pedal.
+        if transport.playing && range.start < range.end {
+            let wanted = snapshot.expression_at(Ticks(range.end.0 - 1));
+            for event in sent_expression.moves_to(wanted) {
+                if sender.send(0, event) {
+                    sent_expression.follow(event);
+                }
+            }
+        }
+
+        // The preview after the pedal and the lanes, so it starts where they stand too.
+        preview(
+            preview_wanted,
+            previewed,
+            *preview_frames,
+            context.frames,
+            held,
+            &mut sender,
+        );
 
         // A held note follows the new snapshot: it takes its new end, or it ends now when its
         // note is gone or moved. A note the edit did not touch is found with the same end, so

@@ -598,6 +598,17 @@ impl Opened<'_> {
         )
     }
 
+    /// The place in the lane of the open editor at a project tick, `y` down from the top of
+    /// the lane.
+    pub fn in_lane_at(&mut self, tick: u64, y: f32) -> Point<Pixels> {
+        let editor = self.editor().unwrap();
+        let viewport = self.cx.read(|cx| editor.read(cx).viewport());
+        point(
+            px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
+            px(self.editor_top() + RULER_HEIGHT + roll::ROLL_HEIGHT + y),
+        )
+    }
+
     fn editor_top(&mut self) -> f32 {
         let height = self.cx.update(|window, _| window.viewport_size().height);
         f32::from(height) - EDITOR_HEIGHT

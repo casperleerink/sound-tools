@@ -6,7 +6,7 @@
 //! clip back as it was, with every note.
 
 use sound_core::Ticks;
-use sound_notes::{Clip, Length};
+use sound_notes::{Clip, LaneValue, Length, Point, cut};
 
 use super::layout::{Rect, shifted};
 use super::snap::Grid;
@@ -90,7 +90,29 @@ pub fn resized_left(origin: &Clip, delta: i64, unit: Ticks) -> Clip {
         }
         inside
     });
+    clip.bend = lane_resized_left(&origin.bend, delta, origin.length);
+    clip.mod_wheel = lane_resized_left(&origin.mod_wheel, delta, origin.length);
+    clip.pressure = lane_resized_left(&origin.pressure, delta, origin.length);
     clip
+}
+
+/// A lane of a clip whose left edge moved by `delta`. It keeps its place in the project, as
+/// the notes do; cut short, it keeps the value it had at the new start.
+fn lane_resized_left<V: LaneValue>(
+    points: &[Point<V>],
+    delta: i64,
+    length: Length,
+) -> Vec<Point<V>> {
+    match u64::try_from(delta) {
+        Ok(delta) => cut(points, Ticks(delta)..length.ticks()),
+        Err(_) => points
+            .iter()
+            .map(|point| Point {
+                tick: shifted(point.tick, -delta),
+                value: point.value,
+            })
+            .collect(),
+    }
 }
 
 /// The track row an arrow key moves a clip to. It stops at the first and at the last.
@@ -255,6 +277,33 @@ mod tests {
         let at_note = resized_left(&origin, 960, UNIT);
         assert_eq!(placed(&at_note), [(BAR + 2880, 0)]);
         assert_eq!(placed(&resized_left(&origin, 0, UNIT)), placed(&origin));
+        assert_eq!(resized_left(&origin, 0, UNIT), origin);
+    }
+
+    /// A lane keeps its place in the project too, and one cut through the middle of a line
+    /// keeps the value it had at the new start, so what is left sounds as it did.
+    #[test]
+    fn the_left_edge_keeps_a_lane_where_it_is_in_the_project() {
+        let mut origin = clip(BAR, BAR, &[(1920, 480)]);
+        let point = |tick, value| Point {
+            tick: Ticks(tick),
+            value: sound_notes::Bend::new(value).unwrap(),
+        };
+        origin.bend = vec![point(0, 0), point(960, 4000), point(2880, 0)];
+        let values = |clip: &Clip| -> Vec<(u64, i16)> {
+            let placed = clip.bend.iter();
+            placed
+                .map(|point| (clip.start.0 + point.tick.0, point.value.value()))
+                .collect()
+        };
+        let grown = resized_left(&origin, -960, UNIT);
+        assert_eq!(values(&grown), values(&origin));
+        // Halfway up the first line: a point there keeps the value of the line.
+        let trimmed = resized_left(&origin, 480, UNIT);
+        assert_eq!(
+            values(&trimmed),
+            [(BAR + 480, 2000), (BAR + 960, 4000), (BAR + 2880, 0)]
+        );
         assert_eq!(resized_left(&origin, 0, UNIT), origin);
     }
 

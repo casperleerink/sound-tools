@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use metronome::Click;
 use midi::{Keyboard, Played, Take};
 use sound_core::{InstanceId, Ticks};
-use sound_notes::{Clip, Pedal, Pitch, Velocity};
+use sound_notes::{Bend, Clip, Pedal, Pitch, Velocity};
 use sound_notes::{RawEvent, RawTake};
 
 use crate::support::{BAR, Harness, difference};
@@ -35,6 +35,10 @@ fn off(pitch: u8) -> Played {
 
 fn pedal(value: u8) -> Played {
     Played::Pedal(Pedal::new(value).unwrap())
+}
+
+fn bend(value: i16) -> Played {
+    Played::Bend(Bend::new(value).unwrap())
 }
 
 /// A project of one track with a synth, with the MIDI input wired to it, as the window does.
@@ -237,6 +241,57 @@ fn the_pedal_is_in_the_clip_and_holds_notes_on_playback() {
     assert_eq!(loudest(90_000..BAR), 0.0);
 }
 
+/// How often the left channel changes sign in `frames`: twice a period, so it counts the pitch.
+fn sign_changes(samples: &[f32], frames: std::ops::Range<usize>) -> usize {
+    let left: Vec<f32> = samples.iter().step_by(2).copied().collect();
+    let left = &left[frames];
+    left.windows(2)
+        .filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0))
+        .count()
+}
+
+/// A bend is in the raw take message for message and in the clip as a thinned lane, and the
+/// clip plays it back: the note is as high as it was live, and higher than without the lane.
+#[test]
+fn a_recorded_bend_is_in_the_take_and_the_clip_plays_it_back() {
+    let mut recorder = Recorder::new();
+    let mut messages = vec![(12_000, on(57, 100))];
+    // Up a whole tone in 32 even steps over a quarter of a second, then held.
+    messages.extend((0..=32).map(|step| (12_000 + step * 375, bend(step as i16 * 255))));
+    messages.push((84_000, off(57)));
+    let (take, heard) = recorder.record(&messages, BAR);
+    recorder.save(&take);
+
+    let text = std::fs::read_to_string(recorder.take_file()).unwrap();
+    assert_eq!(text.matches(r#""kind":"bend""#).count(), 33);
+    let clip = recorder.clip();
+    assert!(
+        (2..10).contains(&clip.bend.len()),
+        "a straight bend is thinned to its ends: {:?}",
+        clip.bend
+    );
+
+    let played = recorder.play_back(BAR);
+    let mut unbent = clip;
+    unbent.bend.clear();
+    let id = InstanceId::new(CLIP).unwrap();
+    let instance = recorder.harness.project.resolve::<Clip>(&id).unwrap();
+    let mut changes = sound_core::Changes::new();
+    changes.set(&instance, unbent);
+    recorder.harness.project.commit("No bend", changes).unwrap();
+    let flat = recorder.play_back(BAR);
+
+    let held = 36_000..80_000;
+    let (live, back, without) = (
+        sign_changes(&heard, held.clone()),
+        sign_changes(&played, held.clone()),
+        sign_changes(&flat, held),
+    );
+    // A whole tone is 12 percent higher.
+    assert!(live.abs_diff(back) * 100 < live, "live {live}, back {back}");
+    assert!(without * 110 < live * 100, "live {live}, without {without}");
+}
+
 /// The whole recording is one undo step. Undo removes the clip and leaves the raw take: it is
 /// the only copy of what was played.
 #[test]
@@ -322,6 +377,7 @@ fn the_raw_take_holds_what_was_played_in_real_time() {
                 sounded_us: 0,
                 value,
             },
+            other => other,
         })
         .collect();
     assert_eq!(
@@ -353,14 +409,7 @@ fn the_raw_take_holds_what_was_played_in_real_time() {
         ]
     );
     // The times are real and in order, counted from the start of the recording.
-    let times: Vec<u64> = raw
-        .events
-        .iter()
-        .map(|event| match *event {
-            RawEvent::On { time_us, .. } | RawEvent::Off { time_us, .. } => time_us,
-            RawEvent::Pedal { time_us, .. } => time_us,
-        })
-        .collect();
+    let times: Vec<u64> = raw.events.iter().map(|event| event.time_us()).collect();
     assert!(times.windows(2).all(|pair| pair[0] <= pair[1]), "{times:?}");
     assert!(!recorder.clip().notes.is_empty());
 }
