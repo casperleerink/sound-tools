@@ -12,6 +12,8 @@
 //! - `instruments`: picking the instrument of a track, and the plugin's own window.
 //! - `drum_pad`: the card of the Drum pad: its pads, its keys and samples dropped on it.
 //! - `effects`: adding and removing effects in the rack.
+//! - `wavetable`: the card of the Wavetable: the drag on its wavetable, its matrix and the
+//!   switches of its sections.
 //! - `fit`: fitting the tempo to a take, and the steadiness in the transport.
 //! - `transport`: the tempo, the click and the view following the playhead.
 //! - `piece`: a short piece made by hand from the default project, closed and opened again.
@@ -54,3 +56,4 @@ mod track_panel;
 mod transport;
 mod utility;
 mod velocity;
+mod wavetable;
