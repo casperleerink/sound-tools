@@ -6,7 +6,7 @@
 //! it, every time it changes, by a function that gives the same bytes for the same inputs:
 //!
 //! - the tempo map in `project.json`, one step per beat,
-//! - the ticks of the notes and the pedal of the take's clip.
+//! - the ticks of the notes, the pedal and the lanes of the take's clip.
 //!
 //! Neither is saved twice and neither is edited by hand. They are written by a **derive**, the
 //! core's way for a record to decide state of its own, so a change of the fit record, from the
