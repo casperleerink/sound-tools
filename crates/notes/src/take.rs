@@ -22,7 +22,10 @@
 use serde::{Deserialize, Serialize};
 use sound_core::{AssetError, AssetName, Assets, InvalidAssetName, Ticks};
 
-use crate::{Clip, Length, Note, Pedal, PedalChange, Pitch, Velocity};
+use crate::{
+    Amount, Bend, Clip, LaneValue, Length, Note, Pedal, PedalChange, Pitch, Point, Velocity,
+    thinned,
+};
 
 /// Where raw takes live under `assets/`.
 pub const TAKES_FOLDER: &str = "assets/takes";
@@ -69,7 +72,7 @@ impl From<AssetError> for TakeError {
 
 /// One message of a saved take. Both times count from the moment recording began.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RawEvent {
     On {
         time_us: u64,
@@ -89,6 +92,24 @@ pub enum RawEvent {
         sounded_us: u64,
         value: u8,
     },
+    /// The bend wheel, -8192 to 8191 with 0 in the middle.
+    Bend {
+        time_us: u64,
+        sounded_us: u64,
+        value: i16,
+    },
+    /// The modulation wheel, 0 to 127.
+    ModWheel {
+        time_us: u64,
+        sounded_us: u64,
+        value: u8,
+    },
+    /// The key pressure, 0 to 127.
+    Pressure {
+        time_us: u64,
+        sounded_us: u64,
+        value: u8,
+    },
 }
 
 impl RawEvent {
@@ -96,9 +117,12 @@ impl RawEvent {
     /// works from these.
     pub fn time_us(self) -> u64 {
         match self {
-            Self::On { time_us, .. } | Self::Off { time_us, .. } | Self::Pedal { time_us, .. } => {
-                time_us
-            }
+            Self::On { time_us, .. }
+            | Self::Off { time_us, .. }
+            | Self::Pedal { time_us, .. }
+            | Self::Bend { time_us, .. }
+            | Self::ModWheel { time_us, .. }
+            | Self::Pressure { time_us, .. } => time_us,
         }
     }
 
@@ -108,7 +132,10 @@ impl RawEvent {
         match self {
             Self::On { sounded_us, .. }
             | Self::Off { sounded_us, .. }
-            | Self::Pedal { sounded_us, .. } => sounded_us,
+            | Self::Pedal { sounded_us, .. }
+            | Self::Bend { sounded_us, .. }
+            | Self::ModWheel { sounded_us, .. }
+            | Self::Pressure { sounded_us, .. } => sounded_us,
         }
     }
 
@@ -137,6 +164,27 @@ impl RawEvent {
                 value,
             } => format!(
                 r#"{{"kind":"pedal","time_us":{time_us},"sounded_us":{sounded_us},"value":{value}}}"#
+            ),
+            Self::Bend {
+                time_us,
+                sounded_us,
+                value,
+            } => format!(
+                r#"{{"kind":"bend","time_us":{time_us},"sounded_us":{sounded_us},"value":{value}}}"#
+            ),
+            Self::ModWheel {
+                time_us,
+                sounded_us,
+                value,
+            } => format!(
+                r#"{{"kind":"mod_wheel","time_us":{time_us},"sounded_us":{sounded_us},"value":{value}}}"#
+            ),
+            Self::Pressure {
+                time_us,
+                sounded_us,
+                value,
+            } => format!(
+                r#"{{"kind":"pressure","time_us":{time_us},"sounded_us":{sounded_us},"value":{value}}}"#
             ),
         }
     }
@@ -273,6 +321,12 @@ impl RawTake {
     /// - A take that began under a held pedal starts with that value, so it plays back as it
     ///   sounded, and one that ends with the pedal down lifts it at its end, as a held note
     ///   ends there. Without the lift a clip would sustain for the rest of the piece.
+    /// - The wheels and the pressure become lanes, one point per tick, the last move of each
+    ///   tick, [`thinned`] so a recorded wheel is a small diff. Between two moves close in time
+    ///   the wheel was moving, and the lane is a straight line; after a pause it held still, and
+    ///   the lane holds the value until the next move instead of creeping towards it. A lane
+    ///   starts at rest unless the take moves it at time 0, which a recording does for a wheel
+    ///   that was away from rest when it began. A lane needs no lift: it ends with its clip.
     ///
     /// `None` when nothing was played.
     pub fn clip(&self, tick_of: impl Fn(u64) -> Ticks) -> Option<Clip> {
@@ -298,6 +352,9 @@ impl RawTake {
         let mut held: Vec<(Pitch, Ticks, Velocity)> = Vec::new();
         let mut notes = Vec::new();
         let mut pedal = Vec::new();
+        let mut bend = Recorded::default();
+        let mut mod_wheel = Recorded::default();
+        let mut pressure = Recorded::default();
         let mut pedal_value = Pedal::UP;
         if Pedal::nearest(i64::from(self.pedal_at_start)).is_down() {
             pedal_value = Pedal::nearest(i64::from(self.pedal_at_start));
@@ -339,6 +396,23 @@ impl RawTake {
                         });
                     }
                 }
+                RawEvent::Bend { value, .. } => {
+                    bend.moved(in_clip, event.sounded_us(), Bend::nearest(i64::from(value)));
+                }
+                RawEvent::ModWheel { value, .. } => {
+                    mod_wheel.moved(
+                        in_clip,
+                        event.sounded_us(),
+                        Amount::nearest(i64::from(value)),
+                    );
+                }
+                RawEvent::Pressure { value, .. } => {
+                    pressure.moved(
+                        in_clip,
+                        event.sounded_us(),
+                        Amount::nearest(i64::from(value)),
+                    );
+                }
             }
         }
         // Still held when recording ended: the note ends there.
@@ -363,6 +437,9 @@ impl RawTake {
         notes.sort_by_key(|note| (note.start, note.pitch));
         let mut clip = Clip::new(start, length, notes);
         clip.pedal = pedal;
+        clip.bend = thinned(&bend.points);
+        clip.mod_wheel = thinned(&mod_wheel.points);
+        clip.pressure = thinned(&pressure.points);
         Some(clip)
     }
 
@@ -373,5 +450,54 @@ impl RawTake {
             _ => None,
         });
         last.unwrap_or_else(|| Pedal::nearest(i64::from(self.pedal_at_start)))
+    }
+}
+
+/// A wheel in motion sends a message every few milliseconds. A longer pause between two moves
+/// means it stood still.
+const STILL_US: u64 = 50_000;
+
+/// A lane as a take moves it, and when the engine last sounded a move of it.
+struct Recorded<V> {
+    points: Vec<Point<V>>,
+    moved_us: u64,
+}
+
+impl<V> Default for Recorded<V> {
+    fn default() -> Self {
+        Self {
+            points: Vec::new(),
+            moved_us: 0,
+        }
+    }
+}
+
+impl<V: LaneValue> Recorded<V> {
+    /// A move at `tick`. A lane holds one point per tick, so a later move on the same tick
+    /// replaces the one there. Before its first move the wheel was at rest, from the start of
+    /// the take.
+    fn moved(&mut self, tick: Ticks, sounded_us: u64, value: V) {
+        let still = sounded_us.saturating_sub(self.moved_us) > STILL_US;
+        self.moved_us = sounded_us;
+        let points = &mut self.points;
+        let before = points.partition_point(|point| point.tick < tick);
+        points.truncate(before);
+        if points.is_empty() && tick > Ticks(0) {
+            points.push(Point {
+                tick: Ticks(0),
+                value: V::REST,
+            });
+        }
+        if let Some(last) = points.last().copied()
+            && still
+            && last.tick.0 + 1 < tick.0
+            && last.value != value
+        {
+            points.push(Point {
+                tick: Ticks(tick.0 - 1),
+                value: last.value,
+            });
+        }
+        points.push(Point { tick, value });
     }
 }

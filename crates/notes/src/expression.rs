@@ -37,6 +37,17 @@ impl Expression {
     pub fn is_at_rest(&self) -> bool {
         *self == Self::REST
     }
+
+    /// The events that move an instrument from here to `wanted`: one for each value that is
+    /// not there yet, and none when nothing moves.
+    pub fn moves_to(self, wanted: Self) -> impl Iterator<Item = NoteEvent> {
+        let bend = (self.bend != wanted.bend).then_some(NoteEvent::Bend(wanted.bend));
+        let mod_wheel =
+            (self.mod_wheel != wanted.mod_wheel).then_some(NoteEvent::ModWheel(wanted.mod_wheel));
+        let pressure =
+            (self.pressure != wanted.pressure).then_some(NoteEvent::Pressure(wanted.pressure));
+        [bend, mod_wheel, pressure].into_iter().flatten()
+    }
 }
 
 /// What the bundled instruments do with the wheels, so they all play the same: the bend wheel

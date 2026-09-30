@@ -11,7 +11,8 @@ use sound_core::{
     Processor, Project, Registry, State, Tempo, TempoMap, Ticks, TimeSignature,
 };
 use sound_notes::{
-    AUDIO_OUTPUT, Clip, Length, NOTES_INPUT, Note, NoteEvent, Pedal, Pitch, Velocity,
+    AUDIO_OUTPUT, Amount, Bend, Clip, Expression, Length, NOTES_INPUT, Note, NoteEvent, Pedal,
+    Pitch, Point, Velocity,
 };
 
 pub const SAMPLE_RATE: u32 = 48_000;
@@ -20,11 +21,28 @@ pub const TICK: usize = 25;
 
 /// An instrument that makes no sound but a level: `scale` times the sum of the pitches it
 /// holds. So one sample tells which notes are held, and two tracks with scales 1 and 1000 can
-/// be told apart in one device channel.
+/// be told apart in one device channel. It can show where a lane stands instead.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Probe {
     pub scale: f32,
+    #[serde(default)]
+    pub shows: Shows,
+}
+
+/// What the level of a [`Probe`] is.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Shows {
+    /// `scale` times the sum of the held pitches.
+    #[default]
+    Notes,
+    /// Where the bend wheel stands, as a number, with no scale.
+    Bend,
+    ModWheel,
+    Pressure,
+    /// Where the bend wheel stood when the last note started, so a test sees whether the note
+    /// started after the wheel on its frame.
+    BendOfLastOn,
 }
 
 impl State for Probe {
@@ -32,7 +50,7 @@ impl State for Probe {
 }
 
 pub struct ProbeProcessor {
-    scale: f32,
+    probe: Probe,
     /// Held notes per pitch. An `On` adds one. An `Off` releases every note of its pitch, as
     /// the note contract says.
     held: [u32; 128],
@@ -40,18 +58,22 @@ pub struct ProbeProcessor {
     /// is what the note contract asks of an instrument.
     sustained: [u32; 128],
     pedal: Pedal,
+    expression: Expression,
+    bend_of_last_on: Bend,
 }
 
 impl ProbeProcessor {
     const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     const OUTPUT: AudioOutput = AudioOutput::new(0);
 
-    pub fn new(scale: f32) -> Self {
+    pub fn new(probe: Probe) -> Self {
         Self {
-            scale,
+            probe,
             held: [0; 128],
             sustained: [0; 128],
             pedal: Pedal::UP,
+            expression: Expression::REST,
+            bend_of_last_on: Bend::MIDDLE,
         }
     }
 
@@ -60,12 +82,22 @@ impl ProbeProcessor {
         let sum: u32 = pitches
             .map(|(pitch, (held, sustained))| pitch as u32 * (held + sustained))
             .sum();
-        self.scale * sum as f32
+        match self.probe.shows {
+            Shows::Notes => self.probe.scale * sum as f32,
+            Shows::Bend => f32::from(self.expression.bend.value()),
+            Shows::ModWheel => f32::from(self.expression.mod_wheel.value()),
+            Shows::Pressure => f32::from(self.expression.pressure.value()),
+            Shows::BendOfLastOn => f32::from(self.bend_of_last_on.value()),
+        }
     }
 
     fn handle(&mut self, event: NoteEvent) {
+        self.expression.follow(event);
         match event {
-            NoteEvent::On { pitch, .. } => self.held[usize::from(pitch.number())] += 1,
+            NoteEvent::On { pitch, .. } => {
+                self.held[usize::from(pitch.number())] += 1;
+                self.bend_of_last_on = self.expression.bend;
+            }
             NoteEvent::Off { pitch } => {
                 let pitch = usize::from(pitch.number());
                 if self.pedal.is_down() {
@@ -86,14 +118,13 @@ impl ProbeProcessor {
                 self.sustained = [0; 128];
                 self.pedal = Pedal::UP;
             }
-            // The level is the held pitches: the wheels do not move it.
             NoteEvent::Bend(_) | NoteEvent::ModWheel(_) | NoteEvent::Pressure(_) => {}
         }
     }
 }
 
 impl Processor for ProbeProcessor {
-    type Update = f32;
+    type Update = Probe;
 
     fn ports(&self) -> Ports {
         Ports::new()
@@ -103,8 +134,8 @@ impl Processor for ProbeProcessor {
 
     fn prepare(&mut self, _: &PrepareConfig) {}
 
-    fn update(&mut self, scale: &mut f32) {
-        self.scale = *scale;
+    fn update(&mut self, probe: &mut Probe) {
+        self.probe = *probe;
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
@@ -123,8 +154,8 @@ impl Processor for ProbeProcessor {
 }
 
 fn apply_probe(state: &Probe, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
-    let probe = context.processor("probe", || ProbeProcessor::new(state.scale))?;
-    context.update(probe, state.scale)?;
+    let probe = context.processor("probe", || ProbeProcessor::new(*state))?;
+    context.update(probe, *state)?;
     context.input(
         NOTES_INPUT,
         InputEndpoint::new(probe, ProbeProcessor::NOTES),
@@ -265,6 +296,22 @@ pub fn clip_with_pedal(start: u64, length: u64, notes: Vec<Note>, pedal: &[(u64,
     clip
 }
 
+/// A point of a bend lane, counted from the clip start.
+pub fn bend(tick: u64, value: i16) -> Point<Bend> {
+    Point {
+        tick: Ticks(tick),
+        value: Bend::new(value).unwrap(),
+    }
+}
+
+/// A point of a mod wheel or pressure lane.
+pub fn amount(tick: u64, value: u8) -> Point<Amount> {
+    Point {
+        tick: Ticks(tick),
+        value: Amount::new(value).unwrap(),
+    }
+}
+
 /// The record of a clip as an agent would write it.
 pub fn clip_json(clip: &Clip) -> String {
     format!(
@@ -321,6 +368,11 @@ impl Harness {
 
     /// One track `arrangement/<name>` with a probe of this scale.
     pub fn add_track(&mut self, name: &str, scale: f32) {
+        let shows = Shows::Notes;
+        self.add_probe_track(name, Probe { scale, shows });
+    }
+
+    pub fn add_probe_track(&mut self, name: &str, probe: Probe) {
         let mut changes = Changes::new();
         let track = arrangement::add_track(
             &self.project,
@@ -328,7 +380,7 @@ impl Harness {
             &id("arrangement"),
             name,
             Colour::Blue,
-            Probe { scale },
+            probe,
         );
         assert_eq!(track.unwrap().id(), &id(&format!("arrangement/{name}")));
         self.project.commit("Add track", changes).unwrap();
@@ -340,8 +392,13 @@ impl Harness {
     }
 
     pub fn and_clips(self, clips: Vec<Clip>) -> Self {
+        self.and_clips_showing(Shows::Notes, clips)
+    }
+
+    /// The same, with a probe that shows `shows`.
+    pub fn and_clips_showing(self, shows: Shows, clips: Vec<Clip>) -> Self {
         let mut harness = self;
-        harness.add_track("piano", 1.0);
+        harness.add_probe_track("piano", Probe { scale: 1.0, shows });
         let mut changes = Changes::new();
         for (index, clip) in clips.into_iter().enumerate() {
             changes.create(id(&format!("arrangement/piano/clip-{index}")), clip);

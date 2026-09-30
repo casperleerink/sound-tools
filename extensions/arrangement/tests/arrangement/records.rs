@@ -4,7 +4,7 @@ use arrangement::{Colour, TrackState, add_clip, add_clips, add_track, clips, mov
 use sound_core::Changes;
 use sound_notes::Clip;
 
-use crate::support::{Harness, Probe, TICK, clip, id, level_changes, note};
+use crate::support::{Harness, Probe, Shows, TICK, clip, id, level_changes, note};
 
 const CLIP: &str = "state/arrangement/piano/clip-0.json";
 
@@ -33,7 +33,7 @@ fn an_invalid_clip_names_the_field_and_the_last_valid_clip_keeps_playing() {
         ),
         (
             r#"{"start": 0, "length": 3840, "notes": [], "name": "Verse"}"#,
-            "state.name: unknown field `name`, expected one of `start`, `length`, `notes`, `pedal`, `take`",
+            "state.name: unknown field `name`, expected one of `start`, `length`, `notes`, `pedal`, `bend`, `mod_wheel`, `pressure`, `take`",
         ),
         (
             r#"{"start": 15360, "length": 3840, "notes": [{"start": 0, "length": 480, "pitch": 60, "velocity": 100}, {"start": 15360, "length": 480, "pitch": 60, "velocity": 100}]}"#,
@@ -119,7 +119,10 @@ fn the_helpers_add_tracks_and_clips_under_free_ids_and_move_a_clip_as_one_step()
     let arrangement = id("arrangement");
     for _ in 0..2 {
         let mut changes = Changes::new();
-        let probe = Probe { scale: 1.0 };
+        let probe = Probe {
+            scale: 1.0,
+            shows: Shows::Notes,
+        };
         let track = add_track(
             &harness.project,
             &mut changes,
