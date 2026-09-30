@@ -6,12 +6,15 @@
 //! that does not fit as segments, such as the shape of an EQ band. When the picked item has an
 //! icon, the trigger shows the icon and not the words, so that it fits in a cell of a card.
 //!
+//! [`Select`](super::select::Select) is the same list as a control on saved state: the owner
+//! gives the value on every render and keeps no menu of its own.
+//!
 //! [`Trigger::Chevron`] is the menu half of a [`crate::components::split_button::SplitButton`].
 
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, Div, EventEmitter, FocusHandle, FontWeight, IntoElement, KeyDownEvent,
+    App, Context, Div, ElementId, EventEmitter, FocusHandle, FontWeight, IntoElement, KeyDownEvent,
     MouseDownEvent, Render, RenderOnce, SharedString, Stateful, StyleRefinement, Styled, Window,
     div, prelude::*, px,
 };
@@ -132,7 +135,7 @@ pub enum MenuEntry {
 }
 
 /// Every item in render order, with its keyboard index.
-fn flat(entries: &[MenuEntry]) -> Vec<&MenuItem> {
+pub(crate) fn flat(entries: &[MenuEntry]) -> Vec<&MenuItem> {
     entries
         .iter()
         .flat_map(|entry| match entry {
@@ -140,6 +143,33 @@ fn flat(entries: &[MenuEntry]) -> Vec<&MenuItem> {
             MenuEntry::Separator | MenuEntry::Note(_) => [].as_slice().iter(),
         })
         .collect()
+}
+
+/// The row the highlight moves to from `highlighted`, `delta` rows on, skipping disabled rows
+/// and going round. From no highlight, `usize::MAX`, down is the first row and up the last.
+/// `None` for a menu with no rows.
+pub(crate) fn highlight_step(
+    entries: &[MenuEntry],
+    highlighted: usize,
+    delta: isize,
+) -> Option<usize> {
+    let items = flat(entries);
+    let count = items.len();
+    if count == 0 {
+        return None;
+    }
+    let mut next = if highlighted == usize::MAX {
+        if delta > 0 { 0 } else { count - 1 }
+    } else {
+        (highlighted as isize + delta).rem_euclid(count as isize) as usize
+    };
+    for _ in 0..count {
+        if !items[next].disabled {
+            break;
+        }
+        next = (next as isize + delta).rem_euclid(count as isize) as usize;
+    }
+    Some(next)
 }
 
 type SelectFn = Rc<dyn Fn(SharedString, &mut Window, &mut App)>;
@@ -342,7 +372,7 @@ pub enum Trigger {
 }
 
 /// A select: 24 pt, 12 pt medium type, 6 pt corners, as a toggle or a segmented control.
-fn select_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
+pub(crate) fn select_trigger(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let (background, hover, text) = (theme.alpha_at(0.05), theme.alpha_at(0.10), theme.gray_950);
     div()
@@ -584,24 +614,10 @@ impl DropdownMenu {
 
     /// Move the highlight, skipping disabled rows.
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let items = flat(&self.entries);
-        let count = items.len();
-        if count == 0 {
-            return;
+        if let Some(next) = highlight_step(&self.entries, self.highlighted, delta) {
+            self.highlighted = next;
+            cx.notify();
         }
-        let mut next = if self.highlighted == usize::MAX {
-            if delta > 0 { 0 } else { count - 1 }
-        } else {
-            (self.highlighted as isize + delta).rem_euclid(count as isize) as usize
-        };
-        for _ in 0..count {
-            if !items[next].disabled {
-                break;
-            }
-            next = (next as isize + delta).rem_euclid(count as isize) as usize;
-        }
-        self.highlighted = next;
-        cx.notify();
     }
 
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {

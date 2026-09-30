@@ -75,6 +75,7 @@ registries (`crates/runtime/src/lib.rs`, `views`) and installs them as GPUI glob
 | --- | --- |
 | A device card with knobs and a display | `extensions/filter/src/view.rs` |
 | A card with handles on a display | `extensions/instrument/src/view.rs` |
+| A card with sections behind expand, selects and a list of rows | `extensions/wavetable/src/view/` |
 | A rack that hosts cards of other extensions | `extensions/arrangement/src/view/track_panel.rs` |
 | A meter and a mixer strip | `extensions/arrangement/src/view/track_panel.rs` |
 | A large view on a canvas, with drags and keys | `extensions/arrangement/src/view.rs` |

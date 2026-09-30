@@ -1,7 +1,7 @@
 //! Rack section: every control of a device card and the mixer strip, in each of its states, as
 //! in `docs/mockups/components.png`: knob, volume, meter and gain
-//! reduction, the display of a limiter, toggle, segmented control, select and drag number, and device cards with their header and a
-//! display. The focus section beside it shows the focus ring of each, which one window can
+//! reduction, the display of a limiter, toggle, segmented control, select, slider and drag number, and device cards with their header and a
+//! display, and a card with sections behind expand. The focus section beside it shows the focus ring of each, which one window can
 //! show only one at a time.
 //!
 //! Every sample is live: its value is kept here and a drag, a key or a click changes it.
@@ -10,10 +10,12 @@ use gpui::{
     AnyElement, App, AppContext, Entity, FontWeight, IntoElement, ParentElement, Point,
     SharedString, Styled, Window, div, point, px,
 };
+use sound_core::LfoShape;
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{Cell, ROW_HEIGHT};
-use sound_ui::components::device_card::{Column, DeviceCard};
+use sound_ui::components::curves::{Adsr, envelope_display, lfo_line};
+use sound_ui::components::device_card::{Column, DeviceCard, Section};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem, Trigger};
@@ -22,6 +24,8 @@ use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::limiter_display::{COLUMNS, LimiterHistory, POLLS_PER_COLUMN};
 use sound_ui::components::meter::{GainReduction, Level, Meter};
 use sound_ui::components::segmented_control::SegmentedControl;
+use sound_ui::components::select::Select;
+use sound_ui::components::slider::Slider;
 use sound_ui::components::split_button::SplitButton;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::volume::Volume;
@@ -77,6 +81,9 @@ pub(crate) struct RackState {
     reverb: [Live<f32>; 2],
     reverb_expanded: bool,
     tempo: Live<f64>,
+    /// The value of the controlled select, and of the slider.
+    table: SharedString,
+    amount: Live<f32>,
 }
 
 fn picker(name: &'static str, cx: &mut App) -> Entity<DropdownMenu> {
@@ -121,6 +128,20 @@ fn select(cx: &mut App) -> Entity<DropdownMenu> {
     })
 }
 
+/// Tables in groups, the list of the controlled select.
+fn tables() -> Vec<MenuEntry> {
+    let group = |label: &'static str, tables: &[&'static str]| {
+        let items = tables
+            .iter()
+            .map(|table| MenuItem::new(table.to_lowercase(), *table));
+        MenuEntry::Group(MenuGroup::new().label(label).items(items))
+    };
+    vec![
+        group("Basic", &["Basic shapes", "Pulse width"]),
+        group("Vocal", &["Vowels"]),
+    ]
+}
+
 /// Level in dBFS, the same on both sides, with the peak line a little above.
 fn level(db: f32, clipped: bool) -> Level {
     Level {
@@ -159,6 +180,8 @@ impl RackState {
             reverb: [0.02, 2.4].map(Live::new),
             reverb_expanded: true,
             tempo: Live::new(93.5),
+            table: "vowels".into(),
+            amount: Live::new(0.4),
         }
     }
 }
@@ -453,6 +476,7 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
     let rack = state.read(cx);
     let (toggles, segment, select) = (rack.toggles, rack.segment.clone(), rack.select.clone());
     let tempo = rack.tempo.value;
+    let (table, amount) = (rack.table.clone(), rack.amount.value);
     let muted = theme.gray_700;
     let toggle = |index: usize, label: &'static str| {
         Toggle::new(("toggle", index), label, toggles[index])
@@ -465,7 +489,7 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
         ("notch", "Notch"),
     ];
     block(
-        "Toggle, segmented control, select and drag number",
+        "Toggle, segmented control, select, slider and drag number",
         cx,
         [
             sample("mute", cx, toggle(0, "M").color(peach)),
@@ -496,6 +520,23 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
                     .disabled(true),
             ),
             sample("select", cx, select),
+            sample(
+                "select on a record",
+                cx,
+                Select::new("table", table)
+                    .entries(tables())
+                    .on_change(update(state, |s, value| s.table = value)),
+            ),
+            sample(
+                "bipolar slider",
+                cx,
+                Slider::new("amount", 64.)
+                    .range(KnobRange::linear(-1., 1.))
+                    .bipolar(true)
+                    .value(amount)
+                    .default_value(0.)
+                    .on_change(update(state, |s, change| s.amount.follow(change))),
+            ),
             sample(
                 "drag number",
                 cx,
@@ -789,6 +830,47 @@ fn reverb_card(state: &Entity<RackState>, cx: &App) -> DeviceCard {
         )
 }
 
+/// A card with sections behind expand, each a display and its knobs: a curved envelope, as
+/// the Wavetable draws it, and two cycles of an LFO.
+fn sections_card() -> DeviceCard {
+    let adsr = Adsr {
+        attack: 0.02,
+        decay: 0.6,
+        sustain: 0.4,
+        release: 0.8,
+    };
+    let time = KnobRange::logarithmic(0.001, 10.);
+    let envelope = envelope_display(
+        "curved",
+        200.,
+        time,
+        (adsr, adsr),
+        [0.5, 0.9, 0.8],
+        |_, _, _| {},
+    )
+    .caption("A 20 ms · D 600 ms · S 40% · R 800 ms");
+    let lfo = Display::new("lfo", 200.)
+        .curve(lfo_line(LfoShape::Triangle, 2., 0.4, 0.28))
+        .zero_line(0.4)
+        .caption("1 Hz");
+    let knob = |id: &'static str, label: &'static str, value: f32, readout: &'static str| {
+        Knob::new(id).value(value).label(label).readout(readout)
+    };
+    DeviceCard::new("sections", "Wavetable")
+        .expand(true, |_, _, _| {})
+        .display(envelope)
+        .column(
+            Column::new()
+                .top(knob("attack-curve", "Curve", 0.5, "50%"))
+                .bottom(knob("decay-curve", "Curve", 0.9, "90%")),
+        )
+        .section(
+            Section::new()
+                .display(lfo)
+                .column(Column::new().top(knob("lfo-rate", "Rate", 0.4, "1 Hz"))),
+        )
+}
+
 fn plugin_card(cx: &App) -> DeviceCard {
     let muted = cx.theme().gray_800;
     DeviceCard::new("plugin", div().child("Surge XT"))
@@ -835,6 +917,11 @@ fn cards(state: &Entity<RackState>, cx: &App) -> AnyElement {
             sample("effect off", cx, filter_card(state, 1, "filter-off", cx)),
             sample("expanded, a hollow handle", cx, reverb_card(state, cx)),
             sample("plugin", cx, plugin_card(cx)),
+            sample(
+                "sections behind expand, curved envelope, LFO",
+                cx,
+                sections_card(),
+            ),
         ],
     )
 }

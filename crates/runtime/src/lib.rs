@@ -32,6 +32,7 @@ use sound_core::{
 };
 use sound_ui::{DeviceOffer, Devices, Views};
 use utility::UtilityState;
+use wavetable::WavetableState;
 
 const PROJECT_FILE: &str = "project.json";
 
@@ -158,6 +159,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     utility::view::register(&mut views, &mut devices);
     modulation::view::register(&mut views, &mut devices);
     sampler::view::register(&mut views, &mut devices);
+    wavetable::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     devices.instruments(|| {
         vec![
@@ -172,6 +174,18 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             .needs(
                 instrument::EXTENSION,
                 "This project does not load the synth.",
+            ),
+            DeviceOffer::new(
+                WavetableState::TOOL,
+                wavetable::view::NAME,
+                |_, slot, changes| {
+                    changes.create(slot.clone(), WavetableState::default());
+                    Ok(())
+                },
+            )
+            .needs(
+                wavetable::EXTENSION,
+                "This project does not load the Wavetable.",
             ),
             DeviceOffer::new(
                 SamplerState::TOOL,

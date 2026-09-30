@@ -268,6 +268,96 @@ fn paint_dial(
     paint::line(window, inner, outer, POINTER_WIDTH, colors.value);
 }
 
+/// How a control that drags one value on a [`KnobRange`] moves it: the knob and the slider.
+#[derive(Clone, Copy)]
+pub(crate) struct Dragged {
+    pub range: KnobRange,
+    pub value: f32,
+    /// What a double click and backspace set.
+    pub default: Option<f32>,
+    /// Values in whole steps of this, and an arrow key moves one step.
+    pub step: Option<f32>,
+    /// Points of pointer travel for the whole travel.
+    pub span: f32,
+    /// A drag to the right raises the value, and not a drag up.
+    pub sideways: bool,
+}
+
+/// The mouse and the keys of a control that drags one value: the gesture of
+/// [`gesture`](super::gesture), with the arrows stepping a fiftieth of the travel, or one step.
+pub(crate) fn drags(
+    control: gpui::Stateful<Div>,
+    dragged: Dragged,
+    state: &gpui::Entity<GestureState<f32>>,
+    focus_handle: &gpui::FocusHandle,
+    on_change: ChangeHandler<f32>,
+) -> gpui::Stateful<Div> {
+    let Dragged {
+        range,
+        value,
+        default,
+        step: whole_step,
+        span,
+        sideways,
+    } = dragged;
+    let position = range.position(value);
+    // A value on a whole step, inside the range.
+    let stepped = move |value: f32| match whole_step {
+        Some(step) => ((value / step).round() * step).clamp(range.min, range.max),
+        None => value,
+    };
+    // Grows in the direction that raises the value.
+    let along = move |pointer: gpui::Point<Pixels>| match sideways {
+        true => f32::from(pointer.x),
+        false => -f32::from(pointer.y),
+    };
+    let on_mouse_down = {
+        let (state, on_change) = (state.clone(), on_change.clone());
+        move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+            let mut travel = Travel::new(along(event.position), position, span);
+            let value_at = move |pointer: gpui::Point<Pixels>, fine| match travel
+                .position(along(pointer), fine)
+            {
+                Some(position) => stepped(range.value(position)),
+                None => value,
+            };
+            gesture::press(
+                &state, event, value, default, value_at, &on_change, window, cx,
+            );
+        }
+    };
+    let on_key_down = {
+        let (state, on_change) = (state.clone(), on_change.clone());
+        move |event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App| {
+            let step = |up: bool, fine: bool| {
+                let next = match whole_step {
+                    Some(whole) => {
+                        let whole = if up { whole } else { -whole };
+                        stepped(value + whole)
+                    }
+                    None => {
+                        let step = if fine { FINE_KEY_STEP } else { KEY_STEP };
+                        let step = if up { step } else { -step };
+                        range.value(position + step)
+                    }
+                };
+                (next != value).then_some(next)
+            };
+            gesture::key_down(&state, event, Some(&step), default, &on_change, window, cx);
+        }
+    };
+    let cursor = match sideways {
+        true => CursorStyle::ResizeLeftRight,
+        false => CursorStyle::ResizeUpDown,
+    };
+    control
+        .cursor(cursor)
+        .track_focus(focus_handle)
+        .on_key_down(on_key_down)
+        .on_mouse_down(MouseButton::Left, on_mouse_down)
+        .child(gesture::drag_listeners(state.clone(), on_change))
+}
+
 impl RenderOnce for Knob {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| GestureState::new(cx));
@@ -294,13 +384,14 @@ impl RenderOnce for Knob {
         .size_full();
 
         let on_change = self.on_change.filter(|_| !disabled);
-        let whole_step = self.step;
-        // A value on a whole step, inside the range.
-        let stepped = move |value: f32| match whole_step {
-            Some(step) => ((value / step).round() * step).clamp(range.min, range.max),
-            None => value,
+        let dragged = Dragged {
+            range,
+            value,
+            default: self.default_value,
+            step: self.step,
+            span: TRAVEL,
+            sideways: false,
         };
-        let default_value = self.default_value;
         // For tests, which find the knob by its id: `knob-<id>`. Nothing in a normal build.
         let selector = self.id.clone();
         let knob = div()
@@ -310,62 +401,7 @@ impl RenderOnce for Knob {
             .size(px(DIAL))
             .when(disabled, |d| d.cursor_not_allowed())
             .when_some(on_change, |d, on_change| {
-                let on_mouse_down = {
-                    let (state, on_change) = (state.clone(), on_change.clone());
-                    move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
-                        let y = -f32::from(event.position.y);
-                        let mut travel = Travel::new(y, position, TRAVEL);
-                        let value_at = move |pointer: gpui::Point<Pixels>, fine| match travel
-                            .position(-f32::from(pointer.y), fine)
-                        {
-                            Some(position) => stepped(range.value(position)),
-                            None => value,
-                        };
-                        gesture::press(
-                            &state,
-                            event,
-                            value,
-                            default_value,
-                            value_at,
-                            &on_change,
-                            window,
-                            cx,
-                        );
-                    }
-                };
-                let on_key_down = {
-                    let (state, on_change) = (state.clone(), on_change.clone());
-                    move |event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App| {
-                        let step = |up: bool, fine: bool| {
-                            let next = match whole_step {
-                                Some(whole) => {
-                                    let whole = if up { whole } else { -whole };
-                                    stepped(value + whole)
-                                }
-                                None => {
-                                    let step = if fine { FINE_KEY_STEP } else { KEY_STEP };
-                                    let step = if up { step } else { -step };
-                                    range.value(position + step)
-                                }
-                            };
-                            (next != value).then_some(next)
-                        };
-                        gesture::key_down(
-                            &state,
-                            event,
-                            Some(&step),
-                            default_value,
-                            &on_change,
-                            window,
-                            cx,
-                        );
-                    }
-                };
-                d.cursor(CursorStyle::ResizeUpDown)
-                    .track_focus(&focus_handle)
-                    .on_key_down(on_key_down)
-                    .on_mouse_down(MouseButton::Left, on_mouse_down)
-                    .child(gesture::drag_listeners(state, on_change))
+                drags(d, dragged, &state, &focus_handle, on_change)
             })
             .child(dial);
 

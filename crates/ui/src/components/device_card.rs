@@ -2,7 +2,8 @@
 //! and 16 pt under it. The body is a display at the left, 8 pt of air, then columns of cells,
 //! 16 pt from each side of the card. So a card is 32 pt plus its display plus 8 plus 56 per
 //! column wide. Expanding it shows the columns it hides to the right of a hairline: the card
-//! gets wider and never taller.
+//! gets wider and never taller. A card with much behind expand, such as the Wavetable, hides
+//! [`Section`]s: each a display and its columns, or a list, after a hairline of its own.
 //!
 //! The header: the title at 16 pt from the left, which is the picker of the slot in a rack, and
 //! at the right, 8 pt from the edge, icons in 24 pt targets 4 pt apart: expand, power and close,
@@ -175,6 +176,53 @@ impl RenderOnce for Column {
     }
 }
 
+/// A part of a card that shows only when it is expanded, after a hairline: a display at its
+/// left and columns of cells, as the body of a card has, or anything else as children, such as
+/// a list.
+#[derive(IntoElement, Default)]
+pub struct Section {
+    display: Option<AnyElement>,
+    columns: Vec<Column>,
+    children: Vec<AnyElement>,
+}
+
+impl Section {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn display(mut self, display: impl IntoElement) -> Self {
+        self.display = Some(display.into_any_element());
+        self
+    }
+
+    pub fn column(mut self, column: Column) -> Self {
+        self.columns.push(column);
+        self
+    }
+}
+
+impl ParentElement for Section {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements);
+    }
+}
+
+impl RenderOnce for Section {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let hairline = cx.theme().alpha_at(0.06);
+        div()
+            .flex()
+            .child(div().mx(px(HIDDEN_GAP)).w(px(1.)).h_full().bg(hairline))
+            .children(
+                self.display
+                    .map(|display| div().flex_none().mr(px(DISPLAY_GAP)).child(display)),
+            )
+            .children(self.columns)
+            .children(self.children)
+    }
+}
+
 /// An icon of the header, with the focus it keeps in element state.
 struct IconState {
     focus_handle: gpui::FocusHandle,
@@ -193,6 +241,7 @@ pub struct DeviceCard {
     display: Option<AnyElement>,
     columns: Vec<Column>,
     hidden: Vec<Column>,
+    sections: Vec<Section>,
     children: Vec<AnyElement>,
 }
 
@@ -211,6 +260,7 @@ impl DeviceCard {
             display: None,
             columns: Vec::new(),
             hidden: Vec::new(),
+            sections: Vec::new(),
             children: Vec::new(),
         }
     }
@@ -258,6 +308,12 @@ impl DeviceCard {
     /// A column that shows only when the card is expanded.
     pub fn hidden_column(mut self, column: Column) -> Self {
         self.hidden.push(column);
+        self
+    }
+
+    /// A section that shows only when the card is expanded, after the hidden columns.
+    pub fn section(mut self, section: Section) -> Self {
+        self.sections.push(section);
         self
     }
 }
@@ -388,6 +444,7 @@ impl RenderOnce for DeviceCard {
             None => header,
         };
 
+        let sections = expanded.then_some(self.sections).unwrap_or_default();
         let hidden = (expanded && !self.hidden.is_empty()).then(|| {
             div()
                 .flex()
@@ -406,6 +463,7 @@ impl RenderOnce for DeviceCard {
             )
             .children(self.columns)
             .children(hidden)
+            .children(sections)
             .children(self.children);
 
         // The id scopes what the controls in the card keep, so two cards with controls of one

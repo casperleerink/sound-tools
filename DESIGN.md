@@ -136,6 +136,12 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Drum pad card | press a pad | Select it and play it. No undo step |
 | Drum pad card | tab to the grid, arrows, enter | The grid is one stop. The arrows move the selection, enter plays the pad |
 | Drum pad card | drop a file on a pad, or `Choose file…` in the Sound list | Copy it into `assets/audio/` and make that pad play it |
+| Wavetable card | drag up or down anywhere on a wavetable | Move the position of that oscillator through its frames, as its Position knob does. The bright line is the frame that plays. Shift is finer, double click resets |
+| Wavetable card | the table at the top of a wavetable | Pick the table of that oscillator, grouped by kind |
+| Wavetable card | Amp, Env 2, Env 3; LFO 1, LFO 2 | Which envelope or LFO its section shows, with its knobs. Not saved, no undo step |
+| Wavetable card | Add route, under the routes of the matrix | A new route from LFO 1 to the position of Osc 1, at no amount. Up to 16 |
+| Wavetable card | the source, the destination and the line of a route | Pick where it comes from and where it goes. Drag the line sideways for the amount, from the middle either way; shift is finer, double click is none. Two fingers scroll a long list |
+| Wavetable card | the close icon of a route | Remove it |
 | Note editor | double click on empty space in the clip | Add a note of one snap step. Keep the second press down and drag to draw its length. It sounds |
 | Note editor | click; shift-click or cmd-click on a note | Select it, it sounds; add it to the selection or take it out |
 | Note editor | drag on empty space | Select the notes the rectangle touches. With shift or cmd, add them |
