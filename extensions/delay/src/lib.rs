@@ -43,87 +43,15 @@ use sound_core::{
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
 pub use processor::{Delay, response};
+/// The note of a synced time. They live in `sound-notes`, which every instrument that follows the
+/// tempo shares.
+pub use sound_notes::{Division, Feel};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "delay";
 
 /// The longest time the delay plays, in seconds. Its lines are this long.
 pub const LONGEST_SECONDS: f32 = 4.0;
-
-/// The note a synced time lasts, before its feel. Saved as the fraction, `"1/8"`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Division {
-    #[serde(rename = "1/32")]
-    ThirtySecond,
-    #[serde(rename = "1/16")]
-    Sixteenth,
-    #[serde(rename = "1/8")]
-    Eighth,
-    #[serde(rename = "1/4")]
-    Quarter,
-    #[serde(rename = "1/2")]
-    Half,
-    #[serde(rename = "1/1")]
-    Whole,
-}
-
-impl Division {
-    /// From the shortest to the longest, each twice the one before.
-    pub const ALL: [Self; 6] = [
-        Self::ThirtySecond,
-        Self::Sixteenth,
-        Self::Eighth,
-        Self::Quarter,
-        Self::Half,
-        Self::Whole,
-    ];
-
-    /// How many quarter notes, the beats of the tempo, it lasts.
-    pub fn quarters(self) -> f32 {
-        match self {
-            Self::ThirtySecond => 0.125,
-            Self::Sixteenth => 0.25,
-            Self::Eighth => 0.5,
-            Self::Quarter => 1.0,
-            Self::Half => 2.0,
-            Self::Whole => 4.0,
-        }
-    }
-
-    /// The fraction, as it is saved.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::ThirtySecond => "1/32",
-            Self::Sixteenth => "1/16",
-            Self::Eighth => "1/8",
-            Self::Quarter => "1/4",
-            Self::Half => "1/2",
-            Self::Whole => "1/1",
-        }
-    }
-}
-
-/// Whether a synced time is the note, one and a half of it, or two thirds of it.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Feel {
-    Straight,
-    Dotted,
-    Triplet,
-}
-
-impl Feel {
-    pub const ALL: [Self; 3] = [Self::Straight, Self::Dotted, Self::Triplet];
-
-    /// What it makes of the length of the note.
-    pub fn factor(self) -> f32 {
-        match self {
-            Self::Straight => 1.0,
-            Self::Dotted => 1.5,
-            Self::Triplet => 2.0 / 3.0,
-        }
-    }
-}
 
 /// The saved state. It is small and `Copy`, so it is also the update the processor gets. The
 /// sound in the delay lines is runtime state and is not saved.
@@ -231,7 +159,7 @@ impl State for DelayState {
 /// the card and the tests all use it.
 pub fn delay_seconds(state: &DelayState, bpm: f64) -> f32 {
     let seconds = if state.sync {
-        let quarters = state.division.quarters() * state.feel.factor();
+        let quarters = state.division.quarters_with(state.feel);
         (f64::from(quarters) * 60.0 / bpm) as f32
     } else {
         state.time_ms / 1_000.0
@@ -337,17 +265,5 @@ mod tests {
             ..DelayState::default()
         };
         assert_eq!(delay_seconds(&free, 120.0), 0.33);
-    }
-
-    /// Each division is twice the one before, and the names are what a record saves.
-    #[test]
-    fn the_divisions_double_and_save_as_their_names() {
-        for pair in Division::ALL.windows(2) {
-            assert_eq!(pair[1].quarters(), 2.0 * pair[0].quarters());
-        }
-        for division in Division::ALL {
-            let saved = serde_json::to_string(&division).unwrap();
-            assert_eq!(saved, format!("\"{}\"", division.name()));
-        }
     }
 }

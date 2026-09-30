@@ -7,7 +7,8 @@
 //! because both sides of a track already read this one.
 //!
 //! It also holds how the bundled instruments play notes, [`Voices`] and [`Wheels`], so they
-//! all play them the same way. Extensions never depend on each other, so this is the one place
+//! all play them the same way, and the note lengths a time that follows the tempo is picked
+//! in, [`Division`] and [`Feel`]. Extensions never depend on each other, so this is the one place
 //! they share.
 //!
 //! Rules for a sender of notes, which no type enforces:
@@ -25,6 +26,7 @@
 //! back at rest while a hand may still hold one. That is what makes "no note and no bend is ever
 //! stuck" a property of the contract and not of every sender.
 
+mod division;
 mod expression;
 mod take;
 mod voices;
@@ -32,6 +34,7 @@ mod voices;
 use serde::{Deserialize, Serialize};
 use sound_core::{Place, State, Ticks};
 
+pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
