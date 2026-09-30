@@ -250,8 +250,6 @@ impl Keyboard {
                 Played::Pedal(value) => self.live_pedal = value,
                 Played::Bend(_) | Played::ModWheel(_) | Played::Pressure(_) => {
                     self.live_expression.follow(sounded.arrived.played.event());
-                    // A clip does not hold the wheels yet, so a take does not either.
-                    continue;
                 }
             }
             let Some(recording) = &mut self.recording else {

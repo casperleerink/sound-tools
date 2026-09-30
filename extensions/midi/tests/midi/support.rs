@@ -184,3 +184,11 @@ pub fn pedal(value: u8) -> Played {
 pub fn bend(value: i16) -> Played {
     Played::Bend(sound_notes::Bend::new(value).unwrap())
 }
+
+pub fn mod_wheel(value: u8) -> Played {
+    Played::ModWheel(sound_notes::Amount::new(value).unwrap())
+}
+
+pub fn pressure(value: u8) -> Played {
+    Played::Pressure(sound_notes::Amount::new(value).unwrap())
+}

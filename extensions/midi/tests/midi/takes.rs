@@ -5,7 +5,7 @@ use sound_core::{Assets, Clock, TempoMap};
 use sound_core::{State, Ticks};
 use sound_notes::{Pedal, RawEvent, RawTake, take_asset};
 
-use crate::support::{off, on, pedal, pitch};
+use crate::support::{bend, mod_wheel, off, on, pedal, pitch, pressure};
 
 /// The clock the take was played by: the default project, 120 bpm in 4/4 at 48 kHz. A quarter
 /// note is 960 ticks and half a second, so tick 960 is 500000 microseconds.
@@ -198,6 +198,38 @@ fn the_raw_take_file_holds_the_times_as_they_arrived_and_both_velocities() {
             },
         ]
     );
+}
+
+/// The wheels are in the raw take with both times, one message per line, and in the clip as
+/// lanes: a straight move of the bend is its two ends.
+#[test]
+fn the_wheels_are_in_the_raw_take_and_thinned_in_its_clip() {
+    let mut events = vec![event(0, 0, mod_wheel(64)), event(10, 0, pressure(20))];
+    events.extend((0..=8).map(|step| event(100 + step, 960 + step * 60, bend(step as i16 * 1000))));
+    let take = take(0, 3840, events);
+    let raw = take.raw(&clock());
+    assert_eq!(raw.events.len(), 11);
+    assert_eq!(
+        raw.events[2],
+        RawEvent::Bend {
+            time_us: 100,
+            sounded_us: 500_000,
+            value: 0
+        }
+    );
+    assert!(
+        raw.json()
+            .contains(r#"{"kind":"mod_wheel","time_us":0,"sounded_us":0,"value":64},"#)
+    );
+    let clip = take.clip(&clock()).unwrap();
+    let bends: Vec<(u64, i16)> = (clip.bend.iter())
+        .map(|point| (point.tick.0, point.value.value()))
+        .collect();
+    assert_eq!(bends, [(960, 0), (1440, 8000)]);
+    assert_eq!(clip.mod_wheel.len(), 1);
+    assert_eq!(clip.pressure.len(), 1);
+    assert!(clip.notes.is_empty());
+    assert_eq!(clip.validate(), Ok(()));
 }
 
 /// A take never takes the name of one that is there. So the second take of a session, after

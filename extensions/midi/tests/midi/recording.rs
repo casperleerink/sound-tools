@@ -3,7 +3,7 @@
 
 use sound_core::Ticks;
 
-use crate::support::{Harness, TICK, bend, off, on, pedal};
+use crate::support::{Harness, TICK, bend, mod_wheel, off, on, pedal, pressure};
 
 /// The clock the harness plays by: 120 bpm in 4/4 at 48 kHz.
 fn clock() -> sound_core::Clock {
@@ -151,14 +151,24 @@ fn recording_stops_and_a_second_take_is_a_take_of_its_own() {
     assert_eq!(second.start, from);
 }
 
-/// A clip does not hold the wheels yet, so a take leaves them out and the take of a bent note is
-/// the note.
+/// The wheels are in the take as they were played, and become lanes of its clip.
 #[test]
-fn the_wheels_are_left_out_of_the_take() {
+fn the_wheels_are_in_the_take_and_become_lanes() {
     let take = recorded(
-        &[(2400, on(60, 88)), (3000, bend(4096)), (4800, off(60))],
+        &[
+            (2400, on(60, 88)),
+            (3000, bend(4096)),
+            (3600, mod_wheel(90)),
+            (4200, pressure(30)),
+            (4800, off(60)),
+        ],
         9600,
     );
-    assert_eq!(take.events.len(), 2);
-    assert_eq!(take.clip(&clock()).unwrap().notes.len(), 1);
+    assert_eq!(take.events.len(), 5);
+    let clip = take.clip(&clock()).unwrap();
+    assert_eq!(clip.notes.len(), 1);
+    let bend: Vec<i16> = clip.bend.iter().map(|point| point.value.value()).collect();
+    assert_eq!(bend, [4096]);
+    assert_eq!(clip.mod_wheel.len(), 1);
+    assert_eq!(clip.pressure.len(), 1);
 }

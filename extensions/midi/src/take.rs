@@ -61,10 +61,10 @@ impl Take {
             events: self
                 .events
                 .iter()
-                .filter_map(|event| {
+                .map(|event| {
                     let time_us = event.time_us;
                     let sounded_us = clock.micros_of(event.tick).saturating_sub(start_us);
-                    Some(match event.played {
+                    match event.played {
                         Played::On { pitch, velocity } => RawEvent::On {
                             time_us,
                             sounded_us,
@@ -82,12 +82,22 @@ impl Take {
                             sounded_us,
                             value: value.value(),
                         },
-                        // A clip does not hold the wheels yet, so a take does not either. The
-                        // keyboard leaves them out already.
-                        Played::Bend(_) | Played::ModWheel(_) | Played::Pressure(_) => {
-                            return None;
-                        }
-                    })
+                        Played::Bend(bend) => RawEvent::Bend {
+                            time_us,
+                            sounded_us,
+                            value: bend.value(),
+                        },
+                        Played::ModWheel(amount) => RawEvent::ModWheel {
+                            time_us,
+                            sounded_us,
+                            value: amount.value(),
+                        },
+                        Played::Pressure(amount) => RawEvent::Pressure {
+                            time_us,
+                            sounded_us,
+                            value: amount.value(),
+                        },
+                    }
                 })
                 .collect(),
         }
