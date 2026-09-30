@@ -61,7 +61,8 @@ Throwaway Python scripts in `/tmp`, run against the CLIs on this Mac (claude 2.1
 | Types | serde enums, checked by the compiler | Types stop at the process edge | Types from the crate, but provider details hide in `_meta` |
 
 - Rejected: **sidecar.** It adds a runtime and our own IPC protocol, and it saves only the mapping code, which is where the Rust types help most.
-- Rejected: **ACP now.** Both adapters are npm-only (`@agentclientprotocol/claude-agent-acp` 0.84.0, `codex-acp` 2.0.1), they lag features by weeks, and sign-in is still per agent. ACP is the right way to add Gemini CLI and others later, as one more `Provider` variant.
+- Rejected: **ACP now.** ACP is a protocol, not an agent. In Zed, Claude through ACP is Node, then the `claude-agent-acp` adapter, then the Agent SDK, then the same `claude` binary. So ACP adds layers and removes none. Both adapters are npm-only (`@agentclientprotocol/claude-agent-acp` 0.84.0, `codex-acp` 2.0.1), they lag features by weeks, and sign-in is still per agent. ACP is the right way to add Gemini CLI, pi and others later, as one more `Provider` variant.
+- Rejected: **a lighter agent such as pi, running Claude models.** Only the unmodified Claude Code binary may use a Claude subscription. Anthropic does not allow third-party apps "to route requests through Free, Pro, or Max plan credentials". A lighter agent would need an API key. We trim Claude Code with flags instead (below).
 - Rejected: **`codex-app-server-protocol` as a git dependency.** It pulls in about 10 crates of the Codex workspace. We write serde types for the messages we use, checked against the schema of the pinned binary.
 - Rejected: **the unofficial `claude-agent-sdk` Rust crate.** It is maintained by a private person and wraps the same undocumented messages.
 
@@ -71,9 +72,13 @@ How it runs (for the implementer):
 - Every protocol enum has an `Unknown` catch-all (`#[serde(other)]` or an untagged fallback), so a new message kind from the CLI is ignored and logged, not a crash.
 - Both CLIs exit when stdin closes, so quitting the app or "Open project…" also ends them.
 - The environment comes from the login shell (`$SHELL -ilc 'env -0'`, captured once in the background at start), as hooman's `shell-env.ts` and Zed do. An app opened from the Finder has a bare PATH, and the agent needs `cargo` and `git` to build extensions. Remove `CLAUDECODE`, `CLAUDE_CODE_*` and `ELECTRON_RUN_AS_NODE` (hooman: a nested session never saves its transcript).
-- Claude flags: `-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio --permission-mode <mode> [--resume <id> | --session-id <uuid>] --model <m> --disallowedTools AskUserQuestion`. Pass every flag explicitly, because the docs say `-p` defaults will change (`--bare`). Check the `capabilities` list of `system/init` rather than version strings.
+- Claude flags: `-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio --permission-mode <mode> [--resume <id> | --session-id <uuid>] --model <m>`. Pass every flag explicitly, because the docs say `-p` defaults will change (`--bare`). Check the `capabilities` list of `system/init` rather than version strings.
+- Claude runs trimmed to what a composer needs: `--tools Bash,Read,Edit,Write,Glob,Grep --strict-mcp-config --setting-sources project,local --disable-slash-commands`. A spike with these flags ran on a Claude Max subscription (Opus 5.5) with those 6 tools and no MCP servers. It edited a file with Read then Write, not Bash.
+  - The trimmed tool list leaves out `AskUserQuestion`, so the agent asks its questions in plain text.
+  - Do not use `--bare`. It never reads the subscription login, only an API key.
+  - Check in milestone 3 that the project's `CLAUDE.md` (the map) still loads with these flags.
 - Codex: `initialize` then `initialized`, then `thread/start` or `thread/resume` with `cwd`, `sandbox` and `approvalPolicy`, then `turn/start`, `turn/interrupt`, `model/list` and the `account/*` methods. Do not enable `experimentalApi`.
-- Each provider uses its default home (`~/.claude`, `~/.codex`), so a login made in a terminal or in the vendors' apps is shared. The composer's own Claude and Codex settings and MCP servers load, as they do in a terminal today.
+- Each provider uses its default home (`~/.claude`, `~/.codex`), so a login made in a terminal or in the vendors' apps is shared. The composer's own user-level setup (MCP servers, skills, hooks, plugins) does not load in the sidebar. Every composer then gets the same agent, and a slow MCP server cannot delay the start. For Codex, find the matching overrides (for example an empty `mcp_servers` with `-c`) in milestone 3; the spike showed it loads the user's MCP servers by default.
 
 ## 2. Install and sign in
 
@@ -200,7 +205,7 @@ Rejected:
 - A request shows as the last item of the thread: one sentence of what the agent wants to do (for example "Run `cargo build`") and **Allow**, **Allow for this thread** and **Deny**, in lavender.
 - The buttons are tab stops with focus rings. Nothing is modal, and music and editing go on.
 - The answers map to Claude `allow` / `deny` (with the CLI's `permission_suggestions` scoped to the session for "this thread") and to Codex `accept` / `acceptForSession` / `decline`.
-- Claude's `AskUserQuestion` is disabled with `--disallowedTools`, so the agent asks in plain text. Codex `item/tool/requestUserInput` gets empty answers, and the agent then asks in text.
+- Claude's `AskUserQuestion` is not in the `--tools` list, so the agent asks in plain text. Codex `item/tool/requestUserInput` gets empty answers, and the agent then asks in text.
 - Rejected: **a modal dialog** (DESIGN.md says nothing blocks). Rejected: **a setting per project or per thread.** One setting per machine is enough, and it keeps approvals out of the folder.
 
 ## 6. Scope of v1
