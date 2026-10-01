@@ -162,7 +162,6 @@ impl Events {
         // Its own process group: a ctrl-c in the terminal that started the app does not stop
         // the agent halfway through a write, and dropping the events ends the agent's own
         // children too.
-        #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let mut child = smol::process::Command::from(command)
             .stdin(Stdio::piped())
@@ -415,7 +414,6 @@ impl Events {
     /// Ends the agent's own children, such as a `cargo build` it started. `kill_on_drop`
     /// ends only the CLI. Only while the CLI is not reaped yet.
     fn end_group(&self) {
-        #[cfg(unix)]
         if let Ok(group) = libc::pid_t::try_from(self.child.id()) {
             // SAFETY: `killpg` only sends a signal; it touches no memory of ours. The group
             // is the CLI's own (`process_group(0)` at the start), and the CLI is not reaped,
