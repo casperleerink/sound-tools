@@ -10,8 +10,8 @@ use gpui::{AppContext, Entity, Focusable, TestAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use runtime::{OFFLINE, open_or_create};
 use sound_agent::{
-    Account, AgentEvent, ApprovalId, Command, Entry, ExitReason, Installed, Session, Sidebar,
-    StepId, StepOutcome, Thread, TurnOutcome,
+    AgentEvent, ApprovalId, Command, Entry, ExitReason, Installed, Session, Sidebar, StepId,
+    StepOutcome, Thread, TurnOutcome,
 };
 use sound_core::Engine;
 use tempfile::TempDir;
@@ -34,10 +34,9 @@ fn install_sidebar_with(cx: &mut TestAppContext, support: &Path, installed: Opti
     let threads = runtime::app::threads_folder(support);
     cx.update(|cx| {
         LeftPanelSlot::new(Some(remembered), move |session, _, cx| {
-            let sidebar = cx.new(|cx| {
-                Sidebar::with_claude(session, installed.clone(), cx)
-                    .with_threads(threads.clone(), cx)
-            });
+            let threads = Some(threads.clone());
+            let sidebar =
+                cx.new(|cx| Sidebar::with_claude(session, installed.clone(), threads, cx));
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
         .install(cx)
@@ -400,7 +399,7 @@ fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
     let mut opened = support::open_with(cx, |_| {});
-    let (thread, commands) = Thread::without_agent();
+    let (thread, commands) = Thread::without_agent(&Session::New);
     let sidebar = opened.sidebar();
     opened
         .cx
@@ -445,14 +444,16 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
     install_sidebar(cx, machine.path());
     let mut opened = support::open_with(cx, |_| {});
     assert_eq!(next_session(&mut opened), Session::New);
+    // The agent's session is known as it starts, before it says anything.
+    let (thread, _commands) = Thread::without_agent(&Session::New);
+    let session = Session::Resume(thread.session_id().to_string());
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
     opened.begin(MESSAGE);
     opened.receive([
         AgentEvent::TurnStarted,
-        AgentEvent::Started {
-            session_id: "recorded-session".to_string(),
-            account: Account::default(),
-            models: Vec::new(),
-        },
         AgentEvent::StepStarted {
             id: step("write"),
             title: "Wrote state/arrangement/track-1/bass.json".to_string(),
@@ -475,21 +476,16 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
         },
     ]);
     let shown = entries(&mut opened);
-    assert_eq!(
-        next_session(&mut opened),
-        Session::Resume("recorded-session".to_string())
-    );
+    assert_eq!(next_session(&mut opened), session);
+    drop(sidebar);
     let folder = opened.close();
 
     let mut opened = open_again(cx, folder);
     assert_eq!(entries(&mut opened), shown);
-    assert_eq!(
-        next_session(&mut opened),
-        Session::Resume("recorded-session".to_string())
-    );
+    assert_eq!(next_session(&mut opened), session);
 
-    // The next message goes on in the same thread.
-    let (thread, commands) = Thread::without_agent();
+    // The next message goes on in the same thread, with an agent in the same session.
+    let (thread, commands) = Thread::without_agent(&next_session(&mut opened));
     let sidebar = opened.sidebar();
     opened
         .cx
@@ -549,6 +545,12 @@ fn a_lost_session_ends_the_thread_until_plus(cx: &mut TestAppContext) {
     assert!(opened.find("agent-cannot-continue").is_none());
     assert_eq!(entries(&mut opened), "[]");
     assert_eq!(next_session(&mut opened), Session::New);
+
+    // Opened again before a message: the new, empty thread, not the old one.
+    let folder = opened.close();
+    let mut opened = open_again(cx, folder);
+    assert!(opened.find("agent-cannot-continue").is_none());
+    assert_eq!(entries(&mut opened), "[]");
 }
 
 /// The real `claude` remembers across a closed window. Ignored: it needs a signed-in `claude`

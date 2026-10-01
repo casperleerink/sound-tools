@@ -316,13 +316,7 @@ pub fn agent_panel(support: Option<PathBuf>) -> LeftPanelSlot {
     let remembered = support.as_deref().map(app::left_panel_file);
     let threads = support.as_deref().map(app::threads_folder);
     LeftPanelSlot::new(remembered, move |session, _, cx| {
-        let sidebar = cx.new(|cx| {
-            let sidebar = Sidebar::new(session, cx);
-            match threads.clone() {
-                Some(threads) => sidebar.with_threads(threads, cx),
-                None => sidebar,
-            }
-        });
+        let sidebar = cx.new(|cx| Sidebar::new(session, threads.clone(), cx));
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
     })
 }

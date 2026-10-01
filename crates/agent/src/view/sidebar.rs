@@ -101,9 +101,15 @@ pub struct Sidebar {
 }
 
 impl Sidebar {
-    /// Finds `claude` on the `PATH` of the login shell, in the background.
-    pub fn new(session: Entity<sound_ui::Session>, cx: &mut Context<Self>) -> Self {
-        let mut sidebar = Self::with(session, Claude::Looking, cx);
+    /// Finds `claude` on the `PATH` of the login shell, in the background. The threads of
+    /// the project are kept in `threads`, `agent/threads` in the support folder of the
+    /// machine; with `None` nothing is saved.
+    pub fn new(
+        session: Entity<sound_ui::Session>,
+        threads: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut sidebar = Self::with(session, Claude::Looking, threads, cx);
         sidebar._finding = Some(cx.spawn(async move |sidebar, cx| {
             let found = cx
                 .background_spawn(async {
@@ -131,14 +137,24 @@ impl Sidebar {
     pub fn with_claude(
         session: Entity<sound_ui::Session>,
         installed: Option<Installed>,
+        threads: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Self {
         let claude = installed.map_or(Claude::Missing, Claude::Found);
-        Self::with(session, claude, cx)
+        Self::with(session, claude, threads, cx)
     }
 
-    fn with(session: Entity<sound_ui::Session>, claude: Claude, cx: &mut Context<Self>) -> Self {
+    fn with(
+        session: Entity<sound_ui::Session>,
+        claude: Claude,
+        threads: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         install_bindings(cx);
+        let loading = threads.map(|threads| {
+            let project = session.read(cx).project().root().to_path_buf();
+            Self::load(threads, project, cx)
+        });
         let input = cx.new(|cx| {
             TextInput::new(cx)
                 .placeholder("Ask for a change")
@@ -173,41 +189,37 @@ impl Sidebar {
             agent: None,
             thread: None,
             writes: None,
-            loading: None,
+            loading,
             _finding: None,
         }
     }
 
-    /// Keeps the threads of the project in `threads`, `agent/threads` in the support folder of
-    /// the machine, and shows the last one, read in the background. Without it nothing is
-    /// saved.
-    pub fn with_threads(mut self, threads: PathBuf, cx: &mut Context<Self>) -> Self {
-        let project = self.session.read(cx).project().root().to_path_buf();
-        self.loading = Some(cx.spawn(async move |sidebar, cx| {
-            let (store, last) = cx
+    /// Reads the current thread of `project` from `threads` in the background.
+    fn load(threads: PathBuf, project: PathBuf, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |sidebar, cx| {
+            let (store, current) = cx
                 .background_spawn(async move {
                     let store = ThreadStore::new(&threads, &project);
-                    let last = store.last();
-                    (store, last)
+                    let current = store.current();
+                    (store, current)
                 })
                 .await;
             // A sidebar that went in the meantime shows nothing.
             sidebar
-                .update(cx, |sidebar, cx| sidebar.loaded(store, last, cx))
+                .update(cx, |sidebar, cx| sidebar.loaded(store, current, cx))
                 .ok();
-        }));
-        self
+        })
     }
 
     fn loaded(
         &mut self,
         store: ThreadStore,
-        last: Result<Option<(SavedThread, Conversation)>, String>,
+        current: Result<Option<(SavedThread, Conversation)>, String>,
         cx: &mut Context<Self>,
     ) {
         self.loading = None;
         self.writes = Some(write_in_order(store, cx));
-        match last {
+        match current {
             Ok(Some((thread, conversation))) => {
                 self.thread = Some(thread);
                 // Only notices came meanwhile: no message goes while it loads.
@@ -217,7 +229,7 @@ impl Sidebar {
             Ok(None) => {}
             Err(error) => self
                 .conversation
-                .notice(format!("The last thread could not be read: {error}")),
+                .notice(format!("The saved thread could not be read: {error}")),
         }
         self.expanded.clear();
         self.list.reset(self.conversation.entries().len());
@@ -264,16 +276,13 @@ impl Sidebar {
         self.session
             .update(cx, |session, _| session.begin_request(&label));
         self.conversation.send(message, started);
-        let thread = self
-            .thread
-            .get_or_insert_with(|| SavedThread::new(Provider::Claude, message, started));
-        thread.updated = started;
+        let thread = self.thread.get_or_insert_with(SavedThread::fresh);
         let line = Line::Sent {
             at: started,
             message: message.to_string(),
         };
         let writes = [
-            Write::Thread(thread.clone()),
+            Write::Current(Some(thread.clone())),
             Write::Lines {
                 thread: thread.id.clone(),
                 lines: vec![line],
@@ -294,14 +303,6 @@ impl Sidebar {
         let mut changed: Option<usize> = None;
         let mut lines = Vec::new();
         for event in events {
-            // The session to resume the thread with, from now on and when it opens again.
-            if let AgentEvent::Started { session_id, .. } = &event
-                && let Some(thread) = &mut self.thread
-            {
-                thread.session_id = Some(session_id.clone());
-                let saved = Write::Thread(thread.clone());
-                self.keep([saved]);
-            }
             lines.extend(Line::of(&event, now));
             let ends = matches!(
                 event,
@@ -369,7 +370,7 @@ impl Sidebar {
                 return;
             };
             match self.start(installed.clone(), cx) {
-                Ok(agent) => self.agent = Some(agent),
+                Ok(agent) => self.attach(agent),
                 Err(error) => {
                     self.conversation
                         .notice(format!("Claude Code did not start: {error}"));
@@ -429,11 +430,19 @@ impl Sidebar {
     /// Talks to `thread` from now on, in place of starting a process at the next send. For a
     /// test with [`Thread::without_agent`], which hands the events to [`Self::receive`].
     pub fn connect(&mut self, thread: Thread) {
-        self.agent = Some(Agent {
+        self.attach(Agent {
             thread,
             _reading: Task::ready(()),
             _delivering: Task::ready(()),
         });
+    }
+
+    /// Talks to `agent` from now on. Its session is the thread's: the next message saves it,
+    /// before the agent has said anything, so a thread quit early still resumes.
+    fn attach(&mut self, agent: Agent) {
+        let thread = self.thread.get_or_insert_with(SavedThread::fresh);
+        thread.session_id = Some(agent.thread.session_id().to_string());
+        self.agent = Some(agent);
     }
 
     fn stop(&mut self, cx: &mut Context<Self>) {
@@ -464,8 +473,9 @@ impl Sidebar {
     /// Drops the thread and its process, and starts empty.
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.agent = None;
-        // The old one stays in the store; the new one is saved from its first message on.
+        // The old one stays in the store, and no thread is current until the next message.
         self.thread = None;
+        self.keep([Write::Current(None)]);
         if self.conversation.is_working() {
             self.session.update(cx, |session, _| session.end_request());
         }

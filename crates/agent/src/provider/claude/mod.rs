@@ -131,11 +131,12 @@ struct Writing {
 }
 
 impl Events {
-    pub fn start(options: ThreadOptions, commands: Receiver<Command>) -> io::Result<Events> {
-        let session_id = match &options.session {
-            Session::New => uuid::Uuid::new_v4().to_string(),
-            Session::Resume(session_id) => session_id.clone(),
-        };
+    /// `session_id` is the one `options.session` names, or the new one to give the session.
+    pub fn start(
+        options: ThreadOptions,
+        session_id: String,
+        commands: Receiver<Command>,
+    ) -> io::Result<Events> {
         let mut command = std::process::Command::new(&options.program);
         command
             .args(arguments(&options, &session_id))

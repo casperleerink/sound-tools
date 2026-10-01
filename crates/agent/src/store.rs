@@ -1,11 +1,11 @@
-//! The threads of each project on this machine, so the sidebar shows the last one again when
-//! the window opens, and its agent resumes it.
+//! The threads of each project on this machine, so the sidebar shows the current one again
+//! when the window opens, and its agent resumes it.
 //!
 //! Kept in the support folder of the machine, never in the project: the log is interface
 //! state of this machine, it would be noise in git, and the agent would read its own chat.
 //! Each project has one folder, `agent/threads/<project key>/`:
 //!
-//! - `index.json` lists the threads ([`SavedThread`]), the one used last at the end.
+//! - `index.json` lists the threads ([`SavedThread`]) and names the current one, if any.
 //! - `<thread id>.jsonl` is what the sidebar showed: one [`Line`] per line, the composer's
 //!   messages and the [`AgentEvent`]s with the time each came. Replayed through
 //!   [`Conversation::apply`] it gives the same conversation back, so the display needs no
@@ -16,40 +16,38 @@
 
 use std::fs;
 use std::io::{self, Write as _};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use crate::conversation::{Conversation, request_label};
-use crate::{AgentEvent, Provider, Session, TurnOutcome};
+use crate::conversation::Conversation;
+use crate::{AgentEvent, Session, TurnOutcome};
 
 const INDEX: &str = "index.json";
+
+/// Where an index that does not read is put aside, so nothing in it is written over.
+const BAD_INDEX: &str = "index.json.bad";
 
 /// One thread in the index.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedThread {
     /// Also the name of its log.
     pub id: String,
-    pub provider: Provider,
-    /// The session [`AgentEvent::Started`] gave, which the next process resumes. `None`
-    /// until the agent has started.
+    /// The session the agent works in, from [`crate::Thread::session_id`]. `None` until an
+    /// agent started for the thread.
     pub session_id: Option<String>,
-    /// The first message, cut short.
-    pub title: String,
-    /// When the composer last sent to it.
-    pub updated: SystemTime,
 }
 
 impl SavedThread {
-    /// The thread that `message` starts.
-    pub fn new(provider: Provider, message: &str, now: SystemTime) -> Self {
+    /// A thread no message has gone to yet.
+    pub fn fresh() -> Self {
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            provider,
+            id: Uuid::new_v4().to_string(),
             session_id: None,
-            title: request_label(message),
-            updated: now,
         }
     }
 
@@ -59,6 +57,14 @@ impl SavedThread {
             .clone()
             .map_or(Session::New, Session::Resume)
     }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Index {
+    /// The id of the thread the sidebar shows. `None` after **+**: the next message starts
+    /// a thread.
+    current: Option<String>,
+    threads: Vec<SavedThread>,
 }
 
 /// One line of a thread's log.
@@ -78,8 +84,7 @@ pub enum Line {
 
 impl Line {
     /// The line of `event`, or `None` when a replay does not need it: a text delta, because
-    /// [`AgentEvent::TextDone`] brings the whole text, and the start, whose session id goes
-    /// to the index.
+    /// [`AgentEvent::TextDone`] brings the whole text, and the start, which shows nothing.
     pub fn of(event: &AgentEvent, at: SystemTime) -> Option<Line> {
         let needed = !matches!(
             event,
@@ -95,8 +100,8 @@ impl Line {
 /// What the sidebar keeps, in the order it happened.
 #[derive(Debug)]
 pub enum Write {
-    /// Adds the thread to the index, or updates it there, as the one used last.
-    Thread(SavedThread),
+    /// The thread the sidebar shows, added to the index or updated there, or none after **+**.
+    Current(Option<SavedThread>),
     /// Adds to the log of the thread with this id.
     Lines { thread: String, lines: Vec<Line> },
 }
@@ -117,12 +122,17 @@ impl ThreadStore {
         }
     }
 
-    /// The thread used last, and what it showed. A line that does not read is left out, with
-    /// a notice in its place.
-    pub fn last(&self) -> Result<Option<(SavedThread, Conversation)>, String> {
-        let Some(thread) = self.index()?.pop() else {
+    /// The current thread, and what it showed. A line that does not read is left out, with a
+    /// notice in its place.
+    pub fn current(&self) -> Result<Option<(SavedThread, Conversation)>, String> {
+        let mut index = self.index()?;
+        let Some(current) = index.current else {
             return Ok(None);
         };
+        let Some(position) = index.threads.iter().position(|saved| saved.id == current) else {
+            return Ok(None);
+        };
+        let thread = index.threads.swap_remove(position);
         let path = self.log(&thread.id);
         let text = match fs::read(&path) {
             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
@@ -136,24 +146,28 @@ impl ThreadStore {
         fs::create_dir_all(&self.folder)
             .map_err(|error| format!("{} could not be made: {error}", self.folder.display()))?;
         match write {
-            Write::Thread(thread) => self.save(thread),
+            Write::Current(thread) => self.save(thread.as_ref()),
             Write::Lines { thread, lines } => self.append(thread, lines),
         }
     }
 
-    fn save(&self, thread: &SavedThread) -> Result<(), String> {
-        // An index that does not read is written over, or no thread would ever be saved
-        // again. `last` has said so already.
-        let mut threads = self.index().unwrap_or_default();
-        threads.retain(|saved| saved.id != thread.id);
-        threads.push(thread.clone());
+    fn save(&self, current: Option<&SavedThread>) -> Result<(), String> {
+        let mut index = self.index()?;
+        index.current = current.map(|thread| thread.id.clone());
+        if let Some(thread) = current {
+            match index.threads.iter_mut().find(|saved| saved.id == thread.id) {
+                Some(saved) => *saved = thread.clone(),
+                None => index.threads.push(thread.clone()),
+            }
+        }
         let path = self.folder.join(INDEX);
         let failed = |error: String| format!("{} was not written: {error}", path.display());
         let mut text =
-            serde_json::to_string_pretty(&threads).map_err(|error| failed(error.to_string()))?;
+            serde_json::to_string_pretty(&index).map_err(|error| failed(error.to_string()))?;
         text.push('\n');
-        // Through a file of its own and a rename, so a crash never leaves half an index.
-        let temporary = self.folder.join(format!("{INDEX}.tmp"));
+        // Through a file of its own and a rename, so a crash never leaves half an index. Its
+        // name is new each time, so no other write can be halfway through it.
+        let temporary = self.folder.join(format!("{INDEX}.{}.tmp", Uuid::new_v4()));
         fs::write(&temporary, text)
             .and_then(|()| fs::rename(&temporary, &path))
             .map_err(|error| failed(error.to_string()))
@@ -167,24 +181,57 @@ impl ThreadStore {
             text.push_str(&serde_json::to_string(line).map_err(|error| failed(error.to_string()))?);
             text.push('\n');
         }
-        // Whole lines in one write, so a crash damages at most the last line, which a replay
-        // leaves out.
-        fs::OpenOptions::new()
+        let file = fs::OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(&path)
-            .and_then(|mut file| file.write_all(text.as_bytes()))
+            .map_err(|error| failed(error.to_string()))?;
+        // A write a crash cut off has no end of line: end it, or the next line would join it
+        // and be lost with it.
+        let length = file
+            .metadata()
+            .map_err(|error| failed(error.to_string()))?
+            .len();
+        if let Some(last) = length.checked_sub(1) {
+            let mut byte = [0];
+            file.read_exact_at(&mut byte, last)
+                .map_err(|error| failed(error.to_string()))?;
+            if byte != *b"\n" {
+                text.insert(0, '\n');
+            }
+        }
+        // Whole lines in one write, so a crash damages at most the last line, which a replay
+        // leaves out.
+        (&file)
+            .write_all(text.as_bytes())
             .map_err(|error| failed(error.to_string()))
     }
 
-    fn index(&self) -> Result<Vec<SavedThread>, String> {
+    /// The index, or an empty one when there is none yet. One that does not read is put
+    /// aside as `index.json.bad`, never written over, and the error says so once; the next
+    /// read starts a new index.
+    fn index(&self) -> Result<Index, String> {
         let path = self.folder.join(INDEX);
-        let failed = |error: String| format!("{} could not be read: {error}", path.display());
-        match fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text).map_err(|error| failed(error.to_string())),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(error) => Err(failed(error.to_string())),
-        }
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Index::default()),
+            Err(error) => return Err(format!("{} could not be read: {error}", path.display())),
+        };
+        serde_json::from_str(&text).or_else(|error| {
+            let bad = self.folder.join(BAD_INDEX);
+            fs::rename(&path, &bad).map_err(|rename| {
+                format!(
+                    "{} could not be read ({error}) or put aside: {rename}",
+                    path.display()
+                )
+            })?;
+            Err(format!(
+                "{} could not be read, and is kept as {}: {error}",
+                path.display(),
+                bad.display()
+            ))
+        })
     }
 
     fn log(&self, thread: &str) -> PathBuf {
@@ -192,13 +239,11 @@ impl ThreadStore {
     }
 }
 
-/// The folder name of a project: the path of its folder, the same however it was opened,
-/// with `%` and `/` escaped, so it is one name and two projects never share one.
+/// The folder name of a project: a name-based UUID of the path of its folder, the same
+/// however it was opened. Any path gives a name of the same short length.
 fn key(project: &Path) -> String {
     let path = fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
-    path.to_string_lossy()
-        .replace('%', "%25")
-        .replace('/', "%2F")
+    Uuid::new_v5(&Uuid::NAMESPACE_URL, path.as_os_str().as_bytes()).to_string()
 }
 
 /// The conversation a log gives. A turn still open is one the app quit during: it ends as

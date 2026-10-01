@@ -20,26 +20,22 @@ fn project(machine: &Path, name: &str) -> (PathBuf, ThreadStore) {
 /// Sends `message`, applies `events` a second apart, and keeps it all as the sidebar does.
 fn keep(
     store: &ThreadStore,
-    thread: &mut SavedThread,
+    thread: &SavedThread,
     conversation: &mut Conversation,
     message: &str,
     sent: u64,
     events: Vec<AgentEvent>,
 ) {
     conversation.send(message, at(sent));
-    thread.updated = at(sent);
     let mut lines = vec![Line::Sent {
         at: at(sent),
         message: message.to_string(),
     }];
     for (event, second) in events.into_iter().zip(sent + 1..) {
-        if let AgentEvent::Started { session_id, .. } = &event {
-            thread.session_id = Some(session_id.clone());
-        }
         lines.extend(Line::of(&event, at(second)));
         conversation.apply(event, at(second));
     }
-    store.write(&Write::Thread(thread.clone())).unwrap();
+    store.write(&Write::Current(Some(thread.clone()))).unwrap();
     let thread = thread.id.clone();
     store.write(&Write::Lines { thread, lines }).unwrap();
 }
@@ -56,16 +52,31 @@ fn answered(text: &str) -> Vec<AgentEvent> {
     ]
 }
 
+/// What a replay shows, one word per entry.
+fn shown(conversation: &Conversation) -> Vec<&str> {
+    conversation
+        .entries()
+        .iter()
+        .map(|entry| match entry {
+            Entry::Message(text) | Entry::Notice(text) => text.as_str(),
+            Entry::Turn(turn) => turn.blocks.first().map_or("", String::as_str),
+        })
+        .collect()
+}
+
 #[test]
 fn a_thread_reads_back_as_the_conversation_it_was() {
     let machine = tempfile::tempdir().unwrap();
     let (_, store) = project(machine.path(), "night");
-    let mut thread = SavedThread::new(Provider::Claude, "Add a bass line", at(0));
+    let thread = SavedThread {
+        session_id: Some("session".to_string()),
+        ..SavedThread::fresh()
+    };
     let mut conversation = Conversation::default();
     let step = StepId("write".to_string());
     keep(
         &store,
-        &mut thread,
+        &thread,
         &mut conversation,
         "Add a bass line",
         0,
@@ -98,7 +109,7 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
     );
     keep(
         &store,
-        &mut thread,
+        &thread,
         &mut conversation,
         "Build it",
         20,
@@ -117,10 +128,9 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
         ],
     );
 
-    let (saved, replayed) = store.last().unwrap().unwrap();
+    let (saved, replayed) = store.current().unwrap().unwrap();
     assert_eq!(replayed, conversation);
     assert_eq!(saved, thread);
-    assert_eq!(saved.title, "Add a bass line");
     assert_eq!(saved.session(), Session::Resume("session".to_string()));
     // "Worked for" survives: the first turn worked from the message to its end.
     let Some(Entry::Turn(turn)) = replayed.entries().get(1) else {
@@ -134,40 +144,77 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
 fn a_damaged_line_is_left_out_with_a_notice() {
     let machine = tempfile::tempdir().unwrap();
     let (_, store) = project(machine.path(), "night");
-    let mut thread = SavedThread::new(Provider::Claude, "First", at(0));
+    let thread = SavedThread::fresh();
     let mut conversation = Conversation::default();
     keep(
         &store,
-        &mut thread,
+        &thread,
         &mut conversation,
         "First",
         0,
         answered("One."),
     );
-    let log = store.log(&thread.id);
-    let mut file = fs::OpenOptions::new().append(true).open(&log).unwrap();
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(store.log(&thread.id))
+        .unwrap();
     file.write_all(b"{\"sent\": {\"at\": 5\n").unwrap();
     keep(
         &store,
-        &mut thread,
+        &thread,
         &mut conversation,
         "Second",
         10,
         answered("Two."),
     );
 
-    let (_, replayed) = store.last().unwrap().unwrap();
-    let kinds: Vec<_> = replayed
-        .entries()
-        .iter()
-        .map(|entry| match entry {
-            Entry::Message(text) => text.as_str(),
-            Entry::Turn(turn) => turn.blocks.first().map_or("", String::as_str),
-            Entry::Notice(text) => text.as_str(),
-        })
-        .collect();
+    let (_, replayed) = store.current().unwrap().unwrap();
     assert_eq!(
-        kinds,
+        shown(&replayed),
+        [
+            "First",
+            "One.",
+            "Part of this thread could not be read.",
+            "Second",
+            "Two."
+        ]
+    );
+}
+
+/// A write a crash cut off has no end of line. The next write ends it first, so only the cut
+/// line is lost, not the good one after it.
+#[test]
+fn a_line_cut_off_does_not_take_the_next_one_with_it() {
+    let machine = tempfile::tempdir().unwrap();
+    let (_, store) = project(machine.path(), "night");
+    let thread = SavedThread::fresh();
+    let mut conversation = Conversation::default();
+    keep(
+        &store,
+        &thread,
+        &mut conversation,
+        "First",
+        0,
+        answered("One."),
+    );
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(store.log(&thread.id))
+        .unwrap();
+    file.write_all(b"{\"event\": {\"at\": {\"secs_since")
+        .unwrap();
+    keep(
+        &store,
+        &thread,
+        &mut conversation,
+        "Second",
+        10,
+        answered("Two."),
+    );
+
+    let (_, replayed) = store.current().unwrap().unwrap();
+    assert_eq!(
+        shown(&replayed),
         [
             "First",
             "One.",
@@ -183,7 +230,7 @@ fn a_damaged_line_is_left_out_with_a_notice() {
 fn a_turn_the_app_quit_during_ends_stopped() {
     let machine = tempfile::tempdir().unwrap();
     let (_, store) = project(machine.path(), "night");
-    let mut thread = SavedThread::new(Provider::Claude, "Hello", at(0));
+    let thread = SavedThread::fresh();
     let mut conversation = Conversation::default();
     let events = vec![
         AgentEvent::TurnStarted,
@@ -191,9 +238,9 @@ fn a_turn_the_app_quit_during_ends_stopped() {
             text: "Half".to_string(),
         },
     ];
-    keep(&store, &mut thread, &mut conversation, "Hello", 0, events);
+    keep(&store, &thread, &mut conversation, "Hello", 0, events);
 
-    let (_, replayed) = store.last().unwrap().unwrap();
+    let (_, replayed) = store.current().unwrap().unwrap();
     assert!(!replayed.is_working());
     let Some(Entry::Turn(turn)) = replayed.entries().get(1) else {
         panic!("{:?}", replayed.entries());
@@ -208,7 +255,7 @@ fn a_turn_the_app_quit_during_ends_stopped() {
 fn a_lost_session_stays_lost() {
     let machine = tempfile::tempdir().unwrap();
     let (_, store) = project(machine.path(), "night");
-    let mut thread = SavedThread::new(Provider::Claude, "Hello", at(0));
+    let thread = SavedThread::fresh();
     let mut conversation = Conversation::default();
     let events = vec![
         AgentEvent::TurnStarted,
@@ -221,8 +268,8 @@ fn a_lost_session_stays_lost() {
             reason: ExitReason::SessionNotFound,
         },
     ];
-    keep(&store, &mut thread, &mut conversation, "Hello", 0, events);
-    let (_, replayed) = store.last().unwrap().unwrap();
+    keep(&store, &thread, &mut conversation, "Hello", 0, events);
+    let (_, replayed) = store.current().unwrap().unwrap();
     assert!(!replayed.can_continue());
 }
 
@@ -230,51 +277,54 @@ fn a_lost_session_stays_lost() {
 fn two_projects_never_share_a_thread() {
     let machine = tempfile::tempdir().unwrap();
     let (night, night_store) = project(machine.path(), "night");
-    // Names that a plain `/` to `-` would give the same key.
     let (_, day_store) = project(machine.path(), "a-b");
     let (_, other_store) = project(&machine.path().join("a"), "b");
-    assert!(other_store.last().unwrap().is_none());
+    assert!(other_store.current().unwrap().is_none());
     for (store, message) in [
         (&night_store, "Night"),
         (&day_store, "Day"),
         (&other_store, "Other"),
     ] {
-        let mut thread = SavedThread::new(Provider::Claude, message, at(0));
         let mut conversation = Conversation::default();
+        let thread = SavedThread::fresh();
         keep(
             store,
-            &mut thread,
+            &thread,
             &mut conversation,
             message,
             0,
             answered("Ok."),
         );
     }
-    let title = |store: &ThreadStore| store.last().unwrap().unwrap().0.title;
-    assert_eq!(title(&night_store), "Night");
-    assert_eq!(title(&day_store), "Day");
-    assert_eq!(title(&other_store), "Other");
+    let first = |store: &ThreadStore| {
+        let (_, conversation) = store.current().unwrap().unwrap();
+        shown(&conversation).first().map(|text| text.to_string())
+    };
+    assert_eq!(first(&night_store).as_deref(), Some("Night"));
+    assert_eq!(first(&day_store).as_deref(), Some("Day"));
+    assert_eq!(first(&other_store).as_deref(), Some("Other"));
 
     // The same folder through a link or `..` is the same project.
     let link = machine.path().join("link");
     std::os::unix::fs::symlink(&night, &link).unwrap();
     let threads = machine.path().join("agent/threads");
-    assert_eq!(title(&ThreadStore::new(&threads, &link)), "Night");
-    let roundabout = night.join("..").join("night");
-    assert_eq!(title(&ThreadStore::new(&threads, &roundabout)), "Night");
+    let through_link = ThreadStore::new(&threads, &link);
+    assert_eq!(first(&through_link).as_deref(), Some("Night"));
+    let roundabout = ThreadStore::new(&threads, &night.join("..").join("night"));
+    assert_eq!(first(&roundabout).as_deref(), Some("Night"));
 }
 
 #[test]
-fn the_index_keeps_every_thread_and_the_last_one_used_last() {
+fn the_index_keeps_every_thread_and_names_the_current_one() {
     let machine = tempfile::tempdir().unwrap();
     let (_, store) = project(machine.path(), "night");
-    assert!(store.last().unwrap().is_none());
-    let mut first = SavedThread::new(Provider::Claude, "First", at(0));
-    let mut second = SavedThread::new(Provider::Claude, "Second", at(10));
+    assert!(store.current().unwrap().is_none());
+    let first = SavedThread::fresh();
+    let second = SavedThread::fresh();
     let mut conversation = Conversation::default();
     keep(
         &store,
-        &mut first,
+        &first,
         &mut conversation,
         "First",
         0,
@@ -283,22 +333,143 @@ fn the_index_keeps_every_thread_and_the_last_one_used_last() {
     let mut conversation = Conversation::default();
     keep(
         &store,
-        &mut second,
+        &second,
         &mut conversation,
         "Second",
         10,
         answered("Two."),
     );
-    assert_eq!(store.last().unwrap().unwrap().0, second);
+    assert_eq!(store.current().unwrap().unwrap().0, second);
 
-    // Back to the first: it is the last one used, and the second stays in the index.
-    store.write(&Write::Thread(first.clone())).unwrap();
-    assert_eq!(store.last().unwrap().unwrap().0, first);
+    // **+**: no thread is current, and both stay.
+    store.write(&Write::Current(None)).unwrap();
+    assert!(store.current().unwrap().is_none());
+    // Back to the first.
+    store.write(&Write::Current(Some(first.clone()))).unwrap();
+    assert_eq!(store.current().unwrap().unwrap().0, first);
     let ids: Vec<_> = store
         .index()
         .unwrap()
+        .threads
         .into_iter()
         .map(|thread| thread.id)
         .collect();
-    assert_eq!(ids, [second.id, first.id]);
+    assert_eq!(ids, [first.id, second.id]);
+}
+
+/// An index that does not read is put aside, never written over, and the store goes on.
+#[test]
+fn an_index_that_does_not_read_is_kept_aside() {
+    let machine = tempfile::tempdir().unwrap();
+    let (_, store) = project(machine.path(), "night");
+    fs::create_dir_all(&store.folder).unwrap();
+    fs::write(store.folder.join(INDEX), "[1, 2").unwrap();
+    let error = store.current().unwrap_err();
+    assert!(error.contains("index.json.bad"), "{error}");
+    assert_eq!(
+        fs::read_to_string(store.folder.join(BAD_INDEX)).unwrap(),
+        "[1, 2"
+    );
+
+    let thread = SavedThread::fresh();
+    let mut conversation = Conversation::default();
+    keep(
+        &store,
+        &thread,
+        &mut conversation,
+        "Hello",
+        0,
+        answered("Hi."),
+    );
+    assert_eq!(store.current().unwrap().unwrap().0, thread);
+    assert_eq!(
+        fs::read_to_string(store.folder.join(BAD_INDEX)).unwrap(),
+        "[1, 2"
+    );
+}
+
+/// One saved line of each event. The log is a file format: a line that changes here is a
+/// thread saved before that no longer reads.
+#[test]
+fn every_event_saves_as_the_same_line() {
+    let step = || StepId("toolu_1".to_string());
+    let text = |text: &str| text.to_string();
+    let events = [
+        AgentEvent::TurnStarted,
+        AgentEvent::TextDone {
+            text: text("Done."),
+        },
+        AgentEvent::StepStarted {
+            id: step(),
+            title: text("Ran cargo build"),
+            running_title: text("Running cargo build"),
+        },
+        AgentEvent::StepDone {
+            id: step(),
+            outcome: StepOutcome::Denied,
+        },
+        AgentEvent::ApprovalRequested {
+            id: ApprovalId(text("request-1")),
+            title: text("Run `cargo build`"),
+        },
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Failed {
+                message: text("Killed"),
+            },
+        },
+        AgentEvent::Error {
+            message: text("Could not stop"),
+        },
+        AgentEvent::Exited {
+            reason: ExitReason::SessionNotFound,
+        },
+    ];
+    let mut lines = vec![
+        serde_json::to_string(&Line::Sent {
+            at: at(0),
+            message: text("Hello"),
+        })
+        .unwrap(),
+    ];
+    for event in events {
+        // A new event fails to compile here until it has a line below, or is not saved.
+        match &event {
+            AgentEvent::TurnStarted
+            | AgentEvent::TextDone { .. }
+            | AgentEvent::StepStarted { .. }
+            | AgentEvent::StepDone { .. }
+            | AgentEvent::ApprovalRequested { .. }
+            | AgentEvent::TurnEnded { .. }
+            | AgentEvent::Error { .. }
+            | AgentEvent::Exited { .. } => {}
+            AgentEvent::Started { .. } | AgentEvent::TextDelta { .. } => {
+                unreachable!("not saved")
+            }
+        }
+        let line = Line::of(&event, at(0)).unwrap();
+        let saved = serde_json::to_string(&line).unwrap();
+        assert_eq!(serde_json::from_str::<Line>(&saved).unwrap(), line);
+        lines.push(saved);
+    }
+    let at = r#""at":{"secs_since_epoch":1800000000,"nanos_since_epoch":0}"#;
+    let expected = [
+        format!(r#"{{"sent":{{{at},"message":"Hello"}}}}"#),
+        format!(r#"{{"event":{{{at},"event":"turn_started"}}}}"#),
+        format!(r#"{{"event":{{{at},"event":{{"text_done":{{"text":"Done."}}}}}}}}"#),
+        format!(
+            r#"{{"event":{{{at},"event":{{"step_started":{{"id":"toolu_1","title":"Ran cargo build","running_title":"Running cargo build"}}}}}}}}"#
+        ),
+        format!(
+            r#"{{"event":{{{at},"event":{{"step_done":{{"id":"toolu_1","outcome":"denied"}}}}}}}}"#
+        ),
+        format!(
+            r#"{{"event":{{{at},"event":{{"approval_requested":{{"id":"request-1","title":"Run `cargo build`"}}}}}}}}"#
+        ),
+        format!(
+            r#"{{"event":{{{at},"event":{{"turn_ended":{{"outcome":{{"failed":{{"message":"Killed"}}}}}}}}}}}}"#
+        ),
+        format!(r#"{{"event":{{{at},"event":{{"error":{{"message":"Could not stop"}}}}}}}}"#),
+        format!(r#"{{"event":{{{at},"event":{{"exited":{{"reason":"session_not_found"}}}}}}}}"#),
+    ];
+    assert_eq!(lines, expected);
 }
