@@ -12,7 +12,9 @@
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session by [`ControlEdit`], as in the synth: a knob or a handle drag is one
 //! gesture and one undo step, a key step or a reset one commit. A handle edits the field of its
-//! knob, under the name of its knob in the history.
+//! knob, under the name of its knob in the history. A number that an automation lane of the
+//! track moves shows the value that plays, on its knob and on the display, and does not drag
+//! ([`Lanes`]).
 
 use std::path::PathBuf;
 
@@ -31,11 +33,12 @@ use sound_ui::components::waveform_display::{
     FileDrop, NoFile, WaveformDisplay, clamped_end, clamped_start, place,
 };
 use sound_ui::{
-    ControlEdit, DeviceLabel, Devices, Session, Views, Waveforms, every_poll, weak_callback,
+    ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, Waveforms, every_poll, weak_callback,
 };
 
 use crate::{
-    ATTACK, DECAY, GAIN, POSITION, Parameter, RELEASE, ROOT, SUSTAIN, SamplerState, VELOCITY,
+    ATTACK, DECAY, GAIN, POSITION, Parameter, RELEASE, ROOT, SUSTAIN, Sampler, SamplerState,
+    VELOCITY,
 };
 
 /// The name the rack puts on the card of a sampler.
@@ -159,6 +162,7 @@ pub struct SamplerView {
     frame: CardFrame,
     /// The gesture of a knob or handle drag.
     edit: ControlEdit,
+    lanes: Entity<Lanes<SamplerState>>,
     /// Whether the card shows Start, End, Attack, Decay and Sustain. Interface state.
     expanded: bool,
     /// Where the green line is, in seconds of the file, while a note sounds.
@@ -196,11 +200,13 @@ impl SamplerView {
         if let Some(peaks) = session.read(cx).project().peaks(sampler.id(), POSITION) {
             peaks.take();
         }
+        let lanes = Lanes::follow(&session, sampler.id(), Sampler::AUTOMATION, cx);
         Self {
             session,
             sampler,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             expanded: false,
             playing_at: None,
             choose_focus: cx.focus_handle().tab_stop(true),
@@ -348,9 +354,11 @@ impl SamplerView {
         cx: &mut Context<Self>,
     ) -> Knob {
         let value = (control.parameter.get)(state);
+        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
         let knob = Knob::new(control.parameter.field)
             .range(KnobRange::of(control.parameter))
             .value(value)
+            .automated(automated)
             .default_value(control.parameter.default)
             .label(control.label)
             .readout(readout(control.unit, value))
@@ -450,6 +458,9 @@ impl SamplerView {
             point(across(start + attack + decay), sustain),
             point(across(end.max(start + attack + decay)), sustain),
         ];
+        let lanes = self.lanes.read(cx);
+        let attack_held = lanes.is_automated(ATTACK.field);
+        let corner_held = lanes.is_automated(DECAY.field) || lanes.is_automated(SUSTAIN.field);
         // The attack peak moves the attack: its range across the display is the file, offset
         // by where the attack starts.
         let attack_handle = Handle::new(
@@ -461,6 +472,7 @@ impl SamplerView {
             ),
             Axis::fixed(TOP),
         )
+        .automated(attack_held)
         .on_change(weak_callback(
             cx,
             |view, change: ValueChange<Point<f32>>, cx| {
@@ -486,6 +498,7 @@ impl SamplerView {
                 SUSTAIN.default,
             ),
         )
+        .automated(corner_held)
         .on_change(weak_callback(
             cx,
             |view, change: ValueChange<Point<f32>>, cx| {
@@ -563,13 +576,8 @@ impl SamplerView {
 impl Render for SamplerView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self
-            .session
-            .read(cx)
-            .project()
-            .state(&self.sampler)
-            .cloned()
-        else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);

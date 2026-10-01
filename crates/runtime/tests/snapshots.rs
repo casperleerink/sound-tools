@@ -89,6 +89,7 @@
 //! - `editor-bend.png`, `editor-mod.png`: the expression lanes, see `snapshots/lanes.rs`.
 //! - `automation-*.png`: the automation lanes under a track, and a clip dragged with its
 //!   automation, see `snapshots/automation.rs`.
+//! - `track-panel-automated.png`: knobs that lanes move, see `snapshots/automated.rs`.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -138,6 +139,8 @@ use tempfile::TempDir;
 mod agent;
 #[path = "snapshots/audio.rs"]
 mod audio;
+#[path = "snapshots/automated.rs"]
+mod automated;
 #[path = "snapshots/automation.rs"]
 mod automation;
 #[path = "snapshots/drums.rs"]
@@ -994,8 +997,8 @@ fn main() -> Result<()> {
 
     // Audio tracks and clips, the Sampler, the Drum pad and the Utility first, so a run that
     // only looks at one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=agent`, `=audio`,
-    // `=sampler`, `=drums`, `=utility`, `=saturator`, `=modulation`, `=lanes`, `=automation` or
-    // `=wavetable` renders the default project and those alone.
+    // `=sampler`, `=drums`, `=utility`, `=saturator`, `=modulation`, `=lanes`, `=automation`,
+    // `=automated` or `=wavetable` renders the default project and those alone.
     let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
     let runs = |name: &str| only.as_deref().is_none_or(|only| only == name);
     if runs("agent") {
@@ -1033,6 +1036,9 @@ fn main() -> Result<()> {
     }
     if runs("wavetable") {
         wavetable::snapshots(&mut cx, &save)?;
+    }
+    if runs("automated") {
+        automated::snapshots(&mut cx, &save)?;
     }
     if only.is_some() {
         return Ok(());

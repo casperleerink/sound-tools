@@ -8,7 +8,9 @@
 //! and one undo step, a key step, a reset, a shape or a switch is one commit. The ranges, the
 //! defaults and the travel of each knob come from the [`Parameter`](sound_core::Parameter)s of
 //! the crate. What is only about the interface is here: the label, the unit, the name of the
-//! undo step, which band is selected and whether the card is expanded.
+//! undo step, which band is selected and whether the card is expanded. A number that an
+//! automation lane of the track moves shows the value that plays, on its knob and on the
+//! display, and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, KeyDownEvent, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -21,9 +23,12 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::toggle::Toggle;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
+use sound_ui::lanes::object_of;
+use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
-use crate::{BANDS, Band, EqState, FREQUENCIES, GAIN, OUTPUT_GAIN, Q, Shape, response};
+use crate::{
+    BAND_LANES, BANDS, Band, Eq, EqState, FREQUENCIES, GAIN, OUTPUT_GAIN, Q, Shape, response,
+};
 
 /// The name the rack puts on the card of an EQ.
 pub const NAME: &str = "EQ";
@@ -185,6 +190,7 @@ pub struct EqView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of a handle.
     edit: ControlEdit,
+    lanes: Entity<Lanes<EqState>>,
     /// Whether the card shows the on and off of the bands and the output. Interface state: not
     /// saved.
     expanded: bool,
@@ -233,11 +239,13 @@ impl EqView {
             }
         })
         .detach();
+        let lanes = Lanes::follow(&session, eq.id(), Eq::AUTOMATION, cx);
         Self {
             session,
             eq,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             expanded: false,
             selected: 0,
             shapes,
@@ -262,6 +270,13 @@ impl EqView {
         self.selected
     }
 
+    /// Whether a lane of the track moves the number `field` of band `band`, which it names by
+    /// its path: `bands[0].gain_db`.
+    fn is_automated(&self, band: usize, field: &str, cx: &Context<Self>) -> bool {
+        let band = object_of(BAND_LANES[band][0].field);
+        self.lanes.read(cx).is_automated_in(band, field)
+    }
+
     fn change<V>(
         &mut self,
         label: &str,
@@ -278,8 +293,10 @@ impl EqView {
         let band = self.selected;
         let value = (control.parameter.get)(&state.bands[band]);
         let (set, undo_label) = (control.parameter.set, control.undo_label);
+        let automated = self.is_automated(band, control.parameter.field, cx);
         control
             .knob(value)
+            .automated(automated)
             .on_change(weak_callback(cx, move |view, change, cx| {
                 let set = move |state: &mut EqState, value| set(&mut state.bands[band], value);
                 view.change(undo_label, change, set, cx);
@@ -288,8 +305,10 @@ impl EqView {
 
     fn output_knob(&self, state: &EqState, cx: &mut Context<Self>) -> Knob {
         let value = (OUTPUT_KNOB.parameter.get)(state);
+        let automated = self.lanes.read(cx).is_automated(OUTPUT_GAIN.field);
         OUTPUT_KNOB
             .knob(value)
+            .automated(automated)
             .on_change(weak_callback(cx, move |view, change, cx| {
                 let set = OUTPUT_KNOB.parameter.set;
                 view.change(OUTPUT_KNOB.undo_label, change, set, cx);
@@ -313,8 +332,11 @@ impl EqView {
         };
         let select = weak_callback(cx, move |view: &mut Self, (), cx| view.select(band, cx));
         let number = band + 1;
+        let automated = (with_gain && self.is_automated(band, GAIN.field, cx))
+            || self.is_automated(band, FREQUENCIES[band].field, cx);
         Handle::new(SharedString::from(format!("band-{number}")), x, y)
             .label(number.to_string())
+            .automated(automated)
             .hollow(band != self.selected)
             .dimmed(!settings.on)
             .on_press(move |window, cx| select((), window, cx))
@@ -371,7 +393,8 @@ impl EqView {
 impl Render for EqView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self.session.read(cx).project().state(&self.eq).copied() else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
         let band = state.bands[self.selected];

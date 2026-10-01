@@ -5,6 +5,8 @@
 
 use std::f64::consts::TAU;
 
+use sound_core::{InstanceId, Ticks};
+
 use crate::support::{BAR, Harness, clip, difference, write_samples};
 
 const FOLDER: &str = "state/arrangement/piano";
@@ -123,6 +125,46 @@ fn a_cutoff_sweep_plays_the_values_of_its_points_and_renders_the_same_every_time
     let second = harness.play_from_the_start(4 * BAR);
     assert_eq!(bytes(&first), bytes(&second));
     assert_eq!(bytes(&first), bytes(&swept));
+}
+
+/// The views are shown what the lanes play, at any tick: the cutoff halfway up its sweep on
+/// the knob, and the volume of the track itself. A track whose lanes are gone shows none.
+#[test]
+fn the_views_are_shown_the_value_each_lane_plays() {
+    let sweep = lane(
+        Some("tone"),
+        "cutoff_hz",
+        &[(BAR_TICKS, "300.0"), (2 * BAR_TICKS, "8000.0")],
+    );
+    let fade = lane(None, "gain_db", &[(0, "-6.0")]);
+    let mut harness = piano(&automation(&[sweep, fade]), "{}");
+    assert_eq!(harness.project.problems(), []);
+    let values = |harness: &Harness, instance: &str, tick: u64| {
+        let instance = InstanceId::new(instance).unwrap();
+        let lanes = harness.project.lanes(&instance);
+        lanes.map(|lanes| {
+            let mut values = Vec::new();
+            lanes.values_at(Ticks(tick), &mut values);
+            values
+        })
+    };
+    let middle = BAR_TICKS + BAR_TICKS / 2;
+    let tone = values(&harness, "arrangement/piano/tone", middle).unwrap();
+    let [("cutoff_hz", cutoff)] = tone[..] else {
+        panic!("{tone:?}");
+    };
+    assert!((cutoff - (300_f32 * 8000.).sqrt()).abs() < 0.1, "{cutoff}");
+    // On the travel of the fader and back, as the mixer hears it.
+    let track = values(&harness, "arrangement/piano", 0).unwrap();
+    let [("gain_db", gain)] = track[..] else {
+        panic!("{track:?}");
+    };
+    assert!((gain + 6.).abs() < 1e-4, "{gain}");
+
+    let plain = r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "effects": ["tone"]}}"#;
+    assert_eq!(harness.write_and_apply(TRACK_FILE, plain), 1);
+    assert_eq!(values(&harness, "arrangement/piano/tone", 0), None);
+    assert_eq!(values(&harness, "arrangement/piano", 0), None);
 }
 
 /// The volume holds 0 dB up to bar 2 and fades to silence at bar 3, on the travel of the

@@ -1,6 +1,7 @@
 //! Shared components. Each file is one component; the gallery shows every variant.
 
 pub mod audio_clip;
+pub mod automated;
 pub mod button;
 pub mod card;
 pub mod empty_state;

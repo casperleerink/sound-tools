@@ -37,6 +37,7 @@ use registry::DerivedFrom;
 use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
+use crate::automation::PlayedLanes;
 use crate::clock::{Clock, Ticks, TimeSignatures};
 use crate::control::EngineControl;
 use crate::graph::GraphError;
@@ -299,6 +300,13 @@ impl Project {
     /// that offers to automate them, such as the arrangement when a lane is added.
     pub fn automatable(&self, instance: &InstanceId) -> impl Iterator<Item = &'static str> + '_ {
         self.bindings.automatable(instance)
+    }
+
+    /// The lanes that play into the numbers of `instance`, as its owner showed them the last
+    /// time its behaviour ran. `None` while no lane moves a number of it. For a view, whose
+    /// knob of an automated number shows the value that plays at the playhead.
+    pub fn lanes(&self, instance: &InstanceId) -> Option<&dyn PlayedLanes> {
+        self.bindings.lanes(instance)
     }
 
     /// The peaks that the behaviour of `instance` keeps under `name`, for a meter: take from

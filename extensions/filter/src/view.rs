@@ -7,9 +7,10 @@
 //! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
 //! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
 //! about the interface is here: the label, the unit, the name of the undo step and whether the
-//! card is expanded.
+//! card is expanded. A number that an automation lane of the track moves shows the value that
+//! plays, on its knob and on the display, and does not drag ([`Lanes`]).
 
-use gpui::{Context, Entity, Point, SharedString, Window, div, prelude::*};
+use gpui::{App, Context, Entity, Point, SharedString, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::curves::{
@@ -20,11 +21,11 @@ use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
 use crate::{
-    CUTOFF, DRIVE, FilterState, FilterType, LFO_DEPTH, LFO_RATE, MIX, Parameter, RESONANCE, Slope,
-    response,
+    CUTOFF, DRIVE, Filter, FilterState, FilterType, LFO_DEPTH, LFO_RATE, MIX, Parameter, RESONANCE,
+    Slope, response,
 };
 
 /// The name the rack puts on the card of a filter.
@@ -126,6 +127,7 @@ pub struct FilterView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of the handle.
     edit: ControlEdit,
+    lanes: Entity<Lanes<FilterState>>,
     /// Whether the card shows the slope and the LFO. Interface state: not saved.
     expanded: bool,
 }
@@ -152,11 +154,13 @@ impl FilterView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
+        let lanes = Lanes::follow(&session, filter.id(), Filter::AUTOMATION, cx);
         Self {
             session,
             filter,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             expanded: false,
         }
     }
@@ -165,6 +169,12 @@ impl FilterView {
     pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
         cx.notify();
+    }
+
+    /// The record as the card shows it: what plays, with the value of each lane over it. `None`
+    /// once the record is deleted.
+    pub fn shown(&self, cx: &App) -> Option<FilterState> {
+        self.lanes.read(cx).state(cx)
     }
 
     fn change<V>(
@@ -180,9 +190,11 @@ impl FilterView {
 
     fn knob(&self, control: &'static Control, state: &FilterState, cx: &mut Context<Self>) -> Knob {
         let value = (control.parameter.get)(state);
+        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
         Knob::new(control.parameter.field)
             .range(control.scale)
             .value(value)
+            .automated(automated)
             .default_value(control.parameter.default)
             .label(control.label)
             .readout(readout(control.unit, value))
@@ -201,7 +213,10 @@ impl FilterView {
             state.resonance,
             RESONANCE.default,
         );
-        Handle::new("cutoff-resonance", x, y).on_change(weak_callback(
+        let lanes = self.lanes.read(cx);
+        let automated = lanes.is_automated(CUTOFF.field) || lanes.is_automated(RESONANCE.field);
+        let handle = Handle::new("cutoff-resonance", x, y).automated(automated);
+        handle.on_change(weak_callback(
             cx,
             |view, change: ValueChange<Point<f32>>, cx| {
                 let set = |state: &mut FilterState, at: Point<f32>| {
@@ -255,7 +270,7 @@ impl FilterView {
 impl Render for FilterView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self.session.read(cx).project().state(&self.filter).copied() else {
+        let Some(state) = self.shown(cx) else {
             return div().into_any_element();
         };
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);

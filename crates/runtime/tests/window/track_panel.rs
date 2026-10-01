@@ -4,11 +4,12 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use arrangement::TrackState;
+use arrangement::{AutomationLane, AutomationValue, TrackState};
 use gpui::{Entity, TestAppContext, point, px, size};
 use instrument::view::SynthView;
 use instrument::{SynthState, Waveform};
-use sound_core::Changes;
+use sound_core::{Changes, Ticks};
+use sound_notes::Point;
 
 use crate::support::{self, BAR, Opened, clip, id, note};
 
@@ -1172,4 +1173,46 @@ fn tab_reaches_the_master_row_and_enter_opens_its_panel(cx: &mut TestAppContext)
     });
     assert_eq!(volume, -0.5);
     assert_eq!(opened.undo_label().as_deref(), Some("Change master volume"));
+}
+
+/// Lanes of the volume and the pan in the record of the track: both show what the lanes play,
+/// with a mark, and a drag changes neither. Without the lanes they show the record again.
+#[gpui::test]
+fn an_automated_volume_and_pan_show_their_lanes_and_do_not_drag(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let lane = |parameter: &str, value: f32| AutomationLane {
+        device: None,
+        parameter: parameter.into(),
+        points: vec![Point {
+            tick: Ticks(0),
+            value: AutomationValue(value),
+        }],
+    };
+    let automate = |opened: &mut Opened<'_>, lanes: Vec<AutomationLane>| {
+        opened.edit(|project| {
+            let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
+            let mut state = project.state(&track).unwrap().clone();
+            state.automation = lanes;
+            let mut changes = Changes::new();
+            changes.set(&track, state);
+            project.commit("Automate", changes)
+        });
+    };
+    automate(&mut opened, vec![lane("gain_db", -12.), lane("pan", -0.5)]);
+    assert!(opened.find("automated-gain_db").is_some());
+    assert!(opened.find("automated-pan").is_some());
+    for control in [VOLUME, PAN_KNOB] {
+        let at = opened.control(control);
+        opened.drag(at, at + point(px(0.), px(40.)));
+    }
+    let record = track(&mut opened).unwrap();
+    assert_eq!((record.gain_db, record.pan), (0.0, 0.0));
+    assert_eq!(opened.undo_label().as_deref(), Some("Automate"));
+
+    automate(&mut opened, Vec::new());
+    assert!(opened.find("automated-gain_db").is_none());
+    assert!(opened.find("automated-pan").is_none());
+    let at = opened.control(VOLUME);
+    opened.drag(at, at + point(px(0.), px(40.)));
+    assert!(track(&mut opened).unwrap().gain_db < 0.0);
 }

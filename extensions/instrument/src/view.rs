@@ -9,7 +9,9 @@
 //! same field as its knob, under the same name in the history, and the knob is the way to that
 //! value from the keys. The ranges, the defaults and the travel of each knob come from the
 //! [`Parameter`]s of the crate. What is only about the interface is here: the label, the unit,
-//! the name of the undo step and whether the card is expanded.
+//! the name of the undo step and whether the card is expanded. A number that an automation lane
+//! of the track moves shows the value that plays, on its knob and on the display, and does not
+//! drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -19,10 +21,11 @@ use sound_ui::components::display::Display;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
 use crate::{
-    ATTACK, CUTOFF, DECAY, GAIN, Parameter, RELEASE, RESONANCE, SUSTAIN, SynthState, Waveform,
+    ATTACK, CUTOFF, DECAY, GAIN, Parameter, RELEASE, RESONANCE, SUSTAIN, Synth, SynthState,
+    Waveform,
 };
 
 /// The name the rack puts on the card of a synth.
@@ -126,6 +129,7 @@ pub struct SynthView {
     frame: CardFrame,
     /// The gesture of a knob or handle drag.
     edit: ControlEdit,
+    lanes: Entity<Lanes<SynthState>>,
     /// Whether the card shows the envelope knobs. Interface state: nothing saves it.
     expanded: bool,
 }
@@ -152,11 +156,13 @@ impl SynthView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
+        let lanes = Lanes::follow(&session, synth.id(), Synth::AUTOMATION, cx);
         Self {
             session,
             synth,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             expanded: false,
         }
     }
@@ -173,9 +179,11 @@ impl SynthView {
 
     fn knob(&self, control: &'static Control, state: &SynthState, cx: &mut Context<Self>) -> Knob {
         let value = (control.parameter.get)(state);
+        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
         Knob::new(control.parameter.field)
             .range(control.range())
             .value(value)
+            .automated(automated)
             .default_value(control.parameter.default)
             .label(control.label)
             .readout(readout(control.unit, value))
@@ -199,6 +207,13 @@ impl SynthView {
             decay: DECAY.default,
             sustain: SUSTAIN.default,
             release: RELEASE.default,
+        };
+        let lanes = self.lanes.read(cx);
+        let automated = Adsr {
+            attack: lanes.is_automated(ATTACK.field),
+            decay: lanes.is_automated(DECAY.field),
+            sustain: lanes.is_automated(SUSTAIN.field),
+            release: lanes.is_automated(RELEASE.field),
         };
         let on_change = weak_callback(
             cx,
@@ -233,7 +248,7 @@ impl SynthView {
             "envelope",
             DISPLAY_WIDTH,
             time,
-            (adsr, defaults),
+            (adsr, defaults, automated),
             straight,
             on_change,
         )
@@ -266,7 +281,8 @@ impl SynthView {
 impl Render for SynthView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self.session.read(cx).project().state(&self.synth).copied() else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);

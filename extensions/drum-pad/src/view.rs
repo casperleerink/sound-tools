@@ -14,6 +14,8 @@
 //! defaults and the travel of each knob come from the [`PARAMETERS`](crate::PARAMETERS) of the
 //! crate. What is only about the interface is here: the labels, the units, the names of the undo
 //! steps, which pad is selected, whether the card is expanded and how loud each pad sounds.
+//! A number that an automation lane of the track moves shows the value that plays on its knob,
+//! and does not drag ([`Lanes`]).
 
 use std::path::PathBuf;
 
@@ -33,14 +35,15 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, pan_readout, short};
 use sound_ui::components::pad::{PAD_GAP, PAD_HEIGHT, PAD_WIDTH, Pad as PadElement, PadGlyph};
 use sound_ui::components::toggle::Toggle;
+use sound_ui::lanes::object_of;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, Devices, KeyboardFocus, Session, Views, every_poll,
-    weak_callback,
+    ActiveTheme, ControlEdit, DeviceLabel, Devices, KeyboardFocus, Lanes, Session, Views,
+    every_poll, weak_callback,
 };
 
 use crate::{
-    DECAY, DrumPad, DrumPadState, DrumUpdate, PADS, PAN, PARAMETERS, PITCH, PROCESSOR, Pad,
-    PadParameter, Sound, Source, VOLUME, note_of, peaks_name,
+    DECAY, DrumPad, DrumPadState, DrumUpdate, PAD_LANES, PADS, PAN, PARAMETERS, PITCH, PROCESSOR,
+    Pad, PadParameter, Sound, Source, VOLUME, note_of, peaks_name,
 };
 
 /// The name the rack puts on the card of a Drum pad.
@@ -155,6 +158,7 @@ pub struct DrumPadView {
     frame: CardFrame,
     /// The gesture of a knob drag.
     edit: ControlEdit,
+    lanes: Entity<Lanes<DrumPadState>>,
     /// Whether the card shows Sound and Choke. Interface state: not saved.
     expanded: bool,
     /// The pad the knobs show, from 0. Interface state: not saved.
@@ -215,11 +219,13 @@ impl DrumPadView {
                 peaks.take();
             }
         }
+        let lanes = Lanes::follow(&session, drums.id(), DrumPad::AUTOMATION, cx);
         let mut view = Self {
             session,
             drums,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             expanded: false,
             selected: 0,
             sounds,
@@ -450,9 +456,16 @@ impl DrumPadView {
         let selected = self.selected;
         let parameter = control.parameter(selected);
         let value = (parameter.get)(pad);
+        // The lane of this number of the selected pad is named by its path: `pads.36.pan`.
+        let pad_path = object_of(PAD_LANES[selected][0].field);
+        let automated = self
+            .lanes
+            .read(cx)
+            .is_automated_in(pad_path, parameter.field);
         Knob::new(parameter.field)
             .range(KnobRange::of(parameter))
             .value(value)
+            .automated(automated)
             .default_value(parameter.default)
             // Pitch and pan go both ways from the middle, so their arcs start at the top.
             .bipolar(matches!(control.unit, Unit::Semitones | Unit::Pan))
@@ -549,7 +562,8 @@ impl DrumPadView {
 impl gpui::Render for DrumPadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self.state(cx).cloned() else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
         let pad = &state.pads[self.selected];

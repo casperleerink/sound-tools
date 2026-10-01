@@ -6,6 +6,7 @@ pub mod components;
 pub mod control_edit;
 pub mod devices;
 pub mod focus;
+pub mod lanes;
 pub mod metering;
 pub mod recording;
 pub mod session;
@@ -20,6 +21,7 @@ pub use devices::{
     DeviceLabel, DeviceOffer, Devices, Needs, OfferGroup, Slot, extension_is_enabled,
 };
 pub use focus::KeyboardFocus;
+pub use lanes::Lanes;
 pub use metering::{Metering, every_poll};
 pub use recording::{InputLevels, LiveSound, LiveTake, Recording};
 pub use session::{POLL_INTERVAL, Playhead, Session};

@@ -24,6 +24,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - A value is one bright line on dark: the arc of a knob, the thumb on a meter, a curve and its handles. Values are never coloured.
 - One control per value. The tempo has one drag number, in the transport; a tempo mark in the ruler selects and seeks.
 - Every drag control shares one gesture: it moves from where the value is (a press never jumps), shift is ten times finer, double click or backspace sets the default, escape during a drag puts it back.
+- A value an automation lane of the track moves is not the composer's to drag: its knob, volume or handle shows what the lane plays at the playhead and stays put, and its arrow keys and reset do nothing. It stays a tab stop, so the keys still reach it, and a drag that is open when its lane arrives ends. A knob and a volume carry a 4 pt dot at their top right, in the grey of a label and not a track colour, because it is a control, and a tooltip says `Follows the automation of the track`. Taking the lane out gives the control back the record.
 - Two-finger scroll never changes a value. A control that took the gesture would change a sound while the composer scrolls past.
 - Interface state that is about how the composer works (zoom, snap, expanded cards, shown lanes, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine is kept in the app's support folder, outside every project: whether the agent sidebar is open, the agent's approval mode and model, and its threads.
 - Our own look: plain parameter names, our own drawings on the displays. We learn from Ableton but copy no graphic, name or text of it.
@@ -142,6 +143,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Track panel | drag a knob up or down | Change the value. With shift ten times finer |
 | Track panel | arrows on a focused knob | A fiftieth of the travel, with shift a five-hundredth |
 | Track panel | double click a knob, or backspace on it | Set its default |
+| Track panel | a knob, volume or handle with a dot, or one that does not move | An automation lane of the track moves it: it shows what the lane plays and does not drag. Edit or delete the lane to change it |
 | Track panel | drag a handle of a display | Change what it moves, as its knob does. Shift is finer, double click resets |
 | Track panel | click a segment, or left and right on it | Pick an option, such as the synth waveform or the filter type |
 | Track panel | the expand icon of a card | Show the controls the card hides. Not saved |

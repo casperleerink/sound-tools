@@ -5,7 +5,11 @@
 //! device names with [`BehaviourContext::automation`](crate::BehaviourContext::automation).
 //! The device keeps an [`Automated`] in place of its record, and aims at the [`Targets`] it
 //! gives. Every decision about how fast a number moves is made here, once.
+//!
+//! The owner also shows its lanes to the views, as [`PlayedLanes`], so the knob of an
+//! automated number shows the value that plays.
 
+use crate::clock::Ticks;
 use crate::parameter::Parameter;
 use crate::processor::{EventInput, ProcessContext, Timed};
 
@@ -19,6 +23,17 @@ use crate::processor::{EventInput, ProcessContext, Timed};
 pub struct Automation {
     pub parameter: u16,
     pub value: f32,
+}
+
+/// The lanes an owner plays into the numbers of one instance, as the views see them: the view
+/// of a device shows the value that plays on the knob of each automated number. The owner shows
+/// them with [`BehaviourContext::show_lanes`](crate::BehaviourContext::show_lanes), and works
+/// a value out here as its player does, so the knob and the sound agree.
+pub trait PlayedLanes: Send + Sync {
+    /// The value of each lane at `tick`, with the field of its number as the device names it
+    /// in its [`AutomationInput`], in the units of the record, after what `values` holds. A view
+    /// asks every frame while the project plays, so it gives the list to fill.
+    fn values_at(&self, tick: Ticks, values: &mut Vec<(&'static str, f32)>);
 }
 
 /// The most numbers one device takes automation for. A lane player sends one event per number
