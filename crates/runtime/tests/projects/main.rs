@@ -4,6 +4,7 @@
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them.
 #![allow(clippy::unwrap_used)]
 
+mod agent;
 mod agent_doc;
 mod audio;
 mod compressor;

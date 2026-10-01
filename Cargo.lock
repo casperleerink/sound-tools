@@ -5406,6 +5406,7 @@ dependencies = [
  "sampler",
  "saturator",
  "serde_json",
+ "smol",
  "sound-agent",
  "sound-core",
  "sound-media",
