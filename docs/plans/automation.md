@@ -44,7 +44,8 @@ A composer or the agent can make any built-in knob change over time: "filter ope
 ## Notes for the implementer
 
 - Most processors take their whole state as `Update` (`FilterState`, `DelayState`, …). Add one event input per automatable processor, `Automation { parameter: u16, value: f32 }`, where `parameter` is the index in its `PARAMETERS` list. The processor applies it with the `Parameter::set` of that index to its own copy of the state and runs the same code its `update` runs, with a one-block ramp. A small helper in `sound-core` keeps this to a few lines per processor.
-- The arrangement already builds each track's chain, so it connects the track sequencer's automation output to each device on the track. Lanes reach the sequencer in its snapshot, resolved from field names to indexes on the control side.
+- The arrangement already builds each track's chain, so it gives each automated device a small lane player of its own, connected only to that device's automation input. So each sees the transport with its own latency lead. Lanes reach the player in its snapshot, resolved from field names to indexes on the control side, where the device names its `PARAMETERS` with its automation input.
+- A player sends every lane every block, not only what moved: a device takes a number that hears nothing back to its record, which is how a removed lane or player lets go.
 - Nested records (Wavetable) need a parameter id per object. Name them by path, for example `filter_1.cutoff`, and keep the index resolution in one place.
 - `lane.rs` points are integer `LaneValue`s. Automation needs `f32` values and the knob travel per `Parameter` (a curve, so the line is straight in travel). Reuse `value_at` and `cut` by making them generic over the value, not by copying them.
-- Track volume and pan are arrangement fields, so they skip the event and are read by the mixer directly.
+- Track volume and pan are arrangement fields. Their lanes go through the same player and event to the mixer, which takes them as two automatable numbers; the volume moves on the scale of the fader.
