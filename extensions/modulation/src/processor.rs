@@ -316,7 +316,7 @@ impl Modulation {
             quiet_frames: 0,
         };
         modulation.allocate(48_000.0);
-        modulation.aim(&modulation.state.targets(modulation.ramp_frames));
+        modulation.aim(&modulation.state.targets(modulation.sweep_ramp_frames));
         modulation.snap();
         modulation
     }
@@ -334,24 +334,21 @@ impl Modulation {
         self.stale = true;
     }
 
-    /// Sets every target from the record and its lanes, each reached in its own ramp.
+    /// Sets every target from the record and its lanes, each reached in its own ramp. The edit
+    /// glide of the lanes is the long one of a sweep, see [`SWEEP_RAMP_SECONDS`]; the feedback,
+    /// the mix and the mode take at most the 20 ms of a change.
     fn aim(&mut self, targets: &ModulationTargets) {
-        let (state, edit) = (*self.state, targets.edit());
-        // What glides as an edit sweeps for longer, see [`SWEEP_RAMP_SECONDS`]. A lane that
-        // moves follows its line.
-        let sweep_ramp = self.sweep_ramp_frames;
-        let sweep = |parameter| match targets.ramp(parameter) {
-            ramp if ramp == edit => sweep_ramp,
-            ramp => ramp,
-        };
-        self.rate_hz.set_target(state.rate_hz, sweep(&RATE));
-        self.depth.set_target(state.depth, sweep(&DEPTH));
-        self.lag.set_target(0.5 * state.spread, sweep(&SPREAD));
+        let state = *self.state;
+        self.rate_hz.set_target(state.rate_hz, targets.ramp(&RATE));
+        self.depth.set_target(state.depth, targets.ramp(&DEPTH));
+        self.lag
+            .set_target(0.5 * state.spread, targets.ramp(&SPREAD));
+        let ramp = |parameter| targets.ramp(parameter).min(self.ramp_frames);
         self.feedback
-            .set_target(MAX_FEEDBACK * state.feedback, targets.ramp(&FEEDBACK));
-        self.mix.set_target(state.mix, targets.ramp(&MIX));
+            .set_target(MAX_FEEDBACK * state.feedback, ramp(&FEEDBACK));
+        self.mix.set_target(state.mix, ramp(&MIX));
         for (mode, target) in self.modes.iter_mut().zip(weight(state.mode)) {
-            mode.set_target(target, edit);
+            mode.set_target(target, self.ramp_frames);
         }
         // A sweep that took its value at once has nothing to glide from.
         self.stale |= targets.snaps();
@@ -423,12 +420,12 @@ impl Processor for Modulation {
     }
 
     fn update(&mut self, update: &mut ModulationState) {
-        let targets = self.state.set_record(update, self.ramp_frames);
+        let targets = self.state.set_record(update, self.sweep_ramp_frames);
         self.aim(&targets);
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        if let Some(targets) = self.state.follow(context, self.ramp_frames) {
+        if let Some(targets) = self.state.follow(context, self.sweep_ramp_frames) {
             self.aim(&targets);
         }
         let frames = context.frames;
