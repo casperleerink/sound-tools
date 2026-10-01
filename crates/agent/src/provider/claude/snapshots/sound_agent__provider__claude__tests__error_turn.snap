@@ -33,7 +33,7 @@ expression: "replay(\"error_turn\")"
     },
     Exited {
         reason: Failed {
-            message: "[claude-code:unrecognized_model] {\"model\":\"claude-no-such-model\",\"query_source\":\"sdk\"}",
+            message: "Claude Code stopped: [claude-code:unrecognized_model] {\"model\":\"claude-no-such-model\",\"query_source\":\"sdk\"}",
         },
     },
 ]

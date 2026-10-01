@@ -392,9 +392,10 @@ fn an_exit_mid_turn_ends_the_turn_and_its_request(cx: &mut TestAppContext) {
         "state/arrangement/track-1/bass.json",
         BASS_CLIP,
     );
+    let message = "Claude Code stopped: Killed".to_string();
     opened.receive([AgentEvent::Exited {
         reason: ExitReason::Failed {
-            message: "Killed".to_string(),
+            message: message.clone(),
         },
     }]);
 
@@ -405,7 +406,6 @@ fn an_exit_mid_turn_ends_the_turn_and_its_request(cx: &mut TestAppContext) {
         let [Entry::Message(_), Entry::Turn(turn)] = conversation.entries() else {
             panic!("{:?}", conversation.entries());
         };
-        let message = "Claude Code stopped: Killed".to_string();
         let outcome = turn.end.as_ref().map(|end| &end.outcome);
         assert_eq!(outcome, Some(&TurnOutcome::Failed { message }));
     });

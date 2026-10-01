@@ -240,10 +240,8 @@ impl Conversation {
                         self.session_lost = true;
                         "This thread can't continue.".to_string()
                     }
-                    ExitReason::Failed { message } if message.is_empty() => {
-                        "Claude Code stopped.".to_string()
-                    }
-                    ExitReason::Failed { message } => format!("Claude Code stopped: {message}"),
+                    // The driver's own sentence, which names the provider.
+                    ExitReason::Failed { message } => message,
                 };
                 // The driver ends every turn before it exits. Should one still be open, it
                 // must not look as if the agent still works, and it says why itself.
@@ -434,29 +432,25 @@ mod tests {
             message: "Could not stop".to_string(),
         };
         assert_eq!(conversation.apply(error, now), Some(2));
-        assert_eq!(
-            conversation.apply(exited_with("out of memory"), now),
-            Some(1)
-        );
+        let message = "Claude Code stopped: out of memory";
+        assert_eq!(conversation.apply(exited_with(message), now), Some(1));
         assert!(!conversation.is_working());
         assert_eq!(notices(&conversation), ["Could not stop"]);
         let outcome = turn_at(&conversation, 1)
             .end
             .as_ref()
             .map(|end| &end.outcome);
-        let message = "Claude Code stopped: out of memory".to_string();
+        let message = message.to_string();
         assert_eq!(outcome, Some(&TurnOutcome::Failed { message }));
 
         let finished = AgentEvent::Exited {
             reason: ExitReason::Finished,
         };
         assert_eq!(conversation.apply(finished, now), None);
-        // Between turns an exit is a line of its own.
-        assert_eq!(conversation.apply(exited_with("gone"), now), Some(3));
-        assert_eq!(
-            notices(&conversation),
-            ["Could not stop", "Claude Code stopped: gone"]
-        );
+        // Between turns an exit is a line of its own: the driver's sentence as it is.
+        let gone = "Claude Code stopped unexpectedly.";
+        assert_eq!(conversation.apply(exited_with(gone), now), Some(3));
+        assert_eq!(notices(&conversation), ["Could not stop", gone]);
     }
 
     /// A crash ends the turn as failed and then exits with the same message: it shows once.

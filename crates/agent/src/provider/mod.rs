@@ -268,7 +268,8 @@ pub enum ExitReason {
     /// [`Session::Resume`] named a session the provider no longer has. The thread cannot
     /// continue; a new one can.
     SessionNotFound,
-    /// It stopped by itself. The message is the first line of what it said, if anything.
+    /// It stopped by itself. The message is the whole sentence the sidebar shows, such as
+    /// "Claude Code stopped: " and the first line of what it said.
     Failed { message: String },
 }
 

@@ -184,7 +184,7 @@ impl Mapper {
             ExitReason::Finished
         } else {
             let message = match (said, code) {
-                (Some(said), _) => said.to_string(),
+                (Some(said), _) => format!("Claude Code stopped: {said}"),
                 (None, Some(code)) => format!("Claude Code stopped with exit code {code}."),
                 (None, None) => "Claude Code stopped unexpectedly.".to_string(),
             };
