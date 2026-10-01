@@ -174,13 +174,13 @@ impl RenderOnce for Onboarding {
                         };
                         button(
                             id,
-                            choice.label.into(),
+                            choice.label().into(),
                             SetupAction::SignIn(choice),
                             variant,
                         )
                     })
                     .collect();
-                (None, reason, buttons)
+                (Some("Sign in to start.".to_string()), reason, buttons)
             }
             Setup::SigningIn => {
                 let again = button(

@@ -3,7 +3,8 @@
 //! `/usr/bin/curl` fetches it unmodified, so the app needs no HTTP or TLS code of its own, and
 //! the file is checked against the pinned sha256 before it is used. It is written under a
 //! temporary name and renamed only once it checks out, so a half file never runs. A broken
-//! download resumes where it stopped.
+//! download resumes where it stopped. A lock in the version's folder keeps two windows from
+//! downloading into the same file.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -27,6 +28,14 @@ const HTTP_ERROR: i32 = 22;
 /// curl's exit code when the server does not resume. It also comes for an error page, which
 /// has no range: only a fresh start shows what the server says.
 const CANNOT_RESUME: i32 = 33;
+/// curl's exit code when it could not write the file, such as on a full disk.
+const WRITE_ERROR: i32 = 23;
+
+/// A connection slower than a byte a second for this long counts as broken.
+const STALLED: &str = "60";
+
+/// Held while one install runs, in the version's folder.
+const LOCK: &str = ".lock";
 
 /// The longest server message shown. A longer answer is a page, not a message.
 const MESSAGE_LENGTH: usize = 300;
@@ -65,6 +74,8 @@ pub enum InstallError {
     /// curl did not get it, such as with no connection. What came stays on disk, so the next
     /// try resumes.
     Network { detail: String },
+    /// There is no `/usr/bin/curl` on this computer.
+    NoCurl,
     /// The server answered with an error, such as for a region it does not serve.
     /// `message` is what it said, or curl's line when it said nothing readable.
     Refused { message: String },
@@ -81,6 +92,9 @@ impl InstallError {
             InstallError::Network { .. } => {
                 format!("Could not download {title}. Check the internet connection.")
             }
+            InstallError::NoCurl => {
+                format!("Could not download {title}: curl is not installed.")
+            }
             InstallError::Refused { message } => format!("Could not download {title}: {message}"),
             InstallError::Damaged => "The download was damaged.".to_string(),
             InstallError::Saving(error) => format!("Could not save {title}: {error}."),
@@ -90,6 +104,7 @@ impl InstallError {
 
 /// Downloads the program into `agents`, checks it, makes it executable and removes the other
 /// versions. Gives the program's path. `progress` hears the bytes on disk a few times a second.
+/// An install that runs already, such as in another window, is waited for.
 ///
 /// Dropping the future cancels it: curl is killed, and what came stays for the next try.
 pub async fn install(
@@ -97,14 +112,24 @@ pub async fn install(
     agents: &Path,
     mut progress: impl FnMut(u64),
 ) -> Result<PathBuf, InstallError> {
+    let folder = download.folder(agents);
+    fs::create_dir_all(&folder).map_err(InstallError::Saving)?;
+    let lock = File::create(folder.join(LOCK)).map_err(InstallError::Saving)?;
+    // Held until this function returns, or its future is dropped.
+    let _lock = smol::unblock(move || lock.lock().map(|()| lock))
+        .await
+        .map_err(InstallError::Saving)?;
+    let program = download.program(agents);
+    if program.is_file() {
+        return Ok(program);
+    }
     let partial = download.partial(agents);
-    fs::create_dir_all(download.folder(agents)).map_err(InstallError::Saving)?;
     // More than the whole file is not the start of it.
     if length(&partial) > download.size {
         fs::remove_file(&partial).map_err(InstallError::Saving)?;
     }
     if length(&partial) < download.size {
-        fetch(&download.url, &partial, &mut progress).await?;
+        fetch(download, &partial, &mut progress).await?;
     }
     progress(length(&partial));
     let sha256 = smol::unblock({
@@ -119,7 +144,6 @@ pub async fn install(
     }
     fs::set_permissions(&partial, fs::Permissions::from_mode(0o755))
         .map_err(InstallError::Saving)?;
-    let program = download.program(agents);
     fs::rename(&partial, &program).map_err(InstallError::Saving)?;
     // The new one works without them, so a folder that stays is only space.
     if let Err(error) = remove_other_versions(download, agents) {
@@ -130,7 +154,7 @@ pub async fn install(
 
 /// Runs curl until the file is whole, from where `partial` ends.
 async fn fetch(
-    url: &str,
+    download: &Download,
     partial: &Path,
     progress: &mut impl FnMut(u64),
 ) -> Result<(), InstallError> {
@@ -143,17 +167,23 @@ async fn fetch(
             .arg("--fail-with-body")
             // Resumes from the end of the file.
             .args(["--continue-at", "-"])
+            .arg("--max-filesize")
+            .arg(download.size.to_string())
+            .args(["--speed-limit", "1", "--speed-time", STALLED])
             .arg("--output")
             .arg(partial)
-            .arg(url)
+            .arg(&download.url)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             // Cancel drops the future, and with it curl.
             .kill_on_drop(true)
             .spawn()
-            .map_err(|error| InstallError::Network {
-                detail: format!("curl did not start: {error}"),
+            .map_err(|error| match error.kind() {
+                io::ErrorKind::NotFound => InstallError::NoCurl,
+                _ => InstallError::Network {
+                    detail: format!("curl did not start: {error}"),
+                },
             })?;
         let status = loop {
             // Runs on the background executor, never in a gpui test, where this timer would
@@ -190,6 +220,7 @@ async fn fetch(
                 let message = server_message(&answer).unwrap_or(said);
                 return Err(InstallError::Refused { message });
             }
+            Some(WRITE_ERROR) => return Err(InstallError::Saving(io::Error::other(said))),
             _ => return Err(InstallError::Network { detail: said }),
         }
     }

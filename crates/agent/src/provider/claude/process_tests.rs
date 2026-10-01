@@ -28,12 +28,14 @@ fn start(scenario: &str, output: &Path) -> (Thread, Events) {
     );
     Thread::start(ThreadOptions {
         provider: Provider::Claude,
-        program: fixtures().join("fake-claude.sh"),
+        installed: Installed {
+            program: fixtures().join("fake-claude.sh"),
+            environment,
+        },
         folder: std::env::temp_dir(),
         model: None,
         approval_mode: ApprovalMode::default(),
         session: Session::New,
-        environment,
     })
     .unwrap()
 }
@@ -212,7 +214,7 @@ fn signs_in_with_the_choice_then_out() {
     assert_eq!(smol::block_on(provider.account(&installed)).unwrap(), None);
 
     let choices = provider.sign_in_choices();
-    let labels: Vec<_> = choices.iter().map(|choice| choice.label).collect();
+    let labels: Vec<_> = choices.iter().map(|choice| choice.label()).collect();
     assert_eq!(
         labels,
         [

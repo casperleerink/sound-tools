@@ -70,32 +70,18 @@ pub fn download() -> Option<Download> {
     })
 }
 
-/// The two ways in that Claude Code offers. Both run in the browser.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SignIn {
-    /// A Claude subscription.
-    Plan,
-    /// An Anthropic Console account, billed per use.
-    Console,
-}
-
-impl SignIn {
-    pub const ALL: [SignIn; 2] = [SignIn::Plan, SignIn::Console];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            SignIn::Plan => "Sign in with your Claude plan",
-            SignIn::Console => "Use an Anthropic Console account (API)",
-        }
-    }
-
-    fn flag(self) -> &'static str {
-        match self {
-            SignIn::Plan => "--claudeai",
-            SignIn::Console => "--console",
-        }
-    }
-}
+/// The two ways in that Claude Code offers, and the arguments of each. Both run in the
+/// browser: a Claude subscription, or an Anthropic Console account billed per use.
+pub const SIGN_IN_CHOICES: [(&str, &[&str]); 2] = [
+    (
+        "Sign in with your Claude plan",
+        &["auth", "login", "--claudeai"],
+    ),
+    (
+        "Use an Anthropic Console account (API)",
+        &["auth", "login", "--console"],
+    ),
+];
 
 /// What `claude auth status --json` says. Only what the sidebar shows.
 #[derive(Debug, Deserialize)]
@@ -131,16 +117,19 @@ pub async fn account(installed: &Installed) -> io::Result<Option<Account>> {
     match serde_json::from_slice::<Status>(&output.stdout) {
         Ok(status) if status.logged_in => Ok(Some(status.account())),
         Ok(_) => Ok(None),
-        Err(error) => Err(failed(&output, &error.to_string())),
+        Err(_) => Err(failed(
+            &output,
+            "its answer about the account was unreadable",
+        )),
     }
 }
 
-/// Runs `claude auth login` and waits for it to end: Anthropic's page opens in the browser,
+/// Runs `claude auth login` with one of [`SIGN_IN_CHOICES`] and waits for it to end: Anthropic's page opens in the browser,
 /// and its callback to a port on this computer finishes the sign-in.
 ///
 /// Dropping the future cancels it: the CLI is killed.
-pub async fn sign_in(installed: &Installed, way: SignIn) -> io::Result<()> {
-    let output = run(installed, &["auth", "login", way.flag()]).await?;
+pub async fn sign_in(installed: &Installed, arguments: &[&str]) -> io::Result<()> {
+    let output = run(installed, arguments).await?;
     if output.status.success() {
         return Ok(());
     }
@@ -197,5 +186,16 @@ mod tests {
         let account = status.account();
         assert_eq!(account.email.as_deref(), Some("composer@example.com"));
         assert_eq!(account.plan.as_deref(), Some("Claude Max"));
+    }
+
+    /// A Console login has no plan, and may have no email.
+    #[test]
+    fn an_account_with_no_plan_and_no_email_is_still_signed_in() {
+        let status: Status = serde_json::from_str(
+            r#"{"loggedIn": true, "authMethod": "api_key", "subscriptionType": null}"#,
+        )
+        .unwrap();
+        assert!(status.logged_in);
+        assert_eq!(status.account(), Account::default());
     }
 }

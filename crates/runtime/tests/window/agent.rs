@@ -17,19 +17,20 @@ use crate::support::{self, Opened, mark, one_undo_step, write_outside};
 /// The sidebar with a `claude` that cannot start, so no test ever runs the real one: a test
 /// hands the sidebar the events instead. `support` is the support folder of the machine.
 fn install_sidebar(cx: &mut TestAppContext, support: &Path) {
-    install_sidebar_with(cx, support, Some(PathBuf::from("/nonexistent/claude")));
+    let installed = Installed {
+        program: PathBuf::from("/nonexistent/claude"),
+        environment: HashMap::new(),
+    };
+    install_sidebar_with(cx, support, Some(installed));
 }
 
-/// The same with `claude` at `program`, or not installed.
-fn install_sidebar_with(cx: &mut TestAppContext, support: &Path, program: Option<PathBuf>) {
+/// The same with `installed` as the program, or not installed.
+fn install_sidebar_with(cx: &mut TestAppContext, support: &Path, installed: Option<Installed>) {
     let remembered = runtime::app::left_panel_file(support);
     cx.update(|cx| {
         LeftPanelSlot::new(Some(remembered), move |session, _, cx| {
-            let installed = program.clone().map(|program| Installed {
-                program,
-                environment: HashMap::new(),
-            });
-            let sidebar = cx.new(|cx| Sidebar::with_claude(session, installed, cx));
+            let installed = installed.clone();
+            let sidebar = cx.new(|cx| Sidebar::with_program(session, installed, cx));
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
         .install(cx)
@@ -278,6 +279,41 @@ fn the_account_menu_in_the_composer_offers_sign_out(cx: &mut TestAppContext) {
     let menu = opened.control("account-menu");
     opened.click(menu);
     assert!(opened.find("menu-sign-out").is_some());
+}
+
+/// Sign out ends the agent. The turn it worked on ends as stopped, and its request with it,
+/// so the sidebar is not left working.
+#[gpui::test]
+fn signing_out_mid_turn_stops_the_turn_and_its_request(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    let before = mark(&mut opened);
+    opened.begin(MESSAGE);
+    opened.receive([AgentEvent::TurnStarted]);
+    write_outside(
+        &mut opened,
+        "state/arrangement/track-1/bass.json",
+        BASS_CLIP,
+    );
+
+    let menu = opened.control("account-menu");
+    opened.click(menu);
+    let sign_out = opened.control("menu-sign-out");
+    opened.click(sign_out);
+
+    let sidebar = opened.sidebar();
+    opened.cx.read(|cx| {
+        let conversation = sidebar.read(cx).conversation();
+        assert!(!conversation.is_working());
+        let Some(Entry::Turn(turn)) = conversation.entries().get(1) else {
+            panic!("{:?}", conversation.entries());
+        };
+        let outcome = turn.end.as_ref().map(|end| &end.outcome);
+        assert_eq!(outcome, Some(&TurnOutcome::Interrupted));
+    });
+    assert!(opened.find("left-panel-busy").is_none());
+    one_undo_step(&mut opened, "Add a bass line in bars 5 to 8 that…", &before);
 }
 
 /// While the panel is closed and the agent works, the icon in the title row says so.

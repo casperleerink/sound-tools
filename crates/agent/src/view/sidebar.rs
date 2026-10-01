@@ -46,6 +46,9 @@ const OVERDRAW: f32 = 800.;
 /// How long the browser may take to sign in before the sidebar gives up and asks again.
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+/// How long the program may take to say whether it is signed in.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// The value of **Sign out** in the account menu.
 const SIGN_OUT: &str = "sign-out";
 
@@ -145,7 +148,7 @@ impl Sidebar {
 
     /// For a test or a snapshot: set up and signed in with `installed` as the program, or not
     /// installed with `None`. Nothing runs in the background.
-    pub fn with_claude(
+    pub fn with_program(
         session: Entity<sound_ui::Session>,
         installed: Option<Installed>,
         cx: &mut Context<Self>,
@@ -265,7 +268,21 @@ impl Sidebar {
     ) {
         let now = Instant::now();
         let mut changed: Option<usize> = None;
+        let mut failed = false;
         for event in events {
+            match &event {
+                // The account the running agent reports is the newest word on it.
+                AgentEvent::Started { account, .. }
+                    if matches!(self.setup, Setup::Ready { .. }) =>
+                {
+                    let account = account.clone();
+                    self.set_setup(Setup::Ready { account }, cx);
+                }
+                AgentEvent::TurnEnded {
+                    outcome: TurnOutcome::Failed { .. },
+                } => failed = true,
+                _ => {}
+            }
             let ends = matches!(
                 event,
                 AgentEvent::TurnEnded { .. } | AgentEvent::Exited { .. }
@@ -284,6 +301,34 @@ impl Sidebar {
             }
         }
         self.show(changed, cx);
+        if failed {
+            self.check_still_signed_in(cx);
+        }
+    }
+
+    /// After a failed turn: the program may have been signed out meanwhile, such as in a
+    /// terminal. Only an answer of signed out changes anything; the failed turn says the rest.
+    fn check_still_signed_in(&mut self, cx: &mut Context<Self>) {
+        let Some(installed) = self.installed.clone() else {
+            return;
+        };
+        let provider = self.provider;
+        let asking = cx.background_spawn(async move { provider.account(&installed).await });
+        self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
+            match asking.await {
+                Ok(None) => {
+                    let reason = Some(format!("{} is signed out.", provider.name()));
+                    sidebar
+                        .update(cx, |sidebar, cx| {
+                            sidebar.end_agent(cx);
+                            sidebar.set_setup(Setup::SignedOut { reason }, cx);
+                        })
+                        .ok();
+                }
+                // Signed in, or no answer: the next message shows whether the agent runs.
+                Ok(Some(_)) | Err(_) => {}
+            }
+        }));
     }
 
     /// Tells the list what changed: entries added at the end, and `changed` and what comes
@@ -355,12 +400,22 @@ impl Sidebar {
         let provider = self.provider;
         self.set_setup(Setup::Checking, cx);
         let asking = cx.background_spawn(async move { provider.account(&installed).await });
+        let timeout = cx.background_executor().timer(CHECK_TIMEOUT);
         self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
-            let setup = match asking.await {
-                Ok(Some(account)) => Setup::Ready { account },
-                Ok(None) => Setup::SignedOut { reason },
-                Err(error) => Setup::Stopped {
+            // The question that loses the race is dropped, which ends its process.
+            let answer = future::or(async { Some(asking.await) }, async {
+                timeout.await;
+                None
+            })
+            .await;
+            let setup = match answer {
+                Some(Ok(Some(account))) => Setup::Ready { account },
+                Some(Ok(None)) => Setup::SignedOut { reason },
+                Some(Err(error)) => Setup::Stopped {
                     message: error.to_string(),
+                },
+                None => Setup::Stopped {
+                    message: "it did not answer within 30 seconds.".to_string(),
                 },
             };
             // A sidebar that went in the meantime has nobody to tell.
@@ -442,10 +497,18 @@ impl Sidebar {
         let timeout = cx.background_executor().timer(SIGN_IN_TIMEOUT);
         self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
             // The one that loses the race is dropped: a sign-in out of time ends its process.
-            let ended = future::or(async { Some(running.await) }, async {
-                timeout.await;
-                None
-            })
+            let ended = future::or(
+                async {
+                    match running.await {
+                        Ok(()) => SignInEnded::Finished,
+                        Err(error) => SignInEnded::Failed(error),
+                    }
+                },
+                async {
+                    timeout.await;
+                    SignInEnded::TimedOut
+                },
+            )
             .await;
             sidebar
                 .update(cx, |sidebar, cx| sidebar.signed_in(ended, cx))
@@ -453,19 +516,16 @@ impl Sidebar {
         }));
     }
 
-    /// `None` when the time ran out.
-    fn signed_in(&mut self, ended: Option<io::Result<()>>, cx: &mut Context<Self>) {
+    fn signed_in(&mut self, ended: SignInEnded, cx: &mut Context<Self>) {
         self.signing_in = None;
-        let reason = match ended {
-            Some(Ok(())) => {
-                self.check(Some("The sign-in did not finish.".to_string()), cx);
-                return;
+        let reason = Some(ended.reason());
+        match ended {
+            // The program says whether it worked.
+            SignInEnded::Finished => self.check(reason, cx),
+            SignInEnded::Failed(_) | SignInEnded::TimedOut | SignInEnded::Cancelled => {
+                self.set_setup(Setup::SignedOut { reason }, cx);
             }
-            Some(Err(error)) => format!("The sign-in failed: {error}"),
-            None => "The sign-in took over 10 minutes.".to_string(),
-        };
-        let reason = Some(reason);
-        self.set_setup(Setup::SignedOut { reason }, cx);
+        }
     }
 
     fn cancel(&mut self, cx: &mut Context<Self>) {
@@ -475,7 +535,7 @@ impl Sidebar {
         let setup = match self.setup {
             Setup::Downloading { .. } => Setup::NotInstalled,
             _ => Setup::SignedOut {
-                reason: Some("The sign-in was cancelled.".to_string()),
+                reason: Some(SignInEnded::Cancelled.reason()),
             },
         };
         self.set_setup(setup, cx);
@@ -540,13 +600,12 @@ impl Sidebar {
         let folder = self.session.read(cx).project().root().to_path_buf();
         let (thread, events) = Thread::start(ThreadOptions {
             provider: self.provider,
-            program: installed.program,
+            installed,
             folder,
             // The CLI's own default until the model picker comes.
             model: None,
             approval_mode: ApprovalMode::AskBeforeCommands,
             session: Session::New,
-            environment: installed.environment,
         })?;
         let (sender, receiver) = smol::channel::unbounded();
         let reading = cx.background_spawn(read(events, sender));
@@ -618,11 +677,13 @@ impl Sidebar {
         cx.notify();
     }
 
-    /// Ends the thread's process, and the request of the turn it was working on.
+    /// Ends the thread's process. A dropped process says nothing more, so the turn it was
+    /// working on ends here as stopped, and its request with it.
     fn end_agent(&mut self, cx: &mut Context<Self>) {
         self.agent = None;
         if self.conversation.is_working() {
-            self.session.update(cx, |session, _| session.end_request());
+            let outcome = TurnOutcome::Interrupted;
+            self.receive([AgentEvent::TurnEnded { outcome }], cx);
         }
     }
 
@@ -782,6 +843,28 @@ impl Sidebar {
     }
 }
 
+/// How a sign-in ended.
+#[derive(Debug)]
+enum SignInEnded {
+    /// The program asks whether it worked.
+    Finished,
+    Failed(io::Error),
+    TimedOut,
+    Cancelled,
+}
+
+impl SignInEnded {
+    /// The line the composer reads when the sign-in ended with nobody signed in.
+    fn reason(&self) -> String {
+        match self {
+            SignInEnded::Finished => "The sign-in did not finish.".to_string(),
+            SignInEnded::Failed(error) => format!("The sign-in failed: {error}"),
+            SignInEnded::TimedOut => "The sign-in took over 10 minutes.".to_string(),
+            SignInEnded::Cancelled => "The sign-in was cancelled.".to_string(),
+        }
+    }
+}
+
 /// What the account menu's trigger says: the plan, since an email is long.
 fn account_label(account: &Account) -> String {
     account
@@ -870,5 +953,28 @@ impl Render for Sidebar {
             .text_color(text)
             .child(self.header(cx))
             .child(body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sign_in_out_of_time_failed_or_cancelled_says_why() {
+        let reasons = [
+            SignInEnded::TimedOut,
+            SignInEnded::Cancelled,
+            SignInEnded::Failed(io::Error::other("OAuth error: access denied")),
+        ]
+        .map(|ended| ended.reason());
+        assert_eq!(
+            reasons,
+            [
+                "The sign-in took over 10 minutes.",
+                "The sign-in was cancelled.",
+                "The sign-in failed: OAuth error: access denied",
+            ]
+        );
     }
 }

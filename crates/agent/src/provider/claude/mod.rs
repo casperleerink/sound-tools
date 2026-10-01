@@ -28,7 +28,7 @@ use smol::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 
 use self::mapper::Mapper;
 use self::protocol::{CliRequest, ControlResponse, Incoming, Outgoing, PermissionMode, Request};
-pub use self::setup::{SignIn, account, download, sign_in, sign_out};
+pub use self::setup::{SIGN_IN_CHOICES, account, download, sign_in, sign_out};
 use super::{AgentEvent, ApprovalMode, Command, Session, ThreadOptions};
 
 /// The tools a composer needs. No web, no subagents, no questions: the agent asks in plain
@@ -148,7 +148,7 @@ impl Events {
             Session::New => uuid::Uuid::new_v4().to_string(),
             Session::Resume(session_id) => session_id.clone(),
         };
-        let mut command = command(&options.program, &options.environment);
+        let mut command = command(&options.installed.program, &options.installed.environment);
         command
             .args(arguments(&options, &session_id))
             .current_dir(&options.folder)

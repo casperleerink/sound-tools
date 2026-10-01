@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use smol::future;
@@ -156,28 +157,100 @@ fn cancelling_kills_curl_and_keeps_what_came() {
     );
 }
 
-#[test]
-fn a_refused_download_says_what_the_server_said() {
-    // Answers every request with 403 and a line, as a region block might.
+/// A server that answers every request with `status` and `body`, with no range, as an error
+/// page or a server that does not resume does. Gives its URL and the requests it got.
+fn serve(status: &'static str, body: Vec<u8>) -> (String, Arc<Mutex<Vec<String>>>) {
     let server = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = server.local_addr().unwrap();
-    std::thread::spawn(move || {
-        for connection in server.incoming() {
-            let mut connection = connection.unwrap();
-            let mut request = [0; 4096];
-            assert!(connection.read(&mut request).unwrap() > 0);
-            let body = "Claude Code is not available in your region.\n";
-            let answer = format!(
-                "HTTP/1.1 403 Forbidden\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            connection.write_all(answer.as_bytes()).unwrap();
+    let url = format!("http://{}/tool", server.local_addr().unwrap());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    std::thread::spawn({
+        let requests = requests.clone();
+        move || {
+            for connection in server.incoming() {
+                let mut connection = connection.unwrap();
+                let mut request = [0; 4096];
+                let read = connection.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..read]).to_string();
+                requests.lock().unwrap().push(request);
+                let head = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                // curl may hang up first, when it does not like the answer.
+                connection.write_all(head.as_bytes()).ok();
+                connection.write_all(&body).ok();
+            }
         }
     });
+    (url, requests)
+}
+
+#[test]
+fn a_server_that_does_not_resume_starts_the_download_again() {
+    let (url, requests) = serve("200 OK", content());
     let folder = tempfile::tempdir().unwrap();
     let agents = folder.path().join("agents");
     let mut download = download(Path::new("/unused"), &content());
-    download.url = format!("http://{address}/tool");
+    download.url = url;
+    fs::create_dir_all(download.folder(&agents)).unwrap();
+    fs::write(download.partial(&agents), vec![7; 1000]).unwrap();
+
+    let (result, _) = run(&download, &agents);
+    assert_eq!(fs::read(result.unwrap()).unwrap(), content());
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    let ranged = |request: &String| request.to_lowercase().contains("range:");
+    assert!(ranged(&requests[0]));
+    assert!(!ranged(&requests[1]));
+}
+
+#[test]
+fn a_partial_file_longer_than_the_program_starts_again() {
+    let folder = tempfile::tempdir().unwrap();
+    let source = folder.path().join("source");
+    fs::write(&source, content()).unwrap();
+    let agents = folder.path().join("agents");
+    let download = download(&source, &content());
+    fs::create_dir_all(download.folder(&agents)).unwrap();
+    fs::write(download.partial(&agents), vec![7; content().len() + 10]).unwrap();
+
+    let (result, _) = run(&download, &agents);
+    assert_eq!(fs::read(result.unwrap()).unwrap(), content());
+}
+
+#[test]
+fn two_installs_at_once_download_once_and_both_get_the_program() {
+    let folder = tempfile::tempdir().unwrap();
+    let source = folder.path().join("source");
+    fs::write(&source, content()).unwrap();
+    let agents = folder.path().join("agents");
+    let download = download(&source, &content());
+
+    let installs: Vec<_> = (0..2)
+        .map(|_| {
+            let (download, agents) = (download.clone(), agents.clone());
+            std::thread::spawn(move || run(&download, &agents))
+        })
+        .collect();
+    let mut heard = Vec::new();
+    for install in installs {
+        let (result, progress) = install.join().unwrap();
+        assert_eq!(fs::read(result.unwrap()).unwrap(), content());
+        heard.push(progress);
+    }
+    // The one that waited found the program there and downloaded nothing.
+    assert!(heard.iter().any(Vec::is_empty), "{heard:?}");
+}
+
+#[test]
+fn a_refused_download_says_what_the_server_said() {
+    // An error page with a line, as a region block might.
+    let body = b"Claude Code is not available in your region.\n".to_vec();
+    let (url, _) = serve("403 Forbidden", body);
+    let folder = tempfile::tempdir().unwrap();
+    let agents = folder.path().join("agents");
+    let mut download = download(Path::new("/unused"), &content());
+    download.url = url;
     // A start on disk too: the server's error page has no range to resume.
     fs::create_dir_all(download.folder(&agents)).unwrap();
     fs::write(download.partial(&agents), &content()[..1000]).unwrap();

@@ -56,10 +56,11 @@ impl Provider {
     /// The ways in the provider offers, in the order the composer reads them.
     pub fn sign_in_choices(self) -> Vec<SignInChoice> {
         match self {
-            Provider::Claude => claude::SignIn::ALL
-                .map(|way| SignInChoice {
-                    label: way.label(),
-                    way: Way::Claude(way),
+            Provider::Claude => claude::SIGN_IN_CHOICES
+                .map(|(label, arguments)| SignInChoice {
+                    provider: self,
+                    label,
+                    arguments,
                 })
                 .to_vec(),
         }
@@ -93,21 +94,23 @@ pub struct Installed {
 /// runs the provider's own flow in the browser, so the app never handles a credential.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SignInChoice {
-    pub label: &'static str,
-    way: Way,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Way {
-    Claude(claude::SignIn),
+    provider: Provider,
+    label: &'static str,
+    /// What the provider's program runs it with, for its driver.
+    arguments: &'static [&'static str],
 }
 
 impl SignInChoice {
+    /// What its button says.
+    pub fn label(self) -> &'static str {
+        self.label
+    }
+
     /// Runs the sign-in and waits for it to end. Ask [`Provider::account`] after: it may have
     /// ended with nobody signed in. Dropping the future cancels it.
     pub async fn run(self, installed: &Installed) -> io::Result<()> {
-        match self.way {
-            Way::Claude(way) => claude::sign_in(installed, way).await,
+        match self.provider {
+            Provider::Claude => claude::sign_in(installed, self.arguments).await,
         }
     }
 }
@@ -146,17 +149,14 @@ pub enum Session {
 #[derive(Clone, Debug)]
 pub struct ThreadOptions {
     pub provider: Provider,
-    /// The provider's program, such as the path of `claude`.
-    pub program: PathBuf,
+    /// The provider's program, such as the path of `claude`, and its environment.
+    pub installed: Installed,
     /// The project folder. The agent works in it.
     pub folder: PathBuf,
     /// One of the ids in [`AgentEvent::Started`], or `None` for the provider's default.
     pub model: Option<String>,
     pub approval_mode: ApprovalMode,
     pub session: Session,
-    /// The environment of the program, usually [`crate::login_shell_environment`]. The driver
-    /// removes what would confuse the agent.
-    pub environment: HashMap<OsString, OsString>,
 }
 
 /// One step of a turn, such as an edit or a command. The id is the provider's; a test that
