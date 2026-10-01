@@ -1518,7 +1518,7 @@ fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx
     let name_width = HEADER_WIDTH - NAME_LEFT - 40.;
     let name = scene.track_name.clone();
     let top = bounds.origin;
-    let label_size = (RULER_HEIGHT, name_width);
+    let label_size = (RULER_HEIGHT / 2., name_width);
     paint_track_label(name, scene.accent, top, label_size, false, window, cx);
 
     window.with_content_mask(Some(ContentMask { bounds: area }), |window| {

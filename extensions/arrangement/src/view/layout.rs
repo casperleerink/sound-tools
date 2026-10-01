@@ -26,15 +26,16 @@ pub const ADD_ROW_HEIGHT: f32 = TRACK_HEIGHT;
 /// The inset of the shapes in a track header (a selected header, the add buttons) from the
 /// edges of the header column.
 pub const HEADER_INSET: f32 = 8.0;
-/// The middle of the lanes toggle of a track header: a 24 pt column at the left edge of the
-/// shape of a selected header, as the arm toggle of an audio track is at its right edge.
-pub const TOGGLE_MIDDLE: f32 = HEADER_INSET + 12.0;
-/// Where the dot of a track starts in its header. The dot belongs to the name, so it is closer
-/// to the name than to the toggle.
-pub const DOT_LEFT: f32 = 36.0;
+/// Where the dot of a track starts in its header, 12 pt inside the shape of a selected header.
+pub const DOT_LEFT: f32 = 20.0;
 /// Where the name of a track starts in its header, 8 pt after its dot, and every word lined up
 /// with it.
-pub const NAME_LEFT: f32 = 52.0;
+pub const NAME_LEFT: f32 = 36.0;
+/// A track header has two lines: its dot and name, and under them the toggle of its lanes.
+/// The middle of the first, from the top of the track.
+pub const NAME_MIDDLE: f32 = 23.0;
+/// The middle of the second line, the toggle of the lanes.
+pub const LANES_MIDDLE: f32 = 43.0;
 /// Tick 0 sits this far into the timeline area, so the start of the piece, its bar number and
 /// the playhead at rest are clear of the track headers.
 pub const LEAD_IN: f32 = 8.0;

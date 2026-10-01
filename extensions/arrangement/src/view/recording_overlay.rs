@@ -17,7 +17,7 @@ use sound_ui::components::meter::Meter;
 use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::{ActiveTheme, InputLevels, Metering, Recording, Session};
 
-use super::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
+use super::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT};
 use super::timeline::{ARM_LEFT, ARMED_METER_HEIGHT, ARMED_METER_LEFT, Timeline, paint_takes};
 use crate::TrackState;
 
@@ -117,7 +117,8 @@ impl Render for RecordingOverlay {
             if let Some(meter) = self.meters.get(&id).filter(|_| armed) {
                 let name = SharedString::from(format!("input-{}", id.name()));
                 let meter = Meter::new(name, meter.level()).horizontal();
-                let meter_top = top + (TRACK_HEIGHT - ARMED_METER_HEIGHT) / 2.;
+                // On the line of the name.
+                let meter_top = top + NAME_MIDDLE - ARMED_METER_HEIGHT / 2.;
                 controls.push(
                     at(ARMED_METER_LEFT, meter_top)
                         .child(meter)

@@ -1,9 +1,10 @@
-//! The automation lanes under a track: the toggle in its header shows them, the select under
+//! The automation lanes under a track: the toggle on the second line of its header shows them, the select under
 //! them adds one, a drag draws its line, alt and a drag erase points, and a double click clears
 //! it. Each edit is one undo step that undo gives back byte for byte. A clip dragged with its
 //! automation shows what the drop will be. `a` on the selected track shows the lanes too, and
 //! tab reaches the select.
 
+use arrangement::view::layout::{LANES_MIDDLE, NAME_LEFT, TRACK_HEIGHT};
 use arrangement::view::track_lanes::LANE_BOX;
 use arrangement::{AutomationLane, AutomationValue, LaneMove, TrackState, moved, travel_in};
 use filter::FilterState;
@@ -79,10 +80,13 @@ fn open(cx: &mut TestAppContext, shown: bool) -> Opened<'_> {
     opened
 }
 
-/// The toggle of the lanes of the first track, left of its dot.
+/// The toggle of the lanes of the first track, its words on the second line of its header.
 fn toggle(opened: &mut Opened<'_>) -> gpui::Point<gpui::Pixels> {
     let header = opened.track_header(0);
-    point(px(14.), header.y)
+    point(
+        px(NAME_LEFT + 8.),
+        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
+    )
 }
 
 fn shows_lanes(opened: &mut Opened<'_>) -> bool {
