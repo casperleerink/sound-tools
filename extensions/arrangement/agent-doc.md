@@ -218,19 +218,19 @@ A track can move a number of one of its devices, or its own volume or pan, over 
 In 4/4 the filter of this track opens over bars 9 to 16, and the track fades in over bar 1.
 
 - `device`: the file name of a device in the track folder, without `.json`, such as an effect in `effects`. Leave it out for the volume and the pan of the track itself.
-- `parameter`: the field in the record of the device, as its doc names it, such as `cutoff_hz` of a filter. For the track itself, `gain_db` or `pan`.
+- `parameter`: the field in the record of the device, as its doc names it, such as `cutoff_hz` of a filter. A number inside an object or a list is named by its path: `filter_1.cutoff_hz` of a wavetable, `bands[0].gain_db` of an EQ, `pads.42.pan` of a Drum pad. For the track itself, `gain_db` or `pan`.
 - `points[].tick`: where the point is in the project, in ticks, not from the start of a clip. The points are in tick order with at most one per tick, and a lane has at least one.
 - `points[].value`: in the units and the range of the field, as its doc gives them. A volume may go down to `"-inf"`, silence.
 - Between two points the value moves in a straight line on the travel of its knob: a cutoff moves evenly in octaves, a volume as its fader moves. Before the first point the lane holds the first value, and after the last point it holds the last. So a sudden move is two points a tick apart.
 - While a lane moves a number, the value in the record of the device does not play. Take the lane out and the record plays again.
 - A lane belongs to the track, not to a clip. When you move a clip by editing its `start`, or move its file to another track, move the points under it yourself if they belong to it.
 - One number has one lane. Leave `automation` out when the track has none.
-- Today the built-in `filter` takes automation, and the volume and pan of every track. A lane of any other device is reported and moves nothing.
+- Every built-in instrument and effect takes automation, and so do the volume and pan of every track. A plugin takes none yet: a lane of it is reported and moves nothing.
 
 What `problems.txt` says about a lane, and what to do:
 
 - `` automation[0].parameter is "cutoff", and dark takes no automation of a number of that name ``: the message lists the fields it takes. Use one of them. A whole number, such as a count of voices, takes none.
-- `` automation[0].device is "echo", and echo.json takes no automation ``: that device cannot be automated yet. Change its record instead.
+- `` automation[0].device is "echo", and echo.json takes no automation ``: that device, such as a plugin, cannot be automated yet. Change its record instead.
 - `` automation[0].points[1].value must be from 20 to 20000 ``: put the value inside the range of the field. The same holds for `gain_db` and `pan` of the track.
 - A lane with no points, points out of tick order, two lanes for one number, or a `device` that cannot be a file name: the track record itself does not load and keeps what it had. Correct the lane.
 
