@@ -23,20 +23,16 @@ pub(crate) struct Watcher {
     assets_watched: bool,
     events: Receiver<notify::Result<notify::Event>>,
     pending: BTreeSet<PathBuf>,
-    /// When the first path of `pending` was heard. The group counts from then for undo, so a
-    /// write heard just after a request ended joins it, however long the group then waits.
-    first_event: Instant,
+    /// When the last path of `pending` was heard. The group counts from then for undo, not
+    /// from when it applies a grouping window later, so a write heard just after a request
+    /// ended joins it.
     last_event: Instant,
 }
 
 impl Watcher {
     fn hear(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
-        let now = Instant::now();
-        if self.pending.is_empty() {
-            self.first_event = now;
-        }
         self.pending.extend(paths);
-        self.last_event = now;
+        self.last_event = Instant::now();
     }
 }
 
@@ -53,7 +49,6 @@ impl Project {
             assets_watched: false,
             events,
             pending: BTreeSet::new(),
-            first_event: Instant::now(),
             last_event: Instant::now(),
         });
         Ok(())
@@ -61,7 +56,8 @@ impl Project {
 
     /// Call this regularly, like `EngineControl::poll`. It collects what the watcher saw and,
     /// once the folder has been quiet for [`GROUPING_WINDOW`], applies it as one group through
-    /// [`Project::apply_outside_changes_at`], at the time its first path was heard. Returns how many records and project files changed.
+    /// [`Project::apply_outside_changes_at`], at the time its last path was heard. Returns how
+    /// many records and project files changed.
     ///
     /// It also brings the generated files up to date, `problems.txt` first of all, so an agent
     /// with only file access sees what the runtime made of its edit.
@@ -100,7 +96,7 @@ impl Project {
             return Ok(0);
         }
         let paths: Vec<PathBuf> = std::mem::take(&mut watcher.pending).into_iter().collect();
-        let heard = watcher.first_event;
+        let heard = watcher.last_event;
         self.apply_outside_changes_at(&paths, heard)
     }
 }

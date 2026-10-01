@@ -199,7 +199,8 @@ pub(crate) struct History {
     undo: Vec<Step>,
     redo: Vec<Step>,
     /// When the step on top of `undo` is an outside step and nothing came after it: when its
-    /// last group was heard. An interface edit, an undo and a redo all clear it.
+    /// last group was heard, see [`Project::apply_outside_changes_at`]. An interface edit, an
+    /// undo and a redo all clear it.
     last_outside: Option<Instant>,
     request: Option<Request>,
     /// The committed state of every record that an open edit has published over: what it was
@@ -298,11 +299,6 @@ impl History {
         let recent = self.last_outside.is_some_and(|last| {
             self.request.is_some() || at.saturating_duration_since(last) < OUTSIDE_UNDO_WINDOW
         });
-        let label = self
-            .request
-            .as_ref()
-            .map_or(label, |request| request.label.as_str())
-            .to_string();
         match self.undo.last_mut().filter(|_| recent) {
             Some(step) => {
                 step.absorb(applied);
@@ -315,8 +311,12 @@ impl History {
                 }
             }
             None => {
+                let label = self
+                    .request
+                    .as_ref()
+                    .map_or(label, |request| request.label.as_str());
                 let mut step = Step {
-                    label,
+                    label: label.to_string(),
                     ..Step::default()
                 };
                 step.absorb(applied);

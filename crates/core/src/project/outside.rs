@@ -36,7 +36,7 @@ impl Project {
     }
 
     /// [`Self::apply_outside_changes`] with the time the change was heard given. The watcher
-    /// gives the time it heard the first path of the group. Tests of the undo grouping give
+    /// gives the time it heard the last path of the group. Tests of the undo grouping give
     /// their own.
     pub fn apply_outside_changes_at(
         &mut self,

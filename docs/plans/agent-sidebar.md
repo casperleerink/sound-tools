@@ -183,7 +183,7 @@ Rejected:
 
 - Add `Project::begin_request(label)` and `Project::end_request()`, with `Session` wrappers.
 - While a request is open, every outside change joins one undo step with that label, however far apart the writes are.
-- `end_request` closes the step once the watcher has been quiet for its 100 ms grouping window, so a write that lands just after the turn ends still joins.
+- After `end_request`, outside changes the watcher hears less than its 100 ms grouping window later still join the step, so a write that lands just after the turn ends still joins.
 - A window edit or an undo during a request splits it, as today (`History::push` clears the grouping).
 - The label is the composer's message, cut to about 40 characters, so the menu says "Undo Add a bass line in bars 5 to 8…".
 - The 15 s heuristic (`OUTSIDE_UNDO_WINDOW`) stays for outside changes made with no request open, which covers terminal agents.
