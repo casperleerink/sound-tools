@@ -77,11 +77,27 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             cx.new(|cx| {
                 TextInput::new(cx)
                     .placeholder("Ask the agent to build something")
-                    .lines(3)
+                    .multi_line(4)
+            }),
+            cx.new(|cx| {
+                let mut input = TextInput::new(cx).multi_line(4);
+                input.set_text(
+                    "Give these three voices independent rhythms and let me stretch each pattern by dragging it.\nKeep the kick as it is.",
+                    cx,
+                );
+                input
+            }),
+            cx.new(|cx| {
+                let mut input = TextInput::new(cx).multi_line(4);
+                input.set_text(
+                    "Make the bass follow the kick.\nKeep it in the low octave.\nSidechain the pad to it.\nAdd a short reverb on the snare only.\nBounce bars 5 to 8.\nThen name the bounce Loop B.",
+                    cx,
+                );
+                input
             }),
         ]
     });
-    let [text_sm, text_md, text_disabled, composer] = inputs.read(cx).clone();
+    let [text_sm, text_md, text_disabled, empty, three_rows, full] = inputs.read(cx).clone();
     let boxed = |width: f32, input| {
         div()
             .w(px(width))
@@ -270,7 +286,9 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             [
                 row("sizes", cx, [boxed(160., text_sm), boxed(240., text_md)]),
                 row("disabled", cx, [boxed(240., text_disabled)]),
-                row("composer", cx, [boxed(360., composer)]),
+                row("multi-line", cx, [boxed(360., empty)]),
+                row("3 rows", cx, [boxed(360., three_rows)]),
+                row("full, scrolled", cx, [boxed(360., full)]),
             ],
         ))
         .child(block(
