@@ -6,12 +6,15 @@
 use std::f32::consts::{PI, SQRT_2};
 
 use sound_core::{
-    AudioOutput, Envelope, EnvelopeState, EventInput, Ports, PrepareConfig, ProcessContext,
-    Processor, Smoothed,
+    AudioOutput, Automated, AutomationInput, Envelope, EnvelopeState, EventInput, Ports,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
 };
 use sound_notes::{NoteEvent, Velocity, Voice as _, Voices, Wheels, frequency_hz};
 
-use crate::{SynthState, Waveform};
+use crate::{CUTOFF, GAIN, PARAMETERS, RESONANCE, SynthState, Waveform};
+
+/// Every number of the synth can be automated.
+type SynthTargets = Targets<SynthState, { PARAMETERS.len() }>;
 
 /// Notes that sound at once. One more note takes over a voice in place, as [`Voices`] picks it.
 pub const VOICES: usize = 16;
@@ -196,7 +199,8 @@ impl Voice {
 }
 
 pub struct Synth {
-    state: SynthState,
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<SynthState, { PARAMETERS.len() }>,
     /// Zero until `prepare` runs.
     sample_rate: f32,
     envelope: Envelope,
@@ -214,10 +218,12 @@ pub struct Synth {
 impl Synth {
     pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<SynthState, { PARAMETERS.len() }> =
+        AutomationInput::new(1, PARAMETERS);
 
     pub fn new(state: SynthState) -> Self {
         Self {
-            state,
+            state: Automated::new(Self::AUTOMATION, state),
             sample_rate: 0.0,
             envelope: Envelope::default(),
             cutoff_octaves: Smoothed::new(state.cutoff_hz.log2()),
@@ -241,6 +247,33 @@ impl Synth {
             self.resonance.advance(frames),
             self.sample_rate,
         );
+    }
+
+    /// The frames a change takes. Zero until `prepare` runs: then a change is at once.
+    fn ramp_frames(&self) -> f32 {
+        RAMP_SECONDS * self.sample_rate
+    }
+
+    /// Sets every target from the record and its lanes, each reached in its own ramp. The
+    /// envelope applies at once, to every voice.
+    fn aim(&mut self, targets: &SynthTargets) {
+        self.envelope = envelope(&self.state, self.sample_rate);
+        self.cutoff_octaves
+            .set_target(self.state.cutoff_hz.log2(), targets.ramp(&CUTOFF));
+        self.resonance
+            .set_target(self.state.resonance, targets.ramp(&RESONANCE));
+        self.gain.set_target(self.state.gain, targets.ramp(&GAIN));
+        let idle = self.voices.is_idle();
+        if idle {
+            // Nothing sounds, so there is nothing to smooth. The next note starts on the new values.
+            self.cutoff_octaves.snap();
+            self.resonance.snap();
+            self.gain.snap();
+        }
+        // A filter that took its value at once does not move, so nothing else works it out.
+        if idle || targets.snaps() {
+            self.move_filter(0);
+        }
     }
 
     /// Renders the frames between two events.
@@ -276,6 +309,7 @@ impl Processor for Synth {
     fn ports(&self) -> Ports {
         Ports::new()
             .event_input(Self::NOTES)
+            .event_input(Self::AUTOMATION.port())
             .audio_output(Self::OUTPUT)
     }
 
@@ -286,23 +320,14 @@ impl Processor for Synth {
     }
 
     fn update(&mut self, update: &mut SynthState) {
-        self.state = *update;
-        self.envelope = envelope(&self.state, self.sample_rate);
-        let ramp_frames = RAMP_SECONDS * self.sample_rate;
-        self.cutoff_octaves
-            .set_target(self.state.cutoff_hz.log2(), ramp_frames);
-        self.resonance.set_target(self.state.resonance, ramp_frames);
-        self.gain.set_target(self.state.gain, ramp_frames);
-        if self.voices.is_idle() {
-            // Nothing sounds, so there is nothing to smooth. The next note starts on the new values.
-            self.cutoff_octaves.snap();
-            self.resonance.snap();
-            self.gain.snap();
-            self.move_filter(0);
-        }
+        let targets = self.state.set_record(update, self.ramp_frames());
+        self.aim(&targets);
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, self.ramp_frames()) {
+            self.aim(&targets);
+        }
         let events = context.event_inputs.get(Self::NOTES);
         if events.is_empty() && self.voices.is_idle() {
             return;

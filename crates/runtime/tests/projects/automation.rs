@@ -165,18 +165,24 @@ fn a_fade_in_from_silence_starts_silent() {
 
 /// A lane whose device or track has no such number, or that takes no automation, or whose
 /// values are outside the range is reported by the field, and the lanes that can play play. A record
-/// whose points are out of order does not load, and the track keeps what it had.
+/// whose points are out of order does not load, and the track keeps what it had. A sine of the
+/// `tone` tool in the track folder takes no automation: it is not part of the arrangement.
 #[test]
 fn a_lane_that_cannot_play_is_reported_and_the_rest_plays() {
     let lanes = [
         lane(Some("tone"), "cutoff", &[(0, "300.0")]),
-        lane(Some("instrument"), "gain", &[(0, "0.5")]),
+        lane(Some("drone"), "gain", &[(0, "0.5")]),
         lane(Some("tone"), "resonance", &[(0, "3.0")]),
         lane(Some("tone"), "cutoff_hz", &[(0, "300.0")]),
         lane(None, "volume", &[(0, "0.0")]),
         lane(None, "pan", &[(0, "3.0")]),
     ];
     let mut harness = piano(&automation(&lanes), "{}");
+    let drone = r#"{"tool": "tone", "state": {"frequency_hz": 220.0, "gain": 0.0}}"#;
+    assert_eq!(
+        harness.write_and_apply(&format!("{FOLDER}/drone.json"), drone),
+        1
+    );
     let problems = harness.project.problems();
     let messages: Vec<&str> = problems
         .iter()
@@ -186,7 +192,7 @@ fn a_lane_that_cannot_play_is_reported_and_the_rest_plays() {
         messages,
         [
             r#"automation[0].parameter is "cutoff", and tone takes no automation of a number of that name. It takes cutoff_hz, resonance, drive_db, mix, lfo_rate_hz, lfo_depth_octaves, so the lane moves nothing"#,
-            r#"automation[1].device is "instrument", and instrument.json takes no automation, so the lane moves nothing"#,
+            r#"automation[1].device is "drone", and drone.json takes no automation, so the lane moves nothing"#,
             "automation[2].points[0].value must be from 0 to 1, not 3, so the lane moves nothing",
             r#"automation[4].parameter is "volume", and the track takes no automation of a number of that name. It takes gain_db, pan, so the lane moves nothing"#,
             "automation[5].points[0].value must be from -1 to 1, not 3, so the lane moves nothing",
