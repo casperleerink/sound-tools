@@ -311,12 +311,14 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
 
 /// The agent sidebar, in the left panel of the window. The window names no agent type, so this
 /// is where the two meet. In `support`, the support folder of the machine, the panel keeps
-/// whether it is open (see [`LeftPanelSlot`]) and the sidebar the threads of each project.
+/// whether it is open (see [`LeftPanelSlot`]), and the sidebar the agent it downloads and the
+/// threads of each project.
 pub fn agent_panel(support: Option<PathBuf>) -> LeftPanelSlot {
     let remembered = support.as_deref().map(app::left_panel_file);
+    let agents = support.as_deref().map(app::agents_folder);
     let threads = support.as_deref().map(app::threads_folder);
     LeftPanelSlot::new(remembered, move |session, _, cx| {
-        let sidebar = cx.new(|cx| Sidebar::new(session, threads.clone(), cx));
+        let sidebar = cx.new(|cx| Sidebar::new(session, agents.clone(), threads.clone(), cx));
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
     })
 }

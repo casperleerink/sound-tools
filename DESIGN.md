@@ -70,6 +70,9 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Anywhere | cmd-q | Quit. There is no save: every finished edit is already in the folder |
 | A MIDI keyboard | any key, the sustain pedal, the bend and mod wheels, key pressure | Play the instrument of the selected track, whether the project plays or not. The synth, the Wavetable and the Sampler bend two semitones and add a vibrato with the mod wheel; the Wavetable can also route the mod wheel and the key pressure in its matrix. A plugin gets them as MIDI (CLAP) or on the parameters it maps them to (VST 3). A take records the wheels too |
 | Title row | the sidebar icon, right of the traffic lights | Open or close the agent sidebar. It stays as it is at the next start. While it is closed and the agent works or asks, the icon carries a lavender dot |
+| Agent sidebar | **Set up**, at the first use | Download the pinned Claude Code (215 MB), then sign in. **Cancel** stops; **Try again** resumes |
+| Agent sidebar | Sign in with your Claude plan, Use an Anthropic Console account (API) | Run Claude Code's own sign-in in the browser. **Open the page again** starts it again, **Cancel** stops it |
+| Agent sidebar | the account menu in the composer | The email and plan, and **Sign out** |
 | Agent sidebar | enter in the composer, or the send button | Send the message. The agent works in the project folder; everything it changes for one message is one undo step named after the message. One message at a time |
 | Agent sidebar | the stop button, or cmd-period | Stop the agent's turn |
 | Agent sidebar | escape in the composer | Give the focus back to where it was |

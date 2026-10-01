@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use runtime::{OFFLINE, open_or_create};
 use smol::future;
 use sound_agent::{
-    AgentEvent, ApprovalAnswer, ApprovalMode, Provider, Session, Thread, ThreadOptions,
+    AgentEvent, ApprovalAnswer, ApprovalMode, Installed, Provider, Session, Thread, ThreadOptions,
     TurnOutcome, login_shell_environment, program_on_path,
 };
 use sound_core::Engine;
@@ -44,12 +44,14 @@ fn the_agent_adds_a_clip_as_one_undo_step() {
     let program = program_on_path("claude", &environment).expect("claude is not on PATH");
     let (thread, mut events) = Thread::start(ThreadOptions {
         provider: Provider::Claude,
-        program,
+        installed: Installed {
+            program,
+            environment,
+        },
         folder: project.root().to_path_buf(),
         model: None,
         approval_mode: ApprovalMode::AskBeforeCommands,
         session: Session::New,
-        environment,
     })
     .unwrap();
 
