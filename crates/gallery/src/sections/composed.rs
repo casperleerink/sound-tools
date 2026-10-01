@@ -1,54 +1,41 @@
-//! Composed examples: agent sidebar, transport pill, project menu.
+//! Composed examples: transport pill, project menu. The agent sidebar is the real one, in
+//! the window snapshots of `crates/runtime`.
 //!
-//! `GALLERY_STATE=idle|working|done|failed` preselects the sidebar state,
-//! `GALLERY_OPEN=project|model` opens a menu at startup.
+//! `GALLERY_OPEN=project` opens the project menu at startup.
 
 use gpui::{
     AnyElement, App, Entity, FontWeight, IntoElement, ParentElement, Styled, Subscription, Window,
     div, prelude::*, px,
 };
 use sound_ui::ActiveTheme;
-use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::toggle::Toggle;
 
 use crate::composed::project_menu::ProjectMenu;
-use crate::composed::sidebar::{AgentSidebar, AgentState};
 use crate::composed::transport::Transport;
 
 struct ComposedState {
-    sidebar: Entity<AgentSidebar>,
     transport: Entity<Transport>,
     project: Entity<ProjectMenu>,
-    _subs: [Subscription; 2],
+    _subscription: Subscription,
 }
 
 impl ComposedState {
     fn new(window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
-        let state = AgentState::from_value(
-            &std::env::var("GALLERY_STATE").unwrap_or_else(|_| "idle".into()),
-        );
-        let sidebar = cx.new(|cx| AgentSidebar::new(state, cx));
         let transport = cx.new(|_| Transport::default());
         let project = cx.new(ProjectMenu::new);
 
-        match std::env::var("GALLERY_OPEN").unwrap_or_default().as_str() {
-            "project" => project.update(cx, |this, cx| this.open(window, cx)),
-            "model" => sidebar.update(cx, |this, cx| this.open_model(window, cx)),
-            _ => {}
+        if std::env::var("GALLERY_OPEN").as_deref() == Ok("project") {
+            project.update(cx, |this, cx| this.open(window, cx));
         }
 
-        // The gallery view observes this state, so forwarding the children's notifications keeps
-        // the controls above each block in step with the block itself.
-        let subs = [
-            cx.observe(&sidebar, |_, _, cx| cx.notify()),
-            cx.observe(&transport, |_, _, cx| cx.notify()),
-        ];
+        // The gallery view observes this state, so forwarding the transport's notifications
+        // keeps the control above it in step with the block itself.
+        let subscription = cx.observe(&transport, |_, _, cx| cx.notify());
 
         Self {
-            sidebar,
             transport,
             project,
-            _subs: subs,
+            _subscription: subscription,
         }
     }
 }
@@ -85,28 +72,7 @@ fn block(
 pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let state = window.use_keyed_state("composed-state", cx, ComposedState::new);
     let state = state.read(cx);
-    let (sidebar, transport, project) = (
-        state.sidebar.clone(),
-        state.transport.clone(),
-        state.project.clone(),
-    );
-    let state_control = SegmentedControl::new("sidebar-state", sidebar.read(cx).state().value())
-        .options([
-            ("idle", "Idle"),
-            ("working", "Working"),
-            ("done", "Done"),
-            ("failed", "Failed"),
-        ])
-        .on_change({
-            let sidebar = sidebar.clone();
-            move |value, _, cx| {
-                sidebar.update(cx, |this, cx| {
-                    this.set_state(AgentState::from_value(&value), cx)
-                })
-            }
-        })
-        .into_any_element();
-
+    let (transport, project) = (state.transport.clone(), state.project.clone());
     let reload_control = Toggle::new(
         "reload-pending",
         "Reload",
@@ -122,7 +88,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap(px(24.))
-        .child(block("Agent sidebar", cx, Some(state_control), sidebar))
         .child(block("Transport", cx, Some(reload_control), transport))
         .child(block("Project menu", cx, None, project))
 }

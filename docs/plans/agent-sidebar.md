@@ -157,11 +157,11 @@ What we build:
 | --- | --- | --- |
 | Thread list | `list` with Top alignment and `FollowMode::Tail`. Text deltas are batched once per frame, then `remeasure_items` runs on the growing item | ~150 lines |
 | Markdown | `pulldown-cmark` 0.13.4 turns events into a small block model (paragraph, heading, list, quote, code block) with inline runs (bold, italic, code, link), drawn with `StyledText`. The streaming message is parsed again on each frame's batch. Tables render as monospace text. No syntax colours and no selection in v1 | ~500 lines |
-| Steps | One line per tool step, such as "Edited state/arrangement/bass/verse-a.json" or "Ran cargo build". The newest step is the working line. After the turn the steps fold behind "Worked for 12 s", as in the gallery mockup | ~150 lines |
+| Steps | One line per tool step, such as "Edited state/arrangement/bass/verse-a.json" or "Ran cargo build". The newest step is the working line. After the turn the steps fold behind "Worked for 12 s" | ~150 lines |
 | Composer | Extend `TextInput` to multi-line: shape with `shape_text` and a wrap width, move up and down across wrapped lines, grow up to 8 lines and then scroll, keep newlines on paste, simple undo. Enter sends, shift-enter adds a newline, and up in an empty composer recalls earlier messages of the thread. It is a general component in `crates/ui` with a gallery entry | ~800 lines |
 | Approval row | See section 5 | ~120 lines |
 
-There are no diffs in v1. The change is already live in the arrangement, the composer hears it, and one cmd-z takes the whole request back. The gallery mockup (`crates/gallery/src/composed/sidebar.rs`) already chose "no avatars, no timestamps, no tool rows", and this plan keeps that.
+There are no diffs in v1. The change is already live in the arrangement, the composer hears it, and one cmd-z takes the whole request back. The sidebar has no avatars, no timestamps and no tool rows.
 
 Rejected:
 
@@ -221,7 +221,7 @@ Rejected:
 
 - The setting is one provider-neutral `enum ApprovalMode`, saved in `support_folder()/agent/settings.json`. Each driver maps it to its own flags with one exhaustive `match`.
 - It applies to every project on the machine. Because it is not in the project, the agent cannot change its own permissions by editing a project file.
-- It sits in the composer's menu (the dropdown of the gallery mockup) as one select, next to the model.
+- It sits in the composer's menu as one select, next to the model.
 - A change applies from the next action of the agent, through the `set_permission_mode` control request, with no restart (R10).
 - Under "Ask before commands" Claude Code still runs file commands such as `touch` and `mkdir` in the project without asking, as it counts them as edits. Commands such as `git init` or `cargo build` ask. Decided: that is fine.
 - Under "Never ask", the first message of a thread shows one quiet line above the composer ("The agent does anything without asking"), so the mode is never a surprise.
