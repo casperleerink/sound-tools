@@ -111,7 +111,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Arrangement | cmd-c, cmd-x | Copy, cut the selected clips with the automation under them. A cut leaves a straight line where they were. The clipboard is in the app only |
 | Arrangement | cmd-v | Paste at the playhead, with the automation, over the automation there. The top row goes on the track of the first selected clip, else the selected track, else the first track |
 | Arrangement | cmd-d | A copy of the selected clips right after them, with their automation |
-| Arrangement | drag a clip | Move it, with every selected clip, in time and to another track. The automation under it goes along and replaces what is where it lands; just outside, nothing changes. To another track only the volume and the pan go: device lanes stay with their track |
+| Arrangement | drag a clip | Move it, with every selected clip, in time and to another track. The automation under it goes along and replaces what is where it lands; just outside, nothing changes. A lane goes along only when it has a point inside the clip. To another track only the volume and the pan go: device lanes stay with their track |
 | Arrangement | alt-drag a clip | Move it without its automation. Alt can be pressed or let go during the drag |
 | Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note. On an audio clip it trims the file and keeps the sound in place |
 | Arrangement | drag a fade handle or the gain handle of an audio clip | Fade in or out, or change its gain. The value shows while dragging |
