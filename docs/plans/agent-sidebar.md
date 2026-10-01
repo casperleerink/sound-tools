@@ -331,6 +331,11 @@ Each milestone ends green on the README checks, with the docs updated in the sam
    - The Linux CI job builds and passes the tests. The sidebar compiles there, and the pinned download covers Linux.
    - A manual run of the `.app` on a second Mac.
 
+## Open issues
+
+- With the sidebar open, the window can still be made as narrow as `MIN_WINDOW_WIDTH` (1100 pt), which leaves the arrangement 740 pt. The minimum size does not grow with the panel.
+- Under "Ask before commands" the agent asks even before a command that only reads, such as `find state -type f`. The live test of milestone 4 met one in its first turn.
+
 ## Adding Codex later
 
 Not in v1. These notes save the next agent the research. Adding Codex is a `Provider::Codex` variant and a private `provider/codex.rs`. The thread, view, install and store code stay as they are.
