@@ -26,9 +26,9 @@ Extensions are trusted user code. The project provides clear contracts, document
 
 ## Where it stands
 
-The DAW comes first: a composer can make a short piece with the bundled tools and reopen it later. Until the agent sidebar exists, the agent is an external coding agent such as Claude Code or Codex, run in the project folder. It edits the project files and the running app plays the change without a build.
+The DAW comes first: a composer can make a short piece with the bundled tools and reopen it later. The agent sidebar runs Claude Code in the project folder. The app downloads it and signs in through Claude Code's own browser flow, and each message is one undo step. A coding agent in a terminal still works the same way, since both only edit the project files.
 
-Next come the agent sidebar and agent-built extensions: a composer asks for a tool that does not exist, and the agent writes it as an extension that the app builds and reloads.
+Next come agent-built extensions: a composer asks for a tool that does not exist, and the agent writes it as an extension that the app builds and reloads.
 
 ## Inspirations
 

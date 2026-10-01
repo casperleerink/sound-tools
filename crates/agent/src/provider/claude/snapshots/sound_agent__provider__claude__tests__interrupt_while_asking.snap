@@ -5,7 +5,6 @@ expression: "replay(\"interrupt_approval\")"
 [
     TurnStarted,
     Started {
-        session_id: "session",
         account: Account {
             email: Some(
                 "composer@example.com",

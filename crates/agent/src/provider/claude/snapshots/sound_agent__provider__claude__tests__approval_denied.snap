@@ -5,7 +5,6 @@ expression: "replay(\"approval_denied\")"
 [
     TurnStarted,
     Started {
-        session_id: "session",
         account: Account {
             email: Some(
                 "composer@example.com",

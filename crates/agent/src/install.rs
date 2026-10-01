@@ -73,7 +73,7 @@ impl Download {
 pub enum InstallError {
     /// curl did not get it, such as with no connection. What came stays on disk, so the next
     /// try resumes.
-    Network { detail: String },
+    Network,
     /// There is no `/usr/bin/curl` on this computer.
     NoCurl,
     /// The server answered with an error, such as for a region it does not serve.
@@ -89,7 +89,7 @@ impl InstallError {
     /// One sentence for the composer. `title` is the program's name, such as "Claude Code".
     pub fn sentence(&self, title: &str) -> String {
         match self {
-            InstallError::Network { .. } => {
+            InstallError::Network => {
                 format!("Could not download {title}. Check the internet connection.")
             }
             InstallError::NoCurl => {
@@ -181,9 +181,7 @@ async fn fetch(
             .spawn()
             .map_err(|error| match error.kind() {
                 io::ErrorKind::NotFound => InstallError::NoCurl,
-                _ => InstallError::Network {
-                    detail: format!("curl did not start: {error}"),
-                },
+                _ => InstallError::Network,
             })?;
         let status = loop {
             // Runs on the background executor, never in a gpui test, where this timer would
@@ -199,9 +197,7 @@ async fn fetch(
             }
             progress(length(partial));
         };
-        let status = status.map_err(|error| InstallError::Network {
-            detail: error.to_string(),
-        })?;
+        let status = status.map_err(|_| InstallError::Network)?;
         if status.success() {
             return Ok(());
         }
@@ -221,7 +217,7 @@ async fn fetch(
                 return Err(InstallError::Refused { message });
             }
             Some(WRITE_ERROR) => return Err(InstallError::Saving(io::Error::other(said))),
-            _ => return Err(InstallError::Network { detail: said }),
+            _ => return Err(InstallError::Network),
         }
     }
 }

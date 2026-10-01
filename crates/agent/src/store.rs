@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::conversation::Conversation;
-use crate::{AgentEvent, Session, TurnOutcome};
+use crate::{AgentEvent, TurnOutcome};
 
 const INDEX: &str = "index.json";
 
@@ -49,13 +49,6 @@ impl SavedThread {
             id: Uuid::new_v4().to_string(),
             session_id: None,
         }
-    }
-
-    /// What the next process of the thread continues.
-    pub fn session(&self) -> Session {
-        self.session_id
-            .clone()
-            .map_or(Session::New, Session::Resume)
     }
 }
 
@@ -165,12 +158,7 @@ impl ThreadStore {
         let mut text =
             serde_json::to_string_pretty(&index).map_err(|error| failed(error.to_string()))?;
         text.push('\n');
-        // Through a file of its own and a rename, so a crash never leaves half an index. Its
-        // name is new each time, so no other write can be halfway through it.
-        let temporary = self.folder.join(format!("{INDEX}.{}.tmp", Uuid::new_v4()));
-        fs::write(&temporary, text)
-            .and_then(|()| fs::rename(&temporary, &path))
-            .map_err(|error| failed(error.to_string()))
+        write_whole(&path, &text).map_err(|error| failed(error.to_string()))
     }
 
     fn append(&self, thread: &str, lines: &[Line]) -> Result<(), String> {
@@ -237,6 +225,16 @@ impl ThreadStore {
     fn log(&self, thread: &str) -> PathBuf {
         self.folder.join(format!("{thread}.jsonl"))
     }
+}
+
+/// Writes `text` as the whole of the file at `path`: through a file of its own and a rename,
+/// so a crash never leaves half a file. The other file's name is new each time, so no other
+/// write can be halfway through it.
+pub fn write_whole(path: &Path, text: &str) -> io::Result<()> {
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(format!(".{}.tmp", Uuid::new_v4()));
+    fs::write(&temporary, text)?;
+    fs::rename(&temporary, path)
 }
 
 /// The folder name of a project: a name-based UUID of the path of its folder, the same

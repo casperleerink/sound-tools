@@ -1,6 +1,6 @@
 # Sound Tools
 
-A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The agent is an external coding agent, run in the project folder.
+A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The agent sidebar runs Claude Code in the project folder. Any coding agent in a terminal works too.
 
 What it has: instrument and audio tracks, clips with notes or audio, a synth, a Sampler, a Drum pad, CLAP and VST 3 plugins, nine effects (Filter, Compressor, Limiter, EQ, Delay, Reverb, Saturator, Utility, and Modulation: a chorus, flanger and phaser), a mixer with a limited master, MIDI and audio recording, and **fit tempo**: play freely with no click, and one action moves the grid onto your playing.
 
@@ -80,15 +80,10 @@ Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 
 ## Work with an agent
 
-The agent is any coding agent that can edit files. The app must be running on the project, else the edits are saved but nobody checks or plays them.
+The agent sidebar runs Claude Code in the project folder, with no terminal.
 
 1. Run the app on a project and press space.
-2. Click the project name top-left and pick **Open terminal in project folder**, then start Claude Code or Codex there:
-
-   ```sh
-   claude        # or: codex
-   ```
-
+2. Open the agent sidebar: the icon right of the traffic lights, or cmd-L. The first time, **Set up** downloads Claude Code and signs you in, in your browser.
 3. Ask in plain language:
    - `Add a bass line in bars 5 to 8 that follows the chords on the piano track`
    - `Add a new track with a simple melody over bars 1 to 4`
@@ -99,6 +94,8 @@ The agent is any coding agent that can edit files. The app must be running on th
    - `Put the file in assets/audio on a new audio track, so it starts at bar 3`
    - `The grid runs twice as fast as the music. Fix the fit`
 4. The part shows up and plays while the agent still writes. One cmd-z in the app takes the whole request back.
+
+The terminal works too, with any coding agent that can edit files. Click the project name top-left, pick **Open terminal in project folder**, and start Claude Code or Codex there (`claude` or `codex`). The app must be running on the project, else the edits are saved but nobody checks or plays them.
 
 What the agent uses:
 

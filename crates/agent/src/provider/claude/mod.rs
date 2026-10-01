@@ -29,7 +29,7 @@ use smol::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use self::mapper::Mapper;
 use self::protocol::{CliRequest, ControlResponse, Incoming, Outgoing, PermissionMode, Request};
 pub use self::setup::{SIGN_IN_CHOICES, account, download, sign_in, sign_out};
-use super::{AgentEvent, ApprovalMode, Command, Session, ThreadOptions};
+use super::{AgentEvent, ApprovalMode, Command, ThreadOptions};
 
 /// The tools a composer needs. No web, no subagents, no questions: the agent asks in plain
 /// text.
@@ -45,9 +45,9 @@ fn permission_mode(mode: ApprovalMode) -> PermissionMode {
 
 /// The flags, every one explicit: the docs say the defaults of `-p` will change.
 fn arguments(options: &ThreadOptions, session_id: &str) -> Vec<OsString> {
-    let session_flag = match options.session {
-        Session::New => "--session-id",
-        Session::Resume(_) => "--resume",
+    let session_flag = match options.resume {
+        Some(_) => "--resume",
+        None => "--session-id",
     };
     let mut arguments: Vec<OsString> = [
         "-p",
@@ -143,15 +143,15 @@ struct Writing {
 }
 
 impl Events {
-    /// `session_id` is the one `options.session` names, or the new one to give the session.
+    /// `session_id` is the one `options.resume` names, or the new one to give the session.
     pub fn start(
         options: ThreadOptions,
-        session_id: String,
+        session_id: &str,
         commands: Receiver<Command>,
     ) -> io::Result<Events> {
         let mut command = command(&options.installed.program, &options.installed.environment);
         command
-            .args(arguments(&options, &session_id))
+            .args(arguments(&options, session_id))
             .current_dir(&options.folder)
             // Loads the CLAUDE.md of the `--add-dir` folder, the project's.
             .env("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD", "1")
@@ -162,7 +162,6 @@ impl Events {
         // Its own process group: a ctrl-c in the terminal that started the app does not stop
         // the agent halfway through a write, and dropping the events ends the agent's own
         // children too.
-        #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let mut child = smol::process::Command::from(command)
             .stdin(Stdio::piped())
@@ -184,7 +183,7 @@ impl Events {
             stderr_line: Vec::new(),
             said: None,
             commands: Some(commands),
-            mapper: Mapper::new(session_id, options.folder),
+            mapper: Mapper::new(options.folder),
             outbox: VecDeque::new(),
             events: VecDeque::new(),
             requests_sent: 0,
@@ -415,7 +414,6 @@ impl Events {
     /// Ends the agent's own children, such as a `cargo build` it started. `kill_on_drop`
     /// ends only the CLI. Only while the CLI is not reaped yet.
     fn end_group(&self) {
-        #[cfg(unix)]
         if let Ok(group) = libc::pid_t::try_from(self.child.id()) {
             // SAFETY: `killpg` only sends a signal; it touches no memory of ours. The group
             // is the CLI's own (`process_group(0)` at the start), and the CLI is not reaped,

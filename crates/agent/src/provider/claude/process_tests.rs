@@ -9,8 +9,8 @@ use smol::future;
 
 use super::protocol::Outgoing;
 use crate::provider::{
-    Account, AgentEvent, ApprovalMode, Driver, Events, ExitReason, Installed, Provider, Session,
-    Thread, ThreadOptions, TurnOutcome,
+    Account, AgentEvent, ApprovalMode, Driver, Events, ExitReason, Installed, Provider, Thread,
+    ThreadOptions, TurnOutcome,
 };
 
 fn fixtures() -> PathBuf {
@@ -35,7 +35,7 @@ fn start(scenario: &str, output: &Path) -> (Thread, Events) {
         folder: std::env::temp_dir(),
         model: None,
         approval_mode: ApprovalMode::default(),
-        session: Session::New,
+        resume: None,
     })
     .unwrap()
 }

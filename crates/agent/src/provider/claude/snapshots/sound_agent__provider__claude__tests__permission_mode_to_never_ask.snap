@@ -5,7 +5,6 @@ expression: "replay(\"permission_bypass\")"
 [
     TurnStarted,
     Started {
-        session_id: "session",
         account: Account {
             email: Some(
                 "composer@example.com",

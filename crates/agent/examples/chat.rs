@@ -15,8 +15,8 @@ use std::path::PathBuf;
 use smol::channel;
 use smol::future;
 use sound_agent::{
-    AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Installed, Provider, Session,
-    StepOutcome, Thread, ThreadOptions, login_shell_environment, program_on_path,
+    AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Installed, Provider, StepOutcome, Thread,
+    ThreadOptions, login_shell_environment, program_on_path,
 };
 
 enum Input {
@@ -64,8 +64,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             folder,
             model: None,
             approval_mode: ApprovalMode::default(),
-            session: Session::New,
+            resume: None,
         })?;
+        let session_id = thread.session_id().to_string();
         let mut thread = Some(thread);
         let mut approval: Option<ApprovalId> = None;
         // Whether the text block on screen came as deltas, so its done text is not printed twice.
@@ -91,11 +92,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             match future::or(event, future::or(line, interrupt)).await {
                 Input::Event(None) => break,
                 Input::Event(Some(event)) => match event {
-                    AgentEvent::Started {
-                        session_id,
-                        account,
-                        models,
-                    } => {
+                    AgentEvent::Started { account, models } => {
                         let email = account.email.unwrap_or_default();
                         let plan = account.plan.unwrap_or_default();
                         let models: Vec<_> = models.iter().map(|model| model.id.as_str()).collect();

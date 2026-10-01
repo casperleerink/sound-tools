@@ -142,14 +142,6 @@ pub enum ApprovalAnswer {
     Deny,
 }
 
-/// Which conversation the agent continues.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Session {
-    New,
-    /// The session id an earlier [`AgentEvent::Started`] gave.
-    Resume(String),
-}
-
 /// What [`Thread::start`] needs.
 #[derive(Clone, Debug)]
 pub struct ThreadOptions {
@@ -161,7 +153,9 @@ pub struct ThreadOptions {
     /// One of the ids in [`AgentEvent::Started`], or `None` for the provider's default.
     pub model: Option<String>,
     pub approval_mode: ApprovalMode,
-    pub session: Session,
+    /// The session to continue, from an earlier [`Thread::session_id`], or `None` for a new
+    /// one.
+    pub resume: Option<String>,
 }
 
 /// One step of a turn, such as an edit or a command. The id is the provider's; a test that
@@ -183,11 +177,10 @@ pub struct ApprovalId(pub String);
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentEvent {
-    /// The agent is ready. It comes once, before the first turn ends. Never saved: the
-    /// session id is known from [`Thread::session_id`] before.
+    /// The agent is ready. It comes once, before the first turn ends. Never saved: it shows
+    /// nothing in the thread. The session is [`Thread::session_id`].
     #[serde(skip)]
     Started {
-        session_id: String,
         account: Account,
         /// What the composer can pick, the provider's default first.
         models: Vec<Model>,
@@ -265,10 +258,11 @@ pub enum TurnOutcome {
 pub enum ExitReason {
     /// Every [`Thread`] handle was dropped, so the agent ended.
     Finished,
-    /// [`Session::Resume`] named a session the provider no longer has. The thread cannot
+    /// [`ThreadOptions::resume`] named a session the provider no longer has. The thread cannot
     /// continue; a new one can.
     SessionNotFound,
-    /// It stopped by itself. The message is the first line of what it said, if anything.
+    /// It stopped by itself. The message is the whole sentence the sidebar shows, such as
+    /// "Claude Code stopped: " and the first line of what it said.
     Failed { message: String },
 }
 
@@ -292,13 +286,10 @@ pub struct Model {
     pub short_name: String,
 }
 
-/// The id of `session`. A new one is ours to pick, so it is known before the agent says
+/// The id of a new session. It is ours to pick, so it is known before the agent says
 /// anything, and a thread quit before then can still be resumed.
-fn session_id(session: &Session) -> String {
-    match session {
-        Session::New => uuid::Uuid::new_v4().to_string(),
-        Session::Resume(session_id) => session_id.clone(),
-    }
+fn new_session_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// What a [`Thread`] asks its driver to do.
@@ -337,13 +328,11 @@ impl Thread {
     /// that comes as [`Events`].
     pub fn start(options: ThreadOptions) -> io::Result<(Thread, Events)> {
         let (sender, receiver) = channel::unbounded();
-        let session_id = session_id(&options.session);
+        let session_id = options.resume.clone().unwrap_or_else(new_session_id);
         let driver = match options.provider {
-            Provider::Claude => Driver::Claude(claude::Events::start(
-                options,
-                session_id.clone(),
-                receiver,
-            )?),
+            Provider::Claude => {
+                Driver::Claude(claude::Events::start(options, &session_id, receiver)?)
+            }
         };
         let thread = Thread {
             commands: sender,
@@ -352,18 +341,20 @@ impl Thread {
         Ok((thread, Events { driver }))
     }
 
-    /// A thread with no agent behind it, in `session`: what it is asked to do comes out of
-    /// the receiver. For a test of a view, which cannot run a process.
-    pub fn without_agent(session: &Session) -> (Thread, Receiver<Command>) {
+    /// A thread with no agent behind it, in the session `resume` names or a new one: what it
+    /// is asked to do comes out of the receiver. For a test of a view, which cannot run a
+    /// process.
+    pub fn without_agent(resume: Option<String>) -> (Thread, Receiver<Command>) {
         let (sender, receiver) = channel::unbounded();
         let thread = Thread {
             commands: sender,
-            session_id: session_id(session),
+            session_id: resume.unwrap_or_else(new_session_id),
         };
         (thread, receiver)
     }
 
-    /// The session the agent works in: the one [`Session::Resume`] named, or the new one.
+    /// The session the agent works in: the one [`ThreadOptions::resume`] named, or the new
+    /// one.
     /// Saved with the thread from its first message, to resume it later.
     pub fn session_id(&self) -> &str {
         &self.session_id

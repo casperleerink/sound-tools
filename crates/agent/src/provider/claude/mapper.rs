@@ -27,7 +27,6 @@ const TITLE_DETAIL_CHARACTERS: usize = 60;
 
 #[derive(Debug)]
 pub struct Mapper {
-    session_id: String,
     /// Paths in titles are relative to it.
     folder: PathBuf,
     turn_open: bool,
@@ -54,9 +53,8 @@ struct Approval {
 }
 
 impl Mapper {
-    pub fn new(session_id: String, folder: PathBuf) -> Self {
+    pub fn new(folder: PathBuf) -> Self {
         Mapper {
-            session_id,
             folder,
             turn_open: false,
             interrupted: false,
@@ -184,7 +182,7 @@ impl Mapper {
             ExitReason::Finished
         } else {
             let message = match (said, code) {
-                (Some(said), _) => said.to_string(),
+                (Some(said), _) => format!("Claude Code stopped: {said}"),
                 (None, Some(code)) => format!("Claude Code stopped with exit code {code}."),
                 (None, None) => "Claude Code stopped unexpectedly.".to_string(),
             };
@@ -371,7 +369,6 @@ impl Mapper {
         let initialized = serde_json::from_value::<Initialized>(response.unwrap_or(Value::Null));
         match initialized {
             Ok(initialized) => AgentEvent::Started {
-                session_id: self.session_id.clone(),
                 account: initialized
                     .account
                     .map(|account| Account {

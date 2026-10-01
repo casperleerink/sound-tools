@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use runtime::{OFFLINE, open_or_create};
 use smol::future;
 use sound_agent::{
-    AgentEvent, ApprovalAnswer, ApprovalMode, Installed, Provider, Session, Thread, ThreadOptions,
+    AgentEvent, ApprovalAnswer, ApprovalMode, Installed, Provider, Thread, ThreadOptions,
     TurnOutcome, login_shell_environment, program_on_path,
 };
 use sound_core::Engine;
@@ -51,7 +51,7 @@ fn the_agent_adds_a_clip_as_one_undo_step() {
         folder: project.root().to_path_buf(),
         model: None,
         approval_mode: ApprovalMode::AskBeforeCommands,
-        session: Session::New,
+        resume: None,
     })
     .unwrap();
 

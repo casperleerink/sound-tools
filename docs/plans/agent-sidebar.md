@@ -80,7 +80,7 @@ How it runs:
 
 - There is one child process per open thread. Use `smol::process::Command` with `kill_on_drop` (clippy already requires smol).
 - The stdout reader runs on the background executor. It parses each line into a typed message and hands a batch to the sidebar entity once per frame.
-- Every protocol enum has an `Unknown` catch-all (`#[serde(other)]` or an untagged fallback). A new message kind from the CLI is then ignored and logged, not a crash.
+- Every protocol enum has an `Unknown` catch-all (`#[serde(other)]` or an untagged fallback). A new message kind from the CLI is then ignored, not a crash.
 - The CLI exits when stdin closes, so quitting the app or "Open project…" also ends it.
 - The environment comes from the login shell (`$SHELL -ilc 'env -0'`, captured once in the background at start), as hooman's `shell-env.ts` and Zed do. An app opened from the Finder has a bare PATH, and the agent needs `cargo` and `git` to build extensions.
 - Remove `CLAUDECODE`, `CLAUDE_CODE_*` and `ELECTRON_RUN_AS_NODE` from that environment. hooman found that a nested session never saves its transcript. Set `DISABLE_AUTOUPDATER=1`.
@@ -104,7 +104,7 @@ Install:
 - The version and the sha256 of each platform (macOS arm64 and x64, Linux x64 and arm64) are constants in the Claude driver. Moving the pin means changing the constants and recording the fixtures again, in the same commit.
 - The download is `downloads.claude.ai/claude-code-releases/<version>/<platform>/claude`, unmodified, into `support_folder()/agents/claude/<version>/`. This is what the Claude desktop app does.
 - Use `/usr/bin/curl` (with `-C -`, so a broken download resumes), then check the sha256 with the `sha2` crate. That needs no HTTP or TLS dependency. An older version's folder is removed once the new one checks out.
-- The download itself is provider-neutral: a pinned URL, a checksum, and an optional unpack step. Codex later fills in its own values.
+- The download itself is provider-neutral: a pinned URL and a checksum. Codex later fills in its own values; its asset is a `.tar.gz`, so it adds an unpack step then.
 
 Sign-in:
 
@@ -157,11 +157,11 @@ What we build:
 | --- | --- | --- |
 | Thread list | `list` with Top alignment and `FollowMode::Tail`. Text deltas are batched once per frame, then `remeasure_items` runs on the growing item | ~150 lines |
 | Markdown | `pulldown-cmark` 0.13.4 turns events into a small block model (paragraph, heading, list, quote, code block) with inline runs (bold, italic, code, link), drawn with `StyledText`. The streaming message is parsed again on each frame's batch. Tables render as monospace text. No syntax colours and no selection in v1 | ~500 lines |
-| Steps | One line per tool step, such as "Edited state/arrangement/bass/verse-a.json" or "Ran cargo build". The newest step is the working line. After the turn the steps fold behind "Worked for 12 s", as in the gallery mockup | ~150 lines |
+| Steps | One line per tool step, such as "Edited state/arrangement/bass/verse-a.json" or "Ran cargo build". The newest step is the working line. After the turn the steps fold behind "Worked for 12 s" | ~150 lines |
 | Composer | Extend `TextInput` to multi-line: shape with `shape_text` and a wrap width, move up and down across wrapped lines, grow up to 8 lines and then scroll, keep newlines on paste, simple undo. Enter sends, shift-enter adds a newline, and up in an empty composer recalls earlier messages of the thread. It is a general component in `crates/ui` with a gallery entry | ~800 lines |
 | Approval row | See section 5 | ~120 lines |
 
-There are no diffs in v1. The change is already live in the arrangement, the composer hears it, and one cmd-z takes the whole request back. The gallery mockup (`crates/gallery/src/composed/sidebar.rs`) already chose "no avatars, no timestamps, no tool rows", and this plan keeps that.
+There are no diffs in v1. The change is already live in the arrangement, the composer hears it, and one cmd-z takes the whole request back. The sidebar has no avatars, no timestamps and no tool rows.
 
 Rejected:
 
@@ -221,7 +221,7 @@ Rejected:
 
 - The setting is one provider-neutral `enum ApprovalMode`, saved in `support_folder()/agent/settings.json`. Each driver maps it to its own flags with one exhaustive `match`.
 - It applies to every project on the machine. Because it is not in the project, the agent cannot change its own permissions by editing a project file.
-- It sits in the composer's menu (the dropdown of the gallery mockup) as one select, next to the model.
+- It sits in the composer's menu as one select, next to the model.
 - A change applies from the next action of the agent, through the `set_permission_mode` control request, with no restart (R10).
 - Under "Ask before commands" Claude Code still runs file commands such as `touch` and `mkdir` in the project without asking, as it counts them as edits. Commands such as `git init` or `cargo build` ask. Decided: that is fine.
 - Under "Never ask", the first message of a thread shows one quiet line above the composer ("The agent does anything without asking"), so the mode is never a surprise.
@@ -270,17 +270,19 @@ Diffs come only if composers ask for them.
 
 ## Shape of the code
 
-- A new crate, `crates/agent` (package `sound-agent`). It depends on `sound-core`, `sound-ui` and gpui. Nothing depends on it except the composition root.
+- A new crate, `crates/agent` (package `sound-agent`). It depends on `sound-core`, `sound-ui` and gpui. Nothing depends on it except the composition root and the gallery.
 - `provider/mod.rs` holds the provider seam. It is the only place a new provider touches outside its own module:
   - `enum Provider { Claude }`.
-  - The provider-neutral `AgentEvent`: turn started, text delta, text done, step started or done, approval requested, turn ended with an outcome, process exited.
+  - The provider-neutral `AgentEvent`: started, turn started, text delta, text done, step started or done, approval requested, turn ended with an outcome, error, process exited.
   - `ApprovalMode`, the sign-in choices, and the pinned download description.
-  - Functions that `match` on `Provider` and call the driver: start or resume a thread, send, interrupt, answer an approval, set the approval mode, check the account, sign in.
-- `provider/claude.rs` is private and holds every Claude type and flag. Adding a provider means a new variant and a new private module. The compiler then points at every `match` that needs a new arm.
+  - Functions that `match` on `Provider` and call the driver: start or resume a thread, send, interrupt, answer an approval, set the approval mode or the model, check the account, sign in and out.
+- `provider/claude/` is private and holds every Claude type and flag: `mod.rs` runs the process, `protocol.rs` has the message types, `mapper.rs` turns them into `AgentEvent`s with no I/O, and `setup.rs` has the pinned download and `claude auth`. Adding a provider means a new variant and a new private module. The compiler then points at every `match` that needs a new arm.
 - The rest of the crate:
   - `install.rs` downloads from a pinned description.
-  - `thread.rs` builds the thread state from events and owns the store.
-  - `view/` holds the sidebar, onboarding, message list and approval row.
+  - `conversation.rs` builds the thread state from events.
+  - `store.rs` keeps the threads, and `settings.rs` the approval mode and the model, in the support folder.
+  - `environment.rs` reads the login shell's environment.
+  - `view/` holds the sidebar (`sidebar.rs`), the onboarding (`onboarding.rs`), the entries of the thread (`entry.rs`), the composer's menu (`menu.rs`) and its history (`history.rs`).
 - Keep the driver apart from the thread state. Tests can then feed `AgentEvent`s to the thread and the view with no process.
 - The window gets a generic left panel slot: a GPUI global holding a constructor from `Entity<Session>` to `AnyView`. It is filled in `crates/runtime/src/lib.rs`, where views are registered.
 - The runtime owns the open-or-closed flag and the title-row icon, because they belong to the window's generic left panel. The agent crate gives the slot a way to say "working or waiting" for the icon's `Indicator`. `window.rs` names no agent type.
@@ -293,10 +295,10 @@ Diffs come only if composers ask for them.
 | --- | --- | --- |
 | R1 | Claude's control messages are undocumented and could change | Removed for 2.1.286: initialize, can_use_tool, resume, interrupt, a denied tool and an error turn are recorded in `crates/agent/tests/fixtures/claude/`, with snapshot tests. Moving the pin means running `record.py` again and reading the snapshot changes |
 | R2 | `claude auth login` without a terminal might not finish | Partly removed. Milestone 5: the pinned 2.1.286 downloads and checks out, `auth status` in a fresh `CLAUDE_CONFIG_DIR` says signed out (exit 1), and `auth login` started by the app with stdin empty listens on `127.0.0.1` and waits; Cancel kills it (ignored test `crates/agent/tests/setup.rs`). The fallback URL it prints is the paste-a-code flow, which the app cannot finish, so **Open the page again** starts the sign-in again instead. Still to do: finish a real sign-in into a throwaway `CLAUDE_CONFIG_DIR`, check exit code 0 and `auth status`, and check the Keychain item with the default folder |
-| R4 | An app opened from the Finder has a bare PATH, so the agent cannot find `cargo` | Launch the `.app` from the Finder and have the agent run `which cargo`, with and without the login-shell environment |
-| R5 | The agent's last write lands after the turn ends and misses the undo step | A core test with `apply_outside_changes`: a write 50 ms after `end_request` joins the step, and a write 500 ms after starts a new one |
-| R6 | The multi-line composer is the largest UI piece | A gallery spike, before the rest: wrapping, up and down across wrapped lines, and growth to 8 lines |
-| R7 | Parsing a long streaming message on every frame is too slow | Stream a 5 KB answer into a 200-message thread and check frame times in a release build |
+| R4 | An app opened from the Finder has a bare PATH, so the agent cannot find `cargo` | Launch the `.app` from the Finder and have the agent run `which cargo`, with and without the login-shell environment. Partly removed: every run of `claude` gets the login shell's environment (`environment.rs`, with tests), and the sidebar says so when the shell does not answer. Still open, for a person: launch the `.app` from the Finder and check that the agent finds `cargo` |
+| R5 | The agent's last write lands after the turn ends and misses the undo step | A core test with `apply_outside_changes`: a write 50 ms after `end_request` joins the step, and a write 500 ms after starts a new one. Removed: `a_write_heard_just_after_the_end_joins_the_request` and `a_write_heard_well_after_the_end_is_a_step_of_its_own` in `crates/core/tests/project/undo_grouping.rs`, and a window test of a write heard just after the turn |
+| R6 | The multi-line composer is the largest UI piece | A gallery spike, before the rest: wrapping, up and down across wrapped lines, and growth to 8 lines. Removed: the multi-line `TextInput` in `crates/ui`, with key tests in `crates/ui/tests/text_input.rs`, a gallery entry, and the full composer in `agent-composer-full.png` |
+| R7 | Parsing a long streaming message on every frame is too slow | Stream a 5 KB answer into a 200-message thread and check frame times in a release build. Partly removed: a 5.1 KB answer parses in 58 µs in release, against a 16 ms frame (ignored test in `crates/ui/src/components/markdown.rs`), and the sidebar parses an answer again only when its entry changed. Still open, for a person: frame times while a long answer streams in the app |
 | R9 | Terms change, or Sound Tools stops being open source | Not a spike. Check the terms page before each release |
 | R10 | Claude cannot change its permission mode on a running process | Removed: `set_permission_mode` works on 2.1.286. Switching to "Never ask" needs `--allow-dangerously-skip-permissions` at start, which the driver always passes |
 
@@ -305,22 +307,32 @@ Diffs come only if composers ask for them.
 Each milestone ends green on the README checks, with the docs updated in the same change.
 
 1. **Spikes R2 and R4.** Verify: each result goes into this file as a row in the spike table. No code lands.
+
+   Status: partly done. R2 and R4 are in the risk table: what the app does is built and tested, and the rest needs a person (see "Still open").
 2. **Request boundaries in the core.** `begin_request` and `end_request` on `Project` and `Session`. Verify:
    - Tests in `crates/core/tests/project/undo_grouping.rs`: writes 30 s apart in one request make one step with the label; a window edit mid-request makes two steps; R5's late write; the 15 s rule after the end.
    - ARCHITECTURE.md, "The live folder and editing", is updated.
+
+   Status: done, with those tests and that section.
 3. **`sound-agent` with the Claude driver.** The provider seam, the Claude protocol types, `AgentEvent`, and a dev example (`cargo run -p sound-agent --example chat -- <folder>`) that chats in the terminal with a `claude` found on PATH. Verify:
    - Fixture tests: recorded JSONL of real runs (plain answer, file edit, approval, denied tool, interrupt, permission mode change, stale resume, process crash), with `insta` snapshots of the `AgentEvent`s.
    - One `#[ignore]` live test in a temp folder.
    - The trimmed flags still load the project's `CLAUDE.md`: the live test asks for a fact that is only in `AGENTS.md`.
+
+   Status: done. Fixtures in `crates/agent/tests/fixtures/claude/` with snapshots in `provider/claude/tests.rs`, the driver against a fake `claude` in `process_tests.rs`, and ignored live tests in `crates/agent/tests/live.rs` (the `AGENTS.md` fact and a resume, settings in the project ignored, each approval mode).
 4. **Sidebar end to end, plain text.** The left panel slot, the title-row icon, cmd-L, the remembered open-or-closed flag, the sidebar, `list`, the current single-line composer, send, stop and request boundaries, still using a `claude` found on PATH. Verify:
    - A window test in `crates/runtime/tests/window/` feeds recorded events and checks the thread, the undo label and that it is one undo step.
    - A window test with a temporary support folder: close the sidebar, reopen the window, and check it is still closed. cmd-L opens it with the composer focused.
    - Window snapshots at 1470 x 920 with the sidebar open, and closed with the working indicator on the icon.
    - A manual run: open a project, ask "Add a bass line in bars 5 to 8 that follows the piano", see the clips appear, and check that one cmd-z removes all of it.
+
+   Status: done. Window tests in `crates/runtime/tests/window/agent.rs` (`a_request_of_the_agent_is_one_undo_step_named_after_the_message`, `the_panel_stays_closed_once_closed_and_cmd_l_opens_it_on_the_composer`, `a_closed_panel_shows_the_agent_working_on_its_icon`), snapshots `agent-sidebar.png` and `agent-closed-working.png`. In place of the manual run, an ignored test with the real `claude` (`the_agent_adds_a_clip_as_one_undo_step` in `crates/runtime/tests/projects/agent.rs`) asks for a clip and checks that one undo takes it back.
 5. **Install and sign-in.** The pinned download, the onboarding states and both sign-in choices. Verify:
    - Unit tests of the install state machine against a local file: checksum mismatch, resume, removing an old version.
    - Gallery states for every row of the table in section 2.
    - A manual run as a new macOS user with no `claude`: set up, sign in and send a message, with no terminal opened.
+
+   Status: done but for the manual run. Install tests in `crates/agent/src/install/tests.rs`, the onboarding section of the gallery, and ignored tests in `crates/agent/tests/setup.rs` that download the pinned `claude` and start its sign-in. The manual run is R2, still open.
 6. **Chat quality.** Markdown, the multi-line composer with history, steps and "Worked for", approvals and the approval setting, the problems line, and the model picker. Verify:
    - A unit test that each `ApprovalMode` maps to the permission mode in section 5.
    - Unit tests of the markdown block model and of the composer's wrap and cursor math. Both are pure functions.
@@ -336,6 +348,17 @@ Each milestone ends green on the README checks, with the docs updated in the sam
 8. **Docs and release check.** ARCHITECTURE.md gets a section on the agent sidebar, and its "Agent context" section changes. DESIGN.md gets the new keys and the changed rule on saved interface state. CONCEPT.md "Where it stands" changes. Verify:
    - The Linux CI job builds and passes the tests. The sidebar compiles there, and the pinned download covers Linux.
    - A manual run of the `.app` on a second Mac.
+
+   Status: the docs are done, and CI passes on Linux. The run on a second Mac is still open.
+
+### Still open
+
+These need a person and a real Mac:
+
+- R2: finish a real sign-in to the end, in a throwaway `CLAUDE_CONFIG_DIR`, and check `auth status` after.
+- R4: launch the `.app` from the Finder and check that the agent finds `cargo`.
+- R7: frame times while a long answer streams in the app. The parse time is measured.
+- Milestone 8: run the `.app` on a second Mac.
 
 ## Open issues
 
