@@ -172,10 +172,9 @@ impl LaneLine {
 pub(crate) struct LaneLines(Vec<LaneLine>);
 
 impl PlayedLanes for LaneLines {
-    fn values_at(&self, tick: Ticks) -> Vec<(&'static str, f32)> {
+    fn values_at(&self, tick: Ticks, values: &mut Vec<(&'static str, f32)>) {
         let lanes = self.0.iter();
-        let values = lanes.filter_map(|lane| Some((lane.field, lane.value_at(tick)?)));
-        values.collect()
+        values.extend(lanes.filter_map(|lane| Some((lane.field, lane.value_at(tick)?))));
     }
 }
 

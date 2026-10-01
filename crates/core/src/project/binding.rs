@@ -524,9 +524,11 @@ impl Bindings {
 
     /// The lanes that play into the numbers of `instance`, from its own behaviour or from the
     /// behaviour of its owner, see [`BehaviourContext::show_lanes`].
+    /// A view asks every frame while the project plays, so it allocates nothing.
     pub fn lanes(&self, instance: &InstanceId) -> Option<&dyn PlayedLanes> {
-        let mut owners = std::iter::once(instance.clone()).chain(instance.parent());
-        let lanes = owners.find_map(|owner| self.by_instance.get(&owner)?.lanes.get(instance));
+        let shown_by = |owner: &str| self.by_instance.get(owner)?.lanes.get(instance);
+        let owner = instance.as_str().rsplit_once('/').map(|(owner, _)| owner);
+        let lanes = shown_by(instance.as_str()).or_else(|| shown_by(owner?));
         lanes.map(|lanes| &**lanes)
     }
 

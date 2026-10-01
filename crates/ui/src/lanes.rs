@@ -9,7 +9,7 @@
 //!
 //! [`Project::lanes`]: sound_core::Project::lanes
 
-use gpui::{App, Context, Entity, prelude::*};
+use gpui::{Context, Entity, prelude::*};
 use sound_core::{InstanceId, Parameter};
 
 use crate::session::Session;
@@ -19,6 +19,8 @@ pub struct Lanes {
     instance: InstanceId,
     /// The value of each lane at the playhead, by the field of its number.
     values: Vec<(&'static str, f32)>,
+    /// Where the next look puts the values, so that it allocates nothing.
+    next: Vec<(&'static str, f32)>,
 }
 
 impl Lanes {
@@ -39,8 +41,9 @@ impl Lanes {
                 session: session.clone(),
                 instance: instance.clone(),
                 values: Vec::new(),
+                next: Vec::new(),
             };
-            lanes.values = lanes.played(cx);
+            lanes.refresh(cx);
             lanes
         });
         cx.observe(&lanes, |_, _, cx| cx.notify()).detach();
@@ -78,17 +81,15 @@ impl Lanes {
         }
     }
 
-    fn played(&self, cx: &App) -> Vec<(&'static str, f32)> {
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.next.clear();
         let session = self.session.read(cx);
         let tick = session.playhead().read(cx).tick;
-        let lanes = session.project().lanes(&self.instance);
-        lanes.map_or_else(Vec::new, |lanes| lanes.values_at(tick))
-    }
-
-    fn refresh(&mut self, cx: &mut Context<Self>) {
-        let values = self.played(cx);
-        if values != self.values {
-            self.values = values;
+        if let Some(lanes) = session.project().lanes(&self.instance) {
+            lanes.values_at(tick, &mut self.next);
+        }
+        if self.next != self.values {
+            std::mem::swap(&mut self.next, &mut self.values);
             cx.notify();
         }
     }

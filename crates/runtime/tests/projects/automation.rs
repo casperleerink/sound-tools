@@ -142,7 +142,11 @@ fn the_views_are_shown_the_value_each_lane_plays() {
     let values = |harness: &Harness, instance: &str, tick: u64| {
         let instance = InstanceId::new(instance).unwrap();
         let lanes = harness.project.lanes(&instance);
-        lanes.map(|lanes| lanes.values_at(Ticks(tick)))
+        lanes.map(|lanes| {
+            let mut values = Vec::new();
+            lanes.values_at(Ticks(tick), &mut values);
+            values
+        })
     };
     let middle = BAR_TICKS + BAR_TICKS / 2;
     let tone = values(&harness, "arrangement/piano/tone", middle).unwrap();

@@ -31,8 +31,9 @@ pub struct Automation {
 /// a value out here as its player does, so the knob and the sound agree.
 pub trait PlayedLanes: Send + Sync {
     /// The value of each lane at `tick`, with the field of its number as the device names it
-    /// in its [`AutomationInput`], in the units of the record.
-    fn values_at(&self, tick: Ticks) -> Vec<(&'static str, f32)>;
+    /// in its [`AutomationInput`], in the units of the record, after what `values` holds. A view
+    /// asks every frame while the project plays, so it gives the list to fill.
+    fn values_at(&self, tick: Ticks, values: &mut Vec<(&'static str, f32)>);
 }
 
 /// The most numbers one device takes automation for. A lane player sends one event per number
