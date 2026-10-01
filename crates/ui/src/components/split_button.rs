@@ -37,6 +37,8 @@ pub struct SplitButton {
     main_focus: FocusHandle,
     keyboard_focus: KeyboardFocus,
     menu: Entity<DropdownMenu>,
+    /// The height of a split button that is a row, see [`SplitButton::row`].
+    row: Option<f32>,
     /// What a test looks the main half up by. The chevron is `<name>-menu`.
     name: SharedString,
 }
@@ -69,6 +71,7 @@ impl SplitButton {
             main_focus: cx.focus_handle().tab_stop(true),
             keyboard_focus: KeyboardFocus::default(),
             menu,
+            row: None,
             name,
         }
     }
@@ -76,6 +79,15 @@ impl SplitButton {
     /// An icon before the words of the main half, such as `plus`.
     pub fn icon(mut self, name: impl Into<SharedString>) -> Self {
         self.icon = Some(name.into());
+        self
+    }
+
+    /// Makes it a row of a list: as wide as it is given and this tall, its main half taking
+    /// the room the chevron leaves, with its icon 16 pt in.
+    pub fn row(mut self, height: f32, cx: &mut Context<Self>) -> Self {
+        self.row = Some(height);
+        self.menu
+            .update(cx, |menu, cx| menu.set_trigger_height(height, cx));
         self
     }
 
@@ -110,8 +122,9 @@ impl Render for SplitButton {
             .flex()
             .items_center()
             .gap(px(8.))
-            .h(px(HEIGHT))
-            .pl(px(8.))
+            .h(px(self.row.unwrap_or(HEIGHT)))
+            .pl(px(if self.row.is_some() { 16. } else { 8. }))
+            .when(self.row.is_some(), |main| main.flex_1())
             .pr(px(10.))
             .rounded_l(px(6.))
             .border_1()
@@ -139,6 +152,7 @@ impl Render for SplitButton {
             .track_focus(&self.focus_handle)
             .flex()
             .flex_none()
+            .when(self.row.is_some(), |button| button.w_full())
             .items_center()
             .child(main)
             .child(div().w(px(1.)).h(px(12.)).bg(line))

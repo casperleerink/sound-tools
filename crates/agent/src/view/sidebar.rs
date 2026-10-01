@@ -1302,7 +1302,7 @@ impl Focusable for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (background, border, text) = (theme.gray_50, theme.alpha_at(0.10), theme.gray_950);
+        let (border, text) = (theme.alpha_at(0.10), theme.gray_950);
         let body = match &self.setup {
             setup @ (Setup::Checking
             | Setup::NotInstalled
@@ -1342,7 +1342,7 @@ impl Render for Sidebar {
             .size_full()
             .flex()
             .flex_col()
-            .bg(background)
+            // On the background of the window, so it meets the title row with no edge.
             .border_r_1()
             .border_color(border)
             .text_color(text)

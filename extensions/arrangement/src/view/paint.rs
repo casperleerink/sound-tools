@@ -11,7 +11,7 @@ use gpui::{
 };
 use sound_ui::{ActiveTheme, Playhead, Theme, typography};
 
-use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, RulerBar, Viewport};
+use super::layout::{DOT_LEFT, HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rect, RulerBar, Viewport};
 use crate::Colour;
 
 /// Track colours are design tokens. The match is exhaustive, so a new colour cannot be
@@ -155,7 +155,7 @@ pub(super) fn paint_track_label(
         accent.opacity(opacity),
     );
     let dot = Bounds::new(
-        top + point(px(24.), px(row_height / 2. - 4.)),
+        top + point(px(DOT_LEFT), px(row_height / 2. - 4.)),
         size(px(8.), px(8.)),
     );
     window.paint_quad(quad(
@@ -166,7 +166,7 @@ pub(super) fn paint_track_label(
         accent,
         BorderStyle::Solid,
     ));
-    let origin = top + point(px(44.), px(row_height / 2. - 10.));
+    let origin = top + point(px(NAME_LEFT), px(row_height / 2. - 10.));
     let fit = Fit::Truncate(name_width);
     let weight = FontWeight::MEDIUM;
     paint_text(name, origin, 14., weight, text, fit, window, cx);

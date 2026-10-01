@@ -25,7 +25,7 @@ use sound_ui::{
     ActiveTheme, ControlEdit, Metering, Session, every_poll, weak_action, weak_callback,
 };
 
-use super::layout::HEADER_WIDTH;
+use super::layout::{DOT_LEFT, HEADER_WIDTH, NAME_LEFT};
 use super::track_panel::{RACK_LEFT, RACK_TOP, ROW_TOP, TITLE_MIDDLE, VOLUME_LEFT};
 use crate::{ArrangementState, LimiterState, MasterState};
 
@@ -330,7 +330,7 @@ impl Render for MasterPanel {
             .child(
                 div()
                     .absolute()
-                    .left(px(24.))
+                    .left(px(DOT_LEFT))
                     .top(px(TITLE_MIDDLE - 4.))
                     .size(px(8.))
                     .rounded_full()
@@ -340,7 +340,7 @@ impl Render for MasterPanel {
             .child(
                 div()
                     .absolute()
-                    .left(px(44.))
+                    .left(px(NAME_LEFT))
                     .top(px(TITLE_MIDDLE - 10.))
                     .line_height(px(20.))
                     .font_weight(FontWeight::MEDIUM)
