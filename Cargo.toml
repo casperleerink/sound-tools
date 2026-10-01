@@ -52,6 +52,8 @@ hound = "3.5"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # Snapshots of what the agent driver makes of recorded runs.
 insta = "1.48"
+# Ends the agent's process group, so its own children stop with it.
+libc = "0.2"
 # MIDI devices and messages. wmidi parses without allocating, so it is safe next to the engine.
 midir = "0.11"
 no_denormals = "0.3"

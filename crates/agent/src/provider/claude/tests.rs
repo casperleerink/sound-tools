@@ -51,7 +51,10 @@ fn replay(name: &str) -> Vec<AgentEvent> {
         let new = match entry {
             Entry::Sent(message) => mapper.sent(&serde_json::from_value(message).unwrap()),
             Entry::Received(message) => mapper.received(message),
-            Entry::Exited { code, stderr } => mapper.exited(code, &stderr),
+            Entry::Exited { code, stderr } => {
+                let said = stderr.lines().map(str::trim).find(|line| !line.is_empty());
+                mapper.exited(code, said)
+            }
         };
         for mut event in new {
             if let AgentEvent::Started { models, .. } = &mut event {
@@ -94,9 +97,21 @@ fn interrupt() {
     insta::assert_debug_snapshot!(replay("interrupt"));
 }
 
+/// The question is void once the turn ends.
+#[test]
+fn interrupt_while_asking() {
+    insta::assert_debug_snapshot!(replay("interrupt_approval"));
+}
+
 #[test]
 fn permission_mode_change() {
     insta::assert_debug_snapshot!(replay("permission_mode"));
+}
+
+/// To "never ask" on a running process: the command runs with no question.
+#[test]
+fn permission_mode_to_never_ask() {
+    insta::assert_debug_snapshot!(replay("permission_bypass"));
 }
 
 #[test]
@@ -114,13 +129,15 @@ fn process_killed() {
     insta::assert_debug_snapshot!(replay("crash"));
 }
 
-const FIXTURES: [&str; 9] = [
+const FIXTURES: [&str; 11] = [
     "plain",
     "edit",
     "approval_allowed",
     "approval_denied",
     "interrupt",
+    "interrupt_approval",
     "permission_mode",
+    "permission_bypass",
     "stale_resume",
     "error_turn",
     "crash",

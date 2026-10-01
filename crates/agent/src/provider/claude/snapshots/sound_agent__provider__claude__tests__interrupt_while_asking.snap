@@ -1,0 +1,51 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"interrupt_approval\")"
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_01TNwoh9etvJXQBWHNeN88VC",
+        ),
+        title: "Ran git init",
+    },
+    ApprovalRequested {
+        id: ApprovalId(
+            "907aed0c-ae5e-4f3d-90a5-0f8cd94ca6a9",
+        ),
+        title: "Run `git init`",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_01TNwoh9etvJXQBWHNeN88VC",
+        ),
+        outcome: Failed,
+    },
+    TurnEnded {
+        outcome: Interrupted,
+    },
+    Exited {
+        reason: Failed {
+            message: "Claude Code stopped with exit code 1.",
+        },
+    },
+]

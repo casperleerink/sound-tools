@@ -50,7 +50,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
 
     smol::block_on(async {
-        let environment = login_shell_environment().await;
+        let environment = login_shell_environment().await.unwrap_or_else(|error| {
+            eprintln!("[{error}; using this terminal's environment]");
+            std::env::vars_os().collect()
+        });
         let program = program_on_path("claude", &environment).ok_or("claude is not on PATH")?;
         let (thread, mut events) = Thread::start(ThreadOptions {
             provider: Provider::Claude,

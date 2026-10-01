@@ -15,7 +15,7 @@ use sound_agent::{
 };
 
 fn start(folder: &Path, session: Session) -> (Thread, Events) {
-    let environment = smol::block_on(login_shell_environment());
+    let environment = smol::block_on(login_shell_environment()).unwrap();
     let program = program_on_path("claude", &environment).expect("claude is not on PATH");
     Thread::start(ThreadOptions {
         provider: Provider::Claude,

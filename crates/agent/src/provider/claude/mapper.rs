@@ -68,7 +68,8 @@ impl Mapper {
     /// A line we wrote.
     pub fn sent(&mut self, message: &Outgoing) -> Vec<AgentEvent> {
         match message {
-            // The CLI announces no turn of its own. A message sent while one runs joins it.
+            // The CLI announces no turn of its own. It queues a message sent while a turn runs
+            // as a turn of its own, which this does not follow: send only between turns.
             Outgoing::User { .. } if self.turn_open => Vec::new(),
             Outgoing::User { .. } => {
                 self.turn_open = true;
@@ -161,9 +162,8 @@ impl Mapper {
     }
 
     /// The process ended: it closed its output and exited with `code`, or `None` when a
-    /// signal stopped it.
-    pub fn exited(&mut self, code: Option<i32>, stderr: &str) -> Vec<AgentEvent> {
-        let said = stderr.lines().map(str::trim).find(|line| !line.is_empty());
+    /// signal stopped it. `said` is the first line it wrote on stderr.
+    pub fn exited(&mut self, code: Option<i32>, said: Option<&str>) -> Vec<AgentEvent> {
         let mut events = self.close_blocks();
         if self.turn_open {
             self.turn_open = false;
@@ -187,6 +187,25 @@ impl Mapper {
             ExitReason::Failed { message }
         };
         events.push(AgentEvent::Exited { reason });
+        events
+    }
+
+    /// A line the types cannot read. `ends_turn` when it is a `result`: the turn will get no
+    /// other end.
+    pub fn unreadable(&mut self, ends_turn: bool, error: &str) -> Vec<AgentEvent> {
+        let mut events = vec![AgentEvent::Error {
+            message: format!("Claude Code sent a message this app cannot read: {error}"),
+        }];
+        if ends_turn && self.turn_open {
+            self.turn_open = false;
+            events.extend(self.close_blocks());
+            events.push(AgentEvent::TurnEnded {
+                outcome: TurnOutcome::Failed {
+                    message: "Claude Code ended the turn with a message this app cannot read."
+                        .to_string(),
+                },
+            });
+        }
         events
     }
 

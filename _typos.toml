@@ -1,6 +1,7 @@
 [files]
-# The agent fixtures are recorded output of the `claude` CLI, with ids and signatures.
-extend-exclude = ["experiments/*/results", "*.svg", "Cargo.lock", "crates/agent/tests/fixtures/claude/*.jsonl"]
+# The agent fixtures are recorded output of the `claude` CLI, with ids and signatures, and
+# their snapshots hold the ids.
+extend-exclude = ["experiments/*/results", "*.svg", "Cargo.lock", "crates/agent/tests/fixtures/claude/*.jsonl", "crates/agent/src/provider/claude/snapshots/*.snap"]
 
 [default.extend-identifiers]
 PNGs = "PNGs"

@@ -7,22 +7,28 @@
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
+use std::io;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::Duration;
+
+use smol::future;
 
 /// Separates what the shell's rc files print from the environment.
 const MARKER: &str = "__SOUND_TOOLS_ENVIRONMENT__";
 
+/// How long the shell may take. An rc file can start an agent such as `ssh-agent` that keeps
+/// the output open, and then the shell never seems to end.
+const TIMEOUT: Duration = Duration::from_secs(10);
+
 /// The environment of `$SHELL -ilc`, over this process's own. Takes a moment, so run it once,
 /// in the background, and keep the result.
 ///
-/// Falls back to this process's environment when the shell fails or gives no `PATH`: a broken
-/// shell config must not stop the agent. Dropping the future kills the shell, so a caller can
-/// race it with a timer against an rc file that waits forever.
-pub async fn login_shell_environment() -> HashMap<OsString, OsString> {
-    let mut environment: HashMap<OsString, OsString> = env::vars_os().collect();
+/// When the shell fails, takes over 10 s or gives no `PATH`, use this process's environment
+/// (`std::env::vars_os()`) and show the error: a broken shell config must not stop the agent.
+pub async fn login_shell_environment() -> io::Result<HashMap<OsString, OsString>> {
     let shell = env::var_os("SHELL").unwrap_or_else(|| "/bin/zsh".into());
     let output = smol::process::Command::new(shell)
         // -i and -l: both the profile and the rc files run.
@@ -32,20 +38,32 @@ pub async fn login_shell_environment() -> HashMap<OsString, OsString> {
         .arg(format!("command printf '\\0{MARKER}\\0'; command env -0"))
         .stdin(Stdio::null())
         .stderr(Stdio::null())
+        // Dropped when the time is up, which ends the shell.
         .kill_on_drop(true)
-        .output()
-        .await;
-    match output {
-        Ok(output) if output.status.success() => {
-            let captured = parse(&output.stdout);
-            if captured.contains_key(&OsString::from("PATH")) {
-                environment.extend(captured);
-            }
-        }
-        Ok(output) => eprintln!("agent: the login shell failed ({})", output.status),
-        Err(error) => eprintln!("agent: the login shell did not run: {error}"),
+        .output();
+    // Runs once at start, never in a gpui test, where this timer would not be deterministic.
+    #[allow(clippy::disallowed_methods)]
+    let timeout = async {
+        smol::Timer::after(TIMEOUT).await;
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "the login shell took over 10 s",
+        ))
+    };
+    let output = future::or(output, timeout).await?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "the login shell failed ({})",
+            output.status
+        )));
     }
-    environment
+    let captured = parse(&output.stdout);
+    if !captured.contains_key(&OsString::from("PATH")) {
+        return Err(io::Error::other("the login shell has no PATH"));
+    }
+    let mut environment: HashMap<OsString, OsString> = env::vars_os().collect();
+    environment.extend(captured);
+    Ok(environment)
 }
 
 /// Where `name` is on the `PATH` of `environment`, as a shell would find it.

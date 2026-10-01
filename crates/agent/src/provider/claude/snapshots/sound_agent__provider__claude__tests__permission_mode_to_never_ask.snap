@@ -1,0 +1,49 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"permission_bypass\")"
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_014L5ZSFW49aTPb5tcKEpvHx",
+        ),
+        title: "Ran git init",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_014L5ZSFW49aTPb5tcKEpvHx",
+        ),
+        outcome: Done,
+    },
+    TextDelta {
+        text: "done.",
+    },
+    TextDone {
+        text: "done.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

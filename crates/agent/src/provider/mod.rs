@@ -213,7 +213,9 @@ impl Thread {
         Ok((Thread { commands: sender }, Events { driver }))
     }
 
-    /// Sends a message of the composer. A turn starts.
+    /// Sends a message of the composer. A turn starts. Send only between turns: a message
+    /// sent while a turn runs becomes a turn of its own, queued, which the events do not
+    /// show apart.
     pub fn send(&self, text: impl Into<String>) -> Result<(), ThreadClosed> {
         self.command(Command::Send(text.into()))
     }
@@ -239,7 +241,8 @@ impl Thread {
 }
 
 /// What the agent of one thread does. Poll [`Events::next`] for as long as the thread is open:
-/// it also writes what the [`Thread`] sends. Dropping it kills the process.
+/// it also writes what the [`Thread`] sends. Dropping it kills the process and everything
+/// the agent started.
 #[derive(Debug)]
 pub struct Events {
     driver: Driver,
@@ -252,6 +255,9 @@ enum Driver {
 
 impl Events {
     /// The next event, or `None` after [`AgentEvent::Exited`].
+    ///
+    /// Cancel-safe: dropping the future before it is ready loses nothing, so it can race a
+    /// timer, as a view that takes the events once per frame does.
     pub async fn next(&mut self) -> Option<AgentEvent> {
         match &mut self.driver {
             Driver::Claude(events) => events.next().await,
