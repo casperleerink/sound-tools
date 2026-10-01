@@ -1616,6 +1616,12 @@ impl Timeline {
         }
     }
 
+    /// Whether the drag of clips going on takes automation along: when its hint shows, with
+    /// the ghosts of the lines, or the mark on a clip whose lanes are folded away.
+    pub fn automation_moves(&self) -> bool {
+        !self.lane_ghosts().is_empty()
+    }
+
     /// The tracks as they were when a drag of clips opened its gesture, while it goes on.
     fn tracks_before_drag(&self) -> Option<&BTreeMap<InstanceId, TrackState>> {
         match self.drag.as_ref().map(|drag| &drag.kind) {
