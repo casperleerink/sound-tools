@@ -67,11 +67,10 @@ impl<S, const N: usize> AutomationInput<S, N> {
     }
 }
 
-/// What a device aims at, and how many frames each number takes to get there. A ramp of 0
-/// takes the value at once: [`Smoothed::set_target`](crate::Smoothed::set_target) does that.
+/// How many frames each number takes to get to its new target, which the [`Automated`] of the
+/// device holds. A ramp of 0 takes the value at once:
+/// [`Smoothed::set_target`](crate::Smoothed::set_target) does that.
 pub struct Targets<S: 'static, const N: usize> {
-    /// The record, with the value of each lane over it.
-    pub state: S,
     parameters: [&'static Parameter<S>; N],
     ramps: [f32; N],
     edit: f32,
@@ -103,7 +102,9 @@ impl<S, const N: usize> Targets<S, N> {
 }
 
 /// What a device plays while lanes move some of its numbers: its record, with the value of
-/// each lane over the record's.
+/// each lane over the record's. It reads as that record, and changes it in place: so a record
+/// that is not `Copy`, such as one that names a file, is never copied or dropped on the audio
+/// thread.
 ///
 /// - A lane moves its number over one block, so the value is on time and a sweep has no steps.
 /// - A lane that takes a number over or lets it go glides as an edit does, because the two
@@ -116,7 +117,10 @@ impl<S, const N: usize> Targets<S, N> {
 /// down. Realtime safe.
 pub struct Automated<S: 'static, const N: usize> {
     input: AutomationInput<S, N>,
-    record: S,
+    /// The record, with the value of each lane over it.
+    state: S,
+    /// The value of each number in the record, which it goes back to when its lane lets go.
+    record: [f32; N],
     /// The value of each number that a lane holds.
     lanes: [Option<f32>; N],
     /// The frames left of the edit glide of each number.
@@ -125,12 +129,22 @@ pub struct Automated<S: 'static, const N: usize> {
     followed: bool,
 }
 
-impl<S: Copy, const N: usize> Automated<S, N> {
+impl<S, const N: usize> std::ops::Deref for Automated<S, N> {
+    type Target = S;
+
+    /// The record, with the value of each lane over it: what the device plays.
+    fn deref(&self) -> &S {
+        &self.state
+    }
+}
+
+impl<S, const N: usize> Automated<S, N> {
     /// No number automated yet.
-    pub const fn new(input: AutomationInput<S, N>, record: S) -> Self {
+    pub fn new(input: AutomationInput<S, N>, record: S) -> Self {
         Self {
             input,
-            record,
+            record: input.parameters.map(|parameter| (parameter.get)(&record)),
+            state: record,
             lanes: [None; N],
             gliding: [0.0; N],
             followed: false,
@@ -142,10 +156,18 @@ impl<S: Copy, const N: usize> Automated<S, N> {
         self.targets_with([ramp; N], ramp, false)
     }
 
-    /// A new record from an update, and what to aim at: the numbers that a lane holds keep
-    /// the lane's value, and the rest glide in `edit` frames.
-    pub fn set_record(&mut self, record: S, edit: f32) -> Targets<S, N> {
-        self.record = record;
+    /// Takes a new record from an update, and gives what to aim at: the numbers that a lane
+    /// holds keep the lane's value, and the rest glide in `edit` frames. The record it replaces
+    /// rides back in `record`, so nothing is dropped here.
+    pub fn set_record(&mut self, record: &mut S, edit: f32) -> Targets<S, N> {
+        std::mem::swap(&mut self.state, record);
+        let numbers = self.input.parameters.iter().zip(&mut self.record);
+        for ((parameter, value), lane) in numbers.zip(self.lanes) {
+            *value = (parameter.get)(&self.state);
+            if let Some(lane) = lane {
+                (parameter.set)(&mut self.state, lane);
+            }
+        }
         self.targets(edit)
     }
 
@@ -180,8 +202,11 @@ impl<S: Copy, const N: usize> Automated<S, N> {
         // A number that does not move keeps its target, and so its glide.
         let mut ramps = [edit; N];
         let mut changed = false;
-        let numbers = self.lanes.iter_mut().zip(&mut self.gliding).zip(&mut ramps);
-        for (((lane, gliding), ramp), heard) in numbers.zip(heard) {
+        let numbers = self.input.parameters.iter().zip(self.record);
+        let numbers = numbers.zip(self.lanes.iter_mut().zip(&mut self.gliding));
+        for (((parameter, record), (lane, gliding)), (ramp, heard)) in
+            numbers.zip(ramps.iter_mut().zip(heard))
+        {
             let moved = match (*lane, heard) {
                 (None, None) => None,
                 (Some(before), Some(now)) if before == now => None,
@@ -200,6 +225,7 @@ impl<S: Copy, const N: usize> Automated<S, N> {
             if let Some(moved) = moved {
                 changed = true;
                 *ramp = moved;
+                (parameter.set)(&mut self.state, heard.unwrap_or(record));
             }
             *gliding = (*gliding - block).max(0.0);
             *lane = heard;
@@ -208,14 +234,7 @@ impl<S: Copy, const N: usize> Automated<S, N> {
     }
 
     fn targets_with(&self, ramps: [f32; N], edit: f32, snaps: bool) -> Targets<S, N> {
-        let mut state = self.record;
-        for (parameter, lane) in self.input.parameters.iter().zip(self.lanes) {
-            if let Some(value) = lane {
-                (parameter.set)(&mut state, value);
-            }
-        }
         Targets {
-            state,
             parameters: self.input.parameters,
             ramps,
             edit,
@@ -286,7 +305,7 @@ mod tests {
         let mut automated = Automated::new(INPUT, RECORD);
         let targets = take(&mut automated, &[(0, 500.)]).unwrap();
         assert!(targets.snaps());
-        assert_eq!(targets.state.cutoff, 500.);
+        assert_eq!(automated.cutoff, 500.);
         assert_eq!(ramps(&targets), (0., EDIT));
         // The same value again moves nothing, and a move takes one block.
         assert!(take(&mut automated, &[(0, 500.)]).is_none());
@@ -322,7 +341,7 @@ mod tests {
         // And a lane that lets go glides back alone.
         let targets = take(&mut automated, &[(0, 700.)]).unwrap();
         assert_eq!(ramps(&targets), (BLOCK, EDIT));
-        assert_eq!(targets.state.mix, RECORD.mix);
+        assert_eq!(automated.mix, RECORD.mix);
     }
 
     #[test]
@@ -343,14 +362,21 @@ mod tests {
             cutoff: 2_000.,
             mix: 0.5,
         };
-        let targets = automated.set_record(edited, EDIT);
+        let mut update = edited;
+        automated.set_record(&mut update, EDIT);
         let expected = State {
             cutoff: 600.,
             mix: 0.5,
         };
-        assert_eq!(targets.state, expected);
+        assert_eq!(*automated, expected);
+        // What it played before rides back in the update.
+        let before = State {
+            cutoff: 600.,
+            mix: 1.,
+        };
+        assert_eq!(update, before);
         let targets = take(&mut automated, &[]).unwrap();
-        assert_eq!(targets.state, edited);
+        assert_eq!(*automated, edited);
         assert_eq!(targets.ramp(&CUTOFF), EDIT);
     }
 
@@ -362,6 +388,7 @@ mod tests {
             cutoff: 20_000.,
             mix: 0.,
         };
-        assert_eq!(targets.state, expected);
+        assert!(targets.snaps());
+        assert_eq!(*automated, expected);
     }
 }

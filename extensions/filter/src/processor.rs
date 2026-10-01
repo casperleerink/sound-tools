@@ -122,7 +122,7 @@ impl Filter {
 
     /// Sets every target from the record and its lanes, each reached in its own ramp.
     fn aim(&mut self, targets: &FilterTargets) {
-        let (state, edit) = (&targets.state, targets.edit());
+        let (state, edit) = (*self.state, targets.edit());
         self.octaves
             .set_target(state.cutoff_hz.log2(), targets.ramp(&CUTOFF));
         self.resonance
@@ -216,7 +216,7 @@ impl Processor for Filter {
     }
 
     fn update(&mut self, update: &mut FilterState) {
-        let targets = self.state.set_record(*update, self.ramp_frames);
+        let targets = self.state.set_record(update, self.ramp_frames);
         self.aim(&targets);
     }
 

@@ -116,7 +116,7 @@ impl Mixer {
 
     /// Aims at the volume and the pan of the record and its lanes, each in its own ramp.
     fn aim(&mut self, targets: &Targets<Mix, 2>) {
-        let mix = targets.state;
+        let mix = *self.mix;
         self.level.set_target(mix.level(), targets.ramp(&GAIN));
         self.pan.set_target(mix.pan, targets.ramp(&PAN));
         // Taken at once, so the block starts there too.
@@ -141,7 +141,7 @@ impl Processor for Mixer {
     }
 
     fn update(&mut self, update: &mut Mix) {
-        let targets = self.mix.set_record(*update, self.ramp_frames);
+        let targets = self.mix.set_record(update, self.ramp_frames);
         self.aim(&targets);
     }
 
