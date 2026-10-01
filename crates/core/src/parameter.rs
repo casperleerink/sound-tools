@@ -29,7 +29,7 @@ impl<S> Parameter<S> {
             },
             value,
         ) = (self, (self.get)(state));
-        if self.info().contains(value) {
+        if ValueRange::of(self).contains(value) {
             return Ok(());
         }
         Err(format!("{field} must be from {min} to {max}, not {value}"))
@@ -40,41 +40,83 @@ impl<S> Parameter<S> {
     pub const fn info(&self) -> ParameterInfo {
         ParameterInfo {
             field: self.field,
-            min: self.min,
-            max: self.max,
-            scale: self.scale,
+            range: ValueRange::of(self),
         }
     }
 }
 
-/// A [`Parameter`] without its state type: its field, its range and its scale.
+/// A [`Parameter`] without its state type: its field and its range.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ParameterInfo {
     pub field: &'static str,
+    pub range: ValueRange,
+}
+
+/// The values of a number and how they spread over the travel of its knob, from 0 to 1. A knob
+/// of a [`Parameter`] and an automation lane of it both take it with [`ValueRange::of`], so
+/// they agree. Other controls, such as the axes of a display, make their own.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ValueRange {
     pub min: f32,
     pub max: f32,
     pub scale: Scale,
 }
 
-impl ParameterInfo {
+impl ValueRange {
+    pub const fn linear(min: f32, max: f32) -> Self {
+        let scale = Scale::Linear;
+        Self { min, max, scale }
+    }
+
+    pub const fn logarithmic(min: f32, max: f32) -> Self {
+        let scale = Scale::Logarithmic;
+        Self { min, max, scale }
+    }
+
+    /// The range and the scale of a parameter.
+    pub const fn of<S>(parameter: &Parameter<S>) -> Self {
+        let Parameter {
+            min, max, scale, ..
+        } = *parameter;
+        Self { min, max, scale }
+    }
+
     /// Whether `value` is in the range. Not a number is not.
     pub fn contains(&self, value: f32) -> bool {
         (self.min..=self.max).contains(&value)
     }
 
-    /// Where `value` is on the travel, from 0 to 1. See [`Scale::position`].
+    /// Where a value is on the travel, from 0 to 1. A value outside the range is at an end.
     pub fn position(&self, value: f32) -> f32 {
         self.scale.position(self.min, self.max, value)
     }
 
-    /// The value at a place on the travel. See [`Scale::value`].
+    /// The value at a place on the travel, with three significant digits, as a knob gives it:
+    /// so a readout and a saved file stay short. The ends are exact.
     pub fn value(&self, position: f32) -> f32 {
+        three_digits(self.exact(position)).clamp(self.min, self.max)
+    }
+
+    /// The value at a place on the travel, not rounded: what an automation lane plays.
+    pub fn exact(&self, position: f32) -> f32 {
         self.scale.value(self.min, self.max, position)
     }
 }
 
+fn three_digits(value: f32) -> f32 {
+    if value == 0. || !value.is_finite() {
+        return value;
+    }
+    // In f64, so that the result is the f32 nearest to the short decimal number.
+    let value = f64::from(value);
+    let unit = 10_f64.powf(2. - value.abs().log10().floor());
+    ((value * unit).round() / unit) as f32
+}
+
 /// Where 0 dB sits on the travel of [`Scale::Fader`].
 pub const FADER_UNITY: f32 = 0.8;
+/// The top of [`Scale::Fader`], in decibels.
+pub const FADER_TOP_DB: f32 = 6.;
 /// Decibels of one tenfold step of the place on the travel of [`Scale::Fader`], so that +6 dB
 /// is at the top.
 const FADER_DECADE: f32 = 61.94;
@@ -91,6 +133,8 @@ pub enum Scale {
     /// Decibels on the volume of a track: `-inf` at the bottom, 0 dB at 80 % of the travel and
     /// +6 dB at the top. A power law on the amplitude, which gives the lower decibels room and
     /// reaches the bottom at `-inf`. The meters draw on the same scale.
+    ///
+    /// The scale is always `-inf` to +6 dB: it does not read the min and the max it is given.
     Fader,
 }
 
@@ -105,7 +149,7 @@ impl Scale {
             Self::Logarithmic => (held / min).ln() / (max / min).ln(),
             Self::Fader if value.is_nan() => 0.,
             // The decade is rounded, so the top would be a hair under the end.
-            Self::Fader if value >= max => 1.,
+            Self::Fader if value >= FADER_TOP_DB => 1.,
             Self::Fader => FADER_UNITY * 10_f32.powf(value / FADER_DECADE),
         };
         position.clamp(0., 1.)
@@ -122,7 +166,7 @@ impl Scale {
             Self::Linear => min + (max - min) * position,
             Self::Logarithmic => min * (max / min).powf(position),
             Self::Fader if position <= 0. => f32::NEG_INFINITY,
-            Self::Fader => (FADER_DECADE * (position / FADER_UNITY).log10()).min(max),
+            Self::Fader => (FADER_DECADE * (position / FADER_UNITY).log10()).min(FADER_TOP_DB),
         }
     }
 }
@@ -166,6 +210,15 @@ mod tests {
             assert_eq!(scale.position(min, max, f32::NAN), 0., "{scale:?}");
             assert_eq!(scale.value(min, max, f32::NAN), min, "{scale:?}");
         }
+    }
+
+    #[test]
+    fn values_have_three_significant_digits() {
+        assert_eq!(super::three_digits(2143.55), 2140.);
+        assert_eq!(super::three_digits(0.0123456), 0.0123);
+        assert_eq!(super::three_digits(0.15549), 0.155);
+        assert_eq!(super::three_digits(-12.34), -12.3);
+        assert_eq!(super::three_digits(0.), 0.);
     }
 
     #[test]

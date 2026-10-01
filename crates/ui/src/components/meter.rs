@@ -20,7 +20,7 @@ use sound_core::Scale;
 use crate::theme::ActiveTheme;
 
 /// The top of the scale.
-pub const MAX_DB: f32 = 6.;
+pub const MAX_DB: f32 = sound_core::FADER_TOP_DB;
 /// Where 0 dB sits on the scale.
 pub const UNITY: f32 = sound_core::FADER_UNITY;
 /// Where green ends and yellow begins.

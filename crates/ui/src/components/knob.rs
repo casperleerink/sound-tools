@@ -21,8 +21,6 @@ use gpui::{
     StyleRefinement, Window, canvas, div, prelude::*, px,
 };
 
-use sound_core::{Parameter, Scale};
-
 use crate::components::cell::{self, CONTROL_HEIGHT};
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::paint;
@@ -42,45 +40,10 @@ const FACE: f32 = 21.;
 const POINTER_WIDTH: f32 = 2.;
 const RING_WIDTH: f32 = 2.;
 
-/// The values of a knob and how they spread over its travel. A knob of a [`Parameter`] takes
-/// both from it, with [`KnobRange::of`], so the knob and an automation lane agree.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct KnobRange {
-    pub min: f32,
-    pub max: f32,
-    pub scale: Scale,
-}
-
-impl KnobRange {
-    pub const fn linear(min: f32, max: f32) -> Self {
-        let scale = Scale::Linear;
-        Self { min, max, scale }
-    }
-
-    pub const fn logarithmic(min: f32, max: f32) -> Self {
-        let scale = Scale::Logarithmic;
-        Self { min, max, scale }
-    }
-
-    /// The range and the scale of a parameter.
-    pub const fn of<S>(parameter: &Parameter<S>) -> Self {
-        let Parameter {
-            min, max, scale, ..
-        } = *parameter;
-        Self { min, max, scale }
-    }
-
-    /// Where a value is on the travel, from 0 to 1. A value outside the range is at an end.
-    pub fn position(&self, value: f32) -> f32 {
-        self.scale.position(self.min, self.max, value)
-    }
-
-    /// The value at a place on the travel, with three significant digits. The ends are exact.
-    pub fn value(&self, position: f32) -> f32 {
-        let value = self.scale.value(self.min, self.max, position);
-        three_digits(value).clamp(self.min, self.max)
-    }
-}
+/// The values of a knob and how they spread over its travel: the range of the core, which a
+/// [`Parameter`](sound_core::Parameter) gives with [`KnobRange::of`], so the knob and an
+/// automation lane agree. Its values have three significant digits.
+pub type KnobRange = sound_core::ValueRange;
 
 /// A pan as a knob shows it, from -1 (left) to 1 (right): `C`, `25L`, `100R`.
 pub fn pan_readout(pan: f32) -> String {
@@ -107,16 +70,6 @@ pub fn short(value: f32) -> String {
         true => text.trim_end_matches('0').trim_end_matches('.').into(),
         false => text,
     }
-}
-
-fn three_digits(value: f32) -> f32 {
-    if value == 0. || !value.is_finite() {
-        return value;
-    }
-    // In f64, so that the result is the f32 nearest to the short decimal number.
-    let value = f64::from(value);
-    let unit = 10_f64.powf(2. - value.abs().log10().floor());
-    ((value * unit).round() / unit) as f32
 }
 
 #[derive(IntoElement)]
@@ -497,15 +450,6 @@ mod tests {
             travel.position(-311., true).map(|p| range.value(p)),
             Some(1150.)
         );
-    }
-
-    #[test]
-    fn values_have_three_significant_digits() {
-        assert_eq!(three_digits(2143.55), 2140.);
-        assert_eq!(three_digits(0.0123456), 0.0123);
-        assert_eq!(three_digits(0.15549), 0.155);
-        assert_eq!(three_digits(-12.34), -12.3);
-        assert_eq!(three_digits(0.), 0.);
     }
 
     #[test]
