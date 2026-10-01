@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 
 use gpui::{AppContext as _, Context, EventEmitter, Task};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
+use crate::store::write_whole;
 use crate::{ApprovalMode, Model};
 
 /// The settings of the app, read once and shared by every sidebar. A sidebar observes it to
@@ -180,11 +180,8 @@ impl Settings {
         let folder = file
             .parent()
             .ok_or_else(|| failed("it has no folder".to_string()))?;
-        // Through a file of its own and a rename, so a crash never leaves half a file.
-        let temporary = folder.join(format!("settings.{}.tmp", Uuid::new_v4()));
         fs::create_dir_all(folder)
-            .and_then(|()| fs::write(&temporary, text))
-            .and_then(|()| fs::rename(&temporary, file))
+            .and_then(|()| write_whole(file, &text))
             .map_err(|error| failed(error.to_string()))
     }
 }
