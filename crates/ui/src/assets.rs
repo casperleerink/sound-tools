@@ -86,6 +86,8 @@ icons!(
 pub const FONT_REGULAR: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Regular.ttf");
 pub const FONT_MEDIUM: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Medium.ttf");
 pub const FONT_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/InterDisplay-SemiBold.ttf");
+/// For emphasis in the agent's answers. Bold italic shows as bold.
+pub const FONT_ITALIC: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Italic.ttf");
 
 pub struct Assets;
 
@@ -118,6 +120,7 @@ pub fn load_fonts(cx: &mut App) {
             Cow::Borrowed(FONT_REGULAR),
             Cow::Borrowed(FONT_MEDIUM),
             Cow::Borrowed(FONT_SEMIBOLD),
+            Cow::Borrowed(FONT_ITALIC),
         ])
         .expect("load InterDisplay");
 }

@@ -61,6 +61,8 @@ no_denormals = "0.3"
 # Raw events. The project groups them itself, see ARCHITECTURE.md "Project storage".
 notify = "8.2"
 proptest = "1"
+# The agent's answers are markdown. Only the parser: no HTML output, no command line. MIT.
+pulldown-cmark = { version = "0.13.4", default-features = false }
 # The spectra of the Wavetable synth's tables, worked out on the control side. MIT.
 realfft = "3.5"
 # The `NSView` of a GPUI window, which a plugin embeds its own view in. Same version as gpui.
