@@ -83,7 +83,7 @@ tempfile = "3"
 thiserror = "2"
 triple_buffer = "9"
 # Claude session ids, which the app picks.
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v5"] }
 # VST 3 hosting: raw COM bindings generated from the SDK headers. We write the safe layer.
 # The bindings ship with the crate, so no copy of the SDK is needed to build.
 vst3 = "0.3"

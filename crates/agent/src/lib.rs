@@ -4,7 +4,8 @@
 //!   sends to it, and the [`Events`] it answers with: text, steps, approvals and the end of
 //!   each turn, the same [`AgentEvent`]s whichever [`Provider`] runs.
 //! - [`Conversation`] is what the sidebar shows of a thread, built from those events with no
-//!   process, and [`Sidebar`] is the view the window shows in its left panel.
+//!   process, and [`Sidebar`] is the view the window shows in its left panel. The sidebar
+//!   saves each thread in the machine's support folder and shows it again (`store`).
 //! - [`login_shell_environment`] is the environment to run it in. An app opened from the
 //!   Finder has a bare `PATH`, and the agent needs `cargo` and `git`.
 //! - [`install`] downloads the provider's pinned program, which the sidebar runs, and
@@ -21,6 +22,7 @@ mod conversation;
 mod environment;
 mod install;
 mod provider;
+mod store;
 mod view;
 
 pub use conversation::{Approval, Conversation, Entry, Step, Turn, TurnEnd};

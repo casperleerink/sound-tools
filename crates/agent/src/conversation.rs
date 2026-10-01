@@ -2,8 +2,11 @@
 //!
 //! Plain state with no process and no gpui, so a test feeds it events by hand or from a
 //! recording. The view renders it, and the driver only produces the events.
+//!
+//! Times are the wall clock, not `Instant`: a saved thread replays its events with the times
+//! they came at, and gets the same conversation back, "Worked for" included.
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use crate::{AgentEvent, ApprovalId, ExitReason, StepId, StepOutcome, TurnOutcome};
 
@@ -12,15 +15,17 @@ use crate::{AgentEvent, ApprovalId, ExitReason, StepId, StepOutcome, TurnOutcome
 const LABEL_LENGTH: usize = 40;
 
 /// The entries of one thread, oldest first.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Conversation {
     entries: Vec<Entry>,
     /// The last event ended a turn as failed. The process usually exits right after with the
     /// same message, which the turn already shows.
     turn_just_failed: bool,
+    /// The agent no longer has the session of this thread, so no message can follow.
+    session_lost: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Entry {
     /// What the composer sent.
     Message(String),
@@ -30,7 +35,7 @@ pub enum Entry {
     Notice(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Turn {
     /// The finished blocks of the answer.
     pub blocks: Vec<String>,
@@ -39,12 +44,12 @@ pub struct Turn {
     pub steps: Vec<Step>,
     /// The question the agent waits on. It is void when the turn ends.
     pub approval: Option<Approval>,
-    started: Instant,
+    started: SystemTime,
     /// `None` while the agent works.
     pub end: Option<TurnEnd>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Step {
     pub id: StepId,
     /// In the past tense, for the steps of a finished turn.
@@ -55,20 +60,20 @@ pub struct Step {
     pub outcome: Option<StepOutcome>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Approval {
     pub id: ApprovalId,
     pub title: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct TurnEnd {
     pub outcome: TurnOutcome,
     pub worked: Duration,
 }
 
 impl Turn {
-    fn new(started: Instant) -> Self {
+    fn new(started: SystemTime) -> Self {
         Self {
             blocks: Vec::new(),
             streaming: String::new(),
@@ -84,7 +89,7 @@ impl Turn {
         self.steps.last()
     }
 
-    fn finish(&mut self, outcome: TurnOutcome, now: Instant) {
+    fn finish(&mut self, outcome: TurnOutcome, now: SystemTime) {
         // An interrupted answer never gets its whole text, so what streamed is what it said.
         if !self.streaming.is_empty() {
             self.blocks.push(std::mem::take(&mut self.streaming));
@@ -92,7 +97,8 @@ impl Turn {
         self.approval = None;
         self.end = Some(TurnEnd {
             outcome,
-            worked: now.saturating_duration_since(self.started),
+            // A clock set back during the turn gives nothing rather than nonsense.
+            worked: now.duration_since(self.started).unwrap_or_default(),
         });
     }
 }
@@ -100,6 +106,12 @@ impl Turn {
 impl Conversation {
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    /// Whether a message can follow. Not once the agent lost the session of the thread: only a
+    /// new thread can go on.
+    pub fn can_continue(&self) -> bool {
+        !self.session_lost
     }
 
     /// Whether a turn runs, which includes one that waits on an approval.
@@ -116,7 +128,7 @@ impl Conversation {
     }
 
     /// The composer's message, and the turn that answers it, working from now.
-    pub fn send(&mut self, message: &str, now: Instant) {
+    pub fn send(&mut self, message: &str, now: SystemTime) {
         self.entries.push(Entry::Message(message.to_string()));
         self.entries.push(Entry::Turn(Turn::new(now)));
     }
@@ -134,9 +146,14 @@ impl Conversation {
         self.entries.push(Entry::Notice(message.into()));
     }
 
+    /// The entries of `later` after these, for what came while a saved thread was read.
+    pub fn append(&mut self, later: Conversation) {
+        self.entries.extend(later.entries);
+    }
+
     /// Applies one event. Gives the index of the entry it changed or added, if any, so a view
     /// measures only that one again.
-    pub fn apply(&mut self, event: AgentEvent, now: Instant) -> Option<usize> {
+    pub fn apply(&mut self, event: AgentEvent, now: SystemTime) -> Option<usize> {
         let turn_just_failed = std::mem::replace(
             &mut self.turn_just_failed,
             matches!(
@@ -147,7 +164,7 @@ impl Conversation {
             ),
         );
         match event {
-            // Nothing to show yet. The thread is not saved before milestone 7.
+            // Nothing to show: the sidebar saves the session id with the thread.
             AgentEvent::Started { .. } => None,
             AgentEvent::TurnStarted => match self.open_turn_index() {
                 Some(index) => Some(index),
@@ -195,8 +212,10 @@ impl Conversation {
             AgentEvent::Exited { reason } => {
                 let message = match reason {
                     ExitReason::Finished => return None,
+                    // The composer's place says so, see [`Self::can_continue`].
                     ExitReason::SessionNotFound => {
-                        "This thread can't continue. Start a new one with +.".to_string()
+                        self.session_lost = true;
+                        "This thread can't continue.".to_string()
                     }
                     ExitReason::Failed { message } if message.is_empty() => {
                         "Claude Code stopped.".to_string()
@@ -211,7 +230,7 @@ impl Conversation {
                 if let Some(index) = self.update_open_turn(|turn| turn.finish(failed, now)) {
                     return Some(index);
                 }
-                if turn_just_failed {
+                if turn_just_failed || self.session_lost {
                     return None;
                 }
                 self.notice(message);
@@ -278,7 +297,7 @@ mod tests {
 
     #[test]
     fn a_turn_streams_its_text_and_ends_with_how_long_it_worked() {
-        let start = Instant::now();
+        let start = SystemTime::now();
         let mut conversation = Conversation::default();
         conversation.send("Add a clip", start);
         assert!(conversation.is_working());
@@ -328,7 +347,7 @@ mod tests {
 
     #[test]
     fn an_approval_waits_until_answered_and_is_void_when_the_turn_ends() {
-        let now = Instant::now();
+        let now = SystemTime::now();
         let mut conversation = Conversation::default();
         conversation.send("Build it", now);
         let asked = AgentEvent::ApprovalRequested {
@@ -384,7 +403,7 @@ mod tests {
     /// An exit that finds a turn still open ends it with the reason, on the turn itself.
     #[test]
     fn an_error_is_a_quiet_line_and_an_exit_ends_an_open_turn() {
-        let now = Instant::now();
+        let now = SystemTime::now();
         let mut conversation = Conversation::default();
         conversation.send("Hello", now);
         let error = AgentEvent::Error {
@@ -419,7 +438,7 @@ mod tests {
     /// A crash ends the turn as failed and then exits with the same message: it shows once.
     #[test]
     fn a_crash_mid_turn_says_so_once() {
-        let now = Instant::now();
+        let now = SystemTime::now();
         let mut conversation = Conversation::default();
         conversation.send("Hello", now);
         let failed = AgentEvent::TurnEnded {
@@ -429,6 +448,28 @@ mod tests {
         };
         assert_eq!(conversation.apply(failed, now), Some(1));
         assert_eq!(conversation.apply(exited_with("Killed"), now), None);
+        assert_eq!(notices(&conversation), Vec::<&str>::new());
+    }
+
+    /// A resume of a session the agent no longer has: the turn says what the CLI said, and
+    /// the thread takes no more messages. The sidebar says so in place of the composer.
+    #[test]
+    fn a_lost_session_ends_the_thread() {
+        let now = SystemTime::now();
+        let mut conversation = Conversation::default();
+        conversation.send("Hello", now);
+        assert!(conversation.can_continue());
+        let failed = AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Failed {
+                message: "No conversation found".to_string(),
+            },
+        };
+        conversation.apply(failed, now);
+        let lost = AgentEvent::Exited {
+            reason: ExitReason::SessionNotFound,
+        };
+        assert_eq!(conversation.apply(lost, now), None);
+        assert!(!conversation.can_continue());
         assert_eq!(notices(&conversation), Vec::<&str>::new());
     }
 

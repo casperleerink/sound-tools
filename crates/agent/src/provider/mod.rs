@@ -13,6 +13,7 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use smol::channel::{self, Receiver, Sender};
 
 use crate::install::Download;
@@ -161,20 +162,27 @@ pub struct ThreadOptions {
 
 /// One step of a turn, such as an edit or a command. The id is the provider's; a test that
 /// feeds events with no process makes its own.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StepId(pub String);
 
 /// One question of the agent, answered with [`Thread::answer`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ApprovalId(pub String);
 
 /// What the agent did, in order. A turn runs from [`AgentEvent::TurnStarted`] to
 /// [`AgentEvent::TurnEnded`], and every turn that starts ends, also when the process dies.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Serde gives the lines of a thread's saved log, see `crate::store`, so the names of these
+/// variants and of their fields, and of the types in them, are a file format: renaming one
+/// breaks the threads saved before. A new field gets `#[serde(default)]`, so older lines
+/// still read. `store/tests.rs` pins one line of each.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentEvent {
-    /// The agent is ready. It comes once, before the first turn ends.
+    /// The agent is ready. It comes once, before the first turn ends. Never saved: the
+    /// session id is known from [`Thread::session_id`] before.
+    #[serde(skip)]
     Started {
-        /// Saved with the thread, to resume it with [`Session::Resume`].
         session_id: String,
         account: Account,
         models: Vec<Model>,
@@ -222,7 +230,8 @@ pub enum AgentEvent {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StepOutcome {
     Done,
     Failed,
@@ -230,7 +239,8 @@ pub enum StepOutcome {
     Denied,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnOutcome {
     Completed,
     /// Stopped with [`Thread::interrupt`].
@@ -240,7 +250,8 @@ pub enum TurnOutcome {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ExitReason {
     /// Every [`Thread`] handle was dropped, so the agent ended.
     Finished,
@@ -268,6 +279,15 @@ pub struct Model {
     pub description: String,
 }
 
+/// The id of `session`. A new one is ours to pick, so it is known before the agent says
+/// anything, and a thread quit before then can still be resumed.
+fn session_id(session: &Session) -> String {
+    match session {
+        Session::New => uuid::Uuid::new_v4().to_string(),
+        Session::Resume(session_id) => session_id.clone(),
+    }
+}
+
 /// What a [`Thread`] asks its driver to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -282,6 +302,7 @@ pub enum Command {
 #[derive(Clone, Debug)]
 pub struct Thread {
     commands: Sender<Command>,
+    session_id: String,
 }
 
 /// The [`Events`] of the thread were dropped, which stops the agent.
@@ -301,17 +322,36 @@ impl Thread {
     /// that comes as [`Events`].
     pub fn start(options: ThreadOptions) -> io::Result<(Thread, Events)> {
         let (sender, receiver) = channel::unbounded();
+        let session_id = session_id(&options.session);
         let driver = match options.provider {
-            Provider::Claude => Driver::Claude(claude::Events::start(options, receiver)?),
+            Provider::Claude => Driver::Claude(claude::Events::start(
+                options,
+                session_id.clone(),
+                receiver,
+            )?),
         };
-        Ok((Thread { commands: sender }, Events { driver }))
+        let thread = Thread {
+            commands: sender,
+            session_id,
+        };
+        Ok((thread, Events { driver }))
     }
 
-    /// A thread with no agent behind it: what it is asked to do comes out of the receiver.
-    /// For a test of a view, which cannot run a process.
-    pub fn without_agent() -> (Thread, Receiver<Command>) {
+    /// A thread with no agent behind it, in `session`: what it is asked to do comes out of
+    /// the receiver. For a test of a view, which cannot run a process.
+    pub fn without_agent(session: &Session) -> (Thread, Receiver<Command>) {
         let (sender, receiver) = channel::unbounded();
-        (Thread { commands: sender }, receiver)
+        let thread = Thread {
+            commands: sender,
+            session_id: session_id(session),
+        };
+        (thread, receiver)
+    }
+
+    /// The session the agent works in: the one [`Session::Resume`] named, or the new one.
+    /// Saved with the thread from its first message, to resume it later.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
     }
 
     /// Sends a message of the composer. A turn starts. Send only between turns: a message

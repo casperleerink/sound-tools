@@ -5,14 +5,18 @@
 //! - `agent-approval.png`: the same turn waiting on an approval.
 //! - `agent-closed-working.png`: the same with the sidebar closed, and the lavender indicator on
 //!   its icon in the title row.
+//! - `agent-cannot-continue.png`: open again, the turn stopped, and a message the agent no
+//!   longer has the session for: the composer gives way to the line with **+**.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
 use gpui::{AppContext, HeadlessAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
-use sound_agent::{AgentEvent, ApprovalId, Installed, Sidebar, StepId, StepOutcome, TurnOutcome};
+use sound_agent::{
+    AgentEvent, ApprovalId, ExitReason, Installed, Sidebar, StepId, StepOutcome, TurnOutcome,
+};
 
 use super::{Opened, piece};
 
@@ -28,7 +32,7 @@ pub fn snapshots(
                 program: "/nonexistent/claude".into(),
                 environment: HashMap::new(),
             };
-            let sidebar = cx.new(|cx| Sidebar::with_program(session, Some(installed), cx));
+            let sidebar = cx.new(|cx| Sidebar::with_program(session, Some(installed), None, cx));
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
         .install(cx)
@@ -45,7 +49,7 @@ pub fn snapshots(
     })?;
     let step = |id: &str| StepId(id.to_string());
     // The first turn ends now, so it worked for 12 s.
-    let started = Instant::now()
+    let started = SystemTime::now()
         .checked_sub(Duration::from_secs(12))
         .context("a clock this early")?;
 
@@ -114,5 +118,35 @@ pub fn snapshots(
     let open = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.left_panel_open()))?;
     anyhow::ensure!(!open, "the sidebar did not close");
     save(cx, &opened, "agent-closed-working")?;
+
+    // Opened again, stopped, and a message the agent no longer has the session for.
+    opened.key("cmd-l", cx)?;
+    cx.update(|cx| {
+        sidebar.update(cx, |sidebar, cx| {
+            let stopped = AgentEvent::TurnEnded {
+                outcome: TurnOutcome::Interrupted,
+            };
+            sidebar.receive([stopped], cx);
+            sidebar.begin("Which clips did you add?", cx);
+            let lost =
+                "No conversation found with session ID: 0b6c2a4e-6f0f-4c43-9d43-6f5ad1c5a0e2";
+            sidebar.receive(
+                [
+                    AgentEvent::TurnStarted,
+                    AgentEvent::TurnEnded {
+                        outcome: TurnOutcome::Failed {
+                            message: lost.to_string(),
+                        },
+                    },
+                    AgentEvent::Exited {
+                        reason: ExitReason::SessionNotFound,
+                    },
+                ],
+                cx,
+            );
+        })
+    });
+    cx.run_until_parked();
+    save(cx, &opened, "agent-cannot-continue")?;
     Ok(())
 }

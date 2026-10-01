@@ -170,13 +170,13 @@ Rejected:
 
 **Recommendation: Claude Code keeps the conversation. The app keeps a small display log per thread in the machine's support folder.**
 
-- The store is `support_folder()/agent/threads/<project key>/`. The project key is the canonical project path, the same key the plugin window positions use.
-  - `index.json` lists each thread: its id, provider, provider session id, title and when it was last updated.
-  - Each thread has one `<thread id>.jsonl`. Every line is one of our own typed entries: user message, agent text, step, approval and its answer, turn outcome.
-- A thread is resumed with the saved provider session id. For Claude, the app picks `--session-id <uuid>` at the start and passes `--resume <uuid>` later.
+- The store is `support_folder()/agent/threads/<project key>/`. The project key is a UUID v5 of the canonical project path, so a symlink finds the same threads and any path gives a short folder name.
+  - `index.json` lists each thread (its id and provider session id) and names the current one. **+** sets no current thread, so a reopen before the next message shows an empty thread.
+  - Each thread has one `<thread id>.jsonl`. Every line is the composer's message or an `AgentEvent`, with the time it came. Text deltas and the start are left out: `TextDone` has the whole text, and the start shows nothing. A write ends a line a crash cut off before it appends, so only the cut line is lost. Opening replays the lines through `Conversation::apply`, which gives the same conversation, "Worked for" included. A turn still open at the end is one the app quit during, and shows as stopped.
+- A thread is resumed with the saved provider session id. The app picks the id itself (`--session-id <uuid>` for Claude) and saves it with the first message, before the agent answers, then passes `--resume <uuid>` later.
 - The display comes from our log, so reopening needs no provider API and works the same for any provider.
 - If a resume fails (the CLI says "no conversation found"), the old log stays visible, read-only, with "This thread can't continue. Start a new one."
-- A project can have many threads. In v1 the sidebar shows the last thread, and **+** starts a new one. Older threads stay in the index for a thread list later.
+- A project can have many threads. In v1 the sidebar shows the current thread, and **+** starts a new one. Older threads stay in the index for a thread list later.
 - The model is chosen per thread, from the `models` of `initialize`.
 - One turn runs at a time per project, because every turn writes the same folder and makes one undo step.
 - While a turn runs, the send button becomes stop, and cmd-period stops too. Both send the `interrupt` control request.
@@ -327,6 +327,8 @@ Each milestone ends green on the README checks, with the docs updated in the sam
 7. **Threads saved and resumed.** The store, resume, **+** and the stale-resume message. Verify:
    - Store tests: a round trip; a damaged line is skipped with a notice; two projects never share a thread.
    - A manual run: quit mid-thread, reopen, and ask "what did we just change?"
+
+   Status: done. Store tests in `crates/agent/src/store/tests.rs`; window tests close and reopen a project with the same support folder (`a_thread_opens_again_as_it_was_and_resumes_its_session`, `a_lost_session_ends_the_thread_until_plus`); snapshot `agent-cannot-continue.png`. In place of the manual run, an ignored window test with the real `claude` (`the_real_agent_resumes_a_thread_after_the_window_closed`) says "remember the word lantern", closes the window, opens the project again and gets "lantern" back. An `index.json` that does not read is kept as `index.json.bad` with a notice, never written over.
 8. **Docs and release check.** ARCHITECTURE.md gets a section on the agent sidebar, and its "Agent context" section changes. DESIGN.md gets the new keys and the changed rule on saved interface state. CONCEPT.md "Where it stands" changes. Verify:
    - The Linux CI job builds and passes the tests. The sidebar compiles there, and the pinned download covers Linux.
    - A manual run of the `.app` on a second Mac.

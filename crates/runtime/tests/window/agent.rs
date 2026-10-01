@@ -1,5 +1,6 @@
 //! The agent sidebar in the left panel: a turn fed as events with no process, the request it
-//! makes one undo step, the approval row, cmd-L and escape, and the panel remembered closed.
+//! makes one undo step, the approval row, cmd-L and escape, the panel remembered closed, and
+//! the thread saved and opened again.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -7,10 +8,13 @@ use std::time::Duration;
 
 use gpui::{AppContext, Entity, Focusable, TestAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
+use runtime::{OFFLINE, open_or_create};
 use sound_agent::{
-    AgentEvent, ApprovalId, Command, Entry, ExitReason, Installed, Sidebar, StepId, StepOutcome,
-    Thread, TurnOutcome,
+    AgentEvent, ApprovalId, Command, Entry, ExitReason, Installed, Session, Sidebar, StepId,
+    StepOutcome, Thread, TurnOutcome,
 };
+use sound_core::Engine;
+use tempfile::TempDir;
 
 use crate::support::{self, Opened, mark, one_undo_step, write_outside};
 
@@ -24,17 +28,29 @@ fn install_sidebar(cx: &mut TestAppContext, support: &Path) {
     install_sidebar_with(cx, support, Some(installed));
 }
 
-/// The same with `installed` as the program, or not installed.
+/// The same with `installed` as the program, or not installed. The threads are kept in
+/// `support`.
 fn install_sidebar_with(cx: &mut TestAppContext, support: &Path, installed: Option<Installed>) {
     let remembered = runtime::app::left_panel_file(support);
+    let threads = runtime::app::threads_folder(support);
     cx.update(|cx| {
         LeftPanelSlot::new(Some(remembered), move |session, _, cx| {
-            let installed = installed.clone();
-            let sidebar = cx.new(|cx| Sidebar::with_program(session, installed, cx));
+            let (installed, threads) = (installed.clone(), Some(threads.clone()));
+            let sidebar = cx.new(|cx| Sidebar::with_program(session, installed, threads, cx));
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
         .install(cx)
     });
+}
+
+/// The same project folder in a new window, as quitting and starting the app gives.
+fn open_again(cx: &mut TestAppContext, folder: TempDir) -> Opened<'_> {
+    let (control, engine) = Engine::new(OFFLINE);
+    let (project, plugins) = open_or_create(folder.path(), control).unwrap();
+    let opened = support::open_project(cx, folder, project, engine, plugins.downgrade());
+    // The sidebar reads the saved thread in the background.
+    opened.cx.run_until_parked();
+    opened
 }
 
 impl Opened<'_> {
@@ -430,7 +446,7 @@ fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
     let mut opened = support::open_with(cx, |_| {});
-    let (thread, commands) = Thread::without_agent();
+    let (thread, commands) = Thread::without_agent(&Session::New);
     let sidebar = opened.sidebar();
     opened
         .cx
@@ -453,4 +469,195 @@ fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
             Command::Interrupt
         ]
     );
+}
+
+fn entries(opened: &mut Opened<'_>) -> String {
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .read(|cx| format!("{:?}", sidebar.read(cx).conversation().entries()))
+}
+
+fn next_session(opened: &mut Opened<'_>) -> Session {
+    let sidebar = opened.sidebar();
+    opened.cx.read(|cx| sidebar.read(cx).next_session())
+}
+
+/// The window closes and the project opens again on the same machine: the sidebar shows the
+/// thread as it was, and the next message resumes the agent's session.
+#[gpui::test]
+fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    assert_eq!(next_session(&mut opened), Session::New);
+    // The agent's session is known as it starts, before it says anything.
+    let (thread, _commands) = Thread::without_agent(&Session::New);
+    let session = Session::Resume(thread.session_id().to_string());
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    opened.begin(MESSAGE);
+    opened.receive([
+        AgentEvent::TurnStarted,
+        AgentEvent::StepStarted {
+            id: step("write"),
+            title: "Wrote state/arrangement/track-1/bass.json".to_string(),
+            running_title: "Writing state/arrangement/track-1/bass.json".to_string(),
+        },
+    ]);
+    opened.receive([
+        AgentEvent::StepDone {
+            id: step("write"),
+            outcome: StepOutcome::Done,
+        },
+        AgentEvent::TextDelta {
+            text: "Added".to_string(),
+        },
+        AgentEvent::TextDone {
+            text: "Added a bass line.".to_string(),
+        },
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        },
+    ]);
+    let shown = entries(&mut opened);
+    assert_eq!(next_session(&mut opened), session);
+    drop(sidebar);
+    let folder = opened.close();
+
+    let mut opened = open_again(cx, folder);
+    assert_eq!(entries(&mut opened), shown);
+    assert_eq!(next_session(&mut opened), session);
+
+    // The next message goes on in the same thread, with an agent in the same session.
+    let (thread, commands) = Thread::without_agent(&next_session(&mut opened));
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    opened.keys("cmd-l");
+    opened.cx.simulate_input("Which file was it?");
+    opened.keys("enter");
+    assert_eq!(
+        commands.try_recv().ok(),
+        Some(Command::Send("Which file was it?".to_string()))
+    );
+    opened.cx.read(|cx| {
+        let entries = sidebar.read(cx).conversation().entries();
+        let [
+            Entry::Message(_),
+            Entry::Turn(_),
+            Entry::Message(next),
+            Entry::Turn(_),
+        ] = entries
+        else {
+            panic!("{entries:?}");
+        };
+        assert_eq!(next, "Which file was it?");
+    });
+}
+
+/// The agent no longer has the session: the thread stays to read, also when the project opens
+/// again, and only **+** goes on.
+#[gpui::test]
+fn a_lost_session_ends_the_thread_until_plus(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    opened.begin("Hello");
+    opened.receive([
+        AgentEvent::TurnStarted,
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Failed {
+                message: "No conversation found with session ID: gone".to_string(),
+            },
+        },
+        AgentEvent::Exited {
+            reason: ExitReason::SessionNotFound,
+        },
+    ]);
+    assert!(opened.find("agent-cannot-continue").is_some());
+    assert!(opened.find("agent-stop").is_none());
+    let folder = opened.close();
+
+    let mut opened = open_again(cx, folder);
+    assert!(opened.find("agent-cannot-continue").is_some());
+    // With no composer, cmd-L focuses the sidebar itself.
+    opened.keys("cmd-l");
+    assert!(opened.composer_focused());
+    let plus = opened.control("agent-cannot-continue");
+    opened.click(plus);
+    assert!(opened.find("agent-cannot-continue").is_none());
+    assert_eq!(entries(&mut opened), "[]");
+    assert_eq!(next_session(&mut opened), Session::New);
+
+    // Opened again before a message: the new, empty thread, not the old one.
+    let folder = opened.close();
+    let mut opened = open_again(cx, folder);
+    assert!(opened.find("agent-cannot-continue").is_none());
+    assert_eq!(entries(&mut opened), "[]");
+}
+
+/// The real `claude` remembers across a closed window. Ignored: it needs a signed-in `claude`
+/// on the login shell's `PATH`, and runs two real turns.
+///
+/// ```sh
+/// cargo test -p runtime --test window -- --ignored the_real_agent
+/// ```
+#[gpui::test]
+#[ignore]
+fn the_real_agent_resumes_a_thread_after_the_window_closed(cx: &mut TestAppContext) {
+    // The process wakes the sidebar's tasks from smol's own thread.
+    cx.executor().allow_parking();
+    let environment = smol::block_on(sound_agent::login_shell_environment()).unwrap();
+    let program = sound_agent::program_on_path("claude", &environment).expect("no claude");
+    let machine = tempfile::tempdir().unwrap();
+    let installed = Installed {
+        program,
+        environment,
+    };
+    install_sidebar_with(cx, machine.path(), Some(installed));
+
+    let mut opened = support::open_with(cx, |_| {});
+    ask(&mut opened, "Remember the word lantern. Reply only: ok.");
+    let folder = opened.close();
+
+    let mut opened = open_again(cx, folder);
+    assert!(matches!(next_session(&mut opened), Session::Resume(_)));
+    let answer = ask(
+        &mut opened,
+        "Which word did I ask you to remember? Answer with the word only. Use no tools.",
+    );
+    assert!(answer.to_lowercase().contains("lantern"), "{answer}");
+}
+
+/// Sends `message` from the composer and gives the text of the answer once the turn ends.
+fn ask(opened: &mut Opened<'_>, message: &str) -> String {
+    opened.keys("cmd-l");
+    opened.cx.simulate_input(message);
+    opened.keys("enter");
+    let sidebar = opened.sidebar();
+    let started = std::time::Instant::now();
+    while opened.cx.read(|cx| sidebar.read(cx).is_busy(cx)) {
+        assert!(started.elapsed() < Duration::from_secs(180), "no answer");
+        // The process is real: give it time, and the sidebar its frame.
+        std::thread::sleep(Duration::from_millis(50));
+        opened
+            .cx
+            .executor()
+            .advance_clock(Duration::from_millis(16));
+        opened.cx.run_until_parked();
+    }
+    opened.cx.read(
+        |cx| match sidebar.read(cx).conversation().entries().last() {
+            Some(Entry::Turn(turn)) => {
+                let outcome = turn.end.as_ref().map(|end| &end.outcome);
+                assert_eq!(outcome, Some(&TurnOutcome::Completed));
+                turn.blocks.join("\n")
+            }
+            other => panic!("{other:?}"),
+        },
+    )
 }

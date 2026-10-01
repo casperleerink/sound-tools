@@ -24,6 +24,10 @@ const LEFT_PANEL_FILE: &str = "left-panel";
 /// The agent programs the sidebar downloads, such as `claude/2.1.286/claude`.
 const AGENTS_FOLDER: &str = "agents";
 
+/// The threads of the agent sidebar, out of every project: the agent reads and writes the
+/// project folder, and must not read its own chat there.
+const THREADS_FOLDER: &str = "agent/threads";
+
 fn home() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -100,6 +104,11 @@ pub fn remember_left_panel(file: &Path, open: bool) -> Result<()> {
     }
     let word = if open { "open\n" } else { "closed\n" };
     std::fs::write(file, word).with_context(|| format!("could not write {}", file.display()))
+}
+
+/// Where the agent sidebar keeps the threads of every project, one folder per project.
+pub fn threads_folder(support: &Path) -> PathBuf {
+    support.join(THREADS_FOLDER)
 }
 
 /// Refuses a folder that holds files but no project: opening it would put a new project's
