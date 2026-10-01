@@ -36,6 +36,21 @@ pub struct AutomationInput<S: 'static, const N: usize> {
     parameters: [&'static Parameter<S>; N],
 }
 
+/// Whether two names are the same, in a constant.
+const fn same(one: &[u8], two: &[u8]) -> bool {
+    if one.len() != two.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < one.len() {
+        if one[index] != two[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
 impl<S, const N: usize> Clone for AutomationInput<S, N> {
     fn clone(&self) -> Self {
         *self
@@ -51,6 +66,20 @@ impl<S, const N: usize> AutomationInput<S, N> {
             N <= MAX_AUTOMATED,
             "a device takes at most 64 automated numbers"
         );
+        // A lane finds its number by the name, so two numbers of one name would hide one.
+        let mut first = 0;
+        while first < N {
+            let mut second = first + 1;
+            while second < N {
+                let (one, two) = (parameters[first].field, parameters[second].field);
+                assert!(
+                    !same(one.as_bytes(), two.as_bytes()),
+                    "each automated number of a device has a name of its own"
+                );
+                second += 1;
+            }
+            first += 1;
+        }
         Self {
             port: EventInput::new(index),
             parameters,
@@ -399,6 +428,12 @@ mod tests {
         assert_eq!(targets.ramp(&MIX), EDIT);
         let targets = take(&mut automated, &[(1, 0.8)]).unwrap();
         assert_eq!(targets.ramp(&MIX), EDIT - BLOCK);
+    }
+
+    #[test]
+    #[should_panic(expected = "a name of its own")]
+    fn two_numbers_of_one_name_are_refused() {
+        AutomationInput::new(0, [&CUTOFF, &MIX, &CUTOFF]);
     }
 
     #[test]
