@@ -27,6 +27,7 @@ expression: "replay(\"permission_bypass\")"
             "toolu_014L5ZSFW49aTPb5tcKEpvHx",
         ),
         title: "Ran git init",
+        running_title: "Running git init",
     },
     StepDone {
         id: StepId(

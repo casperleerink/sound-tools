@@ -242,11 +242,12 @@ impl Mapper {
                 (!text.is_empty()).then_some(AgentEvent::TextDone { text })
             }
             Block::ToolUse { id, name, input } => {
-                let title = Action::of(&name, &input, &self.folder).done_title();
+                let action = Action::of(&name, &input, &self.folder);
                 self.open_steps.push(id.clone());
                 Some(AgentEvent::StepStarted {
                     id: StepId(id),
-                    title,
+                    title: action.done_title(),
+                    running_title: action.running_title(),
                 })
             }
             Block::ToolResult { .. } | Block::Other => None,
@@ -476,6 +477,17 @@ impl Action {
             Action::Write(path) => format!("Wrote {path}"),
             Action::Search(pattern) => format!("Searched for {pattern}"),
             Action::Use(tool) => format!("Used {tool}"),
+        }
+    }
+
+    fn running_title(&self) -> String {
+        match self {
+            Action::Run(command) => format!("Running {command}"),
+            Action::Read(path) => format!("Reading {path}"),
+            Action::Edit(path) => format!("Editing {path}"),
+            Action::Write(path) => format!("Writing {path}"),
+            Action::Search(pattern) => format!("Searching for {pattern}"),
+            Action::Use(tool) => format!("Using {tool}"),
         }
     }
 

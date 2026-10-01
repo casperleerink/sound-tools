@@ -27,6 +27,7 @@ expression: "replay(\"permission_mode\")"
             "toolu_01FHfJdYY7hxGL5WpQphtcSr",
         ),
         title: "Wrote a.txt",
+        running_title: "Writing a.txt",
     },
     ApprovalRequested {
         id: ApprovalId(
@@ -55,6 +56,7 @@ expression: "replay(\"permission_mode\")"
             "toolu_01YXqcXcH5Qpp9qYKkUu4k54",
         ),
         title: "Wrote b.txt",
+        running_title: "Writing b.txt",
     },
     StepDone {
         id: StepId(
