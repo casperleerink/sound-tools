@@ -20,7 +20,7 @@ malformed)
     echo '{"type": "control_request", "request_id": "broken", "request": 5}'
     read -r answer
     echo "$answer" >"$FAKE_OUTPUT"
-    echo '{"type": "result", "subtype": 5}'
+    echo '{"type": "result", "subtype": 5, "request_id": 7}'
     cat >/dev/null
     ;;
 children)
@@ -30,8 +30,9 @@ children)
     wait
     ;;
 slow_reader)
-    # Reads nothing for a second, then answers with the length of the message line.
-    sleep 1
+    # Reads nothing until FAKE_OUTPUT exists, then answers with the length of the message
+    # line.
+    while [ ! -e "$FAKE_OUTPUT" ]; do sleep 0.02; done
     read -r request
     read -r message
     printf '{"type": "assistant", "message": {"content": [{"type": "text", "text": "%s"}]}}\n' "${#message}"

@@ -8,7 +8,7 @@ use smol::future;
 
 use super::protocol::Outgoing;
 use crate::provider::{
-    AgentEvent, ApprovalMode, Events, ExitReason, Provider, Session, Thread, ThreadOptions,
+    AgentEvent, ApprovalMode, Driver, Events, ExitReason, Provider, Session, Thread, ThreadOptions,
     TurnOutcome,
 };
 
@@ -37,8 +37,23 @@ fn start(scenario: &str, output: &Path) -> (Thread, Events) {
     .unwrap()
 }
 
+/// How long any wait of these tests may take, so a hang fails fast and names what it waited
+/// for.
+const DEADLINE: Duration = Duration::from_secs(10);
+
+/// Runs `future` to the end, or fails the test after [`DEADLINE`].
+fn within<T>(what: &str, future: impl Future<Output = T>) -> T {
+    // Not a gpui test, and the timer only bounds a hang.
+    #[allow(clippy::disallowed_methods)]
+    let deadline = async {
+        smol::Timer::after(DEADLINE).await;
+        panic!("{what} took over {DEADLINE:?}");
+    };
+    smol::block_on(future::or(future, deadline))
+}
+
 fn rest(events: &mut Events) -> Vec<AgentEvent> {
-    smol::block_on(async {
+    within("the end of the events", async {
         let mut rest = Vec::new();
         while let Some(event) = events.next().await {
             rest.push(event);
@@ -50,7 +65,7 @@ fn rest(events: &mut Events) -> Vec<AgentEvent> {
 fn wait_for(what: &str, done: impl Fn() -> bool) {
     let start = Instant::now();
     while !done() {
-        assert!(start.elapsed() < Duration::from_secs(5), "{what}");
+        assert!(start.elapsed() < DEADLINE, "{what}");
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -60,7 +75,7 @@ fn dropping_the_thread_ends_the_agent() {
     let folder = tempfile::tempdir().unwrap();
     let (thread, mut events) = start("replay", &folder.path().join("output"));
     thread.send("Say hello.").unwrap();
-    let turn = smol::block_on(async {
+    let turn = within("the end of the turn", async {
         loop {
             if let Some(AgentEvent::TurnEnded { outcome }) = events.next().await {
                 return outcome;
@@ -106,7 +121,7 @@ fn a_line_it_cannot_read_ends_the_turn_and_answers_the_request() {
     let (thread, mut events) = start("malformed", &output);
     thread.send("Say hello.").unwrap();
     let mut seen = Vec::new();
-    smol::block_on(async {
+    within("the end of the turn", async {
         while let Some(event) = events.next().await {
             let ended = matches!(event, AgentEvent::TurnEnded { .. });
             seen.push(event);
@@ -135,23 +150,33 @@ fn a_line_it_cannot_read_ends_the_turn_and_answers_the_request() {
     assert_eq!(answer["response"]["request_id"], "broken");
 }
 
-/// The fake reads nothing for a second, so a long message fills the pipe and its write waits.
-/// `next` is dropped many times meanwhile, and the CLI still gets the whole line once.
+/// The fake reads nothing until the test lets it, so a long message fills the pipe and its
+/// write waits. `next` is dropped halfway through the write many times, and the CLI still
+/// gets the whole line once.
 #[test]
 fn cancelling_next_loses_nothing_of_a_message() {
     let folder = tempfile::tempdir().unwrap();
-    let (thread, mut events) = start("slow_reader", &folder.path().join("output"));
+    let go = folder.path().join("go");
+    let (thread, mut events) = start("slow_reader", &go);
     let text = "a".repeat(300_000);
     let line = serde_json::to_vec(&Outgoing::user(text.clone())).unwrap();
     thread.send(text).unwrap();
-    let mut seen = Vec::new();
-    for _ in 0..20 {
+    for _ in 0..10 {
         if let Some(Some(event)) = smol::block_on(future::poll_once(events.next())) {
-            seen.push(event);
+            panic!("an event before the fake read anything: {event:?}");
         }
-        std::thread::sleep(Duration::from_millis(20));
     }
-    let answer = smol::block_on(async {
+    let Driver::Claude(driver) = &events.driver;
+    let written = driver.writing.as_ref().map_or(0, |writing| writing.written);
+    assert!(
+        written > 0 && written < line.len(),
+        "not halfway through the message: {written} of {} bytes",
+        line.len()
+    );
+
+    fs::write(&go, "").unwrap();
+    let mut seen = Vec::new();
+    let answer = within("the answer to the long message", async {
         loop {
             match events.next().await {
                 Some(AgentEvent::TextDone { text }) => return text,
