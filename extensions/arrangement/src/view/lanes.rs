@@ -20,6 +20,9 @@ use super::snap::Grid;
 
 /// How far apart a drag draws points when it does not snap, in pixels.
 const DRAW_SPACING: f32 = 4.0;
+/// How far the pointer moves before a press in a lane draws or erases, in pixels. The
+/// automation lanes of the timeline wait as long.
+pub const DRAG_THRESHOLD: f32 = 3.0;
 
 /// What the lane under the pitch rows shows. Interface state: not saved, no undo step.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -193,13 +196,14 @@ pub fn value_at_y<V: ExpressionValue>(y: f32) -> V {
     V::nearest(i64::from(V::LOWEST) + (share * span).round() as i64)
 }
 
-/// What a drag draws between two places in the lane, `(x, y)` from the last move to this one:
-/// the ticks of the clip it passes, each with the height of the pointer there. On the grid
-/// lines when the grid snaps, the one nearest the pointer included, else every few pixels.
-/// Inside the clip only.
+/// What a drag draws between two places in a lane, `(x, y)` from the last move to this one:
+/// the ticks it passes, each with the height of the pointer there. On the grid lines when the
+/// grid snaps, the one nearest the pointer included, else every few pixels. Only ticks
+/// `inside`, such as those of a clip, and in project ticks. The automation lanes of the
+/// timeline draw the same way.
 pub fn drawn_between(
     viewport: &Viewport,
-    clip: &Clip,
+    inside: Range<Ticks>,
     grid: &Grid,
     from: (f32, f32),
     to: (f32, f32),
@@ -234,16 +238,10 @@ pub fn drawn_between(
             .map(|x| viewport.tick_at(x))
             .collect()
     };
-    let inside = clip.start..clip.end();
     ticks
         .into_iter()
         .filter(|tick| inside.contains(tick))
-        .map(|tick| {
-            (
-                tick.saturating_sub(clip.start),
-                height_at(viewport.x_of(tick)),
-            )
-        })
+        .map(|tick| (tick, height_at(viewport.x_of(tick))))
         .collect()
 }
 
@@ -257,6 +255,21 @@ mod tests {
 
     fn clip() -> Clip {
         Clip::new(Ticks(3840), Length::new(Ticks(3840)).unwrap(), Vec::new())
+    }
+
+    /// What a drag draws in the clip, in ticks of the clip.
+    fn drawn_in_clip(
+        viewport: &Viewport,
+        grid: &Grid,
+        from: (f32, f32),
+        to: (f32, f32),
+    ) -> Vec<(Ticks, f32)> {
+        let clip = clip();
+        let drawn = drawn_between(viewport, clip.start..clip.end(), grid, from, to);
+        let drawn = drawn.into_iter();
+        drawn
+            .map(|(tick, y)| (tick.saturating_sub(clip.start), y))
+            .collect()
     }
 
     /// A quarter is 96 pixels, and tick 3840 is at the left edge of the lane.
@@ -300,20 +313,19 @@ mod tests {
     fn a_snapped_drag_draws_on_the_grid_lines_it_passes() {
         let grid = Snap::Sixteenth.grid(&TimeSignatures::default());
         let viewport = viewport();
-        let clip = clip();
         let x = |tick: u64| viewport.x_of(Ticks(3840 + tick));
-        let drawn = drawn_between(&viewport, &clip, &grid, (x(0), 10.0), (x(700), 30.0));
+        let drawn = drawn_in_clip(&viewport, &grid, (x(0), 10.0), (x(700), 30.0));
         let ticks: Vec<u64> = drawn.iter().map(|(tick, _)| tick.0).collect();
         assert_eq!(ticks, [720, 0, 240, 480]);
         // A small move inside a cell draws only the line nearest the pointer, not the one it
         // did not cross.
-        let small = drawn_between(&viewport, &clip, &grid, (x(230), 10.0), (x(235), 10.0));
+        let small = drawn_in_clip(&viewport, &grid, (x(230), 10.0), (x(235), 10.0));
         let ticks: Vec<u64> = small.iter().map(|(tick, _)| tick.0).collect();
         assert_eq!(ticks, [240]);
         let (_, height) = drawn[2];
         assert!((height - (10.0 + 20.0 * 240.0 / 700.0)).abs() < 0.01);
         // Left of the clip draws nothing there.
-        let before = drawn_between(&viewport, &clip, &grid, (x(0) - 50.0, 10.0), (x(0), 10.0));
+        let before = drawn_in_clip(&viewport, &grid, (x(0) - 50.0, 10.0), (x(0), 10.0));
         let ticks: Vec<u64> = before.iter().map(|(tick, _)| tick.0).collect();
         assert_eq!(ticks, [0, 0]);
     }
@@ -324,7 +336,7 @@ mod tests {
         let grid = Snap::Sixteenth.grid(&TimeSignatures::default()).free();
         let viewport = viewport();
         let from = viewport.x_of(Ticks(3840 + 100));
-        let drawn = drawn_between(&viewport, &clip(), &grid, (from, 10.0), (from + 20.0, 10.0));
+        let drawn = drawn_in_clip(&viewport, &grid, (from, 10.0), (from + 20.0, 10.0));
         // 96 pixels a quarter is 10 ticks a pixel.
         let ticks: Vec<u64> = drawn.iter().map(|(tick, _)| tick.0).collect();
         assert_eq!(ticks, [100, 140, 180, 220, 260, 300, 300]);

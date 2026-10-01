@@ -30,7 +30,7 @@ use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 
 use super::clipboard::{Copied, CopiedNotes, SharedClipboard};
 use super::gesture::Zone;
-use super::lanes::{Lane, LaneEdit, Shown, drawn_between};
+use super::lanes::{DRAG_THRESHOLD, Lane, LaneEdit, Shown, drawn_between};
 use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, RulerBar, Viewport};
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
@@ -51,9 +51,6 @@ pub enum EditorEvent {
     /// Escape or the close control.
     Close,
 }
-
-/// How far the pointer moves before a press in an expression lane draws or erases, in pixels.
-const DRAG_THRESHOLD: f32 = 3.0;
 
 /// How far the alt arrows move the velocity of the selected notes.
 const VELOCITY_STEP: i64 = 10;
@@ -723,7 +720,10 @@ impl NoteEditor {
                 if drawn.is_empty() && still {
                     return;
                 }
-                drawn.extend(drawn_between(&viewport, clip, grid, *last, (x, y)));
+                let inside = clip.start..clip.end();
+                let passed = drawn_between(&viewport, inside, grid, *last, (x, y));
+                let passed = passed.into_iter();
+                drawn.extend(passed.map(|(tick, y)| (tick.saturating_sub(clip.start), y)));
                 *last = (x, y);
                 (*lane, &*origin, LaneEdit::Draw(drawn))
             }
