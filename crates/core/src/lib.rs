@@ -45,7 +45,7 @@ pub use input::{
 pub use lfo::{Lfo, LfoShape};
 pub use limiter::PeakLimiter;
 pub use oversampling::{Oversampler, OversamplingFilters};
-pub use parameter::Parameter;
+pub use parameter::{FADER_UNITY, Parameter, ParameterInfo, Scale};
 pub use peaks::Peaks;
 pub use processor::{
     AudioInput, AudioInputs, AudioOutput, AudioOutputs, CHANNELS, Event, EventInput, EventInputs,

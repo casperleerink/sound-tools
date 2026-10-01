@@ -33,7 +33,7 @@ pub mod view;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -79,6 +79,7 @@ pub const CUTOFF: Parameter = Parameter {
     min: 20.0,
     max: 20_000.0,
     default: 1_000.0,
+    scale: Scale::Logarithmic,
     get: |state| state.cutoff_hz,
     set: |state, value| state.cutoff_hz = value,
 };
@@ -87,6 +88,7 @@ pub const RESONANCE: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.2,
+    scale: Scale::Linear,
     get: |state| state.resonance,
     set: |state, value| state.resonance = value,
 };
@@ -95,6 +97,7 @@ pub const DRIVE: Parameter = Parameter {
     min: 0.0,
     max: 24.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |state| state.drive_db,
     set: |state, value| state.drive_db = value,
 };
@@ -103,6 +106,7 @@ pub const MIX: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 1.0,
+    scale: Scale::Linear,
     get: |state| state.mix,
     set: |state, value| state.mix = value,
 };
@@ -111,6 +115,7 @@ pub const LFO_RATE: Parameter = Parameter {
     min: 0.05,
     max: 20.0,
     default: 1.0,
+    scale: Scale::Logarithmic,
     get: |state| state.lfo_rate_hz,
     set: |state, value| state.lfo_rate_hz = value,
 };
@@ -119,6 +124,7 @@ pub const LFO_DEPTH: Parameter = Parameter {
     min: 0.0,
     max: 4.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |state| state.lfo_depth_octaves,
     set: |state, value| state.lfo_depth_octaves = value,
 };

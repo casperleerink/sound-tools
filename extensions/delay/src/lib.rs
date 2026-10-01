@@ -38,7 +38,7 @@ pub mod view;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -88,6 +88,7 @@ pub const TIME: Parameter = Parameter {
     min: 1.0,
     max: 4_000.0,
     default: 250.0,
+    scale: Scale::Logarithmic,
     get: |state| state.time_ms,
     set: |state, value| state.time_ms = value,
 };
@@ -97,6 +98,7 @@ pub const FEEDBACK: Parameter = Parameter {
     min: 0.0,
     max: 0.95,
     default: 0.4,
+    scale: Scale::Linear,
     get: |state| state.feedback,
     set: |state, value| state.feedback = value,
 };
@@ -105,6 +107,7 @@ pub const LOW_CUT: Parameter = Parameter {
     min: 20.0,
     max: 20_000.0,
     default: 100.0,
+    scale: Scale::Logarithmic,
     get: |state| state.low_cut_hz,
     set: |state, value| state.low_cut_hz = value,
 };
@@ -113,6 +116,7 @@ pub const HIGH_CUT: Parameter = Parameter {
     min: 20.0,
     max: 20_000.0,
     default: 8_000.0,
+    scale: Scale::Logarithmic,
     get: |state| state.high_cut_hz,
     set: |state, value| state.high_cut_hz = value,
 };
@@ -121,6 +125,7 @@ pub const MIX: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.3,
+    scale: Scale::Linear,
     get: |state| state.mix,
     set: |state, value| state.mix = value,
 };

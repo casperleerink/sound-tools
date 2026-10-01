@@ -30,7 +30,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_media::{Audio, AudioAsset, MediaError};
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
@@ -91,6 +91,7 @@ const fn time(
         min: 0.001,
         max: 10.0,
         default,
+        scale: Scale::Logarithmic,
         get,
         set,
     }
@@ -102,6 +103,7 @@ pub const ROOT: Parameter = Parameter {
     min: 0.0,
     max: 127.0,
     default: 60.0,
+    scale: Scale::Linear,
     get: |state| f32::from(state.root.number()),
     set: |state, value| state.root = Pitch::nearest(value.round() as i64),
 };
@@ -122,6 +124,7 @@ pub const SUSTAIN: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 1.0,
+    scale: Scale::Linear,
     get: |state| state.sustain,
     set: |state, value| state.sustain = value,
 };
@@ -136,6 +139,7 @@ pub const VELOCITY: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.5,
+    scale: Scale::Linear,
     get: |state| state.velocity_to_volume,
     set: |state, value| state.velocity_to_volume = value,
 };
@@ -145,6 +149,7 @@ pub const GAIN: Parameter = Parameter {
     min: -48.0,
     max: 24.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |state| state.gain_db,
     set: |state, value| state.gain_db = value,
 };

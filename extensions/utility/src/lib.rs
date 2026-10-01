@@ -34,7 +34,7 @@ pub mod view;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -92,6 +92,7 @@ pub const GAIN: Parameter = Parameter {
     min: -36.0,
     max: 36.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |state| state.gain_db,
     set: |state, value| state.gain_db = value,
 };
@@ -100,6 +101,7 @@ pub const PAN: Parameter = Parameter {
     min: -1.0,
     max: 1.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |state| state.pan,
     set: |state, value| state.pan = value,
 };
@@ -108,6 +110,7 @@ pub const WIDTH: Parameter = Parameter {
     min: 0.0,
     max: 2.0,
     default: 1.0,
+    scale: Scale::Linear,
     get: |state| state.width,
     set: |state, value| state.width = value,
 };
@@ -116,6 +119,7 @@ pub const BASS_MONO_HZ: Parameter = Parameter {
     min: 50.0,
     max: 500.0,
     default: 120.0,
+    scale: Scale::Logarithmic,
     get: |state| state.bass_mono_hz,
     set: |state, value| state.bass_mono_hz = value,
 };

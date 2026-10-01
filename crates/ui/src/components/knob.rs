@@ -21,6 +21,8 @@ use gpui::{
     StyleRefinement, Window, canvas, div, prelude::*, px,
 };
 
+use sound_core::{Parameter, Scale};
+
 use crate::components::cell::{self, CONTROL_HEIGHT};
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::paint;
@@ -40,49 +42,42 @@ const FACE: f32 = 21.;
 const POINTER_WIDTH: f32 = 2.;
 const RING_WIDTH: f32 = 2.;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KnobScale {
-    Linear,
-    /// Equal travel for equal ratios: for frequencies and times. The range must be above zero.
-    Logarithmic,
-}
-
-/// The values of a knob and how they spread over its travel.
+/// The values of a knob and how they spread over its travel. A knob of a [`Parameter`] takes
+/// both from it, with [`KnobRange::of`], so the knob and an automation lane agree.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KnobRange {
     pub min: f32,
     pub max: f32,
-    pub scale: KnobScale,
+    pub scale: Scale,
 }
 
 impl KnobRange {
     pub const fn linear(min: f32, max: f32) -> Self {
-        let scale = KnobScale::Linear;
+        let scale = Scale::Linear;
         Self { min, max, scale }
     }
 
     pub const fn logarithmic(min: f32, max: f32) -> Self {
-        let scale = KnobScale::Logarithmic;
+        let scale = Scale::Logarithmic;
+        Self { min, max, scale }
+    }
+
+    /// The range and the scale of a parameter.
+    pub const fn of<S>(parameter: &Parameter<S>) -> Self {
+        let Parameter {
+            min, max, scale, ..
+        } = *parameter;
         Self { min, max, scale }
     }
 
     /// Where a value is on the travel, from 0 to 1. A value outside the range is at an end.
     pub fn position(&self, value: f32) -> f32 {
-        let value = value.clamp(self.min, self.max);
-        let position = match self.scale {
-            KnobScale::Linear => (value - self.min) / (self.max - self.min),
-            KnobScale::Logarithmic => (value / self.min).ln() / (self.max / self.min).ln(),
-        };
-        position.clamp(0., 1.)
+        self.scale.position(self.min, self.max, value)
     }
 
     /// The value at a place on the travel, with three significant digits. The ends are exact.
     pub fn value(&self, position: f32) -> f32 {
-        let position = position.clamp(0., 1.);
-        let value = match self.scale {
-            KnobScale::Linear => self.min + (self.max - self.min) * position,
-            KnobScale::Logarithmic => self.min * (self.max / self.min).powf(position),
-        };
+        let value = self.scale.value(self.min, self.max, position);
         three_digits(value).clamp(self.min, self.max)
     }
 }

@@ -10,10 +10,10 @@
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a knob drag is one gesture and one undo step, a
-//! key step, a reset, a sound, a sample or the choke switch is one commit. The ranges and the
-//! defaults come from the [`PARAMETERS`](crate::PARAMETERS) of the crate. What is only about the
-//! interface is here: the labels, the units, the travel of a knob, the names of the undo steps,
-//! which pad is selected, whether the card is expanded and how loud each pad sounds.
+//! key step, a reset, a sound, a sample or the choke switch is one commit. The ranges, the
+//! defaults and the travel of each knob come from the [`PARAMETERS`](crate::PARAMETERS) of the
+//! crate. What is only about the interface is here: the labels, the units, the names of the undo
+//! steps, which pad is selected, whether the card is expanded and how loud each pad sounds.
 
 use std::path::PathBuf;
 
@@ -121,18 +121,6 @@ const PAN_KNOB: Control = Control {
 impl Control {
     fn parameter(&self, pad: usize) -> &'static PadParameter {
         &PARAMETERS[pad % PADS][self.number]
-    }
-
-    /// A time is heard in ratios, so its knob travels in ratios. Pitch and pan go both ways
-    /// from the middle, so their arcs start at the top.
-    fn range(&self, pad: usize) -> KnobRange {
-        let parameter = self.parameter(pad);
-        match self.unit {
-            Unit::Milliseconds => KnobRange::logarithmic(parameter.min, parameter.max),
-            Unit::Decibels | Unit::Semitones | Unit::Pan => {
-                KnobRange::linear(parameter.min, parameter.max)
-            }
-        }
     }
 }
 
@@ -463,9 +451,10 @@ impl DrumPadView {
         let parameter = control.parameter(selected);
         let value = (parameter.get)(pad);
         Knob::new(parameter.field)
-            .range(control.range(selected))
+            .range(KnobRange::of(parameter))
             .value(value)
             .default_value(parameter.default)
+            // Pitch and pan go both ways from the middle, so their arcs start at the top.
             .bipolar(matches!(control.unit, Unit::Semitones | Unit::Pan))
             .label(control.label)
             .readout(readout(control.unit, value))
@@ -653,7 +642,8 @@ mod tests {
     fn every_knob_gives_the_ends_of_its_range() {
         for pad in 0..PADS {
             for control in [&VOLUME_KNOB, &PITCH_KNOB, &DECAY_KNOB, &PAN_KNOB] {
-                let (range, parameter) = (control.range(pad), control.parameter(pad));
+                let parameter = control.parameter(pad);
+                let range = KnobRange::of(parameter);
                 assert_eq!(range.value(0.0), parameter.min);
                 assert_eq!(range.value(1.0), parameter.max);
                 let default = range.value(range.position(parameter.default));

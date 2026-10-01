@@ -31,7 +31,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -115,6 +115,7 @@ const fn frequency(default: f32) -> BandParameter {
         min: 20.0,
         max: 20_000.0,
         default,
+        scale: Scale::Logarithmic,
         get: |band| band.frequency_hz,
         set: |band, value| band.frequency_hz = value,
     }
@@ -133,6 +134,7 @@ pub const GAIN: BandParameter = BandParameter {
     min: -15.0,
     max: 15.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |band| band.gain_db,
     set: |band, value| band.gain_db = value,
 };
@@ -141,6 +143,7 @@ pub const Q: BandParameter = BandParameter {
     min: 0.1,
     max: 18.0,
     default: 0.71,
+    scale: Scale::Logarithmic,
     get: |band| band.q,
     set: |band, value| band.q = value,
 };
@@ -175,6 +178,7 @@ pub const OUTPUT_GAIN: Parameter = Parameter {
     min: -12.0,
     max: 12.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |state| state.output_gain_db,
     set: |state, value| state.output_gain_db = value,
 };

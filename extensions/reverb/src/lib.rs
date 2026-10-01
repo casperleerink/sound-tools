@@ -40,7 +40,7 @@ pub mod view;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -86,6 +86,7 @@ pub const PRE_DELAY: Parameter = Parameter {
     min: 0.5,
     max: 250.0,
     default: 20.0,
+    scale: Scale::Logarithmic,
     get: |state| state.pre_delay_ms,
     set: |state, value| state.pre_delay_ms = value,
 };
@@ -94,6 +95,7 @@ pub const DECAY: Parameter = Parameter {
     min: 0.2,
     max: 60.0,
     default: 2.0,
+    scale: Scale::Logarithmic,
     get: |state| state.decay_seconds,
     set: |state, value| state.decay_seconds = value,
 };
@@ -102,6 +104,7 @@ pub const SIZE: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.5,
+    scale: Scale::Linear,
     get: |state| state.size,
     set: |state, value| state.size = value,
 };
@@ -110,6 +113,7 @@ pub const DAMPING: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.5,
+    scale: Scale::Linear,
     get: |state| state.damping,
     set: |state, value| state.damping = value,
 };
@@ -118,6 +122,7 @@ pub const DIFFUSION: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.7,
+    scale: Scale::Linear,
     get: |state| state.diffusion,
     set: |state, value| state.diffusion = value,
 };
@@ -126,6 +131,7 @@ pub const LOW_CUT: Parameter = Parameter {
     min: 20.0,
     max: 20_000.0,
     default: 100.0,
+    scale: Scale::Logarithmic,
     get: |state| state.low_cut_hz,
     set: |state, value| state.low_cut_hz = value,
 };
@@ -134,6 +140,7 @@ pub const HIGH_CUT: Parameter = Parameter {
     min: 20.0,
     max: 20_000.0,
     default: 8_000.0,
+    scale: Scale::Logarithmic,
     get: |state| state.high_cut_hz,
     set: |state, value| state.high_cut_hz = value,
 };
@@ -142,6 +149,7 @@ pub const WIDTH: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 1.0,
+    scale: Scale::Linear,
     get: |state| state.width,
     set: |state, value| state.width = value,
 };
@@ -150,6 +158,7 @@ pub const MIX: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.3,
+    scale: Scale::Linear,
     get: |state| state.mix,
     set: |state, value| state.mix = value,
 };

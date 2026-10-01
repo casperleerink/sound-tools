@@ -24,7 +24,7 @@ pub mod view;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -80,6 +80,7 @@ pub const DRIVE: Parameter = Parameter {
     min: 0.0,
     max: 36.0,
     default: 6.0,
+    scale: Scale::Linear,
     get: |state| state.drive_db,
     set: |state, value| state.drive_db = value,
 };
@@ -88,6 +89,7 @@ pub const TONE: Parameter = Parameter {
     min: -12.0,
     max: 12.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |state| state.tone_db,
     set: |state, value| state.tone_db = value,
 };
@@ -96,6 +98,7 @@ pub const OUTPUT: Parameter = Parameter {
     min: -12.0,
     max: 12.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |state| state.output_db,
     set: |state, value| state.output_db = value,
 };
@@ -104,6 +107,7 @@ pub const MIX: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 1.0,
+    scale: Scale::Linear,
     get: |state| state.mix,
     set: |state, value| state.mix = value,
 };

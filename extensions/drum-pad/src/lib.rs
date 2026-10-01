@@ -24,7 +24,7 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_media::AudioAsset;
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
@@ -269,6 +269,7 @@ const fn volume(default: f32) -> PadParameter {
         min: -48.0,
         max: 12.0,
         default,
+        scale: Scale::Linear,
         get: |pad| pad.volume_db,
         set: |pad, value| pad.volume_db = value,
     }
@@ -280,6 +281,7 @@ const fn pitch(default: f32) -> PadParameter {
         min: -24.0,
         max: 24.0,
         default,
+        scale: Scale::Linear,
         get: |pad| pad.pitch_semitones,
         set: |pad, value| pad.pitch_semitones = value,
     }
@@ -291,6 +293,7 @@ const fn decay(default: f32) -> PadParameter {
         min: 10.0,
         max: 10_000.0,
         default,
+        scale: Scale::Logarithmic,
         get: |pad| pad.decay_ms,
         set: |pad, value| pad.decay_ms = value,
     }
@@ -302,6 +305,7 @@ const fn pan(default: f32) -> PadParameter {
         min: -1.0,
         max: 1.0,
         default,
+        scale: Scale::Linear,
         get: |pad| pad.pan,
         set: |pad, value| pad.pan = value,
     }

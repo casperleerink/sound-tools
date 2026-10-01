@@ -21,7 +21,7 @@ pub mod view;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -78,6 +78,7 @@ pub const RATE: Parameter = Parameter {
     min: 0.05,
     max: 10.0,
     default: 0.5,
+    scale: Scale::Logarithmic,
     get: |state| state.rate_hz,
     set: |state, value| state.rate_hz = value,
 };
@@ -86,6 +87,7 @@ pub const DEPTH: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.5,
+    scale: Scale::Linear,
     get: |state| state.depth,
     set: |state, value| state.depth = value,
 };
@@ -94,6 +96,7 @@ pub const FEEDBACK: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.2,
+    scale: Scale::Linear,
     get: |state| state.feedback,
     set: |state, value| state.feedback = value,
 };
@@ -102,6 +105,7 @@ pub const SPREAD: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.5,
+    scale: Scale::Linear,
     get: |state| state.spread,
     set: |state, value| state.spread = value,
 };
@@ -110,6 +114,7 @@ pub const MIX: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.5,
+    scale: Scale::Linear,
     get: |state| state.mix,
     set: |state, value| state.mix = value,
 };

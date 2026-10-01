@@ -7,9 +7,9 @@
 //! change goes through the session, by [`ControlEdit`]: a knob or a handle drag is one gesture
 //! and one undo step, a key step, a reset or a waveform switch is one commit. A handle edits the
 //! same field as its knob, under the same name in the history, and the knob is the way to that
-//! value from the keys. The ranges and the defaults come from the [`Parameter`]s of the crate.
-//! What is only about the interface is here: the label, the unit, the travel of the knob, the
-//! name of the undo step and whether the card is expanded.
+//! value from the keys. The ranges, the defaults and the travel of each knob come from the
+//! [`Parameter`]s of the crate. What is only about the interface is here: the label, the unit,
+//! the name of the undo step and whether the card is expanded.
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -17,7 +17,7 @@ use sound_ui::components::curves::{Adsr, EnvelopeHandle, envelope_display};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::Display;
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, KnobScale, short};
+use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
 
@@ -50,8 +50,6 @@ struct Control {
     parameter: &'static Parameter,
     label: &'static str,
     undo_label: &'static str,
-    /// Frequencies and times are heard in ratios, so their knobs travel in ratios.
-    scale: KnobScale,
     unit: Unit,
 }
 
@@ -62,25 +60,16 @@ impl Control {
         undo_label: &'static str,
         unit: Unit,
     ) -> Self {
-        let scale = match unit {
-            Unit::Hertz | Unit::Seconds => KnobScale::Logarithmic,
-            Unit::Part => KnobScale::Linear,
-        };
         Self {
             parameter,
             label,
             undo_label,
-            scale,
             unit,
         }
     }
 
     fn range(&self) -> KnobRange {
-        KnobRange {
-            min: self.parameter.min,
-            max: self.parameter.max,
-            scale: self.scale,
-        }
+        KnobRange::of(self.parameter)
     }
 
     /// A value as the parameter takes it: a handle may ask for one past its ends.
