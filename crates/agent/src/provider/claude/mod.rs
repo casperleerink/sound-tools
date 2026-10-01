@@ -20,15 +20,14 @@ use std::path::Path;
 use std::pin::Pin;
 use std::process::Stdio;
 
+use serde_json::Value;
 use smol::channel::Receiver;
 use smol::future;
 use smol::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader};
 use smol::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 
 use self::mapper::Mapper;
-use self::protocol::{
-    CliRequest, ControlResponse, Envelope, Incoming, Outgoing, PermissionMode, Request,
-};
+use self::protocol::{CliRequest, ControlResponse, Incoming, Outgoing, PermissionMode, Request};
 pub use self::setup::{SignIn, account, download, sign_in, sign_out};
 use super::{AgentEvent, ApprovalMode, Command, Session, ThreadOptions};
 
@@ -351,15 +350,16 @@ impl Events {
             Err(error) => {
                 // What can still be read keeps the turn going: a broken `result` still ends
                 // it, and a broken request still gets an answer.
-                let envelope = serde_json::from_str::<Envelope>(line).ok();
-                let kind = envelope
-                    .as_ref()
-                    .and_then(|envelope| envelope.kind.as_deref());
+                let value = serde_json::from_str::<Value>(line).unwrap_or_default();
+                let kind = value.get("type").and_then(Value::as_str);
                 if kind == Some("control_request")
-                    && let Some(request_id) = envelope
-                        .as_ref()
-                        .and_then(|envelope| envelope.request_id.clone())
+                    && let Some(request_id) = value.get("request_id")
                 {
+                    // Echoed as it came, also when it is not a string.
+                    let request_id = match request_id {
+                        Value::String(request_id) => request_id.clone(),
+                        other => other.to_string(),
+                    };
                     self.refuse(request_id);
                 }
                 let ends_turn = kind == Some("result");
@@ -395,6 +395,8 @@ impl Events {
             }
         }
         self.close_stdin();
+        // Before the wait: until the CLI is reaped its pid cannot name another group.
+        self.end_group();
         let code = match self.child.status().await {
             Ok(status) => status.code(),
             Err(error) => {
@@ -402,22 +404,30 @@ impl Events {
                 None
             }
         };
+        // Reaped, so from here the pid may belong to someone else.
+        self.exited = true;
         let events = self.mapper.exited(code, self.said.as_deref());
         self.events.extend(events);
-        self.exited = true;
+    }
+
+    /// Ends the agent's own children, such as a `cargo build` it started. `kill_on_drop`
+    /// ends only the CLI. Only while the CLI is not reaped yet.
+    fn end_group(&self) {
+        #[cfg(unix)]
+        if let Ok(group) = libc::pid_t::try_from(self.child.id()) {
+            // SAFETY: `killpg` only sends a signal; it touches no memory of ours. The group
+            // is the CLI's own (`process_group(0)` at the start), and the CLI is not reaped,
+            // so the id is still its. It fails only when the group is gone already, which
+            // is what this wants.
+            unsafe { libc::killpg(group, libc::SIGTERM) };
+        }
     }
 }
 
 impl Drop for Events {
-    /// Ends the agent's own children too, such as a `cargo build` it started. `kill_on_drop`
-    /// ends only the CLI.
     fn drop(&mut self) {
-        #[cfg(unix)]
-        if let Ok(group) = libc::pid_t::try_from(self.child.id()) {
-            // SAFETY: `killpg` only sends a signal; it touches no memory of ours. The group
-            // is the CLI's own (`process_group(0)` at the start). It fails only when the
-            // group is gone already, which is what this wants.
-            unsafe { libc::killpg(group, libc::SIGTERM) };
+        if !self.exited {
+            self.end_group();
         }
     }
 }

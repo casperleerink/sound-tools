@@ -108,8 +108,9 @@ impl LeftPanelSlot {
 /// The view in the left panel, and what the window needs to know of it.
 pub struct LeftPanel {
     view: AnyView,
-    /// What cmd-L focuses, such as the composer of the agent.
-    focus: FocusHandle,
+    /// What cmd-L focuses, such as the composer of the agent. Asked each time: what the view
+    /// can focus changes, as when the composer appears.
+    focus: Box<dyn Fn(&App) -> FocusHandle>,
     /// Whether it works or waits on the composer. The icon in the title row says so while the
     /// panel is closed, so a closed panel never hides a question.
     busy: bool,
@@ -133,7 +134,10 @@ impl LeftPanel {
         });
         Self {
             busy: busy(view.read(cx), cx),
-            focus: view.read(cx).focus_handle(cx),
+            focus: {
+                let view = view.clone();
+                Box::new(move |cx| view.read(cx).focus_handle(cx))
+            },
             view: view.into(),
             _observing: observing,
         }
@@ -266,7 +270,7 @@ impl Shell {
         let Some(panel) = &self.left_panel else {
             return;
         };
-        let focus = panel.focus.clone();
+        let focus = (panel.focus)(cx);
         if !self.left_panel_open {
             self.remember_focus(window, cx);
             self.set_left_panel_open(true, window, cx);

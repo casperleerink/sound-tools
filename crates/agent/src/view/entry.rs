@@ -9,7 +9,7 @@ use sound_ui::components::indicator::{Indicator, IndicatorSize};
 
 use crate::StepOutcome;
 use crate::TurnOutcome;
-use crate::thread::Turn;
+use crate::conversation::Turn;
 
 /// The text of the thread: 15 on 22, as the mockup.
 const TEXT_SIZE: f32 = 15.;
@@ -98,10 +98,14 @@ pub fn turn(
             .line_height(px(LINE_HEIGHT))
             .child(SharedString::from(block.clone()))
     });
-    let working = turn.end.is_none().then(|| {
+    // While a question waits, the question is what the agent does.
+    let working = (turn.end.is_none() && turn.approval.is_none()).then(|| {
         let title = turn
             .current_step()
-            .map_or("Working", |step| step.title.as_str());
+            .map_or("Working", |step| match step.outcome {
+                None => step.running_title.as_str(),
+                Some(_) => step.title.as_str(),
+            });
         div()
             .flex()
             .items_center()

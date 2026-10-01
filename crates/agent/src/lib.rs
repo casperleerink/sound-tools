@@ -17,18 +17,18 @@
 //! `cargo run -p sound-agent --example chat -- <folder>` chats with Claude Code in the
 //! terminal, with a `claude` on the `PATH` ([`program_on_path`]).
 
+mod conversation;
 mod environment;
 mod install;
 mod provider;
-mod thread;
 mod view;
 
+pub use conversation::{Approval, Conversation, Entry, Step, Turn, TurnEnd};
 pub use environment::{login_shell_environment, program_on_path};
 pub use install::{Download, InstallError, install};
 pub use provider::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Events, ExitReason, Installed,
-    Model, Provider, Session, SignInChoice, StepId, StepOutcome, Thread, ThreadClosed,
+    Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Command, Events, ExitReason,
+    Installed, Model, Provider, Session, SignInChoice, StepId, StepOutcome, Thread, ThreadClosed,
     ThreadOptions, TurnOutcome,
 };
-pub use thread::{Approval, Conversation, Entry, Step, Turn, TurnEnd};
 pub use view::{Onboarding, Setup, SetupAction, Sidebar};

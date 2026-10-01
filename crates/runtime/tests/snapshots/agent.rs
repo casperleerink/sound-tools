@@ -1,11 +1,13 @@
 //! The agent sidebar in the left panel, with events handed to it and no process:
 //!
-//! - `agent-sidebar.png`: the piece with the sidebar open: a finished turn, and a second turn
-//!   that works and waits on an approval.
+//! - `agent-sidebar.png`: the piece with the sidebar open: a turn that worked for 12 s, and a
+//!   second turn that runs a command.
+//! - `agent-approval.png`: the same turn waiting on an approval.
 //! - `agent-closed-working.png`: the same with the sidebar closed, and the lavender indicator on
 //!   its icon in the title row.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use gpui::{AppContext, HeadlessAppContext};
@@ -26,7 +28,7 @@ pub fn snapshots(
                 program: "/nonexistent/claude".into(),
                 environment: HashMap::new(),
             };
-            let sidebar = cx.new(|cx| Sidebar::ready(session, installed, cx));
+            let sidebar = cx.new(|cx| Sidebar::with_claude(session, Some(installed), cx));
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
         .install(cx)
@@ -42,16 +44,22 @@ pub fn snapshots(
             .map_err(|_| anyhow::anyhow!("the left panel is not the sidebar"))
     })?;
     let step = |id: &str| StepId(id.to_string());
+    // The first turn ends now, so it worked for 12 s.
+    let started = Instant::now()
+        .checked_sub(Duration::from_secs(12))
+        .context("a clock this early")?;
 
     cx.update(|cx| {
         sidebar.update(cx, |sidebar, cx| {
-            sidebar.begin("Add a bass line in bars 5 to 8 that follows the piano", cx);
+            let message = "Add a bass line in bars 5 to 8 that follows the piano";
+            sidebar.begin_at(message, started, cx);
             sidebar.receive(
                 [
                     AgentEvent::TurnStarted,
                     AgentEvent::StepStarted {
                         id: step("read"),
                         title: "Read state/arrangement/piano/verse.json".to_string(),
+                        running_title: "Reading state/arrangement/piano/verse.json".to_string(),
                     },
                     AgentEvent::StepDone {
                         id: step("read"),
@@ -60,6 +68,7 @@ pub fn snapshots(
                     AgentEvent::StepStarted {
                         id: step("write"),
                         title: "Wrote state/arrangement/bass/clip-005.json".to_string(),
+                        running_title: "Writing state/arrangement/bass/clip-005.json".to_string(),
                     },
                     AgentEvent::StepDone {
                         id: step("write"),
@@ -81,10 +90,7 @@ pub fn snapshots(
                     AgentEvent::StepStarted {
                         id: step("build"),
                         title: "Ran cargo build".to_string(),
-                    },
-                    AgentEvent::ApprovalRequested {
-                        id: ApprovalId("build".to_string()),
-                        title: "Run `cargo build`".to_string(),
+                        running_title: "Running cargo build".to_string(),
                     },
                 ],
                 cx,
@@ -93,6 +99,14 @@ pub fn snapshots(
     });
     cx.run_until_parked();
     save(cx, &opened, "agent-sidebar")?;
+
+    let question = AgentEvent::ApprovalRequested {
+        id: ApprovalId("build".to_string()),
+        title: "Run `cargo build`".to_string(),
+    };
+    cx.update(|cx| sidebar.update(cx, |sidebar, cx| sidebar.receive([question], cx)));
+    cx.run_until_parked();
+    save(cx, &opened, "agent-approval")?;
 
     // Closed while it waits: the icon carries the indicator.
     opened.key("cmd-l", cx)?;

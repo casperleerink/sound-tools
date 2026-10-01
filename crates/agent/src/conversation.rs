@@ -15,6 +15,9 @@ const LABEL_LENGTH: usize = 40;
 #[derive(Debug, Default)]
 pub struct Conversation {
     entries: Vec<Entry>,
+    /// The last event ended a turn as failed. The process usually exits right after with the
+    /// same message, which the turn already shows.
+    turn_just_failed: bool,
 }
 
 #[derive(Debug)]
@@ -44,7 +47,10 @@ pub struct Turn {
 #[derive(Debug)]
 pub struct Step {
     pub id: StepId,
+    /// In the past tense, for the steps of a finished turn.
     pub title: String,
+    /// In the present tense, for the working line while it runs.
+    pub running_title: String,
     /// `None` while it runs.
     pub outcome: Option<StepOutcome>,
 }
@@ -115,10 +121,13 @@ impl Conversation {
         self.entries.push(Entry::Turn(Turn::new(now)));
     }
 
-    /// Answered: the row goes, and the turn goes on.
-    pub fn answered(&mut self) -> Option<ApprovalId> {
+    /// Answered: the row goes, and the turn goes on. Gives the question's id and the index of
+    /// its turn.
+    pub fn answered(&mut self) -> Option<(ApprovalId, usize)> {
+        let index = self.open_turn_index()?;
         let turn = self.open_turn()?;
-        turn.approval.take().map(|approval| approval.id)
+        let approval = turn.approval.take()?;
+        Some((approval.id, index))
     }
 
     pub fn notice(&mut self, message: impl Into<String>) {
@@ -128,6 +137,15 @@ impl Conversation {
     /// Applies one event. Gives the index of the entry it changed or added, if any, so a view
     /// measures only that one again.
     pub fn apply(&mut self, event: AgentEvent, now: Instant) -> Option<usize> {
+        let turn_just_failed = std::mem::replace(
+            &mut self.turn_just_failed,
+            matches!(
+                event,
+                AgentEvent::TurnEnded {
+                    outcome: TurnOutcome::Failed { .. }
+                }
+            ),
+        );
         match event {
             // Nothing to show yet. The thread is not saved before milestone 7.
             AgentEvent::Started { .. } => None,
@@ -147,10 +165,15 @@ impl Conversation {
                 turn.streaming.clear();
                 turn.blocks.push(text);
             }),
-            AgentEvent::StepStarted { id, title } => self.update_open_turn(|turn| {
+            AgentEvent::StepStarted {
+                id,
+                title,
+                running_title,
+            } => self.update_open_turn(|turn| {
                 turn.steps.push(Step {
                     id,
                     title,
+                    running_title,
                     outcome: None,
                 });
             }),
@@ -181,13 +204,16 @@ impl Conversation {
                     ExitReason::Failed { message } => format!("Claude Code stopped: {message}"),
                 };
                 // The driver ends every turn before it exits. Should one still be open, it
-                // must not look as if the agent still works.
-                self.update_open_turn(|turn| {
-                    let outcome = TurnOutcome::Failed {
-                        message: message.clone(),
-                    };
-                    turn.finish(outcome, now);
-                });
+                // must not look as if the agent still works, and it says why itself.
+                let failed = TurnOutcome::Failed {
+                    message: message.clone(),
+                };
+                if let Some(index) = self.update_open_turn(|turn| turn.finish(failed, now)) {
+                    return Some(index);
+                }
+                if turn_just_failed {
+                    return None;
+                }
                 self.notice(message);
                 Some(self.entries.len() - 1)
             }
@@ -240,7 +266,11 @@ mod tests {
     }
 
     fn turn(conversation: &Conversation) -> &Turn {
-        match conversation.entries().last() {
+        turn_at(conversation, conversation.entries().len() - 1)
+    }
+
+    fn turn_at(conversation: &Conversation, index: usize) -> &Turn {
+        match conversation.entries().get(index) {
             Some(Entry::Turn(turn)) => turn,
             other => panic!("not a turn: {other:?}"),
         }
@@ -257,6 +287,7 @@ mod tests {
             AgentEvent::StepStarted {
                 id: step("one"),
                 title: "Wrote state/arrangement/track-1/clip.json".to_string(),
+                running_title: "Writing state/arrangement/track-1/clip.json".to_string(),
             },
             AgentEvent::StepDone {
                 id: step("one"),
@@ -313,7 +344,7 @@ mod tests {
         );
         assert_eq!(
             conversation.answered(),
-            Some(ApprovalId("question".to_string()))
+            Some((ApprovalId("question".to_string()), 1))
         );
         assert!(conversation.approval().is_none());
 
@@ -331,8 +362,28 @@ mod tests {
         assert_eq!(turn(&conversation).blocks, ["Half"]);
     }
 
+    fn notices(conversation: &Conversation) -> Vec<&str> {
+        conversation
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Notice(line) => Some(line.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn exited_with(message: &str) -> AgentEvent {
+        AgentEvent::Exited {
+            reason: ExitReason::Failed {
+                message: message.to_string(),
+            },
+        }
+    }
+
+    /// An exit that finds a turn still open ends it with the reason, on the turn itself.
     #[test]
-    fn errors_and_a_failed_exit_are_quiet_lines_and_end_an_open_turn() {
+    fn an_error_is_a_quiet_line_and_an_exit_ends_an_open_turn() {
         let now = Instant::now();
         let mut conversation = Conversation::default();
         conversation.send("Hello", now);
@@ -340,29 +391,45 @@ mod tests {
             message: "Could not stop".to_string(),
         };
         assert_eq!(conversation.apply(error, now), Some(2));
-        let exited = AgentEvent::Exited {
-            reason: ExitReason::Failed {
-                message: "out of memory".to_string(),
-            },
-        };
-        conversation.apply(exited, now);
-        assert!(!conversation.is_working());
-        let lines: Vec<_> = conversation
-            .entries()
-            .iter()
-            .filter_map(|entry| match entry {
-                Entry::Notice(line) => Some(line.as_str()),
-                _ => None,
-            })
-            .collect();
         assert_eq!(
-            lines,
-            ["Could not stop", "Claude Code stopped: out of memory"]
+            conversation.apply(exited_with("out of memory"), now),
+            Some(1)
         );
+        assert!(!conversation.is_working());
+        assert_eq!(notices(&conversation), ["Could not stop"]);
+        let outcome = turn_at(&conversation, 1)
+            .end
+            .as_ref()
+            .map(|end| &end.outcome);
+        let message = "Claude Code stopped: out of memory".to_string();
+        assert_eq!(outcome, Some(&TurnOutcome::Failed { message }));
+
         let finished = AgentEvent::Exited {
             reason: ExitReason::Finished,
         };
         assert_eq!(conversation.apply(finished, now), None);
+        // Between turns an exit is a line of its own.
+        assert_eq!(conversation.apply(exited_with("gone"), now), Some(3));
+        assert_eq!(
+            notices(&conversation),
+            ["Could not stop", "Claude Code stopped: gone"]
+        );
+    }
+
+    /// A crash ends the turn as failed and then exits with the same message: it shows once.
+    #[test]
+    fn a_crash_mid_turn_says_so_once() {
+        let now = Instant::now();
+        let mut conversation = Conversation::default();
+        conversation.send("Hello", now);
+        let failed = AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Failed {
+                message: "Killed".to_string(),
+            },
+        };
+        assert_eq!(conversation.apply(failed, now), Some(1));
+        assert_eq!(conversation.apply(exited_with("Killed"), now), None);
+        assert_eq!(notices(&conversation), Vec::<&str>::new());
     }
 
     #[test]
