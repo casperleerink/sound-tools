@@ -75,6 +75,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 # Errors name the field, such as `state.gain`, so an agent can fix its edit.
 serde_path_to_error = "0.1"
+# Checks the agent CLI the app downloads against its pinned checksum. MIT OR Apache-2.0.
+sha2 = { version = "0.11", default-features = false }
 # The async runtime under gpui's executors. The agent's child process and its pipes.
 smol = "2"
 tempfile = "3"

@@ -12,7 +12,7 @@ use serde_json::Value;
 use super::mapper::Mapper;
 use super::protocol::{ControlResponse, Outgoing, PermissionResult};
 use super::{Session, ThreadOptions, arguments};
-use crate::provider::{AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Provider};
+use crate::provider::{AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Installed, Provider};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -235,12 +235,14 @@ fn allows_a_command_for_the_thread() {
 fn starts_claude_with_the_trimmed_flags() {
     let options = |approval_mode, session| ThreadOptions {
         provider: Provider::Claude,
-        program: PathBuf::from("claude"),
+        installed: Installed {
+            program: PathBuf::from("claude"),
+            environment: Default::default(),
+        },
         folder: PathBuf::from("/tmp/project"),
         model: Some("haiku".to_string()),
         approval_mode,
         session,
-        environment: Default::default(),
     };
     let flags = |approval_mode, session| {
         arguments(&options(approval_mode, session), "id")

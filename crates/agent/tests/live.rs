@@ -10,8 +10,8 @@ use std::fs;
 use std::path::Path;
 
 use sound_agent::{
-    AgentEvent, ApprovalMode, Events, ExitReason, Provider, Session, Thread, ThreadOptions,
-    TurnOutcome, login_shell_environment, program_on_path,
+    AgentEvent, ApprovalMode, Events, ExitReason, Installed, Provider, Session, Thread,
+    ThreadOptions, TurnOutcome, login_shell_environment, program_on_path,
 };
 
 fn start(folder: &Path, session: Session) -> (Thread, Events) {
@@ -19,12 +19,14 @@ fn start(folder: &Path, session: Session) -> (Thread, Events) {
     let program = program_on_path("claude", &environment).expect("claude is not on PATH");
     Thread::start(ThreadOptions {
         provider: Provider::Claude,
-        program,
+        installed: Installed {
+            program,
+            environment,
+        },
         folder: folder.to_path_buf(),
         model: Some("haiku".to_string()),
         approval_mode: ApprovalMode::default(),
         session,
-        environment,
     })
     .unwrap()
 }

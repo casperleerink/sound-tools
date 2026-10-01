@@ -15,10 +15,104 @@ use std::path::PathBuf;
 
 use smol::channel::{self, Receiver, Sender};
 
+use crate::install::Download;
+
 /// The coding agent CLI that runs a thread.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provider {
     Claude,
+}
+
+impl Provider {
+    /// The program's name for the composer, as in "The agent runs Claude Code by Anthropic."
+    pub fn name(self) -> &'static str {
+        match self {
+            Provider::Claude => "Claude Code",
+        }
+    }
+
+    /// Who makes it.
+    pub fn maker(self) -> &'static str {
+        match self {
+            Provider::Claude => "Anthropic",
+        }
+    }
+
+    /// The pinned program for this computer, or `None` when the provider has no build for it.
+    pub fn download(self) -> Option<Download> {
+        match self {
+            Provider::Claude => claude::download(),
+        }
+    }
+
+    /// The environment variable that names a program to run instead of the download, for
+    /// development and tests.
+    pub fn program_variable(self) -> &'static str {
+        match self {
+            Provider::Claude => "SOUND_TOOLS_CLAUDE",
+        }
+    }
+
+    /// The ways in the provider offers, in the order the composer reads them.
+    pub fn sign_in_choices(self) -> Vec<SignInChoice> {
+        match self {
+            Provider::Claude => claude::SIGN_IN_CHOICES
+                .map(|(label, arguments)| SignInChoice {
+                    provider: self,
+                    label,
+                    arguments,
+                })
+                .to_vec(),
+        }
+    }
+
+    /// The account the program is signed in to, or `None` when it is signed out. Fails when
+    /// the program does not run; the error is the first line it wrote.
+    pub async fn account(self, installed: &Installed) -> io::Result<Option<Account>> {
+        match self {
+            Provider::Claude => claude::account(installed).await,
+        }
+    }
+
+    pub async fn sign_out(self, installed: &Installed) -> io::Result<()> {
+        match self {
+            Provider::Claude => claude::sign_out(installed).await,
+        }
+    }
+}
+
+/// Where the provider's program is, and the environment it runs in.
+#[derive(Clone, Debug)]
+pub struct Installed {
+    pub program: PathBuf,
+    /// Usually [`crate::login_shell_environment`]. The driver removes what would confuse the
+    /// agent.
+    pub environment: HashMap<OsString, OsString>,
+}
+
+/// One way to sign in that a provider offers, such as "Sign in with your Claude plan". Each
+/// runs the provider's own flow in the browser, so the app never handles a credential.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SignInChoice {
+    provider: Provider,
+    label: &'static str,
+    /// What the provider's program runs it with, for its driver.
+    arguments: &'static [&'static str],
+}
+
+impl SignInChoice {
+    /// What its button says.
+    pub fn label(self) -> &'static str {
+        self.label
+    }
+
+    /// Runs the sign-in and waits for it to end. Ask [`Provider::account`] after: it may have
+    /// ended with nobody signed in. Dropping the future cancels it.
+    pub async fn run(self, installed: &Installed) -> io::Result<()> {
+        match self.provider {
+            Provider::Claude => claude::sign_in(installed, self.arguments).await,
+        }
+    }
 }
 
 /// How much the agent may do without asking. One setting for the machine, never saved in a
@@ -55,17 +149,14 @@ pub enum Session {
 #[derive(Clone, Debug)]
 pub struct ThreadOptions {
     pub provider: Provider,
-    /// The provider's program, such as the path of `claude`.
-    pub program: PathBuf,
+    /// The provider's program, such as the path of `claude`, and its environment.
+    pub installed: Installed,
     /// The project folder. The agent works in it.
     pub folder: PathBuf,
     /// One of the ids in [`AgentEvent::Started`], or `None` for the provider's default.
     pub model: Option<String>,
     pub approval_mode: ApprovalMode,
     pub session: Session,
-    /// The environment of the program, usually [`crate::login_shell_environment`]. The driver
-    /// removes what would confuse the agent.
-    pub environment: HashMap<OsString, OsString>,
 }
 
 /// One step of a turn, such as an edit or a command. The id is the provider's; a test that

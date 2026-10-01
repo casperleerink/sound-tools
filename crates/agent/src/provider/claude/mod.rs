@@ -2,18 +2,21 @@
 //!
 //! Every Claude flag and type is in this module. The process reads one JSON message per line
 //! on stdin and writes one per line on stdout. Approvals come as `can_use_tool` requests that
-//! we answer (`--permission-prompt-tool stdio`). It exits when stdin closes.
+//! we answer (`--permission-prompt-tool stdio`). It exits when stdin closes. The pinned
+//! download and the sign-in are in [`setup`].
 
 mod mapper;
 #[cfg(test)]
 mod process_tests;
 mod protocol;
+mod setup;
 #[cfg(test)]
 mod tests;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::OsString;
 use std::io;
+use std::path::Path;
 use std::pin::Pin;
 use std::process::Stdio;
 
@@ -25,6 +28,7 @@ use smol::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 
 use self::mapper::Mapper;
 use self::protocol::{CliRequest, ControlResponse, Incoming, Outgoing, PermissionMode, Request};
+pub use self::setup::{SIGN_IN_CHOICES, account, download, sign_in, sign_out};
 use super::{AgentEvent, ApprovalMode, Command, Session, ThreadOptions};
 
 /// The tools a composer needs. No web, no subagents, no questions: the agent asks in plain
@@ -85,16 +89,24 @@ fn arguments(options: &ThreadOptions, session_id: &str) -> Vec<OsString> {
     arguments
 }
 
-/// The environment without what would confuse the CLI.
-fn environment(options: &ThreadOptions) -> impl Iterator<Item = (&OsString, &OsString)> {
-    options.environment.iter().filter(|(key, _)| {
+/// `claude` in the environment without what would confuse it. Every run of the CLI starts
+/// here: a thread, and `auth`.
+fn command(program: &Path, environment: &HashMap<OsString, OsString>) -> std::process::Command {
+    let environment = environment.iter().filter(|(key, _)| {
         let key = key.to_string_lossy();
         // A nested session inherits the outer one's markers and then never saves its
         // transcript, which breaks every later resume.
         let nested = key == "CLAUDECODE" || key.starts_with("CLAUDE_CODE_");
         // Set when the app was started from Electron; the CLI would run as plain Node.
         !nested && key != "ELECTRON_RUN_AS_NODE"
-    })
+    });
+    let mut command = std::process::Command::new(program);
+    command
+        .env_clear()
+        .envs(environment)
+        // A self-update would replace the pinned version the protocol was tested with.
+        .env("DISABLE_AUTOUPDATER", "1");
+    command
 }
 
 /// The process of one thread and what it said so far. Polling it also writes what the
@@ -136,14 +148,10 @@ impl Events {
             Session::New => uuid::Uuid::new_v4().to_string(),
             Session::Resume(session_id) => session_id.clone(),
         };
-        let mut command = std::process::Command::new(&options.program);
+        let mut command = command(&options.installed.program, &options.installed.environment);
         command
             .args(arguments(&options, &session_id))
             .current_dir(&options.folder)
-            .env_clear()
-            .envs(environment(&options))
-            // A self-update would replace the pinned version the protocol was tested with.
-            .env("DISABLE_AUTOUPDATER", "1")
             // Loads the CLAUDE.md of the `--add-dir` folder, the project's.
             .env("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD", "1")
             // No connection to an editor the composer has open, and no extension installed

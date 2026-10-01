@@ -21,6 +21,9 @@ const LAST_PROJECT_FILE: &str = "last-project";
 /// One word, `open` or `closed`: the left panel of the window, for every project.
 const LEFT_PANEL_FILE: &str = "left-panel";
 
+/// The agent programs the sidebar downloads, such as `claude/2.1.286/claude`.
+const AGENTS_FOLDER: &str = "agents";
+
 fn home() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -77,6 +80,11 @@ fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
 /// The file that remembers whether the left panel is open.
 pub fn left_panel_file(support: &Path) -> PathBuf {
     support.join(LEFT_PANEL_FILE)
+}
+
+/// Where the agent sidebar keeps the agent programs it downloads, one folder per version.
+pub fn agents_folder(support: &Path) -> PathBuf {
+    support.join(AGENTS_FOLDER)
 }
 
 /// Whether the left panel was open. It is open the first time, and when the file cannot be
