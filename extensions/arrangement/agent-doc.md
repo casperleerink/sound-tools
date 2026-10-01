@@ -223,6 +223,7 @@ In 4/4 the filter of this track opens over bars 9 to 16, and the track fades in 
 - `points[].value`: in the units and the range of the field, as its doc gives them. A volume may go down to `"-inf"`, silence.
 - Between two points the value moves in a straight line on the travel of its knob: a cutoff moves evenly in octaves, a volume as its fader moves. Before the first point the lane holds the first value, and after the last point it holds the last. So a sudden move is two points a tick apart.
 - While a lane moves a number, the value in the record of the device does not play. Take the lane out and the record plays again.
+- A lane belongs to the track, not to a clip. When you move a clip by editing its `start`, or move its file to another track, move the points under it yourself if they belong to it.
 - One number has one lane. Leave `automation` out when the track has none.
 - Today the built-in `filter` takes automation, and the volume and pan of every track. A lane of any other device is reported and moves nothing.
 

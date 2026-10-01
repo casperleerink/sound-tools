@@ -40,6 +40,7 @@ use watcher::Watcher;
 use crate::clock::{Clock, Ticks, TimeSignatures};
 use crate::control::EngineControl;
 use crate::graph::GraphError;
+use crate::parameter::AutomatedNumber;
 use crate::peaks::Peaks;
 use crate::processor::Processor;
 
@@ -284,6 +285,13 @@ impl Project {
     /// built again. Read it again after every change instead of keeping it.
     pub fn input_port(&self, instance: &InstanceId, port: &str) -> Option<InputEndpoint> {
         self.bindings.input(instance, port)
+    }
+
+    /// The number `field` that `instance` takes automation for, as its behaviour named it the
+    /// last time it ran. `None` while it takes none of that name. For an owner that edits its
+    /// lanes, such as the arrangement when a clip takes the automation under it along.
+    pub fn automation(&self, instance: &InstanceId, field: &str) -> Option<AutomatedNumber> {
+        self.bindings.automation(instance, field)
     }
 
     /// The peaks that the behaviour of `instance` keeps under `name`, for a meter: take from
