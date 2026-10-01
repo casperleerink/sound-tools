@@ -325,11 +325,9 @@ impl RenderOnce for Knob {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| GestureState::new(cx));
         let (disabled, automated) = (self.disabled, self.automated);
-        let focus_handle = state
-            .read(cx)
-            .focus_handle
-            .clone()
-            .tab_stop(!disabled && !automated);
+        // An automated knob is still a tab stop, so the keys reach it, and a lane that arrives
+        // on a focused knob leaves the focus where it is.
+        let focus_handle = state.read(cx).focus_handle.clone().tab_stop(!disabled);
         let ring_shows = state
             .read(cx)
             .keyboard_focus
@@ -350,7 +348,8 @@ impl RenderOnce for Knob {
         )
         .size_full();
 
-        let on_change = self.on_change.filter(|_| !disabled && !automated);
+        let held = disabled || automated;
+        let on_change = self.on_change;
         let marked = self.id.clone();
         let mark = automated.then(|| {
             let mark = automated::mark(DIAL - automated::MARK - MARK_INSET, MARK_INSET, cx);
@@ -372,10 +371,14 @@ impl RenderOnce for Knob {
             .relative()
             .size(px(DIAL))
             .when(disabled, |d| d.cursor_not_allowed())
-            .when_some(on_change, |d, on_change| {
-                drags(d, dragged, &state, &focus_handle, on_change)
+            .when_some(on_change, |d, on_change| match held {
+                true => d.child(gesture::held_listeners(state.clone(), on_change)),
+                false => drags(d, dragged, &state, &focus_handle, on_change),
             })
-            .when(automated, automated::tooltip)
+            .when(automated, |d| {
+                let d = d.track_focus(&focus_handle);
+                automated::tooltip(d.on_key_down(|event, _, cx| gesture::held_key_down(event, cx)))
+            })
             .child(dial)
             .children(mark);
 

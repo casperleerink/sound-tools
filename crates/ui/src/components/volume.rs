@@ -214,11 +214,8 @@ impl RenderOnce for Volume {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| GestureState::new(cx));
         let (disabled, automated) = (self.disabled, self.automated);
-        let focus_handle = state
-            .read(cx)
-            .focus_handle
-            .clone()
-            .tab_stop(!disabled && !automated);
+        // An automated volume is still a tab stop, as an automated knob is.
+        let focus_handle = state.read(cx).focus_handle.clone().tab_stop(!disabled);
         let ring_shows = state
             .read(cx)
             .keyboard_focus
@@ -246,7 +243,8 @@ impl RenderOnce for Volume {
         .w(px(meter_width))
         .h(px(height));
 
-        let on_change = self.on_change.filter(|_| !disabled && !automated);
+        let held = disabled || automated;
+        let on_change = self.on_change;
         let mark_left = (CELL_WIDTH + meter_width) / 2. + MARK_GAP;
         let marked = self.id.clone();
         let mark = automated.then(|| {
@@ -263,7 +261,10 @@ impl RenderOnce for Volume {
             .flex()
             .justify_center()
             .when(disabled, |d| d.cursor_not_allowed())
-            .when_some(on_change, |d, on_change| {
+            .when_some(on_change.clone().filter(|_| held), |d, on_change| {
+                d.child(gesture::held_listeners(state.clone(), on_change))
+            })
+            .when_some(on_change.filter(|_| !held), |d, on_change| {
                 let on_mouse_down = {
                     let (state, on_change) = (state.clone(), on_change.clone());
                     move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
@@ -315,7 +316,10 @@ impl RenderOnce for Volume {
                         meter.on_clear_clip(move |window, cx| clear(window, cx))
                     }),
             )
-            .when(automated, automated::tooltip)
+            .when(automated, |d| {
+                let d = d.track_focus(&focus_handle);
+                automated::tooltip(d.on_key_down(|event, _, cx| gesture::held_key_down(event, cx)))
+            })
             .child(thumb)
             .children(mark);
 

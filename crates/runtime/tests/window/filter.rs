@@ -321,3 +321,23 @@ fn an_automated_cutoff_shows_its_lane_and_does_not_drag(cx: &mut TestAppContext)
     assert!(state(&mut opened).cutoff_hz > record);
     assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
 }
+
+/// A lane that arrives during a drag of the cutoff, as an agent writes it: the drag ends at the
+/// next mouse move, with the gesture of the session, so undo does not wait for a mouse up.
+#[gpui::test]
+fn a_lane_that_arrives_during_a_knob_drag_ends_the_gesture(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    let knob = opened.control("knob-cutoff_hz");
+    opened.press(knob);
+    opened.drag_to(point(knob.x, knob.y - px(20.)));
+    assert!(opened.gesture_open());
+    automate(&mut opened, &[(0, 300.)]);
+    opened.drag_to(point(knob.x, knob.y - px(40.)));
+    assert!(!opened.gesture_open());
+    assert!((shown_cutoff(&mut opened) - 300.).abs() < 0.01);
+    let label = opened.undo_label();
+    opened.keys("cmd-z");
+    assert_ne!(opened.undo_label(), label);
+    opened.release(point(knob.x, knob.y - px(40.)));
+    assert!(!opened.gesture_open());
+}

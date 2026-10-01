@@ -16,7 +16,7 @@
 //! A handle may also be the whole display, with no dot ([`Handle::area`]): a drag anywhere on
 //! it moves the value, as the position of a wavetable moves. The controls at the top of the
 //! display stay above it. A handle that moves a number an automation lane moves shows where the
-//! lane is and does not drag, as the knob of that number does not.
+//! lane is and does not drag; the knob of that number carries the mark and says why.
 //!
 //! The display knows no device. The owner gives the curve as points on the display and the
 //! handles with their values, and hears what a handle moves.
@@ -34,7 +34,6 @@ use gpui::{
     canvas, div, fill, point, prelude::*, px, size,
 };
 
-use crate::components::automated;
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::knob::KnobRange;
 use crate::components::paint;
@@ -523,7 +522,7 @@ fn moved(axis: Axis, travel: &mut Travel, pointer: f32, fine: bool) -> f32 {
 /// The element of one handle, a dot in a larger target centred on its place.
 fn handle_element(
     display: &ElementId,
-    mut handle: Handle,
+    handle: Handle,
     hides_under_files: bool,
     (width, height): (f32, f32),
     (dot, ring): (Hsla, Hsla),
@@ -537,9 +536,6 @@ fn handle_element(
     let state = window.use_keyed_state(key, cx, |_, cx| GestureState::new(cx));
     let focus_handle = state.read(cx).focus_handle.clone();
     let held = handle.automated;
-    if held {
-        handle.on_change = None;
-    }
     let (x, y) = (handle.x, handle.y);
     let place = point(x.position(), y.position());
     let value = point(x.value, y.value);
@@ -577,7 +573,6 @@ fn handle_element(
         .items_center()
         .justify_center()
         .when(handle.dimmed, |d| d.opacity(0.4))
-        .when(held, automated::tooltip)
         .when(hides_under_files, |d| {
             d.group_drag_over::<ExternalPaths>(INSET_GROUP, |style| style.opacity(0.))
         })
@@ -605,12 +600,20 @@ fn handle_element(
         // A handle that does not drag still hears its presses. One that drags hears them in
         // its own listener, before the drag, which stops the press there.
         .when_some(
-            on_press.clone().filter(|_| handle.on_change.is_none()),
+            on_press
+                .clone()
+                .filter(|_| held || handle.on_change.is_none()),
             |d, on_press| {
                 d.on_mouse_down(MouseButton::Left, move |_, window, cx| on_press(window, cx))
             },
         )
-        .when_some(handle.on_change, |d, on_change| {
+        // A held handle keeps its focus, so that a lane arriving during a drag ends the drag
+        // and leaves nothing open.
+        .when_some(handle.on_change.clone().filter(|_| held), |d, on_change| {
+            d.track_focus(&focus_handle)
+                .child(gesture::held_listeners(state.clone(), on_change))
+        })
+        .when_some(handle.on_change.filter(|_| !held), |d, on_change| {
             let on_mouse_down = {
                 let (state, on_change) = (state.clone(), on_change.clone());
                 let press_focus = focus_handle.clone();

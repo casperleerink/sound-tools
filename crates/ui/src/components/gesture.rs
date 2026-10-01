@@ -14,6 +14,8 @@
 //! - Escape during a drag reports [`ValueChange::DragCancel`].
 //! - A double click, or backspace on the focused control, reports its default value.
 //! - The arrow keys step. What a step is belongs to the control.
+//! - A control that starts to hold still during a drag, because it is disabled or a lane took
+//!   its value over, ends the drag at the next mouse event, so the gesture of its owner ends.
 //!
 //! [`Travel`] and [`ValueKey`] are the maths and the keys, with no GPUI in them. The rest wires
 //! them to the mouse and the keys the same way for every control.
@@ -242,6 +244,16 @@ pub(crate) fn key_down<V: Copy + PartialEq + 'static>(
     }
 }
 
+/// A key on a focused control that holds still because a lane moves its value: it takes the
+/// keys of a value and does nothing with them, so an arrow on an automated knob does not move
+/// what holds it, such as the selection of a track. Escape goes on to the holder.
+pub(crate) fn held_key_down(event: &KeyDownEvent, cx: &mut App) {
+    let key = ValueKey::of(&event.keystroke);
+    if key.is_some_and(|key| key != ValueKey::Cancel) {
+        cx.stop_propagation();
+    }
+}
+
 /// The end of a drag: mouse up, the button came up somewhere else, or a new press. Nothing that
 /// is drawn depends on the drag, so nobody is notified: these listeners hear every mouse up and
 /// every press of the window.
@@ -267,6 +279,23 @@ pub(crate) fn drag_listeners<V: Copy + PartialEq + 'static>(
     state: Entity<GestureState<V>>,
     on_change: ChangeHandler<V>,
 ) -> impl IntoElement {
+    listeners(state, on_change, false)
+}
+
+/// The listeners of a control that holds still, disabled or automated: a drag that was open
+/// when it began to hold sends no more values and ends at the next mouse event.
+pub(crate) fn held_listeners<V: Copy + PartialEq + 'static>(
+    state: Entity<GestureState<V>>,
+    on_change: ChangeHandler<V>,
+) -> impl IntoElement {
+    listeners(state, on_change, true)
+}
+
+fn listeners<V: Copy + PartialEq + 'static>(
+    state: Entity<GestureState<V>>,
+    on_change: ChangeHandler<V>,
+    held: bool,
+) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |_, (), window, _| {
@@ -276,8 +305,9 @@ pub(crate) fn drag_listeners<V: Copy + PartialEq + 'static>(
                     if phase != DispatchPhase::Bubble || state.read(cx).drag.is_none() {
                         return;
                     }
-                    if !event.dragging() {
-                        // The button came up somewhere that did not tell us.
+                    if held || !event.dragging() {
+                        // The button came up somewhere that did not tell us, or the control
+                        // holds still now.
                         return end_drag(&state, &on_change, window, cx);
                     }
                     let next = state.update(cx, |state, _| {

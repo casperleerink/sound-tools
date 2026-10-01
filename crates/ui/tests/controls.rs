@@ -397,18 +397,20 @@ fn a_press_on_a_handle_is_heard_whether_or_not_it_drags(cx: &mut TestAppContext)
     assert!(view.read_with(cx, |view, _| view.handle.changes.is_empty()));
 }
 
-/// A knob and a volume that an automation lane moves, with a callback that counts what they
-/// send.
+/// A knob and a volume that an automation lane moves, or not, with a callback that keeps what
+/// they send.
 struct Automated {
-    changes: usize,
+    automated: bool,
+    changes: Vec<ValueChange>,
 }
 
 impl Render for Automated {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let heard = |cx: &Context<Self>| {
             let view = cx.weak_entity();
-            move |_: ValueChange, _: &mut Window, cx: &mut gpui::App| {
-                view.update(cx, |view, _| view.changes += 1).unwrap();
+            move |change: ValueChange, _: &mut Window, cx: &mut gpui::App| {
+                view.update(cx, |view, _| view.changes.push(change))
+                    .unwrap();
             }
         };
         div()
@@ -419,24 +421,42 @@ impl Render for Automated {
                 Knob::new("cutoff")
                     .value(0.5)
                     .default_value(0.2)
-                    .automated(true)
+                    .automated(self.automated)
                     .on_change(heard(cx)),
             )
             .child(
                 Volume::new("volume", START_DB)
                     .height(HEIGHT)
-                    .automated(true)
+                    .automated(self.automated)
                     .on_change(heard(cx)),
             )
     }
 }
 
+fn open_automated(
+    cx: &mut TestAppContext,
+    automated: bool,
+) -> (gpui::Entity<Automated>, &mut VisualTestContext) {
+    cx.update(sound_ui::init);
+    cx.add_window_view(move |_, _| Automated {
+        automated,
+        changes: Vec::new(),
+    })
+}
+
+fn set_automated(view: &gpui::Entity<Automated>, cx: &mut VisualTestContext) {
+    view.update(cx, |view, cx| {
+        view.automated = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+}
+
 /// An automated control shows its value and changes nothing: a drag, a double click and the
-/// keys send nothing, and tab does not stop on it.
+/// keys send nothing. Tab still stops on it, so the keys reach it and its tooltip.
 #[gpui::test]
 fn an_automated_knob_or_volume_does_not_drag_step_or_reset(cx: &mut TestAppContext) {
-    cx.update(sound_ui::init);
-    let (view, cx) = cx.add_window_view(|_, _| Automated { changes: 0 });
+    let (view, cx) = open_automated(cx, true);
     for selector in ["knob-cutoff", "volume-volume"] {
         let at = bounds(cx, selector).center();
         press(cx, at, 1);
@@ -445,10 +465,42 @@ fn an_automated_knob_or_volume_does_not_drag_step_or_reset(cx: &mut TestAppConte
         press(cx, at, 2);
         release(cx, at, 2);
     }
+    for _ in 0..2 {
+        cx.update(|window, cx| window.focus_next(cx));
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| window.focused(cx).is_some()));
+        cx.simulate_keystrokes("up backspace");
+        cx.run_until_parked();
+    }
+    assert_eq!(view.read_with(cx, |view, _| view.changes.clone()), []);
+}
+
+/// A lane that arrives during a drag ends it at the next mouse move, so the owner closes its
+/// gesture, and the control sends no more values. A lane that arrives on a focused knob leaves
+/// the focus where it is.
+#[gpui::test]
+fn a_lane_that_arrives_during_a_drag_ends_it(cx: &mut TestAppContext) {
+    for selector in ["knob-cutoff", "volume-volume"] {
+        let (view, cx) = open_automated(cx, false);
+        let at = bounds(cx, selector).center();
+        press(cx, at, 1);
+        drag_to(cx, at - point(px(0.), px(20.)), false);
+        set_automated(&view, cx);
+        drag_to(cx, at - point(px(0.), px(40.)), false);
+        drag_to(cx, at - point(px(0.), px(60.)), false);
+        release(cx, at - point(px(0.), px(60.)), 1);
+        let changes = view.read_with(cx, |view, _| view.changes.clone());
+        assert!(
+            matches!(changes[0], ValueChange::Drag(_)),
+            "{selector}: {changes:?}"
+        );
+        assert_eq!(changes[1..], [ValueChange::DragEnd], "{selector}");
+    }
+    let (view, cx) = open_automated(cx, false);
     cx.update(|window, cx| window.focus_next(cx));
     cx.run_until_parked();
-    assert!(cx.update(|window, cx| window.focused(cx).is_none()));
-    cx.simulate_keystrokes("up backspace");
-    cx.run_until_parked();
-    assert_eq!(view.read_with(cx, |view, _| view.changes), 0);
+    let focused = cx.update(|window, cx| window.focused(cx));
+    assert!(focused.is_some());
+    set_automated(&view, cx);
+    assert_eq!(cx.update(|window, cx| window.focused(cx)), focused);
 }
