@@ -15,8 +15,8 @@ use sound_core::{
     EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor, Ticks, Transport,
 };
 use sound_notes::{
-    Amount, Bend, Clip, Expression, LaneValue, NoteEvent, Pedal, Pitch, PlacedNote, PlacedPedal,
-    Point, Velocity,
+    Amount, Bend, Clip, Expression, ExpressionValue, NoteEvent, Pedal, Pitch, PlacedNote,
+    PlacedPedal, Point, Velocity,
 };
 
 /// How long a preview note sounds. Its off comes from the processor after this time, so no
@@ -152,7 +152,7 @@ struct Piece<V> {
     line: [Point<V>; 2],
 }
 
-impl<V: LaneValue> PlayedLane<V> {
+impl<V: ExpressionValue> PlayedLane<V> {
     /// The lane `points` of `clips`. Where clips with points in it overlap, the one that
     /// started last owns the lane, and of two that start together the later one in `clips`. A
     /// clip without points owns nothing.

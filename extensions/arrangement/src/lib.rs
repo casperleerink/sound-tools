@@ -31,6 +31,7 @@
 //! is in [`view`]. Nothing else here uses GPUI.
 
 mod audio;
+mod automation;
 pub mod decibels;
 mod input;
 mod master;
@@ -52,10 +53,11 @@ use sound_core::{
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOOL, Velocity};
 
 pub use audio::AudioClip;
+pub use automation::{AutomationLane, AutomationValue};
 pub use input::InputChannels;
 use master::Master;
 pub use master::{LimiterState, MasterState};
-pub use mixer::{ChannelGains, Mixer, RAMP_SECONDS, channel_gains};
+pub use mixer::{ChannelGains, Mix, Mixer, RAMP_SECONDS};
 pub use player::{AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS};
 pub use sequencer::{HELD_CAPACITY, PREVIEW_SECONDS, Sequencer, SequencerUpdate, TrackSnapshot};
 pub use slot::EffectSlot;
@@ -213,6 +215,11 @@ pub struct TrackState {
     /// records notes, not audio, and does nothing with it.
     #[serde(default, skip_serializing_if = "InputChannels::is_default")]
     pub input: InputChannels,
+    /// The lanes that move numbers of the devices of the track, and its own volume and pan,
+    /// over the project timeline. Left out when there are none, so a track of before
+    /// automation existed loads unchanged and gives the same bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub automation: Vec<AutomationLane>,
 }
 
 impl TrackState {
@@ -235,6 +242,7 @@ impl TrackState {
             solo: false,
             effects: Vec::new(),
             input: InputChannels::FIRST,
+            automation: Vec::new(),
         }
     }
 
@@ -288,7 +296,7 @@ impl State for TrackState {
                 ));
             }
         }
-        Ok(())
+        AutomationLane::check_all(&self.automation)
     }
 }
 
@@ -377,6 +385,7 @@ fn apply_track(
     if let Some(sound) = sound {
         context.output(AUDIO_OUTPUT, sound);
     }
+    automation::play(&track.automation, context)?;
     for name in unlisted_effects(track, context) {
         context.problem(format!(
             "the child {name:?} takes audio in and makes audio out, and the `effects` list of this track does not name it, so nothing goes through it. Add {name:?} to `effects` where you want it in the chain, or delete the file"
@@ -453,14 +462,12 @@ fn apply_arrangement(
     let soloing = context
         .children::<TrackState>()
         .any(|(_, track)| track.solo);
-    let tracks: Vec<(String, ChannelGains)> = context
+    let tracks: Vec<(String, Mix)> = context
         .children::<TrackState>()
         .map(|(name, track)| {
-            let gains = match soloing && !track.solo {
-                true => [0.0; sound_core::CHANNELS],
-                false => channel_gains(track),
-            };
-            (name.to_string(), gains)
+            let mix = Mix::of(track);
+            let silent = mix.silent || (soloing && !track.solo);
+            (name.to_string(), Mix { silent, ..mix })
         })
         .collect();
 
@@ -469,12 +476,15 @@ fn apply_arrangement(
     let master = context.processor(MASTER, || Master::new(settings, peaks, reduction))?;
     context.update(master, settings)?;
 
-    for (name, gains) in tracks {
+    for (name, mix) in tracks {
         let peaks = context.peaks(&format!("{TRACK_PEAKS}{name}"));
-        let mixer = context.processor(&format!("{MIXER}{name}"), || Mixer::new(gains, peaks))?;
-        context.update(mixer, gains)?;
+        let mixer = context.processor(&format!("{MIXER}{name}"), || Mixer::new(mix, peaks))?;
+        context.update(mixer, mix)?;
         if let Some(sound) = context.child_output(&name, AUDIO_OUTPUT) {
             context.connect(sound.to(InputEndpoint::new(mixer, Mixer::INPUT)))?;
+        }
+        if let Some(lanes) = context.child_output(&name, automation::TRACK_AUTOMATION) {
+            context.connect(lanes.to(InputEndpoint::new(mixer, Mixer::AUTOMATION.port())))?;
         }
         let into_master = InputEndpoint::new(master, Master::INPUT);
         context.connect(OutputEndpoint::new(mixer, Mixer::OUTPUT).to(into_master))?;

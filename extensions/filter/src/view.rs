@@ -4,9 +4,9 @@
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one
-//! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges and
-//! the defaults come from the [`Parameter`]s of the crate. What is only about the interface is
-//! here: the label, the unit, the travel of a knob, the name of the undo step and whether the
+//! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
+//! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
+//! about the interface is here: the label, the unit, the name of the undo step and whether the
 //! card is expanded.
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, prelude::*};
@@ -62,24 +62,17 @@ struct Control {
 }
 
 impl Control {
-    /// Frequencies are heard in ratios, so their knobs travel in ratios.
     const fn new(
         parameter: &'static Parameter,
         label: &'static str,
         undo_label: &'static str,
         unit: Unit,
     ) -> Self {
-        let scale = match unit {
-            Unit::Hertz => KnobRange::logarithmic(parameter.min, parameter.max),
-            Unit::Decibels | Unit::Part | Unit::Octaves => {
-                KnobRange::linear(parameter.min, parameter.max)
-            }
-        };
         Self {
             parameter,
             label,
             undo_label,
-            scale,
+            scale: KnobRange::of(parameter),
             unit,
         }
     }

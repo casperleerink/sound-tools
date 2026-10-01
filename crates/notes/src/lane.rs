@@ -1,5 +1,6 @@
-//! The expression lanes of a clip: how the bend wheel, the modulation wheel and the key
-//! pressure move through it.
+//! Lanes: how a value moves over time. The expression lanes of a clip move the bend wheel, the
+//! modulation wheel and the key pressure through it; an automation lane of a track moves a
+//! number of a device, as a place on the travel of its knob.
 //!
 //! A lane is a list of points. Between two points the value moves in a straight line, before
 //! the first point it holds the first value, and after the last it holds the last. Everyone
@@ -21,8 +22,22 @@ pub struct Point<V> {
     pub value: V,
 }
 
-/// What a lane holds: a [`Bend`] or an [`Amount`].
-pub trait LaneValue: Copy + Eq + Debug {
+/// What a lane holds, and the straight line between two of its values.
+pub trait LaneValue: Copy + PartialEq + Debug {
+    /// The value `done` of the way from `from` to `to`, with `done` from 0 to 1.
+    fn between(from: Self, to: Self, done: f64) -> Self;
+}
+
+/// A plain number, such as a place on the travel of a knob.
+impl LaneValue for f32 {
+    fn between(from: Self, to: Self, done: f64) -> Self {
+        let from = f64::from(from);
+        (from + (f64::from(to) - from) * done) as f32
+    }
+}
+
+/// What an expression lane holds: a [`Bend`] or an [`Amount`], in the steps MIDI sends.
+pub trait ExpressionValue: LaneValue + Eq {
     /// Where the lane stands when no clip moves it, as after an `AllOff`.
     const REST: Self;
     /// The lowest and the highest value, as numbers.
@@ -38,7 +53,26 @@ pub trait LaneValue: Copy + Eq + Debug {
     fn nearest(number: i64) -> Self;
 }
 
+/// The step nearest to the straight line between two steps.
+fn nearest_between<V: ExpressionValue>(from: V, to: V, done: f64) -> V {
+    let from = f64::from(from.number());
+    let rise = f64::from(to.number()) - from;
+    V::nearest((from + rise * done).round() as i64)
+}
+
 impl LaneValue for Bend {
+    fn between(from: Self, to: Self, done: f64) -> Self {
+        nearest_between(from, to, done)
+    }
+}
+
+impl LaneValue for Amount {
+    fn between(from: Self, to: Self, done: f64) -> Self {
+        nearest_between(from, to, done)
+    }
+}
+
+impl ExpressionValue for Bend {
     const REST: Self = Self::MIDDLE;
     const LOWEST: i32 = -8192;
     const HIGHEST: i32 = 8191;
@@ -56,7 +90,7 @@ impl LaneValue for Bend {
     }
 }
 
-impl LaneValue for Amount {
+impl ExpressionValue for Amount {
     const REST: Self = Self::NONE;
     const LOWEST: i32 = 0;
     const HIGHEST: i32 = 127;
@@ -81,10 +115,8 @@ impl<V: LaneValue> Point<V> {
         if tick >= next.tick {
             return next.value;
         }
-        let from = f64::from(self.value.number());
-        let rise = f64::from(next.value.number()) - from;
         let done = (tick.0 - self.tick.0) as f64 / (next.tick.0 - self.tick.0) as f64;
-        V::nearest((from + rise * done).round() as i64)
+        V::between(self.value, next.value, done)
     }
 }
 
@@ -100,14 +132,14 @@ pub fn value_at<V: LaneValue>(points: &[Point<V>], tick: Ticks) -> Option<V> {
 }
 
 /// The lane with every point dropped that the straight line through the points it keeps
-/// passes within [`LaneValue::STEP`] of. The first and the last point stay. So a recorded
+/// passes within [`ExpressionValue::STEP`] of. The first and the last point stay. So a recorded
 /// wheel is a small file, and it plays as it was played.
 ///
 /// One pass: from the last kept point, the lines that pass every point since within a step
 /// have slopes between `lowest` and `highest`. A point whose own slope is outside them is the
 /// end of a line, and the point before it is kept. A minute of pressure is thinned as fast as
 /// it is read.
-pub fn thinned<V: LaneValue>(points: &[Point<V>]) -> Vec<Point<V>> {
+pub fn thinned<V: ExpressionValue>(points: &[Point<V>]) -> Vec<Point<V>> {
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return Vec::new();
     };
@@ -173,23 +205,29 @@ pub fn cut<V: LaneValue>(points: &[Point<V>], range: Range<Ticks>) -> Vec<Point<
 /// Whether a lane of a clip `length` long follows the rules of a clip: every point inside it,
 /// in tick order, one per tick. `field` is the name of the lane in the record.
 pub(crate) fn check<V>(field: &str, points: &[Point<V>], length: Ticks) -> Result<(), String> {
-    let mut before: Option<Ticks> = None;
-    for (index, point) in points.iter().enumerate() {
-        if point.tick >= length {
-            return Err(format!(
-                "{field}[{index}].tick must be less than the clip length {}, not {}. A point counts from the start of its clip, not from the start of the project",
-                length.0, point.tick.0
-            ));
-        }
-        if let Some(before) = before
-            && point.tick <= before
-        {
+    let mut points_inside = points.iter().enumerate();
+    if let Some((index, point)) = points_inside.find(|(_, point)| point.tick >= length) {
+        return Err(format!(
+            "{field}[{index}].tick must be less than the clip length {}, not {}. A point counts from the start of its clip, not from the start of the project",
+            length.0, point.tick.0
+        ));
+    }
+    check_order(field, points)
+}
+
+/// Whether the points of a lane are in tick order, one per tick. `field` is the name of the
+/// lane in the record.
+pub fn check_order<V>(field: &str, points: &[Point<V>]) -> Result<(), String> {
+    for (index, pair) in (1..).zip(points.windows(2)) {
+        let [before, point] = pair else {
+            continue;
+        };
+        if point.tick <= before.tick {
             return Err(format!(
                 "{field}[{index}].tick must be after the tick of the point before it, {}, not {}. The points of a lane are in tick order, one per tick",
-                before.0, point.tick.0
+                before.tick.0, point.tick.0
             ));
         }
-        before = Some(point.tick);
     }
     Ok(())
 }

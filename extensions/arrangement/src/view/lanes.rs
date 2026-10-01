@@ -12,7 +12,7 @@ use std::iter::once;
 use std::ops::{Range, RangeInclusive};
 
 use sound_core::Ticks;
-use sound_notes::{Clip, LaneValue, Point, cut, thinned};
+use sound_notes::{Clip, ExpressionValue, Point, cut, thinned};
 
 use super::layout::Viewport;
 use super::roll::{VELOCITY_BOTTOM, VELOCITY_HEIGHT, VELOCITY_TOP};
@@ -70,7 +70,7 @@ pub enum LaneEdit<'a> {
 }
 
 impl LaneEdit<'_> {
-    fn applied<V: LaneValue>(&self, points: &[Point<V>]) -> Vec<Point<V>> {
+    fn applied<V: ExpressionValue>(&self, points: &[Point<V>]) -> Vec<Point<V>> {
         match self {
             Self::Draw(drawn) => {
                 let (Some((&first, _)), Some((&last, _))) =
@@ -155,7 +155,7 @@ impl Lane {
     }
 }
 
-fn line<V: LaneValue>(
+fn line<V: ExpressionValue>(
     viewport: &Viewport,
     clip: &Clip,
     points: &[Point<V>],
@@ -179,14 +179,14 @@ fn line<V: LaneValue>(
 
 /// The height in the lane of a value: the lowest at the bottom, the highest at the top, with
 /// the air of a velocity bar.
-pub fn lane_y<V: LaneValue>(value: V) -> f32 {
+pub fn lane_y<V: ExpressionValue>(value: V) -> f32 {
     let bottom = VELOCITY_HEIGHT - VELOCITY_BOTTOM;
     let share = (value.number() - V::LOWEST) as f32 / (V::HIGHEST - V::LOWEST) as f32;
     bottom - (bottom - VELOCITY_TOP) * share
 }
 
 /// The value at height `y` in the lane. Above the lane it is the highest, below the lowest.
-pub fn value_at_y<V: LaneValue>(y: f32) -> V {
+pub fn value_at_y<V: ExpressionValue>(y: f32) -> V {
     let bottom = VELOCITY_HEIGHT - VELOCITY_BOTTOM;
     let share = ((bottom - y) / (bottom - VELOCITY_TOP)).clamp(0.0, 1.0);
     let span = (V::HIGHEST - V::LOWEST) as f32;

@@ -9,9 +9,10 @@
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob, a slider or on a display is
 //! one gesture and one undo step, a key step, a reset, a pick or a click is one commit. The
-//! ranges and the defaults come from the [`Parameter`](sound_core::Parameter)s of the crate.
-//! What is only about the interface is here: labels, units, the travel of a knob, the names of
-//! the undo steps, whether the card is expanded and which envelope and LFO it shows.
+//! ranges, the defaults and the travel of each knob come from the
+//! [`Parameter`](sound_core::Parameter)s of the crate. What is only about the interface is
+//! here: labels, units, the names of the undo steps, whether the card is expanded and which
+//! envelope and LFO it shows.
 
 mod choices;
 mod drawing;
@@ -134,14 +135,8 @@ impl<T> Control<T> {
         }
     }
 
-    /// Frequencies and times are heard in ratios, so their knobs travel in ratios, when their
-    /// range allows it.
     fn range(&self) -> KnobRange {
-        let Parameter { min, max, .. } = *self.parameter;
-        match self.unit {
-            Unit::Hertz | Unit::Seconds if min > 0. => KnobRange::logarithmic(min, max),
-            _ => KnobRange::linear(min, max),
-        }
+        KnobRange::of(self.parameter)
     }
 
     /// Whole octaves, semitones and voices step by one.

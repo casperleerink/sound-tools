@@ -6,8 +6,8 @@
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of the ceiling handle is one
-//! gesture and one undo step, a key step, a reset or a pick is one commit. The ranges and the
-//! defaults come from the [`Parameter`]s of the crate.
+//! gesture and one undo step, a key step, a reset or a pick is one commit. The ranges, the
+//! defaults and the travel of each knob come from the [`Parameter`]s of the crate.
 
 use gpui::{Context, Entity, Point, Task, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -48,22 +48,21 @@ const GAIN_KNOB: Control = Control {
     parameter: &GAIN,
     label: "Gain",
     undo_label: "Change gain",
-    scale: KnobRange::linear(GAIN.min, GAIN.max),
+    scale: KnobRange::of(&GAIN),
     unit: "dB",
 };
 const CEILING_KNOB: Control = Control {
     parameter: &CEILING,
     label: "Ceiling",
     undo_label: "Change ceiling",
-    scale: KnobRange::linear(CEILING.min, CEILING.max),
+    scale: KnobRange::of(&CEILING),
     unit: "dB",
 };
 const RELEASE_KNOB: Control = Control {
     parameter: &RELEASE,
     label: "Release",
     undo_label: "Change release",
-    // Times are heard in ratios.
-    scale: KnobRange::logarithmic(RELEASE.min, RELEASE.max),
+    scale: KnobRange::of(&RELEASE),
     unit: "ms",
 };
 

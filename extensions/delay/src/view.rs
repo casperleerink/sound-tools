@@ -5,10 +5,10 @@
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one
-//! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges and the
-//! defaults come from the [`Parameter`]s of the crate. What is only about the interface is here:
-//! the label, the unit, the travel of a knob, the name of the undo step and whether the card is
-//! expanded.
+//! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
+//! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
+//! about the interface is here: the label, the unit, the name of the undo step and whether the
+//! card is expanded.
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -57,24 +57,17 @@ struct Control {
 }
 
 impl Control {
-    /// Frequencies and times are heard in ratios, so their knobs travel in ratios.
     const fn new(
         parameter: &'static Parameter,
         label: &'static str,
         undo_label: &'static str,
         unit: Unit,
     ) -> Self {
-        let scale = match unit {
-            Unit::Hertz | Unit::Milliseconds => {
-                KnobRange::logarithmic(parameter.min, parameter.max)
-            }
-            Unit::Part => KnobRange::linear(parameter.min, parameter.max),
-        };
         Self {
             parameter,
             label,
             undo_label,
-            scale,
+            scale: KnobRange::of(parameter),
             unit,
         }
     }
@@ -152,7 +145,8 @@ fn time_readout(state: &DelayState) -> String {
 /// feedback, on a straight scale of level. The handle is on the second repeat: sideways it moves
 /// the time, up and down the feedback, and it stays on the drawing at every value.
 mod layout {
-    use sound_ui::components::knob::{KnobRange, KnobScale};
+    use sound_core::Scale;
+    use sound_ui::components::knob::KnobRange;
 
     /// Where the sound comes in, and the air after the last repeat drawn.
     pub const LEFT: f32 = 0.04;
@@ -170,15 +164,16 @@ mod layout {
     pub const MOST: usize = 64;
 
     /// A range whose place is `start + zone × range.position(value)`: the range stretched over
-    /// the zone and moved to its start. A logarithmic range stays one, with other ends.
+    /// the zone and moved to its start. A logarithmic range stays one, with other ends. No range
+    /// here is on a fader scale, so it is taken as linear.
     pub fn stretched(range: KnobRange, start: f32, zone: f32) -> KnobRange {
         match range.scale {
-            KnobScale::Linear => {
+            Scale::Linear | Scale::Fader => {
                 let width = range.max - range.min;
                 let min = range.min - width * start / zone;
                 KnobRange::linear(min, min + width / zone)
             }
-            KnobScale::Logarithmic => {
+            Scale::Logarithmic => {
                 let ratio = range.max / range.min;
                 let min = range.min * ratio.powf(-start / zone);
                 KnobRange::logarithmic(min, min * ratio.powf(1. / zone))
@@ -451,8 +446,6 @@ impl Render for DelayView {
 
 #[cfg(test)]
 mod tests {
-    use sound_ui::components::knob::KnobScale;
-
     use super::*;
 
     #[test]
@@ -559,10 +552,7 @@ mod tests {
         for range in [DIVISIONS, TIME_KNOB.scale] {
             let stretched = layout::stretched(range, 0.1, 0.8);
             for position in [0., 0.25, 0.5, 1.] {
-                let value = match range.scale {
-                    KnobScale::Linear => range.min + (range.max - range.min) * position,
-                    KnobScale::Logarithmic => range.min * (range.max / range.min).powf(position),
-                };
+                let value = range.scale.value(range.min, range.max, position);
                 let place = stretched.position(value);
                 assert!((place - (0.1 + 0.8 * position)).abs() < 1e-4, "{range:?}");
             }

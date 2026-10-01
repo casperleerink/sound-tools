@@ -5,9 +5,9 @@
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one gesture
-//! and one undo step, a key step, a reset, a shape or a switch is one commit. The ranges and
-//! the defaults come from the [`Parameter`](sound_core::Parameter)s of the crate. What is only
-//! about the interface is here: the label, the unit, the travel of a knob, the name of the
+//! and one undo step, a key step, a reset, a shape or a switch is one commit. The ranges, the
+//! defaults and the travel of each knob come from the [`Parameter`](sound_core::Parameter)s of
+//! the crate. What is only about the interface is here: the label, the unit, the name of the
 //! undo step, which band is selected and whether the card is expanded.
 
 use gpui::{Context, Entity, KeyDownEvent, Point, SharedString, Window, div, point, prelude::*};
@@ -44,8 +44,8 @@ const DRAWN_AT: f32 = 48_000.;
 /// narrow dip of a notch.
 const CURVE_POINTS: usize = 156;
 
-/// Frequencies are heard in ratios, so the display and the frequency knob go across them in
-/// ratios, from 20 Hz to 20 kHz.
+/// Frequencies are heard in ratios, so the display goes across them in ratios, from 20 Hz to
+/// 20 kHz, as the frequency knob does.
 const ACROSS: KnobRange = KnobRange::logarithmic(20., 20_000.);
 
 /// Up and down on the display is the gain of a band, placed so that the handle is at its gain
@@ -78,22 +78,13 @@ struct Control<S: 'static> {
 }
 
 impl<S> Control<S> {
-    /// A frequency and a Q are heard in ratios, so their knobs travel in ratios. A gain goes
-    /// both ways from 0 dB, so its arc starts at the top.
-    fn scale(&self) -> KnobRange {
-        let parameter = self.parameter;
-        match self.unit {
-            Unit::Hertz | Unit::Plain => KnobRange::logarithmic(parameter.min, parameter.max),
-            Unit::Decibels => KnobRange::linear(parameter.min, parameter.max),
-        }
-    }
-
     fn knob(&self, value: f32) -> Knob {
         let parameter = self.parameter;
         Knob::new(parameter.field)
-            .range(self.scale())
+            .range(KnobRange::of(parameter))
             .value(value)
             .default_value(parameter.default)
+            // A gain goes both ways from 0 dB, so its arc starts at the top.
             .bipolar(matches!(self.unit, Unit::Decibels))
             .label(self.label)
             .readout(readout(self.unit, value))
@@ -466,13 +457,19 @@ mod tests {
             for (control, parameter) in controls.iter().zip(band_parameters(band)) {
                 let values = [parameter.min, parameter.default, parameter.max];
                 let (min, max) = (parameter.min, parameter.max);
-                check(control.scale(), parameter.field, min, max, &values);
+                check(
+                    KnobRange::of(control.parameter),
+                    parameter.field,
+                    min,
+                    max,
+                    &values,
+                );
             }
         }
         let output: &crate::Parameter = OUTPUT_KNOB.parameter;
         let values = [output.min, output.default, output.max];
         check(
-            OUTPUT_KNOB.scale(),
+            KnobRange::of(output),
             output.field,
             output.min,
             output.max,

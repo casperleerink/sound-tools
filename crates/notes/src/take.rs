@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use sound_core::{AssetError, AssetName, Assets, InvalidAssetName, Ticks};
 
 use crate::{
-    Amount, Bend, Clip, LaneValue, Length, Note, Pedal, PedalChange, Pitch, Point, Velocity,
+    Amount, Bend, Clip, ExpressionValue, Length, Note, Pedal, PedalChange, Pitch, Point, Velocity,
     thinned,
 };
 
@@ -472,7 +472,7 @@ impl<V> Default for Recorded<V> {
     }
 }
 
-impl<V: LaneValue> Recorded<V> {
+impl<V: ExpressionValue> Recorded<V> {
     /// A move at `tick`. A lane holds one point per tick, so a later move on the same tick
     /// replaces the one there. Before its first move the wheel was at rest, from the start of
     /// the take.

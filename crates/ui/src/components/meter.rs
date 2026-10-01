@@ -15,36 +15,29 @@ use gpui::{
     fill, point, prelude::*, px, size,
 };
 
+use sound_core::Scale;
+
 use crate::theme::ActiveTheme;
 
 /// The top of the scale.
-pub const MAX_DB: f32 = 6.;
+pub const MAX_DB: f32 = sound_core::FADER_TOP_DB;
 /// Where 0 dB sits on the scale.
-pub const UNITY: f32 = 0.8;
+pub const UNITY: f32 = sound_core::FADER_UNITY;
 /// Where green ends and yellow begins.
 const HOT_DB: f32 = -6.;
-/// Decibels of one tenfold step of the place on the scale, so that +6 dB is at the top. The
-/// scale is `UNITY * 10^(dB / DECADE)`: a power law on the amplitude, which gives the lower
-/// decibels room and reaches the bottom at -inf.
-const DECADE: f32 = 61.94;
 
 /// Under this a level is silence: the bars and the peak line come to rest.
 pub const FLOOR_DB: f32 = -96.;
 
-/// The place of a level on the scale, 0 at -inf and 1 at +6 dB. Not a number is silence.
+/// The place of a level on the scale, 0 at -inf and 1 at +6 dB. Not a number is silence. The
+/// scale is [`Scale::Fader`], the one a lane of a track's volume moves on.
 pub fn position_of(db: f32) -> f32 {
-    if db.is_nan() {
-        return 0.;
-    }
-    (UNITY * 10_f32.powf(db / DECADE)).clamp(0., 1.)
+    Scale::Fader.position(f32::NEG_INFINITY, MAX_DB, db)
 }
 
 /// The level at a place on the scale: `-inf` at 0, and for anything that is not above 0.
 pub fn db_at(position: f32) -> f32 {
-    if position.is_nan() || position <= 0. {
-        return f32::NEG_INFINITY;
-    }
-    (DECADE * (position / UNITY).log10()).min(MAX_DB)
+    Scale::Fader.value(f32::NEG_INFINITY, MAX_DB, position)
 }
 
 /// Bars of a vertical meter and the room between them.

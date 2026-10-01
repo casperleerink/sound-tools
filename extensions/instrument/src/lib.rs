@@ -26,7 +26,7 @@ pub mod view;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
@@ -84,6 +84,7 @@ const fn time(
         min,
         max,
         default,
+        scale: Scale::Logarithmic,
         get,
         set,
     }
@@ -94,6 +95,7 @@ pub const CUTOFF: Parameter = Parameter {
     min: 20.0,
     max: 20_000.0,
     default: 2_000.0,
+    scale: Scale::Logarithmic,
     get: |state| state.cutoff_hz,
     set: |state, value| state.cutoff_hz = value,
 };
@@ -102,6 +104,7 @@ pub const RESONANCE: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.2,
+    scale: Scale::Linear,
     get: |state| state.resonance,
     set: |state, value| state.resonance = value,
 };
@@ -122,6 +125,7 @@ pub const SUSTAIN: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.7,
+    scale: Scale::Linear,
     get: |state| state.sustain,
     set: |state, value| state.sustain = value,
 };
@@ -136,6 +140,7 @@ pub const GAIN: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.15,
+    scale: Scale::Linear,
     get: |state| state.gain,
     set: |state, value| state.gain = value,
 };

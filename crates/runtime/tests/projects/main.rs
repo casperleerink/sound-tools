@@ -7,6 +7,7 @@
 mod agent;
 mod agent_doc;
 mod audio;
+mod automation;
 mod compressor;
 mod delay;
 mod drums;

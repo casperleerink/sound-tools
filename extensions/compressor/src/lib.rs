@@ -35,7 +35,7 @@ pub mod view;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -130,6 +130,7 @@ pub const THRESHOLD: Parameter = Parameter {
     min: -60.0,
     max: 0.0,
     default: -18.0,
+    scale: Scale::Linear,
     get: |state| state.threshold_db,
     set: |state, value| state.threshold_db = value,
 };
@@ -138,6 +139,7 @@ pub const RATIO: Parameter = Parameter {
     min: 1.0,
     max: 100.0,
     default: 4.0,
+    scale: Scale::Logarithmic,
     get: |state| state.ratio,
     set: |state, value| state.ratio = value,
 };
@@ -146,6 +148,7 @@ pub const ATTACK: Parameter = Parameter {
     min: 0.1,
     max: 300.0,
     default: 10.0,
+    scale: Scale::Logarithmic,
     get: |state| state.attack_ms,
     set: |state, value| state.attack_ms = value,
 };
@@ -154,6 +157,7 @@ pub const RELEASE: Parameter = Parameter {
     min: 1.0,
     max: 3_000.0,
     default: 120.0,
+    scale: Scale::Logarithmic,
     get: |state| state.release_ms,
     set: |state, value| state.release_ms = value,
 };
@@ -162,6 +166,7 @@ pub const KNEE: Parameter = Parameter {
     min: 0.0,
     max: 18.0,
     default: 6.0,
+    scale: Scale::Linear,
     get: |state| state.knee_db,
     set: |state, value| state.knee_db = value,
 };
@@ -170,6 +175,7 @@ pub const MAKEUP: Parameter = Parameter {
     min: 0.0,
     max: 24.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |state| state.makeup_db,
     set: |state, value| state.makeup_db = value,
 };
@@ -178,6 +184,7 @@ pub const MIX: Parameter = Parameter {
     min: 0.0,
     max: 1.0,
     default: 1.0,
+    scale: Scale::Linear,
     get: |state| state.mix,
     set: |state, value| state.mix = value,
 };

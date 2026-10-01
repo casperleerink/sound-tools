@@ -4,9 +4,9 @@
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one
-//! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges and
-//! the defaults come from the [`Parameter`]s of the crate. What is only about the interface is
-//! here: the label, the unit, the travel of a knob and the name of the undo step.
+//! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
+//! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
+//! about the interface is here: the label, the unit and the name of the undo step.
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -209,7 +209,7 @@ impl SaturatorView {
         let parameter = control.parameter;
         let value = (parameter.get)(state);
         Knob::new(parameter.field)
-            .range(KnobRange::linear(parameter.min, parameter.max))
+            .range(KnobRange::of(parameter))
             .value(value)
             .default_value(parameter.default)
             .bipolar(parameter.min < 0.)
@@ -317,7 +317,7 @@ mod tests {
     fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
         for control in KNOBS {
             let parameter = control.parameter;
-            let range = KnobRange::linear(parameter.min, parameter.max);
+            let range = KnobRange::of(parameter);
             assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
             assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
             for value in [parameter.min, parameter.default, parameter.max] {

@@ -172,6 +172,67 @@ What `problems.txt` says about this, and what to do:
 - `` the child "space" takes audio in and makes audio out ``, and the list does not name it: the record is there and nothing goes through it. Add its name to `effects` where you want it, or delete the file.
 - `effects[1] is "warmth", which the list already has`, or a name with a capital letter, or `instrument`: the record itself does not load, so the whole track keeps what it had. Correct the list.
 
+## Automation: lanes of a track
+
+A track can move a number of one of its devices, or its own volume or pan, over time. Each number that moves has a lane in `automation` in the track record, with points in project ticks.
+
+```json state/arrangement/riser/instance.json
+{
+  "tool": "arrangement.track",
+  "state": {
+    "name": "Riser",
+    "colour": "blue",
+    "order": 3,
+    "gain_db": 0.0,
+    "pan": 0.0,
+    "mute": false,
+    "effects": ["dark"],
+    "automation": [
+      {
+        "device": "dark",
+        "parameter": "cutoff_hz",
+        "points": [{"tick": 30720, "value": 300.0}, {"tick": 61440, "value": 8000.0}]
+      },
+      {"parameter": "gain_db", "points": [{"tick": 0, "value": "-inf"}, {"tick": 3840, "value": 0.0}]}
+    ]
+  }
+}
+```
+
+```json state/arrangement/riser/dark.json
+{
+  "tool": "filter",
+  "state": {
+    "type": "low_pass",
+    "cutoff_hz": 300.0,
+    "resonance": 0.2,
+    "slope": 12,
+    "drive_db": 0.0,
+    "mix": 1.0,
+    "lfo_rate_hz": 1.0,
+    "lfo_depth_octaves": 0.0
+  }
+}
+```
+
+In 4/4 the filter of this track opens over bars 9 to 16, and the track fades in over bar 1.
+
+- `device`: the file name of a device in the track folder, without `.json`, such as an effect in `effects`. Leave it out for the volume and the pan of the track itself.
+- `parameter`: the field in the record of the device, as its doc names it, such as `cutoff_hz` of a filter. For the track itself, `gain_db` or `pan`.
+- `points[].tick`: where the point is in the project, in ticks, not from the start of a clip. The points are in tick order with at most one per tick, and a lane has at least one.
+- `points[].value`: in the units and the range of the field, as its doc gives them. A volume may go down to `"-inf"`, silence.
+- Between two points the value moves in a straight line on the travel of its knob: a cutoff moves evenly in octaves, a volume as its fader moves. Before the first point the lane holds the first value, and after the last point it holds the last. So a sudden move is two points a tick apart.
+- While a lane moves a number, the value in the record of the device does not play. Take the lane out and the record plays again.
+- One number has one lane. Leave `automation` out when the track has none.
+- Today the built-in `filter` takes automation, and the volume and pan of every track. A lane of any other device is reported and moves nothing.
+
+What `problems.txt` says about a lane, and what to do:
+
+- `` automation[0].parameter is "cutoff", and dark takes no automation of a number of that name ``: the message lists the fields it takes. Use one of them. A whole number, such as a count of voices, takes none.
+- `` automation[0].device is "echo", and echo.json takes no automation ``: that device cannot be automated yet. Change its record instead.
+- `` automation[0].points[1].value must be from 20 to 20000 ``: put the value inside the range of the field. The same holds for `gain_db` and `pan` of the track.
+- A lane with no points, points out of tick order, two lanes for one number, or a `device` that cannot be a file name: the track record itself does not load and keeps what it had. Correct the lane.
+
 ## The arrangement and its master: `arrangement`
 
 ```json state/arrangement/instance.json
@@ -206,3 +267,4 @@ The arrangement is the master: every track plays into it, and it plays to the ma
 - Change the sound of a track: edit its `instrument.json`. Put an effect after it, or take one off, with `effects` in `instance.json` and the record next to it.
 - Balance the tracks: set `gain_db` in `instance.json` of each. Put a track to one side with `pan`, silence one with `"mute": true`, and hear one alone with `"solo": true`. All of them apply while the project plays.
 - Make the whole piece louder or quieter: `master.gain_db` in `state/arrangement/instance.json`. The limiter keeps it under its ceiling.
+- Make a number change over time, such as a filter sweep or a fade: a lane in `automation` of the track record.

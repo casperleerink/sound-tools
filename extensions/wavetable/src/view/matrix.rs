@@ -91,7 +91,7 @@ impl WavetableView {
             .trigger_width(DESTINATION_WIDTH)
             .menu_width(200.);
         let amount = Slider::new(("route-amount", index), AMOUNT_WIDTH)
-            .range(KnobRange::linear(ROUTE_AMOUNT.min, ROUTE_AMOUNT.max))
+            .range(KnobRange::of(&ROUTE_AMOUNT))
             .bipolar(true)
             .value(route.amount)
             .default_value(ROUTE_AMOUNT.default)

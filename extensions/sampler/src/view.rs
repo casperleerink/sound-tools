@@ -26,7 +26,7 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, KnobScale, short};
+use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::waveform_display::{
     FileDrop, NoFile, WaveformDisplay, clamped_end, clamped_start, place,
 };
@@ -77,19 +77,6 @@ struct Control {
 }
 
 impl Control {
-    fn range(&self) -> KnobRange {
-        // Times are heard in ratios, so their knobs travel in ratios.
-        let scale = match self.unit {
-            Unit::Seconds => KnobScale::Logarithmic,
-            Unit::Part | Unit::Decibels | Unit::Note => KnobScale::Linear,
-        };
-        KnobRange {
-            min: self.parameter.min,
-            max: self.parameter.max,
-            scale,
-        }
-    }
-
     /// A value as the parameter takes it: a handle may ask for one past its ends.
     fn clamp(&self, value: f32) -> f32 {
         value.clamp(self.parameter.min, self.parameter.max)
@@ -362,7 +349,7 @@ impl SamplerView {
     ) -> Knob {
         let value = (control.parameter.get)(state);
         let knob = Knob::new(control.parameter.field)
-            .range(control.range())
+            .range(KnobRange::of(control.parameter))
             .value(value)
             .default_value(control.parameter.default)
             .label(control.label)

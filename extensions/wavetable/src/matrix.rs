@@ -204,6 +204,7 @@ pub const ROUTE_AMOUNT: sound_core::Parameter<Route> = sound_core::Parameter {
     min: -1.0,
     max: 1.0,
     default: 0.0,
+    scale: sound_core::Scale::Linear,
     get: |route| route.amount,
     set: |route, value| route.amount = value,
 };

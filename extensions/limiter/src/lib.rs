@@ -38,7 +38,7 @@ pub mod view;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, State,
+    RegistryError, Scale, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -126,6 +126,7 @@ pub const GAIN: Parameter = Parameter {
     min: 0.0,
     max: 24.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |state| state.gain_db,
     set: |state, value| state.gain_db = value,
 };
@@ -135,6 +136,7 @@ pub const CEILING: Parameter = Parameter {
     max: 0.0,
     // Under full scale, for the peaks between samples, which the limiter does not see.
     default: -1.0,
+    scale: Scale::Linear,
     get: |state| state.ceiling_db,
     set: |state, value| state.ceiling_db = value,
 };
@@ -143,6 +145,7 @@ pub const RELEASE: Parameter = Parameter {
     min: 10.0,
     max: 1_000.0,
     default: 100.0,
+    scale: Scale::Logarithmic,
     get: |state| state.release_ms,
     set: |state, value| state.release_ms = value,
 };

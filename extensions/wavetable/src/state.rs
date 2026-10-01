@@ -3,13 +3,13 @@
 //!
 //! The record is nested: an object per oscillator, filter, envelope and LFO. Every number of
 //! each object type is one [`Parameter`](sound_core::Parameter) constant of that type, with its
-//! range and its default: `OSC_POSITION` is a `Parameter<Oscillator>`, and reads and writes
+//! range, its default and its scale: `OSC_POSITION` is a `Parameter<Oscillator>`, and reads and writes
 //! `osc_1` or `osc_2` alike. Each type lists its constants in `PARAMETERS`. A field that a
 //! record leaves out takes the default of its type, so `"state": {}` is the default patch and
 //! `"osc_2": {}` a default oscillator.
 
 use serde::{Deserialize, Serialize};
-use sound_core::{FilterSlope, FilterType, LfoShape};
+use sound_core::{FilterSlope, FilterType, LfoShape, Scale};
 use sound_notes::{Division, Feel};
 
 use crate::matrix::{Destination, MAX_ROUTES, Route, Source};
@@ -66,6 +66,7 @@ pub const OSC_POSITION: Parameter<Oscillator> = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.5,
+    scale: Scale::Linear,
     get: |osc| osc.position,
     set: |osc, value| osc.position = value,
 };
@@ -74,6 +75,7 @@ pub const OSC_EFFECT_AMOUNT: Parameter<Oscillator> = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.4,
+    scale: Scale::Linear,
     get: |osc| osc.effect_amount,
     set: |osc, value| osc.effect_amount = value,
 };
@@ -82,6 +84,7 @@ pub const OSC_OCTAVE: Parameter<Oscillator> = Parameter {
     min: -3.0,
     max: 3.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |osc| f32::from(osc.octave),
     set: |osc, value| osc.octave = value as i8,
 };
@@ -90,6 +93,7 @@ pub const OSC_SEMITONE: Parameter<Oscillator> = Parameter {
     min: -12.0,
     max: 12.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |osc| f32::from(osc.semitone),
     set: |osc, value| osc.semitone = value as i8,
 };
@@ -98,6 +102,7 @@ pub const OSC_DETUNE: Parameter<Oscillator> = Parameter {
     min: -50.0,
     max: 50.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |osc| osc.detune_cents,
     set: |osc, value| osc.detune_cents = value,
 };
@@ -106,6 +111,7 @@ pub const OSC_GAIN: Parameter<Oscillator> = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.7,
+    scale: Scale::Linear,
     get: |osc| osc.gain,
     set: |osc, value| osc.gain = value,
 };
@@ -114,6 +120,7 @@ pub const OSC_PAN: Parameter<Oscillator> = Parameter {
     min: -1.0,
     max: 1.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |osc| osc.pan,
     set: |osc, value| osc.pan = value,
 };
@@ -198,6 +205,7 @@ pub const SUB_GAIN: Parameter<Sub> = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |sub| sub.gain,
     set: |sub, value| sub.gain = value,
 };
@@ -230,6 +238,7 @@ pub const UNISON_VOICES: Parameter<Unison> = Parameter {
     min: 1.0,
     max: crate::synth::MAX_UNISON as f32,
     default: 1.0,
+    scale: Scale::Linear,
     get: |unison| f32::from(unison.voices),
     set: |unison, value| unison.voices = value as u8,
 };
@@ -238,6 +247,7 @@ pub const UNISON_AMOUNT: Parameter<Unison> = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.3,
+    scale: Scale::Linear,
     get: |unison| unison.amount,
     set: |unison, value| unison.amount = value,
 };
@@ -279,6 +289,7 @@ pub const FILTER_CUTOFF: Parameter<Filter> = Parameter {
     min: 20.0,
     max: 20_000.0,
     default: 1_000.0,
+    scale: Scale::Logarithmic,
     get: |filter| filter.cutoff_hz,
     set: |filter, value| filter.cutoff_hz = value,
 };
@@ -287,6 +298,7 @@ pub const FILTER_RESONANCE: Parameter<Filter> = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.2,
+    scale: Scale::Linear,
     get: |filter| filter.resonance,
     set: |filter, value| filter.resonance = value,
 };
@@ -295,6 +307,7 @@ pub const FILTER_DRIVE: Parameter<Filter> = Parameter {
     min: 0.0,
     max: 24.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |filter| filter.drive_db,
     set: |filter, value| filter.drive_db = value,
 };
@@ -353,7 +366,8 @@ pub struct Adsr {
     pub release_curve: f32,
 }
 
-/// An envelope time. The lower end keeps every stage long enough not to click.
+/// An envelope time, heard in ratios. The lower end keeps every stage long enough not to
+/// click.
 const fn time(
     field: &'static str,
     default: f32,
@@ -365,6 +379,7 @@ const fn time(
         min: 0.001,
         max: 10.0,
         default,
+        scale: Scale::Logarithmic,
         get,
         set,
     }
@@ -381,6 +396,7 @@ const fn curve(
         min: 0.0,
         max: 1.0,
         default,
+        scale: Scale::Linear,
         get,
         set,
     }
@@ -403,6 +419,7 @@ pub const ENV_SUSTAIN: Parameter<Adsr> = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.6,
+    scale: Scale::Linear,
     get: |env| env.sustain,
     set: |env, value| env.sustain = value,
 };
@@ -478,6 +495,7 @@ pub const LFO_RATE: Parameter<LfoSettings> = Parameter {
     min: 0.01,
     max: 40.0,
     default: 1.0,
+    scale: Scale::Logarithmic,
     get: |lfo| lfo.rate_hz,
     set: |lfo, value| lfo.rate_hz = value,
 };
@@ -526,6 +544,7 @@ pub const POLYPHONY: Parameter<Voicing> = Parameter {
     min: 1.0,
     max: crate::synth::VOICES as f32,
     default: 8.0,
+    scale: Scale::Linear,
     get: |voicing| f32::from(voicing.polyphony),
     set: |voicing, value| voicing.polyphony = value as u8,
 };
@@ -534,6 +553,7 @@ pub const GLIDE: Parameter<Voicing> = Parameter {
     min: 0.0,
     max: 5.0,
     default: 0.0,
+    scale: Scale::Linear,
     get: |voicing| voicing.glide_seconds,
     set: |voicing, value| voicing.glide_seconds = value,
 };
@@ -588,6 +608,7 @@ pub const GAIN: Parameter<WavetableState> = Parameter {
     min: 0.0,
     max: 1.0,
     default: 0.15,
+    scale: Scale::Linear,
     get: |state| state.gain,
     set: |state, value| state.gain = value,
 };
