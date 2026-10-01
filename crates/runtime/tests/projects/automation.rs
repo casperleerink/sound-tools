@@ -86,10 +86,10 @@ fn a_cutoff_sweep_plays_the_values_of_its_points_and_renders_the_same_every_time
     };
     let (dark, bright) = (reference("300.0"), reference("8000.0"));
 
-    // 100 ms for the filter to settle, after the glide from its record value at the start and
-    // after the end of the sweep.
+    // From the first frame: the lane takes its value at once when the render starts, with no
+    // glide from the record. After the sweep the filter takes 100 ms to settle.
     let settle = 4_800;
-    let held_dark = largest_difference(frames(&swept, settle, BAR), frames(&dark, settle, BAR));
+    let held_dark = largest_difference(frames(&swept, 0, BAR), frames(&dark, 0, BAR));
     assert!(held_dark < 1e-5, "{held_dark}");
     let held_bright = largest_difference(
         frames(&swept, 2 * BAR + settle, 4 * BAR),
@@ -149,8 +149,22 @@ fn a_volume_fade_plays_the_values_of_its_points_and_renders_the_same_every_time(
     assert!(record.contains(r#""value": "-inf""#), "{record}");
 }
 
-/// A lane whose device has no such number, or that takes no automation, or whose values are
-/// outside the range is reported by the field, and the lanes that can play play. A record
+/// A fade in from silence starts silent: the lane is at `-inf` from the first frame of the
+/// render, and does not glide down from the record's 0 dB.
+#[test]
+fn a_fade_in_from_silence_starts_silent() {
+    let fade = lane(None, "gain_db", &[(0, r#""-inf""#), (BAR_TICKS, "0.0")]);
+    let mut harness = piano(&automation(&[fade]), "{}");
+    assert_eq!(harness.project.problems(), []);
+    let faded = harness.play_from_the_start(BAR);
+    let full = piano("", "{}").play_from_the_start(BAR);
+    let start = |samples| rms(frames(samples, 0, 256));
+    assert!(start(&full) > 0.001, "{}", start(&full));
+    assert!(start(&faded) < start(&full) * 1e-3, "{}", start(&faded));
+}
+
+/// A lane whose device or track has no such number, or that takes no automation, or whose
+/// values are outside the range is reported by the field, and the lanes that can play play. A record
 /// whose points are out of order does not load, and the track keeps what it had.
 #[test]
 fn a_lane_that_cannot_play_is_reported_and_the_rest_plays() {
@@ -159,6 +173,8 @@ fn a_lane_that_cannot_play_is_reported_and_the_rest_plays() {
         lane(Some("instrument"), "gain", &[(0, "0.5")]),
         lane(Some("tone"), "resonance", &[(0, "3.0")]),
         lane(Some("tone"), "cutoff_hz", &[(0, "300.0")]),
+        lane(None, "volume", &[(0, "0.0")]),
+        lane(None, "pan", &[(0, "3.0")]),
     ];
     let mut harness = piano(&automation(&lanes), "{}");
     let problems = harness.project.problems();
@@ -169,15 +185,17 @@ fn a_lane_that_cannot_play_is_reported_and_the_rest_plays() {
     assert_eq!(
         messages,
         [
-            r#"automation[0].parameter is "cutoff", and tone has no number of that name. It has cutoff_hz, resonance, drive_db, mix, lfo_rate_hz, lfo_depth_octaves, so the lane moves nothing"#,
+            r#"automation[0].parameter is "cutoff", and tone takes no automation of a number of that name. It takes cutoff_hz, resonance, drive_db, mix, lfo_rate_hz, lfo_depth_octaves, so the lane moves nothing"#,
             r#"automation[1].device is "instrument", and instrument.json takes no automation, so the lane moves nothing"#,
             "automation[2].points[0].value must be from 0 to 1, not 3, so the lane moves nothing",
+            r#"automation[4].parameter is "volume", and the track takes no automation of a number of that name. It takes gain_db, pan, so the lane moves nothing"#,
+            "automation[5].points[0].value must be from -1 to 1, not 3, so the lane moves nothing",
         ]
     );
     let played = harness.play_from_the_start(BAR);
     let mut dark = piano("", r#"{"cutoff_hz": 300.0}"#);
     let dark = dark.play_from_the_start(BAR);
-    let held = largest_difference(frames(&played, 4_800, BAR), frames(&dark, 4_800, BAR));
+    let held = largest_difference(frames(&played, 0, BAR), frames(&dark, 0, BAR));
     assert!(held < 1e-5, "{held}");
 
     let unordered = lane(None, "pan", &[(960, "0.5"), (480, "-0.5")]);

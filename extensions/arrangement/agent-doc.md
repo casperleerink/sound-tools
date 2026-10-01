@@ -228,10 +228,10 @@ In 4/4 the filter of this track opens over bars 9 to 16, and the track fades in 
 
 What `problems.txt` says about a lane, and what to do:
 
-- `` automation[0].parameter is "cutoff", and dark has no number of that name ``: the message lists the fields it has. Use one of them.
+- `` automation[0].parameter is "cutoff", and dark takes no automation of a number of that name ``: the message lists the fields it takes. Use one of them. A whole number, such as a count of voices, takes none.
 - `` automation[0].device is "echo", and echo.json takes no automation ``: that device cannot be automated yet. Change its record instead.
-- `` automation[0].points[1].value must be from 20 to 20000 ``: put the value inside the range of the field.
-- A lane out of tick order, a `parameter` of the track other than `gain_db` or `pan`, or a volume over 6: the track record itself does not load and keeps what it had. Correct the lane.
+- `` automation[0].points[1].value must be from 20 to 20000 ``: put the value inside the range of the field. The same holds for `gain_db` and `pan` of the track.
+- A lane with no points, points out of tick order, two lanes for one number, or a `device` that cannot be a file name: the track record itself does not load and keeps what it had. Correct the lane.
 
 ## The arrangement and its master: `arrangement`
 
