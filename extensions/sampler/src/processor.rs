@@ -12,13 +12,18 @@
 use std::sync::Arc;
 
 use sound_core::{
-    AudioOutput, Envelope, EnvelopeState, EventInput, MAX_BLOCK, Peaks, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed,
+    AudioOutput, Automated, AutomationInput, Envelope, EnvelopeState, EventInput, MAX_BLOCK, Peaks,
+    Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
 };
 use sound_media::{Audio, SCRATCH_FRAMES, Varispeed, varispeed};
 use sound_notes::{NoteEvent, Pitch, Velocity, Voice as _, Voices, Wheels};
 
-use crate::SamplerState;
+use crate::{ATTACK, DECAY, GAIN, RELEASE, SUSTAIN, SamplerState, VELOCITY};
+
+/// The numbers an automation lane can move: every number but the root, a key.
+const AUTOMATED: [&crate::Parameter; 6] = [&ATTACK, &DECAY, &SUSTAIN, &RELEASE, &VELOCITY, &GAIN];
+
+type SamplerTargets = Targets<SamplerState, { AUTOMATED.len() }>;
 
 /// Notes that sound at once. One more note takes over a voice, as [`Voices`] picks it. A sample
 /// cannot take over in place as the synth's oscillator does: the new note starts at the start
@@ -42,23 +47,31 @@ const EDGE_SECONDS: f64 = 0.002;
 /// How long the gain takes to reach a new value: the glide of every built-in device.
 const GLIDE_SECONDS: f32 = 0.02;
 
-/// What the processor plays from: the numbers of the record and the sample, read on the control
-/// side. The sample is swapped in, and what it held before goes back to the control side.
+/// What the processor plays from: the record and the sample, read on the control side. Both
+/// are swapped in, and what they replace goes back to the control side.
 pub struct SamplerUpdate {
-    settings: Settings,
+    state: SamplerState,
     sample: Option<Arc<Audio>>,
 }
 
 impl SamplerUpdate {
     /// The update for a record and the file it names, or no file.
     pub fn new(state: &SamplerState, sample: Option<Arc<Audio>>) -> Self {
-        let (rate, frames) = sample.as_ref().map_or((1.0, 0.0), |audio| {
+        let state = state.clone();
+        Self { state, sample }
+    }
+}
+
+impl Settings {
+    /// The numbers of a record for the file it plays, or no file.
+    fn new(state: &SamplerState, sample: Option<&Audio>) -> Self {
+        let (rate, frames) = sample.map_or((1.0, 0.0), |audio| {
             (f64::from(audio.sample_rate()), audio.frames() as f64)
         });
         let end = state
             .end_seconds
             .map_or(frames, |end| (end * rate).min(frames));
-        let settings = Settings {
+        Self {
             root: state.root,
             start: state.start_seconds * rate,
             end,
@@ -69,8 +82,7 @@ impl SamplerUpdate {
             release_seconds: state.release_seconds,
             velocity_to_volume: state.velocity_to_volume,
             gain: 10_f32.powf(state.gain_db / 20.0),
-        };
-        Self { settings, sample }
+        }
     }
 }
 
@@ -244,6 +256,9 @@ impl Voice {
 }
 
 pub struct Sampler {
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<SamplerState, { AUTOMATED.len() }>,
+    /// The record for the current sample.
     settings: Settings,
     current: Option<Arc<Audio>>,
     previous: Option<Arc<Audio>>,
@@ -266,12 +281,16 @@ pub struct Sampler {
 impl Sampler {
     pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<SamplerState, { AUTOMATED.len() }> =
+        AutomationInput::new(1, AUTOMATED);
 
     /// A sampler with no sample, which the first update gives. `position` is where it says
     /// where its last note is in the file.
     pub fn new(position: Peaks) -> Self {
-        let settings = SamplerUpdate::new(&SamplerState::default(), None).settings;
+        let state = SamplerState::default();
+        let settings = Settings::new(&state, None);
         Self {
+            state: Automated::new(Self::AUTOMATION, state),
             settings,
             current: None,
             previous: None,
@@ -334,42 +353,28 @@ impl Sampler {
         }
     }
 
-    /// Where the newest note that still sounds is in its file, for the card.
-    fn show_position(&self) {
-        // A voice that is not cut plays the current sample.
-        if let Some(voice) = self.voices.newest() {
-            let seconds = (voice.position / self.settings.file_rate) as f32;
-            // A peak of 0 is no peak, so the very first frame of a file shows as the smallest
-            // place after it.
-            self.position.record(0, seconds.max(f32::MIN_POSITIVE));
-        }
-    }
-}
-
-impl Processor for Sampler {
-    type Update = SamplerUpdate;
-
-    fn ports(&self) -> Ports {
-        Ports::new()
-            .event_input(Self::NOTES)
-            .audio_output(Self::OUTPUT)
+    /// The frames a change of the gain takes. Zero until `prepare` runs: then it is at once.
+    fn ramp_frames(&self) -> f32 {
+        GLIDE_SECONDS * self.sample_rate
     }
 
-    fn prepare(&mut self, config: &PrepareConfig) {
-        self.sample_rate = config.sample_rate as f32;
-        self.envelope = envelope(&self.settings, self.sample_rate);
-    }
-
-    fn update(&mut self, update: &mut SamplerUpdate) {
-        self.settings = update.settings;
+    /// Works out the record and its lanes for the current sample. The gain glides, the
+    /// envelope applies at once, and the rest from the next note.
+    fn aim(&mut self, targets: &SamplerTargets) {
+        self.settings = Settings::new(&self.state, self.current.as_deref());
         self.envelope = envelope(&self.settings, self.sample_rate);
         self.gain
-            .set_target(self.settings.gain, GLIDE_SECONDS * self.sample_rate);
+            .set_target(self.settings.gain, targets.ramp(&GAIN));
         if self.voices.is_idle() {
             // Nothing sounds, so there is nothing to smooth.
             self.gain.snap();
         }
-        let same = match (&self.current, &update.sample) {
+    }
+
+    /// Takes the sample of an update, unless it is the one that plays. The voices of the one
+    /// before fade out.
+    fn take(&mut self, sample: &mut Option<Arc<Audio>>) {
+        let same = match (&self.current, &*sample) {
             (Some(current), Some(new)) => Arc::ptr_eq(current, new),
             (None, None) => true,
             _ => false,
@@ -388,10 +393,46 @@ impl Processor for Sampler {
         // The current sample becomes the previous one, the new one comes in, and the one
         // before goes back to the control side inside the update, to be dropped there.
         std::mem::swap(&mut self.previous, &mut self.current);
-        std::mem::swap(&mut self.current, &mut update.sample);
+        std::mem::swap(&mut self.current, sample);
+    }
+
+    /// Where the newest note that still sounds is in its file, for the card.
+    fn show_position(&self) {
+        // A voice that is not cut plays the current sample.
+        if let Some(voice) = self.voices.newest() {
+            let seconds = (voice.position / self.settings.file_rate) as f32;
+            // A peak of 0 is no peak, so the very first frame of a file shows as the smallest
+            // place after it.
+            self.position.record(0, seconds.max(f32::MIN_POSITIVE));
+        }
+    }
+}
+
+impl Processor for Sampler {
+    type Update = SamplerUpdate;
+
+    fn ports(&self) -> Ports {
+        Ports::new()
+            .event_input(Self::NOTES)
+            .event_input(Self::AUTOMATION.port())
+            .audio_output(Self::OUTPUT)
+    }
+
+    fn prepare(&mut self, config: &PrepareConfig) {
+        self.sample_rate = config.sample_rate as f32;
+        self.envelope = envelope(&self.settings, self.sample_rate);
+    }
+
+    fn update(&mut self, update: &mut SamplerUpdate) {
+        let targets = self.state.set_record(&mut update.state, self.ramp_frames());
+        self.take(&mut update.sample);
+        self.aim(&targets);
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, self.ramp_frames()) {
+            self.aim(&targets);
+        }
         let events = context.event_inputs.get(Self::NOTES);
         if events.is_empty() && self.voices.is_idle() {
             return;

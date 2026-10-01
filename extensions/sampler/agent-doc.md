@@ -49,6 +49,8 @@ A note plays from `start_seconds` to `end_seconds`, or until its release ends, w
 
 Starting points: a sustained sound (strings, a pad, a held voice) keeps `sustain` 1 and gets `release_seconds` 0.5 or more. A plucked or struck sound (kalimba, piano, a drum) plays well with `sustain` 1 too, since the file decays by itself. To shorten one, set `sustain` 0 with `decay_seconds` as long as the part you want.
 
+The envelope, `velocity_to_volume` and `gain_db` can move over time with an automation lane of the track: see `agent-docs/arrangement.md`.
+
 An edit applies while notes sound. `gain_db` glides there over 20 ms; the envelope applies at once, also to held notes; the other fields apply from the next note. A new `sample` fades out the notes of the old one. A file that is not there is listed in `problems.txt` and the Sampler is silent until the file arrives; the rest of the project plays.
 
 To play notes, write a clip into the track folder as `agent-docs/arrangement.md` says. The Sampler has the ports `notes` (in) and `audio` (out, stereo).

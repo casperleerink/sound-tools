@@ -256,6 +256,7 @@ fn apply(state: &SamplerState, context: &mut BehaviourContext<'_>) -> Result<(),
     let sampler = context.processor("sampler", || Sampler::new(position))?;
     context.update(sampler, SamplerUpdate::new(state, sample))?;
     context.input(NOTES_INPUT, InputEndpoint::new(sampler, Sampler::NOTES));
+    context.automation(sampler, Sampler::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(sampler, Sampler::OUTPUT));
     Ok(())
 }
