@@ -294,6 +294,13 @@ impl Project {
         self.bindings.automation(instance, field)
     }
 
+    /// The fields of every number `instance` takes automation for, in the order its behaviour
+    /// named them the last time it ran, each of which [`Self::automation`] gives. For an owner
+    /// that offers to automate them, such as the arrangement when a lane is added.
+    pub fn automatable(&self, instance: &InstanceId) -> impl Iterator<Item = &'static str> + '_ {
+        self.bindings.automatable(instance)
+    }
+
     /// The peaks that the behaviour of `instance` keeps under `name`, for a meter: take from
     /// them once per frame. `None` while the instance keeps none of that name. They stay the
     /// same while the behaviour declares them, so a view may keep them, and asks again when
