@@ -253,6 +253,18 @@ impl Session {
         }
     }
 
+    /// Makes every file change until [`Self::end_request`] one undo step named `label`, see
+    /// [`Project::begin_request`]. For an agent that knows where a request begins and ends.
+    pub fn begin_request(&mut self, label: &str) {
+        self.project.begin_request(label);
+    }
+
+    /// Ends the request. A file change heard just after still joins its step, see
+    /// [`Project::end_request`].
+    pub fn end_request(&mut self) {
+        self.project.end_request();
+    }
+
     /// How many times undo or redo was asked for in this session. A view that keeps the last
     /// value knows that the events it hears now come from one, so it can select what the undo
     /// brought back: the project events do not say where a change came from. It counts only a
