@@ -31,7 +31,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, lanes,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -157,6 +157,42 @@ pub fn band_parameters(index: usize) -> [&'static BandParameter; 3] {
     [&FREQUENCIES[index], &GAIN, &Q]
 }
 
+/// The numbers of each band as numbers of the whole EQ, named by their path in the record, so
+/// an automation lane can move them: band 1 first, in the order of [`band_parameters`].
+pub static BAND_LANES: [[Parameter; 3]; BANDS] = [
+    lanes![EqState:
+        bands[0].frequency_hz: FREQUENCIES[0],
+        bands[0].gain_db: GAIN,
+        bands[0].q: Q,
+    ],
+    lanes![EqState:
+        bands[1].frequency_hz: FREQUENCIES[1],
+        bands[1].gain_db: GAIN,
+        bands[1].q: Q,
+    ],
+    lanes![EqState:
+        bands[2].frequency_hz: FREQUENCIES[2],
+        bands[2].gain_db: GAIN,
+        bands[2].q: Q,
+    ],
+    lanes![EqState:
+        bands[3].frequency_hz: FREQUENCIES[3],
+        bands[3].gain_db: GAIN,
+        bands[3].q: Q,
+    ],
+];
+
+/// Every number an automation lane can move: those of each band, then the output gain.
+pub const AUTOMATED: [&Parameter; 3 * BANDS + 1] = {
+    let mut all = [&OUTPUT_GAIN; 3 * BANDS + 1];
+    let mut index = 0;
+    while index < 3 * BANDS {
+        all[index] = &BAND_LANES[index / 3][index % 3];
+        index += 1;
+    }
+    all
+};
+
 impl Band {
     /// Band `index` as a new EQ has it.
     pub fn default_at(index: usize) -> Self {
@@ -276,6 +312,7 @@ fn apply(state: &EqState, context: &mut BehaviourContext<'_>) -> Result<(), Beha
     let eq = context.processor("eq", || Eq::new(*state))?;
     context.update(eq, *state)?;
     context.input(AUDIO_INPUT, InputEndpoint::new(eq, Eq::INPUT));
+    context.automation(eq, Eq::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(eq, Eq::OUTPUT));
     Ok(())
 }
@@ -395,6 +432,27 @@ mod tests {
         assert!(parse(peak).is_err_and(|error| error.contains("unknown variant `peak`")));
         let wrong = r#"{"bands": [{"gain": 3.0}]}"#;
         assert!(parse(wrong).is_err_and(|error| error.contains("unknown field `gain`")));
+    }
+
+    /// A lane names a number of a band by its path, so each path must lead to that number in
+    /// the record, and set it alone.
+    #[test]
+    fn each_automated_number_is_named_by_its_path_in_the_record() {
+        for parameter in AUTOMATED {
+            let mut state = EqState::default();
+            let value = parameter.min + 0.37 * (parameter.max - parameter.min);
+            (parameter.set)(&mut state, value);
+            assert_eq!((parameter.get)(&state), value);
+            let record = serde_json::to_value(state).unwrap();
+            let pointer = parameter.field.replace(['[', '.'], "/").replace(']', "");
+            let saved = record.pointer(&format!("/{pointer}"));
+            assert_eq!(
+                saved,
+                Some(&serde_json::json!(value)),
+                "{}",
+                parameter.field
+            );
+        }
     }
 
     /// The runtime writes every field of every band, so an agent reads the whole EQ.

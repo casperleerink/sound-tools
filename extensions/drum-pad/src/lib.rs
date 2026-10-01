@@ -343,6 +343,61 @@ pub static PARAMETERS: [[PadParameter; 4]; PADS] = [
     numbers(15),
 ];
 
+/// One number of the whole Drum pad, for an automation lane: a number of one of its pads, named
+/// by its path in the record.
+pub type Parameter = sound_core::Parameter<DrumPadState>;
+
+/// The volume and the pan of pad `PAD` as numbers of the whole Drum pad, named by `paths`.
+/// Pitch and decay make the sound of the pad, away from the audio thread, so no lane moves them.
+const fn pad_lanes<const PAD: usize>(paths: [&'static str; 2]) -> [Parameter; 2] {
+    let [volume, _, _, pan] = numbers(PAD);
+    let [volume_path, pan_path] = paths;
+    [
+        volume.at(
+            volume_path,
+            |state| state.pads[PAD].volume_db,
+            |state, value| state.pads[PAD].volume_db = value,
+        ),
+        pan.at(
+            pan_path,
+            |state| state.pads[PAD].pan,
+            |state, value| state.pads[PAD].pan = value,
+        ),
+    ]
+}
+
+/// The volume and the pan of every pad, pad 1 (note 36) first, as an automation lane names
+/// them: `pads.36.volume_db` is the volume of the pad on note 36.
+pub static PAD_LANES: [[Parameter; 2]; PADS] = [
+    pad_lanes::<0>(["pads.36.volume_db", "pads.36.pan"]),
+    pad_lanes::<1>(["pads.37.volume_db", "pads.37.pan"]),
+    pad_lanes::<2>(["pads.38.volume_db", "pads.38.pan"]),
+    pad_lanes::<3>(["pads.39.volume_db", "pads.39.pan"]),
+    pad_lanes::<4>(["pads.40.volume_db", "pads.40.pan"]),
+    pad_lanes::<5>(["pads.41.volume_db", "pads.41.pan"]),
+    pad_lanes::<6>(["pads.42.volume_db", "pads.42.pan"]),
+    pad_lanes::<7>(["pads.43.volume_db", "pads.43.pan"]),
+    pad_lanes::<8>(["pads.44.volume_db", "pads.44.pan"]),
+    pad_lanes::<9>(["pads.45.volume_db", "pads.45.pan"]),
+    pad_lanes::<10>(["pads.46.volume_db", "pads.46.pan"]),
+    pad_lanes::<11>(["pads.47.volume_db", "pads.47.pan"]),
+    pad_lanes::<12>(["pads.48.volume_db", "pads.48.pan"]),
+    pad_lanes::<13>(["pads.49.volume_db", "pads.49.pan"]),
+    pad_lanes::<14>(["pads.50.volume_db", "pads.50.pan"]),
+    pad_lanes::<15>(["pads.51.volume_db", "pads.51.pan"]),
+];
+
+/// Every number an automation lane can move, in the order of [`PAD_LANES`].
+pub const AUTOMATED: [&Parameter; 2 * PADS] = {
+    let mut all = [&PAD_LANES[0][0]; 2 * PADS];
+    let mut index = 0;
+    while index < 2 * PADS {
+        all[index] = &PAD_LANES[index / 2][index % 2];
+        index += 1;
+    }
+    all
+};
+
 /// Which of [`PARAMETERS`] of a pad is which.
 pub const VOLUME: usize = 0;
 pub const PITCH: usize = 1;
@@ -521,8 +576,9 @@ fn apply(state: &DrumPadState, context: &mut BehaviourContext<'_>) -> Result<(),
         context.problem(problem);
     }
     let drums = context.processor(PROCESSOR, || DrumPad::new(peaks))?;
-    context.update(drums, DrumUpdate::kit(pads))?;
+    context.update(drums, DrumUpdate::kit(pads, state))?;
     context.input(NOTES_INPUT, InputEndpoint::new(drums, DrumPad::NOTES));
+    context.automation(drums, DrumPad::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(drums, DrumPad::OUTPUT));
     Ok(())
 }
@@ -700,6 +756,29 @@ mod tests {
                     doc.lines().any(|line| line == row),
                     "{name} has no row {row}"
                 );
+            }
+        }
+    }
+
+    /// A lane names the volume or the pan of a pad by its path, so each path must lead to
+    /// that number of that pad in the record, and set it alone.
+    #[test]
+    fn each_automated_number_is_named_by_its_path_in_the_record() {
+        for (pad, lanes) in PAD_LANES.iter().enumerate() {
+            for (lane, number) in lanes
+                .iter()
+                .zip([&PARAMETERS[pad][VOLUME], &PARAMETERS[pad][PAN]])
+            {
+                let mut state = DrumPadState::default();
+                let value = number.min + 0.37 * (number.max - number.min);
+                (lane.set)(&mut state, value);
+                assert_eq!((number.get)(&state.pads[pad]), value);
+                let mut expected = DrumPadState::default();
+                (number.set)(&mut expected.pads[pad], value);
+                assert_eq!(state, expected);
+                let record = serde_json::to_value(&state).unwrap();
+                let saved = record.pointer(&format!("/{}", lane.field.replace('.', "/")));
+                assert_eq!(saved, Some(&serde_json::json!(value)), "{}", lane.field);
             }
         }
     }

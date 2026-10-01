@@ -58,4 +58,6 @@ The shapes:
 
 Starting points: take the rumble out of almost anything but a bass or a kick with `low_cut` at 80 to 120 Hz. Less boxy is a `bell` at 300 to 500 Hz, -3 dB, `q` 1.5. More presence is a `bell` at 2 to 5 kHz, +2 to +4 dB, `q` 1. More air is a `high_shelf` at 10 kHz, +3 dB. Darker is a `high_shelf` at 4 kHz, -4 dB, or a `high_cut` at 6 to 10 kHz. A hum is a `notch` at 50 or 60 Hz, `q` 8. Small moves of 2 to 4 dB are usually enough; when a boost makes the track louder, bring `output_gain_db` down by about as much.
 
+Every number here can move over time with an automation lane of the track, named by its path: `bands[0].gain_db` is the gain of band 1. See `agent-docs/arrangement.md`.
+
 An edit applies while the track plays and glides over 20 ms, also a change of shape or turning a band on or off, so it does not click.

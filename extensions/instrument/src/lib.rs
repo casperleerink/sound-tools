@@ -195,6 +195,7 @@ fn apply(state: &SynthState, context: &mut BehaviourContext<'_>) -> Result<(), B
     let synth = context.processor("synth", || Synth::new(*state))?;
     context.update(synth, *state)?;
     context.input(NOTES_INPUT, InputEndpoint::new(synth, Synth::NOTES));
+    context.automation(synth, Synth::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(synth, Synth::OUTPUT));
     Ok(())
 }

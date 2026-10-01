@@ -27,11 +27,16 @@
 use std::f32::consts::{LOG2_10, TAU};
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, DelayLine, OnePole, Ports, PrepareConfig, ProcessContext,
-    Processor, Smoothed, Taps, held,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, OnePole, Ports,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Taps, Targets, held,
 };
 
-use crate::{PRE_DELAY, ReverbState};
+use crate::{
+    DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PARAMETERS, PRE_DELAY, ReverbState, WIDTH,
+};
+
+/// Every number of the reverb can be automated.
+type ReverbTargets = Targets<ReverbState, { PARAMETERS.len() }>;
 
 /// How long a change takes to arrive. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
@@ -190,8 +195,8 @@ pub struct Reverb {
     sample_rate: f32,
     /// The frames a change takes.
     ramp_frames: f32,
-    /// The last record, so that a new sample rate can aim at it again.
-    state: ReverbState,
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<ReverbState, { PARAMETERS.len() }>,
     /// Where every delay line writes the next frame.
     position: usize,
     pre_delay: [DelayLine; CHANNELS],
@@ -235,6 +240,8 @@ pub struct Reverb {
 impl Reverb {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<ReverbState, { PARAMETERS.len() }> =
+        AutomationInput::new(0, PARAMETERS);
 
     /// Allocates its delay lines for 48 kHz, and again in `prepare` for another rate. Starts at
     /// these values, so a reverb that is added or opened does not glide in.
@@ -243,7 +250,7 @@ impl Reverb {
         let mut reverb = Self {
             sample_rate,
             ramp_frames: RAMP_SECONDS * sample_rate,
-            state,
+            state: Automated::new(Self::AUTOMATION, state),
             position: 0,
             pre_delay: [(); CHANNELS].map(|_| DelayLine::new(1)),
             pre_delay_tap: Taps::new([1]),
@@ -291,17 +298,17 @@ impl Reverb {
         self.cuts = [[OnePole::default(); 2]; CHANNELS];
         self.position = 0;
         self.quiet_frames = 0;
-        let state = self.state;
-        self.aim(&state);
+        self.aim(&self.state.targets(self.ramp_frames));
         // Also a frozen reverb needs lines of its size to begin with.
-        self.line_taps = Taps::new(line_frames(state.size, sample_rate));
+        self.line_taps = Taps::new(line_frames(self.state.size, sample_rate));
         self.snap();
     }
 
-    /// Sets every target from a record.
-    fn aim(&mut self, state: &ReverbState) {
-        self.state = *state;
-        let (ramp, rate) = (self.ramp_frames, self.sample_rate);
+    /// Sets every target from the record and its lanes, each reached in its own ramp. A new
+    /// pre-delay or size is a fade between taps, which takes the glide of an edit: so a lane of
+    /// them moves in a row of 20 ms fades, as a drag of the knob does.
+    fn aim(&mut self, targets: &ReverbTargets) {
+        let (state, ramp, rate) = (*self.state, targets.edit(), self.sample_rate);
         let pre_delay = frames_of(state.pre_delay_ms / 1_000.0, rate);
         self.pre_delay_tap.aim([pre_delay], ramp);
         // A frozen tail keeps its lines: every fade between taps loses a little of it, and
@@ -309,17 +316,31 @@ impl Reverb {
         if !state.freeze {
             self.line_taps.aim(line_frames(state.size, rate), ramp);
         }
-        self.decay.set_target(state.decay_seconds.log2(), ramp);
-        self.low_cut.set_target(state.low_cut_hz.log2(), ramp);
-        self.high_cut.set_target(state.high_cut_hz.log2(), ramp);
-        self.damping.set_target(state.damping, ramp);
+        self.decay
+            .set_target(state.decay_seconds.log2(), targets.ramp(&DECAY));
+        self.low_cut
+            .set_target(state.low_cut_hz.log2(), targets.ramp(&LOW_CUT));
+        self.high_cut
+            .set_target(state.high_cut_hz.log2(), targets.ramp(&HIGH_CUT));
+        self.damping
+            .set_target(state.damping, targets.ramp(&DAMPING));
         self.diffusion
-            .set_target(state.diffusion * MOST_DIFFUSION, ramp);
-        self.width.set_target(state.width, ramp);
-        self.mix.set_target(state.mix, ramp);
+            .set_target(state.diffusion * MOST_DIFFUSION, targets.ramp(&DIFFUSION));
+        self.width.set_target(state.width, targets.ramp(&WIDTH));
+        self.mix.set_target(state.mix, targets.ramp(&MIX));
         let frozen = if state.freeze { 1.0 } else { 0.0 };
         self.freeze.set_target(frozen, ramp);
         self.input.set_target(1.0 - frozen, ramp);
+        // A number that took its value at once does not move, so nothing else says the
+        // factors are old.
+        // And a pre-delay or a size that took the value of its lane at once is there from the
+        // first frame.
+        if targets.snaps() {
+            self.stale = true;
+            self.snapped = true;
+            self.pre_delay_tap.snap();
+            self.line_taps.snap();
+        }
     }
 
     fn smoothers(&mut self) -> [&mut Smoothed; 9] {
@@ -478,6 +499,7 @@ impl Processor for Reverb {
         Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
+            .event_input(Self::AUTOMATION.port())
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -488,10 +510,14 @@ impl Processor for Reverb {
     }
 
     fn update(&mut self, update: &mut ReverbState) {
-        self.aim(update);
+        let targets = self.state.set_record(update, self.ramp_frames);
+        self.aim(&targets);
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, self.ramp_frames) {
+            self.aim(&targets);
+        }
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
         let silent_input = left_in.iter().chain(right_in).all(|sample| *sample == 0.0);
         if silent_input && self.quiet_frames > self.longest_path() {

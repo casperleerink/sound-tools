@@ -215,6 +215,7 @@ fn apply(state: &ReverbState, context: &mut BehaviourContext<'_>) -> Result<(), 
     let reverb = context.processor("reverb", || Reverb::new(*state))?;
     context.update(reverb, *state)?;
     context.input(AUDIO_INPUT, InputEndpoint::new(reverb, Reverb::INPUT));
+    context.automation(reverb, Reverb::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(reverb, Reverb::OUTPUT));
     Ok(())
 }

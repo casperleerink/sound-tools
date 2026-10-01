@@ -173,6 +173,7 @@ fn apply(
         AUDIO_INPUT,
         InputEndpoint::new(modulation, Modulation::INPUT),
     );
+    context.automation(modulation, Modulation::AUTOMATION);
     context.output(
         AUDIO_OUTPUT,
         OutputEndpoint::new(modulation, Modulation::OUTPUT),

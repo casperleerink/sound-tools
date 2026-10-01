@@ -8,29 +8,10 @@ use sound_core::{Changes, InstanceId};
 use sound_media::AudioAsset;
 use sound_notes::Pitch;
 
-use crate::support::{BAR, Harness, TRACK, clip, difference};
+use crate::support::{BAR, Harness, TRACK, clip, difference, write_samples};
 
 const FOLDER: &str = "state/arrangement/keys";
 const SAMPLER_FILE: &str = "state/arrangement/keys/instrument.json";
-
-/// A mono float WAV of `seconds` of these samples at `rate`, in `assets/audio/`.
-fn write_file(harness: &Harness, name: &str, rate: u32, seconds: f64, sample: impl Fn(f64) -> f32) {
-    let path = harness.path(&format!("assets/audio/{name}"));
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: rate,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
-    for frame in 0..(seconds * f64::from(rate)) as usize {
-        writer
-            .write_sample(sample(frame as f64 / f64::from(rate)))
-            .unwrap();
-    }
-    writer.finalize().unwrap();
-}
 
 fn record(state: &str) -> String {
     format!(r#"{{"tool": "sampler", "state": {state}}}"#)
@@ -59,7 +40,7 @@ fn left(samples: &[f32]) -> Vec<f32> {
 fn an_outside_edit_of_the_sampler_while_it_plays_is_heard_with_its_glide_and_undone_in_one_step() {
     let mut harness = Harness::new();
     // A steady level at 44.1 kHz, which the engine plays at 48 kHz.
-    write_file(&harness, "steady.wav", 44_100, 5.0, |_| 0.25);
+    write_samples(&harness, "steady.wav", 44_100, 5.0, |_| 0.25);
     keys_with(&mut harness, &record(r#"{"sample": "steady.wav"}"#));
     assert_eq!(harness.project.problems(), []);
 
@@ -100,7 +81,7 @@ fn an_outside_edit_of_the_sampler_while_it_plays_is_heard_with_its_glide_and_und
 #[test]
 fn the_sampler_comes_back_after_close_and_reopen_and_renders_the_same() {
     let mut harness = Harness::new();
-    write_file(&harness, "kalimba.wav", 48_000, 2.0, |time| {
+    write_samples(&harness, "kalimba.wav", 48_000, 2.0, |time| {
         (std::f64::consts::TAU * 523.25 * time).sin() as f32 * (-3.0 * time).exp() as f32 * 0.5
     });
     keys_with(&mut harness, &record(r#"{"sample": "kalimba.wav"}"#));

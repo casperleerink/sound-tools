@@ -2,11 +2,17 @@
 //! of the master. The two channels share one gain, so the stereo image does not move.
 
 use sound_core::{
-    AudioInput, AudioOutput, PeakLimiter, Peaks, Ports, PrepareConfig, ProcessContext, Processor,
-    Smoothed, amplitude,
+    AudioInput, AudioOutput, Automated, AutomationInput, PeakLimiter, Peaks, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets, amplitude,
 };
 
-use crate::{LimiterState, Lookahead};
+use crate::{GAIN, LimiterState, Lookahead, RELEASE};
+
+/// The numbers a lane can move. The ceiling is left out: it takes a new value at once, also
+/// for the frames already in the lookahead, so a lane would step it every block.
+const AUTOMATED: [&crate::Parameter; 2] = [&GAIN, &RELEASE];
+
+type LimiterTargets = Targets<LimiterState, { AUTOMATED.len() }>;
 
 /// How long a change of the gain takes to arrive. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
@@ -40,8 +46,8 @@ impl Meters {
 
 pub struct Limiter {
     meters: Meters,
-    /// The last record, to aim again when the sample rate is known.
-    state: LimiterState,
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<LimiterState, { AUTOMATED.len() }>,
     ramp_frames: f32,
     gain: Smoothed,
     ceiling: f32,
@@ -53,12 +59,14 @@ pub struct Limiter {
 impl Limiter {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<LimiterState, { AUTOMATED.len() }> =
+        AutomationInput::new(0, AUTOMATED);
 
     /// Starts at these values, so a limiter that is added or opened does not glide in.
     pub fn new(state: LimiterState, meters: Meters) -> Self {
         Self {
             meters,
-            state,
+            state: Automated::new(Self::AUTOMATION, state),
             ramp_frames: 1.0,
             gain: Smoothed::new(amplitude(state.gain_db)),
             ceiling: amplitude(state.ceiling_db),
@@ -67,11 +75,11 @@ impl Limiter {
         }
     }
 
-    /// Sets every target from a record.
-    fn aim(&mut self, state: LimiterState) {
-        self.state = state;
+    /// Sets every target from the record and its lanes.
+    fn aim(&mut self, targets: &LimiterTargets) {
+        let state = *self.state;
         self.gain
-            .set_target(amplitude(state.gain_db), self.ramp_frames);
+            .set_target(amplitude(state.gain_db), targets.ramp(&GAIN));
         self.ceiling = amplitude(state.ceiling_db);
         self.limiter.set_release(state.release_ms / 1_000.0);
         self.limiter.set_lookahead(state.lookahead.seconds());
@@ -91,6 +99,7 @@ impl Processor for Limiter {
         Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
+            .event_input(Self::AUTOMATION.port())
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -98,13 +107,14 @@ impl Processor for Limiter {
         self.ramp_frames = (RAMP_SECONDS * sample_rate).max(1.0);
         // Room for the longest lookahead, so a pick of another one allocates nothing.
         self.limiter.prepare(sample_rate, Lookahead::Five.seconds());
-        self.aim(self.state);
+        self.aim(&self.state.targets(self.ramp_frames));
         self.gain.snap();
         self.quiet = 0;
     }
 
     fn update(&mut self, update: &mut LimiterState) {
-        self.aim(*update);
+        let targets = self.state.set_record(update, self.ramp_frames);
+        self.aim(&targets);
     }
 
     fn latency(&self) -> u32 {
@@ -112,6 +122,9 @@ impl Processor for Limiter {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, self.ramp_frames) {
+            self.aim(&targets);
+        }
         let frames = context.frames;
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
         let silent_input = left_in

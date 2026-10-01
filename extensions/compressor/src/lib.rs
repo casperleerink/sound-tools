@@ -250,6 +250,7 @@ fn apply(
         AUDIO_INPUT,
         InputEndpoint::new(compressor, Compressor::INPUT),
     );
+    context.automation(compressor, Compressor::AUTOMATION);
     context.output(
         AUDIO_OUTPUT,
         OutputEndpoint::new(compressor, Compressor::OUTPUT),

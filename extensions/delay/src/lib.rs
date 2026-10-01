@@ -192,6 +192,7 @@ fn apply(state: &DelayState, context: &mut BehaviourContext<'_>) -> Result<(), B
     let delay = context.processor("delay", || Delay::new(*state))?;
     context.update(delay, *state)?;
     context.input(AUDIO_INPUT, InputEndpoint::new(delay, Delay::INPUT));
+    context.automation(delay, Delay::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(delay, Delay::OUTPUT));
     Ok(())
 }

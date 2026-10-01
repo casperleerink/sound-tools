@@ -16,11 +16,15 @@
 
 use std::f32::consts::PI;
 
-use crate::{Curve, SaturatorState};
+use crate::{Curve, DRIVE, MIX, OUTPUT, PARAMETERS, SaturatorState, TONE};
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, Oversampler, OversamplingFilters, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, soft_clip,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Oversampler,
+    OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
+    soft_clip,
 };
+
+/// Every number of the saturator can be automated.
+type SaturatorTargets = Targets<SaturatorState, { PARAMETERS.len() }>;
 
 /// How many frames the saturator delays the sound, at every sample rate: 1.3 ms at 48 kHz. It
 /// is reported as its latency, so the track stays in time.
@@ -309,6 +313,8 @@ impl Channel {
 }
 
 pub struct Saturator {
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<SaturatorState, { PARAMETERS.len() }>,
     sample_rate: f32,
     /// The frames a change takes.
     ramp_frames: f32,
@@ -344,11 +350,14 @@ pub struct Saturator {
 impl Saturator {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<SaturatorState, { PARAMETERS.len() }> =
+        AutomationInput::new(0, PARAMETERS);
 
     /// Starts at these values, so a saturator that is added or opened does not glide in.
     pub fn new(state: SaturatorState) -> Self {
         let sample_rate = 48_000.0;
         let mut saturator = Self {
+            state: Automated::new(Self::AUTOMATION, state),
             sample_rate,
             ramp_frames: 1.0,
             filters: OversamplingFilters::new(),
@@ -367,23 +376,26 @@ impl Saturator {
             write: 0,
             quiet: QUIET_FRAMES,
         };
-        saturator.aim(&state);
+        saturator.aim(&saturator.state.targets(saturator.ramp_frames));
         saturator.snap();
         saturator
     }
 
-    /// Sets every target from a record.
-    fn aim(&mut self, state: &SaturatorState) {
-        let ramp = self.ramp_frames;
+    /// Sets every target from the record and its lanes, each reached in its own ramp.
+    fn aim(&mut self, targets: &SaturatorTargets) {
+        let state = *self.state;
         self.drive
-            .set_target(decibels_to_gain(state.drive_db), ramp);
+            .set_target(decibels_to_gain(state.drive_db), targets.ramp(&DRIVE));
         for (weight, target) in self.weights.iter_mut().zip(weights(state.curve)) {
-            weight.set_target(target, ramp);
+            weight.set_target(target, targets.edit());
         }
-        self.tone.set_target(state.tone_db, ramp);
+        self.tone.set_target(state.tone_db, targets.ramp(&TONE));
         self.output
-            .set_target(decibels_to_gain(state.output_db), ramp);
-        self.mix.set_target(state.mix, ramp);
+            .set_target(decibels_to_gain(state.output_db), targets.ramp(&OUTPUT));
+        self.mix.set_target(state.mix, targets.ramp(&MIX));
+        // A number that took its value at once does not move, so nothing else says the
+        // factors are old.
+        self.stale |= targets.snaps();
     }
 
     fn smoothers(&mut self) -> impl Iterator<Item = &mut Smoothed> {
@@ -471,6 +483,7 @@ impl Processor for Saturator {
         Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
+            .event_input(Self::AUTOMATION.port())
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -481,7 +494,8 @@ impl Processor for Saturator {
     }
 
     fn update(&mut self, update: &mut SaturatorState) {
-        self.aim(update);
+        let targets = self.state.set_record(update, self.ramp_frames);
+        self.aim(&targets);
     }
 
     fn latency(&self) -> u32 {
@@ -489,6 +503,9 @@ impl Processor for Saturator {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, self.ramp_frames) {
+            self.aim(&targets);
+        }
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
         let silent_input = left_in
             .iter()

@@ -7,9 +7,12 @@
 //! `osc_1` or `osc_2` alike. Each type lists its constants in `PARAMETERS`. A field that a
 //! record leaves out takes the default of its type, so `"state": {}` is the default patch and
 //! `"osc_2": {}` a default oscillator.
+//!
+//! An automation lane names a number by its path in the saved record: `filter_1.cutoff_hz`. The
+//! lists of those are at the end, and [`AUTOMATED`] holds them all.
 
 use serde::{Deserialize, Serialize};
-use sound_core::{FilterSlope, FilterType, LfoShape, Scale};
+use sound_core::{FilterSlope, FilterType, LfoShape, Scale, lanes};
 use sound_notes::{Division, Feel};
 
 use crate::matrix::{Destination, MAX_ROUTES, Route, Source};
@@ -667,6 +670,99 @@ impl Default for WavetableState {
         }
     }
 }
+
+/// The numbers of each oscillator that a lane can move, in this order. The octave and the
+/// semitone are whole numbers, and a lane is a straight line, so they are left out.
+pub static OSCILLATOR_LANES: [[Parameter<WavetableState>; 5]; 2] = [
+    lanes![WavetableState:
+        osc_1.position: OSC_POSITION,
+        osc_1.effect_amount: OSC_EFFECT_AMOUNT,
+        osc_1.detune_cents: OSC_DETUNE,
+        osc_1.gain: OSC_GAIN,
+        osc_1.pan: OSC_PAN,
+    ],
+    lanes![WavetableState:
+        osc_2.position: OSC_POSITION,
+        osc_2.effect_amount: OSC_EFFECT_AMOUNT,
+        osc_2.detune_cents: OSC_DETUNE,
+        osc_2.gain: OSC_GAIN,
+        osc_2.pan: OSC_PAN,
+    ],
+];
+
+/// The numbers of each filter that a lane can move, in this order.
+pub static FILTER_LANES: [[Parameter<WavetableState>; 3]; 2] = [
+    lanes![WavetableState:
+        filter_1.cutoff_hz: FILTER_CUTOFF,
+        filter_1.resonance: FILTER_RESONANCE,
+        filter_1.drive_db: FILTER_DRIVE,
+    ],
+    lanes![WavetableState:
+        filter_2.cutoff_hz: FILTER_CUTOFF,
+        filter_2.resonance: FILTER_RESONANCE,
+        filter_2.drive_db: FILTER_DRIVE,
+    ],
+];
+
+/// The level of the sub and the spread of the unison copies, in this order. The count of the
+/// copies is a whole number.
+pub static VOICE_LANES: [Parameter<WavetableState>; 2] =
+    lanes![WavetableState: sub.gain: SUB_GAIN, unison.amount: UNISON_AMOUNT];
+
+/// What a lane moves at once, with no glide of its own: the envelopes, the rates of the LFOs and
+/// the glide of the notes. The polyphony is a whole number.
+pub static TIMING_LANES: [Parameter<WavetableState>; 24] = lanes![WavetableState:
+    amp_env.attack_seconds: ENV_ATTACK,
+    amp_env.decay_seconds: ENV_DECAY,
+    amp_env.sustain: ENV_SUSTAIN,
+    amp_env.release_seconds: ENV_RELEASE,
+    amp_env.attack_curve: ENV_ATTACK_CURVE,
+    amp_env.decay_curve: ENV_DECAY_CURVE,
+    amp_env.release_curve: ENV_RELEASE_CURVE,
+    env_2.attack_seconds: ENV_ATTACK,
+    env_2.decay_seconds: ENV_DECAY,
+    env_2.sustain: ENV_SUSTAIN,
+    env_2.release_seconds: ENV_RELEASE,
+    env_2.attack_curve: ENV_ATTACK_CURVE,
+    env_2.decay_curve: ENV_DECAY_CURVE,
+    env_2.release_curve: ENV_RELEASE_CURVE,
+    env_3.attack_seconds: ENV_ATTACK,
+    env_3.decay_seconds: ENV_DECAY,
+    env_3.sustain: ENV_SUSTAIN,
+    env_3.release_seconds: ENV_RELEASE,
+    env_3.attack_curve: ENV_ATTACK_CURVE,
+    env_3.decay_curve: ENV_DECAY_CURVE,
+    env_3.release_curve: ENV_RELEASE_CURVE,
+    lfo_1.rate_hz: LFO_RATE,
+    lfo_2.rate_hz: LFO_RATE,
+    voicing.glide_seconds: GLIDE,
+];
+
+/// Every number an automation lane can move, the output gain last. The amounts of the matrix are
+/// left out: a route has no name of its own, and its place changes when one before it goes.
+pub const AUTOMATED: [&Parameter<WavetableState>; 43] = {
+    let groups: [&[Parameter<WavetableState>]; 7] = [
+        &OSCILLATOR_LANES[0],
+        &OSCILLATOR_LANES[1],
+        &FILTER_LANES[0],
+        &FILTER_LANES[1],
+        &VOICE_LANES,
+        &TIMING_LANES,
+        std::slice::from_ref(&GAIN),
+    ];
+    let mut all = [&GAIN; 43];
+    let (mut group, mut next) = (0, 0);
+    while group < groups.len() {
+        let mut index = 0;
+        while index < groups[group].len() {
+            all[next] = &groups[group][index];
+            (index, next) = (index + 1, next + 1);
+        }
+        group += 1;
+    }
+    assert!(next == all.len(), "every lane is in the list once");
+    all
+};
 
 /// Checks every number of `object` against its range, naming it by `path`.
 fn check<S>(path: &str, object: &S, parameters: &[&Parameter<S>]) -> Result<(), String> {

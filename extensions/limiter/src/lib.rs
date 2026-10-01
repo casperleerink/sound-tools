@@ -200,6 +200,7 @@ fn apply(state: &LimiterState, context: &mut BehaviourContext<'_>) -> Result<(),
     let limiter = context.processor("limiter", || Limiter::new(*state, meters))?;
     context.update(limiter, *state)?;
     context.input(AUDIO_INPUT, InputEndpoint::new(limiter, Limiter::INPUT));
+    context.automation(limiter, Limiter::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(limiter, Limiter::OUTPUT));
     Ok(())
 }

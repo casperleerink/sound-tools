@@ -73,6 +73,7 @@ fn apply(state: &WavetableState, context: &mut BehaviourContext<'_>) -> Result<(
         NOTES_INPUT,
         InputEndpoint::new(synth, WavetableSynth::NOTES),
     );
+    context.automation(synth, WavetableSynth::AUTOMATION);
     context.output(
         AUDIO_OUTPUT,
         OutputEndpoint::new(synth, WavetableSynth::OUTPUT),

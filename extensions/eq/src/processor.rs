@@ -27,10 +27,14 @@
 use std::f32::consts::PI;
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
 };
 
-use crate::{BANDS, Band, EqState, Shape};
+use crate::{AUTOMATED, BAND_LANES, BANDS, Band, EqState, OUTPUT_GAIN, Parameter, Shape};
+
+/// Every number of the EQ can be automated.
+type EqTargets = Targets<EqState, { AUTOMATED.len() }>;
 
 /// How long a change takes to arrive. A jump would click, or step in the sound.
 const RAMP_SECONDS: f32 = 0.02;
@@ -258,14 +262,17 @@ impl BandGlide {
         }
     }
 
-    fn aim(&mut self, band: &Band, ramp: f32) {
-        self.octaves.set_target(band.frequency_hz.log2(), ramp);
-        self.gain_db.set_target(band.gain_db, ramp);
-        self.q_octaves.set_target(band.q.log2(), ramp);
+    /// Aims at `band`, whose numbers are `lanes` of the EQ.
+    fn aim(&mut self, band: &Band, lanes: &[Parameter; 3], targets: &EqTargets) {
+        let [frequency, gain, q] = lanes.each_ref().map(|lane| targets.ramp(lane));
+        self.octaves.set_target(band.frequency_hz.log2(), frequency);
+        self.gain_db.set_target(band.gain_db, gain);
+        self.q_octaves.set_target(band.q.log2(), q);
+        let edit = targets.edit();
         for (shape, weight) in Shape::ALL.iter().zip(&mut self.shapes) {
-            weight.set_target(if *shape == band.shape { 1.0 } else { 0.0 }, ramp);
+            weight.set_target(if *shape == band.shape { 1.0 } else { 0.0 }, edit);
         }
-        self.on.set_target(if band.on { 1.0 } else { 0.0 }, ramp);
+        self.on.set_target(if band.on { 1.0 } else { 0.0 }, edit);
     }
 
     fn smoothers(&mut self) -> impl Iterator<Item = &mut Smoothed> {
@@ -341,6 +348,8 @@ impl BandGlide {
 }
 
 pub struct Eq {
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<EqState, { AUTOMATED.len() }>,
     sample_rate: f32,
     /// The frames a change takes.
     ramp_frames: f32,
@@ -355,29 +364,35 @@ pub struct Eq {
 impl Eq {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<EqState, { AUTOMATED.len() }> =
+        AutomationInput::new(0, AUTOMATED);
 
     /// Starts at these values, so an EQ that is added or opened does not glide in.
     pub fn new(state: EqState) -> Self {
         let mut eq = Self {
+            state: Automated::new(Self::AUTOMATION, state),
             sample_rate: 48_000.0,
             ramp_frames: 1.0,
             bands: std::array::from_fn(|_| BandGlide::new()),
             output: Smoothed::new(1.0),
             stale: true,
         };
-        eq.aim(&state);
+        eq.aim(&eq.state.targets(eq.ramp_frames));
         eq.snap();
         eq
     }
 
-    /// Sets every target from a record.
-    fn aim(&mut self, state: &EqState) {
-        let ramp = self.ramp_frames;
-        for (glide, band) in self.bands.iter_mut().zip(&state.bands) {
-            glide.aim(band, ramp);
+    /// Sets every target from the record and its lanes, each reached in its own ramp.
+    fn aim(&mut self, targets: &EqTargets) {
+        let bands = self.bands.iter_mut().zip(&self.state.bands);
+        for ((glide, band), lanes) in bands.zip(&BAND_LANES) {
+            glide.aim(band, lanes, targets);
         }
-        let output = 10_f32.powf(state.output_gain_db / 20.0);
-        self.output.set_target(output, ramp);
+        let output = 10_f32.powf(self.state.output_gain_db / 20.0);
+        self.output.set_target(output, targets.ramp(&OUTPUT_GAIN));
+        // A number that took its value at once does not move, so nothing else says the
+        // factors are old.
+        self.stale |= targets.snaps();
     }
 
     /// Takes every target at once. For an EQ nobody hears, which has nothing to glide for.
@@ -404,6 +419,7 @@ impl Processor for Eq {
         Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
+            .event_input(Self::AUTOMATION.port())
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -413,10 +429,14 @@ impl Processor for Eq {
     }
 
     fn update(&mut self, update: &mut EqState) {
-        self.aim(update);
+        let targets = self.state.set_record(update, self.ramp_frames);
+        self.aim(&targets);
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, self.ramp_frames) {
+            self.aim(&targets);
+        }
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
         let silent_input = left_in.iter().chain(right_in).all(|sample| *sample == 0.0);
         if silent_input && self.is_resting() {

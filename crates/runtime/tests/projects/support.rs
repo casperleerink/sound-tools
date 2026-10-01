@@ -297,6 +297,31 @@ pub fn write(root: &Path, relative: &str, contents: &str) -> PathBuf {
     path
 }
 
+/// A mono float WAV of `seconds` of these samples at `rate`, in `assets/audio/`.
+pub fn write_samples(
+    harness: &Harness,
+    name: &str,
+    rate: u32,
+    seconds: f64,
+    sample: impl Fn(f64) -> f32,
+) {
+    let path = harness.path(&format!("assets/audio/{name}"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+    for frame in 0..(seconds * f64::from(rate)) as usize {
+        writer
+            .write_sample(sample(frame as f64 / f64::from(rate)))
+            .unwrap();
+    }
+    writer.finalize().unwrap();
+}
+
 /// The first and the last frame on which two renders differ.
 pub fn difference(a: &[f32], b: &[f32]) -> Option<(usize, usize)> {
     assert_eq!(a.len(), b.len());

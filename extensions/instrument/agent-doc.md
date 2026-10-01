@@ -33,4 +33,6 @@ These are the defaults. A field you leave out takes its default, so `"state": {}
 
 Starting points: a bass is `cutoff_hz` 300 to 800 with `resonance` near 0.4. A pluck is `sustain` 0 with `decay_seconds` 0.15 to 0.4. A pad is `attack_seconds` 0.5 or more and `release_seconds` 1 or more.
 
+Every number here can move over time with an automation lane of the track: see `agent-docs/arrangement.md`.
+
 An edit applies while notes sound, without a click. A synth outside a track is `state/<name>.json`, has the ports `notes` (in) and `audio` (out, stereo), and needs a connection in `project.json` to be heard.
