@@ -23,10 +23,10 @@ expression: "replay(\"interrupt\")"
         ],
     },
     TextDelta {
-        text: "# The Last Concert\n\nMaria's c",
+        text: "# The Cellist's Gift\n\nMarianne inherited",
     },
     TextDone {
-        text: "# The Last Concert\n\nMaria's c",
+        text: "# The Cellist's Gift\n\nMarianne inherited",
     },
     TurnEnded {
         outcome: Interrupted,

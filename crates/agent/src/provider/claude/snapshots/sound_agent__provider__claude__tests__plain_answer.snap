@@ -23,10 +23,10 @@ expression: "replay(\"plain\")"
         ],
     },
     TextDelta {
-        text: "Hello! I'm ready to help you with your project.",
+        text: "Hello! I'm Claude, and I'm ready to help you with your software engineering tasks.",
     },
     TextDone {
-        text: "Hello! I'm ready to help you with your project.",
+        text: "Hello! I'm Claude, and I'm ready to help you with your software engineering tasks.",
     },
     TurnEnded {
         outcome: Completed,

@@ -24,27 +24,27 @@ expression: "replay(\"approval_allowed\")"
     },
     StepStarted {
         id: StepId(
-            "toolu_01AzLDC7QDNN8m7tKx9kjdPv",
+            "toolu_01PnUsbqppj8chqu9DKUvxLU",
         ),
         title: "Ran touch marker.txt",
     },
     ApprovalRequested {
         id: ApprovalId(
-            "3f8e8e0a-fac0-49bc-91ab-490409208df2",
+            "aa5e25b8-3c0b-4505-8853-58e465a1c380",
         ),
         title: "Run `touch marker.txt`",
     },
     StepDone {
         id: StepId(
-            "toolu_01AzLDC7QDNN8m7tKx9kjdPv",
+            "toolu_01PnUsbqppj8chqu9DKUvxLU",
         ),
         outcome: Done,
     },
     TextDelta {
-        text: "Created the marker.txt file in the current directory.",
+        text: "The marker.txt file has been created.",
     },
     TextDone {
-        text: "Created the marker.txt file in the current directory.",
+        text: "The marker.txt file has been created.",
     },
     TurnEnded {
         outcome: Completed,

@@ -24,27 +24,27 @@ expression: "replay(\"approval_denied\")"
     },
     StepStarted {
         id: StepId(
-            "toolu_01KkJhSWVLoPmSJqiFtfoNmJ",
+            "toolu_012eNgXhPHPr9pmCqcq7vA7M",
         ),
         title: "Ran touch marker.txt",
     },
     ApprovalRequested {
         id: ApprovalId(
-            "c5fefa56-de0c-4daf-a9cc-4d6263db0f06",
+            "f761f169-2e24-49ed-ada9-0317152b5803",
         ),
         title: "Run `touch marker.txt`",
     },
     StepDone {
         id: StepId(
-            "toolu_01KkJhSWVLoPmSJqiFtfoNmJ",
+            "toolu_012eNgXhPHPr9pmCqcq7vA7M",
         ),
         outcome: Denied,
     },
     TextDelta {
-        text: "The tool execution was denied by the permission system, so I wasn't able to create the file.",
+        text: "The permission to run this command was denied by your settings.",
     },
     TextDone {
-        text: "The tool execution was denied by the permission system, so I wasn't able to create the file.",
+        text: "The permission to run this command was denied by your settings.",
     },
     TurnEnded {
         outcome: Completed,

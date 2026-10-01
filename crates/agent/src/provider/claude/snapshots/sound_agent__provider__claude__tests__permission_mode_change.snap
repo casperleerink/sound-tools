@@ -24,19 +24,19 @@ expression: "replay(\"permission_mode\")"
     },
     StepStarted {
         id: StepId(
-            "toolu_01QmWeHKSbD3nXmLLbse7WBv",
+            "toolu_01FHfJdYY7hxGL5WpQphtcSr",
         ),
         title: "Wrote a.txt",
     },
     ApprovalRequested {
         id: ApprovalId(
-            "a49d1029-f6a9-41fe-88d1-cdd19b82265e",
+            "6d9832d6-d7a3-411e-b921-5aff49aebe8c",
         ),
         title: "Write a.txt",
     },
     StepDone {
         id: StepId(
-            "toolu_01QmWeHKSbD3nXmLLbse7WBv",
+            "toolu_01FHfJdYY7hxGL5WpQphtcSr",
         ),
         outcome: Done,
     },
@@ -52,13 +52,13 @@ expression: "replay(\"permission_mode\")"
     TurnStarted,
     StepStarted {
         id: StepId(
-            "toolu_011BuV8gRVYz5iaFGFfYGTkW",
+            "toolu_01YXqcXcH5Qpp9qYKkUu4k54",
         ),
         title: "Wrote b.txt",
     },
     StepDone {
         id: StepId(
-            "toolu_011BuV8gRVYz5iaFGFfYGTkW",
+            "toolu_01YXqcXcH5Qpp9qYKkUu4k54",
         ),
         outcome: Done,
     },

@@ -6,13 +6,14 @@ Run from anywhere, with a signed-in `claude` on PATH (or CLAUDE=/path/to/claude)
     python3 crates/agent/tests/fixtures/record.py            # every scenario
     python3 crates/agent/tests/fixtures/record.py interrupt  # one of them
 
-Each scenario writes `claude/<name>.jsonl`. Every line is one of
-`{"sent": <what we wrote>}`, `{"received": <what the CLI wrote>}` or
+Each scenario writes `crates/agent/tests/fixtures/claude/<name>.jsonl`. Every line is one
+of `{"sent": <what we wrote>}`, `{"received": <what the CLI wrote>}` or
 `{"exited": {"code": <int or null>, "stderr": <text>}}`. The tests replay the file
 through the driver's parser and mapper, so after recording run
-`cargo insta test -p sound-agent --review` and read the changed snapshots.
+`cargo insta test -p sound-agent --review` and read the changed snapshots in
+`crates/agent/src/provider/claude/snapshots/`.
 
-The flags match `provider/claude.rs`. Personal data (account, paths, the user's own
+The flags and the environment match `crates/agent/src/provider/claude/mod.rs`. Personal data (account, paths, the user's own
 agents) is replaced before writing, since the repository is public. Runs use haiku to
 stay cheap; one full recording costs a few cents.
 """
@@ -42,6 +43,8 @@ def environment():
     }
     cleaned["DISABLE_AUTOUPDATER"] = "1"
     cleaned["CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"] = "1"
+    cleaned["CLAUDE_CODE_AUTO_CONNECT_IDE"] = "0"
+    cleaned["CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL"] = "1"
     return cleaned
 
 
@@ -148,6 +151,8 @@ def scrub(text, folder):
     home = str(Path.home())
     for real in (os.path.realpath(folder), folder):
         text = text.replace(real, "/tmp/project")
+        # The CLI's own folder for the project is named after the path, with dashes.
+        text = text.replace(re.sub(r"[^A-Za-z0-9]", "-", real), "-tmp-project")
     text = text.replace(home, "/Users/composer")
     text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "composer@example.com", text)
     lines = []
@@ -234,6 +239,30 @@ def interrupt():
     run.finish()
 
 
+def interrupt_approval():
+    # Stopped while a question waits, so the question is never answered.
+    run = Run("interrupt_approval", "default")
+    run.control({"subtype": "initialize"})
+    run.user("Run exactly this command with the Bash tool: git init. Then reply in one short sentence.")
+
+    def on_message(message):
+        if message.get("type") == "control_request" and message["request"]["subtype"] == "can_use_tool":
+            run.control({"subtype": "interrupt"})
+
+    run.until_result(on_message)
+    run.finish()
+
+
+def permission_bypass():
+    # "Never ask" on a running process, which --allow-dangerously-skip-permissions allows.
+    run = Run("permission_bypass", "default")
+    run.control({"subtype": "initialize"})
+    run.control({"subtype": "set_permission_mode", "mode": "bypassPermissions"})
+    run.user("Run exactly this command with the Bash tool: git init. Then reply: done.")
+    run.until_result(lambda message: allow(run, message))
+    run.finish()
+
+
 def permission_mode():
     run = Run("permission_mode", "default")
     run.control({"subtype": "initialize"})
@@ -277,7 +306,10 @@ def crash():
 
 SCENARIOS = {
     function.__name__: function
-    for function in (plain, edit, approval_allowed, approval_denied, interrupt, permission_mode, stale_resume, error_turn, crash)
+    for function in (
+        plain, edit, approval_allowed, approval_denied, interrupt, interrupt_approval, permission_mode,
+        permission_bypass, stale_resume, error_turn, crash,
+    )
 }
 
 if __name__ == "__main__":

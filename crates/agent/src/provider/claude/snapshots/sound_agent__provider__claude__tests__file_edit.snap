@@ -24,37 +24,25 @@ expression: "replay(\"edit\")"
     },
     StepStarted {
         id: StepId(
-            "toolu_01GGssor9rRtFk9NKHAcH7Gu",
+            "toolu_013WW4EyF9VmAuU2p6UKyQoR",
         ),
         title: "Wrote notes.txt",
     },
     StepDone {
         id: StepId(
-            "toolu_01GGssor9rRtFk9NKHAcH7Gu",
+            "toolu_013WW4EyF9VmAuU2p6UKyQoR",
         ),
         outcome: Done,
     },
     StepStarted {
         id: StepId(
-            "toolu_01MqBj2F33cFB3jJvQqFr3uY",
-        ),
-        title: "Read notes.txt",
-    },
-    StepDone {
-        id: StepId(
-            "toolu_01MqBj2F33cFB3jJvQqFr3uY",
-        ),
-        outcome: Done,
-    },
-    StepStarted {
-        id: StepId(
-            "toolu_016WscJ3EFfF6qmAP6NHz4hf",
+            "toolu_01SVArS12TtnZK5m4tEdyQhD",
         ),
         title: "Edited notes.txt",
     },
     StepDone {
         id: StepId(
-            "toolu_016WscJ3EFfF6qmAP6NHz4hf",
+            "toolu_01SVArS12TtnZK5m4tEdyQhD",
         ),
         outcome: Done,
     },
