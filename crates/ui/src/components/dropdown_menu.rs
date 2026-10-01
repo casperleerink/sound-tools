@@ -39,6 +39,7 @@ pub struct MenuItem {
     shortcut: Option<SharedString>,
     disabled: bool,
     selectable: bool,
+    checked: bool,
 }
 
 impl MenuItem {
@@ -51,6 +52,7 @@ impl MenuItem {
             shortcut: None,
             disabled: false,
             selectable: true,
+            checked: false,
         }
     }
 
@@ -81,6 +83,14 @@ impl MenuItem {
     /// menu's selected value; only radio-style items do.
     pub fn selectable(mut self, selectable: bool) -> Self {
         self.selectable = selectable;
+        self
+    }
+
+    /// Shows the check whatever the menu's selected value is, for a menu with more than one
+    /// select in it, such as the agent's approvals and model. The owner says what is picked in
+    /// each and makes the items not selectable.
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = checked;
         self
     }
 
@@ -255,7 +265,8 @@ impl RenderOnce for MenuList {
                         .map(|item| {
                             let row_ix = index;
                             index += 1;
-                            let is_selected = selected.as_ref() == Some(&item.value);
+                            let is_selected =
+                                item.checked || selected.as_ref() == Some(&item.value);
                             let on_select = on_select.clone();
                             let value = item.value.clone();
                             let selector = item.value.clone();
