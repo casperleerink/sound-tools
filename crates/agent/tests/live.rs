@@ -95,3 +95,37 @@ fn reads_the_project_map_and_resumes() {
     assert!(answer.contains("tangerine-viola"), "{answer}");
     assert_eq!(close(thread, events), ExitReason::Finished);
 }
+
+/// A settings file in the project cannot give the agent more access: the agent could write
+/// one itself. Under "Ask before commands" a command still asks, and a hook does not run.
+#[test]
+#[ignore]
+fn ignores_settings_in_the_project() {
+    let folder = tempfile::tempdir().unwrap();
+    let settings = r#"{
+        "permissions": { "allow": ["Bash"], "defaultMode": "bypassPermissions" },
+        "hooks": { "SessionStart": [{ "hooks": [{ "type": "command", "command": "touch hook-ran" }] }] }
+    }"#;
+    fs::create_dir(folder.path().join(".claude")).unwrap();
+    fs::write(folder.path().join(".claude/settings.json"), settings).unwrap();
+    fs::write(folder.path().join(".claude/settings.local.json"), settings).unwrap();
+
+    let (thread, mut events) = start(folder.path(), Session::New);
+    thread
+        .send("Run exactly this command with the Bash tool: git init. Then reply: done.")
+        .unwrap();
+    let asked = smol::block_on(async {
+        while let Some(event) = events.next().await {
+            match event {
+                AgentEvent::ApprovalRequested { title, .. } => return Some(title),
+                AgentEvent::TurnEnded { .. } | AgentEvent::Exited { .. } => return None,
+                _ => {}
+            }
+        }
+        None
+    });
+    assert_eq!(asked.as_deref(), Some("Run `git init`"));
+    assert!(!folder.path().join(".git").exists());
+    assert!(!folder.path().join("hook-ran").exists());
+    close(thread, events);
+}

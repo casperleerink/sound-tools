@@ -63,18 +63,22 @@ fn arguments(options: &ThreadOptions, session_id: &str) -> Vec<OsString> {
         session_flag,
         session_id,
         // Trimmed to what a composer needs. The composer's own MCP servers, skills, hooks and
-        // plugins do not load, so every composer gets the same agent. The project's
-        // CLAUDE.md still loads.
+        // plugins do not load, so every composer gets the same agent.
         "--tools",
         TOOLS,
         "--strict-mcp-config",
+        // No settings file at all, not even the project's: the agent writes in the project,
+        // and a permission rule or a hook there would give it more than the approval mode.
+        // Without the project source the project's CLAUDE.md would not load either, so the
+        // folder comes back as an added folder, whose CLAUDE.md loads (see `Events::start`).
         "--setting-sources",
-        "project,local",
+        "",
         "--disable-slash-commands",
     ]
     .into_iter()
     .map(OsString::from)
     .collect();
+    arguments.extend(["--add-dir".into(), options.folder.clone().into()]);
     if let Some(model) = &options.model {
         arguments.extend(["--model".into(), model.into()]);
     }
@@ -126,7 +130,9 @@ impl Events {
             .env_clear()
             .envs(environment(&options))
             // A self-update would replace the pinned version the protocol was tested with.
-            .env("DISABLE_AUTOUPDATER", "1");
+            .env("DISABLE_AUTOUPDATER", "1")
+            // Loads the CLAUDE.md of the `--add-dir` folder, the project's.
+            .env("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD", "1");
         // Its own process group, so a ctrl-c in the terminal that started the app does not
         // stop the agent halfway through a write. Closing stdin ends it.
         #[cfg(unix)]

@@ -41,10 +41,11 @@ def environment():
         if key != "CLAUDECODE" and not key.startswith("CLAUDE_CODE_") and key != "ELECTRON_RUN_AS_NODE"
     }
     cleaned["DISABLE_AUTOUPDATER"] = "1"
+    cleaned["CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"] = "1"
     return cleaned
 
 
-def arguments(mode, session, model):
+def arguments(mode, session, model, folder):
     return [
         CLAUDE, "-p",
         "--input-format", "stream-json",
@@ -53,12 +54,14 @@ def arguments(mode, session, model):
         "--include-partial-messages",
         "--permission-prompt-tool", "stdio",
         "--permission-mode", mode,
+        "--allow-dangerously-skip-permissions",
         *session,
-        "--model", model,
         "--tools", "Bash,Read,Edit,Write,Glob,Grep",
         "--strict-mcp-config",
-        "--setting-sources", "project,local",
+        "--setting-sources", "",
         "--disable-slash-commands",
+        "--add-dir", folder,
+        "--model", model,
     ]
 
 
@@ -70,7 +73,7 @@ class Run:
         self.folder = tempfile.mkdtemp(prefix="sound-agent-fixture-")
         session = session or ["--session-id", str(uuid.uuid4())]
         self.process = subprocess.Popen(
-            arguments(mode, session, model),
+            arguments(mode, session, model, self.folder),
             cwd=self.folder,
             env=environment(),
             stdin=subprocess.PIPE,
