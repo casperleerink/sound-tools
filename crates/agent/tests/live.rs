@@ -10,11 +10,15 @@ use std::fs;
 use std::path::Path;
 
 use sound_agent::{
-    AgentEvent, ApprovalMode, Events, ExitReason, Installed, Provider, Session, Thread,
-    ThreadOptions, TurnOutcome, login_shell_environment, program_on_path,
+    AgentEvent, ApprovalAnswer, ApprovalMode, Events, ExitReason, Installed, Provider, Session,
+    Thread, ThreadOptions, TurnOutcome, login_shell_environment, program_on_path,
 };
 
 fn start(folder: &Path, session: Session) -> (Thread, Events) {
+    start_with(folder, session, ApprovalMode::default())
+}
+
+fn start_with(folder: &Path, session: Session, approval_mode: ApprovalMode) -> (Thread, Events) {
     let environment = smol::block_on(login_shell_environment()).unwrap();
     let program = program_on_path("claude", &environment).expect("claude is not on PATH");
     Thread::start(ThreadOptions {
@@ -25,7 +29,7 @@ fn start(folder: &Path, session: Session) -> (Thread, Events) {
         },
         folder: folder.to_path_buf(),
         model: Some("haiku".to_string()),
-        approval_mode: ApprovalMode::default(),
+        approval_mode,
         session,
     })
     .unwrap()
@@ -130,4 +134,50 @@ fn ignores_settings_in_the_project() {
     assert!(!folder.path().join(".git").exists());
     assert!(!folder.path().join("hook-ran").exists());
     close(thread, events);
+}
+
+/// Each approval mode asks as the composer reads in the menu. The agent writes a file, lists
+/// the folder and makes a repository; every question is allowed and kept.
+#[test]
+#[ignore]
+fn each_approval_mode_asks_as_it_says() {
+    let message = "Do these three steps, one tool call each, in this order: \
+        1. Write notes.txt containing the word one, with the Write tool. \
+        2. Run exactly this command with the Bash tool: ls \
+        3. Run exactly this command with the Bash tool: git init \
+        Then reply: done.";
+    for (mode, expected) in [
+        (
+            ApprovalMode::AskForEverything,
+            &["Write notes.txt", "Run `git init`"][..],
+        ),
+        (ApprovalMode::AskBeforeCommands, &["Run `git init`"][..]),
+        (ApprovalMode::NeverAsk, &[][..]),
+    ] {
+        let folder = tempfile::tempdir().unwrap();
+        let (thread, mut events) = start_with(folder.path(), Session::New, mode);
+        thread.send(message).unwrap();
+        let mut asked = Vec::new();
+        smol::block_on(async {
+            while let Some(event) = events.next().await {
+                match event {
+                    AgentEvent::ApprovalRequested { id, title } => {
+                        asked.push(title);
+                        thread.answer(id, ApprovalAnswer::Allow).unwrap();
+                    }
+                    AgentEvent::TurnEnded { outcome } => {
+                        assert_eq!(outcome, TurnOutcome::Completed);
+                        return;
+                    }
+                    AgentEvent::Exited { reason } => panic!("exited: {reason:?}"),
+                    _ => {}
+                }
+            }
+        });
+        println!("{mode:?} asked {asked:?}");
+        assert_eq!(asked, expected, "{mode:?}");
+        assert!(folder.path().join("notes.txt").exists(), "{mode:?}");
+        assert!(folder.path().join(".git").exists(), "{mode:?}");
+        close(thread, events);
+    }
 }
