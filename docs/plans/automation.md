@@ -6,7 +6,8 @@
 - **Moving a clip moves the automation under it.** It replaces what was at the new spot. Alt-drag moves the clip alone. A ghost of the line follows the drag, so you see the result before you drop.
 - **Audio path.** The arrangement reads the lines every block and sends each device the new values as events. Renders stay deterministic.
 - **v1 scope.** Track volume and pan, plus every `Parameter` of the built-in instruments and effects. Plugins come later.
-- **Open.** What the knob does while its parameter has a line (section "Open questions").
+- **Knob.** An automated knob shows the playing value with an automation mark and does not drag.
+- **Curves later.** v1 lines are straight. A curve can be added later as an optional field per point, so no file changes.
 
 ---
 
@@ -20,6 +21,7 @@ A composer or the agent can make any built-in knob change over time: "filter ope
 - Between two points the line is straight in the knob's travel, so a cutoff sweep sounds even. Before the first point the lane holds the first value, after the last it holds the last. A parameter with no lane plays its record value.
 - Moving a clip moves the points within its length, `[start, end)`, and they replace the points at the new spot. The values just outside both spots stay what they were (edge points, as `lane::cut` does), so nothing jumps there. Alt-drag moves the clip only. Copy, cut, paste and cmd-d take the automation along the same way. Each is one undo step.
 - While dragging: the moved part of the line follows as a ghost, the part it replaces fades, alt flips it live, and a hint says "Automation moves · alt to leave it" when there is automation under the clip. With lanes collapsed, the clip shows an automation mark during the drag.
+- The knob of an automated parameter shows the playing value with an automation mark and does not drag. Removing the lane gives the knob back its record value.
 - Lanes are drawn and erased like the bend, mod and pressure lanes (DESIGN.md), one lane per automated parameter under the track.
 - The audio thread evaluates lanes from ticks per block, like the expression lanes. Nothing comes from the control thread while playing, so a render is the same bytes every time.
 - An automated value ramps over the block, not the 20 ms edit glide, so it is on time and does not click.
@@ -34,10 +36,10 @@ A composer or the agent can make any built-in knob change over time: "filter ope
 - The realtime sanitizer job passes with automation playing.
 - In the app: draw a volume fade, drag a clip with and without alt, and check the ghost and the hint (screenshot).
 
-## Open questions
+## Later
 
-- The knob of an automated parameter. Proposal: it shows the playing value with an automation mark and does not drag, the simplest option. The Ableton way (a drag overrides the lane until you re-enable it) adds a state per parameter.
-- Plugins after v1: CLAP and VST 3 both take parameter changes in a block, so the plugin host can take the same events later.
+- Curved lines: one optional bend amount per point for the segment after it, not bezier handles. Missing means straight, so old files read the same.
+- Plugins: CLAP and VST 3 both take parameter changes in a block, so the plugin host can take the same events.
 
 ## Notes for the implementer
 
