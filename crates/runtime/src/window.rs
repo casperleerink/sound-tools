@@ -120,11 +120,11 @@ pub struct LeftPanel {
 impl LeftPanel {
     pub fn new<V: Render + Focusable>(
         view: Entity<V>,
-        busy: fn(&V, &App) -> bool,
+        busy: fn(&V) -> bool,
         cx: &mut Context<Shell>,
     ) -> Self {
         let observing = cx.observe(&view, move |shell, view, cx| {
-            let now = busy(view.read(cx), cx);
+            let now = busy(view.read(cx));
             if let Some(panel) = &mut shell.left_panel
                 && panel.busy != now
             {
@@ -133,7 +133,7 @@ impl LeftPanel {
             }
         });
         Self {
-            busy: busy(view.read(cx), cx),
+            busy: busy(view.read(cx)),
             focus: {
                 let view = view.clone();
                 Box::new(move |cx| view.read(cx).focus_handle(cx))

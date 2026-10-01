@@ -469,7 +469,7 @@ fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
     opened.keys("cmd-l");
     opened.cx.simulate_input("Hello");
     opened.keys("enter");
-    assert!(opened.cx.read(|cx| sidebar.read(cx).is_busy(cx)));
+    assert!(opened.cx.read(|cx| sidebar.read(cx).is_busy()));
     opened.keys("cmd-.");
     let stop = opened.control("agent-stop");
     opened.click(stop);
@@ -655,7 +655,7 @@ fn ask(opened: &mut Opened<'_>, message: &str) -> String {
     opened.keys("enter");
     let sidebar = opened.sidebar();
     let started = std::time::Instant::now();
-    while opened.cx.read(|cx| sidebar.read(cx).is_busy(cx)) {
+    while opened.cx.read(|cx| sidebar.read(cx).is_busy()) {
         assert!(started.elapsed() < Duration::from_secs(180), "no answer");
         // The process is real: give it time, and the sidebar its frame.
         std::thread::sleep(Duration::from_millis(50));
@@ -841,7 +841,7 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
     assert!(opened.find("agent-never-ask").is_none());
 
     // While the turn runs, a change goes to the agent at once too.
-    assert!(opened.cx.read(|cx| sidebar.read(cx).is_busy(cx)));
+    assert!(opened.cx.read(|cx| sidebar.read(cx).is_busy()));
     pick(&mut opened, "menu-approval-ask-for-everything");
     assert_eq!(
         commands.try_recv().ok(),

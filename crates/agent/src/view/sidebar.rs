@@ -452,7 +452,7 @@ impl Sidebar {
     }
 
     /// Whether the agent works or waits on the composer, so a closed sidebar can say so.
-    pub fn is_busy(&self, _: &App) -> bool {
+    pub fn is_busy(&self) -> bool {
         self.conversation.is_working()
     }
 
