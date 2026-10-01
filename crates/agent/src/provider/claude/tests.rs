@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use super::mapper::Mapper;
 use super::protocol::{ControlResponse, Outgoing, PermissionResult};
-use super::{Session, ThreadOptions, arguments};
+use super::{ThreadOptions, arguments};
 use crate::provider::{AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Installed, Provider};
 
 #[derive(Deserialize)]
@@ -257,7 +257,7 @@ fn allows_a_command_for_the_thread() {
 
 #[test]
 fn starts_claude_with_the_trimmed_flags() {
-    let options = |approval_mode, session| ThreadOptions {
+    let options = |approval_mode, resume| ThreadOptions {
         provider: Provider::Claude,
         installed: Installed {
             program: PathBuf::from("claude"),
@@ -266,23 +266,23 @@ fn starts_claude_with_the_trimmed_flags() {
         folder: PathBuf::from("/tmp/project"),
         model: Some("haiku".to_string()),
         approval_mode,
-        session,
+        resume,
     };
-    let flags = |approval_mode, session| {
-        arguments(&options(approval_mode, session), "id")
+    let flags = |approval_mode, resume| {
+        arguments(&options(approval_mode, resume), "id")
             .into_iter()
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join(" ")
     };
-    insta::assert_snapshot!(flags(ApprovalMode::default(), Session::New));
-    let resume = flags(ApprovalMode::default(), Session::Resume("id".to_string()));
+    insta::assert_snapshot!(flags(ApprovalMode::default(), None));
+    let resume = flags(ApprovalMode::default(), Some("id".to_string()));
     assert!(resume.contains("--resume id"));
     for (mode, flag) in [
         (ApprovalMode::AskForEverything, "default"),
         (ApprovalMode::AskBeforeCommands, "acceptEdits"),
         (ApprovalMode::NeverAsk, "bypassPermissions"),
     ] {
-        assert!(flags(mode, Session::New).contains(&format!("--permission-mode {flag} ")));
+        assert!(flags(mode, None).contains(&format!("--permission-mode {flag} ")));
     }
 }

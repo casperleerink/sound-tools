@@ -11,7 +11,7 @@ use runtime::window::{LeftPanel, LeftPanelSlot};
 use runtime::{OFFLINE, open_or_create};
 use sound_agent::{
     Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Command, Entry, ExitReason,
-    Installed, Model, Session, Sidebar, StepId, StepOutcome, Thread, TurnOutcome,
+    Installed, Model, Sidebar, StepId, StepOutcome, Thread, TurnOutcome,
 };
 use sound_core::Engine;
 use tempfile::TempDir;
@@ -460,7 +460,7 @@ fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
     let mut opened = support::open_with(cx, |_| {});
-    let (thread, commands) = Thread::without_agent(&Session::New);
+    let (thread, commands) = Thread::without_agent(None);
     let sidebar = opened.sidebar();
     opened
         .cx
@@ -492,9 +492,9 @@ fn entries(opened: &mut Opened<'_>) -> String {
         .read(|cx| format!("{:?}", sidebar.read(cx).conversation().entries()))
 }
 
-fn next_session(opened: &mut Opened<'_>) -> Session {
+fn resume(opened: &mut Opened<'_>) -> Option<String> {
     let sidebar = opened.sidebar();
-    opened.cx.read(|cx| sidebar.read(cx).next_session())
+    opened.cx.read(|cx| sidebar.read(cx).resume())
 }
 
 /// The window closes and the project opens again on the same machine: the sidebar shows the
@@ -504,10 +504,10 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
     let mut opened = support::open_with(cx, |_| {});
-    assert_eq!(next_session(&mut opened), Session::New);
+    assert_eq!(resume(&mut opened), None);
     // The agent's session is known as it starts, before it says anything.
-    let (thread, _commands) = Thread::without_agent(&Session::New);
-    let session = Session::Resume(thread.session_id().to_string());
+    let (thread, _commands) = Thread::without_agent(None);
+    let session = Some(thread.session_id().to_string());
     let sidebar = opened.sidebar();
     opened
         .cx
@@ -538,16 +538,16 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
         },
     ]);
     let shown = entries(&mut opened);
-    assert_eq!(next_session(&mut opened), session);
+    assert_eq!(resume(&mut opened), session);
     drop(sidebar);
     let folder = opened.close();
 
     let mut opened = open_again(cx, folder);
     assert_eq!(entries(&mut opened), shown);
-    assert_eq!(next_session(&mut opened), session);
+    assert_eq!(resume(&mut opened), session);
 
     // The next message goes on in the same thread, with an agent in the same session.
-    let (thread, commands) = Thread::without_agent(&next_session(&mut opened));
+    let (thread, commands) = Thread::without_agent(resume(&mut opened));
     let sidebar = opened.sidebar();
     opened
         .cx
@@ -606,7 +606,7 @@ fn a_lost_session_ends_the_thread_until_plus(cx: &mut TestAppContext) {
     opened.click(plus);
     assert!(opened.find("agent-cannot-continue").is_none());
     assert_eq!(entries(&mut opened), "[]");
-    assert_eq!(next_session(&mut opened), Session::New);
+    assert_eq!(resume(&mut opened), None);
 
     // Opened again before a message: the new, empty thread, not the old one.
     let folder = opened.close();
@@ -640,7 +640,7 @@ fn the_real_agent_resumes_a_thread_after_the_window_closed(cx: &mut TestAppConte
     let folder = opened.close();
 
     let mut opened = open_again(cx, folder);
-    assert!(matches!(next_session(&mut opened), Session::Resume(_)));
+    assert!(resume(&mut opened).is_some());
     let answer = ask(
         &mut opened,
         "Which word did I ask you to remember? Answer with the word only. Use no tools.",
@@ -805,7 +805,7 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
     let mut opened = support::open_with(cx, |_| {});
-    let (thread, commands) = Thread::without_agent(&Session::New);
+    let (thread, commands) = Thread::without_agent(None);
     let sidebar = opened.sidebar();
     opened
         .cx
@@ -855,8 +855,8 @@ fn two_sidebars_share_one_setting(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     let settings = install_sidebar(cx, machine.path());
     let mut opened = support::open_with(cx, |_| {});
-    let (thread, commands) = Thread::without_agent(&Session::New);
-    let (other_thread, other_commands) = Thread::without_agent(&Session::New);
+    let (thread, commands) = Thread::without_agent(None);
+    let (other_thread, other_commands) = Thread::without_agent(None);
     let sidebar = opened.sidebar();
     let session = opened.session.clone();
     let shared = settings.clone();

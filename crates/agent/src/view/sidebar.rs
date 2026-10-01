@@ -34,8 +34,8 @@ use crate::install::{self, InstallError};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{Line, SavedThread, ThreadStore, Write};
 use crate::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalMode, Events, Installed, Provider, Session,
-    SignInChoice, Thread, ThreadOptions, TurnOutcome, login_shell_environment,
+    Account, AgentEvent, ApprovalAnswer, ApprovalMode, Events, Installed, Provider, SignInChoice,
+    Thread, ThreadOptions, TurnOutcome, login_shell_environment,
 };
 
 actions!(agent_sidebar, [Stop]);
@@ -446,12 +446,11 @@ impl Sidebar {
         &self.menu
     }
 
-    /// What the next process of the thread continues: the thread's own session once its
-    /// agent has started, so a thread opened again resumes where it left off.
-    pub fn next_session(&self) -> Session {
-        self.thread
-            .as_ref()
-            .map_or(Session::New, SavedThread::session)
+    /// The session the next process of the thread resumes: the thread's own once its agent
+    /// has started, so a thread opened again goes on where it left off. `None` starts a new
+    /// one.
+    pub fn resume(&self) -> Option<String> {
+        self.thread.as_ref()?.session_id.clone()
     }
 
     fn keep(&self, writes: impl IntoIterator<Item = Write>) {
@@ -907,7 +906,7 @@ impl Sidebar {
             folder,
             model: settings.model.clone(),
             approval_mode: settings.approval_mode,
-            session: self.next_session(),
+            resume: self.resume(),
         })?;
         let (sender, receiver) = smol::channel::unbounded();
         let reading = cx.background_spawn(read(events, sender));

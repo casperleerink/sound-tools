@@ -15,8 +15,8 @@ use std::path::PathBuf;
 use smol::channel;
 use smol::future;
 use sound_agent::{
-    AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Installed, Provider, Session,
-    StepOutcome, Thread, ThreadOptions, login_shell_environment, program_on_path,
+    AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Installed, Provider, StepOutcome, Thread,
+    ThreadOptions, login_shell_environment, program_on_path,
 };
 
 enum Input {
@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             folder,
             model: None,
             approval_mode: ApprovalMode::default(),
-            session: Session::New,
+            resume: None,
         })?;
         let session_id = thread.session_id().to_string();
         let mut thread = Some(thread);

@@ -29,7 +29,7 @@ use smol::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use self::mapper::Mapper;
 use self::protocol::{CliRequest, ControlResponse, Incoming, Outgoing, PermissionMode, Request};
 pub use self::setup::{SIGN_IN_CHOICES, account, download, sign_in, sign_out};
-use super::{AgentEvent, ApprovalMode, Command, Session, ThreadOptions};
+use super::{AgentEvent, ApprovalMode, Command, ThreadOptions};
 
 /// The tools a composer needs. No web, no subagents, no questions: the agent asks in plain
 /// text.
@@ -45,9 +45,9 @@ fn permission_mode(mode: ApprovalMode) -> PermissionMode {
 
 /// The flags, every one explicit: the docs say the defaults of `-p` will change.
 fn arguments(options: &ThreadOptions, session_id: &str) -> Vec<OsString> {
-    let session_flag = match options.session {
-        Session::New => "--session-id",
-        Session::Resume(_) => "--resume",
+    let session_flag = match options.resume {
+        Some(_) => "--resume",
+        None => "--session-id",
     };
     let mut arguments: Vec<OsString> = [
         "-p",
@@ -143,7 +143,7 @@ struct Writing {
 }
 
 impl Events {
-    /// `session_id` is the one `options.session` names, or the new one to give the session.
+    /// `session_id` is the one `options.resume` names, or the new one to give the session.
     pub fn start(
         options: ThreadOptions,
         session_id: &str,

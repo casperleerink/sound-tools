@@ -32,7 +32,7 @@ pub use environment::{login_shell_environment, program_on_path};
 pub use install::{Download, InstallError, install};
 pub use provider::{
     Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Command, Events, ExitReason,
-    Installed, Model, Provider, Session, SignInChoice, StepId, StepOutcome, Thread, ThreadClosed,
+    Installed, Model, Provider, SignInChoice, StepId, StepOutcome, Thread, ThreadClosed,
     ThreadOptions, TurnOutcome,
 };
 pub use settings::{AgentSettings, AgentSettingsEvent, Settings};

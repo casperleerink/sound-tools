@@ -131,7 +131,6 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
     let (saved, replayed) = store.current().unwrap().unwrap();
     assert_eq!(replayed, conversation);
     assert_eq!(saved, thread);
-    assert_eq!(saved.session(), Session::Resume("session".to_string()));
     // "Worked for" survives: the first turn worked from the message to its end.
     let Some(Entry::Turn(turn)) = replayed.entries().get(1) else {
         panic!("{:?}", replayed.entries());

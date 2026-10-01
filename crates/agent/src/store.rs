@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::conversation::Conversation;
-use crate::{AgentEvent, Session, TurnOutcome};
+use crate::{AgentEvent, TurnOutcome};
 
 const INDEX: &str = "index.json";
 
@@ -49,13 +49,6 @@ impl SavedThread {
             id: Uuid::new_v4().to_string(),
             session_id: None,
         }
-    }
-
-    /// What the next process of the thread continues.
-    pub fn session(&self) -> Session {
-        self.session_id
-            .clone()
-            .map_or(Session::New, Session::Resume)
     }
 }
 

@@ -10,15 +10,19 @@ use std::fs;
 use std::path::Path;
 
 use sound_agent::{
-    AgentEvent, ApprovalAnswer, ApprovalMode, Events, ExitReason, Installed, Provider, Session,
-    Thread, ThreadOptions, TurnOutcome, login_shell_environment, program_on_path,
+    AgentEvent, ApprovalAnswer, ApprovalMode, Events, ExitReason, Installed, Provider, Thread,
+    ThreadOptions, TurnOutcome, login_shell_environment, program_on_path,
 };
 
-fn start(folder: &Path, session: Session) -> (Thread, Events) {
-    start_with(folder, session, ApprovalMode::default())
+fn start(folder: &Path, resume: Option<String>) -> (Thread, Events) {
+    start_with(folder, resume, ApprovalMode::default())
 }
 
-fn start_with(folder: &Path, session: Session, approval_mode: ApprovalMode) -> (Thread, Events) {
+fn start_with(
+    folder: &Path,
+    resume: Option<String>,
+    approval_mode: ApprovalMode,
+) -> (Thread, Events) {
     let environment = smol::block_on(login_shell_environment()).unwrap();
     let program = program_on_path("claude", &environment).expect("claude is not on PATH");
     Thread::start(ThreadOptions {
@@ -30,7 +34,7 @@ fn start_with(folder: &Path, session: Session, approval_mode: ApprovalMode) -> (
         folder: folder.to_path_buf(),
         model: Some("haiku".to_string()),
         approval_mode,
-        session,
+        resume,
     })
     .unwrap()
 }
@@ -81,7 +85,7 @@ fn reads_the_project_map_and_resumes() {
     )
     .unwrap();
 
-    let (thread, mut events) = start(folder.path(), Session::New);
+    let (thread, mut events) = start(folder.path(), None);
     let answer = ask(
         &thread,
         &mut events,
@@ -91,7 +95,7 @@ fn reads_the_project_map_and_resumes() {
     let session = thread.session_id().to_string();
     assert_eq!(close(thread, events), ExitReason::Finished);
 
-    let (thread, mut events) = start(folder.path(), Session::Resume(session));
+    let (thread, mut events) = start(folder.path(), Some(session));
     let answer = ask(
         &thread,
         &mut events,
@@ -115,7 +119,7 @@ fn ignores_settings_in_the_project() {
     fs::write(folder.path().join(".claude/settings.json"), settings).unwrap();
     fs::write(folder.path().join(".claude/settings.local.json"), settings).unwrap();
 
-    let (thread, mut events) = start(folder.path(), Session::New);
+    let (thread, mut events) = start(folder.path(), None);
     thread
         .send("Run exactly this command with the Bash tool: git init. Then reply: done.")
         .unwrap();
@@ -154,7 +158,7 @@ fn each_approval_mode_asks_as_it_says() {
         (ApprovalMode::NeverAsk, &[][..]),
     ] {
         let folder = tempfile::tempdir().unwrap();
-        let (thread, mut events) = start_with(folder.path(), Session::New, mode);
+        let (thread, mut events) = start_with(folder.path(), None, mode);
         thread.send(message).unwrap();
         let mut asked = Vec::new();
         smol::block_on(async {
