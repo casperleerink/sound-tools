@@ -6,7 +6,8 @@
 
 use sound_core::{State, Ticks};
 use sound_notes::{
-    Amount, Bend, Clip, Expression, Length, NoteEvent, Point, RawEvent, RawTake, thinned, value_at,
+    Amount, Bend, Clip, Expression, Length, NoteEvent, Point, RawEvent, RawTake, check_order, cut,
+    thinned, value_at,
 };
 
 fn bend(tick: u64, value: i16) -> Point<Bend> {
@@ -87,6 +88,51 @@ fn a_lane_moves_in_straight_lines_between_its_points() {
     assert_eq!(at(1680), 0);
     assert_eq!(at(100_000), -8000);
     assert_eq!(value_at::<Bend>(&[], Ticks(0)), None);
+}
+
+fn number(tick: u64, value: f32) -> Point<f32> {
+    Point {
+        tick: Ticks(tick),
+        value,
+    }
+}
+
+/// A lane of plain numbers, as an automation lane plays the travel of a knob, follows the same
+/// rules: it holds before the first point and after the last, and is straight between them,
+/// with no rounding.
+#[test]
+fn a_lane_of_numbers_moves_in_straight_lines_and_holds_its_ends() {
+    let lane = [number(960, 0.25), number(1920, 0.75), number(2880, 0.0)];
+    let at = |tick| value_at(&lane, Ticks(tick)).unwrap();
+    assert_eq!(at(0), 0.25);
+    assert_eq!(at(960), 0.25);
+    assert_eq!(at(1200), 0.375);
+    assert_eq!(at(1440), 0.5);
+    assert_eq!(at(1920), 0.75);
+    assert_eq!(at(2400), 0.375);
+    assert_eq!(at(100_000), 0.0);
+    assert_eq!(value_at::<f32>(&[], Ticks(0)), None);
+}
+
+/// A cut keeps the points inside and puts a point on each edge with the value the lane had
+/// there, so what is left moves as it did.
+#[test]
+fn a_cut_of_a_lane_of_numbers_keeps_its_value_on_both_edges() {
+    let lane = [number(0, 0.0), number(1000, 1.0)];
+    let cut = cut(&lane, Ticks(250)..Ticks(501));
+    assert_eq!(cut, [number(0, 0.25), number(250, 0.5)]);
+}
+
+#[test]
+fn the_points_of_a_lane_are_in_tick_order_one_per_tick() {
+    assert_eq!(
+        check_order("points", &[number(0, 0.), number(1, 1.)]),
+        Ok(())
+    );
+    assert_eq!(
+        check_order("points", &[number(5, 0.), number(5, 1.)]),
+        Err("points[1].tick must be after the tick of the point before it, 5, not 5. The points of a lane are in tick order, one per tick".into())
+    );
 }
 
 /// A line that rises by one over three ticks rounds to the nearest value on every tick.
