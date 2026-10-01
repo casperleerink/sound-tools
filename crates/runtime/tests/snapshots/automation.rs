@@ -6,7 +6,7 @@
 //!   the pan and the numbers of the Filter.
 //! - `automation-drag.png`: the second bass clip dragged two bars on, the button still down:
 //!   the line it takes along over a light band where it lands, the line it replaces faded,
-//!   and the hint under the clip.
+//!   and the hint in the top left of the clip.
 //! - `automation-drag-folded.png`: the same drag with the lanes folded away, where the clip
 //!   carries a small mark instead.
 

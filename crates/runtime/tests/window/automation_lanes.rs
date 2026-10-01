@@ -1,9 +1,10 @@
 //! The automation lanes under a track: the toggle in its header shows them, the select under
 //! them adds one, a drag draws its line, alt and a drag erase points, and a double click clears
 //! it. Each edit is one undo step that undo gives back byte for byte. A clip dragged with its
-//! automation shows what the drop will be.
+//! automation shows what the drop will be. `a` on the selected track shows the lanes too, and
+//! tab reaches the select.
 
-use arrangement::view::track_lanes::y_of;
+use arrangement::view::track_lanes::LANE_BOX;
 use arrangement::{AutomationLane, AutomationValue, LaneMove, TrackState, moved, travel_in};
 use filter::FilterState;
 use gpui::{Modifiers, TestAppContext, point, px};
@@ -162,7 +163,7 @@ fn a_drag_draws_the_line_in_one_undo_step(cx: &mut TestAppContext) {
     let mut opened = open(cx, true);
     let before = mark(&mut opened);
     let (from, to) = (
-        opened.in_track_lane(5 * BAR, 0, 0, y_of(1.)),
+        opened.in_track_lane(5 * BAR, 0, 0, LANE_BOX.y_of(1.)),
         opened.in_track_lane(6 * BAR, 0, 0, -20.),
     );
     opened.press(from);
@@ -237,7 +238,7 @@ fn the_ghost_of_a_drag_is_the_drop(cx: &mut TestAppContext) {
         to: id(ONE),
         start: Ticks(5 * BAR),
     };
-    let expected = opened.project(|project| moved(&tracks, &[step], &travel_in(project)));
+    let expected = opened.project(|project| moved(&tracks, &[step], &travel_in(project)).lanes);
     let expected = expected.get(&id(ONE)).cloned().unwrap();
     let automation_moves = |opened: &mut Opened<'_>| {
         let timeline = opened.timeline.clone();
@@ -267,4 +268,99 @@ fn the_ghost_of_a_drag_is_the_drop(cx: &mut TestAppContext) {
     opened.drag_to(to);
     assert!(automation_moves(&mut opened));
     opened.release(to);
+}
+
+/// The order of the tracks of the arrangement, by name.
+fn order(opened: &mut Opened<'_>) -> Vec<String> {
+    opened.project(|project| {
+        let arrangement = runtime::main_arrangement(project).unwrap();
+        let tracks = arrangement::tracks(project, arrangement.id()).into_iter();
+        let names = tracks.map(|(track, _)| track.id().name().to_string());
+        names.collect()
+    })
+}
+
+/// A drag of a track header past a track that shows its lanes goes where the pointer is and
+/// stays there while the pointer stays: the rows of mouse down decide, not those the last move
+/// made, in which the taller track is somewhere else.
+#[gpui::test]
+fn a_track_dragged_past_open_lanes_stays_where_the_pointer_is(cx: &mut TestAppContext) {
+    let mut opened = open(cx, true);
+    assert_eq!(order(&mut opened), ["track-1", "track-2"]);
+    // The second header up into the lanes of the first track, and on a little.
+    let from = opened.track_header(1);
+    let into_lanes = opened.in_track_lane(0, 0, 1, 20.);
+    let to = point(from.x, into_lanes.y);
+    opened.press(from);
+    opened.drag_to(to);
+    assert_eq!(order(&mut opened), ["track-2", "track-1"]);
+    for step in [1., 2., 3.] {
+        opened.drag_to(point(to.x, to.y + px(step)));
+        assert_eq!(order(&mut opened), ["track-2", "track-1"], "{step}");
+    }
+    opened.release(to);
+    assert_eq!(opened.undo_label().as_deref(), Some("Move track"));
+}
+
+/// A lane just added holds one value, so a clip over it takes nothing along and no hint shows,
+/// also to another track, where only the volume and the pan would go.
+#[gpui::test]
+fn a_lane_that_holds_one_value_does_not_move(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let arrangement = runtime::main_arrangement(project).unwrap();
+        runtime::add_track(project, &arrangement).unwrap();
+        let mut changes = Changes::new();
+        changes.create(id(PART), clip(0, BAR, vec![note(0, 480, 60)]));
+        project.commit("Add clip", changes).unwrap();
+        project.clear_history();
+    });
+    let toggle = toggle(&mut opened);
+    opened.click(toggle);
+    let select = opened.control("add-lane-track-1");
+    opened.click(select);
+    let pan = opened.control("menu-/pan");
+    opened.click(pan);
+    assert_eq!(points(&mut opened, "pan"), [(0, 0.)]);
+    let timeline = opened.timeline.clone();
+    let (from, to) = (opened.at(240, 0), opened.at(4 * BAR + 240, 1));
+    opened.press(from);
+    opened.drag_to(to);
+    assert!(!opened.cx.read(|cx| timeline.read(cx).automation_moves()));
+    opened.release(to);
+    assert_eq!(points(&mut opened, "pan"), [(0, 0.)]);
+    let second = opened.project(|project| {
+        let track = project.resolve::<TrackState>(&id("arrangement/track-2"));
+        project.state(&track.unwrap()).unwrap().automation.clone()
+    });
+    assert_eq!(second, []);
+}
+
+/// `a` on the selected track shows its lanes and folds them away, and tab reaches the select
+/// that adds one.
+#[gpui::test]
+fn a_shows_the_lanes_of_the_selected_track_and_tab_reaches_the_select(cx: &mut TestAppContext) {
+    let mut opened = open(cx, false);
+    let header = opened.track_header(0);
+    opened.click(header);
+    opened.keys("a");
+    assert!(shows_lanes(&mut opened));
+    let timeline = opened.timeline.clone();
+    let lane_menu = opened
+        .cx
+        .read(|cx| timeline.read(cx).lane_menu(&id(ONE)).cloned());
+    let menu = lane_menu.unwrap();
+    let mut reached = false;
+    for _ in 0..4 {
+        opened.keys("tab");
+        let menu = menu.clone();
+        reached |= opened
+            .cx
+            .update(|window, cx| menu.read(cx).trigger_is_focused(window));
+    }
+    assert!(reached, "tab does not reach the select under the lanes");
+    // Back on the timeline, `a` folds them away.
+    let header = opened.track_header(0);
+    opened.click(header);
+    opened.keys("a");
+    assert!(!shows_lanes(&mut opened));
 }
