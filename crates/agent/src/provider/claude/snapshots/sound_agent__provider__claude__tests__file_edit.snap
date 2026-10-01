@@ -1,0 +1,73 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"edit\")"
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_01GGssor9rRtFk9NKHAcH7Gu",
+        ),
+        title: "Wrote notes.txt",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_01GGssor9rRtFk9NKHAcH7Gu",
+        ),
+        outcome: Done,
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_01MqBj2F33cFB3jJvQqFr3uY",
+        ),
+        title: "Read notes.txt",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_01MqBj2F33cFB3jJvQqFr3uY",
+        ),
+        outcome: Done,
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_016WscJ3EFfF6qmAP6NHz4hf",
+        ),
+        title: "Edited notes.txt",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_016WscJ3EFfF6qmAP6NHz4hf",
+        ),
+        outcome: Done,
+    },
+    TextDelta {
+        text: "done",
+    },
+    TextDone {
+        text: "done",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

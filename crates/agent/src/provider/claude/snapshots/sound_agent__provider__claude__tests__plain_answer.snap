@@ -1,0 +1,37 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"plain\")"
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    TextDelta {
+        text: "Hello! I'm ready to help you with your project.",
+    },
+    TextDone {
+        text: "Hello! I'm ready to help you with your project.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

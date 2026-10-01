@@ -1,0 +1,17 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "serde_json::to_string_pretty(&updated_permissions).unwrap()"
+---
+[
+  {
+    "type": "addRules",
+    "rules": [
+      {
+        "toolName": "Bash",
+        "ruleContent": "touch marker.txt"
+      }
+    ],
+    "behavior": "allow",
+    "destination": "session"
+  }
+]

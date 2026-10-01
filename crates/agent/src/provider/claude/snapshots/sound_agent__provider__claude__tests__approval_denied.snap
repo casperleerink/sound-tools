@@ -1,0 +1,55 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"approval_denied\")"
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_01KkJhSWVLoPmSJqiFtfoNmJ",
+        ),
+        title: "Ran touch marker.txt",
+    },
+    ApprovalRequested {
+        id: ApprovalId(
+            "c5fefa56-de0c-4daf-a9cc-4d6263db0f06",
+        ),
+        title: "Run `touch marker.txt`",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_01KkJhSWVLoPmSJqiFtfoNmJ",
+        ),
+        outcome: Denied,
+    },
+    TextDelta {
+        text: "The tool execution was denied by the permission system, so I wasn't able to create the file.",
+    },
+    TextDone {
+        text: "The tool execution was denied by the permission system, so I wasn't able to create the file.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

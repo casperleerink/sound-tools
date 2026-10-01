@@ -1,0 +1,47 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"interrupt\")"
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    TextDelta {
+        text: "# The Last Concert\n\nMaria's c",
+    },
+    TextDone {
+        text: "# The Last Concert\n\nMaria's c",
+    },
+    TurnEnded {
+        outcome: Interrupted,
+    },
+    TurnStarted,
+    TextDelta {
+        text: "ok",
+    },
+    TextDone {
+        text: "ok",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]
