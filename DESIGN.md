@@ -72,14 +72,14 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Title row | the sidebar icon, right of the traffic lights | Open or close the agent sidebar. It stays as it is at the next start. While it is closed and the agent works or asks, the icon carries a lavender dot |
 | Agent sidebar | **Set up**, at the first use | Download the pinned Claude Code (215 MB), then sign in. **Cancel** stops; **Try again** resumes |
 | Agent sidebar | Sign in with your Claude plan, Use an Anthropic Console account (API) | Run Claude Code's own sign-in in the browser. **Open the page again** starts it again, **Cancel** stops it |
-| Agent sidebar | the menu in the composer | How much the agent may do without asking (Ask for everything, Ask before commands, Never ask), the model, the email and plan, and **Sign out**. Both selects are kept for the machine and apply from the next message. Under Never ask a new thread says so above the composer |
+| Agent sidebar | the menu in the composer | Its button says the model. How much the agent may do without asking (Ask for everything, Ask before commands, Never ask; plain reads such as `ls` never ask), the model, the email and plan, and **Sign out**. Both selects are kept for the machine, are the same in every window, and apply at once, also to a turn that runs. Under Never ask a new thread says so above the composer |
 | Agent sidebar | up, down in the composer | Up in an empty composer, or on its first row, recalls the earlier messages of the thread, newest first. Down goes forward again, and past the newest to empty. A draft stays |
 | Agent sidebar | enter in the composer, or the send button | Send the message. The agent works in the project folder; everything it changes for one message is one undo step named after the message. One message at a time |
 | Agent sidebar | the stop button, or cmd-period | Stop the agent's turn |
 | Agent sidebar | escape in the composer | Give the focus back to where it was |
 | Agent sidebar | **+** | A new thread. The agent of the old one stops, and the old one stays saved. The sidebar opens on the project's last thread, and the agent goes on where it left off |
 | Agent sidebar | Allow, Allow for this thread, Deny | Answer the agent when it asks before a command |
-| Agent sidebar | Worked for … | Show the steps of that turn. A failed step says so in red; a denied one is struck through |
+| Agent sidebar | Worked for … | Show the steps of that turn. A failed step says so in red; a denied one says what it asked to do, and denied |
 | Agent sidebar | N files are not live, under an answer | Show the problems that turn left, as `path: message` lines |
 | Project menu | Fit tempo to take | Fit the tempo map to the take of the selected clip, so bar lines land on the beats as played |
 | Project menu | Undo, Redo | Named after the step they undo or redo |
