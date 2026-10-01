@@ -42,9 +42,9 @@ const TRACK_WIDTH: f32 = 2.5;
 const FACE: f32 = 21.;
 const POINTER_WIDTH: f32 = 2.;
 const RING_WIDTH: f32 = 2.;
-/// Where the mark of an automated knob sits, from the top left of the dial: in its corner,
-/// clear of the track.
-const MARK_AT: f32 = 1.;
+/// Where the mark of an automated knob sits: in the top right corner of the dial, clear of
+/// the track, this far in from both edges.
+const MARK_INSET: f32 = 1.;
 
 /// The values of a knob and how they spread over its travel: the range of the core, which a
 /// [`Parameter`](sound_core::Parameter) gives with [`KnobRange::of`], so the knob and an
@@ -353,7 +353,7 @@ impl RenderOnce for Knob {
         let on_change = self.on_change.filter(|_| !disabled && !automated);
         let marked = self.id.clone();
         let mark = automated.then(|| {
-            let mark = automated::mark(MARK_AT, MARK_AT, cx);
+            let mark = automated::mark(DIAL - automated::MARK - MARK_INSET, MARK_INSET, cx);
             mark.debug_selector(move || format!("automated-{marked}"))
         });
         let dragged = Dragged {

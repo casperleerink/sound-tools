@@ -11,7 +11,8 @@ use crate::theme::ActiveTheme;
 
 /// What the tooltip of an automated control says.
 pub const TOOLTIP: &str = "Follows the automation of the track";
-const MARK: f32 = 4.;
+/// The size of the dot.
+pub(crate) const MARK: f32 = 4.;
 
 /// The dot, with its top left corner at `left` and `top` in the control.
 pub(crate) fn mark(left: f32, top: f32, cx: &App) -> Div {
