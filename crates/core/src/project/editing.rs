@@ -366,9 +366,12 @@ impl Project {
     }
 
     /// [`Self::end_request`] with the time of the end given, for tests of the undo grouping.
+    ///
+    /// The first end counts: an end said again later, such as when the agent's process exits
+    /// long after its turn, must not let the outside changes of that moment join the step.
     pub fn end_request_at(&mut self, at: Instant) {
         if let Some(request) = &mut self.history.request {
-            request.ended = Some(at);
+            request.ended.get_or_insert(at);
         }
     }
 

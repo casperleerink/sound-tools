@@ -266,6 +266,25 @@ fn an_undo_in_a_request_leaves_its_later_writes_a_new_step_with_its_label() {
 }
 
 #[test]
+fn a_second_end_keeps_the_first_so_a_later_write_is_a_step_of_its_own() {
+    let mut harness = Harness::new();
+    let start = Instant::now();
+    let end = start + Duration::from_secs(10);
+    let again = end + Duration::from_secs(60);
+    harness.project.begin_request(REQUEST);
+    write_dc(&mut harness, "a", 0.1, start);
+    harness.project.end_request_at(end);
+    harness.project.end_request_at(again);
+    write_dc(&mut harness, "b", 0.2, again + Duration::from_millis(50));
+
+    assert_eq!(
+        harness.project.undo().unwrap().as_deref(),
+        Some("File change")
+    );
+    assert_eq!(harness.project.undo().unwrap().as_deref(), Some(REQUEST));
+}
+
+#[test]
 fn a_write_heard_well_after_the_end_is_a_step_of_its_own() {
     let mut harness = Harness::new();
     let start = Instant::now();
