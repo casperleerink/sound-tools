@@ -130,7 +130,7 @@ impl Sidebar {
         let input = cx.new(|cx| {
             TextInput::new(cx)
                 .placeholder("Ask for a change")
-                .lines(2)
+                .multi_line(8)
                 .bare(true)
         });
         let weak = cx.weak_entity();
