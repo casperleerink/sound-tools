@@ -9,7 +9,7 @@ use sound_ui::components::indicator::{Indicator, IndicatorSize};
 
 use crate::StepOutcome;
 use crate::TurnOutcome;
-use crate::thread::Turn;
+use crate::conversation::Turn;
 
 /// The text of the thread: 15 on 22, as the mockup.
 const TEXT_SIZE: f32 = 15.;

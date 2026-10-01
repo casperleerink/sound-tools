@@ -17,7 +17,7 @@
 
 mod environment;
 mod provider;
-mod thread;
+mod conversation;
 mod view;
 
 pub use environment::{login_shell_environment, program_on_path};
@@ -25,5 +25,5 @@ pub use provider::{
     Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Events, ExitReason, Model,
     Provider, Session, StepId, StepOutcome, Thread, ThreadClosed, ThreadOptions, TurnOutcome,
 };
-pub use thread::{Approval, Conversation, Entry, Step, Turn, TurnEnd};
+pub use conversation::{Approval, Conversation, Entry, Step, Turn, TurnEnd};
 pub use view::{Installed, Sidebar};

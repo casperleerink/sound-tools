@@ -19,7 +19,7 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::text_input::TextInput;
 
 use super::entry;
-use crate::thread::{Conversation, Entry, request_label};
+use crate::conversation::{Conversation, Entry, request_label};
 use crate::{
     AgentEvent, ApprovalAnswer, ApprovalMode, Events, Provider, Session, Thread, ThreadOptions,
     TurnOutcome, login_shell_environment, program_on_path,
