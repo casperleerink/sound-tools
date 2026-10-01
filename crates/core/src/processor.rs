@@ -113,18 +113,20 @@ impl Smoothed {
         }
     }
 
-    /// Aims at `target`, reached in `ramp_frames` frames from where the value is now, and at
-    /// once for a ramp of 0. The target it already aims at keeps its ramp, so a processor that
-    /// sets every target again when one of them changes cuts no other glide short.
+    /// Aims at `target`, reached in `ramp_frames` frames from where the value is now. A ramp of
+    /// 0 takes the target at once, also the one it already glides to. With a longer ramp, the
+    /// target it already aims at keeps its glide, so a processor that sets every target again
+    /// when one of them changes cuts no other glide short.
     pub fn set_target(&mut self, target: f32, ramp_frames: f32) {
+        if ramp_frames <= 0.0 {
+            self.target = target;
+            self.snap();
+            return;
+        }
         if target == self.target {
             return;
         }
         self.target = target;
-        if ramp_frames <= 0.0 {
-            self.snap();
-            return;
-        }
         self.step_per_frame = (target - self.current).abs() / ramp_frames;
     }
 
@@ -515,5 +517,24 @@ impl EventOutputs<'_> {
     /// `EngineStatus::event_overflows`, like an event that a full buffer dropped.
     pub fn count_dropped(&mut self) {
         self.dropped.set(self.dropped.get() + 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Smoothed;
+
+    #[test]
+    fn a_ramp_of_zero_takes_the_target_at_once_also_mid_glide() {
+        let mut value = Smoothed::new(0.0);
+        value.set_target(1.0, 128.0);
+        assert_eq!(value.advance(16), 0.125);
+        // The same target with a longer ramp keeps the glide it has.
+        value.set_target(1.0, 1_024.0);
+        assert_eq!(value.advance(16), 0.25);
+        // The same target with no ramp is there at once.
+        value.set_target(1.0, 0.0);
+        assert_eq!(value.current(), 1.0);
+        assert!(!value.is_moving());
     }
 }

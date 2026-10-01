@@ -79,10 +79,10 @@ pub struct Targets<S: 'static, const N: usize> {
 }
 
 impl<S, const N: usize> Targets<S, N> {
-    /// The frames `parameter` takes. A number the device does not take automation for takes
-    /// the glide of an edit. After [`Automated::follow`], a number that did not move has 0:
-    /// its target is the one it had. So a target worked out from several numbers, such as
-    /// the gains of a pan, takes the longest ramp of them.
+    /// The frames `parameter` takes. A number that did not move, or that the device does not
+    /// take automation for, takes the glide of an edit: its target is the one it had, so it
+    /// goes on gliding as it did. Smooth each number on its own; a target worked out from
+    /// several numbers would take one ramp for all of them.
     pub fn ramp(&self, parameter: &Parameter<S>) -> f32 {
         let mut numbers = self.parameters.iter().zip(self.ramps);
         let ramp = numbers.find(|(number, _)| number.field == parameter.field);
@@ -177,8 +177,8 @@ impl<S: Copy, const N: usize> Automated<S, N> {
             // Not `clamp`: it panics on a NaN, and nothing may panic on the audio thread.
             *heard = Some(timed.event.value.max(parameter.min).min(parameter.max));
         }
-        // A number that does not move keeps its target, so its ramp changes nothing.
-        let mut ramps = [0.0; N];
+        // A number that does not move keeps its target, and so its glide.
+        let mut ramps = [edit; N];
         let mut changed = false;
         let numbers = self.lanes.iter_mut().zip(&mut self.gliding).zip(&mut ramps);
         for (((lane, gliding), ramp), heard) in numbers.zip(heard) {
@@ -287,12 +287,12 @@ mod tests {
         let targets = take(&mut automated, &[(0, 500.)]).unwrap();
         assert!(targets.snaps());
         assert_eq!(targets.state.cutoff, 500.);
-        assert_eq!(ramps(&targets), (0., 0.));
+        assert_eq!(ramps(&targets), (0., EDIT));
         // The same value again moves nothing, and a move takes one block.
         assert!(take(&mut automated, &[(0, 500.)]).is_none());
         let targets = take(&mut automated, &[(0, 600.)]).unwrap();
         assert!(!targets.snaps());
-        assert_eq!(ramps(&targets), (BLOCK, 0.));
+        assert_eq!(ramps(&targets), (BLOCK, EDIT));
     }
 
     #[test]
@@ -300,7 +300,7 @@ mod tests {
         let mut automated = Automated::new(INPUT, RECORD);
         assert!(take(&mut automated, &[]).is_none());
         let targets = take(&mut automated, &[(0, 500.)]).unwrap();
-        assert_eq!(ramps(&targets), (EDIT, 0.));
+        assert_eq!(ramps(&targets), (EDIT, EDIT));
         // The next move still ends where the glide ends, one block later than it is now.
         let targets = take(&mut automated, &[(0, 600.)]).unwrap();
         assert_eq!(targets.ramp(&CUTOFF), EDIT - BLOCK);
