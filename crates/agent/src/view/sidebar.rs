@@ -237,19 +237,9 @@ impl Sidebar {
         });
         let list = ListState::new(0, ListAlignment::Top, px(OVERDRAW));
         list.set_follow_mode(FollowMode::Tail);
-        let account = match &setup {
-            Setup::Ready { account } => account.clone(),
-            _ => Account::default(),
-        };
-        let shared = settings.read(cx);
-        let (label, entries) = (
-            menu::label(shared.settings(), shared.models()),
-            menu::entries(&account, shared.settings(), shared.models()),
-        );
-        // Read before this sidebar was made: it says so too.
-        let unreadable = shared.unreadable().map(str::to_string);
+        // Filled by `update_menu` below, as on every change.
         let menu = cx.new(|cx| {
-            DropdownMenu::new(label, entries, cx)
+            DropdownMenu::new("", Vec::new(), cx)
                 .debug_name("account-menu")
                 .trigger(Trigger::Ghost)
                 .side(Side::Top)
@@ -276,10 +266,11 @@ impl Sidebar {
             cx.observe(&input, |_, _, cx| cx.notify()),
         ];
         let mut conversation = Conversation::default();
-        if let Some(unreadable) = unreadable {
+        // Read before this sidebar was made: it says so too.
+        if let Some(unreadable) = settings.read(cx).unreadable() {
             conversation.notice(unreadable);
         }
-        Self {
+        let mut sidebar = Self {
             session,
             provider: Provider::Claude,
             agents,
@@ -308,7 +299,9 @@ impl Sidebar {
             writes: None,
             loading,
             _subscriptions: subscriptions,
-        }
+        };
+        sidebar.update_menu(cx);
+        sidebar
     }
 
     /// Reads the current thread of `project` from `threads` in the background.
@@ -994,17 +987,16 @@ impl Sidebar {
         }
     }
 
-    fn toggle_steps(&mut self, index: usize, cx: &mut Context<Self>) {
-        if !self.expanded.remove(&index) {
-            self.expanded.insert(index);
-        }
-        self.list.remeasure_items(index..index + 1);
-        cx.notify();
-    }
-
-    fn toggle_problems(&mut self, index: usize, cx: &mut Context<Self>) {
-        if !self.problems_open.remove(&index) {
-            self.problems_open.insert(index);
+    /// Opens or closes the turn at `index` in `set`: its steps or its problems.
+    fn toggle(
+        &mut self,
+        set: fn(&mut Self) -> &mut HashSet<usize>,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let set = set(self);
+        if !set.remove(&index) {
+            set.insert(index);
         }
         self.list.remeasure_items(index..index + 1);
         cx.notify();
@@ -1038,13 +1030,16 @@ impl Sidebar {
                     (Some(approval), _) => Some(self.approval_row(&approval.title, cx)),
                     (None, Some(problems)) => {
                         let open = self.problems_open.contains(&index);
-                        let toggle = cx
-                            .listener(move |sidebar, _, _, cx| sidebar.toggle_problems(index, cx));
+                        let toggle = cx.listener(move |sidebar, _, _, cx| {
+                            sidebar.toggle(|sidebar| &mut sidebar.problems_open, index, cx);
+                        });
                         Some(entry::problems(problems, index, open, toggle, cx))
                     }
                     (None, None) => None,
                 };
-                let toggle = cx.listener(move |sidebar, _, _, cx| sidebar.toggle_steps(index, cx));
+                let toggle = cx.listener(move |sidebar, _, _, cx| {
+                    sidebar.toggle(|sidebar| &mut sidebar.expanded, index, cx);
+                });
                 let steps_open = self.expanded.contains(&index);
                 let answer = self
                     .answers
