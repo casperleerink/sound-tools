@@ -1,5 +1,6 @@
-//! The app on this machine, apart from its window: the last project it had open, a start of the
-//! app again on another project, and the command line tool for agents.
+//! The app on this machine, apart from its window: the last project it had open, whether its
+//! left panel was open, a start of the app again on another project, and the command line tool
+//! for agents.
 //!
 //! Only the window uses these. `--inspect`, `--render`, `--headless` and the tests never
 //! write the last project, so a test cannot change what the app opens next.
@@ -17,6 +18,9 @@ pub const TOOL_NAME: &str = "sound-tools";
 /// One line: the folder of the last project the window had open.
 const LAST_PROJECT_FILE: &str = "last-project";
 
+/// One word, `open` or `closed`: the left panel of the window, for every project.
+const LEFT_PANEL_FILE: &str = "left-panel";
+
 fn home() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -26,7 +30,7 @@ fn home() -> Result<PathBuf> {
 /// Where the app keeps what it remembers between two launches:
 /// `~/Library/Application Support/Sound Tools` on macOS, and on Linux `sound-tools` in
 /// `XDG_CONFIG_HOME`, which is `~/.config` when it is not set.
-fn support_folder() -> Result<PathBuf> {
+pub fn support_folder() -> Result<PathBuf> {
     let home = home()?;
     if cfg!(target_os = "macos") {
         return Ok(home.join("Library/Application Support/Sound Tools"));
@@ -68,6 +72,26 @@ fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
     // The bytes of the path, so that any folder name comes back as it was.
     let line = [folder.as_os_str().as_bytes(), b"\n"].concat();
     std::fs::write(&file, line).with_context(|| format!("could not write {}", file.display()))
+}
+
+/// The file that remembers whether the left panel is open.
+pub fn left_panel_file(support: &Path) -> PathBuf {
+    support.join(LEFT_PANEL_FILE)
+}
+
+/// Whether the left panel was open. It is open the first time, and when the file cannot be
+/// read: the panel is how a composer finds the agent.
+pub fn left_panel_was_open(file: &Path) -> bool {
+    std::fs::read_to_string(file).map_or(true, |word| word.trim() != "closed")
+}
+
+pub fn remember_left_panel(file: &Path, open: bool) -> Result<()> {
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("could not make {}", parent.display()))?;
+    }
+    let word = if open { "open\n" } else { "closed\n" };
+    std::fs::write(file, word).with_context(|| format!("could not write {}", file.display()))
 }
 
 /// Refuses a folder that holds files but no project: opening it would put a new project's
@@ -199,6 +223,17 @@ mod tests {
 
         std::fs::remove_dir(&piece).unwrap();
         assert_eq!(last_project_in(support.path()), None);
+    }
+
+    #[test]
+    fn the_left_panel_is_open_until_it_is_closed() {
+        let support = tempfile::tempdir().unwrap();
+        let file = left_panel_file(&support.path().join("Sound Tools"));
+        assert!(left_panel_was_open(&file));
+        remember_left_panel(&file, false).unwrap();
+        assert!(!left_panel_was_open(&file));
+        remember_left_panel(&file, true).unwrap();
+        assert!(left_panel_was_open(&file));
     }
 
     #[test]

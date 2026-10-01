@@ -32,6 +32,7 @@ saturator = { path = "extensions/saturator" }
 test-clap-plugin = { path = "tooling/test-clap-plugin" }
 test-plugin-support = { path = "tooling/test-plugin-support" }
 test-vst3-plugin = { path = "tooling/test-vst3-plugin" }
+sound-agent = { path = "crates/agent" }
 sound-core = { path = "crates/core" }
 sound-media = { path = "crates/media" }
 sound-notes = { path = "crates/notes" }

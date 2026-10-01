@@ -1,9 +1,10 @@
 //! The application window: the title row with the project menu at its left and the transport
-//! in its middle, the view of the project's main instance under it, and a quiet line for
-//! errors and problems top-right, under the title row.
+//! in its middle, the view of the project's main instance under it, the left panel beside it,
+//! and a quiet line for errors and problems top-right, under the title row.
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
-//! view the installed [`Views`] has for the first instance at the top of the project.
+//! view the installed [`Views`] has for the first instance at the top of the project. Nor does
+//! it name the agent: the left panel is whatever the installed [`LeftPanelSlot`] makes.
 
 pub mod audio_input;
 mod project_menu;
@@ -13,16 +14,16 @@ pub mod steadiness;
 pub mod tempo;
 pub mod transport;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use gpui::{
-    AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
-    MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions,
-    div, point, prelude::*, px, size,
+    AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding, MouseButton,
+    MouseDownEvent, SharedString, Subscription, Task, TitlebarOptions, WeakFocusHandle, Window,
+    WindowBounds, WindowOptions, actions, div, point, prelude::*, px, size,
 };
 use midi::{Latency, Lost};
 use plugin_host::WeakPlugins;
@@ -30,8 +31,11 @@ use sound_core::{
     Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, Project, ProjectEvent,
     StreamTiming,
 };
+use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::empty_state::EmptyState;
+use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::notice::{Notice, NoticeTone};
+use sound_ui::components::text_input;
 use sound_ui::{ActiveTheme, Assets, Devices, Session, Views, typography};
 
 use audio_input::OpenInput;
@@ -49,6 +53,7 @@ actions!(
         Redo,
         FocusNext,
         FocusPrevious,
+        ToggleLeftPanel,
         Quit
     ]
 );
@@ -67,6 +72,73 @@ const WINDOW_HEIGHT: f32 = 920.;
 /// and a track panel with room for a card.
 const MIN_WINDOW_WIDTH: f32 = 1100.;
 const MIN_WINDOW_HEIGHT: f32 = 640.;
+/// The left panel has one width, so the main area keeps the width it was designed for.
+const LEFT_PANEL_WIDTH: f32 = 360.;
+
+/// What the window shows in its left panel, given by the composition root, which knows the
+/// agent: this module names no type of it. With none installed the window has no panel and
+/// no icon for it.
+#[derive(Clone)]
+pub struct LeftPanelSlot {
+    make: Rc<dyn Fn(Entity<Session>, &mut Window, &mut Context<Shell>) -> LeftPanel>,
+    /// The file that remembers whether the panel is open, in the support folder of the
+    /// machine and never in a project, where an agent could change it. `None` remembers
+    /// nothing.
+    remembered: Option<PathBuf>,
+}
+
+impl Global for LeftPanelSlot {}
+
+impl LeftPanelSlot {
+    pub fn new(
+        remembered: Option<PathBuf>,
+        make: impl Fn(Entity<Session>, &mut Window, &mut Context<Shell>) -> LeftPanel + 'static,
+    ) -> Self {
+        Self {
+            make: Rc::new(make),
+            remembered,
+        }
+    }
+
+    pub fn install(self, cx: &mut App) {
+        cx.set_global(self);
+    }
+}
+
+/// The view in the left panel, and what the window needs to know of it.
+pub struct LeftPanel {
+    view: AnyView,
+    /// What cmd-L focuses, such as the composer of the agent.
+    focus: FocusHandle,
+    /// Whether it works or waits on the composer. The icon in the title row says so while the
+    /// panel is closed, so a closed panel never hides a question.
+    busy: bool,
+    _observing: Subscription,
+}
+
+impl LeftPanel {
+    pub fn new<V: Render + Focusable>(
+        view: Entity<V>,
+        busy: fn(&V, &App) -> bool,
+        cx: &mut Context<Shell>,
+    ) -> Self {
+        let observing = cx.observe(&view, move |shell, view, cx| {
+            let now = busy(view.read(cx), cx);
+            if let Some(panel) = &mut shell.left_panel
+                && panel.busy != now
+            {
+                panel.busy = now;
+                cx.notify();
+            }
+        });
+        Self {
+            busy: busy(view.read(cx), cx),
+            focus: view.read(cx).focus_handle(cx),
+            view: view.into(),
+            _observing: observing,
+        }
+    }
+}
 
 /// The root view of the window.
 pub struct Shell {
@@ -77,6 +149,18 @@ pub struct Shell {
     transport: Entity<TransportPill>,
     focus_handle: FocusHandle,
     dismiss_focus: FocusHandle,
+    left_panel: Option<LeftPanel>,
+    left_panel_open: bool,
+    /// See [`LeftPanelSlot::remembered`].
+    left_panel_file: Option<PathBuf>,
+    /// The whole panel, to know whether the focus is in it.
+    left_panel_area: FocusHandle,
+    left_panel_icon_focus: FocusHandle,
+    /// Where the focus was before the panel took it, where escape gives it back.
+    return_focus: Option<WeakFocusHandle>,
+    /// The last write of whether the panel is open. Each waits for the one before, so the
+    /// file ends with the last.
+    remembering: Task<()>,
 }
 
 impl Shell {
@@ -125,6 +209,16 @@ impl Shell {
             window.focus(&shell.focus_handle, cx)
         })
         .detach();
+        let slot = cx.try_global::<LeftPanelSlot>().cloned();
+        let left_panel = slot
+            .as_ref()
+            .map(|slot| (slot.make)(session.clone(), window, cx));
+        let left_panel_file = slot.and_then(|slot| slot.remembered);
+        // One word read once before the first frame, as the last project is read before the
+        // window: drawing it closed and then opening it would flash.
+        let left_panel_open = left_panel_file
+            .as_deref()
+            .is_none_or(crate::app::left_panel_was_open);
         let mut shell = Self {
             project_menu: cx.new(|cx| ProjectMenu::new(session.clone(), device_name, window, cx)),
             transport: cx
@@ -133,6 +227,13 @@ impl Shell {
             main: None,
             focus_handle,
             dismiss_focus: cx.focus_handle().tab_stop(true),
+            left_panel,
+            left_panel_open,
+            left_panel_file,
+            left_panel_area: cx.focus_handle(),
+            left_panel_icon_focus: cx.focus_handle().tab_stop(true),
+            return_focus: None,
+            remembering: Task::ready(()),
         };
         shell.show_main_instance(window, cx);
         shell
@@ -148,6 +249,146 @@ impl Shell {
 
     pub fn transport(&self) -> &Entity<TransportPill> {
         &self.transport
+    }
+
+    /// The view in the left panel, open or not.
+    pub fn left_panel(&self) -> Option<&AnyView> {
+        self.left_panel.as_ref().map(|panel| &panel.view)
+    }
+
+    pub fn left_panel_open(&self) -> bool {
+        self.left_panel.is_some() && self.left_panel_open
+    }
+
+    /// cmd-L: opens the panel and focuses it, focuses it when it is open and the focus is
+    /// elsewhere, and closes it when the focus is in it.
+    fn toggle_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = &self.left_panel else {
+            return;
+        };
+        let focus = panel.focus.clone();
+        if !self.left_panel_open {
+            self.remember_focus(window, cx);
+            self.set_left_panel_open(true, window, cx);
+            window.focus(&focus, cx);
+        } else if self.left_panel_area.contains_focused(window, cx) {
+            self.set_left_panel_open(false, window, cx);
+            self.give_focus_back(window, cx);
+        } else {
+            self.remember_focus(window, cx);
+            window.focus(&focus, cx);
+        }
+    }
+
+    /// The icon in the title row opens and closes the panel, and leaves the focus where it is.
+    fn click_left_panel_icon(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let open = !self.left_panel_open;
+        if !open && self.left_panel_area.contains_focused(window, cx) {
+            self.give_focus_back(window, cx);
+        }
+        self.set_left_panel_open(open, window, cx);
+    }
+
+    fn set_left_panel_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.left_panel_open = open;
+        if open {
+            widen_for_left_panel(window, cx);
+        }
+        if let Some(file) = self.left_panel_file.clone() {
+            let previous = std::mem::replace(&mut self.remembering, Task::ready(()));
+            let session = self.session.downgrade();
+            self.remembering = cx.spawn(async move |_, cx| {
+                previous.await;
+                let written = cx
+                    .background_spawn(async move { crate::app::remember_left_panel(&file, open) })
+                    .await;
+                // A window that has gone has nobody left to tell.
+                if let (Err(error), Some(session)) = (written, session.upgrade()) {
+                    let message = format!("{error:#}");
+                    session.update(cx, |session, cx| session.report(message, cx));
+                }
+            });
+        }
+        cx.notify();
+    }
+
+    /// Keeps what has the focus outside the panel, for [`Self::give_focus_back`].
+    fn remember_focus(&mut self, window: &Window, cx: &App) {
+        if let Some(focused) = window.focused(cx)
+            && !self.left_panel_area.contains(&focused, window)
+        {
+            self.return_focus = Some(focused.downgrade());
+        }
+    }
+
+    /// Escape in the panel, and closing it: the focus goes back to where it was before the
+    /// panel took it, else to the window, whose keys then work again.
+    fn give_focus_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let back = self
+            .return_focus
+            .take()
+            .and_then(|focus| focus.upgrade())
+            .unwrap_or_else(|| self.focus_handle.clone());
+        window.focus(&back, cx);
+    }
+
+    /// The panel left of the main area, when it is open.
+    fn left_panel_element(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let panel = self.left_panel.as_ref().filter(|_| self.left_panel_open)?;
+        Some(
+            div()
+                .id("left-panel")
+                .track_focus(&self.left_panel_area)
+                // Before the press moves the focus into the panel.
+                .capture_any_mouse_down(cx.listener(|shell, _: &MouseDownEvent, window, cx| {
+                    shell.remember_focus(window, cx)
+                }))
+                .on_action(cx.listener(|shell, _: &text_input::Cancel, window, cx| {
+                    shell.give_focus_back(window, cx)
+                }))
+                .flex_none()
+                .w(px(LEFT_PANEL_WIDTH))
+                .h_full()
+                .child(panel.view.clone()),
+        )
+    }
+
+    /// The icon right of the traffic lights that opens and closes the panel. While the panel
+    /// is closed and busy, it carries the lavender indicator.
+    fn left_panel_icon(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let panel = self.left_panel.as_ref()?;
+        let lavender = cx.theme().lavender;
+        let busy = panel.busy && !self.left_panel_open;
+        Some(
+            div()
+                .relative()
+                .flex_none()
+                .child(
+                    Button::icon_only("left-panel", "panel-left")
+                        .debug_selector(|| "left-panel-icon".to_string())
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Sm)
+                        .focus_handle(&self.left_panel_icon_focus)
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.click_left_panel_icon(window, cx)
+                        })),
+                )
+                .when(busy, |icon| {
+                    icon.child(
+                        div()
+                            .debug_selector(|| "left-panel-busy".to_string())
+                            .absolute()
+                            .top(px(2.))
+                            .right(px(2.))
+                            .child(
+                                Indicator::new("left-panel-busy")
+                                    .size(IndicatorSize::Xs)
+                                    .color(lavender)
+                                    .pulse(true),
+                            ),
+                    )
+                }),
+        )
     }
 
     fn show_main_instance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -257,6 +498,9 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|shell, _: &Redo, _, cx| shell.session.update(cx, Session::redo)),
             )
+            .on_action(cx.listener(|shell, _: &ToggleLeftPanel, window, cx| {
+                shell.toggle_left_panel(window, cx)
+            }))
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .size_full()
@@ -277,12 +521,21 @@ impl Render for Shell {
                     .items_center()
                     .h(px(TOP_ROW_HEIGHT))
                     .child(Self::drag_region().flex_none().w(px(TRAFFIC_LIGHTS_WIDTH)))
+                    .children(self.left_panel_icon(cx))
                     .child(div().flex_none().child(self.project_menu.clone()))
                     .child(Self::drag_region().flex_1())
                     .child(self.transport.clone())
                     .child(Self::drag_region().flex_1()),
             )
-            .child(div().flex_1().min_h_0().child(main))
+            // The panel comes first, so tab reaches it before the main area, as it reads.
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .children(self.left_panel_element(cx))
+                    .child(div().flex_1().min_w_0().h_full().child(main)),
+            )
             .child(self.notices(cx))
     }
 }
@@ -301,9 +554,27 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-cmd-z", Redo, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-l", ToggleLeftPanel, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
+}
+
+/// Opening the left panel in a window too narrow for it and the main area makes the window
+/// wider, when the screen has room on the right. Without room the main area gets narrower.
+fn widen_for_left_panel(window: &mut Window, cx: &App) {
+    let wanted = px(MIN_WINDOW_WIDTH + LEFT_PANEL_WIDTH);
+    let bounds = window.bounds();
+    if bounds.size.width >= wanted {
+        return;
+    }
+    let Some(display) = window.display(cx) else {
+        return;
+    };
+    if display.visible_bounds().right() - bounds.origin.x >= wanted {
+        let height = window.viewport_size().height;
+        window.resize(size(wanted, height));
+    }
 }
 
 /// What the headless runtime prints at the end too, so a session in the window can be judged
@@ -368,6 +639,15 @@ pub fn run_app() {
 fn init(cx: &mut App) {
     sound_ui::init(cx);
     bind_keys(cx);
+    // Without a support folder the panel still works, and opens at every start.
+    let remembered = match crate::app::support_folder() {
+        Ok(support) => Some(crate::app::left_panel_file(&support)),
+        Err(error) => {
+            eprintln!("error: {error:#}");
+            None
+        }
+    };
+    crate::agent_panel(remembered).install(cx);
 }
 
 /// A project that is open and plays on the default output, ready for its window.

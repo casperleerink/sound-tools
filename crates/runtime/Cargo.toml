@@ -28,6 +28,7 @@ plugin-host.workspace = true
 reverb.workspace = true
 sampler.workspace = true
 saturator.workspace = true
+sound-agent.workspace = true
 sound-core.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
