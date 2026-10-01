@@ -10,8 +10,8 @@ use gpui::{AppContext, Entity, Focusable, TestAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use runtime::{OFFLINE, open_or_create};
 use sound_agent::{
-    AgentEvent, ApprovalId, Command, Entry, ExitReason, Installed, Session, Sidebar, StepId,
-    StepOutcome, Thread, TurnOutcome,
+    Account, AgentEvent, ApprovalId, ApprovalMode, Command, Entry, ExitReason, Installed, Model,
+    Session, Sidebar, StepId, StepOutcome, Thread, TurnOutcome,
 };
 use sound_core::Engine;
 use tempfile::TempDir;
@@ -660,4 +660,112 @@ fn ask(opened: &mut Opened<'_>, message: &str) -> String {
             other => panic!("{other:?}"),
         },
     )
+}
+
+/// A turn that leaves a file that is not live says so under its answer, and the line opens to
+/// why. A turn that fixes it says nothing, and the problem that was there before it is no
+/// news.
+#[gpui::test]
+fn a_turn_shows_the_problems_it_left(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    let file = "state/arrangement/track-1/bass.json";
+
+    opened.begin("Add a bass line");
+    opened.receive([AgentEvent::TurnStarted]);
+    write_outside(&mut opened, file, "{");
+    opened.receive([AgentEvent::TurnEnded {
+        outcome: TurnOutcome::Completed,
+    }]);
+    let line = opened.control("agent-problems-1");
+    assert!(opened.find("agent-problem-1-0").is_none());
+    opened.click(line);
+    assert!(opened.find("agent-problem-1-0").is_some());
+
+    opened.begin("Fix the bass line");
+    opened.receive([AgentEvent::TurnStarted]);
+    write_outside(&mut opened, file, BASS_CLIP);
+    opened.receive([AgentEvent::TurnEnded {
+        outcome: TurnOutcome::Completed,
+    }]);
+    assert!(opened.find("agent-problems-3").is_none());
+    // The first turn still says what it left.
+    assert!(opened.find("agent-problems-1").is_some());
+}
+
+/// Up in an empty composer recalls the earlier messages of the thread, newest first; down
+/// goes forward again and back to empty.
+#[gpui::test]
+fn up_in_the_composer_recalls_earlier_messages(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    for message in ["Add a bass line", "Make it louder"] {
+        opened.begin(message);
+        opened.receive([AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        }]);
+    }
+    let sidebar = opened.sidebar();
+    let press = |opened: &mut Opened<'_>, key: &str| {
+        opened.keys(key);
+        opened.cx.read(|cx| sidebar.read(cx).draft(cx).to_string())
+    };
+    opened.keys("cmd-l");
+    assert_eq!(press(&mut opened, "up"), "Make it louder");
+    assert_eq!(press(&mut opened, "up"), "Add a bass line");
+    assert_eq!(press(&mut opened, "down"), "Make it louder");
+    assert_eq!(press(&mut opened, "down"), "");
+}
+
+/// The approval mode and the model picked in the menu go to the agent with the next message,
+/// not before. "Never ask" says so above the composer until the thread's first message.
+#[gpui::test]
+fn the_menu_settings_go_to_the_agent_with_the_next_message(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    let (thread, commands) = Thread::without_agent(&Session::New);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+    let model = |id: &str| Model {
+        id: id.to_string(),
+        name: id.to_string(),
+        description: String::new(),
+    };
+    opened.receive([AgentEvent::Started {
+        session_id: "session".to_string(),
+        account: Account::default(),
+        models: vec![model("default"), model("haiku")],
+    }]);
+
+    assert!(opened.find("agent-never-ask").is_none());
+    for row in ["menu-approval-never-ask", "menu-model-haiku"] {
+        let menu = opened.control("account-menu");
+        opened.click(menu);
+        let row = opened.control(row);
+        opened.click(row);
+    }
+    assert!(opened.find("agent-never-ask").is_some());
+    assert!(commands.try_recv().is_err());
+
+    // Into the composer, from the menu's trigger where the focus went back to.
+    opened
+        .cx
+        .update(|window, cx| window.focus(&sidebar.focus_handle(cx), cx));
+    opened.cx.simulate_input("Hello");
+    opened.keys("enter");
+    let sent: Vec<Command> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+    assert_eq!(
+        sent,
+        [
+            Command::SetApprovalMode(ApprovalMode::NeverAsk),
+            Command::SetModel("haiku".to_string()),
+            Command::Send("Hello".to_string()),
+        ]
+    );
+    assert!(opened.find("agent-never-ask").is_none());
 }
