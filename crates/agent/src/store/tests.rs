@@ -83,7 +83,6 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
         vec![
             AgentEvent::TurnStarted,
             AgentEvent::Started {
-                session_id: "session".to_string(),
                 account: Account::default(),
                 models: Vec::new(),
             },

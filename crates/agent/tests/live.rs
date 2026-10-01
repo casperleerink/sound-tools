@@ -35,15 +35,13 @@ fn start_with(folder: &Path, session: Session, approval_mode: ApprovalMode) -> (
     .unwrap()
 }
 
-/// Sends `message` and gives the session id and the text of the answer.
-fn ask(thread: &Thread, events: &mut Events, message: &str) -> (Option<String>, String) {
+/// Sends `message` and gives the text of the answer.
+fn ask(thread: &Thread, events: &mut Events, message: &str) -> String {
     thread.send(message).unwrap();
-    let mut session = None;
     let mut answer = String::new();
     smol::block_on(async {
         while let Some(event) = events.next().await {
             match event {
-                AgentEvent::Started { session_id, .. } => session = Some(session_id),
                 AgentEvent::TextDone { text } => answer.push_str(&text),
                 AgentEvent::TurnEnded { outcome } => {
                     assert_eq!(outcome, TurnOutcome::Completed, "{answer}");
@@ -54,7 +52,7 @@ fn ask(thread: &Thread, events: &mut Events, message: &str) -> (Option<String>, 
             }
         }
     });
-    (session, answer)
+    answer
 }
 
 /// Drops the thread and gives how the process ended.
@@ -84,16 +82,17 @@ fn reads_the_project_map_and_resumes() {
     .unwrap();
 
     let (thread, mut events) = start(folder.path(), Session::New);
-    let (session, answer) = ask(
+    let answer = ask(
         &thread,
         &mut events,
         "What is the code word of this project? Answer with the word only. Use no tools.",
     );
     assert!(answer.contains("tangerine-viola"), "{answer}");
+    let session = thread.session_id().to_string();
     assert_eq!(close(thread, events), ExitReason::Finished);
 
-    let (thread, mut events) = start(folder.path(), Session::Resume(session.unwrap()));
-    let (_, answer) = ask(
+    let (thread, mut events) = start(folder.path(), Session::Resume(session));
+    let answer = ask(
         &thread,
         &mut events,
         "Repeat the word you answered with before. Answer with the word only. Use no tools.",

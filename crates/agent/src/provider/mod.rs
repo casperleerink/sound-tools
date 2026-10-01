@@ -183,11 +183,10 @@ pub struct ApprovalId(pub String);
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentEvent {
-    /// The agent is ready. It comes once, before the first turn ends. Never saved: the
-    /// session id is known from [`Thread::session_id`] before.
+    /// The agent is ready. It comes once, before the first turn ends. Never saved: it shows
+    /// nothing in the thread. The session is [`Thread::session_id`].
     #[serde(skip)]
     Started {
-        session_id: String,
         account: Account,
         /// What the composer can pick, the provider's default first.
         models: Vec<Model>,
@@ -340,11 +339,9 @@ impl Thread {
         let (sender, receiver) = channel::unbounded();
         let session_id = session_id(&options.session);
         let driver = match options.provider {
-            Provider::Claude => Driver::Claude(claude::Events::start(
-                options,
-                session_id.clone(),
-                receiver,
-            )?),
+            Provider::Claude => {
+                Driver::Claude(claude::Events::start(options, &session_id, receiver)?)
+            }
         };
         let thread = Thread {
             commands: sender,

@@ -66,6 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             approval_mode: ApprovalMode::default(),
             session: Session::New,
         })?;
+        let session_id = thread.session_id().to_string();
         let mut thread = Some(thread);
         let mut approval: Option<ApprovalId> = None;
         // Whether the text block on screen came as deltas, so its done text is not printed twice.
@@ -91,11 +92,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             match future::or(event, future::or(line, interrupt)).await {
                 Input::Event(None) => break,
                 Input::Event(Some(event)) => match event {
-                    AgentEvent::Started {
-                        session_id,
-                        account,
-                        models,
-                    } => {
+                    AgentEvent::Started { account, models } => {
                         let email = account.email.unwrap_or_default();
                         let plan = account.plan.unwrap_or_default();
                         let models: Vec<_> = models.iter().map(|model| model.id.as_str()).collect();

@@ -146,12 +146,12 @@ impl Events {
     /// `session_id` is the one `options.session` names, or the new one to give the session.
     pub fn start(
         options: ThreadOptions,
-        session_id: String,
+        session_id: &str,
         commands: Receiver<Command>,
     ) -> io::Result<Events> {
         let mut command = command(&options.installed.program, &options.installed.environment);
         command
-            .args(arguments(&options, &session_id))
+            .args(arguments(&options, session_id))
             .current_dir(&options.folder)
             // Loads the CLAUDE.md of the `--add-dir` folder, the project's.
             .env("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD", "1")
@@ -184,7 +184,7 @@ impl Events {
             stderr_line: Vec::new(),
             said: None,
             commands: Some(commands),
-            mapper: Mapper::new(session_id, options.folder),
+            mapper: Mapper::new(options.folder),
             outbox: VecDeque::new(),
             events: VecDeque::new(),
             requests_sent: 0,

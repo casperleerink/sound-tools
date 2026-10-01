@@ -38,7 +38,7 @@ fn entries(name: &str) -> Vec<Entry> {
 
 fn mapper() -> Mapper {
     // The recorder writes the folder as /tmp/project.
-    Mapper::new("session".to_string(), PathBuf::from("/tmp/project"))
+    Mapper::new(PathBuf::from("/tmp/project"))
 }
 
 /// The events of a recorded run. Each run of text deltas is joined into one, so the snapshot

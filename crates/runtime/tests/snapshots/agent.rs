@@ -77,11 +77,7 @@ pub fn snapshots(
             sidebar.begin_at(message, started, cx);
             sidebar.receive(
                 [
-                    AgentEvent::Started {
-                        session_id: "session".to_string(),
-                        account,
-                        models,
-                    },
+                    AgentEvent::Started { account, models },
                     AgentEvent::TurnStarted,
                     AgentEvent::StepStarted {
                         id: step("read"),

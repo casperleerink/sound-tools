@@ -811,7 +811,6 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
         .cx
         .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
     opened.receive([AgentEvent::Started {
-        session_id: "session".to_string(),
         account: Account::default(),
         models: vec![model("default"), model("haiku")],
     }]);
