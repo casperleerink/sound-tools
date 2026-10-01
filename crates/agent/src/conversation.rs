@@ -108,6 +108,14 @@ impl Conversation {
         &self.entries
     }
 
+    /// What the composer sent, oldest first.
+    pub fn messages(&self) -> impl Iterator<Item = &str> {
+        self.entries.iter().filter_map(|entry| match entry {
+            Entry::Message(message) => Some(message.as_str()),
+            Entry::Turn(_) | Entry::Notice(_) => None,
+        })
+    }
+
     /// Whether a message can follow. Not once the agent lost the session of the thread: only a
     /// new thread can go on.
     pub fn can_continue(&self) -> bool {

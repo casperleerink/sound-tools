@@ -6029,6 +6029,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "smol",
+ "sound-core",
  "sound-ui",
  "tempfile",
  "uuid",

@@ -5,7 +5,8 @@
 //!   each turn, the same [`AgentEvent`]s whichever [`Provider`] runs.
 //! - [`Conversation`] is what the sidebar shows of a thread, built from those events with no
 //!   process, and [`Sidebar`] is the view the window shows in its left panel. The sidebar
-//!   saves each thread in the machine's support folder and shows it again (`store`).
+//!   saves each thread in the machine's support folder and shows it again (`store`), and
+//!   keeps the composer's approval mode and model there too (`settings`).
 //! - [`login_shell_environment`] is the environment to run it in. An app opened from the
 //!   Finder has a bare `PATH`, and the agent needs `cargo` and `git`.
 //! - [`install`] downloads the provider's pinned program, which the sidebar runs, and
@@ -22,6 +23,7 @@ mod conversation;
 mod environment;
 mod install;
 mod provider;
+mod settings;
 mod store;
 mod view;
 
