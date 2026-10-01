@@ -355,6 +355,16 @@ fn knobs(state: &Entity<RackState>, cx: &App) -> AnyElement {
                     .readout("2 Hz")
                     .disabled(true),
             ),
+            sample(
+                "automated",
+                cx,
+                Knob::new("swept")
+                    .range(CUTOFF)
+                    .value(1_200.)
+                    .label("Cutoff")
+                    .readout(hertz(1_200.))
+                    .automated(true),
+            ),
         ],
     )
 }
@@ -391,6 +401,11 @@ fn volumes(state: &Entity<RackState>, cx: &App) -> AnyElement {
                 "disabled",
                 cx,
                 Volume::new("volume-off", -6.).disabled(true),
+            ),
+            sample(
+                "automated",
+                cx,
+                Volume::new("volume-automated", -9.).automated(true),
             ),
         ],
     )
