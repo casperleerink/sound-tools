@@ -1,10 +1,10 @@
-//! The sidebar: the header with **+**, the thread in a gpui `list`, and the composer.
+//! The sidebar: the header with **+**, the onboarding until the agent is set up, then the
+//! thread in a gpui `list` and the composer.
 //!
 //! One thread per sidebar. Its process starts on the first send and ends with **+**. Every
 //! message is one request of the session, so the agent's file writes for it are one undo step.
 
-use std::collections::{HashMap, HashSet};
-use std::ffi::OsString;
+use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -14,15 +14,22 @@ use gpui::{
     Global, KeyBinding, ListAlignment, ListState, Subscription, Task, Window, actions, div, hsla,
     list, point, prelude::*, px,
 };
+use smol::future;
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::components::dropdown_menu::{
+    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
+};
+use sound_ui::components::popover::{Align, Side};
 use sound_ui::components::text_input::TextInput;
 
 use super::entry;
+use super::onboarding::{Onboarding, Setup, SetupAction};
+use crate::install::{self, InstallError};
 use crate::thread::{Conversation, Entry, request_label};
 use crate::{
-    AgentEvent, ApprovalAnswer, ApprovalMode, Events, Provider, Session, Thread, ThreadOptions,
-    TurnOutcome, login_shell_environment, program_on_path,
+    Account, AgentEvent, ApprovalAnswer, ApprovalMode, Events, Installed, Provider, Session,
+    SignInChoice, Thread, ThreadOptions, TurnOutcome, login_shell_environment,
 };
 
 actions!(agent_sidebar, [Stop]);
@@ -36,6 +43,12 @@ const FRAME: Duration = Duration::from_millis(16);
 /// How far the list draws beyond what shows, so a short scroll needs no measuring.
 const OVERDRAW: f32 = 800.;
 
+/// How long the browser may take to sign in before the sidebar gives up and asks again.
+const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// The value of **Sign out** in the account menu.
+const SIGN_OUT: &str = "sign-out";
+
 struct BindingsInstalled;
 impl Global for BindingsInstalled {}
 
@@ -46,20 +59,6 @@ fn install_bindings(cx: &mut App) {
     }
     cx.set_global(BindingsInstalled);
     cx.bind_keys([KeyBinding::new("cmd-.", Stop, Some(KEY_CONTEXT))]);
-}
-
-/// Where Claude Code is, and the environment it runs in.
-#[derive(Clone, Debug)]
-pub struct Installed {
-    pub program: PathBuf,
-    pub environment: HashMap<OsString, OsString>,
-}
-
-enum Claude {
-    /// The login shell is still asked for its environment.
-    Looking,
-    Missing,
-    Found(Installed),
 }
 
 /// The process of the thread, from the first send until **+** or until it ends.
@@ -73,7 +72,20 @@ struct Agent {
 
 pub struct Sidebar {
     session: Entity<sound_ui::Session>,
-    claude: Claude,
+    provider: Provider,
+    /// Where downloaded programs are kept, `agents/` in the support folder. `None` when the
+    /// machine has no support folder; a program named in the environment still runs.
+    agents: Option<PathBuf>,
+    setup: Setup,
+    /// The program and its environment, once the login shell answered. The program may not be
+    /// downloaded yet.
+    installed: Option<Installed>,
+    /// The way in of the running sign-in, which **Open the page again** starts again.
+    signing_in: Option<SignInChoice>,
+    /// The download, the sign-in or a question to the program. Dropping it cancels it.
+    setup_task: Option<Task<()>>,
+    /// The account and **Sign out**, in the composer.
+    account_menu: Entity<DropdownMenu>,
     conversation: Conversation,
     list: ListState,
     /// The finished turns whose steps show, by entry.
@@ -85,26 +97,40 @@ pub struct Sidebar {
     approval_focus: [FocusHandle; 3],
     agent: Option<Agent>,
     _input: Subscription,
-    _finding: Option<Task<()>>,
+    _account_menu: Subscription,
 }
 
 impl Sidebar {
-    /// Finds `claude` on the `PATH` of the login shell, in the background.
-    pub fn new(session: Entity<sound_ui::Session>, cx: &mut Context<Self>) -> Self {
-        let mut sidebar = Self::with(session, Claude::Looking, cx);
-        sidebar._finding = Some(cx.spawn(async move |sidebar, cx| {
+    /// Reads the login shell in the background, then asks the program whether it is signed
+    /// in, or offers **Set up** when it is not downloaded yet. The program is the download in
+    /// `agents`, or the one the provider's environment variable names.
+    pub fn new(
+        session: Entity<sound_ui::Session>,
+        agents: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut sidebar = Self::with(session, agents, Setup::Checking, cx);
+        let provider = sidebar.provider;
+        let downloaded = sidebar
+            .agents
+            .clone()
+            .zip(provider.download())
+            .map(|(agents, download)| download.program(&agents));
+        sidebar.setup_task = Some(cx.spawn(async move |sidebar, cx| {
             let found = cx
-                .background_spawn(async {
+                .background_spawn(async move {
                     let (environment, error) = match login_shell_environment().await {
                         Ok(environment) => (environment, None),
                         Err(error) => (std::env::vars_os().collect(), Some(error)),
                     };
-                    let program = program_on_path("claude", &environment);
+                    let named = std::env::var_os(provider.program_variable()).map(PathBuf::from);
+                    let program = named.or(downloaded);
+                    let present = program.as_ref().is_some_and(|program| program.is_file());
                     let installed = program.map(|program| Installed {
                         program,
                         environment,
                     });
-                    (installed, error)
+                    (installed, present, error)
                 })
                 .await;
             // A sidebar that went in the meantime has nobody to tell.
@@ -115,17 +141,24 @@ impl Sidebar {
         sidebar
     }
 
-    /// With `claude` given, or known to be missing, for a test or a snapshot.
-    pub fn with_claude(
+    /// Set up and signed in, with `installed` as the program, for a test or a snapshot.
+    pub fn ready(
         session: Entity<sound_ui::Session>,
-        installed: Option<Installed>,
+        installed: Installed,
         cx: &mut Context<Self>,
     ) -> Self {
-        let claude = installed.map_or(Claude::Missing, Claude::Found);
-        Self::with(session, claude, cx)
+        let account = Account::default();
+        let mut sidebar = Self::with(session, None, Setup::Ready { account }, cx);
+        sidebar.installed = Some(installed);
+        sidebar
     }
 
-    fn with(session: Entity<sound_ui::Session>, claude: Claude, cx: &mut Context<Self>) -> Self {
+    fn with(
+        session: Entity<sound_ui::Session>,
+        agents: Option<PathBuf>,
+        setup: Setup,
+        cx: &mut Context<Self>,
+    ) -> Self {
         install_bindings(cx);
         let input = cx.new(|cx| {
             TextInput::new(cx)
@@ -146,9 +179,32 @@ impl Sidebar {
         });
         let list = ListState::new(0, ListAlignment::Top, px(OVERDRAW));
         list.set_follow_mode(FollowMode::Tail);
+        let account = match &setup {
+            Setup::Ready { account } => account.clone(),
+            _ => Account::default(),
+        };
+        let account_menu = cx.new(|cx| {
+            DropdownMenu::new(account_label(&account), account_entries(&account), cx)
+                .debug_name("account-menu")
+                .trigger(Trigger::Ghost)
+                .side(Side::Top)
+                .align(Align::Start)
+                .width(280.)
+        });
         Self {
             session,
-            claude,
+            provider: Provider::Claude,
+            agents,
+            setup,
+            installed: None,
+            signing_in: None,
+            setup_task: None,
+            _account_menu: cx.subscribe(&account_menu, |sidebar, _, picked: &MenuPicked, cx| {
+                if picked.0.as_ref() == SIGN_OUT {
+                    sidebar.sign_out(cx);
+                }
+            }),
+            account_menu,
             conversation: Conversation::default(),
             list,
             expanded: HashSet::new(),
@@ -158,8 +214,12 @@ impl Sidebar {
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
             agent: None,
-            _finding: None,
         }
+    }
+
+    /// Where the sidebar is in setting up its agent.
+    pub fn setup(&self) -> &Setup {
+        &self.setup
     }
 
     pub fn conversation(&self) -> &Conversation {
@@ -225,16 +285,207 @@ impl Sidebar {
 
     fn found(
         &mut self,
-        (installed, error): (Option<Installed>, Option<io::Error>),
+        (installed, present, error): (Option<Installed>, bool, Option<io::Error>),
         cx: &mut Context<Self>,
     ) {
         if let Some(error) = error {
             self.conversation.notice(format!(
                 "The agent runs without the settings of your shell: {error}."
             ));
+            self.show(None, cx);
         }
-        self.claude = installed.map_or(Claude::Missing, Claude::Found);
-        self.show(None, cx);
+        self.installed = installed;
+        if present {
+            self.check(None, cx);
+        } else {
+            self.set_setup(Setup::NotInstalled, cx);
+        }
+    }
+
+    fn set_setup(&mut self, setup: Setup, cx: &mut Context<Self>) {
+        if let Setup::Ready { account } = &setup {
+            let (label, entries) = (account_label(account), account_entries(account));
+            self.account_menu.update(cx, |menu, cx| {
+                menu.set_label(label, cx);
+                menu.set_entries(entries, cx);
+            });
+        }
+        self.setup = setup;
+        cx.notify();
+    }
+
+    fn act(&mut self, action: SetupAction, cx: &mut Context<Self>) {
+        match action {
+            SetupAction::Download => self.download(cx),
+            SetupAction::Cancel => self.cancel(cx),
+            SetupAction::SignIn(choice) => self.sign_in(choice, cx),
+            SetupAction::OpenPageAgain => {
+                if let Some(choice) = self.signing_in {
+                    self.sign_in(choice, cx);
+                }
+            }
+            SetupAction::Check => self.check(None, cx),
+        }
+    }
+
+    /// Asks the program whether it is signed in. `reason` is what the composer reads when it
+    /// is not, after a sign-in.
+    fn check(&mut self, reason: Option<String>, cx: &mut Context<Self>) {
+        let Some(installed) = self.installed.clone() else {
+            self.set_setup(Setup::NotInstalled, cx);
+            return;
+        };
+        let provider = self.provider;
+        self.set_setup(Setup::Checking, cx);
+        let asking = cx.background_spawn(async move { provider.account(&installed).await });
+        self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
+            let setup = match asking.await {
+                Ok(Some(account)) => Setup::Ready { account },
+                Ok(None) => Setup::SignedOut { reason },
+                Err(error) => Setup::Stopped {
+                    message: error.to_string(),
+                },
+            };
+            // A sidebar that went in the meantime has nobody to tell.
+            sidebar
+                .update(cx, |sidebar, cx| sidebar.set_setup(setup, cx))
+                .ok();
+        }));
+    }
+
+    /// Downloads the pinned program, from where an earlier try stopped.
+    fn download(&mut self, cx: &mut Context<Self>) {
+        let name = self.provider.name();
+        let (Some(agents), Some(download)) = (self.agents.clone(), self.provider.download()) else {
+            let message = match self.agents {
+                None => format!("There is no folder on this computer to keep {name} in."),
+                Some(_) => format!("{name} does not run on this computer."),
+            };
+            self.set_setup(Setup::DownloadFailed { message }, cx);
+            return;
+        };
+        let size = download.size;
+        self.set_setup(Setup::Downloading { received: 0, size }, cx);
+        let (sender, receiver) = smol::channel::unbounded();
+        let installing = cx.background_spawn(async move {
+            install::install(&download, &agents, move |received| {
+                // Closed only when the sidebar went, and then nobody reads it.
+                sender.try_send(received).ok();
+            })
+            .await
+        });
+        self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
+            // Ends with the download, which drops the sender.
+            while let Ok(received) = receiver.recv().await {
+                let downloading = Setup::Downloading { received, size };
+                if sidebar
+                    .update(cx, |sidebar, cx| sidebar.set_setup(downloading, cx))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            let installed = installing.await;
+            sidebar
+                .update(cx, |sidebar, cx| sidebar.downloaded(installed, cx))
+                .ok();
+        }));
+    }
+
+    fn downloaded(&mut self, installed: Result<PathBuf, InstallError>, cx: &mut Context<Self>) {
+        match installed {
+            Ok(program) => {
+                // The login shell answered before **Set up** showed.
+                let environment = self.installed.take().map_or_else(
+                    || std::env::vars_os().collect(),
+                    |installed| installed.environment,
+                );
+                self.installed = Some(Installed {
+                    program,
+                    environment,
+                });
+                self.check(None, cx);
+            }
+            Err(error) => {
+                let message = error.sentence(self.provider.name());
+                self.set_setup(Setup::DownloadFailed { message }, cx);
+            }
+        }
+    }
+
+    /// Runs the provider's sign-in in the browser and waits for it, at most ten minutes.
+    /// Started again, it ends the one before.
+    fn sign_in(&mut self, choice: SignInChoice, cx: &mut Context<Self>) {
+        let Some(installed) = self.installed.clone() else {
+            return;
+        };
+        self.signing_in = Some(choice);
+        self.set_setup(Setup::SigningIn, cx);
+        let running = cx.background_spawn(async move { choice.run(&installed).await });
+        let timeout = cx.background_executor().timer(SIGN_IN_TIMEOUT);
+        self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
+            // The one that loses the race is dropped: a sign-in out of time ends its process.
+            let ended = future::or(async { Some(running.await) }, async {
+                timeout.await;
+                None
+            })
+            .await;
+            sidebar
+                .update(cx, |sidebar, cx| sidebar.signed_in(ended, cx))
+                .ok();
+        }));
+    }
+
+    /// `None` when the time ran out.
+    fn signed_in(&mut self, ended: Option<io::Result<()>>, cx: &mut Context<Self>) {
+        self.signing_in = None;
+        let reason = match ended {
+            Some(Ok(())) => {
+                self.check(Some("The sign-in did not finish.".to_string()), cx);
+                return;
+            }
+            Some(Err(error)) => format!("The sign-in failed: {error}"),
+            None => "The sign-in took over 10 minutes.".to_string(),
+        };
+        let reason = Some(reason);
+        self.set_setup(Setup::SignedOut { reason }, cx);
+    }
+
+    fn cancel(&mut self, cx: &mut Context<Self>) {
+        // Dropping the task ends the download or the sign-in, and its process.
+        self.setup_task = None;
+        self.signing_in = None;
+        let setup = match self.setup {
+            Setup::Downloading { .. } => Setup::NotInstalled,
+            _ => Setup::SignedOut {
+                reason: Some("The sign-in was cancelled.".to_string()),
+            },
+        };
+        self.set_setup(setup, cx);
+    }
+
+    /// Signs the program out, for every app that shares its login, and ends the thread's
+    /// agent.
+    fn sign_out(&mut self, cx: &mut Context<Self>) {
+        let Some(installed) = self.installed.clone() else {
+            return;
+        };
+        self.end_agent(cx);
+        let provider = self.provider;
+        let signing_out = cx.background_spawn(async move { provider.sign_out(&installed).await });
+        self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
+            let signed_out = signing_out.await;
+            sidebar
+                .update(cx, |sidebar, cx| match signed_out {
+                    Ok(()) => sidebar.check(None, cx),
+                    Err(error) => {
+                        let notice = format!("Could not sign out: {error}");
+                        sidebar.conversation.notice(notice);
+                        sidebar.show(None, cx);
+                    }
+                })
+                .ok();
+        }));
     }
 
     fn send(&mut self, cx: &mut Context<Self>) {
@@ -243,14 +494,15 @@ impl Sidebar {
             return;
         }
         if self.agent.is_none() {
-            let Claude::Found(installed) = &self.claude else {
+            let (Setup::Ready { .. }, Some(installed)) = (&self.setup, &self.installed) else {
                 return;
             };
             match self.start(installed.clone(), cx) {
                 Ok(agent) => self.agent = Some(agent),
                 Err(error) => {
+                    let name = self.provider.name();
                     self.conversation
-                        .notice(format!("Claude Code did not start: {error}"));
+                        .notice(format!("{name} did not start: {error}"));
                     self.show(None, cx);
                     return;
                 }
@@ -270,7 +522,7 @@ impl Sidebar {
     fn start(&self, installed: Installed, cx: &mut Context<Self>) -> io::Result<Agent> {
         let folder = self.session.read(cx).project().root().to_path_buf();
         let (thread, events) = Thread::start(ThreadOptions {
-            provider: Provider::Claude,
+            provider: self.provider,
             program: installed.program,
             folder,
             // The CLI's own default until the model picker comes.
@@ -332,15 +584,20 @@ impl Sidebar {
 
     /// Drops the thread and its process, and starts empty.
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.agent = None;
-        if self.conversation.is_working() {
-            self.session.update(cx, |session, _| session.end_request());
-        }
+        self.end_agent(cx);
         self.conversation = Conversation::default();
         self.expanded.clear();
         self.list.reset(0);
         window.focus(&self.input.focus_handle(cx), cx);
         cx.notify();
+    }
+
+    /// Ends the thread's process, and the request of the turn it was working on.
+    fn end_agent(&mut self, cx: &mut Context<Self>) {
+        self.agent = None;
+        if self.conversation.is_working() {
+            self.session.update(cx, |session, _| session.end_request());
+        }
     }
 
     fn toggle_steps(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -480,16 +737,46 @@ impl Sidebar {
                 }])
                 .child(self.input.clone())
                 .child(
-                    div().flex().justify_end().child(
-                        button
-                            .variant(ButtonVariant::Subtle)
-                            .size(ButtonSize::Sm)
-                            .rounded(true)
-                            .focus_handle(&self.send_focus),
-                    ),
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(self.account_menu.clone())
+                        .child(
+                            button
+                                .variant(ButtonVariant::Subtle)
+                                .size(ButtonSize::Sm)
+                                .rounded(true)
+                                .focus_handle(&self.send_focus),
+                        ),
                 ),
         )
     }
+}
+
+/// What the account menu's trigger says: the plan, since an email is long.
+fn account_label(account: &Account) -> String {
+    account
+        .plan
+        .clone()
+        .unwrap_or_else(|| "Account".to_string())
+}
+
+/// The account, then **Sign out**. The model and the approval setting join them later.
+fn account_entries(account: &Account) -> Vec<MenuEntry> {
+    let who: Vec<&str> = [&account.email, &account.plan]
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    let sign_out = MenuItem::new(SIGN_OUT, "Sign out").selectable(false);
+    let group = MenuGroup::new().item(sign_out);
+    let group = if who.is_empty() {
+        group
+    } else {
+        group.label(who.join(" · "))
+    };
+    vec![MenuEntry::Group(group)]
 }
 
 /// Every event of the process, until it ends or the sidebar stops listening.
@@ -511,25 +798,20 @@ impl Focusable for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (background, border, text, muted) = (
-            theme.gray_50,
-            theme.alpha_at(0.10),
-            theme.gray_950,
-            theme.gray_700,
-        );
-        let body = match &self.claude {
-            Claude::Looking => div().flex_1().into_any_element(),
-            Claude::Missing => div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .px(px(24.))
-                .text_size(px(14.))
-                .text_color(muted)
-                .child("Claude Code is not installed.")
+        let (background, border, text) = (theme.gray_50, theme.alpha_at(0.10), theme.gray_950);
+        let body = match &self.setup {
+            setup @ (Setup::Checking
+            | Setup::NotInstalled
+            | Setup::Downloading { .. }
+            | Setup::DownloadFailed { .. }
+            | Setup::SignedOut { .. }
+            | Setup::SigningIn
+            | Setup::Stopped { .. }) => Onboarding::new(self.provider, setup.clone())
+                .on_action(
+                    cx.listener(|sidebar, action: &SetupAction, _, cx| sidebar.act(*action, cx)),
+                )
                 .into_any_element(),
-            Claude::Found(_) => div()
+            Setup::Ready { .. } => div()
                 .flex_1()
                 .min_h_0()
                 .flex()

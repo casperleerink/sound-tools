@@ -22,7 +22,7 @@ fn install_sidebar(cx: &mut TestAppContext, support: &Path) {
                 program: "/nonexistent/claude".into(),
                 environment: HashMap::new(),
             };
-            let sidebar = cx.new(|cx| Sidebar::with_claude(session, Some(installed), cx));
+            let sidebar = cx.new(|cx| Sidebar::ready(session, installed, cx));
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
         .install(cx)
@@ -244,6 +244,18 @@ fn the_panel_stays_closed_once_closed_and_cmd_l_opens_it_on_the_composer(cx: &mu
     opened.keys("cmd-l");
     assert!(opened.panel_open());
     assert!(opened.composer_focused());
+}
+
+/// The account menu sits in the composer and offers **Sign out**.
+#[gpui::test]
+fn the_account_menu_in_the_composer_offers_sign_out(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    assert!(opened.find("menu-sign-out").is_none());
+    let menu = opened.control("account-menu");
+    opened.click(menu);
+    assert!(opened.find("menu-sign-out").is_some());
 }
 
 /// While the panel is closed and the agent works, the icon in the title row says so.

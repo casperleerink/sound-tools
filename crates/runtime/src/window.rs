@@ -640,14 +640,14 @@ fn init(cx: &mut App) {
     sound_ui::init(cx);
     bind_keys(cx);
     // Without a support folder the panel still works, and opens at every start.
-    let remembered = match crate::app::support_folder() {
-        Ok(support) => Some(crate::app::left_panel_file(&support)),
+    let support = match crate::app::support_folder() {
+        Ok(support) => Some(support),
         Err(error) => {
             eprintln!("error: {error:#}");
             None
         }
     };
-    crate::agent_panel(remembered).install(cx);
+    crate::agent_panel(support).install(cx);
 }
 
 /// A project that is open and plays on the default output, ready for its window.

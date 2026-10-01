@@ -26,7 +26,7 @@ pub fn snapshots(
                 program: "/nonexistent/claude".into(),
                 environment: HashMap::new(),
             };
-            let sidebar = cx.new(|cx| Sidebar::with_claude(session, Some(installed), cx));
+            let sidebar = cx.new(|cx| Sidebar::ready(session, installed, cx));
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
         .install(cx)

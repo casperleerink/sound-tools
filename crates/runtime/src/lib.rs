@@ -310,10 +310,13 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
 }
 
 /// The agent sidebar, in the left panel of the window. The window names no agent type, so this
-/// is where the two meet. `remembered` keeps whether the panel is open, see [`LeftPanelSlot`].
-pub fn agent_panel(remembered: Option<PathBuf>) -> LeftPanelSlot {
-    LeftPanelSlot::new(remembered, |session, _, cx| {
-        let sidebar = cx.new(|cx| Sidebar::new(session, cx));
+/// is where the two meet. In `support`, the support folder of the machine, the panel keeps
+/// whether it is open (see [`LeftPanelSlot`]) and the sidebar the agent it downloads.
+pub fn agent_panel(support: Option<PathBuf>) -> LeftPanelSlot {
+    let remembered = support.as_deref().map(app::left_panel_file);
+    let agents = support.as_deref().map(app::agents_folder);
+    LeftPanelSlot::new(remembered, move |session, _, cx| {
+        let sidebar = cx.new(|cx| Sidebar::new(session, agents.clone(), cx));
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
     })
 }

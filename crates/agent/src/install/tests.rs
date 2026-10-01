@@ -1,0 +1,209 @@
+//! The download against local files and a local server, with the real curl and no network.
+
+use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::time::Duration;
+
+use smol::future;
+
+use super::*;
+
+/// Bytes that differ along the file, so a part in the wrong place shows.
+fn content() -> Vec<u8> {
+    (0..300_000u32).map(|index| (index % 251) as u8).collect()
+}
+
+fn sha256_hex(bytes: &[u8]) -> &'static str {
+    let digest: String = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    digest.leak()
+}
+
+/// The download of `content`, served from `source` as a `file://` URL.
+fn download(source: &Path, content: &[u8]) -> Download {
+    Download {
+        name: "tool",
+        version: "2.0.0",
+        url: format!("file://{}", source.display()),
+        sha256: sha256_hex(content),
+        size: content.len() as u64,
+    }
+}
+
+fn run(download: &Download, agents: &Path) -> (Result<PathBuf, InstallError>, Vec<u64>) {
+    let mut heard = Vec::new();
+    let result = smol::block_on(install(download, agents, |bytes| heard.push(bytes)));
+    (result, heard)
+}
+
+#[test]
+fn installs_the_program_executable_where_the_version_says() {
+    let folder = tempfile::tempdir().unwrap();
+    let source = folder.path().join("source");
+    fs::write(&source, content()).unwrap();
+    let agents = folder.path().join("agents");
+    let download = download(&source, &content());
+
+    let (result, heard) = run(&download, &agents);
+    let program = result.unwrap();
+    assert_eq!(program, agents.join("tool/2.0.0/tool"));
+    assert_eq!(fs::read(&program).unwrap(), content());
+    let mode = fs::metadata(&program).unwrap().permissions().mode();
+    assert_eq!(mode & 0o111, 0o111);
+    assert!(!download.partial(&agents).exists());
+    assert_eq!(heard.last(), Some(&download.size));
+}
+
+#[test]
+fn a_damaged_download_is_deleted() {
+    let folder = tempfile::tempdir().unwrap();
+    let source = folder.path().join("source");
+    let mut damaged = content();
+    damaged[1000] ^= 1;
+    fs::write(&source, &damaged).unwrap();
+    let agents = folder.path().join("agents");
+    let download = download(&source, &content());
+
+    let (result, _) = run(&download, &agents);
+    assert!(matches!(result, Err(InstallError::Damaged)), "{result:?}");
+    assert!(!download.partial(&agents).exists());
+    assert!(!download.program(&agents).exists());
+}
+
+#[test]
+fn a_broken_download_resumes_where_it_stopped() {
+    let folder = tempfile::tempdir().unwrap();
+    let content = content();
+    let (start, _) = content.split_at(100_000);
+    // The source starts with other bytes: only a download that resumes and keeps the start
+    // on disk matches the checksum.
+    let mut source_bytes = vec![0; start.len()];
+    source_bytes.extend_from_slice(&content[start.len()..]);
+    let source = folder.path().join("source");
+    fs::write(&source, &source_bytes).unwrap();
+    let agents = folder.path().join("agents");
+    let download = download(&source, &content);
+    fs::create_dir_all(download.folder(&agents)).unwrap();
+    fs::write(download.partial(&agents), start).unwrap();
+
+    let (result, _) = run(&download, &agents);
+    assert_eq!(fs::read(result.unwrap()).unwrap(), content);
+}
+
+#[test]
+fn the_other_versions_are_removed_once_the_new_one_checks_out() {
+    let folder = tempfile::tempdir().unwrap();
+    let source = folder.path().join("source");
+    fs::write(&source, content()).unwrap();
+    let agents = folder.path().join("agents");
+    let older = agents.join("tool/1.0.0");
+    fs::create_dir_all(&older).unwrap();
+    fs::write(older.join("tool"), "older").unwrap();
+    let download = download(&source, &content());
+
+    // A damaged download keeps the older one.
+    let mut damaged = download.clone();
+    damaged.sha256 = sha256_hex(b"something else");
+    assert!(run(&damaged, &agents).0.is_err());
+    assert!(older.exists());
+
+    run(&download, &agents).0.unwrap();
+    assert!(!older.exists());
+    assert!(download.program(&agents).exists());
+}
+
+#[test]
+fn cancelling_kills_curl_and_keeps_what_came() {
+    // A server that takes the connection and never answers.
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = server.local_addr().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let agents = folder.path().join("agents");
+    let mut download = download(Path::new("/unused"), &content());
+    download.url = format!("http://{address}/tool");
+    fs::create_dir_all(download.folder(&agents)).unwrap();
+    fs::write(download.partial(&agents), &content()[..1000]).unwrap();
+
+    let cancelled = smol::block_on(future::or(
+        async {
+            install(&download, &agents, |_| {}).await.ok();
+            false
+        },
+        async {
+            #[allow(clippy::disallowed_methods)]
+            smol::Timer::after(Duration::from_millis(500)).await;
+            true
+        },
+    ));
+    assert!(cancelled);
+
+    // The connection ends, because curl is gone.
+    let (mut connection, _) = server.accept().unwrap();
+    connection
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut request = Vec::new();
+    connection.read_to_end(&mut request).unwrap();
+    assert!(request.starts_with(b"GET /tool"));
+    assert_eq!(
+        fs::read(download.partial(&agents)).unwrap(),
+        &content()[..1000]
+    );
+}
+
+#[test]
+fn a_refused_download_says_what_the_server_said() {
+    // Answers every request with 403 and a line, as a region block might.
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = server.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for connection in server.incoming() {
+            let mut connection = connection.unwrap();
+            let mut request = [0; 4096];
+            assert!(connection.read(&mut request).unwrap() > 0);
+            let body = "Claude Code is not available in your region.\n";
+            let answer = format!(
+                "HTTP/1.1 403 Forbidden\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            connection.write_all(answer.as_bytes()).unwrap();
+        }
+    });
+    let folder = tempfile::tempdir().unwrap();
+    let agents = folder.path().join("agents");
+    let mut download = download(Path::new("/unused"), &content());
+    download.url = format!("http://{address}/tool");
+    // A start on disk too: the server's error page has no range to resume.
+    fs::create_dir_all(download.folder(&agents)).unwrap();
+    fs::write(download.partial(&agents), &content()[..1000]).unwrap();
+
+    let (result, _) = run(&download, &agents);
+    let Err(InstallError::Refused { message }) = result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(message, "Claude Code is not available in your region.");
+    assert!(!download.partial(&agents).exists());
+}
+
+#[test]
+fn reads_the_message_of_an_answer() {
+    assert_eq!(
+        server_message(br#"{"error": {"type": "forbidden", "message": "Not in your region"}}"#),
+        Some("Not in your region".to_string())
+    );
+    assert_eq!(
+        server_message(b"\n  Access denied  \nmore"),
+        Some("Access denied".to_string())
+    );
+    assert_eq!(server_message(b"<html><body>403</body></html>"), None);
+    assert_eq!(server_message(b""), None);
+    assert_eq!(
+        curl_line("curl: (6) Could not resolve host: downloads.claude.ai\n"),
+        "Could not resolve host: downloads.claude.ai"
+    );
+}
