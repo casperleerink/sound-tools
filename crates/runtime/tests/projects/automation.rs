@@ -266,6 +266,33 @@ fn a_lane_of_every_built_in_device_sounds_as_its_record_set_to_that_value() {
     }
 }
 
+/// Unmuting a utility while a lane moves its gain glides over the 20 ms of an edit, and does
+/// not jump in the next block: the moves of the lane right after the edit end with its glide.
+#[test]
+fn unmuting_while_a_gain_lane_moves_glides_over_twenty_milliseconds() {
+    let sweep = lane(
+        Some("tone"),
+        "gain_db",
+        &[(0, "-12.0"), (4 * BAR_TICKS, "0.0")],
+    );
+    let lanes = automation(&[sweep]);
+    let utility = |mute: bool| record("utility", &format!(r#"{{"mute": {mute}}}"#));
+    let mut muted = track(Harness::new(), &lanes, None, &utility(true));
+    muted.play_from_the_start(BAR);
+    assert_eq!(muted.write_and_apply(FILTER_FILE, &utility(false)), 1);
+    let unmuted = muted.render(2_000);
+    let mut open = track(Harness::new(), &lanes, None, &utility(false));
+    let reference = open.play_from_the_start(BAR + 2_000);
+    let reference = frames(&reference, BAR, BAR + 2_000);
+    let part = |from, to| rms(frames(&unmuted, from, to)) / rms(frames(reference, from, to));
+    let start = part(0, 64);
+    assert!(start < 0.1, "{start}");
+    let halfway = part(440, 520);
+    assert!((halfway - 0.5).abs() < 0.1, "{halfway}");
+    let after = part(1_000, 2_000);
+    assert!((after - 1.0).abs() < 1e-3, "{after}");
+}
+
 /// A lane whose device or track has no such number, or that takes no automation, or whose
 /// values are outside the range is reported by the field, and the lanes that can play play. A record
 /// whose points are out of order does not load, and the track keeps what it had. A sine of the

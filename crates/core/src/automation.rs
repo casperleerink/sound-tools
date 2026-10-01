@@ -110,6 +110,7 @@ impl<S, const N: usize> Targets<S, N> {
 /// - A lane that takes a number over or lets it go glides as an edit does, because the two
 ///   values may be far apart, and its later moves end with that glide, not before.
 /// - So does every lane after a seek or a stop, which moves the lanes anywhere.
+/// - An edit of the record glides, and the moves of the lanes right after it end with that glide.
 /// - In the first block of the device, the lanes take their values at once: a render or a new
 ///   device starts where its lanes are, with no glide from the record.
 ///
@@ -159,8 +160,13 @@ impl<S, const N: usize> Automated<S, N> {
     /// Takes a new record from an update, and gives what to aim at: the numbers that a lane
     /// holds keep the lane's value, and the rest glide in `edit` frames. The record it replaces
     /// rides back in `record`, so nothing is dropped here.
+    ///
+    /// The moves of a lane right after an edit end with its glide, as after a take-over: a
+    /// choice of the record can be part of the target of a number, such as mute of a gain, and
+    /// the lane does not cut the glide of that choice short.
     pub fn set_record(&mut self, record: &mut S, edit: f32) -> Targets<S, N> {
         std::mem::swap(&mut self.state, record);
+        self.gliding = [edit; N];
         let numbers = self.input.parameters.iter().zip(&mut self.record);
         for ((parameter, value), lane) in numbers.zip(self.lanes) {
             *value = (parameter.get)(&self.state);
@@ -378,6 +384,21 @@ mod tests {
         let targets = take(&mut automated, &[]).unwrap();
         assert_eq!(*automated, edited);
         assert_eq!(targets.ramp(&CUTOFF), EDIT);
+    }
+
+    /// Unmuting a gain whose lane moves: the gain glides as the edit does, and does not jump
+    /// in the next block.
+    #[test]
+    fn the_moves_of_a_lane_right_after_an_edit_end_with_its_glide() {
+        let mut automated = Automated::new(INPUT, RECORD);
+        take(&mut automated, &[(1, 0.5)]);
+        take(&mut automated, &[(1, 0.6)]);
+        let mut update = RECORD;
+        automated.set_record(&mut update, EDIT);
+        let targets = take(&mut automated, &[(1, 0.7)]).unwrap();
+        assert_eq!(targets.ramp(&MIX), EDIT);
+        let targets = take(&mut automated, &[(1, 0.8)]).unwrap();
+        assert_eq!(targets.ramp(&MIX), EDIT - BLOCK);
     }
 
     #[test]
