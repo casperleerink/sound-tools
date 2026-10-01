@@ -311,11 +311,6 @@ impl Sidebar {
         }
     }
 
-    /// Where the sidebar is in setting up its agent.
-    pub fn setup(&self) -> &Setup {
-        &self.setup
-    }
-
     /// Reads the current thread of `project` from `threads` in the background.
     fn load(threads: PathBuf, project: PathBuf, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |sidebar, cx| {
