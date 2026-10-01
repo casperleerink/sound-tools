@@ -5,9 +5,8 @@
 //! `Working` (one pulsing line), `Done` (a muted `Worked for 12 s` line that expands to the
 //! history) and `Failed` (the same line in red plus one sentence).
 //!
-//! Enter sends: it appends the message and switches to `Working`. Shift-enter would insert a
-//! newline, but `TextInput` is single-line (only the box grows with `.lines(n)`), so the binding
-//! is left out until real multi-line editing exists.
+//! Enter sends: it appends the message and switches to `Working`. Shift-enter inserts a
+//! newline, and the composer grows up to 8 rows before it scrolls.
 
 use gpui::{
     BoxShadow, Context, Entity, FontWeight, IntoElement, ParentElement, SharedString, Styled,
@@ -91,7 +90,7 @@ impl AgentSidebar {
         let input = cx.new(|cx| {
             TextInput::new(cx)
                 .placeholder("Ask for a change")
-                .lines(2)
+                .multi_line(8)
                 .bare(true)
         });
         let weak = cx.weak_entity();
