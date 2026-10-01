@@ -120,7 +120,7 @@ pub struct Sidebar {
     approval_focus: [FocusHandle; 3],
     agent: Option<Agent>,
     /// The thread shown, as it is saved. `None` until its first message.
-    thread: Option<SavedThread>,
+    saved: Option<SavedThread>,
     /// Hands what to keep of the thread to its writer, in order. `None` while nothing is
     /// saved, as in a snapshot.
     writes: Option<smol::channel::Sender<Write>>,
@@ -295,7 +295,7 @@ impl Sidebar {
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
             agent: None,
-            thread: None,
+            saved: None,
             writes: None,
             loading,
             _subscriptions: subscriptions,
@@ -330,8 +330,8 @@ impl Sidebar {
         self.loading = None;
         self.writes = Some(write_in_order(store, cx));
         match current {
-            Ok(Some((thread, conversation))) => {
-                self.thread = Some(thread);
+            Ok(Some((saved, conversation))) => {
+                self.saved = Some(saved);
                 // Only notices came meanwhile: no message goes while it loads.
                 let meanwhile = std::mem::replace(&mut self.conversation, conversation);
                 self.conversation.append(meanwhile);
@@ -438,7 +438,7 @@ impl Sidebar {
     /// has started, so a thread opened again goes on where it left off. `None` starts a new
     /// one.
     pub fn resume(&self) -> Option<String> {
-        self.thread.as_ref()?.session_id.clone()
+        self.saved.as_ref()?.session_id.clone()
     }
 
     fn keep(&self, writes: impl IntoIterator<Item = Write>) {
@@ -471,15 +471,15 @@ impl Sidebar {
         self.problems_before = self.session.read(cx).project().problems();
         self.just_ended = None;
         self.conversation.send(message, started);
-        let thread = self.thread.get_or_insert_with(SavedThread::fresh);
+        let saved = self.saved.get_or_insert_with(SavedThread::fresh);
         let line = Line::Sent {
             at: started,
             message: message.to_string(),
         };
         let writes = [
-            Write::Current(Some(thread.clone())),
+            Write::Current(Some(saved.clone())),
             Write::Lines {
-                thread: thread.id.clone(),
+                thread: saved.id.clone(),
                 lines: vec![line],
             },
         ];
@@ -541,10 +541,10 @@ impl Sidebar {
             }
         }
         // A thread is saved from its first message on.
-        if let Some(thread) = &self.thread
+        if let Some(saved) = &self.saved
             && !lines.is_empty()
         {
-            let thread = thread.id.clone();
+            let thread = saved.id.clone();
             self.keep([Write::Lines { thread, lines }]);
         }
         self.show(changed, cx);
@@ -934,8 +934,8 @@ impl Sidebar {
     /// Talks to `agent` from now on. Its session is the thread's: the next message saves it,
     /// before the agent has said anything, so a thread quit early still resumes.
     fn attach(&mut self, agent: Agent) {
-        let thread = self.thread.get_or_insert_with(SavedThread::fresh);
-        thread.session_id = Some(agent.thread.session_id().to_string());
+        let saved = self.saved.get_or_insert_with(SavedThread::fresh);
+        saved.session_id = Some(agent.thread.session_id().to_string());
         self.agent = Some(agent);
     }
 
@@ -968,7 +968,7 @@ impl Sidebar {
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.end_agent(cx);
         // The old one stays in the store, and no thread is current until the next message.
-        self.thread = None;
+        self.saved = None;
         self.keep([Write::Current(None)]);
         self.conversation = Conversation::default();
         self.forget_entries();
