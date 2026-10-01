@@ -6,12 +6,13 @@
 
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use super::assets::Assets;
 use super::file::{PortReference, SavedConnection, SavedDestination};
 use super::instance::{InstanceId, Record, State};
 use super::registry::Registry;
-use crate::automation::AutomationInput;
+use crate::automation::{AutomationInput, PlayedLanes};
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
 use crate::graph::{Connection, Destination, GraphError, NodeId};
@@ -90,6 +91,9 @@ struct Binding {
     /// Where its owner sends automation, and the numbers it takes, see
     /// [`BehaviourContext::automation`].
     automation: Option<Automatable>,
+    /// The lanes it plays into the numbers of itself and of its owned children, by the
+    /// instance that has the numbers, see [`BehaviourContext::show_lanes`].
+    lanes: BTreeMap<InstanceId, Arc<dyn PlayedLanes>>,
     /// The levels its processors show, by the name the behaviour chose.
     peaks: BTreeMap<String, Peaks>,
     /// What the behaviour said is not live about its instance, see [`BehaviourContext::problem`].
@@ -298,6 +302,20 @@ impl BehaviourContext<'_> {
         });
     }
 
+    /// Shows the views the lanes this instance plays into the numbers of its owned child
+    /// `child`, or of itself with `None`, so a knob of an automated number shows the value that
+    /// plays, see [`Project::lanes`](super::Project::lanes). Declare them each run, as the rest.
+    pub fn show_lanes(&mut self, child: Option<&str>, lanes: Arc<dyn PlayedLanes>) {
+        let instance = match child {
+            Some(name) => self.id.child(name),
+            None => Ok(self.id.clone()),
+        };
+        // A name that cannot be a child has no view to show it.
+        if let Ok(instance) = instance {
+            self.next.lanes.insert(instance, lanes);
+        }
+    }
+
     /// The owned children that hold state of type `C`, as (name, state), in name order.
     pub fn children<C: State>(&self) -> impl Iterator<Item = (&str, &C)> {
         self.id
@@ -502,6 +520,14 @@ impl Bindings {
         let automatable = automatable.and_then(|binding| binding.automation.as_ref());
         let parameters = automatable.map(|automatable| automatable.parameters.iter());
         parameters.into_iter().flatten().map(|number| number.field)
+    }
+
+    /// The lanes that play into the numbers of `instance`, from its own behaviour or from the
+    /// behaviour of its owner, see [`BehaviourContext::show_lanes`].
+    pub fn lanes(&self, instance: &InstanceId) -> Option<&dyn PlayedLanes> {
+        let mut owners = std::iter::once(instance.clone()).chain(instance.parent());
+        let lanes = owners.find_map(|owner| self.by_instance.get(&owner)?.lanes.get(instance));
+        lanes.map(|lanes| &**lanes)
     }
 
     /// The input port that the behaviour of `instance` named, as `project.json` connections

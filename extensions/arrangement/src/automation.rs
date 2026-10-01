@@ -18,8 +18,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sound_core::{
     Automation, BehaviourContext, BehaviourError, EventOutput, InputEndpoint, InstanceId,
-    OutputEndpoint, ParameterInfo, Ports, PrepareConfig, ProcessContext, Processor, Project,
-    ValueRange,
+    OutputEndpoint, ParameterInfo, PlayedLanes, Ports, PrepareConfig, ProcessContext, Processor,
+    Project, Ticks, ValueRange,
 };
 use sound_notes::{Point, check_order, value_at};
 
@@ -148,13 +148,35 @@ pub fn automatable(
     own.chain(of_devices).collect()
 }
 
-/// One automation lane as it plays: the index of its number, its range, and its points as
-/// places on the travel, so a straight line between them is straight on the knob.
+/// One automation lane as it plays: the index and the field of its number, its range, and its
+/// points as places on the travel, so a straight line between them is straight on the knob.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LaneLine {
     parameter: u16,
+    field: &'static str,
     range: ValueRange,
     positions: Vec<Point<f32>>,
+}
+
+impl LaneLine {
+    /// The value at `tick`, not rounded: what the device hears, and what its knob shows.
+    fn value_at(&self, tick: Ticks) -> Option<f32> {
+        let position = value_at(&self.positions, tick)?;
+        Some(self.range.exact(position))
+    }
+}
+
+/// The lanes of one device, or of the track itself: what its player plays, and what the views
+/// show on the knobs of its numbers.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct LaneLines(Vec<LaneLine>);
+
+impl PlayedLanes for LaneLines {
+    fn values_at(&self, tick: Ticks) -> Vec<(&'static str, f32)> {
+        let lanes = self.0.iter();
+        let values = lanes.filter_map(|lane| Some((lane.field, lane.value_at(tick)?)));
+        values.collect()
+    }
 }
 
 /// Plays the lanes of one device on the audio thread: every block, the value of each lane at
@@ -168,7 +190,7 @@ pub(crate) struct LaneLine {
 /// which `MAX_AUTOMATED` keeps far under the capacity of an event port.
 #[derive(Default)]
 pub(crate) struct LanePlayer {
-    lanes: Arc<Vec<LaneLine>>,
+    lanes: Arc<LaneLines>,
 }
 
 impl LanePlayer {
@@ -176,7 +198,7 @@ impl LanePlayer {
 }
 
 impl Processor for LanePlayer {
-    type Update = Arc<Vec<LaneLine>>;
+    type Update = Arc<LaneLines>;
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::OUTPUT)
@@ -192,9 +214,8 @@ impl Processor for LanePlayer {
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         // Where the next block starts, so the ramp of this block ends on the line.
         let tick = context.transport.tick_range.end;
-        for lane in self.lanes.iter() {
-            if let Some(position) = value_at(&lane.positions, tick) {
-                let value = lane.range.exact(position);
+        for lane in &self.lanes.0 {
+            if let Some(value) = lane.value_at(tick) {
                 let event = Automation {
                     parameter: lane.parameter,
                     value,
@@ -208,7 +229,8 @@ impl Processor for LanePlayer {
 /// The lanes of a track: one player per device that has lanes, connected to its automation
 /// input, and one for the track itself, which becomes its [`TRACK_AUTOMATION`] output. A lane
 /// whose device or number is not there, or whose values are outside the range of the number,
-/// is reported and plays nothing, and the rest plays.
+/// is reported and plays nothing, and the rest plays. The views are shown what each player
+/// plays.
 pub(crate) fn play(
     lanes: &[AutomationLane],
     context: &mut BehaviourContext<'_>,
@@ -230,7 +252,9 @@ pub(crate) fn play(
             None => PLAYER.to_string(),
         };
         let player = context.processor(&name, LanePlayer::default)?;
-        context.update(player, Arc::new(lanes))?;
+        let lanes = Arc::new(LaneLines(lanes));
+        context.update(player, lanes.clone())?;
+        context.show_lanes(device, lanes);
         let output = OutputEndpoint::new(player, LanePlayer::OUTPUT);
         match input {
             Some(input) => context.connect(output.to(input))?,
@@ -276,6 +300,7 @@ fn resolve(
         .map_err(|_| format!("{field}.parameter is past the first {} numbers", u16::MAX))?;
     let played = LaneLine {
         parameter,
+        field: info.field,
         range: info.range,
         positions: positions(&lane.points, info.range),
     };
