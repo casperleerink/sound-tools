@@ -8,11 +8,11 @@
 //! record leaves out takes the default of its type, so `"state": {}` is the default patch and
 //! `"osc_2": {}` a default oscillator.
 //!
-//! An automation lane names a number by its path, as an error does: `filter_1.cutoff_hz`. The
+//! An automation lane names a number by its path in the saved record: `filter_1.cutoff_hz`. The
 //! lists of those are at the end, and [`AUTOMATED`] holds them all.
 
 use serde::{Deserialize, Serialize};
-use sound_core::{FilterSlope, FilterType, LfoShape, Scale};
+use sound_core::{FilterSlope, FilterType, LfoShape, Scale, lanes};
 use sound_notes::{Division, Feel};
 
 use crate::matrix::{Destination, MAX_ROUTES, Route, Source};
@@ -671,30 +671,17 @@ impl Default for WavetableState {
     }
 }
 
-/// Numbers of objects of the record as numbers of the whole record, each named by its path, as
-/// `object.field: PARAMETER`: the field of the object, with the range of the parameter of its
-/// object type.
-macro_rules! lanes {
-    ($($object:ident . $field:ident : $parameter:ident),+ $(,)?) => {
-        [$($parameter.at(
-            concat!(stringify!($object), ".", stringify!($field)),
-            |state: &WavetableState| state.$object.$field,
-            |state: &mut WavetableState, value| state.$object.$field = value,
-        )),+]
-    };
-}
-
 /// The numbers of each oscillator that a lane can move, in this order. The octave and the
 /// semitone are whole numbers, and a lane is a straight line, so they are left out.
 pub static OSCILLATOR_LANES: [[Parameter<WavetableState>; 5]; 2] = [
-    lanes![
+    lanes![WavetableState:
         osc_1.position: OSC_POSITION,
         osc_1.effect_amount: OSC_EFFECT_AMOUNT,
         osc_1.detune_cents: OSC_DETUNE,
         osc_1.gain: OSC_GAIN,
         osc_1.pan: OSC_PAN,
     ],
-    lanes![
+    lanes![WavetableState:
         osc_2.position: OSC_POSITION,
         osc_2.effect_amount: OSC_EFFECT_AMOUNT,
         osc_2.detune_cents: OSC_DETUNE,
@@ -705,12 +692,12 @@ pub static OSCILLATOR_LANES: [[Parameter<WavetableState>; 5]; 2] = [
 
 /// The numbers of each filter that a lane can move, in this order.
 pub static FILTER_LANES: [[Parameter<WavetableState>; 3]; 2] = [
-    lanes![
+    lanes![WavetableState:
         filter_1.cutoff_hz: FILTER_CUTOFF,
         filter_1.resonance: FILTER_RESONANCE,
         filter_1.drive_db: FILTER_DRIVE,
     ],
-    lanes![
+    lanes![WavetableState:
         filter_2.cutoff_hz: FILTER_CUTOFF,
         filter_2.resonance: FILTER_RESONANCE,
         filter_2.drive_db: FILTER_DRIVE,
@@ -720,11 +707,11 @@ pub static FILTER_LANES: [[Parameter<WavetableState>; 3]; 2] = [
 /// The level of the sub and the spread of the unison copies, in this order. The count of the
 /// copies is a whole number.
 pub static VOICE_LANES: [Parameter<WavetableState>; 2] =
-    lanes![sub.gain: SUB_GAIN, unison.amount: UNISON_AMOUNT];
+    lanes![WavetableState: sub.gain: SUB_GAIN, unison.amount: UNISON_AMOUNT];
 
 /// What a lane moves at once, with no glide of its own: the envelopes, the rates of the LFOs and
 /// the glide of the notes. The polyphony is a whole number.
-pub static TIMING_LANES: [Parameter<WavetableState>; 24] = lanes![
+pub static TIMING_LANES: [Parameter<WavetableState>; 24] = lanes![WavetableState:
     amp_env.attack_seconds: ENV_ATTACK,
     amp_env.decay_seconds: ENV_DECAY,
     amp_env.sustain: ENV_SUSTAIN,

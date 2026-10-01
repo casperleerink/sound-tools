@@ -65,6 +65,22 @@ impl<S> Parameter<S> {
     }
 }
 
+/// Numbers of the objects of a nested record `S` as numbers of the whole record, with
+/// [`Parameter::at`], for the lanes of a device: `lanes![S: object.field: PARAMETER, ...]`, or
+/// `object[index].field` for an object in a list. Each is named by its path in the saved
+/// record, which is the path of the field here, and has the range of the parameter of its
+/// object type. Gives an array, in the order written.
+#[macro_export]
+macro_rules! lanes {
+    ($state:ty: $($object:ident $([$index:literal])? . $field:ident : $parameter:expr),+ $(,)?) => {
+        [$($parameter.at(
+            concat!(stringify!($object), $("[", stringify!($index), "]",)? ".", stringify!($field)),
+            |state: &$state| state.$object$([$index])?.$field,
+            |state: &mut $state, value| state.$object$([$index])?.$field = value,
+        )),+]
+    };
+}
+
 /// A [`Parameter`] without its state type: its field and its range.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ParameterInfo {
@@ -203,6 +219,43 @@ impl Scale {
 #[cfg(test)]
 mod tests {
     use super::{Parameter, Scale};
+
+    #[derive(Default)]
+    struct Nested {
+        filter: f32,
+        bands: [f32; 2],
+    }
+
+    #[derive(Default)]
+    struct Record {
+        filter: Nested,
+        bands: [Nested; 2],
+    }
+
+    /// Each lane is named by the path of its field, and reads and writes that field alone.
+    #[test]
+    fn lanes_are_named_by_their_path_in_the_record() {
+        const NUMBER: Parameter<Nested> = Parameter {
+            field: "filter",
+            min: 0.,
+            max: 1.,
+            default: 0.5,
+            scale: Scale::Linear,
+            get: |nested| nested.filter,
+            set: |nested, value| nested.filter = value,
+        };
+        let lanes: [Parameter<Record>; 2] =
+            lanes![Record: filter.filter: NUMBER, bands[1].filter: NUMBER];
+        let fields = lanes.each_ref().map(|lane| lane.field);
+        assert_eq!(fields, ["filter.filter", "bands[1].filter"]);
+        let mut record = Record::default();
+        (lanes[1].set)(&mut record, 0.25);
+        assert_eq!(record.bands[1].filter, 0.25);
+        assert_eq!((lanes[1].get)(&record), 0.25);
+        assert_eq!(record.bands[0].filter + record.filter.filter, 0.);
+        assert_eq!(record.filter.bands, [0.; 2]);
+        assert_eq!((lanes[0].max, lanes[0].scale), (1., Scale::Linear));
+    }
 
     const GAIN: Parameter<f32> = Parameter {
         field: "gain",

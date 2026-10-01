@@ -31,7 +31,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, lanes,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -157,36 +157,29 @@ pub fn band_parameters(index: usize) -> [&'static BandParameter; 3] {
     [&FREQUENCIES[index], &GAIN, &Q]
 }
 
-/// The frequency, the gain and the Q of band `BAND` as numbers of the whole EQ, named by their
-/// path in the record, so an automation lane can move them.
-const fn band_lanes<const BAND: usize>(paths: [&'static str; 3]) -> [Parameter; 3] {
-    let [frequency, gain, q] = paths;
-    [
-        FREQUENCIES[BAND].at(
-            frequency,
-            |state| state.bands[BAND].frequency_hz,
-            |state, value| state.bands[BAND].frequency_hz = value,
-        ),
-        GAIN.at(
-            gain,
-            |state| state.bands[BAND].gain_db,
-            |state, value| state.bands[BAND].gain_db = value,
-        ),
-        Q.at(
-            q,
-            |state| state.bands[BAND].q,
-            |state, value| state.bands[BAND].q = value,
-        ),
-    ]
-}
-
-/// The numbers of each band as numbers of the whole EQ, band 1 first, in the order of
-/// [`band_parameters`].
+/// The numbers of each band as numbers of the whole EQ, named by their path in the record, so
+/// an automation lane can move them: band 1 first, in the order of [`band_parameters`].
 pub static BAND_LANES: [[Parameter; 3]; BANDS] = [
-    band_lanes::<0>(["bands[0].frequency_hz", "bands[0].gain_db", "bands[0].q"]),
-    band_lanes::<1>(["bands[1].frequency_hz", "bands[1].gain_db", "bands[1].q"]),
-    band_lanes::<2>(["bands[2].frequency_hz", "bands[2].gain_db", "bands[2].q"]),
-    band_lanes::<3>(["bands[3].frequency_hz", "bands[3].gain_db", "bands[3].q"]),
+    lanes![EqState:
+        bands[0].frequency_hz: FREQUENCIES[0],
+        bands[0].gain_db: GAIN,
+        bands[0].q: Q,
+    ],
+    lanes![EqState:
+        bands[1].frequency_hz: FREQUENCIES[1],
+        bands[1].gain_db: GAIN,
+        bands[1].q: Q,
+    ],
+    lanes![EqState:
+        bands[2].frequency_hz: FREQUENCIES[2],
+        bands[2].gain_db: GAIN,
+        bands[2].q: Q,
+    ],
+    lanes![EqState:
+        bands[3].frequency_hz: FREQUENCIES[3],
+        bands[3].gain_db: GAIN,
+        bands[3].q: Q,
+    ],
 ];
 
 /// Every number an automation lane can move: those of each band, then the output gain.
