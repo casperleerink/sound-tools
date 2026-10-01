@@ -3,6 +3,7 @@
 //!
 //! - `shell`: the keys of the window, the focus, the transport and the read-only timeline.
 //! - `clips`: adding, moving, resizing, deleting and nudging clips in the arrangement.
+//! - `clip_automation`: the automation under a clip going along when it moves or is copied.
 //! - `notes`: the note editor.
 //! - `several_notes`, `velocity`: several notes, copy and paste, and the velocity lane.
 //! - `lanes`: the bend, mod wheel and pressure lanes of the note editor.
@@ -29,6 +30,7 @@
 
 mod agent;
 mod audio;
+mod clip_automation;
 mod clips;
 mod compressor;
 mod delay;
