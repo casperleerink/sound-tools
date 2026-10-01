@@ -35,5 +35,5 @@ pub use provider::{
     Installed, Model, Provider, SignInChoice, StepId, StepOutcome, Thread, ThreadClosed,
     ThreadOptions, TurnOutcome,
 };
-pub use settings::{AgentSettings, AgentSettingsEvent, Settings};
+pub use settings::AgentSettings;
 pub use view::{Onboarding, Setup, SetupAction, Sidebar};
