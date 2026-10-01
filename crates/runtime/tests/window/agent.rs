@@ -2,12 +2,14 @@
 //! makes one undo step, the approval row, cmd-L and escape, and the panel remembered closed.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use gpui::{AppContext, Entity, Focusable, TestAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use sound_agent::{
-    AgentEvent, ApprovalId, Entry, Installed, Sidebar, StepId, StepOutcome, TurnOutcome,
+    AgentEvent, ApprovalId, Command, Entry, ExitReason, Installed, Sidebar, StepId, StepOutcome,
+    Thread, TurnOutcome,
 };
 
 use crate::support::{self, Opened, mark, one_undo_step, write_outside};
@@ -15,14 +17,19 @@ use crate::support::{self, Opened, mark, one_undo_step, write_outside};
 /// The sidebar with a `claude` that cannot start, so no test ever runs the real one: a test
 /// hands the sidebar the events instead. `support` is the support folder of the machine.
 fn install_sidebar(cx: &mut TestAppContext, support: &Path) {
+    install_sidebar_with(cx, support, Some(PathBuf::from("/nonexistent/claude")));
+}
+
+/// The same with `claude` at `program`, or not installed.
+fn install_sidebar_with(cx: &mut TestAppContext, support: &Path, program: Option<PathBuf>) {
     let remembered = runtime::app::left_panel_file(support);
     cx.update(|cx| {
-        LeftPanelSlot::new(Some(remembered), |session, _, cx| {
-            let installed = Installed {
-                program: "/nonexistent/claude".into(),
+        LeftPanelSlot::new(Some(remembered), move |session, _, cx| {
+            let installed = program.clone().map(|program| Installed {
+                program,
                 environment: HashMap::new(),
-            };
-            let sidebar = cx.new(|cx| Sidebar::with_claude(session, Some(installed), cx));
+            });
+            let sidebar = cx.new(|cx| Sidebar::with_claude(session, installed, cx));
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
         .install(cx)
@@ -67,6 +74,20 @@ fn step(id: &str) -> StepId {
 }
 
 const MESSAGE: &str = "Add a bass line in bars 5 to 8 that follows the piano";
+const LABEL: &str = "Add a bass line in bars 5 to 8 that…";
+
+/// A clip in the form the runtime writes, so a redo gives the same bytes back.
+const BASS_CLIP: &str = "{\n  \"tool\": \"arrangement.clip\",\n  \"state\": {\n    \"start\": 15360,\n    \"length\": 15360,\n    \"notes\": [{\"start\": 0, \"length\": 960, \"pitch\": 36, \"velocity\": 100}]\n  }\n}\n";
+
+/// An empty clip in bar 1, written after the request.
+const LATER_CLIP: &str =
+    r#"{"tool": "arrangement.clip", "state": {"start": 0, "length": 3840, "notes": []}}"#;
+
+/// Longer than the grouping window after the end of a request, so a write after it is no part
+/// of the request.
+fn after_the_request() {
+    std::thread::sleep(Duration::from_millis(150));
+}
 
 #[gpui::test]
 fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut TestAppContext) {
@@ -81,6 +102,7 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
         AgentEvent::StepStarted {
             id: step("write"),
             title: "Wrote state/arrangement/track-1/bass.json".to_string(),
+            running_title: "Writing state/arrangement/track-1/bass.json".to_string(),
         },
     ]);
     assert!(opened.panel_open());
@@ -98,13 +120,13 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
         AgentEvent::StepStarted {
             id: step("edit"),
             title: "Edited state/arrangement/track-1/bass.json".to_string(),
+            running_title: "Editing state/arrangement/track-1/bass.json".to_string(),
         },
     ]);
     write_outside(
         &mut opened,
         "state/arrangement/track-1/bass.json",
-        // In the form the runtime writes, so a redo gives the same bytes back.
-        "{\n  \"tool\": \"arrangement.clip\",\n  \"state\": {\n    \"start\": 15360,\n    \"length\": 15360,\n    \"notes\": [{\"start\": 0, \"length\": 960, \"pitch\": 36, \"velocity\": 100}]\n  }\n}\n",
+        BASS_CLIP,
     );
     opened.receive([
         AgentEvent::StepDone {
@@ -145,7 +167,7 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
         let outcome = turn.end.as_ref().map(|end| &end.outcome);
         assert_eq!(outcome, Some(&TurnOutcome::Completed));
     });
-    one_undo_step(&mut opened, "Add a bass line in bars 5 to 8 that…", &before);
+    one_undo_step(&mut opened, LABEL, &before);
 }
 
 #[gpui::test]
@@ -262,4 +284,125 @@ fn a_closed_panel_shows_the_agent_working_on_its_icon(cx: &mut TestAppContext) {
         outcome: TurnOutcome::Completed,
     }]);
     assert!(opened.find("left-panel-busy").is_none());
+}
+
+/// With no composer, the sidebar itself takes the focus, so cmd-L still closes it.
+#[gpui::test]
+fn with_no_claude_cmd_l_focuses_the_sidebar_and_closes_it_again(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar_with(cx, machine.path(), None);
+    let mut opened = support::open_with(cx, |_| {});
+    assert!(opened.panel_open());
+    opened.keys("cmd-l");
+    assert!(opened.composer_focused());
+    opened.keys("cmd-l");
+    assert!(!opened.panel_open());
+}
+
+/// The process dies in the middle of a turn: the turn says so, the request ends there, and
+/// what the agent wrote before is still one undo step.
+#[gpui::test]
+fn an_exit_mid_turn_ends_the_turn_and_its_request(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    let before = mark(&mut opened);
+    opened.begin(MESSAGE);
+    opened.receive([AgentEvent::TurnStarted]);
+    write_outside(
+        &mut opened,
+        "state/arrangement/track-1/bass.json",
+        BASS_CLIP,
+    );
+    opened.receive([AgentEvent::Exited {
+        reason: ExitReason::Failed {
+            message: "Killed".to_string(),
+        },
+    }]);
+
+    let sidebar = opened.sidebar();
+    opened.cx.read(|cx| {
+        let conversation = sidebar.read(cx).conversation();
+        assert!(!conversation.is_working());
+        let [Entry::Message(_), Entry::Turn(turn)] = conversation.entries() else {
+            panic!("{:?}", conversation.entries());
+        };
+        let message = "Claude Code stopped: Killed".to_string();
+        let outcome = turn.end.as_ref().map(|end| &end.outcome);
+        assert_eq!(outcome, Some(&TurnOutcome::Failed { message }));
+    });
+    one_undo_step(&mut opened, LABEL, &before);
+
+    after_the_request();
+    write_outside(
+        &mut opened,
+        "state/arrangement/track-1/later.json",
+        LATER_CLIP,
+    );
+    assert_eq!(opened.undo_label().as_deref(), Some("File change"));
+}
+
+/// **+** in the middle of a turn ends its request with the thread.
+#[gpui::test]
+fn a_new_thread_mid_turn_ends_the_request(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    opened.begin(MESSAGE);
+    opened.receive([AgentEvent::TurnStarted]);
+    write_outside(
+        &mut opened,
+        "state/arrangement/track-1/bass.json",
+        BASS_CLIP,
+    );
+    let new_thread = opened.control("agent-new-thread");
+    opened.click(new_thread);
+
+    let sidebar = opened.sidebar();
+    opened.cx.read(|cx| {
+        let conversation = sidebar.read(cx).conversation();
+        assert!(conversation.entries().is_empty());
+        assert!(!conversation.is_working());
+    });
+    after_the_request();
+    write_outside(
+        &mut opened,
+        "state/arrangement/track-1/later.json",
+        LATER_CLIP,
+    );
+    assert_eq!(opened.undo_label().as_deref(), Some("File change"));
+    // The composer has the focus, where cmd-z belongs to the text.
+    opened.edit(|project| project.undo());
+    assert_eq!(opened.undo_label().as_deref(), Some(LABEL));
+}
+
+/// cmd-period and the stop button both send the interrupt, to a thread with no process.
+#[gpui::test]
+fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    let (thread, commands) = Thread::without_agent();
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
+
+    opened.keys("cmd-l");
+    opened.cx.simulate_input("Hello");
+    opened.keys("enter");
+    assert!(opened.cx.read(|cx| sidebar.read(cx).is_busy(cx)));
+    opened.keys("cmd-.");
+    let stop = opened.control("agent-stop");
+    opened.click(stop);
+
+    let sent: Vec<Command> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+    assert_eq!(
+        sent,
+        [
+            Command::Send("Hello".to_string()),
+            Command::Interrupt,
+            Command::Interrupt
+        ]
+    );
 }
