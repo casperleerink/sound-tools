@@ -215,6 +215,17 @@ The synth (`extensions/instrument`), Wavetable, Sampler, Drum pad, Filter, Compr
 - The UI SDK (`crates/ui`) holds the shared design system: colours, type, and general components such as knobs, cards, menus and displays. A slider belongs there; a piano roll belongs to an extension. So do the lines that more than one device draws (`components/curves.rs`): the envelope with its handles, the shape of an LFO and the response of the state variable filter, from the same functions the sound comes from (`EnvelopeCurves::progress`, `Lfo`, `svf_response`). A select on a record (`Select`) is controlled like a knob, so a list of many, such as the routes of a matrix, keeps no menu in sync. Extensions may still use GPUI directly for custom musical interfaces. The rules are in DESIGN.md.
 - The macOS app bundle is the runtime binary alone. Extensions, fonts, icons and agent docs are compiled in. With no folder it opens the last project. "Open project…" quits and starts a new process, because a new process tears down the device, plugins and their windows correctly for free.
 
+## The agent sidebar
+
+`crates/agent` (`sound-agent`). The plan and the reasons are in `docs/plans/agent-sidebar.md`.
+
+- The sidebar runs Claude Code as a child process in the project folder, one process per thread, started on the first message. The agent edits files and the runtime applies them, as for a terminal agent. Only the composition root (`crates/runtime/src/lib.rs`) depends on the crate.
+- The window has a generic left panel slot (`LeftPanelSlot`, a GPUI global): a constructor from the session to a view, and whether that view is busy, for the dot on the icon. The window names no agent type.
+- Whether the panel is open is kept per machine in the support folder, next to the last project, never in a project: an agent writes in the project folder and must not change the interface under the composer.
+- Each message is one request (`Session::begin_request` at send, `end_request` when the turn ends or the process exits), so all the agent's writes for it are one undo step named after the message.
+- The thread state (`Conversation`) is built from provider-neutral `AgentEvent`s and holds no process, so tests feed it events. The process is read on the background executor and its events reach the view once a frame.
+- The agent finds `claude` on the `PATH` of the login shell, read once in the background, because an app opened from the Finder has a bare `PATH`.
+
 ## Direction: extensions made by the agent
 
 The goal is that a composer asks an integrated agent to create or adapt extensions for their piece: a new tool, instrument, effect or view. The extension system exists for this. Bundled extensions use only the public SDK, so an agent-made extension has the same power. The live project folder exists for this too: content edits apply at once, with no build.
