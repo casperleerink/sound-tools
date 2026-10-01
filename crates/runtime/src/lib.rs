@@ -1,5 +1,5 @@
 //! What the project runtime is made of, apart from the command line in `main.rs`: the bundled
-//! extensions and their views, the default project, the project summary, offline rendering and
+//! extensions and their views, the agent sidebar, the default project, the project summary, offline rendering and
 //! the application window. Tests of whole projects, with every bundled extension, use this
 //! crate.
 
@@ -7,7 +7,7 @@ pub mod app;
 pub mod recorder;
 pub mod window;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use arrangement::{ArrangementState, Colour, TrackKind};
@@ -16,6 +16,7 @@ use delay::DelayState;
 use drum_pad::DrumPadState;
 use eq::EqState;
 use filter::FilterState;
+use gpui::AppContext as _;
 use instrument::SynthState;
 use limiter::LimiterState;
 use modulation::ModulationState;
@@ -26,6 +27,7 @@ use plugin_host::{
 use reverb::ReverbState;
 use sampler::SamplerState;
 use saturator::SaturatorState;
+use sound_agent::Sidebar;
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
     ProjectError, Registry, SavedDestination, State, Ticks,
@@ -33,6 +35,7 @@ use sound_core::{
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
 use utility::UtilityState;
 use wavetable::WavetableState;
+use window::{LeftPanel, LeftPanelSlot};
 
 const PROJECT_FILE: &str = "project.json";
 
@@ -304,6 +307,15 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     });
     devices.effects(move || plugin_offers(&plugins, plugin_host::Plugins::effects));
     (views, devices)
+}
+
+/// The agent sidebar, in the left panel of the window. The window names no agent type, so this
+/// is where the two meet. `remembered` keeps whether the panel is open, see [`LeftPanelSlot`].
+pub fn agent_panel(remembered: Option<PathBuf>) -> LeftPanelSlot {
+    LeftPanelSlot::new(remembered, |session, _, cx| {
+        let sidebar = cx.new(|cx| Sidebar::new(session, cx));
+        LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+    })
 }
 
 /// A built-in device at its defaults, which a project that does not enable `extension` shows

@@ -279,7 +279,8 @@ impl TextInput {
         self.on_submit = Some(Rc::new(f));
     }
 
-    /// Called on escape with the current text.
+    /// Called on escape with the current text. Without it escape goes on to the views around
+    /// the field.
     pub fn set_on_cancel(&mut self, f: impl Fn(&str, &mut Window, &mut App) + 'static) {
         self.on_cancel = Some(Rc::new(f));
     }
@@ -554,8 +555,11 @@ impl TextInput {
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(f) = self.on_cancel.clone() {
-            f(&self.content.clone(), window, cx);
+        match self.on_cancel.clone() {
+            Some(f) => f(&self.content.clone(), window, cx),
+            // Escape means nothing to this field, so the view around it gets it: a panel
+            // gives the focus back to where it was.
+            None => cx.propagate(),
         }
     }
 

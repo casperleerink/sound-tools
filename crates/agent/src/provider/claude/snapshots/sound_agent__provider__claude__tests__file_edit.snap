@@ -27,6 +27,7 @@ expression: "replay(\"edit\")"
             "toolu_013WW4EyF9VmAuU2p6UKyQoR",
         ),
         title: "Wrote notes.txt",
+        running_title: "Writing notes.txt",
     },
     StepDone {
         id: StepId(
@@ -39,6 +40,7 @@ expression: "replay(\"edit\")"
             "toolu_01SVArS12TtnZK5m4tEdyQhD",
         ),
         title: "Edited notes.txt",
+        running_title: "Editing notes.txt",
     },
     StepDone {
         id: StepId(

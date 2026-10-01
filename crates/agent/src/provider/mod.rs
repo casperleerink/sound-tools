@@ -13,7 +13,7 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
-use smol::channel::{self, Sender};
+use smol::channel::{self, Receiver, Sender};
 
 /// The coding agent CLI that runs a thread.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,13 +68,14 @@ pub struct ThreadOptions {
     pub environment: HashMap<OsString, OsString>,
 }
 
-/// One step of a turn, such as an edit or a command.
+/// One step of a turn, such as an edit or a command. The id is the provider's; a test that
+/// feeds events with no process makes its own.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct StepId(String);
+pub struct StepId(pub String);
 
 /// One question of the agent, answered with [`Thread::answer`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ApprovalId(String);
+pub struct ApprovalId(pub String);
 
 /// What the agent did, in order. A turn runs from [`AgentEvent::TurnStarted`] to
 /// [`AgentEvent::TurnEnded`], and every turn that starts ends, also when the process dies.
@@ -103,6 +104,8 @@ pub enum AgentEvent {
         /// One line in the past tense, such as "Edited state/arrangement/bass/verse-a.json" or
         /// "Ran cargo build".
         title: String,
+        /// The same while it runs, such as "Running cargo build".
+        running_title: String,
     },
     StepDone {
         id: StepId,
@@ -175,8 +178,8 @@ pub struct Model {
 }
 
 /// What a [`Thread`] asks its driver to do.
-#[derive(Debug)]
-enum Command {
+#[derive(Debug, PartialEq, Eq)]
+pub enum Command {
     Send(String),
     Interrupt,
     Answer(ApprovalId, ApprovalAnswer),
@@ -211,6 +214,13 @@ impl Thread {
             Provider::Claude => Driver::Claude(claude::Events::start(options, receiver)?),
         };
         Ok((Thread { commands: sender }, Events { driver }))
+    }
+
+    /// A thread with no agent behind it: what it is asked to do comes out of the receiver.
+    /// For a test of a view, which cannot run a process.
+    pub fn without_agent() -> (Thread, Receiver<Command>) {
+        let (sender, receiver) = channel::unbounded();
+        (Thread { commands: sender }, receiver)
     }
 
     /// Sends a message of the composer. A turn starts. Send only between turns: a message

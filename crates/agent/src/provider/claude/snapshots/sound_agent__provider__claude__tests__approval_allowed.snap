@@ -27,6 +27,7 @@ expression: "replay(\"approval_allowed\")"
             "toolu_01PnUsbqppj8chqu9DKUvxLU",
         ),
         title: "Ran touch marker.txt",
+        running_title: "Running touch marker.txt",
     },
     ApprovalRequested {
         id: ApprovalId(

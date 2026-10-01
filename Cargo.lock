@@ -5417,6 +5417,8 @@ dependencies = [
  "sampler",
  "saturator",
  "serde_json",
+ "smol",
+ "sound-agent",
  "sound-core",
  "sound-media",
  "sound-notes",
@@ -5962,11 +5964,13 @@ name = "sound-agent"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
+ "gpui",
  "insta",
  "libc",
  "serde",
  "serde_json",
  "smol",
+ "sound-ui",
  "tempfile",
  "uuid",
 ]

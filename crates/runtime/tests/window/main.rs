@@ -21,11 +21,13 @@
 //!   Clip card, files dropped from the Finder, and adding an audio track.
 //! - `recording_audio`: arming audio tracks, the input select and recording them from a
 //!   simulated input.
+//! - `agent`: the agent sidebar in the left panel, with events fed by hand and no process.
 
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them, and
 // it does not know `#[gpui::test]`.
 #![allow(clippy::unwrap_used)]
 
+mod agent;
 mod audio;
 mod clips;
 mod compressor;

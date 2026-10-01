@@ -25,7 +25,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - One control per value. The tempo has one drag number, in the transport; a tempo mark in the ruler selects and seeks.
 - Every drag control shares one gesture: it moves from where the value is (a press never jumps), shift is ten times finer, double click or backspace sets the default, escape during a drag puts it back.
 - Two-finger scroll never changes a value. A control that took the gesture would change a sound while the composer scrolls past.
-- Interface state that is about how the composer works (zoom, snap, expanded cards, armed tracks) is not saved. A setting in a file would be one more thing an agent could change under the composer.
+- Interface state that is about how the composer works (zoom, snap, expanded cards, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine, such as whether the agent sidebar is open, is kept in the app's support folder, outside every project.
 - Our own look: plain parameter names, our own drawings on the displays. We learn from Ableton but copy no graphic, name or text of it.
 - Every built-in device has its own icon in the pickers: a line drawing of what it does to the sound, on the 24 pt grid of the other icons. A plugin shows a plug. The built-in instruments are one group; the built-in effects are grouped by what they do (Tone, Dynamics, Space, Mix), with the plugins last.
 
@@ -65,9 +65,17 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Anywhere | space | Play or pause |
 | Anywhere | r | Record from the playhead on every armed audio track and on the selected instrument track. With nothing armed and an audio track selected, arm it and record. Again to end the take. Stop, pause or a seek also end it |
 | Anywhere | cmd-z, shift-cmd-z | Undo, redo. Both wait while a drag is going on |
-| Anywhere | tab, shift-tab | Move the focus: project menu, transport, arrangement, the panel below |
+| Anywhere | tab, shift-tab | Move the focus: the sidebar icon, project menu, transport, the agent sidebar, arrangement, the panel below |
+| Anywhere | cmd-L | Open the agent sidebar with the focus in its composer. In the composer, close it again |
 | Anywhere | cmd-q | Quit. There is no save: every finished edit is already in the folder |
 | A MIDI keyboard | any key, the sustain pedal, the bend and mod wheels, key pressure | Play the instrument of the selected track, whether the project plays or not. The synth, the Wavetable and the Sampler bend two semitones and add a vibrato with the mod wheel; the Wavetable can also route the mod wheel and the key pressure in its matrix. A plugin gets them as MIDI (CLAP) or on the parameters it maps them to (VST 3). A take records the wheels too |
+| Title row | the sidebar icon, right of the traffic lights | Open or close the agent sidebar. It stays as it is at the next start. While it is closed and the agent works or asks, the icon carries a lavender dot |
+| Agent sidebar | enter in the composer, or the send button | Send the message. The agent works in the project folder; everything it changes for one message is one undo step named after the message. One message at a time |
+| Agent sidebar | the stop button, or cmd-period | Stop the agent's turn |
+| Agent sidebar | escape in the composer | Give the focus back to where it was |
+| Agent sidebar | **+** | A new thread. The agent of the old one stops |
+| Agent sidebar | Allow, Allow for this thread, Deny | Answer the agent when it asks before a command |
+| Agent sidebar | Worked for … | Show the steps of that turn |
 | Project menu | Fit tempo to take | Fit the tempo map to the take of the selected clip, so bar lines land on the beats as played |
 | Project menu | Undo, Redo | Named after the step they undo or redo |
 | Project menu | Output device | Shows the device the app plays on |
