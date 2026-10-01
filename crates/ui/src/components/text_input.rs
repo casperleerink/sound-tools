@@ -6,6 +6,9 @@
 //! One line by default. `multi_line(n)` wraps at the width of the box, grows up to `n` rows and
 //! then scrolls, for the agent composer: enter submits, shift-enter adds a newline, up and down
 //! move by rows, and cmd-z undoes.
+//!
+//! Known limit: where a word too long for a row is broken inside, end stops one character
+//! before the break, because the offset at the break belongs to the next row.
 
 mod rows;
 
@@ -22,8 +25,14 @@ use gpui::{
 };
 
 use crate::theme::ActiveTheme;
-pub use rows::Arrow;
 use rows::Row;
+
+/// Up or down from the caret.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Arrow {
+    Up,
+    Down,
+}
 
 actions!(
     sound_text_input,
@@ -137,7 +146,7 @@ impl InputSize {
 const ROW_HEIGHT: f32 = 20.;
 
 type SubmitHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
-type ArrowHandler = Rc<dyn Fn(Arrow, &mut Window, &mut App)>;
+type ArrowHandler = Rc<dyn Fn(&str, Arrow, &mut Window, &mut App)>;
 
 /// The text and selection before an edit, for undo.
 struct Snapshot {
@@ -146,7 +155,7 @@ struct Snapshot {
 }
 
 /// Typing or deleting one character right where the last such edit left off joins its undo
-/// step, so cmd-z takes back a typed word and not a letter.
+/// step. A typed space ends the step, so cmd-z takes back a typed word and not a letter.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EditKind {
     Typing,
@@ -275,10 +284,14 @@ impl TextInput {
         self.on_cancel = Some(Rc::new(f));
     }
 
-    /// Called when up is pressed on the first row or down on the last, after the caret went
-    /// to the start or the end. The agent composer recalls earlier messages with it. Like the
-    /// other handlers it runs inside an update of this input, so defer a change to it.
-    pub fn set_on_arrow_past_edge(&mut self, f: impl Fn(Arrow, &mut Window, &mut App) + 'static) {
+    /// Called with the current text when up is pressed on the first row or down on the last,
+    /// after the caret went to the start or the end. The agent composer recalls earlier
+    /// messages with it. Like the other handlers it runs inside an update of this input, so
+    /// defer a change to it.
+    pub fn set_on_arrow_past_edge(
+        &mut self,
+        f: impl Fn(&str, Arrow, &mut Window, &mut App) + 'static,
+    ) {
         self.on_arrow_past_edge = Some(Rc::new(f));
     }
 
@@ -361,7 +374,11 @@ impl TextInput {
             return;
         };
         let goal_x = self.goal_x.unwrap_or_else(|| layout.x_for(row, from));
-        let target = rows::row_after(&layout.rows, row_index, arrow)
+        let target_index = match arrow {
+            Arrow::Up => row_index.checked_sub(1),
+            Arrow::Down => Some(row_index + 1),
+        };
+        let target = target_index
             .and_then(|index| layout.rows.get(index))
             .map(|target| layout.offset_for_x(target, goal_x));
         let offset = target.unwrap_or(match arrow {
@@ -378,7 +395,7 @@ impl TextInput {
             && !select
             && let Some(f) = self.on_arrow_past_edge.clone()
         {
-            f(arrow, window, cx);
+            f(&self.content.clone(), arrow, window, cx);
         }
     }
 
@@ -439,20 +456,42 @@ impl TextInput {
         self.last_edit = kind.map(|kind| (kind, range.start + inserted));
     }
 
-    /// Every change of the text goes through here, so undo sees it.
-    fn edit(&mut self, range: Range<usize>, new_text: &str) {
+    /// Every change of the text goes through here, so undo sees it. A one-line field turns
+    /// newlines into spaces. Returns the length of what went in, or `None` for a range that
+    /// is not on character boundaries of the text, which changes nothing.
+    fn edit(&mut self, range: Range<usize>, new_text: &str) -> Option<usize> {
+        let (Some(before), Some(removed), Some(after)) = (
+            self.content.get(..range.start),
+            self.content.get(range.clone()),
+            self.content.get(range.end..),
+        ) else {
+            return None;
+        };
+        let new_text = if self.max_rows.is_some() {
+            new_text.to_string()
+        } else {
+            new_text.replace('\n', " ")
+        };
         let kind = if new_text.is_empty() {
-            let removed = self.content.get(range.clone()).unwrap_or_default();
             (removed.chars().count() == 1).then_some(EditKind::Deleting)
         } else {
             (range.is_empty() && new_text.chars().count() == 1 && new_text != "\n")
                 .then_some(EditKind::Typing)
         };
-        self.record_undo(kind, range.clone(), new_text.len());
-        let before = self.content.get(..range.start).unwrap_or_default();
-        let after = self.content.get(range.end..).unwrap_or_default();
-        self.content = format!("{before}{new_text}{after}").into();
+        let content = format!("{before}{new_text}{after}");
+        self.record_undo(kind, range, new_text.len());
+        if new_text == " " {
+            self.last_edit = None;
+        }
+        self.content = content.into();
         self.caret_moved();
+        Some(new_text.len())
+    }
+
+    /// `offset` inside the text and on a character boundary. Rows from the last frame can be
+    /// older than the text, after a `set_text` before the next frame.
+    fn clamp_offset(&self, offset: usize) -> usize {
+        self.content.floor_char_boundary(offset)
     }
 
     /// The row the caret is on, as the last frame laid it out.
@@ -483,30 +522,28 @@ impl TextInput {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                self.content[self.selected_range.clone()].to_string(),
-            ));
+        if let Some(selected) = self.selected_text() {
+            cx.write_to_clipboard(ClipboardItem::new_string(selected));
         }
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                self.content[self.selected_range.clone()].to_string(),
-            ));
+        if let Some(selected) = self.selected_text() {
+            cx.write_to_clipboard(ClipboardItem::new_string(selected));
             self.replace_text_in_range(None, "", window, cx);
         }
     }
 
+    fn selected_text(&self) -> Option<String> {
+        self.content
+            .get(self.selected_range.clone())
+            .filter(|selected| !selected.is_empty())
+            .map(str::to_string)
+    }
+
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            let text = if self.max_rows.is_some() {
-                text.replace("\r\n", "\n")
-            } else {
-                text.replace('\n', " ")
-            };
-            self.replace_text_in_range(None, &text, window, cx);
+            self.replace_text_in_range(None, &text.replace("\r\n", "\n"), window, cx);
         }
     }
 
@@ -530,10 +567,11 @@ impl TextInput {
     ) {
         window.focus(&self.focus_handle, cx);
         self.is_selecting = true;
+        let offset = self.offset_at(event.position).unwrap_or(0);
         if event.modifiers.shift {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+            self.select_to(offset, cx);
         } else {
-            self.move_to(self.index_for_mouse_position(event.position), cx);
+            self.move_to(offset, cx);
         }
     }
 
@@ -543,7 +581,7 @@ impl TextInput {
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.is_selecting {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+            self.select_to(self.offset_at(event.position).unwrap_or(0), cx);
         }
     }
 
@@ -573,6 +611,7 @@ impl TextInput {
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let offset = self.clamp_offset(offset);
         self.selected_range = offset..offset;
         self.caret_moved();
         cx.notify();
@@ -586,23 +625,19 @@ impl TextInput {
         }
     }
 
-    fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
-        if self.content.is_empty() {
-            return 0;
-        }
-        let (Some(bounds), Some(layout)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
-        else {
-            return 0;
-        };
+    /// The caret offset at a point in the window, `None` above the text.
+    fn offset_at(&self, position: Point<Pixels>) -> Option<usize> {
+        let bounds = self.last_bounds?;
+        let layout = self.last_layout.as_ref()?;
         let y = position.y - bounds.top() + self.scroll_top;
-        rows::row_at(y, layout.line_height, layout.rows.len())
-            .and_then(|index| layout.rows.get(index))
-            .map_or(0, |row| {
-                layout.offset_for_x(row, position.x - bounds.left())
-            })
+        let row = layout
+            .rows
+            .get(rows::row_at(y, layout.line_height, layout.rows.len())?)?;
+        Some(self.clamp_offset(layout.offset_for_x(row, position.x - bounds.left())))
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let offset = self.clamp_offset(offset);
         if self.selection_reversed {
             self.selected_range.start = offset;
         } else {
@@ -660,16 +695,7 @@ impl TextInput {
     }
 
     fn offset_from_utf16(&self, offset: usize) -> usize {
-        let mut utf8_offset = 0;
-        let mut utf16_count = 0;
-        for ch in self.content.chars() {
-            if utf16_count >= offset {
-                break;
-            }
-            utf16_count += ch.len_utf16();
-            utf8_offset += ch.len_utf8();
-        }
-        utf8_offset
+        utf8_from_utf16(&self.content, offset)
     }
 
     fn offset_to_utf16(&self, offset: usize) -> usize {
@@ -726,7 +752,7 @@ impl EntityInputHandler for TextInput {
     ) -> Option<String> {
         let range = self.range_from_utf16(&range_utf16);
         actual_range.replace(self.range_to_utf16(&range));
-        Some(self.content[range].to_string())
+        self.content.get(range).map(str::to_string)
     }
 
     fn selected_text_range(
@@ -763,8 +789,10 @@ impl EntityInputHandler for TextInput {
             .map(|range| self.range_from_utf16(range))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
-        self.edit(range.clone(), new_text);
-        let cursor = range.start + new_text.len();
+        let Some(inserted) = self.edit(range.clone(), new_text) else {
+            return;
+        };
+        let cursor = range.start + inserted;
         self.selected_range = cursor..cursor;
         self.marked_range.take();
         cx.notify();
@@ -783,17 +811,17 @@ impl EntityInputHandler for TextInput {
             .map(|range| self.range_from_utf16(range))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
-        self.edit(range.clone(), new_text);
-        self.marked_range =
-            (!new_text.is_empty()).then(|| range.start..range.start + new_text.len());
-        self.selected_range = new_selected_range_utf16
-            .as_ref()
-            .map(|range| self.range_from_utf16(range))
-            .map(|new| new.start + range.start..new.end + range.end)
-            .unwrap_or_else(|| {
-                let cursor = range.start + new_text.len();
-                cursor..cursor
-            });
+        let Some(inserted) = self.edit(range.clone(), new_text) else {
+            return;
+        };
+        let end = range.start + inserted;
+        self.marked_range = (inserted > 0).then(|| range.start..end);
+        // The IME places the selection inside the new text. A one-line field swapped its
+        // newlines for spaces, which keeps every offset.
+        self.selected_range = new_selected_range_utf16.map_or(end..end, |new| {
+            range.start + utf8_from_utf16(new_text, new.start)
+                ..range.start + utf8_from_utf16(new_text, new.end)
+        });
         cx.notify();
     }
 
@@ -826,15 +854,23 @@ impl EntityInputHandler for TextInput {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<usize> {
-        let bounds = self.last_bounds?;
-        let layout = self.last_layout.as_ref()?;
-        let y = position.y - bounds.top() + self.scroll_top;
-        let row = layout
-            .rows
-            .get(rows::row_at(y, layout.line_height, layout.rows.len())?)?;
-        let index = layout.offset_for_x(row, position.x - bounds.left());
-        Some(self.offset_to_utf16(index))
+        self.offset_at(position)
+            .map(|offset| self.offset_to_utf16(offset))
     }
+}
+
+/// The byte offset in `text` of a UTF-16 offset, as the IME counts.
+fn utf8_from_utf16(text: &str, offset_utf16: usize) -> usize {
+    let mut utf8_offset = 0;
+    let mut utf16_count = 0;
+    for ch in text.chars() {
+        if utf16_count >= offset_utf16 {
+            break;
+        }
+        utf16_count += ch.len_utf16();
+        utf8_offset += ch.len_utf8();
+    }
+    utf8_offset
 }
 
 /// The shaped text of a frame, kept for the caret math until the next one.
@@ -863,15 +899,6 @@ impl TextLayout {
         Self {
             rows: rows::rows(&text, &wraps),
             lines,
-            line_height,
-        }
-    }
-
-    /// The layout of an empty text: one row, nothing to paint.
-    fn empty(line_height: Pixels) -> Self {
-        Self {
-            lines: Vec::new(),
-            rows: rows::rows("", &[]),
             line_height,
         }
     }
@@ -919,10 +946,7 @@ struct TextElement {
 }
 
 struct PrepaintState {
-    /// The layout of the text itself, for the caret math.
     layout: Option<TextLayout>,
-    /// The shaped placeholder, shown while the text is empty.
-    placeholder: Option<Vec<WrappedLine>>,
     scroll_top: Pixels,
     cursor: Option<PaintQuad>,
     selections: Vec<PaintQuad>,
@@ -1005,12 +1029,11 @@ impl Element for TextElement {
         let line_height = window.line_height();
         let wrap_width = input.max_rows.map(|_| bounds.size.width);
         let (text, runs) = input.display(&style, placeholder_color(cx));
-        let shaped = TextLayout::shape(text, &runs, font_size, wrap_width, line_height, window);
-        let (layout, placeholder) = if input.content.is_empty() {
-            (TextLayout::empty(line_height), Some(shaped.lines))
-        } else {
-            (shaped, None)
-        };
+        let mut layout = TextLayout::shape(text, &runs, font_size, wrap_width, line_height, window);
+        // The caret math works on the text, not on the placeholder it shows when empty.
+        if input.content.is_empty() {
+            layout.rows = rows::rows("", &[]);
+        }
 
         let caret = input.cursor_offset();
         let caret_row = rows::row_of(&layout.rows, caret);
@@ -1073,7 +1096,6 @@ impl Element for TextElement {
 
         PrepaintState {
             layout: Some(layout),
-            placeholder,
             scroll_top,
             cursor,
             selections,
@@ -1114,9 +1136,8 @@ impl Element for TextElement {
             for selection in prepaint.selections.drain(..) {
                 window.paint_quad(selection);
             }
-            let lines = prepaint.placeholder.as_ref().unwrap_or(&layout.lines);
             let mut origin = point(bounds.left(), bounds.top() - scroll_top);
-            for line in lines {
+            for line in &layout.lines {
                 line.paint(
                     origin,
                     layout.line_height,

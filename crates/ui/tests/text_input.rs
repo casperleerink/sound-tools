@@ -2,11 +2,13 @@
 //! 8.4 px wide at the 14 px text size.
 
 use std::cell::RefCell;
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AppContext, Context, Entity, Focusable, IntoElement, ParentElement, Render, Styled,
-    TestAppContext, VisualTestContext, Window, div, px,
+    AppContext, ClipboardItem, Context, Entity, EntityInputHandler, Focusable, IntoElement,
+    Modifiers, ParentElement, Render, Styled, TestAppContext, VisualTestContext, Window, div,
+    point, px,
 };
 use sound_ui::components::text_input::{Arrow, TextInput};
 
@@ -48,13 +50,27 @@ fn set_text(input: &Entity<TextInput>, text: &'static str, cx: &mut VisualTestCo
     cx.run_until_parked();
 }
 
+/// The selection as the IME sees it, in UTF-16.
+fn selection(input: &Entity<TextInput>, cx: &mut VisualTestContext) -> Range<usize> {
+    input
+        .update_in(cx, |input, window, cx| {
+            input.selected_text_range(false, window, cx)
+        })
+        .map(|selection| selection.range)
+        .unwrap_or_default()
+}
+
+fn utf16_len(input: &Entity<TextInput>, cx: &mut VisualTestContext) -> usize {
+    text(input, cx).encode_utf16().count()
+}
+
 #[gpui::test]
 fn up_and_down_move_across_wrapped_rows_and_past_the_edges(cx: &mut TestAppContext) {
     let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
     let arrows: Rc<RefCell<Vec<Arrow>>> = Rc::default();
     input.update(cx, |input, _| {
         let arrows = arrows.clone();
-        input.set_on_arrow_past_edge(move |arrow, _, _| arrows.borrow_mut().push(arrow));
+        input.set_on_arrow_past_edge(move |_, arrow, _, _| arrows.borrow_mut().push(arrow));
     });
 
     // Two rows, "aaaa bbbb " and "cccc dddd"; the caret is at the end.
@@ -118,8 +134,99 @@ fn cmd_z_takes_back_a_typed_word_and_shift_cmd_z_brings_it_again(cx: &mut TestAp
 }
 
 #[gpui::test]
+fn three_backspaces_are_one_step_and_a_space_ends_a_typed_word(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
+    cx.simulate_keystrokes("a b space c d");
+    assert_eq!(text(&input, cx), "ab cd");
+    cx.simulate_keystrokes("cmd-z");
+    assert_eq!(text(&input, cx), "ab ");
+    cx.simulate_keystrokes("backspace backspace backspace");
+    assert_eq!(text(&input, cx), "");
+    cx.simulate_keystrokes("cmd-z");
+    assert_eq!(text(&input, cx), "ab ");
+}
+
+#[gpui::test]
+fn the_caret_moves_by_characters_in_text_of_many_bytes(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
+
+    // Twelve CJK characters wrap after ten. Up keeps the x of two characters.
+    set_text(&input, "日本語日本語日本語日本語", cx);
+    cx.simulate_keystrokes("up x");
+    assert_eq!(text(&input, cx), "日本x語日本語日本語日本語");
+    cx.simulate_keystrokes("backspace backspace");
+    assert_eq!(text(&input, cx), "日語日本語日本語日本語");
+
+    // End of a hard line, and backspace over a two-byte character.
+    set_text(&input, "üü\nab", cx);
+    cx.simulate_keystrokes("up home end backspace");
+    assert_eq!(text(&input, cx), "ü\nab");
+
+    // An emoji is two characters wide on the test text system.
+    set_text(&input, "😀a\n😀b", cx);
+    cx.simulate_keystrokes("up x");
+    assert_eq!(text(&input, cx), "😀ax\n😀b");
+}
+
+#[gpui::test]
+fn a_composition_keeps_its_selection_inside_the_text(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
+    cx.simulate_keystrokes("a b space");
+    // A Japanese IME: "k" shows as a marked "ｋ", then "a" turns it into "か", then it commits.
+    input.update_in(cx, |input, window, cx| {
+        input.replace_and_mark_text_in_range(None, "ｋ", Some(1..1), window, cx)
+    });
+    assert_eq!(selection(&input, cx), 4..4);
+    input.update_in(cx, |input, window, cx| {
+        input.replace_and_mark_text_in_range(None, "か", Some(1..1), window, cx)
+    });
+    assert_eq!(text(&input, cx), "ab か");
+    assert_eq!(selection(&input, cx), 4..4);
+    assert!(selection(&input, cx).end <= utf16_len(&input, cx));
+    cx.simulate_keystrokes("shift-left cmd-c");
+    let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(copied.as_deref(), Some("か"));
+    input.update_in(cx, |input, window, cx| {
+        input.replace_text_in_range(None, "か", window, cx)
+    });
+    assert_eq!(text(&input, cx), "ab か");
+    cx.simulate_keystrokes("cmd-z");
+    assert_eq!(text(&input, cx), "ab ");
+    assert!(selection(&input, cx).end <= utf16_len(&input, cx));
+}
+
+#[gpui::test]
+fn a_click_on_the_second_row_puts_the_caret_there(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
+    set_text(&input, "aaaa bbbb cccc dddd", cx);
+    // Rows are 20 px high and characters 8.4 px wide: after "cc" on the second row.
+    cx.simulate_click(point(px(18.), px(30.)), Modifiers::none());
+    cx.simulate_keystrokes("x");
+    assert_eq!(text(&input, cx), "aaaa bbbb ccxcc dddd");
+}
+
+#[gpui::test]
+fn the_rows_scroll_to_the_caret_past_the_last_row_of_the_box(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(2).bare(true));
+    // Four rows in a box of two, with the caret on the last: "c" and "d" show.
+    set_text(&input, "a\nb\nc\nd", cx);
+    cx.simulate_click(point(px(30.), px(5.)), Modifiers::none());
+    cx.simulate_keystrokes("x");
+    assert_eq!(text(&input, cx), "a\nb\ncx\nd");
+}
+
+#[gpui::test]
 fn a_one_line_field_leaves_up_and_cmd_z_to_the_views_around_it(cx: &mut TestAppContext) {
     let (input, cx) = open(cx, TextInput::new);
     cx.simulate_keystrokes("a b up cmd-z c");
     assert_eq!(text(&input, cx), "abc");
+}
+
+#[gpui::test]
+fn a_one_line_field_turns_newlines_into_spaces(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, TextInput::new);
+    cx.simulate_keystrokes("a shift-enter");
+    cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("b\r\nc\nd".into())));
+    cx.simulate_keystrokes("cmd-v");
+    assert_eq!(text(&input, cx), "a b c d");
 }

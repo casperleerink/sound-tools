@@ -18,13 +18,6 @@ pub(super) struct Row {
     pub line_start: usize,
 }
 
-/// Up or down from the caret.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Arrow {
-    Up,
-    Down,
-}
-
 /// The rows of `text`. `wraps[line]` holds the offsets inside each hard line where it wrapped.
 pub(super) fn rows(text: &str, wraps: &[Vec<usize>]) -> Vec<Row> {
     let mut rows = Vec::new();
@@ -65,14 +58,6 @@ pub(super) fn row_of(rows: &[Row], offset: usize) -> usize {
     rows.iter()
         .position(|row| offset <= row.caret_end)
         .unwrap_or(rows.len().saturating_sub(1))
-}
-
-/// The row an arrow key moves to, or `None` past the first or last row.
-pub(super) fn row_after(rows: &[Row], row: usize, arrow: Arrow) -> Option<usize> {
-    match arrow {
-        Arrow::Up => row.checked_sub(1),
-        Arrow::Down => (row + 1 < rows.len()).then_some(row + 1),
-    }
 }
 
 /// The row at `y` from the top of the text, the last row below it, `None` above it.
@@ -181,12 +166,17 @@ mod tests {
     }
 
     #[test]
-    fn arrows_stop_at_the_first_and_last_row() {
-        let rows = rows("a\nb\nc", &[]);
-        assert_eq!(row_after(&rows, 0, Arrow::Up), None);
-        assert_eq!(row_after(&rows, 1, Arrow::Up), Some(0));
-        assert_eq!(row_after(&rows, 1, Arrow::Down), Some(2));
-        assert_eq!(row_after(&rows, 2, Arrow::Down), None);
+    fn rows_of_text_with_more_bytes_to_a_character() {
+        // "ü" is 2 bytes, "😀" 4, and each CJK character 3. CJK wraps between characters.
+        let text = "ü😀\n日本語日本";
+        let rows = rows(text, &[vec![], vec![9]]);
+        assert_eq!(ranges(&rows), [0..6, 7..16, 16..22]);
+        let caret_ends: Vec<_> = rows.iter().map(|row| row.caret_end).collect();
+        assert_eq!(caret_ends, [6, 13, 22]);
+        assert!(rows.iter().all(|row| text.is_char_boundary(row.caret_end)));
+        assert_eq!(row_of(&rows, 2), 0);
+        assert_eq!(row_of(&rows, 13), 1);
+        assert_eq!(row_of(&rows, 16), 2);
     }
 
     #[test]
