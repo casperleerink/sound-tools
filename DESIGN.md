@@ -25,7 +25,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - One control per value. The tempo has one drag number, in the transport; a tempo mark in the ruler selects and seeks.
 - Every drag control shares one gesture: it moves from where the value is (a press never jumps), shift is ten times finer, double click or backspace sets the default, escape during a drag puts it back.
 - Two-finger scroll never changes a value. A control that took the gesture would change a sound while the composer scrolls past.
-- Interface state that is about how the composer works (zoom, snap, expanded cards, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine, such as whether the agent sidebar is open, is kept in the app's support folder, outside every project.
+- Interface state that is about how the composer works (zoom, snap, expanded cards, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine is kept in the app's support folder, outside every project: whether the agent sidebar is open, the agent's approval mode and model, and its threads.
 - Our own look: plain parameter names, our own drawings on the displays. We learn from Ableton but copy no graphic, name or text of it.
 - Every built-in device has its own icon in the pickers: a line drawing of what it does to the sound, on the 24 pt grid of the other icons. A plugin shows a plug. The built-in instruments are one group; the built-in effects are grouped by what they do (Tone, Dynamics, Space, Mix), with the plugins last.
 
@@ -75,10 +75,11 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Agent sidebar | the menu in the composer | Its button says the model. How much the agent may do without asking (Ask for everything, Ask before commands, Never ask; plain reads such as `ls` never ask), the model, the email and plan, and **Sign out**. Both selects are kept for the machine, are the same in every window, and apply at once, also to a turn that runs. Under Never ask a new thread says so above the composer |
 | Agent sidebar | up, down in the composer | Up in an empty composer, or on its first row, recalls the earlier messages of the thread, newest first. Down goes forward again, and past the newest to empty. A draft stays |
 | Agent sidebar | enter in the composer, or the send button | Send the message. The agent works in the project folder; everything it changes for one message is one undo step named after the message. One message at a time |
+| Agent sidebar | shift-enter in the composer | Add a line |
 | Agent sidebar | the stop button, or cmd-period | Stop the agent's turn |
 | Agent sidebar | escape in the composer | Give the focus back to where it was |
 | Agent sidebar | **+** | A new thread. The agent of the old one stops, and the old one stays saved. The sidebar opens on the project's last thread, and the agent goes on where it left off |
-| Agent sidebar | Allow, Allow for this thread, Deny | Answer the agent when it asks before a command |
+| Agent sidebar | Allow, Allow for this thread, Deny | Answer the agent when it asks before an edit or a command, as the approval mode says |
 | Agent sidebar | Worked for … | Show the steps of that turn. A failed step says so in red; a denied one says what it asked to do, and denied |
 | Agent sidebar | N files are not live, under an answer | Show the problems that turn left, as `path: message` lines |
 | Project menu | Fit tempo to take | Fit the tempo map to the take of the selected clip, so bar lines land on the beats as played |

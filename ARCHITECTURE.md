@@ -21,8 +21,8 @@ This file holds the technical decisions and the reasons for them: the model, the
 ## Shape of the system
 
 - One process, the runtime (`crates/runtime`), opens one project folder. It runs as a window, `--headless`, `--inspect` (print a summary, read-only) or `--render` (offline WAV, read-only). `--plugins` lists the plugins of the machine.
-- The agent is an outside coding agent (Claude Code, Codex) run in the project folder. It edits files; the runtime applies them live. There is no separate edit API for agents.
-- Crates: `crates/core` (engine, clock, transport, live project folder), `crates/notes` (the note contract), `crates/media` (audio files), `crates/ui` (the UI SDK and the session bridge), `crates/runtime` (the app), `crates/gallery` (component gallery). Each extension is a crate under `extensions/`.
+- The agent works in the project folder: Claude Code run by the agent sidebar, or any coding agent in a terminal. It edits files; the runtime applies them live. There is no separate edit API for agents.
+- Crates: `crates/core` (engine, clock, transport, live project folder), `crates/notes` (the note contract), `crates/media` (audio files), `crates/ui` (the UI SDK and the session bridge), `crates/agent` (the agent sidebar), `crates/runtime` (the app), `crates/gallery` (component gallery). Each extension is a crate under `extensions/`.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name. A new project enables every registered one.
 - Rust for the core and extensions, GPUI for the window. The reason: a one-line extension edit reaches a new running window in about two seconds, and an agent wrote working GPUI views from our docs on the first try. Audio and saved data never depend on GPUI.
 - macOS is the main platform. Linux builds and passes the tests. Platform code sits behind `cfg(target_os = "macos")`: VST 3 bundle loading, plugin folders, cache folders, the terminal, and plugin windows (macOS only).
@@ -105,7 +105,8 @@ Built in `crates/core/src/project` (`editing.rs`, `outside.rs`, `watcher.rs`).
 - A map plus docs, not one big doc, because one doc stopped scaling with the extensions. Agents read the map and then only the docs their task needs.
 - Extensions register their docs (`registry.agent_doc`); the core brings the doc for `project.json`. The sources are product content: `extensions/*/agent-doc.md` and `crates/core/src/project/*.md`. The runtime owns every `.md` in `agent-docs/` and removes one no enabled extension registers, so a doc never outlives its tools. Files are written only when the text changes.
 - A runtime test loads every JSON example in every doc, so the docs cannot drift from the formats.
-- The project menu opens a terminal in the project folder (the system Terminal on macOS, `$TERMINAL` or `x-terminal-emulator` on Linux), so the composer can start an agent there.
+- The sidebar runs Claude Code trimmed: no settings file, no MCP server and none of the composer's own setup (`--setting-sources ""`, `--strict-mcp-config`, six tools). With no settings source the project's `CLAUDE.md` would not load either, so the project comes back as `--add-dir` with `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`. `CLAUDE.md` and its `AGENTS.md` import then load, and a settings file the agent writes in the project gives it no more access.
+- The project menu opens a terminal in the project folder (the system Terminal on macOS, `$TERMINAL` or `x-terminal-emulator` on Linux), so the composer can also start an agent of their own there.
 
 ## Audio engine, transport and time
 
@@ -219,7 +220,7 @@ The synth (`extensions/instrument`), Wavetable, Sampler, Drum pad, Filter, Compr
 
 `crates/agent` (`sound-agent`). The plan and the reasons are in `docs/plans/agent-sidebar.md`.
 
-- The sidebar runs Claude Code as a child process in the project folder, one process per thread, started on the first message. The agent edits files and the runtime applies them, as for a terminal agent. Only the composition root (`crates/runtime/src/lib.rs`) depends on the crate.
+- The sidebar runs Claude Code as a child process in the project folder, one process per thread, started on the first message. The agent edits files and the runtime applies them, as for a terminal agent. Only the composition root (`crates/runtime/src/lib.rs`) and the gallery depend on the crate.
 - The window has a generic left panel slot (`LeftPanelSlot`, a GPUI global): a constructor from the session to a view, and whether that view is busy, for the dot on the icon. The window names no agent type.
 - Whether the panel is open is kept per machine in the support folder, next to the last project, never in a project: an agent writes in the project folder and must not change the interface under the composer.
 - Each message is one request (`Session::begin_request` at send, `end_request` when the turn ends or the process exits), so all the agent's writes for it are one undo step named after the message.
