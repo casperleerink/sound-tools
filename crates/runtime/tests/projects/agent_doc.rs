@@ -166,7 +166,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         .iter()
         .flat_map(|(_, text)| json_examples(text))
         .collect();
-    assert_eq!(all.len(), 44);
+    assert_eq!(all.len(), 46);
 
     // The raw take of a recording is not a record: it is an asset the runtime writes once
     // and never reads back. Its example is checked as the file it is.
@@ -283,6 +283,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "arrangement/piano/warmth",
             "arrangement/rhodes",
             "arrangement/rhodes/instrument",
+            "arrangement/riser",
+            "arrangement/riser/dark",
             "arrangement/strings",
             "arrangement/strings/instrument",
             "arrangement/synth",
