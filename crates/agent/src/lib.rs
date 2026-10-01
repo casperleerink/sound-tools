@@ -15,15 +15,16 @@
 //! `cargo run -p sound-agent --example chat -- <folder>` chats with Claude Code in the
 //! terminal.
 
+mod conversation;
 mod environment;
 mod provider;
-mod conversation;
 mod view;
 
+pub use conversation::{Approval, Conversation, Entry, Step, Turn, TurnEnd};
 pub use environment::{login_shell_environment, program_on_path};
 pub use provider::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Events, ExitReason, Model,
-    Provider, Session, StepId, StepOutcome, Thread, ThreadClosed, ThreadOptions, TurnOutcome,
+    Account, AgentEvent, ApprovalAnswer, ApprovalId, ApprovalMode, Command, Events, ExitReason,
+    Model, Provider, Session, StepId, StepOutcome, Thread, ThreadClosed, ThreadOptions,
+    TurnOutcome,
 };
-pub use conversation::{Approval, Conversation, Entry, Step, Turn, TurnEnd};
 pub use view::{Installed, Sidebar};

@@ -79,6 +79,8 @@ pub struct Sidebar {
     /// The finished turns whose steps show, by entry.
     expanded: HashSet<usize>,
     input: Entity<TextInput>,
+    /// The sidebar itself, for when it has no composer.
+    focus_handle: FocusHandle,
     new_thread_focus: FocusHandle,
     send_focus: FocusHandle,
     /// Allow, Allow for this thread, Deny.
@@ -154,6 +156,7 @@ impl Sidebar {
             expanded: HashSet::new(),
             _input: cx.observe(&input, |_, _, cx| cx.notify()),
             input,
+            focus_handle: cx.focus_handle(),
             new_thread_focus: cx.focus_handle().tab_stop(true),
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
@@ -174,10 +177,16 @@ impl Sidebar {
     /// Shows the composer's message and opens its request. [`Self::send`] calls it before the
     /// message goes to the agent; a test calls it to replay a recorded turn with no process.
     pub fn begin(&mut self, message: &str, cx: &mut Context<Self>) {
+        self.begin_at(message, Instant::now(), cx);
+    }
+
+    /// [`Self::begin`] with the turn started at `started`, so a snapshot shows how long it
+    /// worked.
+    pub fn begin_at(&mut self, message: &str, started: Instant, cx: &mut Context<Self>) {
         let label = request_label(message);
         self.session
             .update(cx, |session, _| session.begin_request(&label));
-        self.conversation.send(message, Instant::now());
+        self.conversation.send(message, started);
         self.show(None, cx);
     }
 
@@ -195,7 +204,9 @@ impl Sidebar {
                 event,
                 AgentEvent::TurnEnded { .. } | AgentEvent::Exited { .. }
             );
-            if ends {
+            // Only the end of a turn that works ends its request: an exit after the turn
+            // ended must not move the end of a request that finished long ago.
+            if ends && self.conversation.is_working() {
                 self.session.update(cx, |session, _| session.end_request());
             }
             if matches!(event, AgentEvent::Exited { .. }) {
@@ -304,6 +315,16 @@ impl Sidebar {
         })
     }
 
+    /// Talks to `thread` from now on, in place of starting a process at the next send. For a
+    /// test with [`Thread::without_agent`], which hands the events to [`Self::receive`].
+    pub fn connect(&mut self, thread: Thread) {
+        self.agent = Some(Agent {
+            thread,
+            _reading: Task::ready(()),
+            _delivering: Task::ready(()),
+        });
+    }
+
     fn stop(&mut self, cx: &mut Context<Self>) {
         if !self.conversation.is_working() {
             return;
@@ -316,7 +337,7 @@ impl Sidebar {
     }
 
     fn answer(&mut self, answer: ApprovalAnswer, cx: &mut Context<Self>) {
-        let Some(approval) = self.conversation.answered() else {
+        let Some((approval, turn)) = self.conversation.answered() else {
             return;
         };
         let answered = self
@@ -326,8 +347,7 @@ impl Sidebar {
         if let Some(Err(error)) = answered {
             self.conversation.notice(error.to_string());
         }
-        self.list.remeasure();
-        self.show(None, cx);
+        self.show(Some(turn), cx);
     }
 
     /// Drops the thread and its process, and starts empty.
@@ -339,7 +359,7 @@ impl Sidebar {
         self.conversation = Conversation::default();
         self.expanded.clear();
         self.list.reset(0);
-        window.focus(&self.input.focus_handle(cx), cx);
+        window.focus(&self.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -437,6 +457,7 @@ impl Sidebar {
             .child(
                 div().absolute().right(px(16.)).child(
                     Button::icon_only("new-thread", "plus")
+                        .debug_selector(|| "agent-new-thread".to_string())
                         .variant(ButtonVariant::Ghost)
                         .size(ButtonSize::Xs)
                         .focus_handle(&self.new_thread_focus)
@@ -455,6 +476,7 @@ impl Sidebar {
         // While a turn runs the send button stops it: one turn at a time.
         let button = if working {
             Button::icon_only("stop", "square")
+                .debug_selector(|| "agent-stop".to_string())
                 .on_click(cx.listener(|sidebar, _, _, cx| sidebar.stop(cx)))
         } else {
             Button::icon_only("send", "arrow-up")
@@ -502,9 +524,13 @@ async fn read(mut events: Events, sender: smol::channel::Sender<AgentEvent>) {
 }
 
 impl Focusable for Sidebar {
-    /// The composer, which cmd-L focuses.
+    /// The composer, which cmd-L focuses, or the sidebar itself while it has none, so cmd-L
+    /// and escape still work there.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.input.focus_handle(cx)
+        match self.claude {
+            Claude::Found(_) => self.input.focus_handle(cx),
+            Claude::Looking | Claude::Missing => self.focus_handle.clone(),
+        }
     }
 }
 
@@ -545,6 +571,7 @@ impl Render for Sidebar {
         div()
             .id("agent-sidebar")
             .key_context(KEY_CONTEXT)
+            .track_focus(&self.focus_handle)
             .on_action(cx.listener(|sidebar, _: &Stop, _, cx| sidebar.stop(cx)))
             .size_full()
             .flex()
