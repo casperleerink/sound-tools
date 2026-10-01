@@ -14,9 +14,10 @@ use std::rc::Rc;
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Entity,
     EventEmitter, ExternalPaths, FileDropEvent, FocusHandle, Focusable, FontWeight, Hitbox,
-    HitboxBehavior, Hsla, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, Subscription,
-    TextAlign, TextRun, Window, canvas, div, fill, point, prelude::*, px, quad, size,
+    HitboxBehavior, Hsla, KeyDownEvent, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollWheelEvent,
+    SharedString, Subscription, TextAlign, TextRun, Window, canvas, div, fill, point, prelude::*,
+    px, quad, size,
 };
 use sound_core::{
     Assets, Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks,
@@ -51,9 +52,9 @@ use super::paint::{
 use super::selection::Selection;
 use super::snap::{Grid, SharedSnap, Snap};
 use crate::{
-    ArrangementState, AudioClip, AutomationLane, Carried, Colour, FreeIds, LaneMove, TrackKind,
-    TrackState, add_audio_clips, add_audio_track, add_clip, add_clips, automation, move_track,
-    moved, top_layer, track_orders, tracks, travel_in, unnumbered,
+    ArrangementState, AudioClip, Carried, Colour, FreeIds, LaneMove, TrackKind, TrackState, Travel,
+    add_audio_clips, add_audio_track, add_clip, add_clips, automation, move_track, moved,
+    top_layer, track_orders, tracks, travel_in, unnumbered,
 };
 
 struct TrackRow {
@@ -431,25 +432,48 @@ struct ClipMove {
     next: AnyClip,
 }
 
-/// The lanes of the tracks after `moves`, from `tracks` as they were before them: each clip
-/// takes the automation under it along, see [`moved`].
-fn moved_lanes(
-    project: &Project,
-    tracks: &BTreeMap<InstanceId, TrackState>,
-    moves: &[ClipMove],
-) -> BTreeMap<InstanceId, Vec<AutomationLane>> {
-    let moves: Vec<LaneMove> = moves
-        .iter()
-        .filter_map(|step| {
-            Some(LaneMove {
-                from: step.home.parent()?,
-                range: step.was.clone(),
-                to: step.to.id().clone(),
-                start: step.next.start(),
-            })
+/// What `moves` are for the automation they take along, see [`moved`].
+fn lane_moves(moves: &[ClipMove]) -> Vec<LaneMove> {
+    let moves = moves.iter().filter_map(|step| {
+        Some(LaneMove {
+            from: step.home.parent()?,
+            range: step.was.clone(),
+            to: step.to.id().clone(),
+            start: step.next.start(),
         })
-        .collect();
-    moved(tracks, &moves, &travel_in(project))
+    });
+    moves.collect()
+}
+
+/// Writes what `change` makes of the lanes of the tracks of `arrangement` to a group of
+/// changes. It gets the records of the tracks by id, and the numbers of their devices.
+fn change_lanes(
+    project: &Project,
+    changes: &mut Changes,
+    arrangement: &InstanceId,
+    change: impl FnOnce(&mut BTreeMap<InstanceId, TrackState>, &Travel<'_>),
+) {
+    let mut tracks = track_states(project, arrangement);
+    change(&mut tracks, &travel_in(project));
+    let lanes = tracks.into_iter().map(|(id, state)| (id, state.automation));
+    automation::write(project, changes, lanes);
+}
+
+/// The automation that `moves` take along, to a group of changes, before the clips move.
+fn move_lanes(
+    project: &Project,
+    changes: &mut Changes,
+    arrangement: &InstanceId,
+    moves: &[ClipMove],
+) {
+    let moves = lane_moves(moves);
+    change_lanes(project, changes, arrangement, |tracks, travel| {
+        for (track, lanes) in moved(tracks, &moves, travel) {
+            if let Some(state) = tracks.get_mut(&track) {
+                state.automation = lanes;
+            }
+        }
+    });
 }
 
 /// The records of the tracks of an arrangement, by id.
@@ -1857,6 +1881,19 @@ impl Timeline {
         }
     }
 
+    /// Alt pressed or let go during a move of clips: the move again where the pointer is, so
+    /// the automation goes along or stays at once, not at the next mouse move.
+    fn modifiers_changed(&mut self, modifiers: Modifiers, window: &Window, cx: &mut Context<Self>) {
+        let moving = self.drag.as_ref().map(|drag| &drag.kind);
+        if !matches!(moving, Some(ClipDragKind::Move { .. })) {
+            return;
+        }
+        let bounds = self.painted_bounds.get();
+        let (x, y) = Self::timeline_position(bounds, window.mouse_position());
+        let keys = (modifiers.platform, modifiers.shift, modifiers.alt);
+        self.drag_to(x, y, keys, cx);
+    }
+
     /// Whether the mouse has something: clips, a rectangle or a track. Keys then wait, as they
     /// would fight the next mouse move.
     fn dragging(&self) -> bool {
@@ -2069,7 +2106,7 @@ impl Timeline {
         }
         let mut lanes = match alone {
             true => BTreeMap::new(),
-            false => moved_lanes(project, tracks, &moves),
+            false => moved(tracks, &lane_moves(&moves), &travel_in(project)),
         };
         // A track the drag wrote before and leaves now goes back to how it was.
         for track in lanes_written.iter() {
@@ -2830,16 +2867,21 @@ impl Timeline {
                     return Err(wrong_track(&track, &name, kind));
                 }
                 let mut changes = Changes::new();
-                let travel = travel_in(project);
-                let mut tracks = track_states(project, &arrangement);
+                change_lanes(project, &mut changes, &arrangement, |tracks, travel| {
+                    for (row, _, clip, lanes) in &placed {
+                        let Some(track) = order.get(*row) else {
+                            continue;
+                        };
+                        if let Some(state) = tracks.get_mut(track.id()) {
+                            lanes.place(track.id(), state, clip.start(), travel);
+                        }
+                    }
+                });
                 let (mut notes, mut audio) = (Vec::new(), Vec::new());
-                for (row, name, clip, lanes) in placed {
+                for (row, name, clip, _) in placed {
                     let Some(track) = order.get(row) else {
                         continue;
                     };
-                    if let Some(state) = tracks.get_mut(track.id()) {
-                        lanes.place(track.id(), state, clip.start(), &travel);
-                    }
                     match clip {
                         AnyClip::Notes(clip) => notes.push((track, name, clip)),
                         // A copy of `take-2` is `take` when that is free, as for notes.
@@ -2852,8 +2894,6 @@ impl Timeline {
                     .collect();
                 let audio = add_audio_clips(project, &mut changes, audio)?;
                 added.extend(audio.into_iter().map(|clip| clip.id().clone()));
-                let lanes = tracks.into_iter().map(|(id, state)| (id, state.automation));
-                automation::write(project, &mut changes, lanes);
                 project.commit(label, changes)?;
                 Ok(added)
             })
@@ -2883,15 +2923,13 @@ impl Timeline {
                     changes.delete(clip);
                 }
                 if let Some(taken) = taken {
-                    let travel = travel_in(project);
-                    let mut tracks = track_states(project, &arrangement);
-                    for lanes in taken.lanes() {
-                        if let Some(state) = tracks.get_mut(lanes.track()) {
-                            lanes.clear(state, &travel);
+                    // A cut takes every lane, as it would along its own track.
+                    let taken: Vec<_> = taken.lanes().map(|lanes| (lanes, lanes.track())).collect();
+                    change_lanes(project, &mut changes, &arrangement, |tracks, travel| {
+                        for (track, state) in tracks {
+                            automation::clear(track, state, &taken, travel);
                         }
-                    }
-                    let lanes = tracks.into_iter().map(|(id, state)| (id, state.automation));
-                    automation::write(project, &mut changes, lanes);
+                    });
                 }
                 project.commit(label, changes)
             })
@@ -2937,9 +2975,8 @@ impl Timeline {
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
-                let lanes = moved_lanes(project, &track_states(project, &arrangement), &moves);
+                move_lanes(project, &mut changes, &arrangement, &moves);
                 move_clips(project, &mut changes, moves)?;
-                automation::write(project, &mut changes, lanes);
                 project.commit(label, changes)
             })
         });
@@ -3000,9 +3037,8 @@ impl Timeline {
         let moved = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
-                let lanes = moved_lanes(project, &track_states(project, &arrangement), &moves);
+                move_lanes(project, &mut changes, &arrangement, &moves);
                 let moved = move_clips(project, &mut changes, moves)?;
-                automation::write(project, &mut changes, lanes);
                 project.commit(label, changes)?;
                 Ok(moved)
             })
@@ -3374,6 +3410,11 @@ impl Render for Timeline {
                     cx.stop_propagation();
                 }
             }))
+            .on_modifiers_changed(cx.listener(
+                |timeline, event: &ModifiersChangedEvent, window, cx| {
+                    timeline.modifiers_changed(event.modifiers, window, cx);
+                },
+            ))
             .child(surface.size_full())
             .child(self.snap_corner(cx))
             .children(self.rename_field())
