@@ -79,6 +79,7 @@
 //! - `arrangement-time-signatures.png`: the piece with a time signature that changes almost
 //!   every bar, each shown in the ruler where it starts.
 //! - `editor-time-signatures.png`: the note editor on the melody in those bars.
+//! - `agent-*.png`: the agent sidebar, open and closed, see `snapshots/agent.rs`.
 //! - `audio-*.png`: audio tracks and clips, see `snapshots/audio.rs`.
 //! - `drums-*.png`: the Drum pad, see `snapshots/drums.rs`.
 //! - `track-panel-utility*.png`: the Utility, see `snapshots/utility.rs`.
@@ -131,6 +132,8 @@ use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{Assets, Session};
 use tempfile::TempDir;
 
+#[path = "snapshots/agent.rs"]
+mod agent;
 #[path = "snapshots/audio.rs"]
 mod audio;
 #[path = "snapshots/drums.rs"]
@@ -986,11 +989,14 @@ fn main() -> Result<()> {
     save(&mut cx, &opened, "default")?;
 
     // Audio tracks and clips, the Sampler, the Drum pad and the Utility first, so a run that
-    // only looks at one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=audio`,
+    // only looks at one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=agent`, `=audio`,
     // `=sampler`, `=drums`, `=utility`, `=saturator`, `=modulation`, `=lanes` or `=wavetable` renders the
     // default project and those alone.
     let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
     let runs = |name: &str| only.as_deref().is_none_or(|only| only == name);
+    if runs("agent") {
+        agent::snapshots(&mut cx, &save)?;
+    }
     if runs("audio") {
         audio::snapshots(&mut cx, &save)?;
     }
