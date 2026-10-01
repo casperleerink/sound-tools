@@ -6,11 +6,12 @@
 //! switch. Nothing that a composer or an agent changes jumps.
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, Lfo, LfoShape, Ports, PrepareConfig, ProcessContext,
-    Processor, Smoothed, SvfFactors, SvfSection, soft_clip, svf_response,
+    AudioInput, AudioOutput, Automated, Automation, AutomationRamp, CHANNELS, EventInput, Lfo,
+    LfoShape, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, SvfFactors, SvfSection,
+    soft_clip, svf_response,
 };
 
-use crate::FilterState;
+use crate::{FilterState, PARAMETERS};
 
 /// How long a change takes to arrive. A jump would click, or step in the sound.
 const RAMP_SECONDS: f32 = 0.02;
@@ -53,6 +54,8 @@ fn held(sample: f32) -> f32 {
 }
 
 pub struct Filter {
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<FilterState, { PARAMETERS.len() }>,
     sample_rate: f32,
     /// The frames a change takes.
     ramp_frames: f32,
@@ -85,10 +88,12 @@ pub struct Filter {
 impl Filter {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: EventInput<Automation> = EventInput::new(0);
 
     /// Starts at these values, so a filter that is added or opened does not glide in.
     pub fn new(state: FilterState) -> Self {
         let mut filter = Self {
+            state: Automated::new(PARAMETERS, state),
             sample_rate: 48_000.0,
             ramp_frames: 1.0,
             octaves: Smoothed::new(0.0),
@@ -106,14 +111,14 @@ impl Filter {
             level_target: 1.0,
             sections: [[SvfSection::default(); 2]; CHANNELS],
         };
-        filter.aim(&state);
+        filter.aim(filter.ramp_frames);
         filter.snap();
         filter
     }
 
-    /// Sets every target from a record.
-    fn aim(&mut self, state: &FilterState) {
-        let ramp = self.ramp_frames;
+    /// Sets every target from the record and its lanes, reached in `ramp` frames.
+    fn aim(&mut self, ramp: f32) {
+        let state = self.state.state();
         self.octaves.set_target(state.cutoff_hz.log2(), ramp);
         self.resonance.set_target(state.resonance, ramp);
         self.slope.set_target(state.slope.weight(), ramp);
@@ -191,6 +196,7 @@ impl Processor for Filter {
         Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
+            .event_input(Self::AUTOMATION)
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -200,11 +206,20 @@ impl Processor for Filter {
     }
 
     fn update(&mut self, update: &mut FilterState) {
-        self.aim(update);
+        self.state.set_record(*update);
+        self.aim(self.ramp_frames);
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let frames = context.frames;
+        match self
+            .state
+            .follow(context.event_inputs.get(Self::AUTOMATION))
+        {
+            Some(AutomationRamp::Block) => self.aim(frames as f32),
+            Some(AutomationRamp::Edit) => self.aim(self.ramp_frames),
+            None => {}
+        }
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
         let silent_input = left_in.iter().chain(right_in).all(|sample| *sample == 0.0);
         if silent_input && self.is_resting() {
