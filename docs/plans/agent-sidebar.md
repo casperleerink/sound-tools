@@ -50,10 +50,11 @@ Throwaway Python scripts in `/tmp`, run against claude 2.1.286 on this Mac. None
 | Milestone 3: `interrupt` (R1) | Works. The CLI acknowledges it at once (`still_queued: []`), sends the partial text as an `assistant` message and a user note "[Request interrupted by user]", and ends the turn with a `result` of `error_during_execution` and `terminal_reason: aborted_streaming`. The streamed text block is never closed. The same process takes the next message. |
 | Milestone 3: denied tool (R1) | Works. A `deny` answer comes back as a `tool_result` with `is_error: true` and our message, and the turn goes on to a normal `result`. |
 | Milestone 3: error turn (R1) | A model that does not exist: the CLI writes the error as an `assistant` text with no streaming, then a `result` with `is_error: true` and `terminal_reason: api_error`. |
-| Milestone 3: stale resume | `--resume` with an unknown id: no answer to `initialize`, a `result` with `errors: ["No conversation found with session ID: …"]`, the same line on stderr, exit code 1. It comes at once, before any message is sent. |
+| Milestone 3: stale resume | `--resume` with an unknown id: no answer to `initialize`, a `result` with `errors: ["No conversation found with session ID: …"]`, the same line on stderr, exit code 1. It comes at once, before any message is sent. The driver ends with `Exited { SessionNotFound }`, and the sidebar turns that into "start a new thread". |
 | Milestone 3: killed process | Stdout ends mid-stream with no `result`, and no stderr. The driver ends the open turn as failed. |
 | Milestone 3: `set_permission_mode` (R10) | Works between `default` and `acceptEdits` on a running process, and applies to the next tool. Switching to `bypassPermissions` fails ("the session was not launched with --dangerously-skip-permissions") unless the process started with `--allow-dangerously-skip-permissions`. That flag only allows the switch; the mode stays the one `--permission-mode` gives. So the driver always passes it, and no restart is needed. |
 | Milestone 3: trimmed flags and `CLAUDE.md` | The project's `CLAUDE.md` loads, and its `@AGENTS.md` import too: the live test asks for a fact that is only in `AGENTS.md`. `initialize` answers without a user message. |
+| Milestone 3: settings in the project | With `--setting-sources project,local`, a `.claude/settings.json` the agent could write itself allows `Bash` without asking, and its `SessionStart` hook runs a command at the next start. `--setting-sources ""` ignores both, but then `CLAUDE.md` does not load either. `--restricted` also drops `CLAUDE.md`, and refuses `bypassPermissions`. `--safe-mode` drops `CLAUDE.md` by design. What works: `--setting-sources "" --add-dir <project>` with `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`. `CLAUDE.md` and its import load, no settings file or hook does, and all three approval modes behave. An ignored live test checks it. |
 
 ## 1. Process model
 
@@ -84,10 +85,11 @@ How it runs:
   - Pass every flag explicitly, because the docs say `-p` defaults will change.
   - `--allow-dangerously-skip-permissions` lets a running process switch to "Never ask" (R10).
   - The `capabilities` list of `system/init` (`interrupt_receipt_v1`, `msg_lifecycle_v1` and MCP entries on 2.1.286) names nothing the driver uses, so the driver checks none. The pin and the fixtures are the guard.
-- Trimmed to what a composer needs: `--tools Bash,Read,Edit,Write,Glob,Grep --strict-mcp-config --setting-sources project,local --disable-slash-commands`.
+- Trimmed to what a composer needs: `--tools Bash,Read,Edit,Write,Glob,Grep --strict-mcp-config --setting-sources "" --disable-slash-commands --add-dir <project>`, with `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`.
   - The composer's own user-level setup (MCP servers, skills, hooks, plugins) does not load. Every composer gets the same agent, and a slow MCP server cannot delay the start.
+  - No settings file loads, not even the project's. The agent writes in the project, and a permission rule or a hook there would give it more access than the approval mode.
+  - The project comes back as an added folder only so its `CLAUDE.md` (the map) loads (milestone 3).
   - `AskUserQuestion` is not in the list, so the agent asks its questions in plain text.
-  - The project's `CLAUDE.md` (the map) still loads with these flags (milestone 3).
 - The default config folder (`~/.claude`) stays, so a login made in a terminal or in the Claude app is shared.
 
 ## 2. Install and sign in
@@ -218,7 +220,7 @@ Rejected:
 - It applies to every project on the machine. Because it is not in the project, the agent cannot change its own permissions by editing a project file.
 - It sits in the composer's menu (the dropdown of the gallery mockup) as one select, next to the model.
 - A change applies from the next action of the agent, through the `set_permission_mode` control request, with no restart (R10).
-- Under "Ask before commands" Claude Code still runs file commands such as `touch` and `mkdir` in the project without asking, as it counts them as edits. Commands such as `git init` or `cargo build` ask.
+- Under "Ask before commands" Claude Code still runs file commands such as `touch` and `mkdir` in the project without asking, as it counts them as edits. Commands such as `git init` or `cargo build` ask. Decided: that is fine.
 - Under "Never ask", the first message of a thread shows one quiet line above the composer ("The agent does anything without asking"), so the mode is never a surprise.
 
 An approval request shows as the last item of the thread:
