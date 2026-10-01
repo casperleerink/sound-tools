@@ -283,6 +283,7 @@ impl Events {
             Command::SetApprovalMode(mode) => self.request(Request::SetPermissionMode {
                 mode: permission_mode(mode),
             }),
+            Command::SetModel(model) => self.request(Request::SetModel { model }),
         }
     }
 

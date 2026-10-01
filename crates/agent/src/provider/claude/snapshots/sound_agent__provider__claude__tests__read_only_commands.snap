@@ -1,0 +1,82 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: events
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_016sL9TpzGTZVuNbQY4VmMbu",
+        ),
+        title: "Ran `ls`",
+        running_title: "Running `ls`",
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_01ByrDDcUqwcbtVtcScJwmu4",
+        ),
+        title: "Ran `cat notes.txt | wc -l`",
+        running_title: "Running `cat notes.txt | wc -l`",
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_01ThTUCcJL3xdtErwk4sS9Qk",
+        ),
+        title: "Ran `for f in $(ls); do cat \"$f\"; done`",
+        running_title: "Running `for f in $(ls); do cat \"$f\"; done`",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_01ByrDDcUqwcbtVtcScJwmu4",
+        ),
+        outcome: Done,
+    },
+    ApprovalRequested {
+        id: ApprovalId(
+            "83014153-b507-40a5-b77b-3d8fbde2900f",
+        ),
+        title: "Run `for f in $(ls); do cat \"$f\"; done`",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_016sL9TpzGTZVuNbQY4VmMbu",
+        ),
+        outcome: Done,
+    },
+    StepDone {
+        id: StepId(
+            "toolu_01ThTUCcJL3xdtErwk4sS9Qk",
+        ),
+        outcome: Done,
+    },
+    TextDelta {
+        text: "done.",
+    },
+    TextDone {
+        text: "done.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

@@ -129,7 +129,29 @@ fn process_killed() {
     insta::assert_debug_snapshot!(replay("crash"));
 }
 
-const FIXTURES: [&str; 11] = [
+/// An unknown model is a quiet error, and the thread goes on.
+#[test]
+fn model_change() {
+    insta::assert_debug_snapshot!(replay("set_model"));
+}
+
+/// Under "Ask before commands" a command that only reads runs with no question, also in a
+/// pipe: the CLI checks that itself. A loop over `$(…)` still asks.
+#[test]
+fn read_only_commands() {
+    let events = replay("read_only");
+    let asked: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ApprovalRequested { title, .. } => Some(title.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, [r#"Run `for f in $(ls); do cat "$f"; done`"#]);
+    insta::assert_debug_snapshot!(events);
+}
+
+const FIXTURES: [&str; 13] = [
     "plain",
     "edit",
     "approval_allowed",
@@ -138,6 +160,8 @@ const FIXTURES: [&str; 11] = [
     "interrupt_approval",
     "permission_mode",
     "permission_bypass",
+    "set_model",
+    "read_only",
     "stale_resume",
     "error_turn",
     "crash",

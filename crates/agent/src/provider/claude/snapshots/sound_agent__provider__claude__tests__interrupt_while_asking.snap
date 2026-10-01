@@ -26,8 +26,8 @@ expression: "replay(\"interrupt_approval\")"
         id: StepId(
             "toolu_01TNwoh9etvJXQBWHNeN88VC",
         ),
-        title: "Ran git init",
-        running_title: "Running git init",
+        title: "Ran `git init`",
+        running_title: "Running `git init`",
     },
     ApprovalRequested {
         id: ApprovalId(

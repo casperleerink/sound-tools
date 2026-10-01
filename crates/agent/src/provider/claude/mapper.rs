@@ -80,7 +80,7 @@ impl Mapper {
                 request_id,
                 request,
             } => {
-                self.requests.insert(request_id.clone(), *request);
+                self.requests.insert(request_id.clone(), request.clone());
                 Vec::new()
             }
             Outgoing::ControlResponse { response } => {
@@ -347,12 +347,13 @@ impl Mapper {
                 self.interrupted = self.turn_open;
                 Vec::new()
             }
-            (Request::SetPermissionMode { .. }, Ok(_)) => Vec::new(),
+            (Request::SetPermissionMode { .. } | Request::SetModel { .. }, Ok(_)) => Vec::new(),
             (request, Err(error)) => {
                 let action = match request {
                     Request::Initialize => "start",
                     Request::Interrupt => "stop the turn",
                     Request::SetPermissionMode { .. } => "change the approval mode",
+                    Request::SetModel { .. } => "change the model",
                 };
                 vec![AgentEvent::Error {
                     message: format!("Claude Code could not {action}: {error}"),
@@ -471,33 +472,33 @@ impl Action {
 
     fn done_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Ran {command}"),
+            Action::Run(command) => format!("Ran {}", code(command)),
             Action::Read(path) => format!("Read {path}"),
             Action::Edit(path) => format!("Edited {path}"),
             Action::Write(path) => format!("Wrote {path}"),
-            Action::Search(pattern) => format!("Searched for {pattern}"),
+            Action::Search(pattern) => format!("Searched for {}", code(pattern)),
             Action::Use(tool) => format!("Used {tool}"),
         }
     }
 
     fn running_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Running {command}"),
+            Action::Run(command) => format!("Running {}", code(command)),
             Action::Read(path) => format!("Reading {path}"),
             Action::Edit(path) => format!("Editing {path}"),
             Action::Write(path) => format!("Writing {path}"),
-            Action::Search(pattern) => format!("Searching for {pattern}"),
+            Action::Search(pattern) => format!("Searching for {}", code(pattern)),
             Action::Use(tool) => format!("Using {tool}"),
         }
     }
 
     fn request_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Run `{command}`"),
+            Action::Run(command) => format!("Run {}", code(command)),
             Action::Read(path) => format!("Read {path}"),
             Action::Edit(path) => format!("Edit {path}"),
             Action::Write(path) => format!("Write {path}"),
-            Action::Search(pattern) => format!("Search for {pattern}"),
+            Action::Search(pattern) => format!("Search for {}", code(pattern)),
             Action::Use(tool) => format!("Use {tool}"),
         }
     }
@@ -520,4 +521,14 @@ fn shorten(text: &str) -> String {
     }
     let cut: String = line.chars().take(TITLE_DETAIL_CHARACTERS).collect();
     format!("{}…", cut.trim_end())
+}
+
+/// A command or a pattern in backticks, which the sidebar shows as code. One with a backtick
+/// of its own stays as it is, since that would end the code early.
+fn code(text: &str) -> String {
+    if text.contains('`') {
+        text.to_string()
+    } else {
+        format!("`{text}`")
+    }
 }

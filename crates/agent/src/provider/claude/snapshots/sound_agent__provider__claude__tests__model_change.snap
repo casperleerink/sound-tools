@@ -1,6 +1,6 @@
 ---
 source: crates/agent/src/provider/claude/tests.rs
-expression: "replay(\"permission_bypass\")"
+expression: "replay(\"set_model\")"
 ---
 [
     TurnStarted,
@@ -22,24 +22,14 @@ expression: "replay(\"permission_bypass\")"
             },
         ],
     },
-    StepStarted {
-        id: StepId(
-            "toolu_014L5ZSFW49aTPb5tcKEpvHx",
-        ),
-        title: "Ran `git init`",
-        running_title: "Running `git init`",
-    },
-    StepDone {
-        id: StepId(
-            "toolu_014L5ZSFW49aTPb5tcKEpvHx",
-        ),
-        outcome: Done,
+    Error {
+        message: "Claude Code could not change the model: Model 'claude-no-such-model' not found",
     },
     TextDelta {
-        text: "done.",
+        text: "ok",
     },
     TextDone {
-        text: "done.",
+        text: "ok",
     },
     TurnEnded {
         outcome: Completed,

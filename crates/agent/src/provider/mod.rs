@@ -118,7 +118,11 @@ impl SignInChoice {
 
 /// How much the agent may do without asking. One setting for the machine, never saved in a
 /// project, so the agent cannot raise its own access by editing a file there.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+///
+/// Serde gives its name in the settings file, see `crate::settings`: renaming a variant
+/// resets the choice of every composer to the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
     /// Asks before every edit and command.
     AskForEverything,
@@ -185,6 +189,7 @@ pub enum AgentEvent {
     Started {
         session_id: String,
         account: Account,
+        /// What the composer can pick, the provider's default first.
         models: Vec<Model>,
     },
     /// A message was sent and the agent works on it.
@@ -201,9 +206,10 @@ pub enum AgentEvent {
     StepStarted {
         id: StepId,
         /// One line in the past tense, such as "Edited state/arrangement/bass/verse-a.json" or
-        /// "Ran cargo build".
+        /// "Ran \`cargo build\`". Text between backticks shows as code, here and in the
+        /// title of an approval.
         title: String,
-        /// The same while it runs, such as "Running cargo build".
+        /// The same while it runs, such as "Running \`cargo build\`".
         running_title: String,
     },
     StepDone {
@@ -295,6 +301,8 @@ pub enum Command {
     Interrupt,
     Answer(ApprovalId, ApprovalAnswer),
     SetApprovalMode(ApprovalMode),
+    /// One of the ids in [`AgentEvent::Started`].
+    SetModel(String),
 }
 
 /// Sends to the agent of one thread. Cheap to clone, and every method returns at once, so an
@@ -374,6 +382,12 @@ impl Thread {
     /// Applies from the next action of the agent, with no restart.
     pub fn set_approval_mode(&self, mode: ApprovalMode) -> Result<(), ThreadClosed> {
         self.command(Command::SetApprovalMode(mode))
+    }
+
+    /// Applies from the next message, with no restart. A model the provider does not know
+    /// comes back as [`AgentEvent::Error`], and the thread keeps the one it had.
+    pub fn set_model(&self, model: impl Into<String>) -> Result<(), ThreadClosed> {
+        self.command(Command::SetModel(model.into()))
     }
 
     fn command(&self, command: Command) -> Result<(), ThreadClosed> {
