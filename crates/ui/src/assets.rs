@@ -58,6 +58,7 @@ icons!(
     "mic",
     "minus",
     "music",
+    "panel-left",
     "pause",
     "pencil",
     "piano",
