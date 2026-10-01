@@ -1,12 +1,16 @@
 //! Automation lanes in the record of a real track: a sweep of the cutoff of the built-in filter
 //! and a fade of the volume of the track, heard where the points say, the same to the byte in
-//! every render, and a lane that cannot play reported while the rest plays.
+//! every render, a lane of every other built-in device heard, and a lane that cannot play
+//! reported while the rest plays.
 
-use crate::support::{BAR, Harness, clip, difference};
+use std::f64::consts::TAU;
+
+use crate::support::{BAR, Harness, clip, difference, write_samples};
 
 const FOLDER: &str = "state/arrangement/piano";
 const TRACK_FILE: &str = "state/arrangement/piano/instance.json";
 const FILTER_FILE: &str = "state/arrangement/piano/tone.json";
+const INSTRUMENT_FILE: &str = "state/arrangement/piano/instrument.json";
 
 /// Ticks in a bar of 4/4.
 const BAR_TICKS: u64 = 3840;
@@ -14,19 +18,30 @@ const BAR_TICKS: u64 = 3840;
 /// A track that holds a chord for four bars and plays it through a filter named `tone`, with
 /// these fields in its record after its name.
 fn piano(fields: &str, filter: &str) -> Harness {
-    let mut harness = Harness::new();
+    track(Harness::new(), fields, None, &record("filter", filter))
+}
+
+/// A track of `harness` that holds a chord for four bars on a synth, or on this instrument
+/// record, and plays it through this effect record named `tone`, with these fields in its
+/// record after its name.
+fn track(mut harness: Harness, fields: &str, instrument: Option<&str>, effect: &str) -> Harness {
     let chord = [(0, 15360, 48), (0, 15360, 55), (0, 15360, 64)];
     harness.write_track("piano", 1, 0.15, &[("chord", clip(0, 15360, &chord))]);
     let track = format!(
         r#"{{"tool": "arrangement.track", "state": {{"name": "piano", "order": 1, "effects": ["tone"]{fields}}}}}"#
     );
-    let filter = format!(r#"{{"tool": "filter", "state": {filter}}}"#);
-    let paths = [
+    let mut paths = vec![
         harness.write(&format!("{FOLDER}/instance.json"), &track),
-        harness.write(FILTER_FILE, &filter),
+        harness.write(FILTER_FILE, effect),
     ];
-    assert_eq!(harness.apply(&paths), 2);
+    paths.extend(instrument.map(|instrument| harness.write(INSTRUMENT_FILE, instrument)));
+    // An instrument record may hold what the synth of the track already holds.
+    assert!(harness.apply(&paths) >= 2);
     harness
+}
+
+fn record(tool: &str, state: &str) -> String {
+    format!(r#"{{"tool": "{tool}", "state": {state}}}"#)
 }
 
 /// A lane as an agent writes it: `(tick, value)` points, the value as JSON.
@@ -161,6 +176,94 @@ fn a_fade_in_from_silence_starts_silent() {
     let start = |samples| rms(frames(samples, 0, 256));
     assert!(start(&full) > 0.001, "{}", start(&full));
     assert!(start(&faded) < start(&full) * 1e-3, "{}", start(&faded));
+}
+
+/// Every built-in instrument and effect takes a lane: a lane that holds a value from the first
+/// frame sounds as the record set to that value, and not as the record. A number inside an
+/// object or a list is named by its path.
+#[test]
+fn a_lane_of_every_built_in_device_sounds_as_its_record_set_to_that_value() {
+    // The tool, its number and the value of the lane, the record, and the record set to it.
+    let devices = [
+        (
+            "instrument.synth",
+            "cutoff_hz",
+            "300.0",
+            "{}",
+            r#"{"cutoff_hz": 300.0}"#,
+        ),
+        (
+            "wavetable",
+            "filter_1.cutoff_hz",
+            "300.0",
+            "{}",
+            r#"{"filter_1": {"cutoff_hz": 300.0}}"#,
+        ),
+        (
+            "drum-pad",
+            "pads.48.volume_db",
+            "-24.0",
+            "{}",
+            r#"{"pads": {"48": {"volume_db": -24.0}}}"#,
+        ),
+        (
+            "sampler",
+            "gain_db",
+            "-12.0",
+            r#"{"sample": "tone.wav"}"#,
+            r#"{"sample": "tone.wav", "gain_db": -12.0}"#,
+        ),
+        (
+            "compressor",
+            "threshold_db",
+            "-40.0",
+            "{}",
+            r#"{"threshold_db": -40.0}"#,
+        ),
+        ("delay", "mix", "1.0", "{}", r#"{"mix": 1.0}"#),
+        (
+            "eq",
+            "bands[1].gain_db",
+            "12.0",
+            "{}",
+            r#"{"bands": [{}, {"gain_db": 12.0}]}"#,
+        ),
+        ("limiter", "gain_db", "12.0", "{}", r#"{"gain_db": 12.0}"#),
+        ("modulation", "mix", "1.0", "{}", r#"{"mix": 1.0}"#),
+        ("reverb", "mix", "1.0", "{}", r#"{"mix": 1.0}"#),
+        (
+            "saturator",
+            "drive_db",
+            "24.0",
+            "{}",
+            r#"{"drive_db": 24.0}"#,
+        ),
+        ("utility", "pan", "-1.0", "{}", r#"{"pan": -1.0}"#),
+    ];
+    let instruments = ["instrument.synth", "wavetable", "drum-pad", "sampler"];
+    for (tool, parameter, value, state, set) in devices {
+        let is_instrument = instruments.contains(&tool);
+        let render = |lanes: &str, state: &str| {
+            let harness = Harness::new();
+            // What the sampler plays.
+            let tone = |time: f64| (0.25 * (TAU * 220.0 * time).sin()) as f32;
+            write_samples(&harness, "tone.wav", 48_000, 3.0, tone);
+            let device = record(tool, state);
+            let mut harness = match is_instrument {
+                true => track(harness, lanes, Some(&device), &record("filter", "{}")),
+                false => track(harness, lanes, None, &device),
+            };
+            assert_eq!(harness.project.problems(), [], "{tool}");
+            harness.play_from_the_start(BAR)
+        };
+        let device = if is_instrument { "instrument" } else { "tone" };
+        let held = lane(Some(device), parameter, &[(0, value)]);
+        let automated = render(&automation(&[held]), state);
+        let heard = largest_difference(&automated, &render("", set));
+        assert!(heard < 1e-4, "{tool} {parameter}: {heard}");
+        let moved = largest_difference(&automated, &render("", state));
+        assert!(moved > 1e-2, "{tool} {parameter}: {moved}");
+    }
 }
 
 /// A lane whose device or track has no such number, or that takes no automation, or whose
