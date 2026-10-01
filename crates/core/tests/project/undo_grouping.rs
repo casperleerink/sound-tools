@@ -233,6 +233,39 @@ fn a_write_heard_just_after_the_end_joins_the_request() {
 }
 
 #[test]
+fn a_group_heard_before_the_end_but_applied_after_it_joins_the_request() {
+    let mut harness = Harness::new();
+    let start = Instant::now();
+    let end = start + Duration::from_secs(10);
+    harness.project.begin_request(REQUEST);
+    write_dc(&mut harness, "a", 0.1, start);
+    harness.project.end_request_at(end);
+    write_dc(&mut harness, "b", 0.2, end - Duration::from_millis(30));
+
+    assert_eq!(harness.project.undo().unwrap().as_deref(), Some(REQUEST));
+    assert_eq!(harness.project.instances().count(), 0);
+}
+
+#[test]
+fn an_undo_in_a_request_leaves_its_later_writes_a_new_step_with_its_label() {
+    let mut harness = Harness::new();
+    let start = Instant::now();
+    harness.project.begin_request(REQUEST);
+    write_dc(&mut harness, "a", 0.1, start);
+    harness.project.undo().unwrap();
+    write_dc(&mut harness, "b", 0.2, start + Duration::from_secs(1));
+    harness
+        .project
+        .end_request_at(start + Duration::from_secs(2));
+
+    assert_eq!(harness.project.undo_label(), Some(REQUEST));
+    assert_eq!(harness.project.redo_label(), None);
+    harness.project.undo().unwrap();
+    assert_eq!(harness.project.instances().count(), 0);
+    assert_eq!(harness.project.undo_label(), None);
+}
+
+#[test]
 fn a_write_heard_well_after_the_end_is_a_step_of_its_own() {
     let mut harness = Harness::new();
     let start = Instant::now();
