@@ -208,7 +208,7 @@ pub struct ReverbView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of a handle.
     edit: ControlEdit,
-    lanes: Entity<Lanes>,
+    lanes: Entity<Lanes<ReverbState>>,
     /// Whether the card shows the hidden controls. Interface state: not saved.
     expanded: bool,
 }
@@ -235,7 +235,7 @@ impl ReverbView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
-        let lanes = Lanes::follow(&session, reverb.id(), cx);
+        let lanes = Lanes::follow(&session, reverb.id(), Reverb::AUTOMATION, cx);
         Self {
             session,
             reverb,
@@ -352,12 +352,10 @@ impl ReverbView {
 impl Render for ReverbView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(mut state) = self.session.read(cx).project().state(&self.reverb).copied() else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
-        // What plays: the knobs and the display show the lanes.
-        let parameters = Reverb::AUTOMATION.parameters();
-        self.lanes.read(cx).apply(parameters, &mut state);
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()

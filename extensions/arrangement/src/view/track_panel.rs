@@ -63,7 +63,7 @@ use super::clip_card::ClipCard;
 use super::layout::HEADER_WIDTH;
 use super::paint::accent;
 use crate::mixer::{GAIN, PAN};
-use crate::{InputChannels, TrackKind, TrackState};
+use crate::{InputChannels, Mix, Mixer, TrackKind, TrackState};
 
 /// The height of the panel: the cards and 12 pt above and below them.
 pub const PANEL_HEIGHT: f32 = CARD_HEIGHT + 2. * RACK_TOP;
@@ -360,7 +360,7 @@ pub struct TrackPanel {
     /// The gesture of a drag of the volume or the pan.
     edit: ControlEdit,
     /// What the lanes of the track play into its volume and pan, which then do not drag.
-    lanes: Entity<Lanes>,
+    lanes: Entity<Lanes<Mix>>,
     /// Not a tab stop. It tells whether the focus is inside the panel.
     focus_handle: FocusHandle,
     /// The controls of the mixer strip bring their own. A button takes one to be a tab stop
@@ -475,7 +475,7 @@ impl TrackPanel {
         })
         .detach();
         let offers = Devices::offers_generation(cx);
-        let lanes = Lanes::follow(&session, track.id(), cx);
+        let lanes = Lanes::follow(&session, track.id(), Mixer::AUTOMATION, cx);
         let mut panel = Self {
             session,
             track: track.clone(),

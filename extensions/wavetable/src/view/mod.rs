@@ -40,11 +40,11 @@ pub use choices::{EnvelopeShown, LfoShown};
 use drawing::POSITION_TRAVEL;
 
 use crate::state::{
-    AUTOMATED, Adsr, ENV_ATTACK, ENV_ATTACK_CURVE, ENV_DECAY, ENV_DECAY_CURVE, ENV_RELEASE,
-    ENV_RELEASE_CURVE, ENV_SUSTAIN, FILTER_CUTOFF, FILTER_DRIVE, FILTER_RESONANCE, Filter, GAIN,
-    GLIDE, LFO_RATE, LfoSettings, OSC_DETUNE, OSC_EFFECT_AMOUNT, OSC_GAIN, OSC_OCTAVE, OSC_PAN,
-    OSC_POSITION, OSC_SEMITONE, Oscillator, POLYPHONY, SUB_GAIN, Sub, UNISON_AMOUNT, UNISON_VOICES,
-    Unison, VoiceMode, Voicing,
+    Adsr, ENV_ATTACK, ENV_ATTACK_CURVE, ENV_DECAY, ENV_DECAY_CURVE, ENV_RELEASE, ENV_RELEASE_CURVE,
+    ENV_SUSTAIN, FILTER_CUTOFF, FILTER_DRIVE, FILTER_RESONANCE, Filter, GAIN, GLIDE, LFO_RATE,
+    LfoSettings, OSC_DETUNE, OSC_EFFECT_AMOUNT, OSC_GAIN, OSC_OCTAVE, OSC_PAN, OSC_POSITION,
+    OSC_SEMITONE, Oscillator, POLYPHONY, SUB_GAIN, Sub, UNISON_AMOUNT, UNISON_VOICES, Unison,
+    VoiceMode, Voicing,
 };
 use crate::{WavetableState, wavetable};
 
@@ -199,8 +199,9 @@ struct Object<T: 'static> {
     title: &'static str,
     /// The start of the ids of its controls, `osc-2`, for tests too.
     key: &'static str,
-    /// Its name in the saved record, `osc_2`, which starts the name of the lane of each of its
-    /// numbers. Empty for the record itself.
+    /// Its path in the saved record, `osc_2`, which starts the name of the lane of each of its
+    /// numbers, see [`Lanes::is_automated_in`]. Empty for the record itself. The synth lists
+    /// the lanes of several objects in one list, so the path is said here.
     path: &'static str,
     get: fn(&WavetableState) -> &T,
     get_mut: fn(&mut WavetableState) -> &mut T,
@@ -220,14 +221,6 @@ impl<T> Object<T> {
         match self.key {
             "" => SharedString::from(name.to_string()),
             key => format!("{key}-{name}").into(),
-        }
-    }
-
-    /// The lane of its number `field`, by its path in the saved record: `osc_2.position`.
-    fn lane(self, field: &str) -> String {
-        match self.path {
-            "" => field.to_string(),
-            path => format!("{path}.{field}"),
         }
     }
 
@@ -352,7 +345,7 @@ pub struct WavetableView {
     frame: CardFrame,
     /// The gesture of a drag of a knob, a slider or on a display.
     edit: ControlEdit,
-    lanes: Entity<Lanes>,
+    lanes: Entity<Lanes<WavetableState>>,
     /// Interface state, not saved: whether the card shows its sections, and which envelope and
     /// which LFO they show.
     expanded: bool,
@@ -403,7 +396,12 @@ impl WavetableView {
         let remove_focus = (0..crate::MAX_ROUTES)
             .map(|_| cx.focus_handle().tab_stop(true))
             .collect();
-        let lanes = Lanes::follow(&session, wavetable.id(), cx);
+        let lanes = Lanes::follow(
+            &session,
+            wavetable.id(),
+            crate::synth::WavetableSynth::AUTOMATION,
+            cx,
+        );
         Self {
             session,
             wavetable,
@@ -456,7 +454,7 @@ impl WavetableView {
 
     /// Whether a lane of the track moves the number `field` of `object`.
     fn is_automated<T>(&self, object: Object<T>, field: &str, cx: &gpui::App) -> bool {
-        self.lanes.read(cx).is_automated(&object.lane(field))
+        self.lanes.read(cx).is_automated_in(object.path, field)
     }
 
     fn knob<T>(
@@ -961,17 +959,10 @@ impl WavetableView {
 impl Render for WavetableView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(mut state) = self
-            .session
-            .read(cx)
-            .project()
-            .state(&self.wavetable)
-            .cloned()
-        else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
-        // What plays: the knobs and the displays show the lanes.
-        self.lanes.read(cx).apply(&AUTOMATED, &mut state);
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
             .frame
@@ -1027,19 +1018,21 @@ mod tests {
     /// the synth takes it, by its path in the record.
     #[test]
     fn the_lane_of_a_number_of_each_object_is_one_the_synth_takes() {
-        let lanes: Vec<&str> = AUTOMATED.iter().map(|lane| lane.field).collect();
+        use crate::state::AUTOMATED;
         let named = [
-            OSC_2.lane(POSITION.parameter.field),
-            FILTER_1.lane(CUTOFF.parameter.field),
-            SUB.lane(SUB_LEVEL.parameter.field),
-            UNISON.lane(SPREAD.parameter.field),
-            VOICING.lane(GLIDE_KNOB.parameter.field),
-            OUTPUT.lane(OUTPUT_GAIN.parameter.field),
-            EnvelopeShown::Env3.object().lane(SUSTAIN.parameter.field),
-            LfoShown::Lfo2.object().lane(RATE.parameter.field),
+            (OSC_2.path, POSITION.parameter.field),
+            (FILTER_1.path, CUTOFF.parameter.field),
+            (SUB.path, SUB_LEVEL.parameter.field),
+            (UNISON.path, SPREAD.parameter.field),
+            (VOICING.path, GLIDE_KNOB.parameter.field),
+            (OUTPUT.path, OUTPUT_GAIN.parameter.field),
+            (EnvelopeShown::Env3.object().path, SUSTAIN.parameter.field),
+            (LfoShown::Lfo2.object().path, RATE.parameter.field),
         ];
-        for lane in named {
-            assert!(lanes.contains(&lane.as_str()), "{lane}");
+        for (object, field) in named {
+            let mut lanes = AUTOMATED.iter();
+            let found = lanes.any(|lane| sound_ui::lanes::is_number_of(lane.field, object, field));
+            assert!(found, "{object} {field}");
         }
     }
 

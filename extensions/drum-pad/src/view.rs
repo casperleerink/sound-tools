@@ -35,6 +35,7 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, pan_readout, short};
 use sound_ui::components::pad::{PAD_GAP, PAD_HEIGHT, PAD_WIDTH, Pad as PadElement, PadGlyph};
 use sound_ui::components::toggle::Toggle;
+use sound_ui::lanes::object_of;
 use sound_ui::{
     ActiveTheme, ControlEdit, DeviceLabel, Devices, KeyboardFocus, Lanes, Session, Views,
     every_poll, weak_callback,
@@ -157,7 +158,7 @@ pub struct DrumPadView {
     frame: CardFrame,
     /// The gesture of a knob drag.
     edit: ControlEdit,
-    lanes: Entity<Lanes>,
+    lanes: Entity<Lanes<DrumPadState>>,
     /// Whether the card shows Sound and Choke. Interface state: not saved.
     expanded: bool,
     /// The pad the knobs show, from 0. Interface state: not saved.
@@ -218,7 +219,7 @@ impl DrumPadView {
                 peaks.take();
             }
         }
-        let lanes = Lanes::follow(&session, drums.id(), cx);
+        let lanes = Lanes::follow(&session, drums.id(), DrumPad::AUTOMATION, cx);
         let mut view = Self {
             session,
             drums,
@@ -456,9 +457,11 @@ impl DrumPadView {
         let parameter = control.parameter(selected);
         let value = (parameter.get)(pad);
         // The lane of this number of the selected pad is named by its path: `pads.36.pan`.
-        let mut paths = PAD_LANES[selected].iter().map(|lane| lane.field);
-        let path = paths.find(|path| path.rsplit('.').next() == Some(parameter.field));
-        let automated = path.is_some_and(|path| self.lanes.read(cx).is_automated(path));
+        let pad_path = object_of(PAD_LANES[selected][0].field);
+        let automated = self
+            .lanes
+            .read(cx)
+            .is_automated_in(pad_path, parameter.field);
         Knob::new(parameter.field)
             .range(KnobRange::of(parameter))
             .value(value)
@@ -559,12 +562,10 @@ impl DrumPadView {
 impl gpui::Render for DrumPadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(mut state) = self.state(cx).cloned() else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
-        // What plays: the knobs show the lanes.
-        let parameters = DrumPad::AUTOMATION.parameters();
-        self.lanes.read(cx).apply(parameters, &mut state);
         let pad = &state.pads[self.selected];
         let columns = [
             Column::new()

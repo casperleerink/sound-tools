@@ -240,7 +240,7 @@ pub struct CompressorView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of a handle.
     edit: ControlEdit,
-    lanes: Entity<Lanes>,
+    lanes: Entity<Lanes<CompressorState>>,
     /// Whether the card shows knee, makeup, mix and lookahead. Interface state: not saved.
     expanded: bool,
     /// The select of the lookahead. It is a view of its own because it opens a list; it shows
@@ -308,7 +308,7 @@ impl CompressorView {
         }
         // The clock of the meters: as often as the session looks at the project.
         let metering = every_poll(cx, Self::read_meters);
-        let lanes = Lanes::follow(&session, compressor.id(), cx);
+        let lanes = Lanes::follow(&session, compressor.id(), Compressor::AUTOMATION, cx);
         Self {
             session,
             compressor,
@@ -471,18 +471,10 @@ impl CompressorView {
 impl Render for CompressorView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(mut state) = self
-            .session
-            .read(cx)
-            .project()
-            .state(&self.compressor)
-            .copied()
-        else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
-        // What plays: the knobs and the display show the lanes.
-        let parameters = Compressor::AUTOMATION.parameters();
-        self.lanes.read(cx).apply(parameters, &mut state);
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()

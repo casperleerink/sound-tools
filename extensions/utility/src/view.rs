@@ -253,7 +253,7 @@ pub struct UtilityView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of the handle.
     edit: ControlEdit,
-    lanes: Entity<Lanes>,
+    lanes: Entity<Lanes<UtilityState>>,
     /// Whether the card shows the hidden controls. Interface state: not saved.
     expanded: bool,
 }
@@ -280,7 +280,7 @@ impl UtilityView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
-        let lanes = Lanes::follow(&session, utility.id(), cx);
+        let lanes = Lanes::follow(&session, utility.id(), Utility::AUTOMATION, cx);
         Self {
             session,
             utility,
@@ -400,18 +400,10 @@ impl UtilityView {
 impl Render for UtilityView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(mut state) = self
-            .session
-            .read(cx)
-            .project()
-            .state(&self.utility)
-            .copied()
-        else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
-        // What plays: the knobs and the display show the lanes.
-        let parameters = Utility::AUTOMATION.parameters();
-        self.lanes.read(cx).apply(parameters, &mut state);
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let toggle = |switch: &'static Switch, cx: &mut Context<Self>| {
             Cell::new(self.toggle(switch, &state, cx)).label(switch.label)

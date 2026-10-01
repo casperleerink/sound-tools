@@ -98,7 +98,7 @@ pub struct LimiterView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of the ceiling handle.
     edit: ControlEdit,
-    lanes: Entity<Lanes>,
+    lanes: Entity<Lanes<LimiterState>>,
     /// The select of the lookahead. It is a view of its own because it opens a list; it shows
     /// what the record says, see [`Self::show_lookahead`].
     lookahead: Entity<DropdownMenu>,
@@ -162,7 +162,7 @@ impl LimiterView {
                 peaks.take();
             }
         }
-        let lanes = Lanes::follow(&session, limiter.id(), cx);
+        let lanes = Lanes::follow(&session, limiter.id(), Limiter::AUTOMATION, cx);
         Self {
             session,
             limiter,
@@ -249,18 +249,10 @@ impl LimiterView {
 impl Render for LimiterView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(mut state) = self
-            .session
-            .read(cx)
-            .project()
-            .state(&self.limiter)
-            .copied()
-        else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
-        // What plays: the knobs show the lanes.
-        let parameters = Limiter::AUTOMATION.parameters();
-        self.lanes.read(cx).apply(parameters, &mut state);
         let handle = self
             .history
             .handle(state.ceiling_db, CEILING.default)

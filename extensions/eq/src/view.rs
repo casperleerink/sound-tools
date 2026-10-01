@@ -23,6 +23,7 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::toggle::Toggle;
+use sound_ui::lanes::object_of;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
 use crate::{
@@ -189,7 +190,7 @@ pub struct EqView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of a handle.
     edit: ControlEdit,
-    lanes: Entity<Lanes>,
+    lanes: Entity<Lanes<EqState>>,
     /// Whether the card shows the on and off of the bands and the output. Interface state: not
     /// saved.
     expanded: bool,
@@ -238,7 +239,7 @@ impl EqView {
             }
         })
         .detach();
-        let lanes = Lanes::follow(&session, eq.id(), cx);
+        let lanes = Lanes::follow(&session, eq.id(), Eq::AUTOMATION, cx);
         Self {
             session,
             eq,
@@ -272,9 +273,8 @@ impl EqView {
     /// Whether a lane of the track moves the number `field` of band `band`, which it names by
     /// its path: `bands[0].gain_db`.
     fn is_automated(&self, band: usize, field: &str, cx: &Context<Self>) -> bool {
-        let mut paths = BAND_LANES[band].iter().map(|lane| lane.field);
-        let path = paths.find(|path| path.rsplit('.').next() == Some(field));
-        path.is_some_and(|path| self.lanes.read(cx).is_automated(path))
+        let band = object_of(BAND_LANES[band][0].field);
+        self.lanes.read(cx).is_automated_in(band, field)
     }
 
     fn change<V>(
@@ -393,13 +393,10 @@ impl EqView {
 impl Render for EqView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(mut state) = self.session.read(cx).project().state(&self.eq).copied() else {
+        // What plays: the record with the lanes over it.
+        let Some(state) = self.lanes.read(cx).state(cx) else {
             return div().into_any_element();
         };
-        // What plays: the knobs and the display show the lanes.
-        self.lanes
-            .read(cx)
-            .apply(Eq::AUTOMATION.parameters(), &mut state);
         let band = state.bands[self.selected];
         // The select shows the shape of the selected band, also after an outside edit.
         let (_, shape, shape_name, _) = SHAPES[band.shape.index()];

@@ -127,7 +127,7 @@ pub struct FilterView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of the handle.
     edit: ControlEdit,
-    lanes: Entity<Lanes>,
+    lanes: Entity<Lanes<FilterState>>,
     /// Whether the card shows the slope and the LFO. Interface state: not saved.
     expanded: bool,
 }
@@ -154,7 +154,7 @@ impl FilterView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
-        let lanes = Lanes::follow(&session, filter.id(), cx);
+        let lanes = Lanes::follow(&session, filter.id(), Filter::AUTOMATION, cx);
         Self {
             session,
             filter,
@@ -174,10 +174,7 @@ impl FilterView {
     /// The record as the card shows it: what plays, with the value of each lane over it. `None`
     /// once the record is deleted.
     pub fn shown(&self, cx: &App) -> Option<FilterState> {
-        let mut state = *self.session.read(cx).project().state(&self.filter)?;
-        let parameters = Filter::AUTOMATION.parameters();
-        self.lanes.read(cx).apply(parameters, &mut state);
-        Some(state)
+        self.lanes.read(cx).state(cx)
     }
 
     fn change<V>(
