@@ -11,11 +11,15 @@ use super::assets::Assets;
 use super::file::{PortReference, SavedConnection, SavedDestination};
 use super::instance::{InstanceId, Record, State};
 use super::registry::Registry;
+use crate::automation::Automation;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
 use crate::graph::{Connection, Destination, GraphError, NodeId};
+use crate::parameter::{Parameter, ParameterInfo};
 use crate::peaks::Peaks;
-use crate::processor::{CHANNELS, InputPort, OutputPort, Ports, PrepareConfig, Processor};
+use crate::processor::{
+    CHANNELS, EventInput, InputPort, OutputPort, Ports, PrepareConfig, Processor,
+};
 
 /// Why a behaviour could not apply a state. It rejects the whole edit group.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -85,6 +89,9 @@ struct Binding {
     connections: BTreeSet<Connection>,
     outputs: BTreeMap<String, OutputEndpoint>,
     inputs: BTreeMap<String, InputEndpoint>,
+    /// Where its owner sends automation, and the numbers it takes, see
+    /// [`BehaviourContext::automation`].
+    automation: Option<(InputEndpoint, Vec<ParameterInfo>)>,
     /// The levels its processors show, by the name the behaviour chose.
     peaks: BTreeMap<String, Peaks>,
     /// What the behaviour said is not live about its instance, see [`BehaviourContext::problem`].
@@ -264,6 +271,21 @@ impl BehaviourContext<'_> {
         self.next.inputs.insert(name.to_string(), endpoint);
     }
 
+    /// Lets the owner of this instance automate its numbers: lanes reach `port` of `node` as
+    /// [`Automation`] events, whose `parameter` is the place in `parameters`. Name the list of
+    /// the record, `PARAMETERS`, so its order never changes under a saved lane: the owner
+    /// saves the field and finds the place here each time it runs.
+    pub fn automation<P, S>(
+        &mut self,
+        node: Node<P>,
+        port: EventInput<Automation>,
+        parameters: &[&Parameter<S>],
+    ) {
+        let infos = parameters.iter().map(|parameter| parameter.info());
+        let endpoint = InputEndpoint::new(node, port);
+        self.next.automation = Some((endpoint, infos.collect()));
+    }
+
     /// The owned children that hold state of type `C`, as (name, state), in name order.
     pub fn children<C: State>(&self) -> impl Iterator<Item = (&str, &C)> {
         self.id
@@ -294,6 +316,14 @@ impl BehaviourContext<'_> {
     pub fn child_input(&self, name: &str, port: &str) -> Option<InputEndpoint> {
         let binding = self.bindings.get(&self.id.child(name).ok()?)?;
         binding.inputs.get(port).copied()
+    }
+
+    /// Where the owned child `name` takes automation, and the numbers it takes, in the order
+    /// of the index of an [`Automation`] event. `None` when it takes none.
+    pub fn child_automation(&self, name: &str) -> Option<(InputEndpoint, &[ParameterInfo])> {
+        let binding = self.bindings.get(&self.id.child(name).ok()?)?;
+        let (endpoint, parameters) = binding.automation.as_ref()?;
+        Some((*endpoint, parameters))
     }
 }
 

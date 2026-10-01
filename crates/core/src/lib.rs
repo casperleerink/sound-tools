@@ -4,6 +4,7 @@
 //! Those belong to extensions. See ARCHITECTURE.md and ENGINEERING.md section 3.
 //! `README.md` in this crate is the guide for extension authors: processors and tools.
 
+mod automation;
 mod clock;
 mod control;
 mod delay_line;
@@ -25,6 +26,7 @@ mod saturation;
 mod svf;
 mod transport;
 
+pub use automation::{Automated, Automation, AutomationRamp};
 pub use clock::{
     Bar, BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, SignatureRun,
     TICKS_PER_QUARTER, Tempo, TempoChange, TempoMap, Ticks, TimeSignature, TimeSignatures,

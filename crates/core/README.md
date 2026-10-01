@@ -93,6 +93,7 @@ format. Keep each doc about one task, and name the task in its `when` line.
 | An instrument that plays notes | `extensions/instrument` |
 | An owner with many small child records | `crates/core/tests/project/tools.rs` |
 | A processor driven by the timeline, with snapshots | `extensions/arrangement/src/sequencer.rs` |
+| A device whose numbers an automation lane can move | `extensions/filter` (`Automated`, `BehaviourContext::automation`) |
 | A derive | `extensions/fit-tempo/src/lib.rs` |
 | A processor that must be released on the audio thread | `extensions/plugin-host/src/processor.rs` |
 | A test of a tool on a real project folder | `extensions/tone/tests/tone/project.rs` |
