@@ -52,6 +52,15 @@ pub struct ParameterInfo {
     pub range: ValueRange,
 }
 
+/// A number that an instance takes automation for, as its owner sees it: its range, and its
+/// value in the record, which plays where no lane moves it. No value when the record is not the
+/// state the numbers read.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct AutomatedNumber {
+    pub range: ValueRange,
+    pub record: Option<f32>,
+}
+
 /// The values of a number and how they spread over the travel of its knob, from 0 to 1. A knob
 /// of a [`Parameter`] and an automation lane of it both take it with [`ValueRange::of`], so
 /// they agree. Other controls, such as the axes of a display, make their own.

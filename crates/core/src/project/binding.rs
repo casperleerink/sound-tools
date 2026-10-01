@@ -15,7 +15,7 @@ use crate::automation::AutomationInput;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
 use crate::graph::{Connection, Destination, GraphError, NodeId};
-use crate::parameter::ParameterInfo;
+use crate::parameter::{AutomatedNumber, ParameterInfo};
 use crate::peaks::Peaks;
 use crate::processor::{CHANNELS, InputPort, OutputPort, Ports, PrepareConfig, Processor};
 
@@ -89,11 +89,20 @@ struct Binding {
     inputs: BTreeMap<String, InputEndpoint>,
     /// Where its owner sends automation, and the numbers it takes, see
     /// [`BehaviourContext::automation`].
-    automation: Option<(InputEndpoint, Vec<ParameterInfo>)>,
+    automation: Option<Automatable>,
     /// The levels its processors show, by the name the behaviour chose.
     peaks: BTreeMap<String, Peaks>,
     /// What the behaviour said is not live about its instance, see [`BehaviourContext::problem`].
     problems: Vec<String>,
+}
+
+/// What an instance takes automation for: where its owner sends it, the numbers, and their
+/// values in the record when the behaviour ran. No values when the record is not the state the
+/// numbers read.
+struct Automatable {
+    endpoint: InputEndpoint,
+    parameters: Vec<ParameterInfo>,
+    records: Vec<f32>,
 }
 
 /// The non-generic part of [`Edit`]. A trait object hides the lifetime of the edit, so
@@ -278,9 +287,15 @@ impl BehaviourContext<'_> {
         node: Node<P>,
         input: AutomationInput<S, N>,
     ) {
-        let infos = input.parameters().iter().map(|parameter| parameter.info());
-        let endpoint = InputEndpoint::new(node, input.port());
-        self.next.automation = Some((endpoint, infos.collect()));
+        let parameters = input.parameters().iter();
+        let record = self.instances.get(self.id);
+        let record = record.and_then(|record| record.state.as_any().downcast_ref::<S>());
+        let records = record.map(|state| parameters.clone().map(|number| (number.get)(state)));
+        self.next.automation = Some(Automatable {
+            endpoint: InputEndpoint::new(node, input.port()),
+            parameters: parameters.map(|parameter| parameter.info()).collect(),
+            records: records.into_iter().flatten().collect(),
+        });
     }
 
     /// The owned children that hold state of type `C`, as (name, state), in name order.
@@ -319,8 +334,8 @@ impl BehaviourContext<'_> {
     /// of the index of an [`Automation`] event. `None` when it takes none.
     pub fn child_automation(&self, name: &str) -> Option<(InputEndpoint, &[ParameterInfo])> {
         let binding = self.bindings.get(&self.id.child(name).ok()?)?;
-        let (endpoint, parameters) = binding.automation.as_ref()?;
-        Some((*endpoint, parameters))
+        let automatable = binding.automation.as_ref()?;
+        Some((automatable.endpoint, &automatable.parameters))
     }
 }
 
@@ -466,11 +481,18 @@ impl Bindings {
         self.by_instance.get(instance)?.peaks.get(name)
     }
 
-    /// The numbers the behaviour of `instance` takes automation for, see
+    /// The number `field` that the behaviour of `instance` takes automation for, see
     /// [`BehaviourContext::automation`].
-    pub fn automation(&self, instance: &InstanceId) -> Option<&[ParameterInfo]> {
-        let (_, parameters) = self.by_instance.get(instance)?.automation.as_ref()?;
-        Some(parameters)
+    pub fn automation(&self, instance: &InstanceId, field: &str) -> Option<AutomatedNumber> {
+        let automatable = self.by_instance.get(instance)?.automation.as_ref()?;
+        let parameters = automatable.parameters.iter();
+        let index = parameters
+            .clone()
+            .position(|number| number.field == field)?;
+        Some(AutomatedNumber {
+            range: automatable.parameters.get(index)?.range,
+            record: automatable.records.get(index).copied(),
+        })
     }
 
     /// The input port that the behaviour of `instance` named, as `project.json` connections
