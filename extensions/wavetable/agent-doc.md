@@ -115,6 +115,8 @@ A new track with the Wavetable: write the track, then its instrument, then clips
 
 This is the default patch: two saws, the second 7 cents up, through a low pass that the second envelope opens at the start of each note. Higher keys open it more, softer notes are quieter, and the mod wheel morphs the first saw into a square. `"state": {}` is this patch, so write only what you change. Inside an object, a field you leave out takes the default of the tables below, which differs from the patch above only in `osc_2.detune_cents`, 0, and `filter_2.on`, true. A `matrix` you write replaces the whole matrix.
 
+Every number here but `octave`, `semitone`, `voices`, `polyphony` and the matrix can move over time with an automation lane of the track, named by its path: `filter_1.cutoff_hz`. See `agent-docs/arrangement.md`.
+
 An edit applies while notes sound, without a click: numbers and choices glide over 20 ms, and a new table or effect fades its oscillator out and in over 10 ms each way.
 
 ## Oscillators

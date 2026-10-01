@@ -10,15 +10,24 @@
 use std::sync::Arc;
 
 use sound_core::{
-    AudioOutput, Envelope, EnvelopeCurves, EventInput, Lfo, LfoShape, OversamplingFilters, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Transport, amplitude,
+    AudioOutput, Automated, AutomationInput, Envelope, EnvelopeCurves, EventInput, Lfo, LfoShape,
+    OversamplingFilters, Parameter, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
+    Targets, Transport, amplitude,
 };
 use sound_notes::{NoteEvent, Voice as _, Voices, Wheels};
 
 use crate::matrix::Route;
-use crate::state::{Adsr, Effect, Filter, Oscillator, Routing, VoiceMode, WavetableState};
+use crate::state::{
+    AUTOMATED, Adsr, Effect, FILTER_LANES, Filter, GAIN, OSCILLATOR_LANES, Oscillator, Routing,
+    VOICE_LANES, VoiceMode, WavetableState,
+};
 use crate::tables::Wavetable;
 use crate::voice::{NoteStart, Voice};
+
+type WavetableTargets = Targets<WavetableState, { AUTOMATED.len() }>;
+
+/// The lanes of the numbers of one object, in the order of their list in [`crate::state`].
+type Lanes<const N: usize> = [Parameter<WavetableState>; N];
 
 /// Notes that sound at once, at most. The polyphony of a record picks how many of them play.
 pub(crate) const VOICES: usize = 16;
@@ -32,6 +41,11 @@ pub(crate) const FACTOR_FRAMES: usize = 16;
 
 /// How long a change of a setting takes.
 const RAMP_SECONDS: f32 = 0.02;
+
+/// The frames a change of a setting takes at a sample rate.
+fn ramp_frames(sample_rate: f32) -> f32 {
+    (RAMP_SECONDS * sample_rate).max(1.0)
+}
 
 /// How long an oscillator takes to fade out, and in again, around a new table or effect.
 const DIP_SECONDS: f32 = 0.01;
@@ -219,18 +233,27 @@ impl OscillatorGlide {
         self.other_is_new || self.effect != oscillator.effect
     }
 
-    fn aim(&mut self, oscillator: &Oscillator, ramp: f32, dip: f32) {
-        self.position.set_target(oscillator.position, ramp);
+    /// Aims at `oscillator`, whose numbers are `lanes` of the record.
+    fn aim(
+        &mut self,
+        oscillator: &Oscillator,
+        lanes: &Lanes<5>,
+        targets: &WavetableTargets,
+        dip: f32,
+    ) {
+        let [position, effect_amount, detune, gain, pan] =
+            lanes.each_ref().map(|lane| targets.ramp(lane));
+        self.position.set_target(oscillator.position, position);
         self.effect_amount
-            .set_target(oscillator.effect_amount, ramp);
-        self.gain.set_target(oscillator.gain, ramp);
-        self.pan.set_target(oscillator.pan, ramp);
-        self.detune.set_target(oscillator.detune_cents, ramp);
+            .set_target(oscillator.effect_amount, effect_amount);
+        self.gain.set_target(oscillator.gain, gain);
+        self.pan.set_target(oscillator.pan, pan);
+        self.detune.set_target(oscillator.detune_cents, detune);
         if self.is_changing(oscillator) {
             self.level.set_target(0.0, dip);
         } else {
             self.level
-                .set_target(if oscillator.on { 1.0 } else { 0.0 }, ramp);
+                .set_target(if oscillator.on { 1.0 } else { 0.0 }, targets.edit());
         }
     }
 
@@ -289,11 +312,21 @@ impl FilterGlide {
         }
     }
 
-    fn aim(&mut self, filter: &Filter, any_driven: bool, ramp: f32) {
-        self.cutoff.set_target(filter.cutoff_hz.log2(), ramp);
-        self.resonance.set_target(filter.resonance, ramp);
+    /// Aims at `filter`, whose numbers are `lanes` of the record. What a choice or the drive
+    /// turns on or off glides as an edit.
+    fn aim(
+        &mut self,
+        filter: &Filter,
+        lanes: &Lanes<3>,
+        targets: &WavetableTargets,
+        any_driven: bool,
+    ) {
+        let [cutoff, resonance, drive] = lanes.each_ref().map(|lane| targets.ramp(lane));
+        self.cutoff.set_target(filter.cutoff_hz.log2(), cutoff);
+        self.resonance.set_target(filter.resonance, resonance);
         let driven = filter.on && filter.drive_db > 0.0;
-        self.drive.set_target(amplitude(filter.drive_db), ramp);
+        self.drive.set_target(amplitude(filter.drive_db), drive);
+        let ramp = targets.edit();
         self.saturated
             .set_target(if driven { 1.0 } else { 0.0 }, ramp);
         for (tap, target) in self.taps.iter_mut().zip(filter.kind.taps()) {
@@ -345,12 +378,17 @@ struct Glides {
 }
 
 impl Glides {
-    fn aim(&mut self, state: &WavetableState, ramp: f32, dip: f32) {
-        for (glide, oscillator) in self.oscillators.iter_mut().zip(state.oscillators()) {
-            glide.aim(oscillator, ramp, dip);
+    /// Aims every glide at the record and its lanes, each number in its own ramp, and a choice
+    /// in the glide of an edit.
+    fn aim(&mut self, state: &WavetableState, targets: &WavetableTargets, dip: f32) {
+        let oscillators = self.oscillators.iter_mut().zip(state.oscillators());
+        for ((glide, oscillator), lanes) in oscillators.zip(&OSCILLATOR_LANES) {
+            glide.aim(oscillator, lanes, targets, dip);
         }
-        self.sub_gain.set_target(state.sub.gain, ramp);
-        self.unison_amount.set_target(state.unison.amount, ramp);
+        let [sub, unison] = VOICE_LANES.each_ref().map(|lane| targets.ramp(lane));
+        self.sub_gain.set_target(state.sub.gain, sub);
+        self.unison_amount.set_target(state.unison.amount, unison);
+        let ramp = targets.edit();
         let voices = usize::from(state.unison.voices).clamp(1, MAX_UNISON);
         for (copy, level) in self.unison_levels.iter_mut().enumerate() {
             let target = if copy < voices {
@@ -362,13 +400,14 @@ impl Glides {
         }
         let driven = |filter: &&Filter| filter.on && filter.drive_db > 0.0;
         let any_driven = state.filters().iter().any(driven);
-        for (glide, filter) in self.filters.iter_mut().zip(state.filters()) {
-            glide.aim(filter, any_driven, ramp);
+        let filters = self.filters.iter_mut().zip(state.filters());
+        for ((glide, filter), lanes) in filters.zip(&FILTER_LANES) {
+            glide.aim(filter, lanes, targets, any_driven);
         }
         for (weight, target) in self.routing.iter_mut().zip(routing_weights(state.routing)) {
             weight.set_target(target, ramp);
         }
-        self.gain.set_target(state.gain, ramp);
+        self.gain.set_target(state.gain, targets.ramp(&GAIN));
     }
 
     fn smoothers(&mut self) -> impl Iterator<Item = &mut Smoothed> {
@@ -408,7 +447,8 @@ fn envelopes(state: &WavetableState, sample_rate: f32) -> [Envelope; 3] {
 const FREE_SEEDS: [u32; 2] = [u32::MAX, u32::MAX - 1];
 
 pub(crate) struct WavetableSynth {
-    state: WavetableState,
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<WavetableState, { AUTOMATED.len() }>,
     /// Zero until `prepare` runs.
     sample_rate: f32,
     envelopes: [Envelope; 3],
@@ -427,6 +467,8 @@ pub(crate) struct WavetableSynth {
 impl WavetableSynth {
     pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<WavetableState, { AUTOMATED.len() }> =
+        AutomationInput::new(1, AUTOMATED);
 
     /// Starts at the settings of `state`, with `tables` for its oscillators, so a synth that
     /// is added or opened does not glide in.
@@ -452,18 +494,17 @@ impl WavetableSynth {
             oversampling: OversamplingFilters::new(),
             notes_started: 0,
             sample_rate: 0.0,
-            state,
+            state: Automated::new(Self::AUTOMATION, state),
         };
-        synth.apply_state(1.0);
+        synth.apply_state(&synth.state.targets(ramp_frames(1.0)), 1.0);
         synth.rest();
         synth
     }
 
-    /// Aims every glide at the state, and follows its voicing and envelopes.
-    fn apply_state(&mut self, sample_rate: f32) {
-        let ramp = (RAMP_SECONDS * sample_rate).max(1.0);
+    /// Aims every glide at the record and its lanes, and follows its voicing and envelopes.
+    fn apply_state(&mut self, targets: &WavetableTargets, sample_rate: f32) {
         let dip = (DIP_SECONDS * sample_rate).max(1.0);
-        self.glides.aim(&self.state, ramp, dip);
+        self.glides.aim(&self.state, targets, dip);
         self.envelopes = envelopes(&self.state, sample_rate);
         let voicing = &self.state.voicing;
         self.voices.set_mono(voicing.mode == VoiceMode::Mono);
@@ -621,28 +662,34 @@ impl Processor for WavetableSynth {
     fn ports(&self) -> Ports {
         Ports::new()
             .event_input(Self::NOTES)
+            .event_input(Self::AUTOMATION.port())
             .audio_output(Self::OUTPUT)
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
         self.sample_rate = config.sample_rate as f32;
-        self.apply_state(self.sample_rate);
+        let targets = self.state.targets(ramp_frames(self.sample_rate));
+        self.apply_state(&targets, self.sample_rate);
         self.rest();
     }
 
     fn update(&mut self, update: &mut Update) {
         // The record this replaces rides back to the control thread in the update.
-        std::mem::swap(&mut self.state, &mut update.state);
+        let ramp = ramp_frames(self.sample_rate);
+        let targets = self.state.set_record(&mut update.state, ramp);
         for (glide, table) in self.glides.oscillators.iter_mut().zip(&mut update.tables) {
             glide.offer(table);
         }
-        self.apply_state(self.sample_rate);
+        self.apply_state(&targets, self.sample_rate);
         if self.voices.is_idle() {
             self.rest();
         }
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, ramp_frames(self.sample_rate)) {
+            self.apply_state(&targets, self.sample_rate);
+        }
         let lfo_hz = self.lfo_hz(&context.transport);
         let frames = context.frames;
         let events = context.event_inputs.get(Self::NOTES);

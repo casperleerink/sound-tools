@@ -1,6 +1,7 @@
 //! The record: `{}` is the default patch, and a value out of range names its field.
 
 use sound_core::State;
+use wavetable::state::AUTOMATED;
 use wavetable::{Destination, MAX_ROUTES, Route, Source, WavetableState};
 
 use crate::support::{Harness, id};
@@ -76,4 +77,30 @@ fn a_matrix_has_at_most_sixteen_routes() {
             .validate()
             .is_err_and(|error| error.contains("matrix"))
     );
+}
+
+/// An automation lane names a number by its path in the record, as an error does: each path
+/// leads to its number in the saved record, moves it alone, and has its range. Whole numbers
+/// are left out.
+#[test]
+fn each_automated_number_is_named_by_its_path_in_the_record() {
+    let default = serde_json::to_value(WavetableState::default()).unwrap();
+    for lane in AUTOMATED {
+        let mut state = WavetableState::default();
+        let value = lane.min + 0.37 * (lane.max - lane.min);
+        (lane.set)(&mut state, value);
+        assert_eq!((lane.get)(&state), value);
+        let pointer = format!("/{}", lane.field.replace('.', "/"));
+        let mut record = serde_json::to_value(&state).unwrap();
+        let saved = record.pointer_mut(&pointer).unwrap();
+        assert_eq!(*saved, serde_json::json!(value), "{}", lane.field);
+        *saved = default.pointer(&pointer).unwrap().clone();
+        assert_eq!(record, default, "{}", lane.field);
+        (lane.set)(&mut state, lane.max * 2.0 + 1.0);
+        let error = state.validate().unwrap_err();
+        assert!(error.starts_with(lane.field), "{error}");
+    }
+    let fields: Vec<&str> = AUTOMATED.iter().map(|lane| lane.field).collect();
+    assert!(fields.contains(&"filter_2.cutoff_hz"), "{fields:?}");
+    assert!(!fields.contains(&"osc_1.octave"), "{fields:?}");
 }
