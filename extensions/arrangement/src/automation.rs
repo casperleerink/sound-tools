@@ -7,6 +7,10 @@
 //! [`LanePlayer`] connected to that device alone. So each player sees the transport the device
 //! sees, with its latency lead, and its events need no device id. The lanes of the track itself
 //! go to its mixer the same way.
+//!
+//! A clip takes the line under it along when it moves or is copied, see [`moves`].
+
+mod moves;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -17,6 +21,9 @@ use sound_core::{
     ParameterInfo, Ports, PrepareConfig, ProcessContext, Processor, ValueRange,
 };
 use sound_notes::{Point, check_order, value_at};
+
+pub(crate) use moves::write;
+pub use moves::{Carried, LaneMove, Travel, moved, travel_in};
 
 use crate::decibels;
 use crate::mixer::Mixer;
