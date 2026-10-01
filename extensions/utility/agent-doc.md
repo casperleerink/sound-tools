@@ -54,4 +54,6 @@ Inside, `channels` and the inverts come first, then `width`, then `bass_mono`, a
 
 Starting points: a pad that takes too much room is `width` 0.6. A wider synth is `width` 1.5 with `bass_mono` on, so its low end stays in the middle. A mono recording that is only in the left channel is `channels` `"left"`. A stereo recording that goes thin in mono often has one channel upside down: `invert_right` `true`. Before an effect that is driven too hard, `gain_db` -6 gives it room.
 
+Every number here can move over time with an automation lane of the track: see `agent-docs/arrangement.md`.
+
 An edit applies while the track plays and glides over 20 ms, so it does not click. Turning `bass_mono` on or off fades between the sound as it came and the sound through the crossover over those 20 ms, and the bass near `bass_mono_hz` dips for that moment.

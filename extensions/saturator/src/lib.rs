@@ -157,6 +157,7 @@ fn apply(state: &SaturatorState, context: &mut BehaviourContext<'_>) -> Result<(
     let saturator = context.processor("saturator", || Saturator::new(*state))?;
     context.update(saturator, *state)?;
     context.input(AUDIO_INPUT, InputEndpoint::new(saturator, Saturator::INPUT));
+    context.automation(saturator, Saturator::AUTOMATION);
     context.output(
         AUDIO_OUTPUT,
         OutputEndpoint::new(saturator, Saturator::OUTPUT),

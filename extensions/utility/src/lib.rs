@@ -173,6 +173,7 @@ fn apply(state: &UtilityState, context: &mut BehaviourContext<'_>) -> Result<(),
     let utility = context.processor("utility", || Utility::new(*state))?;
     context.update(utility, *state)?;
     context.input(AUDIO_INPUT, InputEndpoint::new(utility, Utility::INPUT));
+    context.automation(utility, Utility::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(utility, Utility::OUTPUT));
     Ok(())
 }

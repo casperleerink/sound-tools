@@ -27,11 +27,14 @@ use std::f32::consts::PI;
 use std::f64::consts::TAU;
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, DelayLine, Lfo, LfoShape, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, Lfo, LfoShape, Ports,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
 };
 
-use crate::{Mode, ModulationState};
+use crate::{DEPTH, FEEDBACK, MIX, Mode, ModulationState, PARAMETERS, RATE, SPREAD};
+
+/// Every number of the modulation can be automated.
+type ModulationTargets = Targets<ModulationState, { PARAMETERS.len() }>;
 
 /// How long a change takes to arrive. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
@@ -260,6 +263,8 @@ impl Channel {
 }
 
 pub struct Modulation {
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<ModulationState, { PARAMETERS.len() }>,
     sample_rate: f32,
     /// The frames a change takes, and a change of rate, depth or spread.
     ramp_frames: f32,
@@ -287,11 +292,14 @@ pub struct Modulation {
 impl Modulation {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<ModulationState, { PARAMETERS.len() }> =
+        AutomationInput::new(0, PARAMETERS);
 
     /// Allocates its delay line for 48 kHz, and again in `prepare` for another rate. Starts at
     /// these values, so a modulation that is added or opened does not glide in.
     pub fn new(state: ModulationState) -> Self {
         let mut modulation = Self {
+            state: Automated::new(Self::AUTOMATION, state),
             sample_rate: 0.0,
             ramp_frames: 1.0,
             sweep_ramp_frames: 1.0,
@@ -308,7 +316,7 @@ impl Modulation {
             quiet_frames: 0,
         };
         modulation.allocate(48_000.0);
-        modulation.aim(&state);
+        modulation.aim(&modulation.state.targets(modulation.ramp_frames));
         modulation.snap();
         modulation
     }
@@ -326,18 +334,27 @@ impl Modulation {
         self.stale = true;
     }
 
-    /// Sets every target from a record.
-    fn aim(&mut self, state: &ModulationState) {
-        let (ramp, sweep_ramp) = (self.ramp_frames, self.sweep_ramp_frames);
-        self.rate_hz.set_target(state.rate_hz, sweep_ramp);
-        self.depth.set_target(state.depth, sweep_ramp);
-        self.lag.set_target(0.5 * state.spread, sweep_ramp);
+    /// Sets every target from the record and its lanes, each reached in its own ramp.
+    fn aim(&mut self, targets: &ModulationTargets) {
+        let (state, edit) = (*self.state, targets.edit());
+        // What glides as an edit sweeps for longer, see [`SWEEP_RAMP_SECONDS`]. A lane that
+        // moves follows its line.
+        let sweep_ramp = self.sweep_ramp_frames;
+        let sweep = |parameter| match targets.ramp(parameter) {
+            ramp if ramp == edit => sweep_ramp,
+            ramp => ramp,
+        };
+        self.rate_hz.set_target(state.rate_hz, sweep(&RATE));
+        self.depth.set_target(state.depth, sweep(&DEPTH));
+        self.lag.set_target(0.5 * state.spread, sweep(&SPREAD));
         self.feedback
-            .set_target(MAX_FEEDBACK * state.feedback, ramp);
-        self.mix.set_target(state.mix, ramp);
+            .set_target(MAX_FEEDBACK * state.feedback, targets.ramp(&FEEDBACK));
+        self.mix.set_target(state.mix, targets.ramp(&MIX));
         for (mode, target) in self.modes.iter_mut().zip(weight(state.mode)) {
-            mode.set_target(target, ramp);
+            mode.set_target(target, edit);
         }
+        // A sweep that took its value at once has nothing to glide from.
+        self.stale |= targets.snaps();
     }
 
     fn smoothers(&mut self) -> impl Iterator<Item = &mut Smoothed> {
@@ -394,6 +411,7 @@ impl Processor for Modulation {
         Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
+            .event_input(Self::AUTOMATION.port())
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -405,10 +423,14 @@ impl Processor for Modulation {
     }
 
     fn update(&mut self, update: &mut ModulationState) {
-        self.aim(update);
+        let targets = self.state.set_record(update, self.ramp_frames);
+        self.aim(&targets);
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, self.ramp_frames) {
+            self.aim(&targets);
+        }
         let frames = context.frames;
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
         let silent_input = left_in.iter().chain(right_in).all(|sample| *sample == 0.0);

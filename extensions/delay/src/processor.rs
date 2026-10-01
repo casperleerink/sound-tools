@@ -17,11 +17,16 @@
 //! when the sample rate is set, for [`LONGEST_SECONDS`], and never in `process`.
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, DelayLine, OnePole, Ports, PrepareConfig, ProcessContext,
-    Processor, Smoothed, Taps, held,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, OnePole, Ports,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Taps, Targets, held,
 };
 
-use crate::{DelayState, LONGEST_SECONDS, delay_seconds};
+use crate::{
+    DelayState, FEEDBACK, HIGH_CUT, LONGEST_SECONDS, LOW_CUT, MIX, PARAMETERS, delay_seconds,
+};
+
+/// Every number of the delay can be automated.
+type DelayTargets = Targets<DelayState, { PARAMETERS.len() }>;
 
 /// How long a change takes to arrive. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
@@ -58,8 +63,9 @@ pub struct Delay {
     sample_rate: f32,
     /// The frames a change takes.
     ramp_frames: f32,
-    /// The last record, so that each block can work out its time at the tempo there.
-    state: DelayState,
+    /// The record, with the values of the lanes that automate it, so that each block can work
+    /// out its time at the tempo there.
+    state: Automated<DelayState, { PARAMETERS.len() }>,
     /// The longest time, in frames. Every read is at most this far back.
     longest: usize,
     /// Where both lines write the next frame.
@@ -85,6 +91,8 @@ pub struct Delay {
 impl Delay {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<DelayState, { PARAMETERS.len() }> =
+        AutomationInput::new(0, PARAMETERS);
 
     /// Allocates its lines for 48 kHz, and again in `prepare` for another rate. Starts at these
     /// values, at 120 bpm until the first block says the tempo, so a delay that is added or
@@ -94,7 +102,7 @@ impl Delay {
         let mut delay = Self {
             sample_rate,
             ramp_frames: RAMP_SECONDS * sample_rate,
-            state,
+            state: Automated::new(Self::AUTOMATION, state),
             longest: 1,
             position: 0,
             lines: [(); CHANNELS].map(|_| DelayLine::new(1)),
@@ -123,22 +131,27 @@ impl Delay {
         self.position = 0;
         // Empty lines have rung out.
         self.quiet_frames = usize::MAX;
-        let state = self.state;
-        self.aim(&state);
+        self.aim(&self.state.targets(self.ramp_frames));
         self.aim_time(120.0);
         self.snap();
     }
 
-    /// Sets every target from a record, apart from the time, which needs the tempo.
-    fn aim(&mut self, state: &DelayState) {
-        self.state = *state;
-        let ramp = self.ramp_frames;
-        self.low_cut.set_target(state.low_cut_hz.log2(), ramp);
-        self.high_cut.set_target(state.high_cut_hz.log2(), ramp);
-        self.feedback.set_target(state.feedback, ramp);
+    /// Sets every target from the record and its lanes, each reached in its own ramp, apart
+    /// from the time, which needs the tempo.
+    fn aim(&mut self, targets: &DelayTargets) {
+        let state = *self.state;
+        self.low_cut
+            .set_target(state.low_cut_hz.log2(), targets.ramp(&LOW_CUT));
+        self.high_cut
+            .set_target(state.high_cut_hz.log2(), targets.ramp(&HIGH_CUT));
+        self.feedback
+            .set_target(state.feedback, targets.ramp(&FEEDBACK));
         let crossed = if state.ping_pong { 1.0 } else { 0.0 };
-        self.ping_pong.set_target(crossed, ramp);
-        self.mix.set_target(state.mix, ramp);
+        self.ping_pong.set_target(crossed, targets.edit());
+        self.mix.set_target(state.mix, targets.ramp(&MIX));
+        // A cut that took its value at once does not move, so nothing else says the factors
+        // are old.
+        self.stale |= targets.snaps();
     }
 
     /// Aims the read at the time of the record at a tempo. The same time again changes nothing.
@@ -228,6 +241,7 @@ impl Processor for Delay {
         Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
+            .event_input(Self::AUTOMATION.port())
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -238,10 +252,14 @@ impl Processor for Delay {
     }
 
     fn update(&mut self, update: &mut DelayState) {
-        self.aim(update);
+        let targets = self.state.set_record(update, self.ramp_frames);
+        self.aim(&targets);
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, self.ramp_frames) {
+            self.aim(&targets);
+        }
         let transport = &context.transport;
         let bpm = transport.clock.tempo_at(transport.tick_range.start).bpm();
         self.aim_time(bpm);

@@ -13,11 +13,14 @@
 use std::f32::consts::LN_10;
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, Peaks, Ports, PrepareConfig, ProcessContext, Processor,
-    Smoothed,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Peaks, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
 };
 
-use crate::{CompressorState, Lookahead};
+use crate::{CompressorState, KNEE, Lookahead, MAKEUP, MIX, PARAMETERS, RATIO, THRESHOLD};
+
+/// Every number of the compressor can be automated.
+type CompressorTargets = Targets<CompressorState, { PARAMETERS.len() }>;
 
 /// How long a change of threshold, ratio, knee, makeup, mix or lookahead takes to arrive. A
 /// jump would click.
@@ -180,8 +183,8 @@ impl Meters {
 pub struct Compressor {
     sample_rate: f32,
     meters: Meters,
-    /// The last record, to aim again when the sample rate is known.
-    state: CompressorState,
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<CompressorState, { PARAMETERS.len() }>,
     /// The frames a change takes.
     ramp_frames: f32,
     threshold: Smoothed,
@@ -216,6 +219,8 @@ pub struct Compressor {
 impl Compressor {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<CompressorState, { PARAMETERS.len() }> =
+        AutomationInput::new(0, PARAMETERS);
 
     /// Starts at these values, so a compressor that is added or opened does not glide in.
     pub fn new(state: CompressorState, meters: Meters) -> Self {
@@ -224,7 +229,7 @@ impl Compressor {
         let mut compressor = Self {
             sample_rate,
             meters,
-            state,
+            state: Automated::new(Self::AUTOMATION, state),
             ramp_frames: 1.0,
             threshold: Smoothed::new(0.0),
             slope: Smoothed::new(0.0),
@@ -258,22 +263,24 @@ impl Compressor {
         self.reduction = 0.0;
         let lookahead = self.state.lookahead.frames(sample_rate);
         (self.from_frames, self.to_frames) = (lookahead, lookahead);
-        self.aim(self.state);
+        self.aim(&self.state.targets(self.ramp_frames));
         self.snap();
         // At rest: nothing has come in, so the first sound restarts the detector and its
         // stretches begin with it, whatever ran before.
         self.quiet = self.delay.len() + self.detector.window_frames();
     }
 
-    /// Sets every target from a record.
-    fn aim(&mut self, state: CompressorState) {
-        self.state = state;
-        let ramp = self.ramp_frames;
-        self.threshold.set_target(state.threshold_db, ramp);
-        self.slope.set_target(slope_of(state.ratio), ramp);
-        self.knee.set_target(state.knee_db, ramp);
-        self.makeup.set_target(state.makeup_db, ramp);
-        self.mix.set_target(state.mix, ramp);
+    /// Sets every target from the record and its lanes, each reached in its own ramp.
+    fn aim(&mut self, targets: &CompressorTargets) {
+        let state = *self.state;
+        self.threshold
+            .set_target(state.threshold_db, targets.ramp(&THRESHOLD));
+        self.slope
+            .set_target(slope_of(state.ratio), targets.ramp(&RATIO));
+        self.knee.set_target(state.knee_db, targets.ramp(&KNEE));
+        self.makeup
+            .set_target(state.makeup_db, targets.ramp(&MAKEUP));
+        self.mix.set_target(state.mix, targets.ramp(&MIX));
         self.attack = pole(state.attack_ms / 1_000.0, self.sample_rate);
         self.release = pole(state.release_ms / 1_000.0, self.sample_rate);
         let lookahead = state.lookahead.frames(self.sample_rate);
@@ -333,6 +340,7 @@ impl Processor for Compressor {
         Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
+            .event_input(Self::AUTOMATION.port())
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -340,7 +348,8 @@ impl Processor for Compressor {
     }
 
     fn update(&mut self, update: &mut CompressorState) {
-        self.aim(*update);
+        let targets = self.state.set_record(update, self.ramp_frames);
+        self.aim(&targets);
     }
 
     /// Where the lookahead goes, also while it waits for a fade: that is the delay the sound
@@ -350,6 +359,9 @@ impl Processor for Compressor {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, self.ramp_frames) {
+            self.aim(&targets);
+        }
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
         let silent_input = left_in
             .iter()
