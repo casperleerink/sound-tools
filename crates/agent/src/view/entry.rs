@@ -104,23 +104,20 @@ pub fn turn(
             .gap(px(4.))
             .text_color(dim)
             .children(turn.steps.iter().enumerate().map(|(step_index, step)| {
-                // A step that did not do what it says says so in words, a failure in red. A
-                // denied one never ran, so its title is struck through.
+                // A step that did not do what it says says so in words, a failure in red.
                 let outcome = match step.outcome {
                     Some(StepOutcome::Failed) => Some(("· failed", red)),
                     Some(StepOutcome::Denied) => Some(("· denied", muted)),
                     Some(StepOutcome::Done) | None => None,
                 };
-                let denied = step.outcome == Some(StepOutcome::Denied);
                 div()
                     .flex()
                     .gap(px(6.))
                     .child(
-                        title(("step", step_index), &step.title)
+                        title(("step", step_index), step.finished_title())
                             .min_w_0()
                             .text_size(px(SMALL_TEXT_SIZE))
-                            .line_height(px(SMALL_LINE_HEIGHT))
-                            .when(denied, |title| title.line_through()),
+                            .line_height(px(SMALL_LINE_HEIGHT)),
                     )
                     .children(outcome.map(|(word, color)| {
                         div()
@@ -142,7 +139,7 @@ pub fn turn(
             .current_step()
             .map_or("Working", |step| match step.outcome {
                 None => step.running_title.as_str(),
-                Some(_) => step.title.as_str(),
+                Some(_) => step.finished_title(),
             });
         div()
             .flex()
@@ -159,8 +156,12 @@ pub fn turn(
                     .min_w_0()
                     .flex_1()
                     .truncate()
+                    .text_size(px(TEXT_SIZE))
+                    .line_height(px(LINE_HEIGHT))
                     .text_color(lavender)
-                    .child(title("working", line)),
+                    // One line, a long command cut with an ellipsis. Plain text, as gpui cuts
+                    // only a text that is the direct child of the line, not markdown's blocks.
+                    .child(SharedString::from(line.replace('`', ""))),
             )
     });
     // Ids inside are the turn's own, so two turns never share one.

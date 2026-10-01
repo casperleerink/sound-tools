@@ -65,12 +65,12 @@ fn approval_text(mode: ApprovalMode) -> (&'static str, &'static str, &'static st
         ApprovalMode::AskForEverything => (
             "ask-for-everything",
             "Ask for everything",
-            "Asks before every edit and command.",
+            "Asks before every edit and command, except plain reads like ls.",
         ),
         ApprovalMode::AskBeforeCommands => (
             "ask-before-commands",
             "Ask before commands",
-            "Edits the project freely, asks before commands.",
+            "Edits freely, asks before commands, except plain reads.",
         ),
         ApprovalMode::NeverAsk => (
             "never-ask",
@@ -80,12 +80,18 @@ fn approval_text(mode: ApprovalMode) -> (&'static str, &'static str, &'static st
     }
 }
 
-/// What the trigger says: the plan, since an email is long.
-pub fn label(account: &Account) -> String {
-    account
-        .plan
-        .clone()
-        .unwrap_or_else(|| "Account".to_string())
+/// What the trigger says: the model the agent runs. Until the provider lists its models, the
+/// id that is picked, or "Default".
+pub fn label(settings: &Settings, models: &[Model]) -> String {
+    let picked = match &settings.model {
+        Some(id) => models.iter().find(|model| model.id == *id),
+        None => models.first(),
+    };
+    match (picked, &settings.model) {
+        (Some(model), _) => model.short_name.clone(),
+        (None, Some(id)) => id.clone(),
+        (None, None) => "Default".to_string(),
+    }
 }
 
 /// The approvals, the models, then the account and **Sign out**. `models` are the provider's,
@@ -160,5 +166,25 @@ mod tests {
             assert_eq!(Choice::of(&choice.value()), Some(choice));
         }
         assert_eq!(Choice::of("approval-sometimes"), None);
+    }
+
+    #[test]
+    fn the_button_says_the_model_it_runs() {
+        let model = |id: &str, short_name: &str| Model {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: String::new(),
+            short_name: short_name.to_string(),
+        };
+        let models = [model("default", "Opus 5.5"), model("haiku", "Haiku 4.5")];
+        let picked = |model: Option<&str>| Settings {
+            model: model.map(str::to_string),
+            ..Settings::default()
+        };
+        assert_eq!(label(&picked(None), &models), "Opus 5.5");
+        assert_eq!(label(&picked(Some("haiku")), &models), "Haiku 4.5");
+        // Before the provider lists its models.
+        assert_eq!(label(&picked(None), &[]), "Default");
+        assert_eq!(label(&picked(Some("haiku")), &[]), "haiku");
     }
 }

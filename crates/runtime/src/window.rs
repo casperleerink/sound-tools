@@ -651,7 +651,7 @@ fn init(cx: &mut App) {
             None
         }
     };
-    crate::agent_panel(support).install(cx);
+    crate::agent_panel(support, cx).install(cx);
 }
 
 /// A project that is open and plays on the default output, ready for its window.

@@ -188,6 +188,8 @@ pub struct InitializedModel {
     pub display_name: String,
     #[serde(default)]
     pub description: String,
+    /// The model an alias such as `default` or `opus` runs.
+    pub resolved_model: Option<String>,
 }
 
 /// A line we write. `Deserialize` too, so the tests replay recorded runs.

@@ -19,6 +19,7 @@ expression: "replay(\"permission_mode\")"
                 id: "default",
                 name: "Default (recommended)",
                 description: "Opus 5.5 · Best for everyday, complex tasks",
+                short_name: "Opus 5.5",
             },
         ],
     },
@@ -28,6 +29,7 @@ expression: "replay(\"permission_mode\")"
         ),
         title: "Wrote a.txt",
         running_title: "Writing a.txt",
+        request_title: "Write a.txt",
     },
     ApprovalRequested {
         id: ApprovalId(
@@ -57,6 +59,7 @@ expression: "replay(\"permission_mode\")"
         ),
         title: "Wrote b.txt",
         running_title: "Writing b.txt",
+        request_title: "Write b.txt",
     },
     StepDone {
         id: StepId(

@@ -211,6 +211,10 @@ pub enum AgentEvent {
         title: String,
         /// The same while it runs, such as "Running \`cargo build\`".
         running_title: String,
+        /// The same asked for, such as "Run \`cargo build\`", for a step the composer denied:
+        /// it never ran. Empty in a thread saved before it came.
+        #[serde(default)]
+        request_title: String,
     },
     StepDone {
         id: StepId,
@@ -283,6 +287,9 @@ pub struct Model {
     pub id: String,
     pub name: String,
     pub description: String,
+    /// The model it runs, for the composer's menu button: "Opus 5.5" for a default named
+    /// "Default (recommended)".
+    pub short_name: String,
 }
 
 /// The id of `session`. A new one is ours to pick, so it is known before the agent says

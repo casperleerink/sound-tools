@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::protocol::{
-    Block, CliRequest, Content, ControlResponse, Delta, Incoming, Initialized, Outgoing,
-    PermissionResult, Request, ResultKind, StreamEvent, System, TerminalReason, TurnResult,
+    Block, CliRequest, Content, ControlResponse, Delta, Incoming, Initialized, InitializedModel,
+    Outgoing, PermissionResult, Request, ResultKind, StreamEvent, System, TerminalReason,
+    TurnResult,
 };
 use crate::provider::{
     Account, AgentEvent, ApprovalAnswer, ApprovalId, ExitReason, Model, StepId, StepOutcome,
@@ -17,6 +18,9 @@ use crate::provider::{
 
 /// What the CLI says when `--resume` names a session it does not have.
 const SESSION_NOT_FOUND: &str = "no conversation found with session id";
+
+/// The model the CLI picks itself, in its list of models.
+const DEFAULT_MODEL: &str = "default";
 
 /// The longest command or pattern a title shows, in characters.
 const TITLE_DETAIL_CHARACTERS: usize = 60;
@@ -248,6 +252,7 @@ impl Mapper {
                     id: StepId(id),
                     title: action.done_title(),
                     running_title: action.running_title(),
+                    request_title: action.request_title(),
                 })
             }
             Block::ToolResult { .. } | Block::Other => None,
@@ -374,15 +379,7 @@ impl Mapper {
                         plan: account.subscription_type,
                     })
                     .unwrap_or_default(),
-                models: initialized
-                    .models
-                    .into_iter()
-                    .map(|model| Model {
-                        id: model.value,
-                        name: model.display_name,
-                        description: model.description,
-                    })
-                    .collect(),
+                models: models(initialized.models),
             },
             Err(error) => AgentEvent::Error {
                 message: format!("Claude Code started, but its account is unreadable: {error}"),
@@ -425,6 +422,31 @@ impl Approval {
         }
         permissions
     }
+}
+
+/// The models as the composer picks them. The CLI's `default` runs a model that has an entry
+/// of its own in the list, whose name is the short name of both.
+fn models(models: Vec<InitializedModel>) -> Vec<Model> {
+    let named: Vec<(String, String)> = models
+        .iter()
+        .filter(|model| model.value != DEFAULT_MODEL)
+        .filter_map(|model| Some((model.resolved_model.clone()?, model.display_name.clone())))
+        .collect();
+    models
+        .into_iter()
+        .map(|model| {
+            let short_name = named
+                .iter()
+                .find(|(resolved, _)| Some(resolved) == model.resolved_model.as_ref())
+                .map_or_else(|| model.display_name.clone(), |(_, name)| name.clone());
+            Model {
+                id: model.value,
+                name: model.display_name,
+                description: model.description,
+                short_name,
+            }
+        })
+        .collect()
 }
 
 fn blocks(content: Content) -> Vec<Block> {
@@ -523,8 +545,9 @@ fn shorten(text: &str) -> String {
     format!("{}…", cut.trim_end())
 }
 
-/// A command or a pattern in backticks, which the sidebar shows as code. One with a backtick
-/// of its own stays as it is, since that would end the code early.
+/// A command or a pattern in backticks, which the sidebar shows as code. One that has a
+/// backtick of its own is left bare: its backtick would close ours early, and the line would
+/// show the wrong part as code.
 fn code(text: &str) -> String {
     if text.contains('`') {
         text.to_string()

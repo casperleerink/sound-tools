@@ -19,6 +19,7 @@ expression: "replay(\"permission_bypass\")"
                 id: "default",
                 name: "Default (recommended)",
                 description: "Opus 5.5 · Best for everyday, complex tasks",
+                short_name: "Opus 5.5",
             },
         ],
     },
@@ -28,6 +29,7 @@ expression: "replay(\"permission_bypass\")"
         ),
         title: "Ran `git init`",
         running_title: "Running `git init`",
+        request_title: "Run `git init`",
     },
     StepDone {
         id: StepId(

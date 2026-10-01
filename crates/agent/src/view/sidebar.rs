@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{
     AnyElement, App, BoxShadow, Context, Entity, FocusHandle, Focusable, FollowMode, FontWeight,
@@ -17,7 +17,7 @@ use gpui::{
     list, point, prelude::*, px,
 };
 use smol::future;
-use sound_core::Problem;
+use sound_core::{GROUPING_WINDOW, Problem, ProjectEvent};
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
@@ -31,11 +31,11 @@ use super::menu::{self, Choice};
 use super::onboarding::{Onboarding, Setup, SetupAction};
 use crate::conversation::{Conversation, Entry, request_label};
 use crate::install::{self, InstallError};
-use crate::settings::Settings;
+use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{Line, SavedThread, ThreadStore, Write};
 use crate::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalMode, Events, Installed, Model, Provider, Session,
-    SignInChoice, Thread, ThreadClosed, ThreadOptions, TurnOutcome, login_shell_environment,
+    Account, AgentEvent, ApprovalAnswer, ApprovalMode, Events, Installed, Provider, Session,
+    SignInChoice, Thread, ThreadOptions, TurnOutcome, login_shell_environment,
 };
 
 actions!(agent_sidebar, [Stop]);
@@ -70,31 +70,10 @@ fn install_bindings(cx: &mut App) {
 /// The process of the thread, from the first send until **+** or until it ends.
 struct Agent {
     thread: Thread,
-    /// What the process runs with. A change of the settings goes to it with the next message.
-    approval_mode: ApprovalMode,
-    model: Option<String>,
     /// Reads the process on the background executor. Dropping it ends the process.
     _reading: Task<()>,
     /// Hands what was read to the sidebar, once a frame.
     _delivering: Task<()>,
-}
-
-impl Agent {
-    /// Brings the process to `settings`, so a change applies from the next message on. A
-    /// model of `None` keeps the one it runs: only the provider's list names its default.
-    fn follow(&mut self, settings: &Settings) -> Result<(), ThreadClosed> {
-        if self.approval_mode != settings.approval_mode {
-            self.thread.set_approval_mode(settings.approval_mode)?;
-            self.approval_mode = settings.approval_mode;
-        }
-        if let Some(model) = &settings.model
-            && self.model.as_ref() != Some(model)
-        {
-            self.thread.set_model(model.clone())?;
-            self.model = Some(model.clone());
-        }
-        Ok(())
-    }
 }
 
 pub struct Sidebar {
@@ -113,24 +92,19 @@ pub struct Sidebar {
     setup_task: Option<Task<()>>,
     /// The approval mode, the model, and the account with **Sign out**, in the composer.
     menu: Entity<DropdownMenu>,
-    /// What the menu's selects say. Kept in `settings_file`, `agent/settings.json` in the
-    /// support folder of the machine, or nowhere with `None`.
-    settings: Settings,
-    settings_file: Option<PathBuf>,
-    /// Reads the settings. No message goes until they are in.
-    reading_settings: Option<Task<()>>,
-    /// Writes the last change. A later change waits for it, so the last one is on disk.
-    saving_settings: Option<Task<()>>,
-    /// What the provider offers, from the first agent that started. Empty until then.
-    models: Vec<Model>,
+    /// What the menu's selects say, the same for every sidebar of the app.
+    settings: Entity<AgentSettings>,
     conversation: Conversation,
     list: ListState,
     /// The finished turns whose steps show, by entry.
     expanded: HashSet<usize>,
     /// The answer of each turn, parsed once per batch of events, by entry.
     answers: HashMap<usize, Vec<Markdown>>,
-    /// The problems of the project when the running turn began.
+    /// The problems of the project when the last turn began.
     problems_before: Vec<Problem>,
+    /// The turn that ended last and when, until the next message: the watcher may still
+    /// apply its last writes, and their problems are the turn's too.
+    just_ended: Option<(usize, Instant)>,
     /// The problems each finished turn left that were not there before it, by entry.
     problems_left: HashMap<usize, Vec<Problem>>,
     /// The turns whose problems show line by line, by entry.
@@ -152,29 +126,23 @@ pub struct Sidebar {
     writes: Option<smol::channel::Sender<Write>>,
     /// Reads the last thread of the project. No message goes until it is in.
     loading: Option<Task<()>>,
-    _input: Subscription,
-    _menu: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Sidebar {
     /// Reads the login shell in the background, then asks the program whether it is signed
     /// in, or offers **Set up** when it is not downloaded yet. The program is the download in
     /// `agents`, or the one the provider's environment variable names. The threads of the
-    /// project are kept in `threads`, `agent/threads` in the support folder of the machine,
-    /// and the approval mode and the model in `settings`, `agent/settings.json` there; with
-    /// `None` nothing is saved.
+    /// project are kept in `threads`, `agent/threads` in the support folder of the machine;
+    /// with `None` nothing is saved. `settings` are the app's, shared by every sidebar.
     pub fn new(
         session: Entity<sound_ui::Session>,
         agents: Option<PathBuf>,
         threads: Option<PathBuf>,
-        settings: Option<PathBuf>,
+        settings: Entity<AgentSettings>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut sidebar = Self::with(session, agents, Setup::Checking, threads, cx);
-        if let Some(file) = settings {
-            sidebar.reading_settings = Some(Self::read_settings(file.clone(), cx));
-            sidebar.settings_file = Some(file);
-        }
+        let mut sidebar = Self::with(session, agents, Setup::Checking, threads, settings, cx);
         let provider = sidebar.provider;
         let downloaded = sidebar
             .agents
@@ -212,6 +180,7 @@ impl Sidebar {
         session: Entity<sound_ui::Session>,
         installed: Option<Installed>,
         threads: Option<PathBuf>,
+        settings: Entity<AgentSettings>,
         cx: &mut Context<Self>,
     ) -> Self {
         let setup = match installed {
@@ -220,7 +189,7 @@ impl Sidebar {
             },
             None => Setup::NotInstalled,
         };
-        let mut sidebar = Self::with(session, None, setup, threads, cx);
+        let mut sidebar = Self::with(session, None, setup, threads, settings, cx);
         sidebar.installed = installed;
         sidebar
     }
@@ -230,6 +199,7 @@ impl Sidebar {
         agents: Option<PathBuf>,
         setup: Setup,
         threads: Option<PathBuf>,
+        settings: Entity<AgentSettings>,
         cx: &mut Context<Self>,
     ) -> Self {
         install_bindings(cx);
@@ -271,20 +241,44 @@ impl Sidebar {
             Setup::Ready { account } => account.clone(),
             _ => Account::default(),
         };
-        let settings = Settings::default();
+        let shared = settings.read(cx);
+        let (label, entries) = (
+            menu::label(shared.settings(), shared.models()),
+            menu::entries(&account, shared.settings(), shared.models()),
+        );
+        // Read before this sidebar was made: it says so too.
+        let unreadable = shared.unreadable().map(str::to_string);
         let menu = cx.new(|cx| {
-            DropdownMenu::new(
-                menu::label(&account),
-                menu::entries(&account, &settings, &[]),
-                cx,
-            )
-            .debug_name("account-menu")
-            .trigger(Trigger::Ghost)
-            .side(Side::Top)
-            .align(Align::Start)
-            .width(menu::WIDTH)
-            .max_height(menu::MAX_HEIGHT)
+            DropdownMenu::new(label, entries, cx)
+                .debug_name("account-menu")
+                .trigger(Trigger::Ghost)
+                .side(Side::Top)
+                .align(Align::Start)
+                .width(menu::WIDTH)
+                .max_height(menu::MAX_HEIGHT)
         });
+        let subscriptions = vec![
+            cx.subscribe(&menu, |sidebar, _, picked: &MenuPicked, cx| {
+                if let Some(choice) = Choice::of(&picked.0) {
+                    sidebar.pick(choice, cx);
+                }
+            }),
+            cx.observe(&settings, |sidebar, _, cx| {
+                sidebar.update_menu(cx);
+                cx.notify();
+            }),
+            cx.subscribe(&settings, Self::settings_event),
+            cx.subscribe(&session, |sidebar, _, event: &ProjectEvent, cx| {
+                if matches!(event, ProjectEvent::ProblemsChanged) {
+                    sidebar.problems_changed(cx);
+                }
+            }),
+            cx.observe(&input, |_, _, cx| cx.notify()),
+        ];
+        let mut conversation = Conversation::default();
+        if let Some(unreadable) = unreadable {
+            conversation.notice(unreadable);
+        }
         Self {
             session,
             provider: Provider::Claude,
@@ -293,25 +287,16 @@ impl Sidebar {
             installed: None,
             signing_in: None,
             setup_task: None,
-            _menu: cx.subscribe(&menu, |sidebar, _, picked: &MenuPicked, cx| {
-                if let Some(choice) = Choice::of(&picked.0) {
-                    sidebar.pick(choice, cx);
-                }
-            }),
             menu,
             settings,
-            settings_file: None,
-            reading_settings: None,
-            saving_settings: None,
-            models: Vec::new(),
-            conversation: Conversation::default(),
+            conversation,
             list,
             expanded: HashSet::new(),
             answers: HashMap::new(),
             problems_before: Vec::new(),
+            just_ended: None,
             problems_left: HashMap::new(),
             problems_open: HashSet::new(),
-            _input: cx.observe(&input, |_, _, cx| cx.notify()),
             input,
             history: History::default(),
             focus_handle: cx.focus_handle(),
@@ -322,6 +307,7 @@ impl Sidebar {
             thread: None,
             writes: None,
             loading,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -379,103 +365,55 @@ impl Sidebar {
         self.answers.clear();
         self.problems_left.clear();
         self.problems_open.clear();
+        self.just_ended = None;
         self.history.reset();
     }
 
-    fn read_settings(file: PathBuf, cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |sidebar, cx| {
-            let read = cx
-                .background_spawn(async move { Settings::read(&file) })
-                .await;
-            // A sidebar that went in the meantime has nobody to tell.
-            sidebar
-                .update(cx, |sidebar, cx| sidebar.settings_read(read, cx))
-                .ok();
-        })
-    }
-
-    fn settings_read(&mut self, read: Result<Settings, String>, cx: &mut Context<Self>) {
-        self.reading_settings = None;
-        match read {
-            Ok(settings) => self.settings = settings,
-            Err(error) => {
-                let notice = format!("{error}. The agent uses its default settings.");
-                self.conversation.notice(notice);
+    /// A change of the settings applies at once: the running agent hears it now, from its
+    /// next tool on. A request that fails comes back as an error line.
+    fn settings_event(
+        &mut self,
+        _: Entity<AgentSettings>,
+        event: &AgentSettingsEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let sent = match event {
+            AgentSettingsEvent::Read => {
+                if let Some(unreadable) = self.settings.read(cx).unreadable() {
+                    let notice = unreadable.to_string();
+                    self.conversation.notice(notice);
+                    self.show(None, cx);
+                }
+                return;
+            }
+            AgentSettingsEvent::NotSaved(error) => {
+                self.conversation.notice(error.clone());
                 self.show(None, cx);
+                return;
             }
-        }
-        self.update_menu(cx);
-        cx.notify();
-    }
-
-    /// The approval mode and the model, which apply to the agent from the next message on.
-    pub fn settings(&self) -> &Settings {
-        &self.settings
-    }
-
-    /// What the approvals select of the menu does.
-    pub fn set_approval_mode(&mut self, approval_mode: ApprovalMode, cx: &mut Context<Self>) {
-        let model = self.settings.model.clone();
-        self.change_settings(
-            Settings {
-                approval_mode,
-                model,
-            },
-            cx,
-        );
-    }
-
-    /// What the model select of the menu does. `None` is the provider's default.
-    pub fn set_model(&mut self, model: Option<String>, cx: &mut Context<Self>) {
-        let approval_mode = self.settings.approval_mode;
-        self.change_settings(
-            Settings {
-                approval_mode,
-                model,
-            },
-            cx,
-        );
-    }
-
-    fn change_settings(&mut self, settings: Settings, cx: &mut Context<Self>) {
-        if settings == self.settings {
-            return;
-        }
-        self.settings = settings;
-        self.update_menu(cx);
-        self.save_settings(cx);
-        cx.notify();
-    }
-
-    fn save_settings(&mut self, cx: &mut Context<Self>) {
-        let Some(file) = self.settings_file.clone() else {
-            return;
+            AgentSettingsEvent::ApprovalModeChanged(mode) => self
+                .agent
+                .as_ref()
+                .map(|agent| agent.thread.set_approval_mode(*mode)),
+            AgentSettingsEvent::ModelChanged(model) => self
+                .agent
+                .as_ref()
+                .map(|agent| agent.thread.set_model(model.clone())),
         };
-        let settings = self.settings.clone();
-        let earlier = self.saving_settings.take();
-        self.saving_settings = Some(cx.spawn(async move |sidebar, cx| {
-            if let Some(earlier) = earlier {
-                earlier.await;
-            }
-            let written = cx
-                .background_spawn(async move { settings.write(&file) })
-                .await;
-            if let Err(error) = written {
-                // A sidebar that went has nobody to tell.
-                sidebar
-                    .update(cx, |sidebar, cx| {
-                        sidebar.conversation.notice(error);
-                        sidebar.show(None, cx);
-                    })
-                    .ok();
-            }
-        }));
+        if let Some(Err(error)) = sent {
+            self.conversation.notice(error.to_string());
+            self.show(None, cx);
+        }
     }
 
     fn pick(&mut self, choice: Choice, cx: &mut Context<Self>) {
         match choice {
-            Choice::ApprovalMode(mode) => self.set_approval_mode(mode, cx),
-            Choice::Model(model) => self.set_model(model, cx),
+            Choice::ApprovalMode(mode) => self
+                .settings
+                .update(cx, |settings, cx| settings.set_approval_mode(mode, cx)),
+            Choice::Model(model) => self
+                .settings
+                .update(cx, |settings, cx| settings.set_model(model, cx)),
             Choice::SignOut => self.sign_out(cx),
         }
     }
@@ -485,8 +423,9 @@ impl Sidebar {
             Setup::Ready { account } => account.clone(),
             _ => Account::default(),
         };
-        let label = menu::label(&account);
-        let entries = menu::entries(&account, &self.settings, &self.models);
+        let shared = self.settings.read(cx);
+        let label = menu::label(shared.settings(), shared.models());
+        let entries = menu::entries(&account, shared.settings(), shared.models());
         self.menu.update(cx, |menu, cx| {
             menu.set_label(label, cx);
             menu.set_entries(entries, cx);
@@ -497,18 +436,12 @@ impl Sidebar {
         &self.conversation
     }
 
-    /// What the composer holds, not sent yet.
-    pub fn draft<'a>(&self, cx: &'a App) -> &'a str {
-        self.input.read(cx).text()
+    /// The composer, for a test or a snapshot that reads or types in it.
+    pub fn composer(&self) -> &Entity<TextInput> {
+        &self.input
     }
 
-    /// Puts `text` in the composer, as typing it does. For a snapshot.
-    pub fn set_draft(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.input
-            .update(cx, |input, cx| input.set_text(text.to_string(), cx));
-    }
-
-    /// The composer's menu, for a snapshot that shows it open.
+    /// The composer's menu, for a snapshot that shows it open or a test that picks in it.
     pub fn menu(&self) -> &Entity<DropdownMenu> {
         &self.menu
     }
@@ -549,6 +482,7 @@ impl Sidebar {
         self.session
             .update(cx, |session, _| session.begin_request(&label));
         self.problems_before = self.session.read(cx).project().problems();
+        self.just_ended = None;
         self.conversation.send(message, started);
         let thread = self.thread.get_or_insert_with(SavedThread::fresh);
         let line = Line::Sent {
@@ -583,13 +517,14 @@ impl Sidebar {
                 AgentEvent::Started {
                     account, models, ..
                 } => {
-                    self.models = models.clone();
+                    let models = models.clone();
+                    // Every sidebar's menu follows, by observing the settings.
+                    self.settings
+                        .update(cx, |settings, cx| settings.set_models(models, cx));
                     // The account the running agent reports is the newest word on it.
                     if matches!(self.setup, Setup::Ready { .. }) {
                         let account = account.clone();
                         self.set_setup(Setup::Ready { account }, cx);
-                    } else {
-                        self.update_menu(cx);
                     }
                 }
                 AgentEvent::TurnEnded {
@@ -634,18 +569,37 @@ impl Sidebar {
     /// Keeps what problems the turn at `index` left that were not there when it began. Nothing
     /// goes to the agent: its docs tell it to read `problems.txt` itself.
     fn keep_problems_left(&mut self, index: usize, cx: &App) {
-        let before = std::mem::take(&mut self.problems_before);
         let left: Vec<Problem> = self
             .session
             .read(cx)
             .project()
             .problems()
             .into_iter()
-            .filter(|problem| !before.contains(problem))
+            .filter(|problem| !self.problems_before.contains(problem))
             .collect();
-        if !left.is_empty() {
+        if left.is_empty() {
+            self.problems_left.remove(&index);
+        } else {
             self.problems_left.insert(index, left);
         }
+        self.just_ended = Some((index, Instant::now()));
+    }
+
+    /// The watcher applies what it heard after its grouping window, so the last writes of a
+    /// turn may come just after the turn ended. Their problems are that turn's too.
+    fn problems_changed(&mut self, cx: &mut Context<Self>) {
+        let Some((index, ended)) = self.just_ended else {
+            return;
+        };
+        if ended.elapsed() > GROUPING_WINDOW {
+            self.just_ended = None;
+            return;
+        }
+        self.keep_problems_left(index, cx);
+        // The turn's own end still counts from when it ended.
+        self.just_ended = Some((index, ended));
+        self.list.remeasure_items(index..index + 1);
+        cx.notify();
     }
 
     /// After a failed turn: the program may have been signed out meanwhile, such as in a
@@ -912,7 +866,7 @@ impl Sidebar {
     fn send(&mut self, cx: &mut Context<Self>) {
         let message = self.input.read(cx).text().trim().to_string();
         let ready = self.loading.is_none()
-            && self.reading_settings.is_none()
+            && self.settings.read(cx).is_read()
             && self.conversation.can_continue();
         if message.is_empty() || self.conversation.is_working() || !ready {
             return;
@@ -935,12 +889,7 @@ impl Sidebar {
         self.input.update(cx, |input, cx| input.set_text("", cx));
         self.history.reset();
         self.begin(&message, cx);
-        let settings = &self.settings;
-        let sent = self.agent.as_mut().map(|agent| {
-            agent
-                .follow(settings)
-                .and_then(|()| agent.thread.send(message))
-        });
+        let sent = self.agent.as_ref().map(|agent| agent.thread.send(message));
         if let Some(Err(error)) = sent {
             let outcome = TurnOutcome::Failed {
                 message: error.to_string(),
@@ -951,12 +900,13 @@ impl Sidebar {
 
     fn start(&self, installed: Installed, cx: &mut Context<Self>) -> io::Result<Agent> {
         let folder = self.session.read(cx).project().root().to_path_buf();
+        let settings = self.settings.read(cx).settings().clone();
         let (thread, events) = Thread::start(ThreadOptions {
             provider: self.provider,
             installed,
             folder,
-            model: self.settings.model.clone(),
-            approval_mode: self.settings.approval_mode,
+            model: settings.model.clone(),
+            approval_mode: settings.approval_mode,
             session: self.next_session(),
         })?;
         let (sender, receiver) = smol::channel::unbounded();
@@ -979,21 +929,16 @@ impl Sidebar {
         });
         Ok(Agent {
             thread,
-            approval_mode: self.settings.approval_mode,
-            model: self.settings.model.clone(),
             _reading: reading,
             _delivering: delivering,
         })
     }
 
     /// Talks to `thread` from now on, in place of starting a process at the next send. For a
-    /// test with [`Thread::without_agent`], which hands the events to [`Self::receive`]. The
-    /// thread counts as started with the settings of now.
+    /// test with [`Thread::without_agent`], which hands the events to [`Self::receive`].
     pub fn connect(&mut self, thread: Thread) {
         self.attach(Agent {
             thread,
-            approval_mode: self.settings.approval_mode,
-            model: self.settings.model.clone(),
             _reading: Task::ready(()),
             _delivering: Task::ready(()),
         });
@@ -1192,7 +1137,7 @@ impl Sidebar {
             )
     }
 
-    fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (border, fill) = (theme.alpha_at(0.10), theme.gray_50);
         let working = self.conversation.is_working();
@@ -1208,7 +1153,7 @@ impl Sidebar {
                 .on_click(cx.listener(|sidebar, _, _, cx| sidebar.send(cx)))
         };
         // So the mode is never a surprise, the first message of a thread says it once.
-        let never_ask = self.settings.approval_mode == ApprovalMode::NeverAsk
+        let never_ask = self.settings.read(cx).settings().approval_mode == ApprovalMode::NeverAsk
             && self.conversation.messages().next().is_none();
         let quiet = cx.theme().gray_700;
         div()
@@ -1393,7 +1338,7 @@ impl Render for Sidebar {
                 )
                 .map(|body| {
                     if self.conversation.can_continue() {
-                        body.child(self.composer(cx))
+                        body.child(self.composer_box(cx))
                     } else {
                         body.child(self.cannot_continue(cx))
                     }

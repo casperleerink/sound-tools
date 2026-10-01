@@ -56,8 +56,21 @@ pub struct Step {
     pub title: String,
     /// In the present tense, for the working line while it runs.
     pub running_title: String,
+    /// As it was asked for, for a step the composer denied. Empty in an older saved thread.
+    pub request_title: String,
     /// `None` while it runs.
     pub outcome: Option<StepOutcome>,
+}
+
+impl Step {
+    /// What the fold of a finished turn says: what it did, or for a denied step what it
+    /// asked to do, since it never ran.
+    pub fn finished_title(&self) -> &str {
+        match self.outcome {
+            Some(StepOutcome::Denied) if !self.request_title.is_empty() => &self.request_title,
+            _ => &self.title,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -194,11 +207,13 @@ impl Conversation {
                 id,
                 title,
                 running_title,
+                request_title,
             } => self.update_open_turn(|turn| {
                 turn.steps.push(Step {
                     id,
                     title,
                     running_title,
+                    request_title,
                     outcome: None,
                 });
             }),
@@ -314,6 +329,7 @@ mod tests {
             AgentEvent::StepStarted {
                 id: step("one"),
                 title: "Wrote state/arrangement/track-1/clip.json".to_string(),
+                request_title: "Write state/arrangement/track-1/clip.json".to_string(),
                 running_title: "Writing state/arrangement/track-1/clip.json".to_string(),
             },
             AgentEvent::StepDone {

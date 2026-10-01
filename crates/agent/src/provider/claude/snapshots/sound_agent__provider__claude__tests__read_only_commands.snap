@@ -19,6 +19,7 @@ expression: events
                 id: "default",
                 name: "Default (recommended)",
                 description: "Opus 5.5 · Best for everyday, complex tasks",
+                short_name: "Opus 5.5",
             },
         ],
     },
@@ -28,6 +29,7 @@ expression: events
         ),
         title: "Ran `ls`",
         running_title: "Running `ls`",
+        request_title: "Run `ls`",
     },
     StepStarted {
         id: StepId(
@@ -35,6 +37,7 @@ expression: events
         ),
         title: "Ran `cat notes.txt | wc -l`",
         running_title: "Running `cat notes.txt | wc -l`",
+        request_title: "Run `cat notes.txt | wc -l`",
     },
     StepStarted {
         id: StepId(
@@ -42,6 +45,7 @@ expression: events
         ),
         title: "Ran `for f in $(ls); do cat \"$f\"; done`",
         running_title: "Running `for f in $(ls); do cat \"$f\"; done`",
+        request_title: "Run `for f in $(ls); do cat \"$f\"; done`",
     },
     StepDone {
         id: StepId(

@@ -90,6 +90,7 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
             AgentEvent::StepStarted {
                 id: step.clone(),
                 title: "Wrote state/arrangement/bass/clip.json".to_string(),
+                request_title: "Write state/arrangement/bass/clip.json".to_string(),
                 running_title: "Writing state/arrangement/bass/clip.json".to_string(),
             },
             AgentEvent::StepDone {
@@ -402,6 +403,7 @@ fn every_event_saves_as_the_same_line() {
         AgentEvent::StepStarted {
             id: step(),
             title: text("Ran cargo build"),
+            request_title: text("Run cargo build"),
             running_title: text("Running cargo build"),
         },
         AgentEvent::StepDone {
@@ -457,7 +459,7 @@ fn every_event_saves_as_the_same_line() {
         format!(r#"{{"event":{{{at},"event":"turn_started"}}}}"#),
         format!(r#"{{"event":{{{at},"event":{{"text_done":{{"text":"Done."}}}}}}}}"#),
         format!(
-            r#"{{"event":{{{at},"event":{{"step_started":{{"id":"toolu_1","title":"Ran cargo build","running_title":"Running cargo build"}}}}}}}}"#
+            r#"{{"event":{{{at},"event":{{"step_started":{{"id":"toolu_1","title":"Ran cargo build","running_title":"Running cargo build","request_title":"Run cargo build"}}}}}}}}"#
         ),
         format!(
             r#"{{"event":{{{at},"event":{{"step_done":{{"id":"toolu_1","outcome":"denied"}}}}}}}}"#

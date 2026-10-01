@@ -19,6 +19,7 @@ expression: "replay(\"approval_allowed\")"
                 id: "default",
                 name: "Default (recommended)",
                 description: "Opus 5.5 · Best for everyday, complex tasks",
+                short_name: "Opus 5.5",
             },
         ],
     },
@@ -28,6 +29,7 @@ expression: "replay(\"approval_allowed\")"
         ),
         title: "Ran `touch marker.txt`",
         running_title: "Running `touch marker.txt`",
+        request_title: "Run `touch marker.txt`",
     },
     ApprovalRequested {
         id: ApprovalId(

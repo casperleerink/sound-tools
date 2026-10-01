@@ -19,6 +19,7 @@ expression: "replay(\"interrupt\")"
                 id: "default",
                 name: "Default (recommended)",
                 description: "Opus 5.5 · Best for everyday, complex tasks",
+                short_name: "Opus 5.5",
             },
         ],
     },
