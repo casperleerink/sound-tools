@@ -43,6 +43,26 @@ impl<S> Parameter<S> {
             range: ValueRange::of(self),
         }
     }
+
+    /// This number of one object of a nested record `T`, such as a band of an EQ: the same
+    /// range, default and scale, named by its `path` in `T`, such as `bands[0].gain_db`. So an
+    /// automation lane can name it, and the object type keeps one parameter for all its objects.
+    pub const fn at<T>(
+        &self,
+        path: &'static str,
+        get: fn(&T) -> f32,
+        set: fn(&mut T, f32),
+    ) -> Parameter<T> {
+        Parameter {
+            field: path,
+            min: self.min,
+            max: self.max,
+            default: self.default,
+            scale: self.scale,
+            get,
+            set,
+        }
+    }
 }
 
 /// A [`Parameter`] without its state type: its field and its range.
