@@ -3,7 +3,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use arrangement::view::layout::{HEADER_WIDTH, LEAD_IN, RULER_HEIGHT, TRACK_HEIGHT, Viewport};
+use arrangement::view::layout::{
+    ADD_ROW_HEIGHT, HEADER_WIDTH, LEAD_IN, RULER_HEIGHT, TRACK_HEIGHT, Viewport,
+};
 use arrangement::{ArrangementState, TrackKind};
 use gpui::{
     AppContext, Context, Entity, Focusable, IntoElement, Modifiers, PlatformInput, Render,
@@ -176,7 +178,7 @@ fn the_add_track_button_under_the_last_track_adds_an_instrument_track(cx: &mut T
     // Right under the header of the only track.
     let first = opened.bounds("add-track").unwrap();
     let under_first = TOP_ROW + RULER_HEIGHT + TRACK_HEIGHT;
-    assert!(first.top() > px(under_first) && first.bottom() < px(under_first + 40.));
+    assert!(first.top() > px(under_first) && first.bottom() < px(under_first + ADD_ROW_HEIGHT));
     assert!(first.right() < px(HEADER_WIDTH));
 
     opened.click(first.center());

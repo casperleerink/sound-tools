@@ -60,7 +60,7 @@ use sound_ui::{
 };
 
 use super::clip_card::ClipCard;
-use super::layout::HEADER_WIDTH;
+use super::layout::{DOT_LEFT, HEADER_WIDTH, NAME_LEFT};
 use super::paint::accent;
 use crate::mixer::{GAIN, PAN};
 use crate::{InputChannels, Mix, Mixer, TrackKind, TrackState};
@@ -1159,7 +1159,7 @@ impl Render for TrackPanel {
             .child(
                 div()
                     .absolute()
-                    .left(px(24.))
+                    .left(px(DOT_LEFT))
                     .top(px(TITLE_MIDDLE - 4.))
                     .size(px(8.))
                     .rounded_full()
@@ -1168,9 +1168,9 @@ impl Render for TrackPanel {
             .child(
                 div()
                     .absolute()
-                    .left(px(44.))
+                    .left(px(NAME_LEFT))
                     .top(px(TITLE_MIDDLE - 10.))
-                    .w(px(HEADER_WIDTH - 44. - 40.))
+                    .w(px(HEADER_WIDTH - NAME_LEFT - 40.))
                     .truncate()
                     .line_height(px(20.))
                     .font_weight(FontWeight::MEDIUM)

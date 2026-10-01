@@ -96,7 +96,7 @@ impl ProjectMenu {
             DropdownMenu::new(name, items, cx)
                 .debug_name("project-menu")
                 .selected(DEVICE)
-                .trigger(Trigger::Ghost)
+                .trigger(Trigger::Subtle)
                 .width(280.)
         });
         // Undo and redo say what they would do. A finished edit changes the label and sends no

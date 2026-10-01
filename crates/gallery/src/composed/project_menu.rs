@@ -45,7 +45,7 @@ impl ProjectMenu {
         let menu = cx.new(|cx| {
             DropdownMenu::new("Night Study", entries(), cx)
                 .selected("speakers")
-                .trigger(Trigger::Ghost)
+                .trigger(Trigger::Subtle)
                 .width(260.)
         });
         Self { menu }

@@ -20,8 +20,22 @@ pub const TRACK_HEIGHT: f32 = 64.0;
 pub const LANE_HEIGHT: f32 = 48.0;
 /// The row under the lanes of a track that holds the select that adds one.
 pub const ADD_LANE_HEIGHT: f32 = 40.0;
-/// The row under the last track that holds the add track button. The scroll reaches it.
-pub const ADD_ROW_HEIGHT: f32 = 40.0;
+/// The row under the last track that holds the add track button, as tall as a track. The
+/// scroll reaches it.
+pub const ADD_ROW_HEIGHT: f32 = TRACK_HEIGHT;
+/// The inset of the shapes in a track header (a selected header, the add buttons) from the
+/// edges of the header column.
+pub const HEADER_INSET: f32 = 8.0;
+/// Where the dot of a track starts in its header, 12 pt inside the shape of a selected header.
+pub const DOT_LEFT: f32 = 20.0;
+/// Where the name of a track starts in its header, 8 pt after its dot, and every word lined up
+/// with it.
+pub const NAME_LEFT: f32 = 36.0;
+/// A track header has two lines: its dot and name, and under them the toggle of its lanes.
+/// The middle of the first, from the top of the track.
+pub const NAME_MIDDLE: f32 = 23.0;
+/// The middle of the second line, the toggle of the lanes.
+pub const LANES_MIDDLE: f32 = 43.0;
 /// Tick 0 sits this far into the timeline area, so the start of the piece, its bar number and
 /// the playhead at rest are clear of the track headers.
 pub const LEAD_IN: f32 = 8.0;
@@ -718,9 +732,9 @@ mod tests {
         let far = Viewport::default().scrolled(-100_000.0, -100_000.0);
         let clamped = far.clamped(extent, four_four(), 960.0, 320.0);
         // The lead-in, 8 bars and 16 bars of room are 2312 px. 10 rows and the row of the add
-        // track button are 680 px.
+        // track button are 704 px.
         assert_eq!(clamped.scroll_x, 2312.0 - 960.0);
-        assert_eq!(clamped.scroll_y, 680.0 - 320.0);
+        assert_eq!(clamped.scroll_y, 704.0 - 320.0);
 
         let before_start = Viewport::default().scrolled(50.0, 50.0);
         assert_eq!(

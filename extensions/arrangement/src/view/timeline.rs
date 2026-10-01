@@ -47,8 +47,9 @@ use super::clips::{
 use super::gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
 use super::lanes::{LaneEdit, Stroke};
 use super::layout::{
-    ADD_LANE_HEIGHT, ADD_ROW_HEIGHT, Extent, HEADER_WIDTH, LANE_HEIGHT, Part, RULER_HEIGHT, Rect,
-    Rows, RulerBar, TRACK_HEIGHT, Viewport, shifted,
+    ADD_LANE_HEIGHT, ADD_ROW_HEIGHT, DOT_LEFT, Extent, HEADER_INSET, HEADER_WIDTH, LANE_HEIGHT,
+    LANES_MIDDLE, NAME_LEFT, NAME_MIDDLE, Part, RULER_HEIGHT, Rect, Rows, RulerBar, TRACK_HEIGHT,
+    Viewport, shifted,
 };
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
@@ -78,9 +79,11 @@ struct TrackRow {
     armed: bool,
     /// Its header is being dragged: the ring of a drag shows where it lands.
     lifted: bool,
-    /// Its lanes show under it, and whether it has any: the toggle in its header says both.
+    /// Its lanes show under it, and how many it has: the toggle in its header says both.
     expanded: bool,
     automated: bool,
+    /// What the toggle says: `Automation`, and how many lanes when there are any.
+    lanes_label: SharedString,
 }
 
 /// An automation lane under a track, as one paint shows it.
@@ -439,11 +442,24 @@ struct LaneMenu {
 
 /// What the select that adds a lane says.
 const ADD_LANE: &str = "Add lane";
+/// The select that adds a lane is as wide as the shape of a selected header, and this tall.
+const ADD_LANE_BUTTON_HEIGHT: f32 = 24.;
 /// The hint near a drag of clips that takes automation along.
 const AUTOMATION_HINT: &str = "Automation moves · alt to leave it";
-/// The toggle of the lanes is left of the dot of a track, this wide from the edge of its
-/// header.
-const LANES_TOGGLE_WIDTH: f32 = 22.;
+/// What the toggle of the lanes of a track says.
+const AUTOMATION: &str = "Automation";
+/// The toggle of the lanes is the second line of a track header, from its edge to as far as
+/// its words reach.
+const LANES_TOGGLE_RIGHT: f32 = 128.;
+
+/// What the toggle of the lanes says for a track with this many: `Automation`, and the count
+/// when there are any.
+fn lanes_label(lanes: usize) -> SharedString {
+    match lanes {
+        0 => SharedString::new_static(AUTOMATION),
+        lanes => format!("{AUTOMATION} · {lanes}").into(),
+    }
+}
 
 /// A drag of a track header. The track goes to the row under the pointer at once, so the rows
 /// themselves show where it lands. The whole drag is one gesture of the session.
@@ -1087,6 +1103,7 @@ impl Timeline {
             DropdownMenu::new(ADD_LANE, Vec::new(), cx)
                 .debug_name(format!("add-lane-{}", track.name()))
                 .trigger(Trigger::Select)
+                .trigger_width(HEADER_WIDTH - 2. * HEADER_INSET)
                 .width(240.)
                 .max_height(320.)
         });
@@ -1548,6 +1565,7 @@ impl Timeline {
                     .is_some_and(|drag| drag.moving && drag.track == *track.id()),
                 expanded,
                 automated: !state.automation.is_empty(),
+                lanes_label: lanes_label(state.automation.len()),
             });
             if expanded {
                 let count = state.automation.len();
@@ -1901,12 +1919,13 @@ impl Timeline {
             if y < 0.0 {
                 return;
             }
-            // The header of a track, not of its lanes. Left of its dot is the toggle of its
+            // The header of a track, not of its lanes. Its second line is the toggle of its
             // lanes; elsewhere it is selected, and a double click edits its name.
             let Some((row, Part::Track)) = part else {
                 return;
             };
-            if x + HEADER_WIDTH < LANES_TOGGLE_WIDTH {
+            let in_row = y - scene.viewport.y_of(&scene.layout, row);
+            if in_row >= LANES_MIDDLE - 8. && x + HEADER_WIDTH < LANES_TOGGLE_RIGHT {
                 if let Some(track) = self.order.get(row).map(|track| track.id().clone()) {
                     let shown = self.shows_lanes(&track);
                     self.show_lanes(&track, !shown, cx);
@@ -3705,7 +3724,7 @@ impl Timeline {
         let row = self.row_of(rename.track.id())?;
         let rows = self.rows(cx);
         let top = self.painted.get().y_of(&rows, row);
-        let top = RULER_HEIGHT + top + (TRACK_HEIGHT - RENAME_HEIGHT) / 2.;
+        let top = RULER_HEIGHT + top + NAME_MIDDLE - RENAME_HEIGHT / 2.;
         Some(
             div()
                 .debug_selector(|| "rename-track".to_string())
@@ -3736,8 +3755,9 @@ impl Timeline {
             };
             // Only one that shows whole: one under the ruler would paint over an open one. And
             // only while there is something left to add.
-            let top = viewport.y_at(rows.lane_top(row, lanes)) + (ADD_LANE_HEIGHT - 24.) / 2.;
-            let shows = top >= 0. && top + 24. <= height;
+            let top = viewport.y_at(rows.lane_top(row, lanes))
+                + (ADD_LANE_HEIGHT - ADD_LANE_BUTTON_HEIGHT) / 2.;
+            let shows = top >= 0. && top + ADD_LANE_BUTTON_HEIGHT <= height;
             let state = project.state(track);
             let free =
                 state.is_some_and(|state| !free_lanes(project, track.id(), state).is_empty());
@@ -3749,7 +3769,7 @@ impl Timeline {
                 div()
                     .absolute()
                     .top(px(top))
-                    .left(px(ADD_LANE_LEFT))
+                    .left(px(HEADER_INSET))
                     .occlude()
                     .child(lane_menu.menu.clone()),
             );
@@ -3890,8 +3910,8 @@ impl Timeline {
             .flex()
             .items_center()
             .justify_between()
-            .pl(px(24.))
-            .pr(px(12.))
+            .pl(px(NAME_LEFT))
+            .pr(px(HEADER_INSET))
             .occlude()
             .child(div().text_size(px(12.)).text_color(muted).child("Snap"))
             .child(self.snap_menu.clone())
@@ -3901,7 +3921,8 @@ impl Timeline {
 /// Where the arm toggle of an audio track starts in its header: a 24 pt square that ends 8 pt
 /// from the edge, as the icons of a card header do. The name of an audio track ends before it.
 pub(super) const ARM_LEFT: f32 = HEADER_WIDTH - 8. - 24.;
-/// Where the meter of the input of an armed track starts in its header: 45 pt, to 133.
+/// Where the meter of the input of an armed track starts in its header, on the line of its
+/// name: 45 pt, to 133.
 pub(super) const ARMED_METER_LEFT: f32 = 88.;
 /// The meter is the master meter of the transport, 45 x 8.
 pub(super) const ARMED_METER_HEIGHT: f32 = 8.;
@@ -3913,10 +3934,8 @@ const NEW_AUDIO_TRACK: &str = "New audio track";
 const TEMPO_LABEL_ROOM: f32 = 80.;
 /// The name field of a renamed track: a small text input where the name is painted.
 const RENAME_HEIGHT: f32 = 28.;
-/// Its left edge, so that its text starts where the painted name does, 44 pt in.
-const RENAME_LEFT: f32 = 44. - 8.;
-/// The select that adds a lane: its words start where the name of a track does, 44 pt in.
-const ADD_LANE_LEFT: f32 = 44. - 8.;
+/// Its left edge, so that its text starts where the painted name does.
+const RENAME_LEFT: f32 = NAME_LEFT - 8.;
 
 /// What a take shows while it records: the times of its file under each column on screen,
 /// lined up where the composer heard them, and no handles.
@@ -4230,8 +4249,8 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
             if row.selected {
                 // The shape of a clip, in the same place of the row. No accent: it is a fill.
                 let inside = Bounds::new(
-                    top + point(px(8.), px(4.)),
-                    size(px(HEADER_WIDTH - 16.), px(TRACK_HEIGHT - 8.)),
+                    top + point(px(HEADER_INSET), px(4.)),
+                    size(px(HEADER_WIDTH - 2. * HEADER_INSET), px(TRACK_HEIGHT - 8.)),
                 );
                 window.paint_quad(quad(
                     inside,
@@ -4245,8 +4264,8 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
             // Where a dragged track lands: the ring of a drag, on the shape of a selected header.
             if row.lifted {
                 let inside = Bounds::new(
-                    top + point(px(8.), px(4.)),
-                    size(px(HEADER_WIDTH - 16.), px(TRACK_HEIGHT - 8.)),
+                    top + point(px(HEADER_INSET), px(4.)),
+                    size(px(HEADER_WIDTH - 2. * HEADER_INSET), px(TRACK_HEIGHT - 8.)),
                 );
                 let clear = Hsla::transparent_black();
                 let solid = BorderStyle::Solid;
@@ -4255,24 +4274,24 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
             // An audio track keeps the room of its arm toggle, from 144 pt: its name ends 8 pt
             // before it, and before the meter of its input, from 88 pt, while it is armed.
             let name_width = match (row.kind, row.armed) {
-                (TrackKind::Instrument, _) => HEADER_WIDTH - 44. - 16.,
-                (TrackKind::Audio, false) => ARM_LEFT - 8. - 44.,
-                (TrackKind::Audio, true) => ARMED_METER_LEFT - 8. - 44.,
+                (TrackKind::Instrument, _) => HEADER_WIDTH - NAME_LEFT - 2. * HEADER_INSET,
+                (TrackKind::Audio, false) => ARM_LEFT - 8. - NAME_LEFT,
+                (TrackKind::Audio, true) => ARMED_METER_LEFT - 8. - NAME_LEFT,
             };
             // The field over the header shows the name that is being edited.
             let name = match row.renaming {
                 true => SharedString::default(),
                 false => row.name.clone(),
             };
-            let label_size = (TRACK_HEIGHT, name_width);
+            let label_size = (NAME_MIDDLE, name_width);
             paint_track_label(name, row.accent, top, label_size, row.muted, window, cx);
             paint_lanes_toggle(row, top, window, cx);
         }
         // The name of each lane, where the name of its track starts.
         for lane in &scene.lanes {
             let top = headers.origin + point(px(0.), px(lane.y.round()));
-            let origin = top + point(px(44.), px(LANE_HEIGHT / 2. - 9.));
-            let fit = Fit::Truncate(HEADER_WIDTH - 44. - 16.);
+            let origin = top + point(px(NAME_LEFT), px(LANE_HEIGHT / 2. - 9.));
+            let fit = Fit::Truncate(HEADER_WIDTH - NAME_LEFT - 16.);
             let color = lane_text.opacity(if lane.muted { 0.4 } else { 1. });
             let (name, weight) = (lane.name.clone(), FontWeight::NORMAL);
             paint_text(name, origin, 12., weight, color, fit, window, cx);
@@ -4281,7 +4300,7 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
         if let Some(y) = scene.ghosts.as_ref().and_then(|ghosts| ghosts.new_track) {
             let top = headers.origin + point(px(0.), px(y.round()));
             let ring = Bounds::new(
-                top + point(px(24.), px(TRACK_HEIGHT / 2. - 4.)),
+                top + point(px(DOT_LEFT), px(TRACK_HEIGHT / 2. - 4.)),
                 size(px(8.), px(8.)),
             );
             let clear = Hsla::transparent_black();
@@ -4293,8 +4312,8 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
                 muted_ring,
                 BorderStyle::Solid,
             ));
-            let origin = top + point(px(44.), px(TRACK_HEIGHT / 2. - 10.));
-            let fit = Fit::Truncate(HEADER_WIDTH - 44. - 16.);
+            let origin = top + point(px(NAME_LEFT), px(TRACK_HEIGHT / 2. - 10.));
+            let fit = Fit::Truncate(HEADER_WIDTH - NAME_LEFT - 16.);
             let text = SharedString::from(NEW_AUDIO_TRACK);
             paint_text(
                 text,
@@ -4414,22 +4433,35 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
     });
 }
 
-/// The toggle of the lanes of a track, left of its dot: a chevron to the right while they are
-/// folded away, down while they show. Brighter when the track has lanes, so a folded track
-/// says it has automation.
-fn paint_lanes_toggle(row: &TrackRow, top: Point<Pixels>, window: &mut Window, cx: &App) {
+/// The toggle of the lanes of a track, the second line of its header: a chevron under its dot,
+/// to the right while they are folded away and down while they show, and its words under the
+/// name. Brighter when the track has lanes, so a folded track says it has automation.
+fn paint_lanes_toggle(row: &TrackRow, top: Point<Pixels>, window: &mut Window, cx: &mut App) {
     let theme = cx.theme();
     let color = match row.automated {
-        true => theme.gray_900,
+        true => theme.gray_800,
         false => theme.gray_700,
     };
     let color = color.opacity(if row.muted { 0.4 } else { 1. });
-    let middle = TRACK_HEIGHT / 2.;
+    let (x, y) = (DOT_LEFT + 4., LANES_MIDDLE);
     let corners = match row.expanded {
-        true => [(10., middle - 2.), (14., middle + 2.), (18., middle - 2.)],
-        false => [(12., middle - 4.), (16., middle), (12., middle + 4.)],
+        true => [(x - 4., y - 2.), (x, y + 2.), (x + 4., y - 2.)],
+        false => [(x - 2., y - 4.), (x + 2., y), (x - 2., y + 4.)],
     };
     paint_polyline(&corners, top, 1.5, color, window);
+    let origin = top + point(px(NAME_LEFT), px(LANES_MIDDLE - 9.));
+    let fit = Fit::Truncate(LANES_TOGGLE_RIGHT - NAME_LEFT);
+    let label = row.lanes_label.clone();
+    paint_text(
+        label,
+        origin,
+        12.,
+        FontWeight::NORMAL,
+        color,
+        fit,
+        window,
+        cx,
+    );
 }
 
 /// A line through `corners`, from `origin`.

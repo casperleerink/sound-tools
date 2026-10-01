@@ -30,7 +30,7 @@ use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 use super::clipboard::{Copied, CopiedNotes, SharedClipboard};
 use super::gesture::Zone;
 use super::lanes::{Lane, LaneEdit, Shown, Stroke};
-use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, RulerBar, Viewport};
+use super::layout::{HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rect, RulerBar, Viewport};
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
 };
@@ -1515,10 +1515,10 @@ fn paint_roll(scene: &RollScene, bounds: Bounds<Pixels>, window: &mut Window, cx
 
     paint_ruler(&scene.bars, ruler, window, cx);
     // The track of the clip, where the track headers are above.
-    let name_width = HEADER_WIDTH - 44. - 40.;
+    let name_width = HEADER_WIDTH - NAME_LEFT - 40.;
     let name = scene.track_name.clone();
     let top = bounds.origin;
-    let label_size = (RULER_HEIGHT, name_width);
+    let label_size = (RULER_HEIGHT / 2., name_width);
     paint_track_label(name, scene.accent, top, label_size, false, window, cx);
 
     window.with_content_mask(Some(ContentMask { bounds: area }), |window| {

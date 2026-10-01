@@ -14,9 +14,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, Div, ElementId, EventEmitter, FocusHandle, FontWeight, IntoElement, KeyDownEvent,
-    MouseDownEvent, Render, RenderOnce, SharedString, Stateful, StyleRefinement, Styled, Window,
-    div, prelude::*, px,
+    App, Context, Div, ElementId, EventEmitter, FocusHandle, FontWeight, Hsla, IntoElement,
+    KeyDownEvent, MouseDownEvent, Render, RenderOnce, SharedString, Stateful, StyleRefinement,
+    Styled, Window, div, prelude::*, px,
 };
 
 use crate::components::icon::Icon;
@@ -397,8 +397,10 @@ pub enum Trigger {
     /// The shared 32 pt trigger with a border.
     #[default]
     Outline,
-    /// No border or fill, just a hover wash. For the project name.
+    /// No border or fill, just a hover wash.
     Ghost,
+    /// A ghost on `alpha/5`, with a stronger wash under the pointer. For the project name.
+    Subtle,
     /// The title of a device card: a ghost the height of the icons at the other end of the
     /// header, so the hover wash has the same air above and below as theirs.
     Title,
@@ -467,10 +469,9 @@ fn chevron_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
         .hover(move |s| s.bg(hover))
 }
 
-/// Quiet version of the shared trigger: no border or fill, just a hover wash.
-fn ghost_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
-    let theme = cx.theme();
-    let (hover, text) = (theme.alpha_at(0.05), theme.gray_950);
+/// Quiet version of the shared trigger: no border, `fill` (clear for a ghost) and a `hover`
+/// wash.
+fn ghost_trigger(id: &'static str, fill: Hsla, hover: Hsla, cx: &App) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
@@ -479,9 +480,10 @@ fn ghost_trigger(id: &'static str, cx: &App) -> Stateful<Div> {
         .h(px(TRIGGER_HEIGHT))
         .px(px(8.))
         .rounded(px(8.))
+        .bg(fill)
         .text_size(px(14.))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(text)
+        .text_color(cx.theme().gray_950)
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
 }
@@ -510,6 +512,8 @@ pub struct DropdownMenu {
     /// A trigger this wide, its label at the left and its chevron at the right. `None`: as
     /// wide as what it says.
     trigger_width: Option<f32>,
+    /// A trigger this tall. `None`: the height of its kind.
+    trigger_height: Option<f32>,
     /// What a test looks the trigger up by, see `VisualTestContext::debug_bounds`.
     debug_name: Option<SharedString>,
 }
@@ -534,6 +538,7 @@ impl DropdownMenu {
             max_height: None,
             trigger: Trigger::Outline,
             trigger_width: None,
+            trigger_height: None,
             debug_name: None,
         }
     }
@@ -617,6 +622,12 @@ impl DropdownMenu {
 
     /// Changes what the trigger says, for a menu whose label is what it last picked, such as
     /// the instrument of a track.
+    /// Makes the trigger this tall, such as the chevron of a split button that is a row.
+    pub fn set_trigger_height(&mut self, height: f32, cx: &mut Context<Self>) {
+        self.trigger_height = Some(height);
+        cx.notify();
+    }
+
     pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
         let label = label.into();
         if self.label != label {
@@ -697,10 +708,17 @@ impl DropdownMenu {
 impl Render for DropdownMenu {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (side, align, width) = (self.side, self.align, self.width);
-        let trigger_width = self.trigger_width;
+        let (trigger_width, trigger_height) = (self.trigger_width, self.trigger_height);
         let trigger_element = match self.trigger {
             Trigger::Outline => trigger("dropdown-trigger", cx),
-            Trigger::Ghost => ghost_trigger("dropdown-trigger", cx),
+            Trigger::Ghost => {
+                let hover = cx.theme().alpha_at(0.05);
+                ghost_trigger("dropdown-trigger", Hsla::transparent_black(), hover, cx)
+            }
+            Trigger::Subtle => {
+                let (fill, hover) = (cx.theme().alpha_at(0.05), cx.theme().alpha_at(0.10));
+                ghost_trigger("dropdown-trigger", fill, hover, cx)
+            }
             Trigger::Title => title_trigger("dropdown-trigger", cx),
             Trigger::Select => select_trigger("dropdown-trigger", cx),
             Trigger::Chevron => chevron_trigger("dropdown-trigger", cx),
@@ -714,7 +732,7 @@ impl Render for DropdownMenu {
                     12.,
                 )
             }
-            Trigger::Outline | Trigger::Ghost => (self.label.clone(), None, 14.),
+            Trigger::Outline | Trigger::Ghost | Trigger::Subtle => (self.label.clone(), None, 14.),
             // The glyph of the icons beside it.
             Trigger::Title => (self.label.clone(), None, 12.),
             Trigger::Chevron => (self.label.clone(), None, 12.),
@@ -736,6 +754,7 @@ impl Render for DropdownMenu {
                         element.debug_selector(move || name.to_string())
                     })
                     .when_some(trigger_width, |trigger, width| trigger.w(px(width)))
+                    .when_some(trigger_height, |trigger, height| trigger.h(px(height)))
                     .track_focus(&self.trigger_focus)
                     .border_1()
                     .focus_visible(move |s| s.border_color(ring))
