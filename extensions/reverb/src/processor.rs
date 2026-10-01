@@ -305,7 +305,8 @@ impl Reverb {
     }
 
     /// Sets every target from the record and its lanes, each reached in its own ramp. A new
-    /// pre-delay or size is a fade between taps, which takes the glide of an edit.
+    /// pre-delay or size is a fade between taps, which takes the glide of an edit: so a lane of
+    /// them moves in a row of 20 ms fades, as a drag of the knob does.
     fn aim(&mut self, targets: &ReverbTargets) {
         let (state, ramp, rate) = (*self.state, targets.edit(), self.sample_rate);
         let pre_delay = frames_of(state.pre_delay_ms / 1_000.0, rate);
@@ -332,8 +333,14 @@ impl Reverb {
         self.input.set_target(1.0 - frozen, ramp);
         // A number that took its value at once does not move, so nothing else says the
         // factors are old.
-        self.stale |= targets.snaps();
-        self.snapped |= targets.snaps();
+        // And a pre-delay or a size that took the value of its lane at once is there from the
+        // first frame.
+        if targets.snaps() {
+            self.stale = true;
+            self.snapped = true;
+            self.pre_delay_tap.snap();
+            self.line_taps.snap();
+        }
     }
 
     fn smoothers(&mut self) -> [&mut Smoothed; 9] {

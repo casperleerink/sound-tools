@@ -155,6 +155,8 @@ impl Delay {
     }
 
     /// Aims the read at the time of the record at a tempo. The same time again changes nothing.
+    /// A lane of the time moves the read in a row of 20 ms fades between taps, as a drag of the
+    /// knob does, not in a sweep with a pitch slide.
     fn aim_time(&mut self, bpm: f64) {
         let seconds = delay_seconds(&self.state, bpm);
         let frames = frames_of(seconds, self.sample_rate).min(self.longest);
@@ -257,12 +259,17 @@ impl Processor for Delay {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        if let Some(targets) = self.state.follow(context, self.ramp_frames) {
-            self.aim(&targets);
+        let followed = self.state.follow(context, self.ramp_frames);
+        if let Some(targets) = &followed {
+            self.aim(targets);
         }
         let transport = &context.transport;
         let bpm = transport.clock.tempo_at(transport.tick_range.start).bpm();
         self.aim_time(bpm);
+        // A time that took the value of its lane at once reads there from the first frame.
+        if followed.is_some_and(|targets| targets.snaps()) {
+            self.tap.snap();
+        }
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
         let silent_input = left_in.iter().chain(right_in).all(|sample| *sample == 0.0);
         if self.quiet_frames > self.lines[0].frames() {
