@@ -42,14 +42,6 @@ pub enum Incoming {
     Unknown,
 }
 
-/// What can still be read of a line [`Incoming`] cannot read, to keep the turn going.
-#[derive(Debug, Deserialize)]
-pub struct Envelope {
-    #[serde(rename = "type")]
-    pub kind: Option<String>,
-    pub request_id: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
 pub enum System {

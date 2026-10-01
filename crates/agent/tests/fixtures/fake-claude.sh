@@ -20,7 +20,7 @@ malformed)
     echo '{"type": "control_request", "request_id": "broken", "request": 5}'
     read -r answer
     echo "$answer" >"$FAKE_OUTPUT"
-    echo '{"type": "result", "subtype": 5}'
+    echo '{"type": "result", "subtype": 5, "request_id": 7}'
     cat >/dev/null
     ;;
 children)
