@@ -167,6 +167,71 @@ fn alt_during_a_drag_flips_whether_the_automation_goes(cx: &mut TestAppContext) 
     assert_eq!(opened.undo_label().as_deref(), Some("Move clip"));
 }
 
+/// Alt pressed or let go with the pointer still flips it at once.
+#[gpui::test]
+fn alt_flips_it_without_a_mouse_move(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let (from, to) = (opened.at(BAR + 960, 0), opened.at(5 * BAR + 960, 0));
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::default()
+    };
+    opened.press(from);
+    opened.drag_to(to);
+    let moved = points(&mut opened, ONE, "gain_db");
+    assert_ne!(moved, volume());
+    opened.cx.simulate_modifiers_change(alt);
+    opened.cx.run_until_parked();
+    assert_eq!(points(&mut opened, ONE, "gain_db"), volume());
+    assert_eq!(opened.clip(PART).unwrap().start, Ticks(5 * BAR));
+    opened.cx.simulate_modifiers_change(Modifiers::default());
+    opened.cx.run_until_parked();
+    assert_eq!(points(&mut opened, ONE, "gain_db"), moved);
+    opened.release(to);
+    assert_eq!(opened.undo_label().as_deref(), Some("Move clip"));
+}
+
+/// A paste on the same track after the lane of the filter was taken out makes the lane again,
+/// around the cutoff of the record of the filter. With the filter gone, it makes none.
+#[gpui::test]
+fn a_paste_makes_the_filter_lane_again_while_the_filter_is_there(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let part = opened.at(BAR + 960, 0);
+    opened.click(part);
+    opened.keys("cmd-c");
+    let without_lane = |project: &mut sound_core::Project| {
+        let track = project.resolve::<TrackState>(&id(ONE)).unwrap();
+        let mut state = project.state(&track).unwrap().clone();
+        state.automation.retain(|lane| lane.device.is_none());
+        let mut changes = Changes::new();
+        changes.set(&track, state);
+        project.commit("Take the lane out", changes)
+    };
+    opened.edit(without_lane);
+    let ruler = opened.ruler(5 * BAR);
+    opened.click(ruler);
+    opened.settle();
+    opened.keys("cmd-v");
+    let record = FilterState::default().cutoff_hz;
+    let cutoff = points(&mut opened, ONE, "cutoff_hz");
+    assert_eq!(cutoff.first(), Some(&(5 * BAR - 1, record)));
+    assert_eq!(cutoff.last(), Some(&(7 * BAR, record)));
+    assert!(
+        (cutoff[1].1 - (200f32 * 2000.).sqrt()).abs() < 0.1,
+        "{cutoff:?}"
+    );
+
+    opened.keys("cmd-z");
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.delete(&id("arrangement/track-1/dark"));
+        project.commit("Remove the filter", changes)
+    });
+    opened.keys("cmd-v");
+    assert_eq!(points(&mut opened, ONE, "cutoff_hz"), []);
+    assert_eq!(opened.undo_label().as_deref(), Some("Paste clip"));
+}
+
 /// To another track the volume goes along, around the volume of that track, and the sweep
 /// stays: the filter belongs to the first track.
 #[gpui::test]
