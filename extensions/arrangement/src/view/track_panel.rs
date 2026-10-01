@@ -55,13 +55,14 @@ use sound_ui::components::knob::{Knob, KnobRange, pan_readout};
 use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::components::volume::Volume;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, InputLevels, Metering, Recording,
-    Session, Slot, Views, every_poll, weak_action, weak_callback,
+    ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, InputLevels, Lanes, Metering,
+    Recording, Session, Slot, Views, every_poll, weak_action, weak_callback,
 };
 
 use super::clip_card::ClipCard;
 use super::layout::HEADER_WIDTH;
 use super::paint::accent;
+use crate::mixer::{GAIN, PAN};
 use crate::{InputChannels, TrackKind, TrackState};
 
 /// The height of the panel: the cards and 12 pt above and below them.
@@ -358,6 +359,8 @@ pub struct TrackPanel {
     offers: u64,
     /// The gesture of a drag of the volume or the pan.
     edit: ControlEdit,
+    /// What the lanes of the track play into its volume and pan, which then do not drag.
+    lanes: Entity<Lanes>,
     /// Not a tab stop. It tells whether the focus is inside the panel.
     focus_handle: FocusHandle,
     /// The controls of the mixer strip bring their own. A button takes one to be a tab stop
@@ -472,6 +475,7 @@ impl TrackPanel {
         })
         .detach();
         let offers = Devices::offers_generation(cx);
+        let lanes = Lanes::follow(&session, track.id(), cx);
         let mut panel = Self {
             session,
             track: track.clone(),
@@ -480,6 +484,7 @@ impl TrackPanel {
             add_effect,
             offers,
             edit: ControlEdit::default(),
+            lanes,
             focus_handle: cx.focus_handle(),
             close_focus: cx.focus_handle().tab_stop(true),
             rack_scroll: ScrollHandle::new(),
@@ -630,6 +635,9 @@ impl TrackPanel {
     ) {
         self.end_drag(cx);
         self.track = track;
+        let id = self.track.id().clone();
+        self.lanes
+            .update(cx, |lanes, cx| lanes.set_instance(&id, cx));
         self.metering.reset();
         self.devices.clear();
         let project = self.session.read(cx).project();
@@ -930,7 +938,10 @@ impl TrackPanel {
     /// right of it, and mute and solo on the knob line of the second.
     fn mixer_strip(&self, track: &TrackState, cx: &mut Context<Self>) -> Vec<Div> {
         let (peach, yellow) = (cx.theme().peach, cx.theme().yellow);
-        let volume = Volume::new("gain_db", track.gain_db)
+        let lanes = self.lanes.read(cx);
+        let (gain_db, pan) = (lanes.value(GAIN.field), lanes.value(PAN.field));
+        let volume = Volume::new("gain_db", gain_db.unwrap_or(track.gain_db))
+            .automated(gain_db.is_some())
             .level(self.metering.level())
             .on_clear_clip(weak_action(cx, |panel: &mut Self, cx| {
                 panel.metering.clear_clip();
@@ -943,14 +954,16 @@ impl TrackPanel {
                     .edit
                     .apply(session, track, VOLUME_LABEL, change, set, cx);
             }));
+        let shown_pan = pan.unwrap_or(track.pan);
         let pan = Knob::new("pan")
             .range(KnobRange::linear(TrackState::PAN.0, TrackState::PAN.1))
             .bipolar(true)
-            .value(track.pan)
+            .value(shown_pan)
+            .automated(pan.is_some())
             // The middle.
             .default_value(0.)
             .label("Pan")
-            .readout(pan_readout(track.pan))
+            .readout(pan_readout(shown_pan))
             .on_change(weak_callback(cx, |panel, change, cx| {
                 let (session, track) = (&panel.session, &panel.track);
                 let set = |track: &mut TrackState, pan| track.pan = pan;

@@ -248,7 +248,11 @@ impl RenderOnce for Volume {
 
         let on_change = self.on_change.filter(|_| !disabled && !automated);
         let mark_left = (CELL_WIDTH + meter_width) / 2. + MARK_GAP;
-        let mark = automated.then(|| automated::mark(mark_left, 0., cx));
+        let marked = self.id.clone();
+        let mark = automated.then(|| {
+            let mark = automated::mark(mark_left, 0., cx);
+            mark.debug_selector(move || format!("automated-{marked}"))
+        });
         let selector = self.id.clone();
         let fader = div()
             .id(self.id.clone())

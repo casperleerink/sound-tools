@@ -47,6 +47,15 @@ impl Lanes {
         lanes
     }
 
+    /// Follows the lanes of another instance, for a view that shows another one now, such as
+    /// the panel of another track.
+    pub fn set_instance(&mut self, instance: &InstanceId, cx: &mut Context<Self>) {
+        if self.instance != *instance {
+            self.instance = instance.clone();
+            self.refresh(cx);
+        }
+    }
+
     /// The value the lane of the number `field` plays now, `None` when no lane moves it.
     pub fn value(&self, field: &str) -> Option<f32> {
         let mut values = self.values.iter();
