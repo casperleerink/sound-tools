@@ -86,9 +86,7 @@ fn toggle(opened: &mut Opened<'_>) -> gpui::Point<gpui::Pixels> {
 
 fn shows_lanes(opened: &mut Opened<'_>) -> bool {
     let timeline = opened.timeline.clone();
-    opened
-        .cx
-        .read(|cx| timeline.read(cx).shows_lanes(&id(ONE)))
+    opened.cx.read(|cx| timeline.read(cx).shows_lanes(&id(ONE)))
 }
 
 fn lanes(opened: &mut Opened<'_>) -> Vec<AutomationLane> {
@@ -142,8 +140,14 @@ fn the_select_adds_a_lane_in_one_undo_step(cx: &mut TestAppContext) {
     let select = opened.control("add-lane-track-1");
     opened.click(select);
     assert!(opened.find("menu-dark/resonance").is_some());
-    assert!(opened.find("menu-/gain_db").is_none(), "the volume has a lane");
-    assert!(opened.find("menu-dark/cutoff_hz").is_none(), "the cutoff has one");
+    assert!(
+        opened.find("menu-/gain_db").is_none(),
+        "the volume has a lane"
+    );
+    assert!(
+        opened.find("menu-dark/cutoff_hz").is_none(),
+        "the cutoff has one"
+    );
     let pan = opened.control("menu-/pan");
     opened.click(pan);
     assert_eq!(points(&mut opened, "pan"), [(0, 0.)]);

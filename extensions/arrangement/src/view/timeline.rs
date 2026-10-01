@@ -58,9 +58,9 @@ use super::snap::{Grid, SharedSnap, Snap};
 use super::track_lanes;
 use crate::{
     ArrangementState, AudioClip, AutomationLane, AutomationValue, Carried, Colour, FreeIds,
-    LaneMove, TrackKind, TrackState, Travel, add_audio_clips, add_audio_track, add_clip,
-    add_clips, automatable, automation, move_track, moved, top_layer, track_orders, tracks,
-    travel_in, unnumbered,
+    LaneMove, TrackKind, TrackState, Travel, add_audio_clips, add_audio_track, add_clip, add_clips,
+    automatable, automation, move_track, moved, top_layer, track_orders, tracks, travel_in,
+    unnumbered,
 };
 
 struct TrackRow {
@@ -1116,9 +1116,8 @@ impl Timeline {
         let numbers = automatable(project, instance.id(), state);
         let free = numbers.into_iter().filter(|number| {
             let mut lanes = state.automation.iter();
-            let taken = lanes.any(|lane| {
-                lane.device == number.device && lane.parameter == number.field
-            });
+            let taken =
+                lanes.any(|lane| lane.device == number.device && lane.parameter == number.field);
             !taken && number.number.record.is_some()
         });
         let mut groups: Vec<(Option<String>, Vec<MenuItem>)> = Vec::new();
@@ -1645,11 +1644,15 @@ impl Timeline {
         let project = self.session.read(cx).project();
         let travel = travel_in(project);
         let visible = viewport.visible_ticks(width);
-        let before = self.tracks_before_drag().and_then(|tracks| tracks.get(track));
+        let before = self
+            .tracks_before_drag()
+            .and_then(|tracks| tracks.get(track));
         let ghosts = self.lane_ghosts().iter();
         let ghosts: Vec<&LaneGhost> = ghosts.filter(|ghost| ghost.track == *track).collect();
         let lanes = state.automation.iter().map(|lane| {
-            let range = lane.number(track, state, &travel).map(|number| number.range);
+            let range = lane
+                .number(track, state, &travel)
+                .map(|number| number.range);
             let line = |lane: &AutomationLane, ticks: Range<Ticks>| match range {
                 Some(range) => {
                     let points = track_lanes::on_travel(lane, range);
@@ -1667,7 +1670,10 @@ impl Timeline {
                 let replaced = was.map(|was| line(was, ghost.range.clone()));
                 (across, replaced.unwrap_or_default())
             });
-            let name = lane.device.as_ref().map(|device| self.device_name(track, device, cx));
+            let name = lane
+                .device
+                .as_ref()
+                .map(|device| self.device_name(track, device, cx));
             LaneShape {
                 y: 0.,
                 name: track_lanes::lane_name(name.as_deref(), &lane.parameter).into(),
@@ -3820,7 +3826,13 @@ impl Timeline {
                     return;
                 }
                 let everywhere = Ticks(0)..Ticks(u64::MAX);
-                drawn.extend(drawn_between(&viewport, everywhere, &grid, *last, (x, in_lane)));
+                drawn.extend(drawn_between(
+                    &viewport,
+                    everywhere,
+                    &grid,
+                    *last,
+                    (x, in_lane),
+                ));
                 *last = (x, in_lane);
                 LaneEdit::Draw(drawn)
             }
@@ -3848,7 +3860,9 @@ impl Timeline {
         // The lane in its place among the lanes of the track now, from where it was at mouse
         // down. An erase of every point takes it away, and a drag back puts it back there.
         let mut automation = state.automation.clone();
-        let at = automation.iter().position(|lane| lane.same_number(&drag.origin));
+        let at = automation
+            .iter()
+            .position(|lane| lane.same_number(&drag.origin));
         match (at, next) {
             (Some(at), Some(lane)) => automation[at] = lane,
             (Some(at), None) => {
@@ -4323,19 +4337,22 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
     window.paint_quad(fill(under_ruler, hairline));
     window.paint_quad(fill(beside_headers, hairline));
     // A hairline over each lane, across the header and the timeline.
-    let under_ruler_area = Bounds::new(
-        headers.origin,
-        size(bounds.size.width, headers.size.height),
+    let under_ruler_area =
+        Bounds::new(headers.origin, size(bounds.size.width, headers.size.height));
+    window.with_content_mask(
+        Some(ContentMask {
+            bounds: under_ruler_area,
+        }),
+        |window| {
+            for lane in &scene.lanes {
+                let line = Bounds::new(
+                    headers.origin + point(px(0.), px(lane.y.round())),
+                    size(bounds.size.width, px(1.)),
+                );
+                window.paint_quad(fill(line, hairline));
+            }
+        },
     );
-    window.with_content_mask(Some(ContentMask { bounds: under_ruler_area }), |window| {
-        for lane in &scene.lanes {
-            let line = Bounds::new(
-                headers.origin + point(px(0.), px(lane.y.round())),
-                size(bounds.size.width, px(1.)),
-            );
-            window.paint_quad(fill(line, hairline));
-        }
-    });
 
     let assets = scene.assets.clone();
     window.with_content_mask(Some(ContentMask { bounds: timeline }), |window| {
@@ -4464,7 +4481,10 @@ fn paint_lane(lane: &LaneShape, timeline: Bounds<Pixels>, window: &mut Window) {
     for (across, replaced) in &lane.ghosts {
         let band = Bounds::new(
             origin + point(px(across.start.round()), px(1.)),
-            size(px((across.end - across.start).round().max(1.)), px(LANE_HEIGHT - 1.)),
+            size(
+                px((across.end - across.start).round().max(1.)),
+                px(LANE_HEIGHT - 1.),
+            ),
         );
         window.paint_quad(fill(band, lane.accent.opacity(0.08 * opacity)));
         let faded = lane.accent.opacity(0.3 * opacity);
@@ -4472,7 +4492,13 @@ fn paint_lane(lane: &LaneShape, timeline: Bounds<Pixels>, window: &mut Window) {
             paint_polyline(replaced, origin, 1.5, faded, window);
         });
     }
-    paint_polyline(&lane.line, origin, 1.5, lane.accent.opacity(opacity), window);
+    paint_polyline(
+        &lane.line,
+        origin,
+        1.5,
+        lane.accent.opacity(opacity),
+        window,
+    );
 }
 
 /// The mark of a dragged clip whose automation goes along while its lanes are folded away: a

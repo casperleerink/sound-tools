@@ -102,7 +102,10 @@ pub fn edited(
             before.copied().chain(line).chain(after.copied()).collect()
         }
         LaneEdit::Erase(ticks) => {
-            let kept = origin.points.iter().filter(|point| !ticks.contains(&point.tick));
+            let kept = origin
+                .points
+                .iter()
+                .filter(|point| !ticks.contains(&point.tick));
             kept.copied().collect()
         }
         LaneEdit::Clear => Vec::new(),
@@ -217,7 +220,13 @@ mod tests {
         // Halfway up a logarithmic knob from 20 Hz to 20 kHz is 632 Hz, with three digits.
         assert_eq!(
             values(&drawn_lane),
-            [(0, 200.), (500, 632.), (1500, 632.), (2500, 20000.), (5000, 1000.)]
+            [
+                (0, 200.),
+                (500, 632.),
+                (1500, 632.),
+                (2500, 20000.),
+                (5000, 1000.)
+            ]
         );
         assert_eq!(drawn_lane.device, origin.device);
         // A number the project does not know is not drawn in.
@@ -264,9 +273,15 @@ mod tests {
         assert_eq!(lane_name(None, "gain_db"), "Volume");
         assert_eq!(lane_name(None, "pan"), "Pan");
         assert_eq!(lane_name(Some("Filter"), "cutoff_hz"), "Filter · Cutoff");
-        assert_eq!(lane_name(Some("Filter"), "lfo_rate_hz"), "Filter · LFO rate");
+        assert_eq!(
+            lane_name(Some("Filter"), "lfo_rate_hz"),
+            "Filter · LFO rate"
+        );
         assert_eq!(lane_name(Some("EQ"), "q"), "EQ · Q");
-        assert_eq!(lane_name(Some("Wavetable"), "filter_1.cutoff"), "Wavetable · Filter 1 cutoff");
+        assert_eq!(
+            lane_name(Some("Wavetable"), "filter_1.cutoff"),
+            "Wavetable · Filter 1 cutoff"
+        );
         assert_eq!(lane_name(Some("Synth"), "decay_seconds"), "Synth · Decay");
     }
 
