@@ -113,8 +113,13 @@ impl Smoothed {
         }
     }
 
-    /// Aims at `target`, reached in `ramp_frames` frames from where the value is now.
+    /// Aims at `target`, reached in `ramp_frames` frames from where the value is now. The
+    /// target it already aims at keeps its ramp, so a processor that sets every target again
+    /// when one of them changes cuts no other glide short.
     pub fn set_target(&mut self, target: f32, ramp_frames: f32) {
+        if target == self.target {
+            return;
+        }
         self.target = target;
         self.step_per_frame = (target - self.current).abs() / ramp_frames;
     }
