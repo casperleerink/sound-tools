@@ -54,7 +54,8 @@ use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOO
 
 pub use audio::AudioClip;
 pub use automation::{
-    AutomationLane, AutomationValue, Carried, LaneMove, Travel, moved, travel_in,
+    Automatable, AutomationLane, AutomationValue, Carried, LaneMove, Travel, automatable, moved,
+    travel_in,
 };
 pub use input::InputChannels;
 use master::Master;

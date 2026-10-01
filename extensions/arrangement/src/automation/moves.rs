@@ -90,6 +90,12 @@ impl Carried {
         self.range.end.saturating_sub(self.range.start)
     }
 
+    /// Whether the clip takes any lane along to the track `to`: what a drag shows while it
+    /// goes on.
+    pub fn goes_to(&self, to: &InstanceId) -> bool {
+        self.lanes.iter().any(|lane| self.takes(lane, to))
+    }
+
     /// Whether the clip takes the lane of `number` along to the track `to`: when it carries
     /// it, and it is the volume or the pan, or `to` is the track it came from.
     fn takes(&self, number: &AutomationLane, to: &InstanceId) -> bool {
@@ -283,6 +289,19 @@ pub(crate) fn write(
     }
 }
 
+impl AutomationLane {
+    /// The number this lane of `track`, whose record is `state`, moves. `None` for one the
+    /// project does not know.
+    pub fn number(
+        &self,
+        track: &InstanceId,
+        state: &TrackState,
+        travel: &Travel<'_>,
+    ) -> Option<AutomatedNumber> {
+        number(track, &Mix::of(state), self, travel)
+    }
+}
+
 /// Whether two lanes move the same number.
 fn same_number(a: &AutomationLane, b: &AutomationLane) -> bool {
     a.device == b.device && a.parameter == b.parameter
@@ -305,11 +324,16 @@ fn number(
     travel: &Travel<'_>,
 ) -> Option<AutomatedNumber> {
     match &lane.device {
-        None => track_parameter(lane).map(|parameter| AutomatedNumber {
-            range: ValueRange::of(parameter),
-            record: Some((parameter.get)(mix)),
-        }),
+        None => track_parameter(lane).map(|parameter| own_number(parameter, mix)),
         Some(device) => travel(&track.child(device).ok()?, &lane.parameter),
+    }
+}
+
+/// The volume or the pan of a track whose mix is `mix`, as a lane of it moves it.
+pub(super) fn own_number(parameter: &Parameter<Mix>, mix: &Mix) -> AutomatedNumber {
+    AutomatedNumber {
+        range: ValueRange::of(parameter),
+        record: Some((parameter.get)(mix)),
     }
 }
 

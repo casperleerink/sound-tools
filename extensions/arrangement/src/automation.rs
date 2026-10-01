@@ -17,16 +17,19 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sound_core::{
-    Automation, BehaviourContext, BehaviourError, EventOutput, InputEndpoint, OutputEndpoint,
-    ParameterInfo, Ports, PrepareConfig, ProcessContext, Processor, ValueRange,
+    AutomatedNumber, Automation, BehaviourContext, BehaviourError, EventOutput, InputEndpoint,
+    InstanceId, OutputEndpoint, ParameterInfo, Ports, PrepareConfig, ProcessContext, Processor,
+    Project, ValueRange,
 };
 use sound_notes::{Point, check_order, value_at};
 
+use moves::own_number;
 pub(crate) use moves::write;
 pub use moves::{Carried, LaneMove, Travel, clear, moved, travel_in};
 
+use crate::TrackState;
 use crate::decibels;
-use crate::mixer::Mixer;
+use crate::mixer::{Mix, Mixer};
 
 /// The output of a track that carries the lanes of the track itself, to its mixer.
 pub(crate) const TRACK_AUTOMATION: &str = "automation";
@@ -116,6 +119,44 @@ impl AutomationLane {
             point.value.0
         ))
     }
+}
+
+/// A number of a track that a lane can move: of one of its devices, by its name, or of the
+/// track itself, with its range and its value in the record.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Automatable {
+    /// `None` for the volume and the pan of the track.
+    pub device: Option<String>,
+    pub field: &'static str,
+    pub number: AutomatedNumber,
+}
+
+/// Every number of `track`, whose record is `state`, that a lane can move: its own volume and
+/// pan, then those of its instrument and of its effects in the order of the chain, as their
+/// behaviours named them.
+pub fn automatable(project: &Project, track: &InstanceId, state: &TrackState) -> Vec<Automatable> {
+    let mix = Mix::of(state);
+    let own = Mixer::AUTOMATION.parameters().iter();
+    let own = own.map(|parameter| Automatable {
+        device: None,
+        field: parameter.field,
+        number: own_number(parameter, &mix),
+    });
+    let effects = state.effects.iter().map(|slot| slot.name.as_str());
+    let devices = std::iter::once(crate::INSTRUMENT).chain(effects);
+    let devices = devices.filter_map(|name| Some((name, track.child(name).ok()?)));
+    let of_devices = devices.flat_map(|(name, device)| {
+        let fields: Vec<&'static str> = project.automatable(&device).collect();
+        let numbers = fields.into_iter().filter_map(|field| {
+            Some(Automatable {
+                device: Some(name.to_string()),
+                field,
+                number: project.automation(&device, field)?,
+            })
+        });
+        numbers.collect::<Vec<_>>()
+    });
+    own.chain(of_devices).collect()
 }
 
 /// One automation lane as it plays: the index of its number, its range, and its points as
