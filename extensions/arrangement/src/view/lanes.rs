@@ -6,6 +6,9 @@
 //! drag draws a new line over the ticks it passes, alt and a drag erase the points between the
 //! press and the pointer, and a double click clears the lane. Each works from the lane as it
 //! was at mouse down, so a drag there and back ends where it began.
+//!
+//! The automation lanes of the timeline are drawn and erased the same way: with a [`Stroke`],
+//! into a [`LaneBox`], by a [`LaneEdit`].
 
 use std::collections::BTreeMap;
 use std::iter::once;
@@ -20,6 +23,9 @@ use super::snap::Grid;
 
 /// How far apart a drag draws points when it does not snap, in pixels.
 const DRAW_SPACING: f32 = 4.0;
+/// How far the pointer moves before a press in a lane draws or erases, in pixels. The
+/// automation lanes of the timeline wait as long.
+pub const DRAG_THRESHOLD: f32 = 3.0;
 
 /// What the lane under the pitch rows shows. Interface state: not saved, no undo step.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -58,7 +64,33 @@ impl Shown {
     }
 }
 
-/// What a gesture in a lane does to its points, in ticks of the clip.
+/// Where a lane draws its values: from `top`, the highest, down to `bottom`, the lowest, in
+/// the coordinates of the lane.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct LaneBox {
+    pub top: f32,
+    pub bottom: f32,
+}
+
+impl LaneBox {
+    /// The height of a share of the range, from 0 at the bottom to 1 at the top.
+    pub fn y_of(self, share: f32) -> f32 {
+        self.bottom - (self.bottom - self.top) * share.clamp(0.0, 1.0)
+    }
+
+    /// The share of the range at height `y`. Above the box it is 1, below it 0.
+    pub fn share_at(self, y: f32) -> f32 {
+        ((self.bottom - y) / (self.bottom - self.top)).clamp(0.0, 1.0)
+    }
+}
+
+/// The box of the lane under the pitch rows, with the air of a velocity bar.
+const EXPRESSION_BOX: LaneBox = LaneBox {
+    top: VELOCITY_TOP,
+    bottom: VELOCITY_HEIGHT - VELOCITY_BOTTOM,
+};
+
+/// What a gesture in a lane does to its points, in the ticks of the lane.
 pub enum LaneEdit<'a> {
     /// The points from the first to the last tick drawn give way to the line drawn, thinned.
     /// The line is the height of the pointer in the lane at each tick it drew.
@@ -70,7 +102,14 @@ pub enum LaneEdit<'a> {
 }
 
 impl LaneEdit<'_> {
-    fn applied<V: ExpressionValue>(&self, points: &[Point<V>]) -> Vec<Point<V>> {
+    /// `points` changed by this edit. A drawn height becomes a value by `value_at`, and the
+    /// line drawn is thinned by `thin`.
+    pub fn applied<V: Copy>(
+        &self,
+        points: &[Point<V>],
+        value_at: impl Fn(f32) -> V,
+        thin: impl Fn(&[Point<V>]) -> Vec<Point<V>>,
+    ) -> Vec<Point<V>> {
         match self {
             Self::Draw(drawn) => {
                 let (Some((&first, _)), Some((&last, _))) =
@@ -82,14 +121,14 @@ impl LaneEdit<'_> {
                     .iter()
                     .map(|(tick, y)| Point {
                         tick: *tick,
-                        value: value_at_y(*y),
+                        value: value_at(*y),
                     })
                     .collect();
                 let before = points.iter().filter(|point| point.tick < first);
                 let after = points.iter().filter(|point| point.tick > last);
                 before
                     .copied()
-                    .chain(thinned(&line))
+                    .chain(thin(&line))
                     .chain(after.copied())
                     .collect()
             }
@@ -106,11 +145,14 @@ impl Lane {
     /// `clip` with this lane of `origin` changed by `edit`. The rest of `clip` stays as it is,
     /// also what changed in it since `origin`, and the lane fits it when it got shorter.
     pub fn edit(self, clip: &mut Clip, origin: &Clip, edit: &LaneEdit) {
+        fn applied<V: ExpressionValue>(edit: &LaneEdit, points: &[Point<V>]) -> Vec<Point<V>> {
+            edit.applied(points, value_at_y, thinned)
+        }
         let inside = Ticks(0)..clip.length.ticks();
         match self {
-            Self::Bend => clip.bend = cut(&edit.applied(&origin.bend), inside),
-            Self::ModWheel => clip.mod_wheel = cut(&edit.applied(&origin.mod_wheel), inside),
-            Self::Pressure => clip.pressure = cut(&edit.applied(&origin.pressure), inside),
+            Self::Bend => clip.bend = cut(&applied(edit, &origin.bend), inside),
+            Self::ModWheel => clip.mod_wheel = cut(&applied(edit, &origin.mod_wheel), inside),
+            Self::Pressure => clip.pressure = cut(&applied(edit, &origin.pressure), inside),
         }
     }
 
@@ -180,26 +222,126 @@ fn line<V: ExpressionValue>(
 /// The height in the lane of a value: the lowest at the bottom, the highest at the top, with
 /// the air of a velocity bar.
 pub fn lane_y<V: ExpressionValue>(value: V) -> f32 {
-    let bottom = VELOCITY_HEIGHT - VELOCITY_BOTTOM;
     let share = (value.number() - V::LOWEST) as f32 / (V::HIGHEST - V::LOWEST) as f32;
-    bottom - (bottom - VELOCITY_TOP) * share
+    EXPRESSION_BOX.y_of(share)
 }
 
 /// The value at height `y` in the lane. Above the lane it is the highest, below the lowest.
 pub fn value_at_y<V: ExpressionValue>(y: f32) -> V {
-    let bottom = VELOCITY_HEIGHT - VELOCITY_BOTTOM;
-    let share = ((bottom - y) / (bottom - VELOCITY_TOP)).clamp(0.0, 1.0);
+    let share = EXPRESSION_BOX.share_at(y);
     let span = (V::HIGHEST - V::LOWEST) as f32;
     V::nearest(i64::from(V::LOWEST) + (share * span).round() as i64)
 }
 
-/// What a drag draws between two places in the lane, `(x, y)` from the last move to this one:
-/// the ticks of the clip it passes, each with the height of the pointer there. On the grid
-/// lines when the grid snaps, the one nearest the pointer included, else every few pixels.
-/// Inside the clip only.
+/// A drag across a lane, from mouse down to mouse up: the line it draws, or with alt the
+/// points it erases. The ticks of the lane count from `start`, the start of a clip or tick 0,
+/// and it draws only in the project ticks `inside`.
+pub struct Stroke {
+    start: Ticks,
+    inside: Range<Ticks>,
+    kind: StrokeKind,
+}
+
+enum StrokeKind {
+    /// The height of the pointer at each tick of the lane it passed, and where it was at the
+    /// last mouse move.
+    Draw {
+        drawn: BTreeMap<Ticks, f32>,
+        last: (f32, f32),
+    },
+    /// The project tick of the press, and the ticks between it and the pointer, on the grid
+    /// when it snaps, once the pointer has moved.
+    Erase {
+        from: Ticks,
+        covered: Option<(Ticks, Ticks)>,
+    },
+}
+
+impl Stroke {
+    /// A press at `(x, y)` in a lane: with `erase` it erases, else it draws.
+    pub fn new(
+        erase: bool,
+        start: Ticks,
+        inside: Range<Ticks>,
+        viewport: &Viewport,
+        (x, y): (f32, f32),
+    ) -> Self {
+        let kind = match erase {
+            true => StrokeKind::Erase {
+                from: viewport.tick_at(x),
+                covered: None,
+            },
+            false => StrokeKind::Draw {
+                drawn: BTreeMap::new(),
+                last: (x, y),
+            },
+        };
+        Self {
+            start,
+            inside,
+            kind,
+        }
+    }
+
+    /// One mouse move to `(x, y)` in the lane. Whether the stroke is under way, so that
+    /// [`Self::edit`] says what it does: a hand that moves a little during a click does
+    /// nothing.
+    pub fn moved(&mut self, viewport: &Viewport, grid: &Grid, (x, y): (f32, f32)) -> bool {
+        match &mut self.kind {
+            StrokeKind::Draw { drawn, last } => {
+                let still =
+                    (x - last.0).abs() < DRAG_THRESHOLD && (y - last.1).abs() < DRAG_THRESHOLD;
+                if drawn.is_empty() && still {
+                    return false;
+                }
+                let passed = drawn_between(viewport, self.inside.clone(), grid, *last, (x, y));
+                let start = self.start;
+                drawn.extend(
+                    passed
+                        .into_iter()
+                        .map(|(tick, y)| (tick.saturating_sub(start), y)),
+                );
+                *last = (x, y);
+            }
+            StrokeKind::Erase { from, covered } => {
+                if covered.is_none() && (x - viewport.x_of(*from)).abs() < DRAG_THRESHOLD {
+                    return false;
+                }
+                let to = viewport.tick_at(x);
+                let (from, to) = match grid.snaps() {
+                    true => (grid.snap(*from), grid.snap(to)),
+                    false => (*from, to),
+                };
+                *covered = Some(if from <= to { (from, to) } else { (to, from) });
+            }
+        }
+        true
+    }
+
+    /// What the stroke does to the lane, in the ticks of the lane.
+    pub fn edit(&self) -> LaneEdit<'_> {
+        match &self.kind {
+            StrokeKind::Draw { drawn, .. } => LaneEdit::Draw(drawn),
+            // All of it before the lane, or no move yet, erases nothing.
+            StrokeKind::Erase { covered, .. } => {
+                let covered = covered.and_then(|(first, last)| {
+                    let end = last.0.checked_sub(self.start.0)?;
+                    Some(first.saturating_sub(self.start)..=Ticks(end))
+                });
+                LaneEdit::Erase(covered.unwrap_or(Ticks(1)..=Ticks(0)))
+            }
+        }
+    }
+}
+
+/// What a drag draws between two places in a lane, `(x, y)` from the last move to this one:
+/// the ticks it passes, each with the height of the pointer there. On the grid lines when the
+/// grid snaps, the one nearest the pointer included, else every few pixels. Only ticks
+/// `inside`, such as those of a clip, and in project ticks. The automation lanes of the
+/// timeline draw the same way.
 pub fn drawn_between(
     viewport: &Viewport,
-    clip: &Clip,
+    inside: Range<Ticks>,
     grid: &Grid,
     from: (f32, f32),
     to: (f32, f32),
@@ -234,16 +376,10 @@ pub fn drawn_between(
             .map(|x| viewport.tick_at(x))
             .collect()
     };
-    let inside = clip.start..clip.end();
     ticks
         .into_iter()
         .filter(|tick| inside.contains(tick))
-        .map(|tick| {
-            (
-                tick.saturating_sub(clip.start),
-                height_at(viewport.x_of(tick)),
-            )
-        })
+        .map(|tick| (tick, height_at(viewport.x_of(tick))))
         .collect()
 }
 
@@ -257,6 +393,21 @@ mod tests {
 
     fn clip() -> Clip {
         Clip::new(Ticks(3840), Length::new(Ticks(3840)).unwrap(), Vec::new())
+    }
+
+    /// What a drag draws in the clip, in ticks of the clip.
+    fn drawn_in_clip(
+        viewport: &Viewport,
+        grid: &Grid,
+        from: (f32, f32),
+        to: (f32, f32),
+    ) -> Vec<(Ticks, f32)> {
+        let clip = clip();
+        let drawn = drawn_between(viewport, clip.start..clip.end(), grid, from, to);
+        let drawn = drawn.into_iter();
+        drawn
+            .map(|(tick, y)| (tick.saturating_sub(clip.start), y))
+            .collect()
     }
 
     /// A quarter is 96 pixels, and tick 3840 is at the left edge of the lane.
@@ -300,20 +451,19 @@ mod tests {
     fn a_snapped_drag_draws_on_the_grid_lines_it_passes() {
         let grid = Snap::Sixteenth.grid(&TimeSignatures::default());
         let viewport = viewport();
-        let clip = clip();
         let x = |tick: u64| viewport.x_of(Ticks(3840 + tick));
-        let drawn = drawn_between(&viewport, &clip, &grid, (x(0), 10.0), (x(700), 30.0));
+        let drawn = drawn_in_clip(&viewport, &grid, (x(0), 10.0), (x(700), 30.0));
         let ticks: Vec<u64> = drawn.iter().map(|(tick, _)| tick.0).collect();
         assert_eq!(ticks, [720, 0, 240, 480]);
         // A small move inside a cell draws only the line nearest the pointer, not the one it
         // did not cross.
-        let small = drawn_between(&viewport, &clip, &grid, (x(230), 10.0), (x(235), 10.0));
+        let small = drawn_in_clip(&viewport, &grid, (x(230), 10.0), (x(235), 10.0));
         let ticks: Vec<u64> = small.iter().map(|(tick, _)| tick.0).collect();
         assert_eq!(ticks, [240]);
         let (_, height) = drawn[2];
         assert!((height - (10.0 + 20.0 * 240.0 / 700.0)).abs() < 0.01);
         // Left of the clip draws nothing there.
-        let before = drawn_between(&viewport, &clip, &grid, (x(0) - 50.0, 10.0), (x(0), 10.0));
+        let before = drawn_in_clip(&viewport, &grid, (x(0) - 50.0, 10.0), (x(0), 10.0));
         let ticks: Vec<u64> = before.iter().map(|(tick, _)| tick.0).collect();
         assert_eq!(ticks, [0, 0]);
     }
@@ -324,7 +474,7 @@ mod tests {
         let grid = Snap::Sixteenth.grid(&TimeSignatures::default()).free();
         let viewport = viewport();
         let from = viewport.x_of(Ticks(3840 + 100));
-        let drawn = drawn_between(&viewport, &clip(), &grid, (from, 10.0), (from + 20.0, 10.0));
+        let drawn = drawn_in_clip(&viewport, &grid, (from, 10.0), (from + 20.0, 10.0));
         // 96 pixels a quarter is 10 ticks a pixel.
         let ticks: Vec<u64> = drawn.iter().map(|(tick, _)| tick.0).collect();
         assert_eq!(ticks, [100, 140, 180, 220, 260, 300, 300]);

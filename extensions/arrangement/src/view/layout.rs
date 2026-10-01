@@ -3,6 +3,9 @@
 //!
 //! The coordinates are those of the timeline area: `x` 0 is its left edge, right of the
 //! track headers, and `y` 0 is its top edge, below the ruler. Sizes follow the 8 px grid.
+//!
+//! A track row is the track and, while it shows them, its automation lanes under it and a row
+//! that adds one, so rows have heights of their own: [`Rows`].
 
 use std::ops::Range;
 
@@ -11,7 +14,12 @@ use sound_notes::Clip;
 
 pub const HEADER_WIDTH: f32 = 176.0;
 pub const RULER_HEIGHT: f32 = 32.0;
+/// The height of a track, without the lanes under it.
 pub const TRACK_HEIGHT: f32 = 64.0;
+/// The height of an automation lane under a track.
+pub const LANE_HEIGHT: f32 = 48.0;
+/// The row under the lanes of a track that holds the select that adds one.
+pub const ADD_LANE_HEIGHT: f32 = 40.0;
 /// The row under the last track that holds the add track button. The scroll reaches it.
 pub const ADD_ROW_HEIGHT: f32 = 40.0;
 /// Tick 0 sits this far into the timeline area, so the start of the piece, its bar number and
@@ -37,12 +45,125 @@ pub fn shifted(tick: Ticks, delta: i64) -> Ticks {
     Ticks(tick.0.saturating_add_signed(delta))
 }
 
-/// The track rows between two heights from the top of the first track, both rows included:
-/// what a rectangle drawn over the tracks touches. Only rows that exist.
-pub fn rows_between(a: f64, b: f64, tracks: usize) -> Range<usize> {
-    let row = |y: f64| (y / f64::from(TRACK_HEIGHT)).floor().max(0.0) as usize;
-    let (top, bottom) = if a <= b { (a, b) } else { (b, a) };
-    row(top).min(tracks)..(row(bottom) + 1).min(tracks)
+/// What a height in a track row is.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Part {
+    /// The track itself, with its clips.
+    Track,
+    /// One of its automation lanes, by its place under the track.
+    Lane(usize),
+    /// The row under its lanes that adds one.
+    AddLane,
+}
+
+/// The track rows, top to bottom: each a track, and under it its automation lanes and the row
+/// that adds one while it shows them. Heights from the top of the first track, in `f64` as
+/// the scroll is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rows {
+    /// How many lanes each track shows, `None` while they are folded away.
+    shown: Vec<Option<usize>>,
+    /// The top of each row, and the bottom of the last one at the end.
+    tops: Vec<f64>,
+}
+
+impl Rows {
+    /// The rows of tracks that each show this many lanes, or `None` with their lanes folded
+    /// away.
+    pub fn new(shown: impl IntoIterator<Item = Option<usize>>) -> Self {
+        let shown: Vec<Option<usize>> = shown.into_iter().collect();
+        let mut tops = vec![0.0];
+        for lanes in &shown {
+            let height = match lanes {
+                None => TRACK_HEIGHT,
+                Some(lanes) => TRACK_HEIGHT + *lanes as f32 * LANE_HEIGHT + ADD_LANE_HEIGHT,
+            };
+            let bottom = tops.last().copied().unwrap_or_default();
+            tops.push(bottom + f64::from(height));
+        }
+        Self { shown, tops }
+    }
+
+    /// Tracks that all have their lanes folded away.
+    pub fn folded(tracks: usize) -> Self {
+        Self::new(std::iter::repeat_n(None, tracks))
+    }
+
+    pub fn len(&self) -> usize {
+        self.shown.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shown.is_empty()
+    }
+
+    /// How many lanes a track shows, `None` while they are folded away.
+    pub fn lanes(&self, track: usize) -> Option<usize> {
+        self.shown.get(track).copied().flatten()
+    }
+
+    /// The top of a row. Of the row after the last, or past it, the bottom of the last.
+    pub fn top(&self, track: usize) -> f64 {
+        let top = self.tops.get(track).or(self.tops.last());
+        top.copied().unwrap_or_default()
+    }
+
+    /// The top of a lane of a track.
+    pub fn lane_top(&self, track: usize, lane: usize) -> f64 {
+        self.top(track) + f64::from(TRACK_HEIGHT + lane as f32 * LANE_HEIGHT)
+    }
+
+    /// The height of every row together.
+    pub fn height(&self) -> f64 {
+        self.top(self.len())
+    }
+
+    /// The row at a height: above the first it is the first, and below the last it is the
+    /// count of rows.
+    fn row_of(&self, y: f64) -> usize {
+        let past = self.tops.partition_point(|top| *top <= y.max(0.0));
+        past.saturating_sub(1).min(self.len())
+    }
+
+    /// The row at a height. `None` above the first and below the last.
+    pub fn row_at(&self, y: f64) -> Option<usize> {
+        let row = self.row_of(y);
+        (y >= 0.0 && row < self.len()).then_some(row)
+    }
+
+    /// The row at a height and what is there in it. `None` above the first and below the last.
+    pub fn part_at(&self, y: f64) -> Option<(usize, Part)> {
+        let row = self.row_at(y)?;
+        let below_track = y - self.top(row) - f64::from(TRACK_HEIGHT);
+        if below_track < 0.0 {
+            return Some((row, Part::Track));
+        }
+        let lane = (below_track / f64::from(LANE_HEIGHT)).floor() as usize;
+        match lane < self.lanes(row).unwrap_or(0) {
+            true => Some((row, Part::Lane(lane))),
+            false => Some((row, Part::AddLane)),
+        }
+    }
+
+    /// The row of a drag: above the first track is the first, below the last is the last.
+    /// `None` without tracks.
+    pub fn nearest(&self, y: f64) -> Option<usize> {
+        let last = self.len().checked_sub(1)?;
+        Some(self.row_of(y).min(last))
+    }
+
+    /// The rows between two heights, both rows included: what a rectangle drawn over the tracks
+    /// touches. Only rows that exist.
+    pub fn between(&self, a: f64, b: f64) -> Range<usize> {
+        let (top, bottom) = if a <= b { (a, b) } else { (b, a) };
+        self.row_of(top)..(self.row_of(bottom) + 1).min(self.len())
+    }
+
+    /// The rows from `from` down to `to`, whole or in part.
+    fn overlapping(&self, from: f64, to: f64) -> Range<usize> {
+        let end = self.tops.partition_point(|top| *top < to).min(self.len());
+        self.row_of(from).min(end)..end
+    }
 }
 
 /// A bar with a mark and a number in the ruler, see [`Viewport::ruler_bars`].
@@ -78,11 +199,12 @@ impl Rect {
     }
 }
 
-/// How much there is to scroll over: the end of the last clip and the number of tracks.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+/// How much there is to scroll over: the end of the last clip and the height of the track
+/// rows.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Extent {
     pub end: Ticks,
-    pub tracks: usize,
+    pub height: f64,
 }
 
 /// Zoom and scroll: interface state, never saved. Scroll is in pixels from tick 0 and from
@@ -120,23 +242,36 @@ impl Viewport {
         Ticks(tick.round().max(0.0) as u64)
     }
 
-    /// The top of a track row.
-    pub fn y_of(&self, track: usize) -> f32 {
-        (track as f64 * f64::from(TRACK_HEIGHT) - self.scroll_y) as f32
+    /// Where a height from the top of the first track is on screen.
+    pub fn y_at(&self, top: f64) -> f32 {
+        (top - self.scroll_y) as f32
     }
 
-    /// The index of the track row at `y`. `None` above the first and below the last.
-    pub fn track_at(&self, y: f32, tracks: usize) -> Option<usize> {
-        let row = ((f64::from(y) + self.scroll_y) / f64::from(TRACK_HEIGHT)).floor();
-        (row >= 0.0 && (row as usize) < tracks).then_some(row as usize)
+    /// The height from the top of the first track that is at `y` on screen.
+    pub fn content_y(&self, y: f32) -> f64 {
+        f64::from(y) + self.scroll_y
+    }
+
+    /// The top of a track row.
+    pub fn y_of(&self, rows: &Rows, track: usize) -> f32 {
+        self.y_at(rows.top(track))
+    }
+
+    /// The index of the track row at `y`, lanes included. `None` above the first and below
+    /// the last.
+    pub fn track_at(&self, rows: &Rows, y: f32) -> Option<usize> {
+        rows.row_at(self.content_y(y))
+    }
+
+    /// The track row at `y` and what is there in it.
+    pub fn part_at(&self, rows: &Rows, y: f32) -> Option<(usize, Part)> {
+        rows.part_at(self.content_y(y))
     }
 
     /// The row of a drag: above the first track is the first, below the last is the last.
     /// `None` without tracks.
-    pub fn nearest_track(&self, y: f32, tracks: usize) -> Option<usize> {
-        let row = ((f64::from(y) + self.scroll_y) / f64::from(TRACK_HEIGHT)).floor();
-        let last = tracks.checked_sub(1)?;
-        Some((row.max(0.0) as usize).min(last))
+    pub fn nearest_track(&self, rows: &Rows, y: f32) -> Option<usize> {
+        rows.nearest(self.content_y(y))
     }
 
     /// The ticks a timeline area of this width shows. A clip is visible when it overlaps.
@@ -168,13 +303,8 @@ impl Viewport {
     }
 
     /// The track rows a timeline area of this height shows, whole or in part.
-    pub fn visible_tracks(&self, height: f32, tracks: usize) -> Range<usize> {
-        let row_height = f64::from(TRACK_HEIGHT);
-        let first = (self.scroll_y / row_height).floor().max(0.0) as usize;
-        let last = ((self.scroll_y + f64::from(height)) / row_height)
-            .ceil()
-            .max(0.0) as usize;
-        first.min(tracks)..last.min(tracks)
+    pub fn visible_tracks(&self, rows: &Rows, height: f32) -> Range<usize> {
+        rows.overlapping(self.scroll_y, self.scroll_y + f64::from(height))
     }
 
     /// Zooms by `factor` and keeps the tick under `anchor_x` where it is.
@@ -210,8 +340,7 @@ impl Viewport {
         width: f32,
         height: f32,
     ) -> Self {
-        let rows = extent.tracks as f64 * f64::from(TRACK_HEIGHT);
-        let content_height = rows + f64::from(ADD_ROW_HEIGHT);
+        let content_height = extent.height + f64::from(ADD_ROW_HEIGHT);
         self.clamped_to(extent.end, content_height, time_signatures, width, height)
     }
 
@@ -240,11 +369,11 @@ impl Viewport {
 
     /// Where a clip from `start` to `end` is drawn on its track row. It may reach outside the
     /// timeline area.
-    pub fn clip_rect(&self, track: usize, start: Ticks, end: Ticks) -> Rect {
+    pub fn clip_rect(&self, rows: &Rows, track: usize, start: Ticks, end: Ticks) -> Rect {
         let x = self.x_of(start);
         Rect {
             x,
-            y: self.y_of(track) + CLIP_INSET,
+            y: self.y_of(rows, track) + CLIP_INSET,
             // At least a pixel, so a short clip far zoomed out is still there.
             width: (self.x_of(end) - x).max(1.0),
             height: TRACK_HEIGHT - 2.0 * CLIP_INSET,
@@ -449,12 +578,13 @@ mod tests {
 
     #[test]
     fn a_rectangle_touches_the_rows_between_its_corners() {
-        assert_eq!(rows_between(10.0, 10.0, 5), 0..1);
-        assert_eq!(rows_between(100.0, 10.0, 5), 0..2);
-        assert_eq!(rows_between(-50.0, 64.0, 5), 0..2);
-        assert_eq!(rows_between(200.0, 5_000.0, 5), 3..5);
-        assert_eq!(rows_between(5_000.0, 6_000.0, 5), 5..5);
-        assert_eq!(rows_between(0.0, 100.0, 0), 0..0);
+        let rows = Rows::folded(5);
+        assert_eq!(rows.between(10.0, 10.0), 0..1);
+        assert_eq!(rows.between(100.0, 10.0), 0..2);
+        assert_eq!(rows.between(-50.0, 64.0), 0..2);
+        assert_eq!(rows.between(200.0, 5_000.0), 3..5);
+        assert_eq!(rows.between(5_000.0, 6_000.0), 5..5);
+        assert_eq!(Rows::folded(0).between(0.0, 100.0), 0..0);
     }
 
     #[test]
@@ -463,10 +593,48 @@ mod tests {
             scroll_y: 96.0,
             ..Viewport::default()
         };
-        assert_eq!(viewport.nearest_track(-500.0, 10), Some(0));
-        assert_eq!(viewport.nearest_track(0.0, 10), Some(1));
-        assert_eq!(viewport.nearest_track(5_000.0, 10), Some(9));
-        assert_eq!(viewport.nearest_track(0.0, 0), None);
+        let rows = Rows::folded(10);
+        assert_eq!(viewport.nearest_track(&rows, -500.0), Some(0));
+        assert_eq!(viewport.nearest_track(&rows, 0.0), Some(1));
+        assert_eq!(viewport.nearest_track(&rows, 5_000.0), Some(9));
+        assert_eq!(viewport.nearest_track(&Rows::folded(0), 0.0), None);
+    }
+
+    /// A track that shows its lanes is taller by its lanes and the row that adds one, and the
+    /// rows under it move down by as much.
+    #[test]
+    fn lanes_make_a_track_row_taller() {
+        let rows = Rows::new([None, Some(2), None, Some(0)]);
+        let track = f64::from(TRACK_HEIGHT);
+        let opened = track + 2.0 * f64::from(LANE_HEIGHT) + f64::from(ADD_LANE_HEIGHT);
+        assert_eq!(rows.top(1), track);
+        assert_eq!(rows.top(2), track + opened);
+        assert_eq!(rows.lane_top(1, 1), 2.0 * track + f64::from(LANE_HEIGHT));
+        let empty = track + f64::from(ADD_LANE_HEIGHT);
+        assert_eq!(rows.height(), track + opened + track + empty);
+        assert_eq!(rows.lanes(1), Some(2));
+        assert_eq!(rows.lanes(0), None);
+
+        let at = |y: f64| rows.part_at(y);
+        assert_eq!(at(10.0), Some((0, Part::Track)));
+        assert_eq!(at(track + 10.0), Some((1, Part::Track)));
+        assert_eq!(at(2.0 * track + 1.0), Some((1, Part::Lane(0))));
+        assert_eq!(at(2.0 * track + 50.0), Some((1, Part::Lane(1))));
+        assert_eq!(at(2.0 * track + 100.0), Some((1, Part::AddLane)));
+        assert_eq!(at(track + opened + 1.0), Some((2, Part::Track)));
+        // A track that shows its lanes and has none has only the row that adds one.
+        assert_eq!(at(rows.top(3) + track + 1.0), Some((3, Part::AddLane)));
+        assert_eq!(at(rows.height()), None);
+        assert_eq!(at(-1.0), None);
+
+        // Two rows from the middle of the second track to the third, and what shows of them.
+        assert_eq!(rows.between(track + 10.0, track + opened + 10.0), 1..3);
+        let viewport = Viewport {
+            scroll_y: track + opened - 10.0,
+            ..Viewport::default()
+        };
+        assert_eq!(viewport.visible_tracks(&rows, 20.0), 1..3);
+        assert_eq!(viewport.visible_tracks(&rows, 1_000.0), 1..4);
     }
 
     #[test]
@@ -494,13 +662,14 @@ mod tests {
             scroll_y: 96.0,
             ..Viewport::default()
         };
-        assert_eq!(viewport.y_of(0), -96.0);
-        assert_eq!(viewport.y_of(2), 32.0);
-        assert_eq!(viewport.track_at(0.0, 10), Some(1));
-        assert_eq!(viewport.track_at(31.9, 10), Some(1));
-        assert_eq!(viewport.track_at(32.0, 10), Some(2));
-        assert_eq!(viewport.track_at(32.0, 2), None);
-        assert_eq!(Viewport::default().track_at(-1.0, 10), None);
+        let (rows, two) = (Rows::folded(10), Rows::folded(2));
+        assert_eq!(viewport.y_of(&rows, 0), -96.0);
+        assert_eq!(viewport.y_of(&rows, 2), 32.0);
+        assert_eq!(viewport.track_at(&rows, 0.0), Some(1));
+        assert_eq!(viewport.track_at(&rows, 31.9), Some(1));
+        assert_eq!(viewport.track_at(&rows, 32.0), Some(2));
+        assert_eq!(viewport.track_at(&two, 32.0), None);
+        assert_eq!(Viewport::default().track_at(&rows, -1.0), None);
     }
 
     #[test]
@@ -515,10 +684,11 @@ mod tests {
         // The lead-in shows the 8 px before it too.
         assert_eq!(visible.start, Ticks(BAR / 2 - BAR / 12));
         // Rows 1 and 2 in part, rows 3 and 4 whole: 96 px into 64 px rows, 200 px high.
-        assert_eq!(viewport.visible_tracks(200.0, 100), 1..5);
-        assert_eq!(viewport.visible_tracks(200.0, 3), 1..3);
-        assert_eq!(viewport.visible_tracks(200.0, 0), 0..0);
-        assert_eq!(Viewport::default().visible_tracks(64.0, 100), 0..1);
+        let tracks = Rows::folded;
+        assert_eq!(viewport.visible_tracks(&tracks(100), 200.0), 1..5);
+        assert_eq!(viewport.visible_tracks(&tracks(3), 200.0), 1..3);
+        assert_eq!(viewport.visible_tracks(&tracks(0), 200.0), 0..0);
+        assert_eq!(Viewport::default().visible_tracks(&tracks(100), 64.0), 0..1);
     }
 
     #[test]
@@ -543,7 +713,7 @@ mod tests {
     fn scroll_stays_inside_the_content() {
         let extent = Extent {
             end: Ticks(8 * BAR),
-            tracks: 10,
+            height: Rows::folded(10).height(),
         };
         let far = Viewport::default().scrolled(-100_000.0, -100_000.0);
         let clamped = far.clamped(extent, four_four(), 960.0, 320.0);
@@ -561,7 +731,7 @@ mod tests {
         // Content smaller than the area does not scroll.
         let small = Extent {
             end: Ticks(0),
-            tracks: 1,
+            height: Rows::folded(1).height(),
         };
         assert_eq!(
             far.clamped(small, four_four(), 1600.0, 800.0),
@@ -617,7 +787,8 @@ mod tests {
             scroll_y: 32.0,
             ..Viewport::default()
         };
-        let rect = viewport.clip_rect(2, Ticks(BAR), Ticks(3 * BAR));
+        let rows = Rows::folded(3);
+        let rect = viewport.clip_rect(&rows, 2, Ticks(BAR), Ticks(3 * BAR));
         assert_eq!(
             rect,
             Rect {
@@ -635,7 +806,7 @@ mod tests {
             pixels_per_quarter: 1.0,
             ..Viewport::default()
         };
-        assert_eq!(far_out.clip_rect(0, Ticks(0), Ticks(120)).width, 1.0);
+        assert_eq!(far_out.clip_rect(&rows, 0, Ticks(0), Ticks(120)).width, 1.0);
     }
 
     #[test]
@@ -737,7 +908,8 @@ mod tests {
     fn a_miniature_places_notes_by_time_and_pitch() {
         let viewport = Viewport::default();
         let clip = clip(BAR, BAR, &[(0, 960, 60), (960, 960, 72), (2880, 9600, 60)]);
-        let rect = viewport.clip_rect(0, clip.start, clip.end());
+        let rows = Rows::folded(1);
+        let rect = viewport.clip_rect(&rows, 0, clip.start, clip.end());
         let notes: Vec<_> = viewport.miniature(&clip, rect).collect();
         assert_eq!(notes.len(), 3);
 
@@ -756,7 +928,7 @@ mod tests {
 
         // One pitch sits in the middle.
         let single = self::clip(0, BAR, &[(0, 960, 64)]);
-        let rect = viewport.clip_rect(0, single.start, single.end());
+        let rect = viewport.clip_rect(&rows, 0, single.start, single.end());
         let note = viewport.miniature(&single, rect).next().unwrap();
         assert_eq!(note.y + note.height / 2.0, rect.y + rect.height / 2.0);
 
@@ -765,7 +937,7 @@ mod tests {
             pixels_per_quarter: 1.0,
             ..Viewport::default()
         };
-        let rect = far_out.clip_rect(0, clip.start, clip.end());
+        let rect = far_out.clip_rect(&rows, 0, clip.start, clip.end());
         assert_eq!(far_out.miniature(&clip, rect).count(), 0);
     }
 }

@@ -87,6 +87,8 @@
 //! - `wavetable*.png`: the Wavetable, collapsed, expanded and scrolled, see
 //!   `snapshots/wavetable.rs`.
 //! - `editor-bend.png`, `editor-mod.png`: the expression lanes, see `snapshots/lanes.rs`.
+//! - `automation-*.png`: the automation lanes under a track, and a clip dragged with its
+//!   automation, see `snapshots/automation.rs`.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -136,6 +138,8 @@ use tempfile::TempDir;
 mod agent;
 #[path = "snapshots/audio.rs"]
 mod audio;
+#[path = "snapshots/automation.rs"]
+mod automation;
 #[path = "snapshots/drums.rs"]
 mod drums;
 #[path = "projects/generated_take.rs"]
@@ -990,8 +994,8 @@ fn main() -> Result<()> {
 
     // Audio tracks and clips, the Sampler, the Drum pad and the Utility first, so a run that
     // only looks at one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=agent`, `=audio`,
-    // `=sampler`, `=drums`, `=utility`, `=saturator`, `=modulation`, `=lanes` or `=wavetable` renders the
-    // default project and those alone.
+    // `=sampler`, `=drums`, `=utility`, `=saturator`, `=modulation`, `=lanes`, `=automation` or
+    // `=wavetable` renders the default project and those alone.
     let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
     let runs = |name: &str| only.as_deref().is_none_or(|only| only == name);
     if runs("agent") {
@@ -1023,6 +1027,9 @@ fn main() -> Result<()> {
     }
     if runs("lanes") {
         lanes::snapshots(&mut cx, &save)?;
+    }
+    if runs("automation") {
+        automation::snapshots(&mut cx, &save)?;
     }
     if runs("wavetable") {
         wavetable::snapshots(&mut cx, &save)?;
@@ -2007,7 +2014,8 @@ fn main() -> Result<()> {
     // Row 46 is track 45 of the scale project, after the track of the default project. Its
     // clip 50 is at bar 8 * 50 + 45 % 8 = 405, which is on screen.
     let top = 48.0 + RULER_HEIGHT;
-    let row_46 = top + middle.y_of(46) + TRACK_HEIGHT / 2.;
+    let rows = cx.update(|cx| timeline.read(cx).rows(cx));
+    let row_46 = top + middle.y_of(&rows, 46) + TRACK_HEIGHT / 2.;
     let on_clip = point(
         px(HEADER_WIDTH + middle.x_of(Ticks(405 * BAR + BAR / 2))),
         px(row_46),

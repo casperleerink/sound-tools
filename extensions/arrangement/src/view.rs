@@ -36,6 +36,7 @@ pub mod roll;
 pub mod selection;
 pub mod snap;
 mod timeline;
+pub mod track_lanes;
 pub mod track_panel;
 
 use gpui::{

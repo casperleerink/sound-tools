@@ -495,6 +495,15 @@ impl Bindings {
         })
     }
 
+    /// The fields of every number the behaviour of `instance` takes automation for, in the
+    /// order it named them.
+    pub fn automatable(&self, instance: &InstanceId) -> impl Iterator<Item = &'static str> + '_ {
+        let automatable = self.by_instance.get(instance);
+        let automatable = automatable.and_then(|binding| binding.automation.as_ref());
+        let parameters = automatable.map(|automatable| automatable.parameters.iter());
+        parameters.into_iter().flatten().map(|number| number.field)
+    }
+
     /// The input port that the behaviour of `instance` named, as `project.json` connections
     /// and its owner see it.
     pub fn input(&self, instance: &InstanceId, port: &str) -> Option<InputEndpoint> {

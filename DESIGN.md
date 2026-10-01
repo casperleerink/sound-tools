@@ -25,7 +25,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - One control per value. The tempo has one drag number, in the transport; a tempo mark in the ruler selects and seeks.
 - Every drag control shares one gesture: it moves from where the value is (a press never jumps), shift is ten times finer, double click or backspace sets the default, escape during a drag puts it back.
 - Two-finger scroll never changes a value. A control that took the gesture would change a sound while the composer scrolls past.
-- Interface state that is about how the composer works (zoom, snap, expanded cards, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine is kept in the app's support folder, outside every project: whether the agent sidebar is open, the agent's approval mode and model, and its threads.
+- Interface state that is about how the composer works (zoom, snap, expanded cards, shown lanes, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine is kept in the app's support folder, outside every project: whether the agent sidebar is open, the agent's approval mode and model, and its threads.
 - Our own look: plain parameter names, our own drawings on the displays. We learn from Ableton but copy no graphic, name or text of it.
 - Every built-in device has its own icon in the pickers: a line drawing of what it does to the sound, on the 24 pt grid of the other icons. A plugin shows a plug. The built-in instruments are one group; the built-in effects are grouped by what they do (Tone, Dynamics, Space, Mix), with the plugins last.
 
@@ -40,7 +40,7 @@ Each colour has one meaning:
 - Peach: warning, files not live, and mute.
 - Red: record, the clip light of a meter, errors, an armed track, a take while it records.
 - Lavender: keyboard focus, the agent, and the ring where a drag or a dropped file lands.
-- Track colours: marks only. Dots, notes, velocity bars, the line of a bend, mod wheel or pressure lane, the waveform of an audio clip. No control uses a track colour, because track colours include green, yellow, peach and red.
+- Track colours: marks only. Dots, notes, velocity bars, the line of a bend, mod wheel, pressure or automation lane, the waveform of an audio clip. No control uses a track colour, because track colours include green, yellow, peach and red.
 
 A meter is the one place colour fills an area, because level is a signal. Otherwise only a toggle that is on is tinted, with its colour at low opacity.
 
@@ -111,8 +111,14 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Arrangement | cmd-c, cmd-x | Copy, cut the selected clips with the automation under them. A cut leaves a straight line where they were. The clipboard is in the app only |
 | Arrangement | cmd-v | Paste at the playhead, with the automation, over the automation there. The top row goes on the track of the first selected clip, else the selected track, else the first track |
 | Arrangement | cmd-d | A copy of the selected clips right after them, with their automation |
-| Arrangement | drag a clip | Move it, with every selected clip, in time and to another track. The automation under it goes along and replaces what is where it lands; just outside, nothing changes. A lane goes along only when it has a point inside the clip. To another track only the volume and the pan go: device lanes stay with their track |
+| Arrangement | drag a clip | Move it, with every selected clip, in time and to another track. The automation under it goes along and replaces what is where it lands; just outside, nothing changes. A lane goes along only when it has a point inside the clip and does not hold one value all along. To another track only the volume and the pan go: device lanes stay with their track |
 | Arrangement | alt-drag a clip | Move it without its automation. Alt can be pressed or let go during the drag |
+| Arrangement | while a clip drag takes automation along | In each lane it takes, the line it takes follows over a light band, and the line it replaces fades. `Automation moves · alt to leave it` shows in the top left of the clip. With the lanes folded away, the clip carries a small mark instead. What shows is what drops |
+| Arrangement | the chevron left of the dot of a track, or `a` with a track and no clip selected | Show its automation lanes under it, or fold them away. The chevron is brighter when the track has lanes. Not saved, no undo step |
+| Arrangement | Add lane, under the lanes of a track | Pick a number of the track (volume, pan) or of one of its devices that has no lane yet. The lane holds the value of its knob, so nothing sounds different yet. Tab reaches it. Gone when every number has a lane |
+| Arrangement | drag across an automation lane | Draw its line, on the travel of its knob, as the bend lane of the note editor: one point per snap step, or every few pixels with snap off or cmd. Above or below the lane is the end of the range |
+| Arrangement | alt-drag across an automation lane | Erase the points it covers. Without points the lane goes |
+| Arrangement | double click in an automation lane | Clear it: the lane goes, and the knob gets the value of its record back |
 | Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note. On an audio clip it trims the file and keeps the sound in place |
 | Arrangement | drag a fade handle or the gain handle of an audio clip | Fade in or out, or change its gain. The value shows while dragging |
 | Arrangement | alt-up, alt-down | The gain of the selected audio clips by 1 dB |

@@ -140,27 +140,38 @@ pub fn value_at<V: LaneValue>(points: &[Point<V>], tick: Ticks) -> Option<V> {
 /// end of a line, and the point before it is kept. A minute of pressure is thinned as fast as
 /// it is read.
 pub fn thinned<V: ExpressionValue>(points: &[Point<V>]) -> Vec<Point<V>> {
+    let number = |value: V| f64::from(value.number());
+    thinned_within(points, f64::from(V::STEP), number)
+}
+
+/// [`thinned`] for any value, as the number `number` gives, within `step` of it: the line of
+/// an automation lane is thinned on the travel of its knob.
+pub fn thinned_within<V: Copy>(
+    points: &[Point<V>],
+    step: f64,
+    number: impl Fn(V) -> f64,
+) -> Vec<Point<V>> {
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return Vec::new();
     };
     let mut kept = vec![*first];
     let mut anchor = *first;
     let (mut lowest, mut highest) = (f64::NEG_INFINITY, f64::INFINITY);
-    let slope = |from: &Point<V>, to: &Point<V>, offset: i32| {
-        let rise = f64::from(to.value.number() + offset - from.value.number());
+    let slope = |from: &Point<V>, to: &Point<V>, offset: f64| {
+        let rise = number(to.value) + offset - number(from.value);
         rise / (to.tick.0 as f64 - from.tick.0 as f64)
     };
     for pair in points.windows(2) {
         let [before, point] = pair else {
             continue;
         };
-        if !(lowest..=highest).contains(&slope(&anchor, point, 0)) {
+        if !(lowest..=highest).contains(&slope(&anchor, point, 0.)) {
             anchor = *before;
             kept.push(anchor);
             (lowest, highest) = (f64::NEG_INFINITY, f64::INFINITY);
         }
-        lowest = lowest.max(slope(&anchor, point, -V::STEP));
-        highest = highest.min(slope(&anchor, point, V::STEP));
+        lowest = lowest.max(slope(&anchor, point, -step));
+        highest = highest.min(slope(&anchor, point, step));
     }
     if points.len() > 1 {
         kept.push(*last);
