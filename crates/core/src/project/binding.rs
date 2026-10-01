@@ -466,6 +466,13 @@ impl Bindings {
         self.by_instance.get(instance)?.peaks.get(name)
     }
 
+    /// The numbers the behaviour of `instance` takes automation for, see
+    /// [`BehaviourContext::automation`].
+    pub fn automation(&self, instance: &InstanceId) -> Option<&[ParameterInfo]> {
+        let (_, parameters) = self.by_instance.get(instance)?.automation.as_ref()?;
+        Some(parameters)
+    }
+
     /// The input port that the behaviour of `instance` named, as `project.json` connections
     /// and its owner see it.
     pub fn input(&self, instance: &InstanceId, port: &str) -> Option<InputEndpoint> {
