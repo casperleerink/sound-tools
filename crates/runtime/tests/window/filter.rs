@@ -1,9 +1,12 @@
 //! The card of the built-in filter in the track rack, with a simulated mouse: it is added from
-//! the control at the end of the rack, and every edit of it is one undo step written once.
+//! the control at the end of the rack, and every edit of it is one undo step written once. A
+//! number a lane of the track moves shows the lane and does not drag.
 
+use arrangement::{AutomationLane, AutomationValue, TrackState};
 use filter::view::FilterView;
 use filter::{FilterState, FilterType};
 use gpui::{TestAppContext, point, px};
+use sound_core::Ticks;
 
 use crate::support::{self, Opened, id};
 
@@ -238,4 +241,83 @@ fn the_power_icon_bypasses_the_filter_as_one_undo_step(cx: &mut TestAppContext) 
     opened.click(power);
     opened.click(power);
     assert_eq!(opened.undo_label().as_deref(), Some("Turn on Filter"));
+}
+
+const TRACK: &str = "arrangement/track-1";
+
+/// Puts these lanes of the cutoff of the filter in the record of the track, or takes them out
+/// with none: an edit of the track, as an agent writes it.
+fn automate(opened: &mut Opened<'_>, points: &[(u64, f32)]) {
+    let lanes = match points {
+        [] => Vec::new(),
+        points => vec![AutomationLane {
+            device: Some("filter".into()),
+            parameter: "cutoff_hz".into(),
+            points: points
+                .iter()
+                .map(|&(tick, value)| sound_notes::Point {
+                    tick: Ticks(tick),
+                    value: AutomationValue(value),
+                })
+                .collect(),
+        }],
+    };
+    opened.edit(|project| {
+        let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
+        let mut state = project.state(&track).unwrap().clone();
+        state.automation = lanes;
+        let mut changes = sound_core::Changes::new();
+        changes.set(&track, state);
+        project.commit("Automate", changes)
+    });
+    opened.project(|project| assert_eq!(project.problems(), []));
+}
+
+/// The cutoff as the card shows it.
+fn shown_cutoff(opened: &mut Opened<'_>) -> f32 {
+    let panel = opened.track_panel().unwrap();
+    opened.cx.read(|cx| {
+        let view = panel.read(cx).device_views().nth(1).unwrap().cloned();
+        let view = view.unwrap().downcast::<FilterView>().unwrap();
+        view.read(cx).shown(cx).unwrap().cutoff_hz
+    })
+}
+
+fn seek(opened: &mut Opened<'_>, tick: u64) {
+    let session = opened.session.clone();
+    opened.cx.update(|_, cx| {
+        session.update(cx, |session, _| session.engine().seek(Ticks(tick)));
+    });
+    opened.settle();
+}
+
+/// A lane of the cutoff in the track: the knob shows the value the lane plays at the playhead,
+/// with a mark, and follows a seek. A drag of the knob or of the handle, a key and a reset
+/// change nothing. Taking the lane out of the track gives the knob back the record.
+#[gpui::test]
+fn an_automated_cutoff_shows_its_lane_and_does_not_drag(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    automate(&mut opened, &[(0, 300.), (support::BAR, 3_000.)]);
+    assert!(opened.find("automated-cutoff_hz").is_some());
+    assert!(opened.find("automated-resonance").is_none());
+    assert!((shown_cutoff(&mut opened) - 300.).abs() < 0.01);
+    seek(&mut opened, support::BAR);
+    assert!((shown_cutoff(&mut opened) - 3_000.).abs() < 0.1);
+
+    let knob = opened.control("knob-cutoff_hz");
+    opened.drag(knob, point(knob.x, knob.y - px(40.)));
+    opened.double_click(knob);
+    let handle = opened.control("handle-cutoff-resonance");
+    opened.drag(handle, point(handle.x - px(30.), handle.y - px(10.)));
+    assert_eq!(state(&mut opened), FilterState::default());
+    assert_eq!(opened.undo_label().as_deref(), Some("Automate"));
+
+    automate(&mut opened, &[]);
+    assert!(opened.find("automated-cutoff_hz").is_none());
+    let record = FilterState::default().cutoff_hz;
+    assert_eq!(shown_cutoff(&mut opened), record);
+    let knob = opened.control("knob-cutoff_hz");
+    opened.drag(knob, point(knob.x, knob.y - px(40.)));
+    assert!(state(&mut opened).cutoff_hz > record);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
 }
