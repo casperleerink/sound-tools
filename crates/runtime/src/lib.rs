@@ -16,7 +16,7 @@ use delay::DelayState;
 use drum_pad::DrumPadState;
 use eq::EqState;
 use filter::FilterState;
-use gpui::AppContext as _;
+use gpui::{App, AppContext as _};
 use instrument::SynthState;
 use limiter::LimiterState;
 use modulation::ModulationState;
@@ -27,7 +27,7 @@ use plugin_host::{
 use reverb::ReverbState;
 use sampler::SamplerState;
 use saturator::SaturatorState;
-use sound_agent::Sidebar;
+use sound_agent::{AgentSettings, Sidebar};
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
     ProjectError, Registry, SavedDestination, State, Ticks,
@@ -311,14 +311,18 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
 
 /// The agent sidebar, in the left panel of the window. The window names no agent type, so this
 /// is where the two meet. In `support`, the support folder of the machine, the panel keeps
-/// whether it is open (see [`LeftPanelSlot`]), and the sidebar the agent it downloads and the
-/// threads of each project.
-pub fn agent_panel(support: Option<PathBuf>) -> LeftPanelSlot {
+/// whether it is open (see [`LeftPanelSlot`]), and the sidebar the agent it downloads, the
+/// threads of each project and the composer's approval mode and model. The settings are read
+/// once here and shared by every window, so a change in one is a change in all.
+pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
     let remembered = support.as_deref().map(app::left_panel_file);
     let agents = support.as_deref().map(app::agents_folder);
     let threads = support.as_deref().map(app::threads_folder);
+    let file = support.as_deref().map(app::agent_settings_file);
+    let settings = cx.new(|cx| AgentSettings::new(file, cx));
     LeftPanelSlot::new(remembered, move |session, _, cx| {
-        let sidebar = cx.new(|cx| Sidebar::new(session, agents.clone(), threads.clone(), cx));
+        let (agents, threads, settings) = (agents.clone(), threads.clone(), settings.clone());
+        let sidebar = cx.new(|cx| Sidebar::new(session, agents, threads, settings, cx));
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
     })
 }

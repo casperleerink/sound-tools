@@ -28,6 +28,10 @@ const AGENTS_FOLDER: &str = "agents";
 /// project folder, and must not read its own chat there.
 const THREADS_FOLDER: &str = "agent/threads";
 
+/// How much the agent may do without asking, and its model. Out of every project, so the
+/// agent cannot give itself more access by editing a file there.
+const AGENT_SETTINGS_FILE: &str = "agent/settings.json";
+
 fn home() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -109,6 +113,11 @@ pub fn remember_left_panel(file: &Path, open: bool) -> Result<()> {
 /// Where the agent sidebar keeps the threads of every project, one folder per project.
 pub fn threads_folder(support: &Path) -> PathBuf {
     support.join(THREADS_FOLDER)
+}
+
+/// Where the agent sidebar keeps the composer's approval mode and model, for every project.
+pub fn agent_settings_file(support: &Path) -> PathBuf {
+    support.join(AGENT_SETTINGS_FILE)
 }
 
 /// Refuses a folder that holds files but no project: opening it would put a new project's

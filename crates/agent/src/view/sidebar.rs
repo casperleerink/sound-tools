@@ -6,10 +6,10 @@
 //! The thread is saved on the machine as it goes (`crate::store`), and the sidebar opens on the
 //! project's last one.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{
     AnyElement, App, BoxShadow, Context, Entity, FocusHandle, Focusable, FollowMode, FontWeight,
@@ -17,18 +17,21 @@ use gpui::{
     list, point, prelude::*, px,
 };
 use smol::future;
+use sound_core::{GROUPING_WINDOW, Problem, ProjectEvent};
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::dropdown_menu::{
-    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
-};
+use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
+use sound_ui::components::markdown::Markdown;
 use sound_ui::components::popover::{Align, Side};
-use sound_ui::components::text_input::TextInput;
+use sound_ui::components::text_input::{Arrow, TextInput};
 
 use super::entry;
+use super::history::History;
+use super::menu::{self, Choice};
 use super::onboarding::{Onboarding, Setup, SetupAction};
 use crate::conversation::{Conversation, Entry, request_label};
 use crate::install::{self, InstallError};
+use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{Line, SavedThread, ThreadStore, Write};
 use crate::{
     Account, AgentEvent, ApprovalAnswer, ApprovalMode, Events, Installed, Provider, Session,
@@ -51,9 +54,6 @@ const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// How long the program may take to say whether it is signed in.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// The value of **Sign out** in the account menu.
-const SIGN_OUT: &str = "sign-out";
 
 struct BindingsInstalled;
 impl Global for BindingsInstalled {}
@@ -90,13 +90,28 @@ pub struct Sidebar {
     signing_in: Option<SignInChoice>,
     /// The download, the sign-in or a question to the program. Dropping it cancels it.
     setup_task: Option<Task<()>>,
-    /// The account and **Sign out**, in the composer.
-    account_menu: Entity<DropdownMenu>,
+    /// The approval mode, the model, and the account with **Sign out**, in the composer.
+    menu: Entity<DropdownMenu>,
+    /// What the menu's selects say, the same for every sidebar of the app.
+    settings: Entity<AgentSettings>,
     conversation: Conversation,
     list: ListState,
     /// The finished turns whose steps show, by entry.
     expanded: HashSet<usize>,
+    /// The answer of each turn, parsed once per batch of events, by entry.
+    answers: HashMap<usize, Vec<Markdown>>,
+    /// The problems of the project when the last turn began.
+    problems_before: Vec<Problem>,
+    /// The turn that ended last and when, until the next message: the watcher may still
+    /// apply its last writes, and their problems are the turn's too.
+    just_ended: Option<(usize, Instant)>,
+    /// The problems each finished turn left that were not there before it, by entry.
+    problems_left: HashMap<usize, Vec<Problem>>,
+    /// The turns whose problems show line by line, by entry.
+    problems_open: HashSet<usize>,
     input: Entity<TextInput>,
+    /// Where up and down in the composer are among the earlier messages.
+    history: History,
     /// The sidebar itself, for when it has no composer.
     focus_handle: FocusHandle,
     new_thread_focus: FocusHandle,
@@ -111,8 +126,7 @@ pub struct Sidebar {
     writes: Option<smol::channel::Sender<Write>>,
     /// Reads the last thread of the project. No message goes until it is in.
     loading: Option<Task<()>>,
-    _input: Subscription,
-    _account_menu: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Sidebar {
@@ -120,14 +134,15 @@ impl Sidebar {
     /// in, or offers **Set up** when it is not downloaded yet. The program is the download in
     /// `agents`, or the one the provider's environment variable names. The threads of the
     /// project are kept in `threads`, `agent/threads` in the support folder of the machine;
-    /// with `None` nothing is saved.
+    /// with `None` nothing is saved. `settings` are the app's, shared by every sidebar.
     pub fn new(
         session: Entity<sound_ui::Session>,
         agents: Option<PathBuf>,
         threads: Option<PathBuf>,
+        settings: Entity<AgentSettings>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut sidebar = Self::with(session, agents, Setup::Checking, threads, cx);
+        let mut sidebar = Self::with(session, agents, Setup::Checking, threads, settings, cx);
         let provider = sidebar.provider;
         let downloaded = sidebar
             .agents
@@ -165,6 +180,7 @@ impl Sidebar {
         session: Entity<sound_ui::Session>,
         installed: Option<Installed>,
         threads: Option<PathBuf>,
+        settings: Entity<AgentSettings>,
         cx: &mut Context<Self>,
     ) -> Self {
         let setup = match installed {
@@ -173,7 +189,7 @@ impl Sidebar {
             },
             None => Setup::NotInstalled,
         };
-        let mut sidebar = Self::with(session, None, setup, threads, cx);
+        let mut sidebar = Self::with(session, None, setup, threads, settings, cx);
         sidebar.installed = installed;
         sidebar
     }
@@ -183,6 +199,7 @@ impl Sidebar {
         agents: Option<PathBuf>,
         setup: Setup,
         threads: Option<PathBuf>,
+        settings: Entity<AgentSettings>,
         cx: &mut Context<Self>,
     ) -> Self {
         install_bindings(cx);
@@ -198,12 +215,23 @@ impl Sidebar {
         });
         let weak = cx.weak_entity();
         input.update(cx, |input, _| {
-            input.set_on_submit(move |_, _, cx| {
+            // The handlers run inside the input's own update, and sending or recalling a
+            // message changes it.
+            input.set_on_submit({
                 let weak = weak.clone();
-                // The handler runs inside the input's own update, and sending clears it.
+                move |_, _, cx| {
+                    let weak = weak.clone();
+                    cx.defer(move |cx| {
+                        // A sidebar that went in the meantime sends nothing.
+                        weak.update(cx, |sidebar, cx| sidebar.send(cx)).ok();
+                    });
+                }
+            });
+            input.set_on_arrow_past_edge(move |_, arrow, _, cx| {
+                let weak = weak.clone();
                 cx.defer(move |cx| {
-                    // A sidebar that went in the meantime sends nothing.
-                    weak.update(cx, |sidebar, cx| sidebar.send(cx)).ok();
+                    weak.update(cx, |sidebar, cx| sidebar.recall(arrow, cx))
+                        .ok();
                 });
             });
         });
@@ -213,14 +241,44 @@ impl Sidebar {
             Setup::Ready { account } => account.clone(),
             _ => Account::default(),
         };
-        let account_menu = cx.new(|cx| {
-            DropdownMenu::new(account_label(&account), account_entries(&account), cx)
+        let shared = settings.read(cx);
+        let (label, entries) = (
+            menu::label(shared.settings(), shared.models()),
+            menu::entries(&account, shared.settings(), shared.models()),
+        );
+        // Read before this sidebar was made: it says so too.
+        let unreadable = shared.unreadable().map(str::to_string);
+        let menu = cx.new(|cx| {
+            DropdownMenu::new(label, entries, cx)
                 .debug_name("account-menu")
                 .trigger(Trigger::Ghost)
                 .side(Side::Top)
                 .align(Align::Start)
-                .width(280.)
+                .width(menu::WIDTH)
+                .max_height(menu::MAX_HEIGHT)
         });
+        let subscriptions = vec![
+            cx.subscribe(&menu, |sidebar, _, picked: &MenuPicked, cx| {
+                if let Some(choice) = Choice::of(&picked.0) {
+                    sidebar.pick(choice, cx);
+                }
+            }),
+            cx.observe(&settings, |sidebar, _, cx| {
+                sidebar.update_menu(cx);
+                cx.notify();
+            }),
+            cx.subscribe(&settings, Self::settings_event),
+            cx.subscribe(&session, |sidebar, _, event: &ProjectEvent, cx| {
+                if matches!(event, ProjectEvent::ProblemsChanged) {
+                    sidebar.problems_changed(cx);
+                }
+            }),
+            cx.observe(&input, |_, _, cx| cx.notify()),
+        ];
+        let mut conversation = Conversation::default();
+        if let Some(unreadable) = unreadable {
+            conversation.notice(unreadable);
+        }
         Self {
             session,
             provider: Provider::Claude,
@@ -229,17 +287,18 @@ impl Sidebar {
             installed: None,
             signing_in: None,
             setup_task: None,
-            _account_menu: cx.subscribe(&account_menu, |sidebar, _, picked: &MenuPicked, cx| {
-                if picked.0.as_ref() == SIGN_OUT {
-                    sidebar.sign_out(cx);
-                }
-            }),
-            account_menu,
-            conversation: Conversation::default(),
+            menu,
+            settings,
+            conversation,
             list,
             expanded: HashSet::new(),
-            _input: cx.observe(&input, |_, _, cx| cx.notify()),
+            answers: HashMap::new(),
+            problems_before: Vec::new(),
+            just_ended: None,
+            problems_left: HashMap::new(),
+            problems_open: HashSet::new(),
             input,
+            history: History::default(),
             focus_handle: cx.focus_handle(),
             new_thread_focus: cx.focus_handle().tab_stop(true),
             send_focus: cx.focus_handle().tab_stop(true),
@@ -248,6 +307,7 @@ impl Sidebar {
             thread: None,
             writes: None,
             loading,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -293,13 +353,97 @@ impl Sidebar {
                 .conversation
                 .notice(format!("The saved thread could not be read: {error}")),
         }
-        self.expanded.clear();
+        self.forget_entries();
         self.list.reset(self.conversation.entries().len());
         cx.notify();
     }
 
+    /// For a conversation that is another one now: what the sidebar keeps by entry is not
+    /// its.
+    fn forget_entries(&mut self) {
+        self.expanded.clear();
+        self.answers.clear();
+        self.problems_left.clear();
+        self.problems_open.clear();
+        self.just_ended = None;
+        self.history.reset();
+    }
+
+    /// A change of the settings applies at once: the running agent hears it now, from its
+    /// next tool on. A request that fails comes back as an error line.
+    fn settings_event(
+        &mut self,
+        _: Entity<AgentSettings>,
+        event: &AgentSettingsEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let sent = match event {
+            AgentSettingsEvent::Read => {
+                if let Some(unreadable) = self.settings.read(cx).unreadable() {
+                    let notice = unreadable.to_string();
+                    self.conversation.notice(notice);
+                    self.show(None, cx);
+                }
+                return;
+            }
+            AgentSettingsEvent::NotSaved(error) => {
+                self.conversation.notice(error.clone());
+                self.show(None, cx);
+                return;
+            }
+            AgentSettingsEvent::ApprovalModeChanged(mode) => self
+                .agent
+                .as_ref()
+                .map(|agent| agent.thread.set_approval_mode(*mode)),
+            AgentSettingsEvent::ModelChanged(model) => self
+                .agent
+                .as_ref()
+                .map(|agent| agent.thread.set_model(model.clone())),
+        };
+        if let Some(Err(error)) = sent {
+            self.conversation.notice(error.to_string());
+            self.show(None, cx);
+        }
+    }
+
+    fn pick(&mut self, choice: Choice, cx: &mut Context<Self>) {
+        match choice {
+            Choice::ApprovalMode(mode) => self
+                .settings
+                .update(cx, |settings, cx| settings.set_approval_mode(mode, cx)),
+            Choice::Model(model) => self
+                .settings
+                .update(cx, |settings, cx| settings.set_model(model, cx)),
+            Choice::SignOut => self.sign_out(cx),
+        }
+    }
+
+    fn update_menu(&mut self, cx: &mut Context<Self>) {
+        let account = match &self.setup {
+            Setup::Ready { account } => account.clone(),
+            _ => Account::default(),
+        };
+        let shared = self.settings.read(cx);
+        let label = menu::label(shared.settings(), shared.models());
+        let entries = menu::entries(&account, shared.settings(), shared.models());
+        self.menu.update(cx, |menu, cx| {
+            menu.set_label(label, cx);
+            menu.set_entries(entries, cx);
+        });
+    }
+
     pub fn conversation(&self) -> &Conversation {
         &self.conversation
+    }
+
+    /// The composer, for a test or a snapshot that reads or types in it.
+    pub fn composer(&self) -> &Entity<TextInput> {
+        &self.input
+    }
+
+    /// The composer's menu, for a snapshot that shows it open or a test that picks in it.
+    pub fn menu(&self) -> &Entity<DropdownMenu> {
+        &self.menu
     }
 
     /// What the next process of the thread continues: the thread's own session once its
@@ -337,6 +481,8 @@ impl Sidebar {
         let label = request_label(message);
         self.session
             .update(cx, |session, _| session.begin_request(&label));
+        self.problems_before = self.session.read(cx).project().problems();
+        self.just_ended = None;
         self.conversation.send(message, started);
         let thread = self.thread.get_or_insert_with(SavedThread::fresh);
         let line = Line::Sent {
@@ -368,12 +514,18 @@ impl Sidebar {
         for event in events {
             lines.extend(Line::of(&event, now));
             match &event {
-                // The account the running agent reports is the newest word on it.
-                AgentEvent::Started { account, .. }
-                    if matches!(self.setup, Setup::Ready { .. }) =>
-                {
-                    let account = account.clone();
-                    self.set_setup(Setup::Ready { account }, cx);
+                AgentEvent::Started {
+                    account, models, ..
+                } => {
+                    let models = models.clone();
+                    // Every sidebar's menu follows, by observing the settings.
+                    self.settings
+                        .update(cx, |settings, cx| settings.set_models(models, cx));
+                    // The account the running agent reports is the newest word on it.
+                    if matches!(self.setup, Setup::Ready { .. }) {
+                        let account = account.clone();
+                        self.set_setup(Setup::Ready { account }, cx);
+                    }
                 }
                 AgentEvent::TurnEnded {
                     outcome: TurnOutcome::Failed { .. },
@@ -386,7 +538,8 @@ impl Sidebar {
             );
             // Only the end of a turn that works ends its request: an exit after the turn
             // ended must not move the end of a request that finished long ago.
-            if ends && self.conversation.is_working() {
+            let ends_turn = ends && self.conversation.is_working();
+            if ends_turn {
                 self.session.update(cx, |session, _| session.end_request());
             }
             if matches!(event, AgentEvent::Exited { .. }) {
@@ -395,6 +548,9 @@ impl Sidebar {
             }
             if let Some(index) = self.conversation.apply(event, now) {
                 changed = Some(changed.map_or(index, |earlier| earlier.min(index)));
+                if ends_turn {
+                    self.keep_problems_left(index, cx);
+                }
             }
         }
         // A thread is saved from its first message on.
@@ -408,6 +564,42 @@ impl Sidebar {
         if failed {
             self.check_still_signed_in(cx);
         }
+    }
+
+    /// Keeps what problems the turn at `index` left that were not there when it began. Nothing
+    /// goes to the agent: its docs tell it to read `problems.txt` itself.
+    fn keep_problems_left(&mut self, index: usize, cx: &App) {
+        let left: Vec<Problem> = self
+            .session
+            .read(cx)
+            .project()
+            .problems()
+            .into_iter()
+            .filter(|problem| !self.problems_before.contains(problem))
+            .collect();
+        if left.is_empty() {
+            self.problems_left.remove(&index);
+        } else {
+            self.problems_left.insert(index, left);
+        }
+        self.just_ended = Some((index, Instant::now()));
+    }
+
+    /// The watcher applies what it heard after its grouping window, so the last writes of a
+    /// turn may come just after the turn ended. Their problems are that turn's too.
+    fn problems_changed(&mut self, cx: &mut Context<Self>) {
+        let Some((index, ended)) = self.just_ended else {
+            return;
+        };
+        if ended.elapsed() > GROUPING_WINDOW {
+            self.just_ended = None;
+            return;
+        }
+        self.keep_problems_left(index, cx);
+        // The turn's own end still counts from when it ended.
+        self.just_ended = Some((index, ended));
+        self.list.remeasure_items(index..index + 1);
+        cx.notify();
     }
 
     /// After a failed turn: the program may have been signed out meanwhile, such as in a
@@ -439,6 +631,10 @@ impl Sidebar {
     /// after it measured again, for an entry that grew.
     fn show(&mut self, changed: Option<usize>, cx: &mut Context<Self>) {
         let shown = self.list.item_count();
+        if let Some(changed) = changed {
+            // Parsed again when it next shows.
+            self.answers.retain(|index, _| *index < changed);
+        }
         if let Some(index) = changed.filter(|index| *index < shown) {
             self.list.remeasure_items(index..shown);
         }
@@ -469,14 +665,12 @@ impl Sidebar {
     }
 
     fn set_setup(&mut self, setup: Setup, cx: &mut Context<Self>) {
-        if let Setup::Ready { account } = &setup {
-            let (label, entries) = (account_label(account), account_entries(account));
-            self.account_menu.update(cx, |menu, cx| {
-                menu.set_label(label, cx);
-                menu.set_entries(entries, cx);
-            });
-        }
+        let ready = matches!(setup, Setup::Ready { .. });
         self.setup = setup;
+        // The menu keeps the last account it showed until the next one is in.
+        if ready {
+            self.update_menu(cx);
+        }
         cx.notify();
     }
 
@@ -671,7 +865,9 @@ impl Sidebar {
 
     fn send(&mut self, cx: &mut Context<Self>) {
         let message = self.input.read(cx).text().trim().to_string();
-        let ready = self.loading.is_none() && self.conversation.can_continue();
+        let ready = self.loading.is_none()
+            && self.settings.read(cx).is_read()
+            && self.conversation.can_continue();
         if message.is_empty() || self.conversation.is_working() || !ready {
             return;
         }
@@ -691,6 +887,7 @@ impl Sidebar {
             }
         }
         self.input.update(cx, |input, cx| input.set_text("", cx));
+        self.history.reset();
         self.begin(&message, cx);
         let sent = self.agent.as_ref().map(|agent| agent.thread.send(message));
         if let Some(Err(error)) = sent {
@@ -703,13 +900,13 @@ impl Sidebar {
 
     fn start(&self, installed: Installed, cx: &mut Context<Self>) -> io::Result<Agent> {
         let folder = self.session.read(cx).project().root().to_path_buf();
+        let settings = self.settings.read(cx).settings().clone();
         let (thread, events) = Thread::start(ThreadOptions {
             provider: self.provider,
             installed,
             folder,
-            // The CLI's own default until the model picker comes.
-            model: None,
-            approval_mode: ApprovalMode::AskBeforeCommands,
+            model: settings.model.clone(),
+            approval_mode: settings.approval_mode,
             session: self.next_session(),
         })?;
         let (sender, receiver) = smol::channel::unbounded();
@@ -787,7 +984,7 @@ impl Sidebar {
         self.thread = None;
         self.keep([Write::Current(None)]);
         self.conversation = Conversation::default();
-        self.expanded.clear();
+        self.forget_entries();
         self.list.reset(0);
         window.focus(&self.focus_handle(cx), cx);
         cx.notify();
@@ -811,18 +1008,55 @@ impl Sidebar {
         cx.notify();
     }
 
+    fn toggle_problems(&mut self, index: usize, cx: &mut Context<Self>) {
+        if !self.problems_open.remove(&index) {
+            self.problems_open.insert(index);
+        }
+        self.list.remeasure_items(index..index + 1);
+        cx.notify();
+    }
+
+    /// Opens the steps and the problems of the turn at `index`, as clicks on their lines do.
+    /// For a snapshot.
+    pub fn open_details(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.expanded.insert(index);
+        self.problems_open.insert(index);
+        self.list.remeasure_items(index..index + 1);
+        cx.notify();
+    }
+
+    /// Up on the first row of the composer, or down on its last.
+    fn recall(&mut self, arrow: Arrow, cx: &mut Context<Self>) {
+        let text = self.input.read(cx).text().to_string();
+        let messages: Vec<&str> = self.conversation.messages().collect();
+        if let Some(recalled) = self.history.recall(&messages, &text, arrow) {
+            self.input
+                .update(cx, |input, cx| input.set_text(recalled, cx));
+        }
+    }
+
     fn render_entry(&mut self, index: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let content = match self.conversation.entries().get(index) {
             Some(Entry::Message(text)) => entry::message(text, cx),
             Some(Entry::Notice(text)) => entry::notice(text, cx),
             Some(Entry::Turn(turn)) => {
-                let approval = turn
-                    .approval
-                    .as_ref()
-                    .map(|approval| self.approval_row(&approval.title, cx));
+                let below = match (&turn.approval, self.problems_left.get(&index)) {
+                    (Some(approval), _) => Some(self.approval_row(&approval.title, cx)),
+                    (None, Some(problems)) => {
+                        let open = self.problems_open.contains(&index);
+                        let toggle = cx
+                            .listener(move |sidebar, _, _, cx| sidebar.toggle_problems(index, cx));
+                        Some(entry::problems(problems, index, open, toggle, cx))
+                    }
+                    (None, None) => None,
+                };
                 let toggle = cx.listener(move |sidebar, _, _, cx| sidebar.toggle_steps(index, cx));
-                let expanded = self.expanded.contains(&index);
-                entry::turn(turn, index, expanded, toggle, approval, cx)
+                let steps_open = self.expanded.contains(&index);
+                let answer = self
+                    .answers
+                    .entry(index)
+                    .or_insert_with(|| entry::answer(turn));
+                entry::turn(turn, index, answer, steps_open, toggle, below, cx)
             }
             None => div().into_any_element(),
         };
@@ -870,12 +1104,7 @@ impl Sidebar {
             .flex_col()
             .gap(px(8.))
             .text_color(lavender)
-            .child(
-                div()
-                    .text_size(px(15.))
-                    .line_height(px(22.))
-                    .child(title.to_string()),
-            )
+            .child(entry::title("approval", title))
             .child(div().flex().flex_wrap().gap(px(8.)).children(buttons))
             .into_any_element()
     }
@@ -908,7 +1137,7 @@ impl Sidebar {
             )
     }
 
-    fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (border, fill) = (theme.alpha_at(0.10), theme.gray_50);
         let working = self.conversation.is_working();
@@ -923,39 +1152,60 @@ impl Sidebar {
                 .disabled(!can_send)
                 .on_click(cx.listener(|sidebar, _, _, cx| sidebar.send(cx)))
         };
-        div().flex_none().p(px(24.)).pt(px(8.)).child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .p(px(16.))
-                .rounded(px(16.))
-                .border_1()
-                .border_color(border)
-                .bg(fill)
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.25),
-                    offset: point(px(0.), px(8.)),
-                    blur_radius: px(24.),
-                    spread_radius: px(-8.),
-                    inset: false,
-                }])
-                .child(self.input.clone())
-                .child(
+        // So the mode is never a surprise, the first message of a thread says it once.
+        let never_ask = self.settings.read(cx).settings().approval_mode == ApprovalMode::NeverAsk
+            && self.conversation.messages().next().is_none();
+        let quiet = cx.theme().gray_700;
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .p(px(24.))
+            .pt(px(8.))
+            .when(never_ask, |composer| {
+                composer.child(
                     div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(self.account_menu.clone())
-                        .child(
-                            button
-                                .variant(ButtonVariant::Subtle)
-                                .size(ButtonSize::Sm)
-                                .rounded(true)
-                                .focus_handle(&self.send_focus),
-                        ),
-                ),
-        )
+                        .debug_selector(|| "agent-never-ask".to_string())
+                        .px(px(16.))
+                        .text_size(px(12.))
+                        .text_color(quiet)
+                        .child("The agent does anything without asking."),
+                )
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.))
+                    .p(px(16.))
+                    .rounded(px(16.))
+                    .border_1()
+                    .border_color(border)
+                    .bg(fill)
+                    .shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.25),
+                        offset: point(px(0.), px(8.)),
+                        blur_radius: px(24.),
+                        spread_radius: px(-8.),
+                        inset: false,
+                    }])
+                    .child(self.input.clone())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(self.menu.clone())
+                            .child(
+                                button
+                                    .variant(ButtonVariant::Subtle)
+                                    .size(ButtonSize::Sm)
+                                    .rounded(true)
+                                    .focus_handle(&self.send_focus),
+                            ),
+                    ),
+            )
     }
 
     /// In place of the composer once the agent lost the session: the thread stays to read,
@@ -1040,31 +1290,6 @@ impl SignInEnded {
     }
 }
 
-/// What the account menu's trigger says: the plan, since an email is long.
-fn account_label(account: &Account) -> String {
-    account
-        .plan
-        .clone()
-        .unwrap_or_else(|| "Account".to_string())
-}
-
-/// The account, then **Sign out**. The model and the approval setting join them later.
-fn account_entries(account: &Account) -> Vec<MenuEntry> {
-    let who: Vec<&str> = [&account.email, &account.plan]
-        .into_iter()
-        .flatten()
-        .map(String::as_str)
-        .collect();
-    let sign_out = MenuItem::new(SIGN_OUT, "Sign out").selectable(false);
-    let group = MenuGroup::new().item(sign_out);
-    let group = if who.is_empty() {
-        group
-    } else {
-        group.label(who.join(" · "))
-    };
-    vec![MenuEntry::Group(group)]
-}
-
 /// Every event of the process, until it ends or the sidebar stops listening.
 async fn read(mut events: Events, sender: smol::channel::Sender<AgentEvent>) {
     while let Some(event) = events.next().await {
@@ -1113,7 +1338,7 @@ impl Render for Sidebar {
                 )
                 .map(|body| {
                     if self.conversation.can_continue() {
-                        body.child(self.composer(cx))
+                        body.child(self.composer_box(cx))
                     } else {
                         body.child(self.cannot_continue(cx))
                     }

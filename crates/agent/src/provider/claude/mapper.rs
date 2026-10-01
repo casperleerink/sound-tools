@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::protocol::{
-    Block, CliRequest, Content, ControlResponse, Delta, Incoming, Initialized, Outgoing,
-    PermissionResult, Request, ResultKind, StreamEvent, System, TerminalReason, TurnResult,
+    Block, CliRequest, Content, ControlResponse, Delta, Incoming, Initialized, InitializedModel,
+    Outgoing, PermissionResult, Request, ResultKind, StreamEvent, System, TerminalReason,
+    TurnResult,
 };
 use crate::provider::{
     Account, AgentEvent, ApprovalAnswer, ApprovalId, ExitReason, Model, StepId, StepOutcome,
@@ -17,6 +18,9 @@ use crate::provider::{
 
 /// What the CLI says when `--resume` names a session it does not have.
 const SESSION_NOT_FOUND: &str = "no conversation found with session id";
+
+/// The model the CLI picks itself, in its list of models.
+const DEFAULT_MODEL: &str = "default";
 
 /// The longest command or pattern a title shows, in characters.
 const TITLE_DETAIL_CHARACTERS: usize = 60;
@@ -80,7 +84,7 @@ impl Mapper {
                 request_id,
                 request,
             } => {
-                self.requests.insert(request_id.clone(), *request);
+                self.requests.insert(request_id.clone(), request.clone());
                 Vec::new()
             }
             Outgoing::ControlResponse { response } => {
@@ -248,6 +252,7 @@ impl Mapper {
                     id: StepId(id),
                     title: action.done_title(),
                     running_title: action.running_title(),
+                    request_title: action.request_title(),
                 })
             }
             Block::ToolResult { .. } | Block::Other => None,
@@ -347,12 +352,13 @@ impl Mapper {
                 self.interrupted = self.turn_open;
                 Vec::new()
             }
-            (Request::SetPermissionMode { .. }, Ok(_)) => Vec::new(),
+            (Request::SetPermissionMode { .. } | Request::SetModel { .. }, Ok(_)) => Vec::new(),
             (request, Err(error)) => {
                 let action = match request {
                     Request::Initialize => "start",
                     Request::Interrupt => "stop the turn",
                     Request::SetPermissionMode { .. } => "change the approval mode",
+                    Request::SetModel { .. } => "change the model",
                 };
                 vec![AgentEvent::Error {
                     message: format!("Claude Code could not {action}: {error}"),
@@ -373,15 +379,7 @@ impl Mapper {
                         plan: account.subscription_type,
                     })
                     .unwrap_or_default(),
-                models: initialized
-                    .models
-                    .into_iter()
-                    .map(|model| Model {
-                        id: model.value,
-                        name: model.display_name,
-                        description: model.description,
-                    })
-                    .collect(),
+                models: models(initialized.models),
             },
             Err(error) => AgentEvent::Error {
                 message: format!("Claude Code started, but its account is unreadable: {error}"),
@@ -424,6 +422,31 @@ impl Approval {
         }
         permissions
     }
+}
+
+/// The models as the composer picks them. The CLI's `default` runs a model that has an entry
+/// of its own in the list, whose name is the short name of both.
+fn models(models: Vec<InitializedModel>) -> Vec<Model> {
+    let named: Vec<(String, String)> = models
+        .iter()
+        .filter(|model| model.value != DEFAULT_MODEL)
+        .filter_map(|model| Some((model.resolved_model.clone()?, model.display_name.clone())))
+        .collect();
+    models
+        .into_iter()
+        .map(|model| {
+            let short_name = named
+                .iter()
+                .find(|(resolved, _)| Some(resolved) == model.resolved_model.as_ref())
+                .map_or_else(|| model.display_name.clone(), |(_, name)| name.clone());
+            Model {
+                id: model.value,
+                name: model.display_name,
+                description: model.description,
+                short_name,
+            }
+        })
+        .collect()
 }
 
 fn blocks(content: Content) -> Vec<Block> {
@@ -471,33 +494,33 @@ impl Action {
 
     fn done_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Ran {command}"),
+            Action::Run(command) => format!("Ran {}", code(command)),
             Action::Read(path) => format!("Read {path}"),
             Action::Edit(path) => format!("Edited {path}"),
             Action::Write(path) => format!("Wrote {path}"),
-            Action::Search(pattern) => format!("Searched for {pattern}"),
+            Action::Search(pattern) => format!("Searched for {}", code(pattern)),
             Action::Use(tool) => format!("Used {tool}"),
         }
     }
 
     fn running_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Running {command}"),
+            Action::Run(command) => format!("Running {}", code(command)),
             Action::Read(path) => format!("Reading {path}"),
             Action::Edit(path) => format!("Editing {path}"),
             Action::Write(path) => format!("Writing {path}"),
-            Action::Search(pattern) => format!("Searching for {pattern}"),
+            Action::Search(pattern) => format!("Searching for {}", code(pattern)),
             Action::Use(tool) => format!("Using {tool}"),
         }
     }
 
     fn request_title(&self) -> String {
         match self {
-            Action::Run(command) => format!("Run `{command}`"),
+            Action::Run(command) => format!("Run {}", code(command)),
             Action::Read(path) => format!("Read {path}"),
             Action::Edit(path) => format!("Edit {path}"),
             Action::Write(path) => format!("Write {path}"),
-            Action::Search(pattern) => format!("Search for {pattern}"),
+            Action::Search(pattern) => format!("Search for {}", code(pattern)),
             Action::Use(tool) => format!("Use {tool}"),
         }
     }
@@ -520,4 +543,15 @@ fn shorten(text: &str) -> String {
     }
     let cut: String = line.chars().take(TITLE_DETAIL_CHARACTERS).collect();
     format!("{}…", cut.trim_end())
+}
+
+/// A command or a pattern in backticks, which the sidebar shows as code. One that has a
+/// backtick of its own is left bare: its backtick would close ours early, and the line would
+/// show the wrong part as code.
+fn code(text: &str) -> String {
+    if text.contains('`') {
+        text.to_string()
+    } else {
+        format!("`{text}`")
+    }
 }

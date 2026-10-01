@@ -95,6 +95,29 @@ impl Markdown {
         }
     }
 
+    /// One line the app writes, such as "Run `cargo build`": only the text between two
+    /// backticks is styled, as code, and nothing else is markdown. A `*` in a command or a
+    /// pattern stays a star, and a backtick with no partner shows as it is.
+    pub fn inline_code(line: &str) -> Self {
+        let mut inline = InlineBuilder::default();
+        let parts: Vec<&str> = line.split('`').collect();
+        let last = parts.len().saturating_sub(1);
+        let code = SpanStyle {
+            code: true,
+            ..SpanStyle::default()
+        };
+        for (index, part) in parts.into_iter().enumerate() {
+            match (index % 2 == 1, index < last) {
+                (true, true) => inline.push(part, code.clone()),
+                (true, false) => inline.push(&format!("`{part}"), SpanStyle::default()),
+                (false, _) => inline.push(part, SpanStyle::default()),
+            }
+        }
+        Self {
+            blocks: inline.finish().map(Block::Paragraph).into_iter().collect(),
+        }
+    }
+
     fn blocks(&self) -> &[Block] {
         &self.blocks
     }
@@ -925,6 +948,25 @@ mod tests {
                 assert_eq!(covered, inline.text.len(), "{inline:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_line_of_the_app_styles_only_its_code() {
+        let line = |text| match Markdown::inline_code(text).blocks() {
+            [Block::Paragraph(inline)] => inline.clone(),
+            other => panic!("not one paragraph: {other:?}"),
+        };
+        let run = line("Run `find state -name '*.json'` in **bold**");
+        assert_eq!(
+            spans(&run),
+            [
+                ("Run ", plain()),
+                ("find state -name '*.json'", code()),
+                (" in **bold**", plain()),
+            ]
+        );
+        assert_eq!(spans(&line("Edited a`b")), [("Edited a`b", plain())]);
+        assert_eq!(Markdown::inline_code("").blocks(), []);
     }
 
     /// Risk R7 of the agent sidebar plan: the sidebar parses the whole streaming message again

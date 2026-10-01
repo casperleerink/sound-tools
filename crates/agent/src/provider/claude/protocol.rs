@@ -188,6 +188,8 @@ pub struct InitializedModel {
     pub display_name: String,
     #[serde(default)]
     pub description: String,
+    /// The model an alias such as `default` or `opus` runs.
+    pub resolved_model: Option<String>,
 }
 
 /// A line we write. `Deserialize` too, so the tests replay recorded runs.
@@ -243,7 +245,7 @@ pub enum UserBlock {
 }
 
 /// Our requests to the CLI.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
 pub enum Request {
     /// Answers with the account and the models.
@@ -251,6 +253,10 @@ pub enum Request {
     Interrupt,
     SetPermissionMode {
         mode: PermissionMode,
+    },
+    /// From the next message on. An unknown model is an error answer, and the model stays.
+    SetModel {
+        model: String,
     },
 }
 

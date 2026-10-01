@@ -276,6 +276,32 @@ def permission_mode():
     run.finish()
 
 
+def set_model():
+    # A model the CLI does not know is refused and the model stays; a known one is taken.
+    run = Run("set_model", "acceptEdits")
+    run.control({"subtype": "initialize"})
+    run.control({"subtype": "set_model", "model": "claude-no-such-model"})
+    run.control({"subtype": "set_model", "model": "haiku"})
+    run.user("Say ok. Use no tools.")
+    run.until_result()
+    run.finish()
+
+
+def read_only():
+    # Under "Ask before commands" the CLI's own check runs a command that only reads with no
+    # question, also in a pipe. A loop over a command substitution still asks.
+    run = Run("read_only", "acceptEdits")
+    Path(run.folder, "notes.txt").write_text("one\ntwo\n")
+    run.control({"subtype": "initialize"})
+    run.user(
+        "Run each of these commands with the Bash tool, one tool call per command, exactly as "
+        "written: `ls`, `cat notes.txt | wc -l`, `for f in $(ls); do cat \"$f\"; done`. "
+        "Then reply: done."
+    )
+    run.until_result(lambda message: allow(run, message))
+    run.finish()
+
+
 def stale_resume():
     run = Run("stale_resume", "acceptEdits", ["--resume", str(uuid.uuid4())])
     run.control({"subtype": "initialize"})
@@ -308,7 +334,7 @@ SCENARIOS = {
     function.__name__: function
     for function in (
         plain, edit, approval_allowed, approval_denied, interrupt, interrupt_approval, permission_mode,
-        permission_bypass, stale_resume, error_turn, crash,
+        permission_bypass, set_model, read_only, stale_resume, error_turn, crash,
     )
 }
 

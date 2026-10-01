@@ -19,6 +19,7 @@ expression: "replay(\"edit\")"
                 id: "default",
                 name: "Default (recommended)",
                 description: "Opus 5.5 · Best for everyday, complex tasks",
+                short_name: "Opus 5.5",
             },
         ],
     },
@@ -28,6 +29,7 @@ expression: "replay(\"edit\")"
         ),
         title: "Wrote notes.txt",
         running_title: "Writing notes.txt",
+        request_title: "Write notes.txt",
     },
     StepDone {
         id: StepId(
@@ -41,6 +43,7 @@ expression: "replay(\"edit\")"
         ),
         title: "Edited notes.txt",
         running_title: "Editing notes.txt",
+        request_title: "Edit notes.txt",
     },
     StepDone {
         id: StepId(

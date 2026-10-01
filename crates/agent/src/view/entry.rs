@@ -1,11 +1,14 @@
 //! How each entry of the thread looks: the composer's message as a bubble, the agent's turn as
-//! plain text with its meta line, and quiet lines.
+//! markdown with its meta line, and quiet lines.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
-use gpui::{AnyElement, App, ClickEvent, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, ElementId, SharedString, Window, div, prelude::*, px};
+use sound_core::Problem;
 use sound_ui::ActiveTheme;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
+use sound_ui::components::markdown::{Markdown, MarkdownText};
 
 use crate::StepOutcome;
 use crate::TurnOutcome;
@@ -16,6 +19,7 @@ const TEXT_SIZE: f32 = 15.;
 const LINE_HEIGHT: f32 = 22.;
 /// Meta lines and steps.
 const SMALL_TEXT_SIZE: f32 = 12.;
+const SMALL_LINE_HEIGHT: f32 = 16.;
 
 pub fn message(text: &str, cx: &App) -> AnyElement {
     div()
@@ -36,14 +40,31 @@ pub fn notice(text: &str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// One turn: the meta line once it ended, the steps behind it, the text, and while it works
-/// the working line and the question it waits on.
+/// A line the app writes, such as a step or a question, with its commands as code.
+pub fn title(id: impl Into<ElementId>, line: &str) -> MarkdownText {
+    MarkdownText::new(id, Markdown::inline_code(line))
+}
+
+/// The answers of the agent, its blocks parsed once per batch of events.
+pub fn answer(turn: &Turn) -> Vec<Markdown> {
+    let streaming = (!turn.streaming.is_empty()).then_some(&turn.streaming);
+    turn.blocks
+        .iter()
+        .chain(streaming)
+        .map(|block| Markdown::parse(block))
+        .collect()
+}
+
+/// One turn: the meta line once it ended, the steps behind it, the answer, and while it works
+/// the working line. `below` comes last: the question it waits on, or once it ended the
+/// problems it left.
 pub fn turn(
     turn: &Turn,
     index: usize,
-    expanded: bool,
-    on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    approval: Option<AnyElement>,
+    answer: &[Markdown],
+    steps_open: bool,
+    on_toggle_steps: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    below: Option<AnyElement>,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
@@ -65,53 +86,67 @@ pub fn turn(
         };
         let has_steps = !turn.steps.is_empty();
         div()
-            .id(("worked-for", index))
+            .id("worked-for")
+            .debug_selector(move || format!("agent-worked-for-{index}"))
             .text_size(px(SMALL_TEXT_SIZE))
             .text_color(color)
             .child(line)
             .when(has_steps, |line| {
                 line.cursor_pointer()
                     .hover(move |style| style.text_color(bright))
-                    .on_click(on_toggle)
+                    .on_click(on_toggle_steps)
             })
     });
-    let steps = expanded.then(|| {
+    let steps = steps_open.then(|| {
         div()
             .flex()
             .flex_col()
             .gap(px(4.))
-            .text_size(px(SMALL_TEXT_SIZE))
             .text_color(dim)
-            .children(turn.steps.iter().map(|step| {
-                let suffix = match step.outcome {
-                    Some(StepOutcome::Failed) => ", failed",
-                    Some(StepOutcome::Denied) => ", denied",
-                    Some(StepOutcome::Done) | None => "",
+            .children(turn.steps.iter().enumerate().map(|(step_index, step)| {
+                // A step that did not do what it says says so in words, a failure in red.
+                let outcome = match step.outcome {
+                    Some(StepOutcome::Failed) => Some(("· failed", red)),
+                    Some(StepOutcome::Denied) => Some(("· denied", muted)),
+                    Some(StepOutcome::Done) | None => None,
                 };
-                div().child(format!("{}{suffix}", step.title))
+                div()
+                    .flex()
+                    .gap(px(6.))
+                    .child(
+                        title(("step", step_index), step.finished_title())
+                            .min_w_0()
+                            .text_size(px(SMALL_TEXT_SIZE))
+                            .line_height(px(SMALL_LINE_HEIGHT)),
+                    )
+                    .children(outcome.map(|(word, color)| {
+                        div()
+                            .flex_none()
+                            .text_size(px(SMALL_TEXT_SIZE))
+                            .line_height(px(SMALL_LINE_HEIGHT))
+                            .text_color(color)
+                            .child(word)
+                    }))
             }))
     });
-    let streaming = (!turn.streaming.is_empty()).then_some(&turn.streaming);
-    let text = turn.blocks.iter().chain(streaming).map(|block| {
-        div()
-            .text_size(px(TEXT_SIZE))
-            .line_height(px(LINE_HEIGHT))
-            .child(SharedString::from(block.clone()))
-    });
+    let text = answer
+        .iter()
+        .enumerate()
+        .map(|(block, markdown)| MarkdownText::new(("answer", block), markdown.clone()));
     // While a question waits, the question is what the agent does.
     let working = (turn.end.is_none() && turn.approval.is_none()).then(|| {
-        let title = turn
+        let line = turn
             .current_step()
             .map_or("Working", |step| match step.outcome {
                 None => step.running_title.as_str(),
-                Some(_) => step.title.as_str(),
+                Some(_) => step.finished_title(),
             });
         div()
             .flex()
             .items_center()
             .gap(px(8.))
             .child(
-                Indicator::new(("agent-working", index))
+                Indicator::new("agent-working")
                     .size(IndicatorSize::Sm)
                     .color(lavender)
                     .pulse(true),
@@ -124,10 +159,14 @@ pub fn turn(
                     .text_size(px(TEXT_SIZE))
                     .line_height(px(LINE_HEIGHT))
                     .text_color(lavender)
-                    .child(SharedString::from(title.to_string())),
+                    // One line, a long command cut with an ellipsis. Plain text, as gpui cuts
+                    // only a text that is the direct child of the line, not markdown's blocks.
+                    .child(SharedString::from(line.replace('`', ""))),
             )
     });
+    // Ids inside are the turn's own, so two turns never share one.
     div()
+        .id(("turn", index))
         .flex()
         .flex_col()
         .gap(px(12.))
@@ -135,7 +174,53 @@ pub fn turn(
         .children(steps)
         .children(text)
         .children(working)
-        .children(approval)
+        .children(below)
+        .into_any_element()
+}
+
+/// The problems a turn left that were not there before it: one peach line that opens to
+/// `path: message` lines.
+pub fn problems(
+    problems: &[Problem],
+    index: usize,
+    open: bool,
+    on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let (peach, muted) = (theme.peach, theme.gray_800);
+    let files = problems
+        .iter()
+        .map(|problem| problem.path.as_str())
+        .collect::<BTreeSet<_>>()
+        .len();
+    let line = match files {
+        1 => "1 file is not live".to_string(),
+        files => format!("{files} files are not live"),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .text_size(px(SMALL_TEXT_SIZE))
+        .line_height(px(SMALL_LINE_HEIGHT))
+        .child(
+            div()
+                .id("problems")
+                .debug_selector(move || format!("agent-problems-{index}"))
+                .text_color(peach)
+                .cursor_pointer()
+                .on_click(on_toggle)
+                .child(line),
+        )
+        .when(open, |lines| {
+            lines.children(problems.iter().enumerate().map(|(number, problem)| {
+                div()
+                    .debug_selector(move || format!("agent-problem-{index}-{number}"))
+                    .text_color(muted)
+                    .child(format!("{}: {}", problem.path, problem.message))
+            }))
+        })
         .into_any_element()
 }
 
