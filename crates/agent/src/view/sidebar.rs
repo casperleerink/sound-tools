@@ -2,12 +2,14 @@
 //!
 //! One thread per sidebar. Its process starts on the first send and ends with **+**. Every
 //! message is one request of the session, so the agent's file writes for it are one undo step.
+//! The thread is saved on the machine as it goes (`crate::store`), and the sidebar opens on the
+//! project's last one.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use gpui::{
     AnyElement, App, BoxShadow, Context, Entity, FocusHandle, Focusable, FollowMode, FontWeight,
@@ -20,6 +22,7 @@ use sound_ui::components::text_input::TextInput;
 
 use super::entry;
 use crate::conversation::{Conversation, Entry, request_label};
+use crate::store::{Line, SavedThread, ThreadStore, Write};
 use crate::{
     AgentEvent, ApprovalAnswer, ApprovalMode, Events, Provider, Session, Thread, ThreadOptions,
     TurnOutcome, login_shell_environment, program_on_path,
@@ -86,6 +89,13 @@ pub struct Sidebar {
     /// Allow, Allow for this thread, Deny.
     approval_focus: [FocusHandle; 3],
     agent: Option<Agent>,
+    /// The thread shown, as it is saved. `None` until its first message.
+    thread: Option<SavedThread>,
+    /// Hands what to keep of the thread to its writer, in order. `None` while nothing is
+    /// saved, as in a snapshot.
+    writes: Option<smol::channel::Sender<Write>>,
+    /// Reads the last thread of the project. No message goes until it is in.
+    loading: Option<Task<()>>,
     _input: Subscription,
     _finding: Option<Task<()>>,
 }
@@ -161,12 +171,79 @@ impl Sidebar {
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
             agent: None,
+            thread: None,
+            writes: None,
+            loading: None,
             _finding: None,
         }
     }
 
+    /// Keeps the threads of the project in `threads`, `agent/threads` in the support folder of
+    /// the machine, and shows the last one, read in the background. Without it nothing is
+    /// saved.
+    pub fn with_threads(mut self, threads: PathBuf, cx: &mut Context<Self>) -> Self {
+        let project = self.session.read(cx).project().root().to_path_buf();
+        self.loading = Some(cx.spawn(async move |sidebar, cx| {
+            let (store, last) = cx
+                .background_spawn(async move {
+                    let store = ThreadStore::new(&threads, &project);
+                    let last = store.last();
+                    (store, last)
+                })
+                .await;
+            // A sidebar that went in the meantime shows nothing.
+            sidebar
+                .update(cx, |sidebar, cx| sidebar.loaded(store, last, cx))
+                .ok();
+        }));
+        self
+    }
+
+    fn loaded(
+        &mut self,
+        store: ThreadStore,
+        last: Result<Option<(SavedThread, Conversation)>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.loading = None;
+        self.writes = Some(write_in_order(store, cx));
+        match last {
+            Ok(Some((thread, conversation))) => {
+                self.thread = Some(thread);
+                // Only notices came meanwhile: no message goes while it loads.
+                let meanwhile = std::mem::replace(&mut self.conversation, conversation);
+                self.conversation.append(meanwhile);
+            }
+            Ok(None) => {}
+            Err(error) => self
+                .conversation
+                .notice(format!("The last thread could not be read: {error}")),
+        }
+        self.expanded.clear();
+        self.list.reset(self.conversation.entries().len());
+        cx.notify();
+    }
+
     pub fn conversation(&self) -> &Conversation {
         &self.conversation
+    }
+
+    /// What the next process of the thread continues: the thread's own session once its
+    /// agent has started, so a thread opened again resumes where it left off.
+    pub fn next_session(&self) -> Session {
+        self.thread
+            .as_ref()
+            .map_or(Session::New, SavedThread::session)
+    }
+
+    fn keep(&self, writes: impl IntoIterator<Item = Write>) {
+        let Some(sender) = &self.writes else {
+            return;
+        };
+        for write in writes {
+            // The writer ends only with the sidebar, which owns the sender.
+            sender.try_send(write).ok();
+        }
     }
 
     /// Whether the agent works or waits on the composer, so a closed sidebar can say so.
@@ -177,16 +254,32 @@ impl Sidebar {
     /// Shows the composer's message and opens its request. [`Self::send`] calls it before the
     /// message goes to the agent; a test calls it to replay a recorded turn with no process.
     pub fn begin(&mut self, message: &str, cx: &mut Context<Self>) {
-        self.begin_at(message, Instant::now(), cx);
+        self.begin_at(message, SystemTime::now(), cx);
     }
 
     /// [`Self::begin`] with the turn started at `started`, so a snapshot shows how long it
     /// worked.
-    pub fn begin_at(&mut self, message: &str, started: Instant, cx: &mut Context<Self>) {
+    pub fn begin_at(&mut self, message: &str, started: SystemTime, cx: &mut Context<Self>) {
         let label = request_label(message);
         self.session
             .update(cx, |session, _| session.begin_request(&label));
         self.conversation.send(message, started);
+        let thread = self
+            .thread
+            .get_or_insert_with(|| SavedThread::new(Provider::Claude, message, started));
+        thread.updated = started;
+        let line = Line::Sent {
+            at: started,
+            message: message.to_string(),
+        };
+        let writes = [
+            Write::Thread(thread.clone()),
+            Write::Lines {
+                thread: thread.id.clone(),
+                lines: vec![line],
+            },
+        ];
+        self.keep(writes);
         self.show(None, cx);
     }
 
@@ -197,9 +290,19 @@ impl Sidebar {
         events: impl IntoIterator<Item = AgentEvent>,
         cx: &mut Context<Self>,
     ) {
-        let now = Instant::now();
+        let now = SystemTime::now();
         let mut changed: Option<usize> = None;
+        let mut lines = Vec::new();
         for event in events {
+            // The session to resume the thread with, from now on and when it opens again.
+            if let AgentEvent::Started { session_id, .. } = &event
+                && let Some(thread) = &mut self.thread
+            {
+                thread.session_id = Some(session_id.clone());
+                let saved = Write::Thread(thread.clone());
+                self.keep([saved]);
+            }
+            lines.extend(Line::of(&event, now));
             let ends = matches!(
                 event,
                 AgentEvent::TurnEnded { .. } | AgentEvent::Exited { .. }
@@ -216,6 +319,13 @@ impl Sidebar {
             if let Some(index) = self.conversation.apply(event, now) {
                 changed = Some(changed.map_or(index, |earlier| earlier.min(index)));
             }
+        }
+        // A thread is saved from its first message on.
+        if let Some(thread) = &self.thread
+            && !lines.is_empty()
+        {
+            let thread = thread.id.clone();
+            self.keep([Write::Lines { thread, lines }]);
         }
         self.show(changed, cx);
     }
@@ -250,7 +360,8 @@ impl Sidebar {
 
     fn send(&mut self, cx: &mut Context<Self>) {
         let message = self.input.read(cx).text().trim().to_string();
-        if message.is_empty() || self.conversation.is_working() {
+        let ready = self.loading.is_none() && self.conversation.can_continue();
+        if message.is_empty() || self.conversation.is_working() || !ready {
             return;
         }
         if self.agent.is_none() {
@@ -287,7 +398,7 @@ impl Sidebar {
             // The CLI's own default until the model picker comes.
             model: None,
             approval_mode: ApprovalMode::AskBeforeCommands,
-            session: Session::New,
+            session: self.next_session(),
             environment: installed.environment,
         })?;
         let (sender, receiver) = smol::channel::unbounded();
@@ -353,6 +464,8 @@ impl Sidebar {
     /// Drops the thread and its process, and starts empty.
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.agent = None;
+        // The old one stays in the store; the new one is saved from its first message on.
+        self.thread = None;
         if self.conversation.is_working() {
             self.session.update(cx, |session, _| session.end_request());
         }
@@ -512,6 +625,65 @@ impl Sidebar {
                 ),
         )
     }
+
+    /// In place of the composer once the agent lost the session: the thread stays to read,
+    /// and **+** is the way on.
+    fn cannot_continue(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .p(px(24.))
+            .pt(px(8.))
+            .child(
+                div()
+                    .flex_1()
+                    .text_size(px(14.))
+                    .text_color(cx.theme().gray_700)
+                    .child("This thread can't continue. Start a new one."),
+            )
+            .child(
+                Button::icon_only("new-thread-instead", "plus")
+                    .debug_selector(|| "agent-cannot-continue".to_string())
+                    .variant(ButtonVariant::Subtle)
+                    .size(ButtonSize::Sm)
+                    .rounded(true)
+                    .focus_handle(&self.send_focus)
+                    .on_click(cx.listener(|sidebar, _, window, cx| sidebar.new_thread(window, cx))),
+            )
+    }
+}
+
+/// Hands each write to the background in turn, so the files get them in order. Detached: it
+/// ends when the sidebar does, after the writes still queued.
+fn write_in_order(store: ThreadStore, cx: &mut Context<Sidebar>) -> smol::channel::Sender<Write> {
+    let (sender, receiver) = smol::channel::unbounded::<Write>();
+    cx.spawn(async move |sidebar, cx| {
+        let mut told = false;
+        while let Ok(write) = receiver.recv().await {
+            let store = store.clone();
+            let written = cx
+                .background_spawn(async move { store.write(&write) })
+                .await;
+            // Said once: a full disk would otherwise add a line at every event.
+            if let Err(error) = written
+                && !told
+            {
+                told = true;
+                // A sidebar that went has nobody to tell.
+                sidebar
+                    .update(cx, |sidebar, cx| {
+                        let notice = format!("This thread is not saved: {error}");
+                        sidebar.conversation.notice(notice);
+                        sidebar.show(None, cx);
+                    })
+                    .ok();
+            }
+        }
+    })
+    .detach();
+    sender
 }
 
 /// Every event of the process, until it ends or the sidebar stops listening.
@@ -528,8 +700,8 @@ impl Focusable for Sidebar {
     /// and escape still work there.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self.claude {
-            Claude::Found(_) => self.input.focus_handle(cx),
-            Claude::Looking | Claude::Missing => self.focus_handle.clone(),
+            Claude::Found(_) if self.conversation.can_continue() => self.input.focus_handle(cx),
+            Claude::Found(_) | Claude::Looking | Claude::Missing => self.focus_handle.clone(),
         }
     }
 }
@@ -565,7 +737,13 @@ impl Render for Sidebar {
                         .flex_1()
                         .min_h_0(),
                 )
-                .child(self.composer(cx))
+                .map(|body| {
+                    if self.conversation.can_continue() {
+                        body.child(self.composer(cx))
+                    } else {
+                        body.child(self.cannot_continue(cx))
+                    }
+                })
                 .into_any_element(),
         };
         div()

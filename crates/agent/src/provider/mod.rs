@@ -13,10 +13,12 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use smol::channel::{self, Receiver, Sender};
 
 /// The coding agent CLI that runs a thread.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Provider {
     Claude,
 }
@@ -70,16 +72,19 @@ pub struct ThreadOptions {
 
 /// One step of a turn, such as an edit or a command. The id is the provider's; a test that
 /// feeds events with no process makes its own.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StepId(pub String);
 
 /// One question of the agent, answered with [`Thread::answer`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ApprovalId(pub String);
 
 /// What the agent did, in order. A turn runs from [`AgentEvent::TurnStarted`] to
 /// [`AgentEvent::TurnEnded`], and every turn that starts ends, also when the process dies.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Serde gives the lines of a thread's saved log, see `crate::store`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentEvent {
     /// The agent is ready. It comes once, before the first turn ends.
     Started {
@@ -131,7 +136,8 @@ pub enum AgentEvent {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StepOutcome {
     Done,
     Failed,
@@ -139,7 +145,8 @@ pub enum StepOutcome {
     Denied,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnOutcome {
     Completed,
     /// Stopped with [`Thread::interrupt`].
@@ -149,7 +156,8 @@ pub enum TurnOutcome {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ExitReason {
     /// Every [`Thread`] handle was dropped, so the agent ended.
     Finished,
@@ -161,7 +169,7 @@ pub enum ExitReason {
 }
 
 /// The account the agent runs under.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub email: Option<String>,
     /// Such as "Claude Max".
@@ -169,7 +177,7 @@ pub struct Account {
 }
 
 /// A model the composer can pick for a thread.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Model {
     /// What [`ThreadOptions::model`] takes.
     pub id: String,
