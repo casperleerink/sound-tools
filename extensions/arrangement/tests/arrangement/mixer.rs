@@ -310,3 +310,29 @@ fn the_bottom_of_the_volume_is_silence_and_saved_as_minus_inf() {
         peak(&left)
     );
 }
+
+/// The level of a frame before its pan: the equal power law keeps the sum of the squares of
+/// the two channels at twice the square of the volume, wherever the track is panned.
+fn level(left: f32, right: f32) -> f32 {
+    ((left * left + right * right) / 2.0).sqrt() / LEVEL
+}
+
+/// A volume lane that takes over glides there over 20 ms, as an edit does, also while a pan
+/// lane moves every block. The volume and the pan have each their own ramp.
+#[test]
+fn a_volume_lane_that_takes_over_glides_while_a_pan_lane_moves() {
+    let mut harness = playing();
+    let pan = r#"{"parameter": "pan", "points": [{"tick": 0, "value": -1.0}, {"tick": 30720, "value": 1.0}]}"#;
+    let lanes = |lanes: &str| track_record(&format!(r#", "automation": [{lanes}]"#));
+    harness.write_and_apply(TRACK_FILE, &lanes(pan));
+    render(&mut harness, 4_000);
+    let gain = r#"{"parameter": "gain_db", "points": [{"tick": 0, "value": -20.0}]}"#;
+    harness.write_and_apply(TRACK_FILE, &lanes(&format!("{pan}, {gain}")));
+    let (left, right) = render(&mut harness, 2_000);
+    let at = |frame: usize| level(left[frame], right[frame]);
+    // Halfway through the glide of 960 frames, halfway from 1 to a tenth.
+    let halfway = at(479);
+    assert!((halfway - 0.55).abs() < 0.02, "{halfway}");
+    let arrived = at(1_500);
+    assert!((arrived - 0.1).abs() < 1e-3, "{arrived}");
+}

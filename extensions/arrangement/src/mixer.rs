@@ -45,10 +45,15 @@ impl Mix {
     /// loudness wherever it is panned, and in the middle it is untouched, so a project from
     /// before this existed sounds the same.
     pub fn gains(&self) -> ChannelGains {
-        if self.silent {
-            return [0.0; CHANNELS];
+        pan_gains(f64::from(self.level()), self.pan)
+    }
+
+    /// The factor of the volume, 0 when silent.
+    fn level(&self) -> f32 {
+        match self.silent {
+            true => 0.0,
+            false => amplitude(self.gain_db),
         }
-        pan_gains(f64::from(amplitude(self.gain_db)), self.pan)
     }
 }
 
@@ -73,10 +78,18 @@ pub(crate) const PAN: Parameter<Mix> = Parameter {
 };
 
 /// One per track. It multiplies each channel by its gain and ramps to a new one.
+///
+/// The volume and the pan glide apart, each with its own ramp, and the gains of the channels
+/// are worked out from where both are at the end of each block. So a pan lane that moves does
+/// not cut short the glide of a volume lane that just took over.
 pub struct Mixer {
     /// The record, with the values of the lanes of the track.
     mix: Automated<Mix, 2>,
-    gains: [Smoothed; CHANNELS],
+    /// The factor of the volume, 0 when silent.
+    level: Smoothed,
+    pan: Smoothed,
+    /// The gains at the end of the last block, where the next block starts.
+    gains: ChannelGains,
     /// The frames a change takes. One until `prepare` runs.
     ramp_frames: f32,
     /// What the track sends on, for its meter.
@@ -93,18 +106,22 @@ impl Mixer {
     pub fn new(mix: Mix, peaks: Peaks) -> Self {
         Self {
             mix: Automated::new(Self::AUTOMATION, mix),
-            gains: mix.gains().map(Smoothed::new),
+            level: Smoothed::new(mix.level()),
+            pan: Smoothed::new(mix.pan),
+            gains: mix.gains(),
             ramp_frames: 1.0,
             peaks,
         }
     }
 
-    /// Aims at the gains of the record and its lanes. Both come from the volume and the pan,
-    /// so they take the longer ramp of the two.
+    /// Aims at the volume and the pan of the record and its lanes, each in its own ramp.
     fn aim(&mut self, targets: &Targets<Mix, 2>) {
-        let ramp = targets.ramp(&GAIN).max(targets.ramp(&PAN));
-        for (gain, target) in self.gains.iter_mut().zip(targets.state.gains()) {
-            gain.set_target(target, ramp);
+        let mix = targets.state;
+        self.level.set_target(mix.level(), targets.ramp(&GAIN));
+        self.pan.set_target(mix.pan, targets.ramp(&PAN));
+        // Taken at once, so the block starts there too.
+        if targets.snaps() {
+            self.gains = pan_gains(f64::from(self.level.current()), self.pan.current());
         }
     }
 }
@@ -132,18 +149,25 @@ impl Processor for Mixer {
         if let Some(targets) = self.mix.follow(context, self.ramp_frames) {
             self.aim(&targets);
         }
-        let silent = |gain: &Smoothed| !gain.is_moving() && gain.current() == 0.0;
-        if self.gains.iter().all(silent) {
+        if !self.level.is_moving() && self.level.current() == 0.0 {
             // A muted track that has finished its fade touches nothing.
+            self.gains = [0.0; CHANNELS];
             return;
         }
         let frames = context.frames;
+        let before = self.gains;
+        let level = self.level.advance(frames);
+        let pan = self.pan.advance(frames);
+        self.gains = pan_gains(f64::from(level), pan);
         let input = context.audio_inputs.get(Self::INPUT);
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);
         let outputs = [&mut *left, &mut *right];
-        for ((output, input), gain) in outputs.into_iter().zip(input).zip(&mut self.gains) {
-            let before = gain.current();
-            let step = (gain.advance(frames) - before) / frames as f32;
+        let channels = outputs
+            .into_iter()
+            .zip(input)
+            .zip(before.into_iter().zip(self.gains));
+        for ((output, input), (before, after)) in channels {
+            let step = (after - before) / frames as f32;
             for (frame, (output, input)) in output.iter_mut().zip(input).enumerate() {
                 *output = input * (before + step * (frame + 1) as f32);
             }
