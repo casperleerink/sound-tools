@@ -68,7 +68,13 @@ impl Carried {
         &self.lanes
     }
 
-    fn length(&self) -> Ticks {
+    /// The track the clip was on.
+    pub fn track(&self) -> &InstanceId {
+        &self.track
+    }
+
+    /// How long the clip was on the timeline.
+    pub fn length(&self) -> Ticks {
         self.range.end.saturating_sub(self.range.start)
     }
 
@@ -211,7 +217,10 @@ fn working<'a>(
 }
 
 /// The travel of the numbers of the devices of `project`, as their behaviours named them.
-pub fn travel_in(project: &Project) -> impl Fn(&InstanceId, &str) -> Option<ValueRange> + '_ {
+/// `Copy`, so it holds nothing to drop and a borrow of the project ends where it is last used.
+pub fn travel_in(
+    project: &Project,
+) -> impl Fn(&InstanceId, &str) -> Option<ValueRange> + Copy + '_ {
     |device, field| {
         let numbers = project.automation(device)?;
         let number = numbers.iter().find(|number| number.field == field)?;
@@ -224,7 +233,7 @@ pub fn travel_in(project: &Project) -> impl Fn(&InstanceId, &str) -> Option<Valu
 pub(crate) fn write(
     project: &Project,
     changes: &mut Changes,
-    lanes: BTreeMap<InstanceId, Vec<AutomationLane>>,
+    lanes: impl IntoIterator<Item = (InstanceId, Vec<AutomationLane>)>,
 ) {
     for (track, automation) in lanes {
         let Some(track) = project.resolve::<TrackState>(&track) else {
@@ -533,7 +542,7 @@ mod tests {
     fn a_flat_line_gets_no_points_from_a_move() {
         let flat = lane(None, "gain_db", &[(0, -6.), (BAR, -3.)]);
         let moved = moved_on(vec![flat.clone()], 4 * BAR..5 * BAR, 8 * BAR);
-        assert_eq!(moved, [flat.clone()]);
+        assert_eq!(moved, std::slice::from_ref(&flat));
         // And a move that ends where it began changes nothing at all.
         let back = moved_on(vec![flat.clone()], 4 * BAR..5 * BAR, 4 * BAR);
         assert_eq!(back, [flat]);

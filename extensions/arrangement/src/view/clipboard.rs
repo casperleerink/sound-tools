@@ -10,7 +10,10 @@
 //! A paste keeps the shape of what was copied: the clips keep their distance in time and in
 //! track rows. The earliest start lands at the playhead and the top row on the selected track.
 //! A row that would fall below the last track lands on the last track, so nothing that was
-//! copied is lost; clips may overlap, so that is always a valid arrangement. Notes keep their
+//! copied is lost; clips may overlap, so that is always a valid arrangement. Each clip keeps
+//! the automation that was under it, and a paste puts it down over what is there, as a move
+//! does: the volume and the pan on any track, a lane of a device on its own track only. Notes
+//! keep their
 //! distance in time and their pitch; a note that would start after the end of its clip is left
 //! out, because every note starts inside its clip.
 
@@ -21,16 +24,18 @@ use sound_core::Ticks;
 use sound_notes::{Length, Note};
 
 use super::clips::AnyClip;
+use crate::Carried;
 
 /// One copied clip: its row from the top copied row, its name, the clip with its start from the
-/// earliest one, and how long it was on the timeline. An audio clip has no length of its own,
-/// so the one it had when it was copied is kept, for where a duplicate goes.
+/// earliest one, and the automation under it, which says how long it was on the timeline. An
+/// audio clip has no length of its own, so the one it had when it was copied is kept, for where
+/// a duplicate goes.
 #[derive(Clone, Debug, PartialEq)]
 struct CopiedClip {
     row: usize,
     name: String,
     clip: AnyClip,
-    length: Ticks,
+    lanes: Carried,
 }
 
 /// Clips copied in the window.
@@ -43,21 +48,21 @@ pub struct CopiedClips {
 }
 
 impl CopiedClips {
-    /// The clips, each with the row of its track in the arrangement, its name and how long it
-    /// is on the timeline. `None` when there is nothing to copy.
-    pub fn new(clips: impl IntoIterator<Item = (usize, String, AnyClip, Ticks)>) -> Option<Self> {
+    /// The clips, each with the row of its track in the arrangement, its name and the
+    /// automation under it on the timeline. `None` when there is nothing to copy.
+    pub fn new(clips: impl IntoIterator<Item = (usize, String, AnyClip, Carried)>) -> Option<Self> {
         let clips: Vec<_> = clips.into_iter().collect();
         let start = clips.iter().map(|(_, _, clip, _)| clip.start()).min()?;
         let top = clips.iter().map(|(row, ..)| *row).min()?;
         let clips = clips
             .into_iter()
-            .map(|(row, name, clip, length)| {
+            .map(|(row, name, clip, lanes)| {
                 let at = Ticks(clip.start().0 - start.0);
                 CopiedClip {
                     row: row - top,
                     name,
                     clip: clip.with_start(at),
-                    length,
+                    lanes,
                 }
             })
             .collect();
@@ -74,7 +79,7 @@ impl CopiedClips {
         let end = self
             .clips
             .iter()
-            .map(|copied| copied.clip.start() + copied.length)
+            .map(|copied| copied.clip.start() + copied.lanes.length())
             .max();
         end.unwrap_or_default()
     }
@@ -84,10 +89,20 @@ impl CopiedClips {
         self.clips.len()
     }
 
+    /// The automation under each clip, where it was copied from.
+    pub(crate) fn lanes(&self) -> impl Iterator<Item = &Carried> {
+        self.clips.iter().map(|copied| &copied.lanes)
+    }
+
     /// Where each clip lands for a paste at `at` with the top row on `top`, in an arrangement of
-    /// `rows` tracks: its row, its name and the clip. A row below the last track is the last
-    /// track. Nothing without tracks.
-    pub fn placed(&self, at: Ticks, top: usize, rows: usize) -> Vec<(usize, &str, AnyClip)> {
+    /// `rows` tracks: its row, its name, the clip and its automation. A row below the last track
+    /// is the last track. Nothing without tracks.
+    pub fn placed(
+        &self,
+        at: Ticks,
+        top: usize,
+        rows: usize,
+    ) -> Vec<(usize, &str, AnyClip, &Carried)> {
         let Some(last) = rows.checked_sub(1) else {
             return Vec::new();
         };
@@ -98,6 +113,7 @@ impl CopiedClips {
                 row,
                 copied.name.as_str(),
                 copied.clip.clone().with_start(start),
+                &copied.lanes,
             )
         });
         placed.collect()
@@ -176,9 +192,19 @@ mod tests {
         ))
     }
 
-    /// A copy of a note clip, whose length on the timeline is its own.
-    fn copied(row: usize, name: &str, start: u64, length: u64) -> (usize, String, AnyClip, Ticks) {
-        (row, name.to_string(), clip(start, length), Ticks(length))
+    /// A copy of a note clip, whose length on the timeline is its own, from a track with no
+    /// automation.
+    fn copied(
+        row: usize,
+        name: &str,
+        start: u64,
+        length: u64,
+    ) -> (usize, String, AnyClip, Carried) {
+        let track = sound_core::InstanceId::new("arrangement/track").unwrap();
+        let state = crate::TrackState::new("Track", crate::Colour::Blue, 0);
+        let range = Ticks(start)..Ticks(start + length);
+        let lanes = Carried::under(&track, &state, range, &|_, _| None);
+        (row, name.to_string(), clip(start, length), lanes)
     }
 
     #[test]
@@ -189,7 +215,11 @@ mod tests {
         assert_eq!(copied.span(), Ticks(2 * BAR));
         assert_eq!(copied.len(), 2);
 
-        let placed = copied.placed(Ticks(10 * BAR), 0, 5);
+        let placed: Vec<_> = copied
+            .placed(Ticks(10 * BAR), 0, 5)
+            .into_iter()
+            .map(|(row, name, clip, _)| (row, name, clip))
+            .collect();
         assert_eq!(
             placed,
             [(1, "b", clip(11 * BAR, BAR)), (0, "a", clip(10 * BAR, BAR))]
@@ -202,7 +232,7 @@ mod tests {
         let rows: Vec<_> = copied
             .placed(Ticks(0), 1, 2)
             .into_iter()
-            .map(|(row, _, _)| row)
+            .map(|(row, ..)| row)
             .collect();
         assert_eq!(rows, [1, 1]);
         assert!(copied.placed(Ticks(0), 0, 0).is_empty());
