@@ -127,7 +127,7 @@ What the composer sees in the sidebar, with nothing blocking the rest of the app
 | Downloading | A progress line with MB and percent, and **Cancel** |
 | Download failed | One sentence ("Could not download Claude Code. Check the internet connection.") and **Try again**. A checksum mismatch says "The download was damaged" and deletes the file. A region block repeats Anthropic's message |
 | Signed out | The two sign-in choices |
-| Signing in | "Finish signing in in your browser.", **Open the page again** and **Cancel**. After 10 minutes it goes back to signed out |
+| Signing in | "Finish signing in in your browser.", **Open the page again** (starts the sign-in again, see R2) and **Cancel**. After 10 minutes it goes back to signed out |
 | Sign-in failed or cancelled | Back to signed out, with one line saying why |
 | Ready | The thread. The account (email and plan) sits in the composer's menu, which also has **Sign out** |
 | CLI fails to start | "Claude Code stopped: <first line of its error output>" and **Try again** |
@@ -290,7 +290,7 @@ Diffs come only if composers ask for them.
 | # | Risk | Spike |
 | --- | --- | --- |
 | R1 | Claude's control messages are undocumented and could change | Removed for 2.1.286: initialize, can_use_tool, resume, interrupt, a denied tool and an error turn are recorded in `crates/agent/tests/fixtures/claude/`, with snapshot tests. Moving the pin means running `record.py` again and reading the snapshot changes |
-| R2 | `claude auth login` without a terminal might not finish | Partly removed: it opens the browser and listens on localhost. Still to do: finish a real sign-in into a throwaway `CLAUDE_CONFIG_DIR`, check exit code 0 and `auth status`, and check the Keychain item with the default folder |
+| R2 | `claude auth login` without a terminal might not finish | Partly removed. Milestone 5: the pinned 2.1.286 downloads and checks out, `auth status` in a fresh `CLAUDE_CONFIG_DIR` says signed out (exit 1), and `auth login` started by the app with stdin empty listens on `127.0.0.1` and waits; Cancel kills it (ignored test `crates/agent/tests/setup.rs`). The fallback URL it prints is the paste-a-code flow, which the app cannot finish, so **Open the page again** starts the sign-in again instead. Still to do: finish a real sign-in into a throwaway `CLAUDE_CONFIG_DIR`, check exit code 0 and `auth status`, and check the Keychain item with the default folder |
 | R4 | An app opened from the Finder has a bare PATH, so the agent cannot find `cargo` | Launch the `.app` from the Finder and have the agent run `which cargo`, with and without the login-shell environment |
 | R5 | The agent's last write lands after the turn ends and misses the undo step | A core test with `apply_outside_changes`: a write 50 ms after `end_request` joins the step, and a write 500 ms after starts a new one |
 | R6 | The multi-line composer is the largest UI piece | A gallery spike, before the rest: wrapping, up and down across wrapped lines, and growth to 8 lines |

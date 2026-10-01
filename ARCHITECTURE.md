@@ -224,7 +224,9 @@ The synth (`extensions/instrument`), Wavetable, Sampler, Drum pad, Filter, Compr
 - Whether the panel is open is kept per machine in the support folder, next to the last project, never in a project: an agent writes in the project folder and must not change the interface under the composer.
 - Each message is one request (`Session::begin_request` at send, `end_request` when the turn ends or the process exits), so all the agent's writes for it are one undo step named after the message.
 - The thread state (`Conversation`) is built from provider-neutral `AgentEvent`s and holds no process, so tests feed it events. The process is read on the background executor and its events reach the view once a frame.
-- The agent finds `claude` on the `PATH` of the login shell, read once in the background, because an app opened from the Finder has a bare `PATH`.
+- Every run of `claude` gets the environment of the login shell, read once in the background, because an app opened from the Finder has a bare `PATH`.
+- The app runs its own pinned `claude`, never one on the `PATH`: **Set up** downloads it unmodified with `/usr/bin/curl` into `agents/claude/<version>/` in the support folder, checks the sha256 pinned in the driver, and removes older versions (`crates/agent/src/install.rs`). The pin and the recorded fixtures move together. `SOUND_TOOLS_CLAUDE=<path>` runs another binary, for development.
+- Sign-in is Claude Code's own: `claude auth login` opens the browser and the app waits for it to end, then asks `claude auth status`. The app never reads or keeps a credential. Each provider lists its own sign-in choices, and the onboarding view (`Setup`, one state per row of the plan's table) shows them.
 
 ## Direction: extensions made by the agent
 
