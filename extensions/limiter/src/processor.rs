@@ -6,10 +6,13 @@ use sound_core::{
     ProcessContext, Processor, Smoothed, Targets, amplitude,
 };
 
-use crate::{GAIN, LimiterState, Lookahead, PARAMETERS};
+use crate::{GAIN, LimiterState, Lookahead, RELEASE};
 
-/// Every number of the limiter can be automated.
-type LimiterTargets = Targets<LimiterState, { PARAMETERS.len() }>;
+/// The numbers a lane can move. The ceiling is left out: it takes a new value at once, also
+/// for the frames already in the lookahead, so a lane would step it every block.
+const AUTOMATED: [&crate::Parameter; 2] = [&GAIN, &RELEASE];
+
+type LimiterTargets = Targets<LimiterState, { AUTOMATED.len() }>;
 
 /// How long a change of the gain takes to arrive. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
@@ -44,7 +47,7 @@ impl Meters {
 pub struct Limiter {
     meters: Meters,
     /// The record, with the values of the lanes that automate it.
-    state: Automated<LimiterState, { PARAMETERS.len() }>,
+    state: Automated<LimiterState, { AUTOMATED.len() }>,
     ramp_frames: f32,
     gain: Smoothed,
     ceiling: f32,
@@ -56,8 +59,8 @@ pub struct Limiter {
 impl Limiter {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
-    pub const AUTOMATION: AutomationInput<LimiterState, { PARAMETERS.len() }> =
-        AutomationInput::new(0, PARAMETERS);
+    pub const AUTOMATION: AutomationInput<LimiterState, { AUTOMATED.len() }> =
+        AutomationInput::new(0, AUTOMATED);
 
     /// Starts at these values, so a limiter that is added or opened does not glide in.
     pub fn new(state: LimiterState, meters: Meters) -> Self {
