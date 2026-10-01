@@ -108,16 +108,17 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Arrangement | click; shift-click or cmd-click on a clip | Select it; add it to the selection or take it out |
 | Arrangement | drag on empty track space | Select the clips the rectangle touches. With shift or cmd, add them |
 | Arrangement | cmd-a | Select every clip |
-| Arrangement | cmd-c, cmd-x | Copy, cut the selected clips. The clipboard is in the app only |
-| Arrangement | cmd-v | Paste at the playhead. The top row goes on the track of the first selected clip, else the selected track, else the first track |
-| Arrangement | cmd-d | A copy of the selected clips right after them |
-| Arrangement | drag a clip | Move it, with every selected clip, in time and to another track |
+| Arrangement | cmd-c, cmd-x | Copy, cut the selected clips with the automation under them. A cut leaves a straight line where they were. The clipboard is in the app only |
+| Arrangement | cmd-v | Paste at the playhead, with the automation, over the automation there. The top row goes on the track of the first selected clip, else the selected track, else the first track |
+| Arrangement | cmd-d | A copy of the selected clips right after them, with their automation |
+| Arrangement | drag a clip | Move it, with every selected clip, in time and to another track. The automation under it goes along and replaces what is where it lands; just outside, nothing changes. To another track only the volume and the pan go: device lanes stay with their track |
+| Arrangement | alt-drag a clip | Move it without its automation. Alt can be pressed or let go during the drag |
 | Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note. On an audio clip it trims the file and keeps the sound in place |
 | Arrangement | drag a fade handle or the gain handle of an audio clip | Fade in or out, or change its gain. The value shows while dragging |
 | Arrangement | alt-up, alt-down | The gain of the selected audio clips by 1 dB |
 | Arrangement | drop audio files from the Finder | Copy them into `assets/audio/` and add them one after another on that audio track, or under the last track on a new audio track |
 | Arrangement | delete or backspace | Delete the selected clips |
-| Arrangement | arrows | Move the selected clips by a snap step (1/16 when off), or to the track above or below |
+| Arrangement | arrows | Move the selected clips by a snap step (1/16 when off), or to the track above or below, with their automation as a drag does |
 | Arrangement | double click on a clip, enter or cmd-down | Open it: the note editor for a note clip, the track panel with its Clip card for an audio clip |
 | Arrangement | click a track header | Select the track and open its track panel |
 | Arrangement | up, down, with a track and no clip selected | Select the track above or below. The open panel follows |
