@@ -7,7 +7,9 @@
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of the ceiling handle is one
 //! gesture and one undo step, a key step, a reset or a pick is one commit. The ranges, the
-//! defaults and the travel of each knob come from the [`Parameter`]s of the crate.
+//! defaults and the travel of each knob come from the [`Parameter`]s of the crate. A number that
+//! an automation lane of the track moves shows the value that plays on its knob, and does not
+//! drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, Task, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -19,9 +21,11 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::limiter_display::LimiterHistory;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, every_poll, weak_callback};
+use sound_ui::{
+    ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, every_poll, weak_callback,
+};
 
-use crate::{CEILING, GAIN, LimiterState, Lookahead, Meters, Parameter, RELEASE};
+use crate::{CEILING, GAIN, Limiter, LimiterState, Lookahead, Meters, Parameter, RELEASE};
 
 /// The name the rack puts on the card of a limiter.
 pub const NAME: &str = "Limiter";
@@ -94,6 +98,7 @@ pub struct LimiterView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of the ceiling handle.
     edit: ControlEdit,
+    lanes: Entity<Lanes>,
     /// The select of the lookahead. It is a view of its own because it opens a list; it shows
     /// what the record says, see [`Self::show_lookahead`].
     lookahead: Entity<DropdownMenu>,
@@ -157,11 +162,13 @@ impl LimiterView {
                 peaks.take();
             }
         }
+        let lanes = Lanes::follow(&session, limiter.id(), cx);
         Self {
             session,
             limiter,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             lookahead,
             history: LimiterHistory::new(CEILING_KNOB.scale),
             _metering: every_poll(cx, Self::read_meters),
@@ -224,9 +231,11 @@ impl LimiterView {
         cx: &mut Context<Self>,
     ) -> Knob {
         let value = (control.parameter.get)(state);
+        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
         Knob::new(control.parameter.field)
             .range(control.scale)
             .value(value)
+            .automated(automated)
             .default_value(control.parameter.default)
             .label(control.label)
             .readout(format!("{} {}", short(value), control.unit))
@@ -240,7 +249,7 @@ impl LimiterView {
 impl Render for LimiterView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self
+        let Some(mut state) = self
             .session
             .read(cx)
             .project()
@@ -249,6 +258,9 @@ impl Render for LimiterView {
         else {
             return div().into_any_element();
         };
+        // What plays: the knobs show the lanes.
+        let parameters = Limiter::AUTOMATION.parameters();
+        self.lanes.read(cx).apply(parameters, &mut state);
         let handle = self
             .history
             .handle(state.ceiling_db, CEILING.default)

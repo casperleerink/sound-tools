@@ -846,7 +846,7 @@ fn sections_card() -> DeviceCard {
         "curved",
         200.,
         time,
-        (adsr, adsr),
+        (adsr, adsr, Adsr::default()),
         [0.5, 0.9, 0.8],
         |_, _, _| {},
     )

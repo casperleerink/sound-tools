@@ -8,7 +8,8 @@
 //! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
 //! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
 //! about the interface is here: the label, the unit, the name of the undo step and whether the
-//! card is expanded.
+//! card is expanded. A number that an automation lane of the track moves shows the value that
+//! plays, on its knob and on the display, and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*, px};
 use sound_core::{Instance, ProjectEvent, State};
@@ -22,12 +23,13 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::meter::GainReduction;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, Devices, Session, Views, every_poll, weak_callback,
+    ActiveTheme, ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, every_poll,
+    weak_callback,
 };
 
 use crate::{
-    ATTACK, CompressorState, KNEE, Lookahead, MAKEUP, MIX, Meters, Parameter, RATIO, RELEASE,
-    THRESHOLD, reduction_db,
+    ATTACK, Compressor, CompressorState, KNEE, Lookahead, MAKEUP, MIX, Meters, Parameter, RATIO,
+    RELEASE, THRESHOLD, reduction_db,
 };
 
 /// The name the rack puts on the card of a compressor.
@@ -238,6 +240,7 @@ pub struct CompressorView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of a handle.
     edit: ControlEdit,
+    lanes: Entity<Lanes>,
     /// Whether the card shows knee, makeup, mix and lookahead. Interface state: not saved.
     expanded: bool,
     /// The select of the lookahead. It is a view of its own because it opens a list; it shows
@@ -305,11 +308,13 @@ impl CompressorView {
         }
         // The clock of the meters: as often as the session looks at the project.
         let metering = every_poll(cx, Self::read_meters);
+        let lanes = Lanes::follow(&session, compressor.id(), cx);
         Self {
             session,
             compressor,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             expanded: false,
             lookahead,
             reading: Reading::default(),
@@ -367,9 +372,11 @@ impl CompressorView {
         cx: &mut Context<Self>,
     ) -> Knob {
         let value = (control.parameter.get)(state);
+        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
         Knob::new(control.parameter.field)
             .range(control.scale)
             .value(value)
+            .automated(automated)
             .default_value(control.parameter.default)
             .label(control.label)
             .readout(readout(control.unit, value))
@@ -384,16 +391,19 @@ impl CompressorView {
         let threshold = state.threshold_db;
         let x = Axis::new(threshold_travel(), threshold, THRESHOLD.default);
         let y = Axis::fixed(up(threshold - reduction_db(state, threshold)));
-        Handle::new("threshold", x, y).on_change(weak_callback(
-            cx,
-            |view, change: ValueChange<Point<f32>>, cx| {
-                // The travel reaches past 0 dBFS, the end of the curve.
-                let set = |state: &mut CompressorState, at: Point<f32>| {
-                    state.threshold_db = at.x.clamp(THRESHOLD.min, THRESHOLD.max);
-                };
-                view.change(THRESHOLD_KNOB.undo_label, change, set, cx);
-            },
-        ))
+        let automated = self.lanes.read(cx).is_automated(THRESHOLD.field);
+        Handle::new("threshold", x, y)
+            .automated(automated)
+            .on_change(weak_callback(
+                cx,
+                |view, change: ValueChange<Point<f32>>, cx| {
+                    // The travel reaches past 0 dBFS, the end of the curve.
+                    let set = |state: &mut CompressorState, at: Point<f32>| {
+                        state.threshold_db = at.x.clamp(THRESHOLD.min, THRESHOLD.max);
+                    };
+                    view.change(THRESHOLD_KNOB.undo_label, change, set, cx);
+                },
+            ))
     }
 
     /// The handle at the end of the line above the threshold: up and down is ratio.
@@ -404,8 +414,10 @@ impl CompressorView {
             Some(travel) => Axis::new(travel, 1. / state.ratio, 1. / RATIO.default),
             None => Axis::fixed(up(top - reduction_db(state, top))),
         };
+        let automated = self.lanes.read(cx).is_automated(RATIO.field);
         Handle::new("ratio", x, y)
             .hollow(true)
+            .automated(automated)
             .on_change(weak_callback(
                 cx,
                 |view, change: ValueChange<Point<f32>>, cx| {
@@ -459,7 +471,7 @@ impl CompressorView {
 impl Render for CompressorView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self
+        let Some(mut state) = self
             .session
             .read(cx)
             .project()
@@ -468,6 +480,9 @@ impl Render for CompressorView {
         else {
             return div().into_any_element();
         };
+        // What plays: the knobs and the display show the lanes.
+        let parameters = Compressor::AUTOMATION.parameters();
+        self.lanes.read(cx).apply(parameters, &mut state);
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()

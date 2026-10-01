@@ -8,7 +8,8 @@
 //! and one undo step, a key step, a reset or a switch is one commit. The ranges, the defaults
 //! and the travel of each knob come from the [`Parameter`]s of the crate. What is only about
 //! the interface is here: the label, the unit, the name of the undo step and whether the card
-//! is expanded.
+//! is expanded. A number that an automation lane of the track moves shows the value that plays,
+//! on its knob and on the display, and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -18,11 +19,11 @@ use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::toggle::Toggle;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
 use crate::{
-    DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PRE_DELAY, Parameter, ReverbState, SIZE,
-    WIDTH, high_decay_seconds, reflections,
+    DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PRE_DELAY, Parameter, Reverb, ReverbState,
+    SIZE, WIDTH, high_decay_seconds, reflections,
 };
 
 /// The name the rack puts on the card of a reverb.
@@ -207,6 +208,7 @@ pub struct ReverbView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of a handle.
     edit: ControlEdit,
+    lanes: Entity<Lanes>,
     /// Whether the card shows the hidden controls. Interface state: not saved.
     expanded: bool,
 }
@@ -233,11 +235,13 @@ impl ReverbView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
+        let lanes = Lanes::follow(&session, reverb.id(), cx);
         Self {
             session,
             reverb,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             expanded: false,
         }
     }
@@ -261,9 +265,11 @@ impl ReverbView {
 
     fn knob(&self, control: &'static Control, state: &ReverbState, cx: &mut Context<Self>) -> Knob {
         let value = (control.parameter.get)(state);
+        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
         Knob::new(control.parameter.field)
             .range(control.scale)
             .value(value)
+            .automated(automated)
             .default_value(control.parameter.default)
             .label(control.label)
             .readout(readout(control.unit, value))
@@ -289,7 +295,9 @@ impl ReverbView {
             (parameter.get)(state),
             parameter.default,
         );
-        Handle::new(id, x, Axis::fixed(height)).on_change(weak_callback(
+        let automated = self.lanes.read(cx).is_automated(parameter.field);
+        let handle = Handle::new(id, x, Axis::fixed(height)).automated(automated);
+        handle.on_change(weak_callback(
             cx,
             move |view, change: ValueChange<Point<f32>>, cx| {
                 let set = |state: &mut ReverbState, place: Point<f32>| {
@@ -344,9 +352,12 @@ impl ReverbView {
 impl Render for ReverbView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self.session.read(cx).project().state(&self.reverb).copied() else {
+        let Some(mut state) = self.session.read(cx).project().state(&self.reverb).copied() else {
             return div().into_any_element();
         };
+        // What plays: the knobs and the display show the lanes.
+        let parameters = Reverb::AUTOMATION.parameters();
+        self.lanes.read(cx).apply(parameters, &mut state);
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()

@@ -6,7 +6,9 @@
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one
 //! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
 //! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
-//! about the interface is here: the label, the unit and the name of the undo step.
+//! about the interface is here: the label, the unit and the name of the undo step. A number
+//! that an automation lane of the track moves shows the value that plays, on its knob and on the
+//! display, and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -15,9 +17,11 @@ use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
-use crate::{Curve, DRIVE, MIX, OUTPUT, Parameter, SaturatorState, TONE, auto_gain, transfer};
+use crate::{
+    Curve, DRIVE, MIX, OUTPUT, Parameter, Saturator, SaturatorState, TONE, auto_gain, transfer,
+};
 
 /// The name the rack puts on the card of a saturator.
 pub const NAME: &str = "Saturator";
@@ -157,6 +161,7 @@ pub struct SaturatorView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of the handle.
     edit: ControlEdit,
+    lanes: Entity<Lanes>,
 }
 
 impl SaturatorView {
@@ -181,11 +186,13 @@ impl SaturatorView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
+        let lanes = Lanes::follow(&session, saturator.id(), cx);
         Self {
             session,
             saturator,
             frame,
             edit: ControlEdit::default(),
+            lanes,
         }
     }
 
@@ -208,9 +215,11 @@ impl SaturatorView {
     ) -> Knob {
         let parameter = control.parameter;
         let value = (parameter.get)(state);
+        let automated = self.lanes.read(cx).is_automated(parameter.field);
         Knob::new(parameter.field)
             .range(KnobRange::of(parameter))
             .value(value)
+            .automated(automated)
             .default_value(parameter.default)
             .bipolar(parameter.min < 0.)
             .label(control.label)
@@ -227,15 +236,18 @@ impl SaturatorView {
         let bend = bend_of(state.drive_db);
         let x = Axis::new(LEVELS, bend, bend_of(DRIVE.default));
         let y = Axis::fixed(place(level_out(state, bend)));
-        Handle::new("drive", x, y).on_change(weak_callback(
-            cx,
-            |view, change: ValueChange<Point<f32>>, cx| {
-                let set = |state: &mut SaturatorState, at: Point<f32>| {
-                    state.drive_db = drive_at(at.x);
-                };
-                view.change(DRIVE_KNOB.undo_label, change, set, cx);
-            },
-        ))
+        let automated = self.lanes.read(cx).is_automated(DRIVE.field);
+        Handle::new("drive", x, y)
+            .automated(automated)
+            .on_change(weak_callback(
+                cx,
+                |view, change: ValueChange<Point<f32>>, cx| {
+                    let set = |state: &mut SaturatorState, at: Point<f32>| {
+                        state.drive_db = drive_at(at.x);
+                    };
+                    view.change(DRIVE_KNOB.undo_label, change, set, cx);
+                },
+            ))
     }
 
     fn display(&self, state: &SaturatorState, cx: &mut Context<Self>) -> Display {
@@ -268,7 +280,7 @@ impl SaturatorView {
 impl Render for SaturatorView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self
+        let Some(mut state) = self
             .session
             .read(cx)
             .project()
@@ -277,6 +289,9 @@ impl Render for SaturatorView {
         else {
             return div().into_any_element();
         };
+        // What plays: the knobs and the display show the lanes.
+        let parameters = Saturator::AUTOMATION.parameters();
+        self.lanes.read(cx).apply(parameters, &mut state);
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()

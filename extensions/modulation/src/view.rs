@@ -8,7 +8,8 @@
 //! and one undo step, a key step, a reset or a switch is one commit. The ranges, the defaults
 //! and the travel of each knob come from the [`Parameter`]s of the crate. What is only about
 //! the interface is here: the label, the unit, the name of the undo step and whether the card
-//! is expanded.
+//! is expanded. A number that an automation lane of the track moves shows the value that plays,
+//! on its knob and on the display, and does not drag ([`Lanes`]).
 
 use std::f32::consts::TAU;
 
@@ -19,9 +20,11 @@ use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
-use crate::{DEPTH, FEEDBACK, MIX, Mode, ModulationState, Parameter, RATE, SPREAD, sweep};
+use crate::{
+    DEPTH, FEEDBACK, MIX, Mode, Modulation, ModulationState, Parameter, RATE, SPREAD, sweep,
+};
 
 /// The name the rack puts on the card of a modulation.
 pub const NAME: &str = "Modulation";
@@ -171,6 +174,7 @@ pub struct ModulationView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of a handle.
     edit: ControlEdit,
+    lanes: Entity<Lanes>,
     /// Whether the card shows the spread. Interface state: not saved.
     expanded: bool,
 }
@@ -197,11 +201,13 @@ impl ModulationView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
+        let lanes = Lanes::follow(&session, modulation.id(), cx);
         Self {
             session,
             modulation,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             expanded: false,
         }
     }
@@ -230,9 +236,11 @@ impl ModulationView {
         cx: &mut Context<Self>,
     ) -> Knob {
         let value = (control.parameter.get)(state);
+        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
         Knob::new(control.parameter.field)
             .range(control.scale)
             .value(value)
+            .automated(automated)
             .default_value(control.parameter.default)
             .label(control.label)
             .readout(readout(control.unit, value))
@@ -252,16 +260,19 @@ impl ModulationView {
         cx: &mut Context<Self>,
     ) -> Handle {
         let sideways = x.drags;
-        Handle::new(id, x, y).on_change(weak_callback(
-            cx,
-            move |view, change: ValueChange<Point<f32>>, cx| {
-                let set = |state: &mut ModulationState, place: Point<f32>| {
-                    let value = if sideways { place.x } else { place.y };
-                    (control.parameter.set)(state, control.clamp(value))
-                };
-                view.change(control.undo_label, change, set, cx);
-            },
-        ))
+        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
+        Handle::new(id, x, y)
+            .automated(automated)
+            .on_change(weak_callback(
+                cx,
+                move |view, change: ValueChange<Point<f32>>, cx| {
+                    let set = |state: &mut ModulationState, place: Point<f32>| {
+                        let value = if sideways { place.x } else { place.y };
+                        (control.parameter.set)(state, control.clamp(value))
+                    };
+                    view.change(control.undo_label, change, set, cx);
+                },
+            ))
     }
 
     /// The LFO: the peak of the left side drags the depth, the first peak of the right side
@@ -298,7 +309,7 @@ impl ModulationView {
 impl Render for ModulationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self
+        let Some(mut state) = self
             .session
             .read(cx)
             .project()
@@ -307,6 +318,9 @@ impl Render for ModulationView {
         else {
             return div().into_any_element();
         };
+        // What plays: the knobs and the display show the lanes.
+        let parameters = Modulation::AUTOMATION.parameters();
+        self.lanes.read(cx).apply(parameters, &mut state);
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()

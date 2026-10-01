@@ -8,7 +8,8 @@
 //! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
 //! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
 //! about the interface is here: the label, the unit, the name of the undo step and whether the
-//! card is expanded.
+//! card is expanded. A number that an automation lane of the track moves shows the value that
+//! plays, on its knob and on the display, and does not drag ([`Lanes`]).
 
 use std::f32::consts::FRAC_PI_4;
 
@@ -21,9 +22,11 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, pan_readout, short};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::toggle::Toggle;
-use sound_ui::{ActiveTheme, ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
+use sound_ui::{
+    ActiveTheme, ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback,
+};
 
-use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, Parameter, UtilityState, WIDTH, matrix};
+use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, Parameter, Utility, UtilityState, WIDTH, matrix};
 
 /// The name the rack puts on the card of a utility.
 pub const NAME: &str = "Utility";
@@ -250,6 +253,7 @@ pub struct UtilityView {
     frame: CardFrame,
     /// The gesture of a drag of a knob or of the handle.
     edit: ControlEdit,
+    lanes: Entity<Lanes>,
     /// Whether the card shows the hidden controls. Interface state: not saved.
     expanded: bool,
 }
@@ -276,11 +280,13 @@ impl UtilityView {
         // The net under every other way to go: undo and redo wait for an open gesture.
         cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
             .detach();
+        let lanes = Lanes::follow(&session, utility.id(), cx);
         Self {
             session,
             utility,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             expanded: false,
         }
     }
@@ -309,7 +315,9 @@ impl UtilityView {
         cx: &mut Context<Self>,
     ) -> Knob {
         let value = (control.parameter.get)(state);
+        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
         Knob::new(control.id())
+            .automated(automated)
             .range(control.scale)
             .bipolar(control.bipolar())
             .value(value)
@@ -341,8 +349,11 @@ impl UtilityView {
     fn handle(&self, state: &UtilityState, cx: &mut Context<Self>) -> Handle {
         let x = Axis::new(layout::place_axis(), pan_place(state.pan), 0.);
         let y = Axis::new(layout::gain_axis(), state.gain_db, GAIN.default);
+        let lanes = self.lanes.read(cx);
+        let automated = lanes.is_automated(GAIN.field) || lanes.is_automated(PAN.field);
         Handle::new("gain-pan", x, y)
             .dimmed(state.mute)
+            .automated(automated)
             .on_change(weak_callback(
                 cx,
                 |view, change: ValueChange<Point<f32>>, cx| {
@@ -389,7 +400,7 @@ impl UtilityView {
 impl Render for UtilityView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self
+        let Some(mut state) = self
             .session
             .read(cx)
             .project()
@@ -398,6 +409,9 @@ impl Render for UtilityView {
         else {
             return div().into_any_element();
         };
+        // What plays: the knobs and the display show the lanes.
+        let parameters = Utility::AUTOMATION.parameters();
+        self.lanes.read(cx).apply(parameters, &mut state);
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let toggle = |switch: &'static Switch, cx: &mut Context<Self>| {
             Cell::new(self.toggle(switch, &state, cx)).label(switch.label)

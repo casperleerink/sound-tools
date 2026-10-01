@@ -10,12 +10,13 @@ use crate::components::gesture::ValueChange;
 use crate::components::knob::KnobRange;
 
 /// The four values of an envelope: times in seconds and the sustain as a part of full level.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Adsr {
-    pub attack: f32,
-    pub decay: f32,
-    pub sustain: f32,
-    pub release: f32,
+/// An `Adsr<bool>` says which of them an automation lane moves.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Adsr<T = f32> {
+    pub attack: T,
+    pub decay: T,
+    pub sustain: T,
+    pub release: T,
 }
 
 /// A handle of the envelope display, and what it moves.
@@ -105,12 +106,13 @@ pub fn envelope_curve(time: KnobRange, adsr: Adsr, curves: [f32; 3]) -> Vec<Poin
 /// A display of an envelope, with a handle at the end of each stage, that drag as the knobs
 /// of the times and the sustain do. `on_change` hears which handle moved and how: the
 /// owner holds them to the ranges of its fields, since a handle may ask for one past an end.
+/// A handle that moves a value an automation lane moves, as `automated` says, does not drag.
 /// The owner adds the caption and any control at the top.
 pub fn envelope_display(
     id: impl Into<ElementId>,
     width: f32,
     time: KnobRange,
-    (adsr, defaults): (Adsr, Adsr),
+    (adsr, defaults, automated): (Adsr, Adsr, Adsr<bool>),
     curves: [f32; 3],
     on_change: impl Fn((EnvelopeHandle, ValueChange<Point<f32>>), &mut Window, &mut App) + 'static,
 ) -> Display {
@@ -119,7 +121,13 @@ pub fn envelope_display(
     let on_change = std::rc::Rc::new(on_change);
     let handle = |which: EnvelopeHandle, name: &'static str, x: Axis, y: Axis| {
         let on_change = on_change.clone();
+        let held = match which {
+            EnvelopeHandle::Attack => automated.attack,
+            EnvelopeHandle::Decay => automated.decay || automated.sustain,
+            EnvelopeHandle::Release => automated.release,
+        };
         Handle::new(name, x, y)
+            .automated(held)
             .on_change(move |change, window, cx| on_change((which, change), window, cx))
     };
     let attack = handle(

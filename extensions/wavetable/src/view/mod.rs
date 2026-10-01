@@ -12,7 +12,8 @@
 //! ranges, the defaults and the travel of each knob come from the
 //! [`Parameter`](sound_core::Parameter)s of the crate. What is only about the interface is
 //! here: labels, units, the names of the undo steps, whether the card is expanded and which
-//! envelope and LFO it shows.
+//! envelope and LFO it shows. A number that an automation lane of the track moves shows the
+//! value that plays, on its knob and on the display, and does not drag ([`Lanes`]).
 
 mod choices;
 mod drawing;
@@ -32,18 +33,18 @@ use sound_ui::components::knob::{Knob, KnobRange, pan_readout, short};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::select::Select;
 use sound_ui::components::toggle::Toggle;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
 use choices::Choice;
 pub use choices::{EnvelopeShown, LfoShown};
 use drawing::POSITION_TRAVEL;
 
 use crate::state::{
-    Adsr, ENV_ATTACK, ENV_ATTACK_CURVE, ENV_DECAY, ENV_DECAY_CURVE, ENV_RELEASE, ENV_RELEASE_CURVE,
-    ENV_SUSTAIN, FILTER_CUTOFF, FILTER_DRIVE, FILTER_RESONANCE, Filter, GAIN, GLIDE, LFO_RATE,
-    LfoSettings, OSC_DETUNE, OSC_EFFECT_AMOUNT, OSC_GAIN, OSC_OCTAVE, OSC_PAN, OSC_POSITION,
-    OSC_SEMITONE, Oscillator, POLYPHONY, SUB_GAIN, Sub, UNISON_AMOUNT, UNISON_VOICES, Unison,
-    VoiceMode, Voicing,
+    AUTOMATED, Adsr, ENV_ATTACK, ENV_ATTACK_CURVE, ENV_DECAY, ENV_DECAY_CURVE, ENV_RELEASE,
+    ENV_RELEASE_CURVE, ENV_SUSTAIN, FILTER_CUTOFF, FILTER_DRIVE, FILTER_RESONANCE, Filter, GAIN,
+    GLIDE, LFO_RATE, LfoSettings, OSC_DETUNE, OSC_EFFECT_AMOUNT, OSC_GAIN, OSC_OCTAVE, OSC_PAN,
+    OSC_POSITION, OSC_SEMITONE, Oscillator, POLYPHONY, SUB_GAIN, Sub, UNISON_AMOUNT, UNISON_VOICES,
+    Unison, VoiceMode, Voicing,
 };
 use crate::{WavetableState, wavetable};
 
@@ -198,6 +199,9 @@ struct Object<T: 'static> {
     title: &'static str,
     /// The start of the ids of its controls, `osc-2`, for tests too.
     key: &'static str,
+    /// Its name in the saved record, `osc_2`, which starts the name of the lane of each of its
+    /// numbers. Empty for the record itself.
+    path: &'static str,
     get: fn(&WavetableState) -> &T,
     get_mut: fn(&mut WavetableState) -> &mut T,
 }
@@ -219,6 +223,14 @@ impl<T> Object<T> {
         }
     }
 
+    /// The lane of its number `field`, by its path in the saved record: `osc_2.position`.
+    fn lane(self, field: &str) -> String {
+        match self.path {
+            "" => field.to_string(),
+            path => format!("{path}.{field}"),
+        }
+    }
+
     /// The name of an undo step on this object: `Change Osc 2 position`.
     fn undo(self, verb: &str, noun: &str) -> String {
         match self.title {
@@ -231,48 +243,56 @@ impl<T> Object<T> {
 const OSC_1: Object<Oscillator> = Object {
     title: "Osc 1",
     key: "osc-1",
+    path: "osc_1",
     get: |state| &state.osc_1,
     get_mut: |state| &mut state.osc_1,
 };
 const OSC_2: Object<Oscillator> = Object {
     title: "Osc 2",
     key: "osc-2",
+    path: "osc_2",
     get: |state| &state.osc_2,
     get_mut: |state| &mut state.osc_2,
 };
 const SUB: Object<Sub> = Object {
     title: "Sub",
     key: "sub",
+    path: "sub",
     get: |state| &state.sub,
     get_mut: |state| &mut state.sub,
 };
 const UNISON: Object<Unison> = Object {
     title: "Unison",
     key: "unison",
+    path: "unison",
     get: |state| &state.unison,
     get_mut: |state| &mut state.unison,
 };
 const FILTER_1: Object<Filter> = Object {
     title: "Filter 1",
     key: "filter-1",
+    path: "filter_1",
     get: |state| &state.filter_1,
     get_mut: |state| &mut state.filter_1,
 };
 const FILTER_2: Object<Filter> = Object {
     title: "Filter 2",
     key: "filter-2",
+    path: "filter_2",
     get: |state| &state.filter_2,
     get_mut: |state| &mut state.filter_2,
 };
 const VOICING: Object<Voicing> = Object {
     title: "",
     key: "voicing",
+    path: "voicing",
     get: |state| &state.voicing,
     get_mut: |state| &mut state.voicing,
 };
 const OUTPUT: Object<WavetableState> = Object {
     title: "",
     key: "",
+    path: "",
     get: |state| state,
     get_mut: |state| state,
 };
@@ -283,18 +303,21 @@ impl EnvelopeShown {
             Self::Amp => Object {
                 title: "Amp envelope",
                 key: "amp-env",
+                path: "amp_env",
                 get: |state| &state.amp_env,
                 get_mut: |state| &mut state.amp_env,
             },
             Self::Env2 => Object {
                 title: "Env 2",
                 key: "env-2",
+                path: "env_2",
                 get: |state| &state.env_2,
                 get_mut: |state| &mut state.env_2,
             },
             Self::Env3 => Object {
                 title: "Env 3",
                 key: "env-3",
+                path: "env_3",
                 get: |state| &state.env_3,
                 get_mut: |state| &mut state.env_3,
             },
@@ -308,12 +331,14 @@ impl LfoShown {
             Self::Lfo1 => Object {
                 title: "LFO 1",
                 key: "lfo-1",
+                path: "lfo_1",
                 get: |state| &state.lfo_1,
                 get_mut: |state| &mut state.lfo_1,
             },
             Self::Lfo2 => Object {
                 title: "LFO 2",
                 key: "lfo-2",
+                path: "lfo_2",
                 get: |state| &state.lfo_2,
                 get_mut: |state| &mut state.lfo_2,
             },
@@ -327,6 +352,7 @@ pub struct WavetableView {
     frame: CardFrame,
     /// The gesture of a drag of a knob, a slider or on a display.
     edit: ControlEdit,
+    lanes: Entity<Lanes>,
     /// Interface state, not saved: whether the card shows its sections, and which envelope and
     /// which LFO they show.
     expanded: bool,
@@ -377,11 +403,13 @@ impl WavetableView {
         let remove_focus = (0..crate::MAX_ROUTES)
             .map(|_| cx.focus_handle().tab_stop(true))
             .collect();
+        let lanes = Lanes::follow(&session, wavetable.id(), cx);
         Self {
             session,
             wavetable,
             frame,
             edit: ControlEdit::default(),
+            lanes,
             expanded: false,
             envelope: EnvelopeShown::default(),
             lfo: LfoShown::default(),
@@ -426,6 +454,11 @@ impl WavetableView {
         self.edit.apply(session, wavetable, label, change, set, cx);
     }
 
+    /// Whether a lane of the track moves the number `field` of `object`.
+    fn is_automated<T>(&self, object: Object<T>, field: &str, cx: &gpui::App) -> bool {
+        self.lanes.read(cx).is_automated(&object.lane(field))
+    }
+
     fn knob<T>(
         &self,
         object: Object<T>,
@@ -435,9 +468,11 @@ impl WavetableView {
     ) -> Knob {
         let parameter = control.parameter;
         let value = (parameter.get)((object.get)(state));
+        let automated = self.is_automated(object, parameter.field, cx);
         let knob = Knob::new(object.id(parameter.field))
             .range(control.range())
             .value(value)
+            .automated(automated)
             .default_value(parameter.default)
             .bipolar(parameter.min < 0.)
             .label(control.label)
@@ -538,8 +573,10 @@ impl WavetableView {
             oscillator.position,
             POSITION.parameter.default,
         );
+        let automated = self.is_automated(object, POSITION.parameter.field, cx);
         let area = Handle::new(object.id("position-area"), Axis::fixed(0.5), travel)
             .area()
+            .automated(automated)
             .on_change(weak_callback(
                 cx,
                 move |view, change: ValueChange<Point<f32>>, cx| {
@@ -630,11 +667,19 @@ impl WavetableView {
 
     /// The handle of a filter on the response display: sideways its cutoff, up and down its
     /// resonance, in one undo step.
-    fn filter_handle(object: Object<Filter>, filter: &Filter, cx: &mut Context<Self>) -> Handle {
+    fn filter_handle(
+        &self,
+        object: Object<Filter>,
+        filter: &Filter,
+        cx: &mut Context<Self>,
+    ) -> Handle {
         let x = Axis::new(CUTOFF.range(), filter.cutoff_hz, CUTOFF.parameter.default);
         let travel = resonance_travel(filter.slope);
         let y = Axis::new(travel, filter.resonance, RESONANCE.parameter.default);
-        Handle::new(object.id("handle"), x, y).on_change(weak_callback(
+        let automated = self.is_automated(object, CUTOFF.parameter.field, cx)
+            || self.is_automated(object, RESONANCE.parameter.field, cx);
+        let handle = Handle::new(object.id("handle"), x, y).automated(automated);
+        handle.on_change(weak_callback(
             cx,
             move |view, change: ValueChange<Point<f32>>, cx| {
                 let label = object.undo("Change", "cutoff and resonance");
@@ -671,7 +716,8 @@ impl WavetableView {
             state.routing = routing
         });
         let routing = Self::segments("routing", state.routing, cx, pick);
-        let second = Self::filter_handle(FILTER_2, &state.filter_2, cx)
+        let second = self
+            .filter_handle(FILTER_2, &state.filter_2, cx)
             .hollow(true)
             .dimmed(!state.filter_2.on);
         Display::new("filter-display", DISPLAY_WIDTH)
@@ -683,7 +729,7 @@ impl WavetableView {
             .grid(response_decades(), Vec::new())
             .zero_line(response_height(0.))
             .handle(second)
-            .handle(Self::filter_handle(FILTER_1, &state.filter_1, cx))
+            .handle(self.filter_handle(FILTER_1, &state.filter_1, cx))
             .caption(RESPONSE_CAPTION)
             .child(routing)
     }
@@ -773,6 +819,14 @@ impl WavetableView {
             },
         );
         let values = times(envelope);
+        let automated =
+            |control: &Control<Adsr>| self.is_automated(object, control.parameter.field, cx);
+        let automated = Times {
+            attack: automated(&ATTACK),
+            decay: automated(&DECAY),
+            sustain: automated(&SUSTAIN),
+            release: automated(&RELEASE),
+        };
         let caption = format!(
             "A {} · D {} · S {} · R {}",
             readout(Unit::Seconds, values.attack),
@@ -785,7 +839,7 @@ impl WavetableView {
             "envelope-display",
             DISPLAY_WIDTH,
             ATTACK.range(),
-            (values, defaults),
+            (values, defaults, automated),
             curves,
             on_change,
         )
@@ -907,7 +961,7 @@ impl WavetableView {
 impl Render for WavetableView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(state) = self
+        let Some(mut state) = self
             .session
             .read(cx)
             .project()
@@ -916,6 +970,8 @@ impl Render for WavetableView {
         else {
             return div().into_any_element();
         };
+        // What plays: the knobs and the displays show the lanes.
+        self.lanes.read(cx).apply(&AUTOMATED, &mut state);
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
             .frame
@@ -965,6 +1021,26 @@ mod tests {
         assert_eq!(SUB_LEVEL.readout(0.), "Off");
         assert_eq!(VOICES.readout(1.), "Off");
         assert_eq!(VOICES.readout(3.), "3");
+    }
+
+    /// The knob of a number shows its lane: the lane of a number of each object is named as
+    /// the synth takes it, by its path in the record.
+    #[test]
+    fn the_lane_of_a_number_of_each_object_is_one_the_synth_takes() {
+        let lanes: Vec<&str> = AUTOMATED.iter().map(|lane| lane.field).collect();
+        let named = [
+            OSC_2.lane(POSITION.parameter.field),
+            FILTER_1.lane(CUTOFF.parameter.field),
+            SUB.lane(SUB_LEVEL.parameter.field),
+            UNISON.lane(SPREAD.parameter.field),
+            VOICING.lane(GLIDE_KNOB.parameter.field),
+            OUTPUT.lane(OUTPUT_GAIN.parameter.field),
+            EnvelopeShown::Env3.object().lane(SUSTAIN.parameter.field),
+            LfoShown::Lfo2.object().lane(RATE.parameter.field),
+        ];
+        for lane in named {
+            assert!(lanes.contains(&lane.as_str()), "{lane}");
+        }
     }
 
     /// The defaults and both ends of every range, through the travel of its knob and back.
