@@ -23,7 +23,17 @@ pub(crate) struct Watcher {
     assets_watched: bool,
     events: Receiver<notify::Result<notify::Event>>,
     pending: BTreeSet<PathBuf>,
+    /// When the last path of `pending` was heard. The group counts from then for undo, not
+    /// from when it applies a grouping window later, so a write heard just after a request
+    /// ended joins it.
     last_event: Instant,
+}
+
+impl Watcher {
+    fn hear(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+        self.pending.extend(paths);
+        self.last_event = Instant::now();
+    }
 }
 
 impl Project {
@@ -46,7 +56,8 @@ impl Project {
 
     /// Call this regularly, like `EngineControl::poll`. It collects what the watcher saw and,
     /// once the folder has been quiet for [`GROUPING_WINDOW`], applies it as one group through
-    /// [`Project::apply_outside_changes`]. Returns how many records and project files changed.
+    /// [`Project::apply_outside_changes_at`], at the time its last path was heard. Returns how
+    /// many records and project files changed.
     ///
     /// It also brings the generated files up to date, `problems.txt` first of all, so an agent
     /// with only file access sees what the runtime made of its edit.
@@ -67,16 +78,14 @@ impl Project {
             // Tried once: a watch that fails is reported and not tried on every poll.
             watcher.assets_watched = true;
             watcher.watcher.watch(&assets, RecursiveMode::Recursive)?;
-            watcher.pending.insert(assets);
-            watcher.last_event = Instant::now();
+            watcher.hear([assets]);
         }
         loop {
             match watcher.events.try_recv() {
                 Ok(Ok(event)) => {
                     // Reading a file changes nothing the project cares about.
                     if !event.kind.is_access() {
-                        watcher.pending.extend(event.paths);
-                        watcher.last_event = Instant::now();
+                        watcher.hear(event.paths);
                     }
                 }
                 Ok(Err(error)) => return Err(error.into()),
@@ -87,6 +96,7 @@ impl Project {
             return Ok(0);
         }
         let paths: Vec<PathBuf> = std::mem::take(&mut watcher.pending).into_iter().collect();
-        self.apply_outside_changes(&paths)
+        let heard = watcher.last_event;
+        self.apply_outside_changes_at(&paths, heard)
     }
 }
