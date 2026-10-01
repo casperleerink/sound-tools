@@ -108,4 +108,6 @@ Write only the pads you change, by note. A pad you leave out is the pad of the k
 
 Set a sample pad's `decay_ms` a little longer than its file, else its end is faded out; the window sets it to one and a half times the file. The last 2 ms of a sample always fade to silence, and a sample plays at most 10 s. A pad whose file is not there is silent and listed in `problems.txt`, and the other pads play; it plays once the file is in `assets/audio/`.
 
+The volume and the pan of a pad can move over time with an automation lane of the track, named by the note of the pad: `pads.42.volume_db` or `pads.42.pan`. See `agent-docs/arrangement.md`.
+
 Starting points: a deeper, longer kick is `pitch_semitones` -2 to -4 with `decay_ms` 800 to 1200. A tight snare is `decay_ms` 150 to 200. Toms are one sound, tuned apart: keep them in steps of 2 to 3 semitones. Hats too loud in a busy part: bring the hat pads to -4 to -6 dB rather than lowering their velocities. An edit applies while the part plays. Volume and pan glide over 20 ms; sound, pitch and decay apply from the next hit once the new sound is made, a moment after the edit.

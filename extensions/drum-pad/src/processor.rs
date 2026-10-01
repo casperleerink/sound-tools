@@ -19,12 +19,15 @@
 use std::sync::Arc;
 
 use sound_core::{
-    AudioOutput, EventInput, Peaks, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
+    AudioOutput, Automated, AutomationInput, EventInput, Peaks, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Targets,
 };
 use sound_notes::{NoteEvent, Velocity};
 
 use crate::sounds::Rendered;
-use crate::{PADS, Pad, pad_of};
+use crate::{AUTOMATED, DrumPadState, PAD_LANES, PADS, Pad, pad_of};
+
+type DrumTargets = Targets<DrumPadState, { AUTOMATED.len() }>;
 
 /// Voices that sound at once: one per pad, and the rest for the ones that fade out.
 pub const VOICES: usize = 32;
@@ -43,11 +46,10 @@ pub fn pad_gains(pad: &Pad) -> [f32; 2] {
     sound_core::pan_gains(level, pad.pan.clamp(-1.0, 1.0))
 }
 
-/// One pad as the audio thread plays it.
+/// One pad as the audio thread plays it. Its volume and pan are in the record of the kit.
 pub struct PadPlay {
     /// `None` when the pad is silent, such as a sample pad whose file is not there.
     sound: Option<Arc<Rendered>>,
-    gains: [f32; 2],
     /// Frames from the hit to silence.
     decay_frames: usize,
     choke: bool,
@@ -57,7 +59,6 @@ impl PadPlay {
     pub(crate) fn new(pad: &Pad, sound: Option<Arc<Rendered>>, rate: u32) -> Self {
         Self {
             sound,
-            gains: pad_gains(pad),
             decay_frames: (f64::from(pad.decay_ms) / 1000.0 * f64::from(rate)).round() as usize,
             choke: pad.choke,
         }
@@ -65,15 +66,15 @@ impl PadPlay {
 
     const SILENT: Self = Self {
         sound: None,
-        gains: [0.0; 2],
         decay_frames: 0,
         choke: false,
     };
 }
 
-/// Every pad, and room for what the audio thread gives back.
+/// Every pad and the record, and room for what the audio thread gives back.
 pub struct Kit {
     pads: [PadPlay; PADS],
+    state: DrumPadState,
     /// Sounds that voices held after an edit replaced them, going back to be let go of.
     returned: Vec<Arc<Rendered>>,
 }
@@ -89,9 +90,10 @@ pub enum DrumUpdate {
 }
 
 impl DrumUpdate {
-    pub(crate) fn kit(pads: [PadPlay; PADS]) -> Self {
+    pub(crate) fn kit(pads: [PadPlay; PADS], state: &DrumPadState) -> Self {
         Self::Kit(Box::new(Kit {
             pads,
+            state: state.clone(),
             returned: Vec::with_capacity(VOICES),
         }))
     }
@@ -128,6 +130,8 @@ impl Voice {
 }
 
 pub struct DrumPad {
+    /// The record, with the values of the lanes that automate it.
+    state: Automated<DrumPadState, { AUTOMATED.len() }>,
     pads: [PadPlay; PADS],
     /// The gains of each pad, gliding.
     gains: [[Smoothed; 2]; PADS],
@@ -143,9 +147,12 @@ pub struct DrumPad {
 impl DrumPad {
     pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub const AUTOMATION: AutomationInput<DrumPadState, { AUTOMATED.len() }> =
+        AutomationInput::new(1, AUTOMATED);
 
     pub fn new(peaks: [Peaks; PADS]) -> Self {
         Self {
+            state: Automated::new(Self::AUTOMATION, DrumPadState::default()),
             pads: [PadPlay::SILENT; PADS],
             gains: std::array::from_fn(|_| [Smoothed::new(0.0), Smoothed::new(0.0)]),
             voices: std::array::from_fn(|_| None),
@@ -163,6 +170,24 @@ impl DrumPad {
 
     fn is_idle(&self) -> bool {
         self.voices.iter().all(Option::is_none)
+    }
+
+    /// Aims the gains of every pad at the record and its lanes. Both gains of a pad come from
+    /// its volume and its pan, so they take the longer ramp of the two.
+    fn aim(&mut self, targets: &DrumTargets) {
+        let idle = self.is_idle();
+        let pads = self.gains.iter_mut().zip(&self.state.pads).zip(&PAD_LANES);
+        for ((gains, pad), [volume, pan]) in pads {
+            let ramp = targets.ramp(volume).max(targets.ramp(pan));
+            for (gain, target) in gains.iter_mut().zip(pad_gains(pad)) {
+                gain.set_target(target, ramp);
+                // Nothing sounds, so there is nothing to glide: the next hit starts on the
+                // new values.
+                if idle {
+                    gain.snap();
+                }
+            }
+        }
     }
 
     fn fade(voice: &mut Voice, fade_frames: u32) {
@@ -314,6 +339,7 @@ impl Processor for DrumPad {
     fn ports(&self) -> Ports {
         Ports::new()
             .event_input(Self::NOTES)
+            .event_input(Self::AUTOMATION.port())
             .audio_output(Self::OUTPUT)
     }
 
@@ -335,22 +361,16 @@ impl Processor for DrumPad {
                         kit.returned.push(sound);
                     }
                 }
-                let idle = self.is_idle();
-                for (gains, pad) in self.gains.iter_mut().zip(&self.pads) {
-                    for (gain, target) in gains.iter_mut().zip(pad.gains) {
-                        gain.set_target(target, self.ramp_frames);
-                        // Nothing sounds, so there is nothing to glide: the next hit starts on
-                        // the new values.
-                        if idle {
-                            gain.snap();
-                        }
-                    }
-                }
+                let targets = self.state.set_record(&mut kit.state, self.ramp_frames);
+                self.aim(&targets);
             }
         }
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.state.follow(context, self.ramp_frames) {
+            self.aim(&targets);
+        }
         let events = context.event_inputs.get(Self::NOTES);
         if events.is_empty() && self.is_idle() {
             for gain in self.gains.iter_mut().flatten() {
