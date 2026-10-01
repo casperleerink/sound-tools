@@ -73,7 +73,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Agent sidebar | enter in the composer, or the send button | Send the message. The agent works in the project folder; everything it changes for one message is one undo step named after the message. One message at a time |
 | Agent sidebar | the stop button, or cmd-period | Stop the agent's turn |
 | Agent sidebar | escape in the composer | Give the focus back to where it was |
-| Agent sidebar | **+** | A new thread. The agent of the old one stops |
+| Agent sidebar | **+** | A new thread. The agent of the old one stops, and the old one stays saved. The sidebar opens on the project's last thread, and the agent goes on where it left off |
 | Agent sidebar | Allow, Allow for this thread, Deny | Answer the agent when it asks before a command |
 | Agent sidebar | Worked for … | Show the steps of that turn |
 | Project menu | Fit tempo to take | Fit the tempo map to the take of the selected clip, so bar lines land on the beats as played |

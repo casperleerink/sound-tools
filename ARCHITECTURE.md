@@ -224,6 +224,8 @@ The synth (`extensions/instrument`), Wavetable, Sampler, Drum pad, Filter, Compr
 - Whether the panel is open is kept per machine in the support folder, next to the last project, never in a project: an agent writes in the project folder and must not change the interface under the composer.
 - Each message is one request (`Session::begin_request` at send, `end_request` when the turn ends or the process exits), so all the agent's writes for it are one undo step named after the message.
 - The thread state (`Conversation`) is built from provider-neutral `AgentEvent`s and holds no process, so tests feed it events. The process is read on the background executor and its events reach the view once a frame.
+- Threads are kept per machine, never in the project: `agent/threads/<project path, escaped>/` in the support folder holds `index.json` (each thread's provider session id and title, the last one used last) and one JSONL log per thread: the composer's messages and the `AgentEvent`s with the time each came, without text deltas. The window opens on the project's last thread by replaying its log through `Conversation::apply`, so showing it needs no provider. Writes go to the background in order, and a failed one is a quiet line.
+- The provider keeps the conversation itself: the first message after opening resumes the saved session. When the provider no longer has it, the thread stays to read and **+** starts a new one.
 - The agent finds `claude` on the `PATH` of the login shell, read once in the background, because an app opened from the Finder has a bare `PATH`.
 
 ## Direction: extensions made by the agent
