@@ -335,6 +335,7 @@ Each milestone ends green on the README checks, with the docs updated in the sam
 
 - With the sidebar open, the window can still be made as narrow as `MIN_WINDOW_WIDTH` (1100 pt), which leaves the arrangement 740 pt. The minimum size does not grow with the panel.
 - Under "Ask before commands" the agent asks even before a command that only reads, such as `find state -type f`. The live test of milestone 4 met one in its first turn.
+- **Sign out** does nothing visible when `ANTHROPIC_API_KEY` is set in the login shell: Claude Code then counts as signed in with that key, so the sidebar comes back ready.
 
 ## Adding Codex later
 
