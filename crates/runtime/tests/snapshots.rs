@@ -2007,7 +2007,8 @@ fn main() -> Result<()> {
     // Row 46 is track 45 of the scale project, after the track of the default project. Its
     // clip 50 is at bar 8 * 50 + 45 % 8 = 405, which is on screen.
     let top = 48.0 + RULER_HEIGHT;
-    let row_46 = top + middle.y_of(46) + TRACK_HEIGHT / 2.;
+    let rows = cx.update(|cx| timeline.read(cx).rows(cx));
+    let row_46 = top + middle.y_of(&rows, 46) + TRACK_HEIGHT / 2.;
     let on_clip = point(
         px(HEADER_WIDTH + middle.x_of(Ticks(405 * BAR + BAR / 2))),
         px(row_46),

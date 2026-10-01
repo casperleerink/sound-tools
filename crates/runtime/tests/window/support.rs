@@ -499,10 +499,28 @@ impl Opened<'_> {
     /// The place of a tick on a track row of the arrangement, in the middle of the row.
     pub fn at(&mut self, tick: u64, track: usize) -> Point<Pixels> {
         let timeline = self.timeline.clone();
-        let viewport = self.cx.read(|cx| timeline.read(cx).viewport());
+        let (viewport, rows) = self.cx.read(|cx| {
+            let timeline = timeline.read(cx);
+            (timeline.viewport(), timeline.rows(cx))
+        });
         point(
             px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
-            px(TOP_ROW + RULER_HEIGHT + viewport.y_of(track) + TRACK_HEIGHT / 2.),
+            px(TOP_ROW + RULER_HEIGHT + viewport.y_of(&rows, track) + TRACK_HEIGHT / 2.),
+        )
+    }
+
+    /// The place of a tick in an automation lane of a track that shows its lanes, `y` down
+    /// from the top of the lane.
+    pub fn in_track_lane(&mut self, tick: u64, track: usize, lane: usize, y: f32) -> Point<Pixels> {
+        let timeline = self.timeline.clone();
+        let (viewport, rows) = self.cx.read(|cx| {
+            let timeline = timeline.read(cx);
+            (timeline.viewport(), timeline.rows(cx))
+        });
+        let top = viewport.y_at(rows.lane_top(track, lane));
+        point(
+            px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
+            px(TOP_ROW + RULER_HEIGHT + top + y),
         )
     }
 

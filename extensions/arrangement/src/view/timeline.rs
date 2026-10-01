@@ -3,7 +3,9 @@
 //! resized, copied, pasted and deleted here with the mouse and the keys, an audio clip is
 //! trimmed, faded and turned up or down from its handles, audio files are dropped in from the
 //! Finder, a track is renamed in its header, tempo changes are added and removed in the ruler,
-//! and the snap setting sits in the corner.
+//! and the snap setting sits in the corner. Under a track its automation lanes show at the
+//! toggle in its header, where they are added, drawn, erased and cleared
+//! ([`super::track_lanes`]).
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,13 +17,13 @@ use gpui::{
     App, BorderStyle, Bounds, ContentMask, Context, CursorStyle, DispatchPhase, Entity,
     EventEmitter, ExternalPaths, FileDropEvent, FocusHandle, Focusable, FontWeight, Hitbox,
     HitboxBehavior, Hsla, KeyDownEvent, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point, ScrollWheelEvent,
-    SharedString, Subscription, TextAlign, TextRun, Window, canvas, div, fill, point, prelude::*,
-    px, quad, size,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point,
+    ScrollWheelEvent, SharedString, Subscription, TextAlign, TextRun, Window, canvas, div, fill,
+    point, prelude::*, px, quad, size,
 };
 use sound_core::{
     Assets, Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks,
-    TimeSignatures,
+    TimeSignatures, ValueRange,
 };
 use sound_media::{AudioAsset, Cached, Info, TakeOverview};
 use sound_notes::Clip;
@@ -33,7 +35,8 @@ use sound_ui::components::dropdown_menu::{
 };
 use sound_ui::components::text_input::{InputSize, TextInput};
 use sound_ui::{
-    ActiveTheme, KeyboardFocus, LiveTake, Playhead, Recording, Session, Waveforms, typography,
+    ActiveTheme, Devices, KeyboardFocus, LiveTake, Playhead, Recording, Session, Waveforms,
+    typography,
 };
 
 use super::clipboard::{Copied, CopiedClips, SharedClipboard};
@@ -42,19 +45,22 @@ use super::clips::{
     gain_moved, shown_end, time_label, trimmed_left, trimmed_right,
 };
 use super::gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
+use super::lanes::{DRAG_THRESHOLD, LaneEdit, drawn_between};
 use super::layout::{
-    ADD_ROW_HEIGHT, Extent, HEADER_WIDTH, RULER_HEIGHT, Rect, RulerBar, TRACK_HEIGHT, Viewport,
-    rows_between, shifted,
+    ADD_LANE_HEIGHT, ADD_ROW_HEIGHT, Extent, HEADER_WIDTH, LANE_HEIGHT, Part, RULER_HEIGHT, Rect,
+    Rows, RulerBar, TRACK_HEIGHT, Viewport, shifted,
 };
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
 };
 use super::selection::Selection;
 use super::snap::{Grid, SharedSnap, Snap};
+use super::track_lanes;
 use crate::{
-    ArrangementState, AudioClip, Carried, Colour, FreeIds, LaneMove, TrackKind, TrackState, Travel,
-    add_audio_clips, add_audio_track, add_clip, add_clips, automation, move_track, moved,
-    top_layer, track_orders, tracks, travel_in, unnumbered,
+    ArrangementState, AudioClip, AutomationLane, AutomationValue, Carried, Colour, FreeIds,
+    LaneMove, TrackKind, TrackState, Travel, add_audio_clips, add_audio_track, add_clip,
+    add_clips, automatable, automation, move_track, moved, top_layer, track_orders, tracks,
+    travel_in, unnumbered,
 };
 
 struct TrackRow {
@@ -72,6 +78,24 @@ struct TrackRow {
     armed: bool,
     /// Its header is being dragged: the ring of a drag shows where it lands.
     lifted: bool,
+    /// Its lanes show under it, and whether it has any: the toggle in its header says both.
+    expanded: bool,
+    automated: bool,
+}
+
+/// An automation lane under a track, as one paint shows it.
+struct LaneShape {
+    /// The top of the lane in the timeline area.
+    y: f32,
+    name: SharedString,
+    accent: Hsla,
+    muted: bool,
+    /// The line in the lane, from the left edge to the right one. Empty for a number the
+    /// project does not know.
+    line: Vec<(f32, f32)>,
+    /// While clips are dragged: where across each lands with the line it takes along, and the
+    /// line that was there before, faded.
+    ghosts: Vec<(Range<f32>, Vec<(f32, f32)>)>,
 }
 
 /// What a clip shows: the notes of a note clip, or the waveform of an audio clip.
@@ -115,6 +139,8 @@ pub struct ClipShape {
     accent: Hsla,
     selected: bool,
     muted: bool,
+    /// It is dragged with automation that goes along, on a track whose lanes are folded away.
+    carries: bool,
 }
 
 impl ClipShape {
@@ -165,6 +191,13 @@ pub struct Scene {
     ghosts: Option<Ghosts>,
     /// The folder of the files the audio clips name, for their waveforms.
     assets: Assets,
+    /// How tall each track row is, with the lanes it shows.
+    pub layout: Rows,
+    /// The automation lanes that show.
+    lanes: Vec<LaneShape>,
+    /// Where the hint of a drag of clips that takes automation along goes: under the clip under
+    /// the pointer.
+    hint: Option<(f32, f32)>,
 }
 
 /// What a press on a clip took: its body, an edge, or one of the handles of an audio clip.
@@ -239,6 +272,8 @@ enum ClipDragKind {
         /// The tracks whose lanes a mouse move of this drag wrote, which go back to how they
         /// were once no clip takes lanes from them or lands on them.
         lanes_written: BTreeSet<InstanceId>,
+        /// Where the clips that take automation along put it, as the last mouse move wrote it.
+        ghosts: Vec<LaneGhost>,
     },
     /// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:
     /// every move starts from `origin` again, so going in and out loses nothing. One clip.
@@ -273,6 +308,14 @@ enum ClipDragKind {
         from_y: f32,
         fine: bool,
     },
+}
+
+/// Where a dragged clip puts the automation it takes along: its track and its place now.
+#[derive(Clone, Debug, PartialEq)]
+struct LaneGhost {
+    clip: InstanceId,
+    track: InstanceId,
+    range: Range<Ticks>,
 }
 
 #[derive(Copy, Clone)]
@@ -364,6 +407,51 @@ struct Marquee {
     /// What was selected at the press, with what came first, for escape.
     at_press: (Vec<InstanceId>, Option<InstanceId>),
 }
+
+/// A drag in an automation lane, from mouse down to mouse up. Every move starts from the lane
+/// as it was at mouse down, so a drag there and back ends where it began. One gesture of the
+/// session, which opens with the first change.
+struct LaneDrag {
+    track: Instance<TrackState>,
+    /// The lane at mouse down, its place among the lanes of the track, and the range of its
+    /// number. `None` for a number the project does not know, which is not drawn in.
+    origin: AutomationLane,
+    index: usize,
+    range: Option<ValueRange>,
+    /// The top of the lane from the top of the first track, at mouse down.
+    top: f64,
+    kind: LaneDragKind,
+    begun: bool,
+}
+
+enum LaneDragKind {
+    /// The line the pointer draws, as its height in the lane at each tick it passed, and where
+    /// it was at the last mouse move, in the lane.
+    Draw {
+        drawn: BTreeMap<Ticks, f32>,
+        last: (f32, f32),
+    },
+    /// Alt: the points between the tick of the press and the pointer go.
+    Erase { from: Ticks },
+}
+
+/// The select under the lanes of a track that adds one: a number of the track or of one of its
+/// devices that has none yet.
+struct LaneMenu {
+    menu: Entity<DropdownMenu>,
+    /// What it offered the last time it was filled, so it is filled again only when that
+    /// changed.
+    offered: Vec<SharedString>,
+    _subscriptions: [Subscription; 2],
+}
+
+/// What the select that adds a lane says.
+const ADD_LANE: &str = "Add lane";
+/// The hint near a drag of clips that takes automation along.
+const AUTOMATION_HINT: &str = "Automation moves · alt to leave it";
+/// The toggle of the lanes is left of the dot of a track, this wide from the edge of its
+/// header.
+const LANES_TOGGLE_WIDTH: f32 = 22.;
 
 /// A drag of a track header. The track goes to the row under the pointer at once, so the rows
 /// themselves show where it lands. The whole drag is one gesture of the session.
@@ -679,6 +767,11 @@ pub struct Timeline {
     drag: Option<ClipDrag>,
     marquee: Option<Marquee>,
     track_drag: Option<TrackDrag>,
+    lane_drag: Option<LaneDrag>,
+    /// The tracks that show their automation lanes. Interface state: not saved, no undo step.
+    expanded: BTreeSet<InstanceId>,
+    /// The select that adds a lane, of each track that shows its lanes.
+    lane_menus: BTreeMap<InstanceId, LaneMenu>,
     /// What cmd-c and cmd-x kept, for cmd-v. In the app only, and shared with the note
     /// editor.
     clipboard: SharedClipboard,
@@ -767,14 +860,21 @@ impl Timeline {
                     {
                         timeline.end_drag(cx);
                     }
-                    // The dragged track deleted from outside: that was the last write.
+                    // The dragged track deleted from outside: that was the last write. So
+                    // is the track of a lane being drawn.
                     if timeline
                         .track_drag
                         .as_ref()
                         .is_some_and(|drag| drag.track == *id)
+                        || timeline
+                            .lane_drag
+                            .as_ref()
+                            .is_some_and(|drag| drag.track.id() == id)
                     {
                         timeline.end_drag(cx);
                     }
+                    timeline.expanded.remove(id);
+                    timeline.lane_menus.remove(id);
                     changed
                 }
                 // The time signature places the bars, and the tempo map the tempo marks.
@@ -803,7 +903,8 @@ impl Timeline {
         cx.on_release(|timeline, cx| {
             let clip_drag = timeline.drag.take().is_some_and(|drag| drag.begun);
             let track_drag = timeline.track_drag.take().is_some_and(|drag| drag.begun);
-            if clip_drag || track_drag {
+            let lane_drag = timeline.lane_drag.take().is_some_and(|drag| drag.begun);
+            if clip_drag || track_drag || lane_drag {
                 let session = timeline.session.clone();
                 session.update(cx, |session, cx| session.finish_gesture(cx));
             }
@@ -849,6 +950,9 @@ impl Timeline {
             drag: None,
             marquee: None,
             track_drag: None,
+            lane_drag: None,
+            expanded: BTreeSet::new(),
+            lane_menus: BTreeMap::new(),
             clipboard,
             deleted: Vec::new(),
             rename: None,
@@ -929,9 +1033,188 @@ impl Timeline {
         let end = self.ends.values().max().copied().unwrap_or_default();
         let extent = Extent {
             end: end.max(self.playhead.read(cx).tick),
-            tracks: self.order.len(),
+            height: self.rows(cx).height(),
         };
         viewport.clamped(extent, self.time_signatures(cx), width, height)
+    }
+
+    /// How tall each track row is now: a track, and the lanes it shows under it.
+    pub fn rows(&self, cx: &App) -> Rows {
+        let project = self.session.read(cx).project();
+        let lanes = |track: &Instance<TrackState>| {
+            let state = project.state(track);
+            state.map_or(0, |state| state.automation.len())
+        };
+        let shown = self.order.iter().map(|track| {
+            let expanded = self.expanded.contains(track.id());
+            expanded.then(|| lanes(track))
+        });
+        Rows::new(shown)
+    }
+
+    /// Whether a track shows its automation lanes.
+    pub fn shows_lanes(&self, track: &InstanceId) -> bool {
+        self.expanded.contains(track)
+    }
+
+    /// Shows the automation lanes of a track under it, with the select that adds one, or
+    /// folds them away. Interface state: not saved, no undo step.
+    pub fn show_lanes(&mut self, track: &InstanceId, shown: bool, cx: &mut Context<Self>) {
+        if !shown {
+            self.expanded.remove(track);
+            self.lane_menus.remove(track);
+            cx.notify();
+            return;
+        }
+        if !self.expanded.insert(track.clone()) {
+            return;
+        }
+        let menu = cx.new(|cx| {
+            DropdownMenu::new(ADD_LANE, Vec::new(), cx)
+                .debug_name(format!("add-lane-{}", track.name()))
+                .trigger(Trigger::Select)
+                .width(240.)
+                .max_height(320.)
+        });
+        let picked = cx.subscribe(&menu, {
+            let track = track.clone();
+            move |timeline, _, picked: &MenuPicked, cx| timeline.add_lane(&track, &picked.0, cx)
+        });
+        // What it offers is read again when it opens: a device may have come since.
+        let opened = cx.observe(&menu, {
+            let track = track.clone();
+            move |timeline, menu, cx| {
+                if menu.read(cx).is_open() {
+                    timeline.fill_lane_menu(&track, cx);
+                }
+            }
+        });
+        self.lane_menus.insert(
+            track.clone(),
+            LaneMenu {
+                menu,
+                offered: Vec::new(),
+                _subscriptions: [picked, opened],
+            },
+        );
+        self.fill_lane_menu(track, cx);
+        cx.notify();
+    }
+
+    /// Fills the select that adds a lane to `track` with what it can add now, when that is not
+    /// what it holds.
+    fn fill_lane_menu(&mut self, track: &InstanceId, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project();
+        let Some((instance, state)) = project
+            .resolve::<TrackState>(track)
+            .and_then(|instance| Some((instance.clone(), project.state(&instance)?)))
+        else {
+            return;
+        };
+        // A number with a lane already, or with no value in its record to start from, is left
+        // out. The numbers of one device come one after another, in one group.
+        let numbers = automatable(project, instance.id(), state);
+        let free = numbers.into_iter().filter(|number| {
+            let mut lanes = state.automation.iter();
+            let taken = lanes.any(|lane| {
+                lane.device == number.device && lane.parameter == number.field
+            });
+            !taken && number.number.record.is_some()
+        });
+        let mut groups: Vec<(Option<String>, Vec<MenuItem>)> = Vec::new();
+        for number in free {
+            let device = number.device.as_deref();
+            let label = match device {
+                None => track_lanes::lane_name(None, number.field),
+                Some(_) => track_lanes::number_name(number.field),
+            };
+            let value = track_lanes::menu_value(device, number.field);
+            let item = MenuItem::new(value, label).selectable(false);
+            match groups.last_mut() {
+                Some((last, items)) if *last == number.device => items.push(item),
+                _ => groups.push((number.device, vec![item])),
+            }
+        }
+        let mut offered: Vec<SharedString> = groups
+            .iter()
+            .flat_map(|(_, items)| items.iter().map(|item| item.value.clone()))
+            .collect();
+        let mut entries: Vec<MenuGroup> = groups
+            .into_iter()
+            .map(|(device, items)| {
+                let label = match device {
+                    None => SharedString::from("Track"),
+                    Some(device) => self.device_name(instance.id(), &device, cx),
+                };
+                MenuGroup::new().label(label).items(items)
+            })
+            .collect();
+        if entries.is_empty() {
+            let none = MenuItem::new("none", "Every number has a lane").disabled(true);
+            offered.push(none.value.clone());
+            entries.push(MenuGroup::new().item(none));
+        }
+        let entries: Vec<MenuEntry> = entries.into_iter().map(MenuEntry::Group).collect();
+        let Some(lane_menu) = self.lane_menus.get_mut(track) else {
+            return;
+        };
+        if lane_menu.offered != offered {
+            lane_menu.offered = offered;
+            let menu = lane_menu.menu.clone();
+            menu.update(cx, |menu, cx| menu.set_entries(entries, cx));
+        }
+    }
+
+    /// What a device of a track is called, as its card says: `Filter` for `filter`.
+    fn device_name(&self, track: &InstanceId, device: &str, cx: &App) -> SharedString {
+        let Ok(id) = track.child(device) else {
+            return device.to_string().into();
+        };
+        match Devices::label_of(&self.session, &id, cx) {
+            Some(label) => label.name,
+            None => {
+                let project = self.session.read(cx).project();
+                project.tool_of(&id).unwrap_or(device).to_string().into()
+            }
+        }
+    }
+
+    /// The select of the lanes of a track picked a number: a lane for it, which holds the
+    /// value of its record, so nothing sounds different yet. One undo step.
+    fn add_lane(&mut self, track: &InstanceId, value: &str, cx: &mut Context<Self>) {
+        let Some((device, field)) = track_lanes::from_menu_value(value) else {
+            return;
+        };
+        let (device, field) = (device.map(str::to_string), field.to_string());
+        let track = track.clone();
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let Some(instance) = project.resolve::<TrackState>(&track) else {
+                    return Ok(());
+                };
+                let Some(mut state) = project.state(&instance).cloned() else {
+                    return Ok(());
+                };
+                let numbers = automatable(project, &track, &state);
+                let number = numbers
+                    .iter()
+                    .find(|number| number.device == device && number.field == field);
+                let Some(record) = number.and_then(|number| number.number.record) else {
+                    return Ok(());
+                };
+                state.automation.push(AutomationLane {
+                    device,
+                    parameter: field,
+                    points: vec![sound_notes::Point {
+                        tick: Ticks(0),
+                        value: AutomationValue(record),
+                    }],
+                });
+                let mut changes = Changes::new();
+                changes.set(&instance, state);
+                project.commit("Add automation", changes)
+            })
+        });
     }
 
     /// Whether an event about `id` can change what the timeline paints: the arrangement, a
@@ -1221,6 +1504,8 @@ impl Timeline {
             }
         });
 
+        let layout = self.rows(cx);
+        let lane_ghosts = self.lane_ghosts();
         let mut scene = Scene {
             viewport,
             clips: Vec::new(),
@@ -1229,13 +1514,17 @@ impl Timeline {
             tempo,
             tempo_zones: Vec::new(),
             marquee,
-            ghosts: self.ghosts(&viewport, project),
+            ghosts: self.ghosts(&viewport, &layout, project),
             assets: project.assets().clone(),
+            lanes: Vec::new(),
+            hint: None,
+            layout,
         };
+        let layout = scene.layout.clone();
         let recording = self.recording.read(cx);
         let visible =
             |start: Ticks, end: Ticks| start < visible_ticks.end && end > visible_ticks.start;
-        for index in viewport.visible_tracks(height, self.order.len()) {
+        for index in viewport.visible_tracks(&layout, height) {
             let Some(track) = self.order.get(index) else {
                 break;
             };
@@ -1244,8 +1533,9 @@ impl Timeline {
                 continue;
             };
             let accent = accent(state.colour, theme);
+            let expanded = layout.lanes(index).is_some();
             scene.rows.push(TrackRow {
-                y: viewport.y_of(index),
+                y: viewport.y_of(&layout, index),
                 name: state.name.clone().into(),
                 accent,
                 kind: state.kind,
@@ -1257,7 +1547,17 @@ impl Timeline {
                     .track_drag
                     .as_ref()
                     .is_some_and(|drag| drag.moving && drag.track == *track.id()),
+                expanded,
+                automated: !state.automation.is_empty(),
             });
+            if expanded {
+                let lanes = self.lane_shapes(track.id(), state, accent, &viewport, width, cx);
+                let tops = (0..).map(|lane| viewport.y_at(layout.lane_top(index, lane)));
+                let lanes = lanes.into_iter().zip(tops);
+                scene
+                    .lanes
+                    .extend(lanes.map(|(lane, y)| LaneShape { y, ..lane }));
+            }
             let shape = |id: &InstanceId, rect: Rect, body: Body| ClipShape {
                 id: id.clone(),
                 rect,
@@ -1265,6 +1565,7 @@ impl Timeline {
                 accent,
                 selected: self.clips.contains(id),
                 muted: state.mute,
+                carries: !expanded && lane_ghosts.iter().any(|ghost| ghost.clip == *id),
             };
             // The order of `clips()`, by start and then by id, for the few that are visible:
             // it decides which of two overlapping clips is on top.
@@ -1276,7 +1577,7 @@ impl Timeline {
                 (a_clip.start, a.id()).cmp(&(b_clip.start, b.id()))
             });
             for (clip, state) in notes {
-                let rect = viewport.clip_rect(index, state.start, state.end());
+                let rect = viewport.clip_rect(&layout, index, state.start, state.end());
                 let body = Body::Notes(viewport.miniature(state, rect).collect());
                 scene.clips.push(shape(clip.id(), rect, body));
             }
@@ -1291,14 +1592,86 @@ impl Timeline {
                 (a_clip.layer, a_clip.start, a.id()).cmp(&(b_clip.layer, b_clip.start, b.id()))
             });
             for (clip, state, end) in audio {
-                let rect = viewport.clip_rect(index, state.start, end);
+                let rect = viewport.clip_rect(&layout, index, state.start, end);
                 let body = self.audio_shape(clip.id(), state, rect, &viewport, width, project);
                 scene
                     .clips
                     .push(shape(clip.id(), rect, Body::Audio(Box::new(body))));
             }
         }
+        // The hint goes under the clip under the pointer, while the drag takes automation.
+        let grabbed = self.drag.as_ref().and_then(ClipDrag::grabbed);
+        let grabbed = grabbed.filter(|_| !lane_ghosts.is_empty());
+        let under = grabbed.and_then(|id| scene.clips.iter().find(|shape| shape.id == *id));
+        scene.hint = under.map(|shape| (shape.rect.x, shape.rect.y + shape.rect.height + 4.));
         scene
+    }
+
+    /// Where the clips of a drag put the automation they take along, as its last mouse move
+    /// wrote it. Empty while no drag of clips takes any.
+    fn lane_ghosts(&self) -> &[LaneGhost] {
+        match self.drag.as_ref().map(|drag| &drag.kind) {
+            Some(ClipDragKind::Move { ghosts, .. }) => ghosts,
+            _ => &[],
+        }
+    }
+
+    /// The tracks as they were when a drag of clips opened its gesture, while it goes on.
+    fn tracks_before_drag(&self) -> Option<&BTreeMap<InstanceId, TrackState>> {
+        match self.drag.as_ref().map(|drag| &drag.kind) {
+            Some(ClipDragKind::Move { tracks, .. }) if !tracks.is_empty() => Some(tracks),
+            _ => None,
+        }
+    }
+
+    /// The lanes of `track`, whose record is `state`, as they show in a timeline area this
+    /// wide: each with its name and its line, and while clips are dragged, where they land with
+    /// the line that was there before. The `y` of each is left at 0.
+    fn lane_shapes(
+        &self,
+        track: &InstanceId,
+        state: &TrackState,
+        accent: Hsla,
+        viewport: &Viewport,
+        width: f32,
+        cx: &App,
+    ) -> Vec<LaneShape> {
+        let project = self.session.read(cx).project();
+        let travel = travel_in(project);
+        let visible = viewport.visible_ticks(width);
+        let before = self.tracks_before_drag().and_then(|tracks| tracks.get(track));
+        let ghosts = self.lane_ghosts().iter();
+        let ghosts: Vec<&LaneGhost> = ghosts.filter(|ghost| ghost.track == *track).collect();
+        let lanes = state.automation.iter().map(|lane| {
+            let range = lane.number(track, state, &travel).map(|number| number.range);
+            let line = |lane: &AutomationLane, ticks: Range<Ticks>| match range {
+                Some(range) => {
+                    let points = track_lanes::on_travel(lane, range);
+                    track_lanes::line(viewport, &points, ticks)
+                }
+                None => Vec::new(),
+            };
+            let was = before.and_then(|before| {
+                let mut lanes = before.automation.iter();
+                lanes.find(|was| was.same_number(lane))
+            });
+            let moved = was != Some(lane);
+            let ghosts = ghosts.iter().filter(|_| moved).map(|ghost| {
+                let across = viewport.x_of(ghost.range.start)..viewport.x_of(ghost.range.end);
+                let replaced = was.map(|was| line(was, ghost.range.clone()));
+                (across, replaced.unwrap_or_default())
+            });
+            let name = lane.device.as_ref().map(|device| self.device_name(track, device, cx));
+            LaneShape {
+                y: 0.,
+                name: track_lanes::lane_name(name.as_deref(), &lane.parameter).into(),
+                accent,
+                muted: state.mute,
+                line: line(lane, visible.clone()),
+                ghosts: ghosts.collect(),
+            }
+        });
+        lanes.collect()
     }
 
     /// The takes while they record, from where the recording began to the playhead, in the
@@ -1310,6 +1683,7 @@ impl Timeline {
         let playhead = self.playhead.read(cx).tick;
         let viewport = self.painted.get();
         let theme = cx.theme();
+        let rows = self.rows(cx);
         let mut shapes = Vec::new();
         for take in recording.takes() {
             let Some(index) = self.row_of(&take.track) else {
@@ -1319,7 +1693,7 @@ impl Timeline {
                 continue;
             };
             let end = playhead.max(take.start + Ticks(1));
-            let rect = viewport.clip_rect(index, take.start, end);
+            let rect = viewport.clip_rect(&rows, index, take.start, end);
             let body = live_shape(take, rect, &viewport, width, project);
             shapes.push(ClipShape {
                 id: take.track.clone(),
@@ -1328,6 +1702,7 @@ impl Timeline {
                 accent: accent(state.colour, theme),
                 selected: false,
                 muted: state.mute,
+                carries: false,
             });
         }
         shapes
@@ -1342,7 +1717,8 @@ impl Timeline {
                 .state(*track)
                 .is_some_and(|state| state.kind == TrackKind::Audio)
         });
-        rows.map(|(index, track)| (self.viewport.y_of(index), track.clone()))
+        let layout = self.rows(cx);
+        rows.map(|(index, track)| (self.viewport.y_of(&layout, index), track.clone()))
             .collect()
     }
 
@@ -1352,7 +1728,7 @@ impl Timeline {
     pub(super) fn add_row_top(&self, cx: &App) -> f32 {
         let (width, height) = self.painted_size.get();
         let viewport = self.clamped(self.viewport, width, height, cx);
-        viewport.y_of(self.order.len())
+        viewport.y_at(self.rows(cx).height())
     }
 
     /// Scrolls just enough to show the whole row of the add track button, for a focus that
@@ -1451,7 +1827,7 @@ impl Timeline {
     }
 
     /// The ghosts of the clips a drop of files would make, while files are dragged over.
-    fn ghosts(&self, viewport: &Viewport, project: &Project) -> Option<Ghosts> {
+    fn ghosts(&self, viewport: &Viewport, rows: &Rows, project: &Project) -> Option<Ghosts> {
         let incoming = self.incoming.as_ref()?;
         let (row, start) = match incoming.target.as_ref()? {
             DropTarget::Track(track, start) => (self.row_of(track)?, *start),
@@ -1477,12 +1853,12 @@ impl Timeline {
             let name = path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned());
-            let rect = viewport.clip_rect(row, at, end.max(at + Ticks(1)));
+            let rect = viewport.clip_rect(rows, row, at, end.max(at + Ticks(1)));
             clips.push((rect, SharedString::from(name.unwrap_or_default())));
             at = end;
         }
-        let new_track =
-            matches!(incoming.target, Some(DropTarget::NewTrack(_))).then(|| viewport.y_of(row));
+        let new_track = matches!(incoming.target, Some(DropTarget::NewTrack(_)))
+            .then(|| viewport.y_of(rows, row));
         Some(Ghosts { clips, new_track })
     }
 
@@ -1506,14 +1882,25 @@ impl Timeline {
         // Shift and cmd add to the selection or take out of it, as in the Finder.
         let (shift, cmd) = (event.modifiers.shift, event.modifiers.platform);
         let adds = shift || cmd;
+        let part = scene.viewport.part_at(&scene.layout, y);
         if x < 0.0 {
             // The corner above the headers holds the snap setting, which takes its own clicks.
             if y < 0.0 {
                 return;
             }
-            // A track header. A double click edits its name.
-            let row = scene.viewport.track_at(y, self.order.len());
-            if let Some(track) = row.and_then(|row| self.order.get(row)).cloned() {
+            // The header of a track, not of its lanes. Left of its dot is the toggle of its
+            // lanes; elsewhere it is selected, and a double click edits its name.
+            let Some((row, Part::Track)) = part else {
+                return;
+            };
+            if x + HEADER_WIDTH < LANES_TOGGLE_WIDTH {
+                if let Some(track) = self.order.get(row).map(|track| track.id().clone()) {
+                    let shown = self.shows_lanes(&track);
+                    self.show_lanes(&track, !shown, cx);
+                }
+                return;
+            }
+            if let Some(track) = self.order.get(row).cloned() {
                 self.select_track(Some(track.id().clone()), cx);
                 cx.emit(TimelineEvent::OpenTrack(track.clone()));
                 if double {
@@ -1527,6 +1914,11 @@ impl Timeline {
         if y < 0.0 {
             self.on_ruler(x, double, scene, cx);
             return;
+        }
+        match part {
+            Some((row, Part::Lane(lane))) => return self.press_lane(row, lane, event, x, y, cx),
+            Some((_, Part::AddLane)) => return,
+            Some((_, Part::Track)) | None => {}
         }
         let Some((shape, grip)) = scene.zone_at(x, y) else {
             if double {
@@ -1720,6 +2112,7 @@ impl Timeline {
             rows: 0,
             tracks: BTreeMap::new(),
             lanes_written: BTreeSet::new(),
+            ghosts: Vec::new(),
         })
     }
 
@@ -1782,7 +2175,7 @@ impl Timeline {
 
     /// A double click on empty track space: a clip of one bar in the cell under the pointer.
     fn add_clip_at(&mut self, x: f32, y: f32, scene: &Scene, cx: &mut Context<Self>) {
-        let row = scene.viewport.track_at(y, self.order.len());
+        let row = scene.viewport.track_at(&scene.layout, y);
         let Some(track) = row.and_then(|row| self.order.get(row)).cloned() else {
             return;
         };
@@ -1833,12 +2226,13 @@ impl Timeline {
     fn marquee_to(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
         self.refresh_order(cx);
         let viewport = self.painted.get();
+        let layout = self.rows(cx);
         let Some(marquee) = &mut self.marquee else {
             return;
         };
-        marquee.to = (viewport.tick_at(x), f64::from(y) + viewport.scroll_y);
+        marquee.to = (viewport.tick_at(x), viewport.content_y(y));
         let (left, right) = ordered(marquee.from.0, marquee.to.0);
-        let rows = rows_between(marquee.from.1, marquee.to.1, self.order.len());
+        let rows = layout.between(marquee.from.1, marquee.to.1);
         let project = self.session.read(cx).project();
         let mut selected = marquee.before.clone();
         for track in self.order.get(rows).unwrap_or_default() {
@@ -1897,7 +2291,10 @@ impl Timeline {
     /// Whether the mouse has something: clips, a rectangle or a track. Keys then wait, as they
     /// would fight the next mouse move.
     fn dragging(&self) -> bool {
-        self.drag.is_some() || self.marquee.is_some() || self.track_drag.is_some()
+        self.drag.is_some()
+            || self.marquee.is_some()
+            || self.track_drag.is_some()
+            || self.lane_drag.is_some()
     }
 
     /// A press on a track header, which may become a drag of the track.
@@ -1956,8 +2353,9 @@ impl Timeline {
             (drag.from, drag.at) = (from, usize::MAX);
         }
         let to = viewport
-            .nearest_track(y, drag.origin.len())
-            .unwrap_or(drag.from);
+            .nearest_track(&self.rows(cx), y)
+            .unwrap_or(drag.from)
+            .min(drag.origin.len().saturating_sub(1));
         if to == drag.at {
             self.track_drag = Some(drag);
             return;
@@ -2031,6 +2429,7 @@ impl Timeline {
             rows: last_rows,
             tracks,
             lanes_written,
+            ghosts,
         } = &mut drag.kind
         else {
             self.drag = Some(drag);
@@ -2081,7 +2480,8 @@ impl Timeline {
             clips.iter().map(|moved| moved.row).min().unwrap_or(0),
             clips.iter().map(|moved| moved.row).max().unwrap_or(0),
         );
-        let under_pointer = viewport.nearest_track(y, rows).unwrap_or(*grab_row);
+        let layout = self.rows(cx);
+        let under_pointer = viewport.nearest_track(&layout, y).unwrap_or(*grab_row);
         let row_delta = (under_pointer as i64 - *grab_row as i64)
             .clamp(-(top as i64), rows.saturating_sub(1 + bottom) as i64);
         if self.fits(clips, row_delta, project) {
@@ -2104,10 +2504,11 @@ impl Timeline {
                 next: live.with_start(shifted(moved.start, delta)),
             });
         }
-        let mut lanes = match alone {
-            true => BTreeMap::new(),
-            false => moved(tracks, &lane_moves(&moves), &travel_in(project)),
+        let lane_steps = match alone {
+            true => Vec::new(),
+            false => lane_moves(&moves),
         };
+        let mut lanes = moved(tracks, &lane_steps, &travel_in(project));
         // A track the drag wrote before and leaves now goes back to how it was.
         for track in lanes_written.iter() {
             if let Some(state) = tracks.get(track) {
@@ -2150,6 +2551,28 @@ impl Timeline {
                 (clip.clip, clip.written) = (now, start);
             }
         }
+        // What takes automation along, for the ghosts and the hint: each clip that moves and
+        // has lanes under it that go where it lands.
+        let project = self.session.read(cx).project();
+        let travel = travel_in(project);
+        let takes = |step: &LaneMove| {
+            let moves = step.from != step.to || step.range.start != step.start;
+            let state = tracks.get(&step.from).filter(|_| moves);
+            state.is_some_and(|state| {
+                let carried = Carried::under(&step.from, state, step.range.clone(), &travel);
+                carried.goes_to(&step.to)
+            })
+        };
+        *ghosts = clips
+            .iter()
+            .zip(&lane_steps)
+            .filter(|(_, step)| takes(step))
+            .map(|(clip, step)| LaneGhost {
+                clip: clip.clip.clone(),
+                track: step.to.clone(),
+                range: step.start..step.start + step.range.end.saturating_sub(step.range.start),
+            })
+            .collect();
         let selected: Vec<_> = clips.iter().map(|moved| moved.clip.clone()).collect();
         let primary = selected.get(*grabbed).cloned();
         self.drag = Some(drag);
@@ -2393,7 +2816,9 @@ impl Timeline {
     /// that did not move changes the selection as the click it was, see [`OnRelease`].
     fn end_drag(&mut self, cx: &mut Context<Self>) {
         self.marquee = None;
-        if self.track_drag.take().is_some_and(|drag| drag.begun) {
+        let track_drag = self.track_drag.take().is_some_and(|drag| drag.begun);
+        let lane_drag = self.lane_drag.take().is_some_and(|drag| drag.begun);
+        if track_drag || lane_drag {
             self.session
                 .update(cx, |session, cx| session.finish_gesture(cx));
         }
@@ -2421,8 +2846,10 @@ impl Timeline {
             cx.notify();
             return true;
         }
-        if let Some(drag) = self.track_drag.take() {
-            if drag.begun {
+        let track_drag = self.track_drag.take().map(|drag| drag.begun);
+        let lane_drag = self.lane_drag.take().map(|drag| drag.begun);
+        if let Some(begun) = track_drag.or(lane_drag) {
+            if begun {
                 self.session
                     .update(cx, |session, cx| session.cancel_gesture(cx));
             }
@@ -2459,6 +2886,15 @@ impl Timeline {
             Grip::Handle(ClipHandle::Gain) => Some(CursorStyle::ResizeUpDown),
         });
         let hovered = zone.map(|(shape, _)| shape.id.clone());
+        // A drag in a lane draws.
+        let in_lane = matches!(
+            scene.viewport.part_at(&scene.layout, y),
+            Some((_, Part::Lane(_)))
+        );
+        let cursor = match inside && in_lane {
+            true => Some(CursorStyle::Crosshair),
+            false => cursor,
+        };
         if self.hover_cursor != cursor || self.hovered != hovered {
             (self.hover_cursor, self.hovered) = (cursor, hovered);
             cx.notify();
@@ -2475,6 +2911,9 @@ impl Timeline {
     fn cursor(&self) -> Option<CursorStyle> {
         if self.track_drag.as_ref().is_some_and(|drag| drag.moving) {
             return Some(CursorStyle::ClosedHand);
+        }
+        if self.lane_drag.is_some() {
+            return Some(CursorStyle::Crosshair);
         }
         match &self.drag {
             Some(drag) => drag.cursor(),
@@ -3059,9 +3498,10 @@ impl Timeline {
         }
         let viewport = self.painted.get();
         let tick = self.grid(cx).floor(viewport.tick_at(x));
-        let rows = self.order.len();
-        let Some(row) = viewport.track_at(y, rows) else {
-            return (y >= viewport.y_of(rows)).then_some(DropTarget::NewTrack(tick));
+        let rows = self.rows(cx);
+        let Some(row) = viewport.track_at(&rows, y) else {
+            let below = y >= viewport.y_at(rows.height());
+            return below.then_some(DropTarget::NewTrack(tick));
         };
         let track = self.order.get(row)?;
         let project = self.session.read(cx).project();
@@ -3240,10 +3680,12 @@ impl Timeline {
     }
 
     /// The name field over the header of the track being renamed, where the name is painted.
-    fn rename_field(&self) -> Option<gpui::AnyElement> {
+    fn rename_field(&self, cx: &App) -> Option<gpui::AnyElement> {
         let rename = self.rename.as_ref()?;
         let row = self.row_of(rename.track.id())?;
-        let top = RULER_HEIGHT + self.painted.get().y_of(row) + (TRACK_HEIGHT - RENAME_HEIGHT) / 2.;
+        let rows = self.rows(cx);
+        let top = self.painted.get().y_of(&rows, row);
+        let top = RULER_HEIGHT + top + (TRACK_HEIGHT - RENAME_HEIGHT) / 2.;
         Some(
             div()
                 .debug_selector(|| "rename-track".to_string())
@@ -3255,6 +3697,181 @@ impl Timeline {
                 .child(rename.input.clone())
                 .into_any_element(),
         )
+    }
+
+    /// The select that adds a lane, in the row under the lanes of each track that shows them.
+    /// Clipped to the header column under the ruler, as the painted headers are, but not while
+    /// one is open: GPUI clips a menu to where it was made.
+    fn lane_menu_column(&self, cx: &App) -> impl IntoElement {
+        let rows = self.rows(cx);
+        let (width, height) = self.painted_size.get();
+        let viewport = self.clamped(self.viewport, width, height, cx);
+        let mut open = false;
+        let mut selects = Vec::new();
+        for (row, track) in self.order.iter().enumerate() {
+            let (Some(lanes), Some(lane_menu)) = (rows.lanes(row), self.lane_menus.get(track.id()))
+            else {
+                continue;
+            };
+            open |= lane_menu.menu.read(cx).is_open();
+            let top = viewport.y_at(rows.lane_top(row, lanes)) + (ADD_LANE_HEIGHT - 24.) / 2.;
+            selects.push(
+                div()
+                    .absolute()
+                    .top(px(top))
+                    .left(px(ADD_LANE_LEFT))
+                    .occlude()
+                    .child(lane_menu.menu.clone()),
+            );
+        }
+        div()
+            .absolute()
+            .top(px(RULER_HEIGHT))
+            .bottom_0()
+            .left_0()
+            .w(px(HEADER_WIDTH - 1.))
+            .when(!open, |column| column.overflow_hidden())
+            .children(selects)
+    }
+
+    /// A press in an automation lane, at `y` in the timeline area. A drag from it draws the
+    /// line of the pointer, with alt it erases, and a double click clears the lane: it goes,
+    /// and its number plays its record again. A press alone changes nothing, so the first
+    /// click of a double click is no undo step.
+    fn press_lane(
+        &mut self,
+        row: usize,
+        lane: usize,
+        event: &MouseDownEvent,
+        x: f32,
+        y: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(track) = self.order.get(row).cloned() else {
+            return;
+        };
+        let project = self.session.read(cx).project();
+        let Some(state) = project.state(&track) else {
+            return;
+        };
+        let Some(origin) = state.automation.get(lane).cloned() else {
+            return;
+        };
+        let viewport = self.painted.get();
+        let top = self.rows(cx).lane_top(row, lane);
+        if event.click_count == 2 {
+            let mut state = state.clone();
+            state.automation.retain(|lane| !lane.same_number(&origin));
+            self.session.update(cx, |session, cx| {
+                session.edit(cx, |project| {
+                    let mut changes = Changes::new();
+                    changes.set(&track, state);
+                    project.commit(track_lanes::label(&LaneEdit::Clear), changes)
+                })
+            });
+            return;
+        }
+        let range = origin.number(track.id(), state, &travel_in(project));
+        let kind = match event.modifiers.alt {
+            true => LaneDragKind::Erase {
+                from: viewport.tick_at(x),
+            },
+            false => LaneDragKind::Draw {
+                drawn: BTreeMap::new(),
+                last: (x, (viewport.content_y(y) - top) as f32),
+            },
+        };
+        self.lane_drag = Some(LaneDrag {
+            track,
+            origin,
+            index: lane,
+            range: range.map(|number| number.range),
+            top,
+            kind,
+            begun: false,
+        });
+    }
+
+    /// One mouse move of a drag in a lane, into the gesture of the session, which opens with
+    /// the first change. `free` is cmd held: the drag draws every few pixels, not on the grid.
+    fn drag_lane(&mut self, x: f32, y: f32, free: bool, cx: &mut Context<Self>) {
+        let Some(mut drag) = self.lane_drag.take() else {
+            return;
+        };
+        let viewport = self.painted.get();
+        let grid = match free {
+            true => self.grid(cx).free(),
+            false => self.grid(cx),
+        };
+        let in_lane = (viewport.content_y(y) - drag.top) as f32;
+        let edit = match &mut drag.kind {
+            LaneDragKind::Draw { drawn, last } => {
+                // A hand that moves a little during a click draws nothing.
+                let still = (x - last.0).abs() < DRAG_THRESHOLD
+                    && (in_lane - last.1).abs() < DRAG_THRESHOLD;
+                if drawn.is_empty() && still {
+                    self.lane_drag = Some(drag);
+                    return;
+                }
+                let everywhere = Ticks(0)..Ticks(u64::MAX);
+                drawn.extend(drawn_between(&viewport, everywhere, &grid, *last, (x, in_lane)));
+                *last = (x, in_lane);
+                LaneEdit::Draw(drawn)
+            }
+            LaneDragKind::Erase { from } => {
+                if !drag.begun && (x - viewport.x_of(*from)).abs() < DRAG_THRESHOLD {
+                    self.lane_drag = Some(drag);
+                    return;
+                }
+                let to = viewport.tick_at(x);
+                let (from, to) = match grid.snaps() {
+                    true => (grid.snap(*from), grid.snap(to)),
+                    false => (*from, to),
+                };
+                let (first, last) = ordered(from, to);
+                LaneEdit::Erase(first..=last)
+            }
+        };
+        let label = track_lanes::label(&edit);
+        let next = track_lanes::edited(&drag.origin, drag.range, &edit);
+        let project = self.session.read(cx).project();
+        let Some(state) = project.state(&drag.track) else {
+            self.lane_drag = Some(drag);
+            return self.end_drag(cx);
+        };
+        // The lane in its place among the lanes of the track now, from where it was at mouse
+        // down. An erase of every point takes it away, and a drag back puts it back there.
+        let mut automation = state.automation.clone();
+        let at = automation.iter().position(|lane| lane.same_number(&drag.origin));
+        match (at, next) {
+            (Some(at), Some(lane)) => automation[at] = lane,
+            (Some(at), None) => {
+                automation.remove(at);
+            }
+            (None, Some(lane)) => automation.insert(drag.index.min(automation.len()), lane),
+            (None, None) => {}
+        }
+        if automation == state.automation {
+            self.lane_drag = Some(drag);
+            return;
+        }
+        let next = TrackState {
+            automation,
+            ..state.clone()
+        };
+        let begun = std::mem::replace(&mut drag.begun, true);
+        let track = drag.track.clone();
+        self.lane_drag = Some(drag);
+        self.session.update(cx, |session, cx| {
+            if !begun {
+                session.begin_gesture(label, cx);
+            }
+            session.gesture(cx, |project, edit| {
+                let mut changes = Changes::new();
+                changes.set(&track, next);
+                project.publish(edit, changes)
+            })
+        });
     }
 
     /// The snap setting in the corner above the track headers, on the line of the ruler.
@@ -3294,6 +3911,8 @@ const TEMPO_LABEL_ROOM: f32 = 80.;
 const RENAME_HEIGHT: f32 = 28.;
 /// Its left edge, so that its text starts where the painted name does, 44 pt in.
 const RENAME_LEFT: f32 = 44. - 8.;
+/// The select that adds a lane: its words start where the name of a track does, 44 pt in.
+const ADD_LANE_LEFT: f32 = 44. - 8.;
 
 /// What a take shows while it records: the times of its file under each column on screen,
 /// lined up where the composer heard them, and no handles.
@@ -3417,7 +4036,8 @@ impl Render for Timeline {
             ))
             .child(surface.size_full())
             .child(self.snap_corner(cx))
-            .children(self.rename_field())
+            .child(self.lane_menu_column(cx))
+            .children(self.rename_field(cx))
     }
 }
 
@@ -3491,6 +4111,8 @@ fn listen(
                     timeline.marquee_to(x, y, cx);
                 } else if timeline.track_drag.is_some() {
                     timeline.drag_track(y, cx);
+                } else if timeline.lane_drag.is_some() {
+                    timeline.drag_lane(x, y, event.modifiers.platform, cx);
                 } else {
                     let modifiers = event.modifiers;
                     let keys = (modifiers.platform, modifiers.shift, modifiers.alt);
@@ -3571,7 +4193,8 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
         theme.alpha_at(0.05),
         theme.alpha_at(0.10),
     );
-    let (selection, selected_header) = (theme.gray_950, theme.alpha_at(0.05));
+    let (selection, selected_header, lane_text) =
+        (theme.gray_950, theme.alpha_at(0.05), theme.gray_800);
     let (marquee_fill, marquee_border) = (theme.alpha_at(0.05), theme.alpha_at(0.20));
     let (drop_ring, ghost_text, muted_ring, muted_text, window_fill) = (
         theme.lavender,
@@ -3639,6 +4262,16 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
             };
             let label_size = (TRACK_HEIGHT, name_width);
             paint_track_label(name, row.accent, top, label_size, row.muted, window, cx);
+            paint_lanes_toggle(row, top, window, cx);
+        }
+        // The name of each lane, where the name of its track starts.
+        for lane in &scene.lanes {
+            let top = headers.origin + point(px(0.), px(lane.y.round()));
+            let origin = top + point(px(44.), px(LANE_HEIGHT / 2. - 9.));
+            let fit = Fit::Truncate(HEADER_WIDTH - 44. - 16.);
+            let color = lane_text.opacity(if lane.muted { 0.4 } else { 1. });
+            let (name, weight) = (lane.name.clone(), FontWeight::NORMAL);
+            paint_text(name, origin, 12., weight, color, fit, window, cx);
         }
         // A drop under the last track makes a new audio track, whose header says so.
         if let Some(y) = scene.ghosts.as_ref().and_then(|ghosts| ghosts.new_track) {
@@ -3683,9 +4316,26 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
     );
     window.paint_quad(fill(under_ruler, hairline));
     window.paint_quad(fill(beside_headers, hairline));
+    // A hairline over each lane, across the header and the timeline.
+    let under_ruler_area = Bounds::new(
+        headers.origin,
+        size(bounds.size.width, headers.size.height),
+    );
+    window.with_content_mask(Some(ContentMask { bounds: under_ruler_area }), |window| {
+        for lane in &scene.lanes {
+            let line = Bounds::new(
+                headers.origin + point(px(0.), px(lane.y.round())),
+                size(bounds.size.width, px(1.)),
+            );
+            window.paint_quad(fill(line, hairline));
+        }
+    });
 
     let assets = scene.assets.clone();
     window.with_content_mask(Some(ContentMask { bounds: timeline }), |window| {
+        for lane in &scene.lanes {
+            paint_lane(lane, timeline, window);
+        }
         for shape in &scene.clips {
             let body = placed(shape.rect, timeline.origin);
             let dim = if shape.muted { 0.4 } else { 1. };
@@ -3709,6 +4359,9 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
                     let look = audio_look(shape, audio, body, timeline.origin, &assets, cx);
                     paint_audio_clip(&look, window, cx);
                 }
+            }
+            if shape.carries {
+                paint_automation_mark(body, shape.accent.opacity(dim), window);
             }
         }
 
@@ -3747,7 +4400,108 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
                 solid,
             ));
         }
+        if let Some((x, y)) = scene.hint {
+            let origin = timeline.origin + point(px(x.max(4.).round()), px(y.round()));
+            paint_hint(AUTOMATION_HINT, origin, window, cx);
+        }
     });
+}
+
+/// The toggle of the lanes of a track, left of its dot: a chevron to the right while they are
+/// folded away, down while they show. Brighter when the track has lanes, so a folded track
+/// says it has automation.
+fn paint_lanes_toggle(row: &TrackRow, top: Point<Pixels>, window: &mut Window, cx: &App) {
+    let theme = cx.theme();
+    let color = match row.automated {
+        true => theme.gray_900,
+        false => theme.gray_700,
+    };
+    let color = color.opacity(if row.muted { 0.4 } else { 1. });
+    let middle = TRACK_HEIGHT / 2.;
+    let corners = match row.expanded {
+        true => [(10., middle - 2.), (14., middle + 2.), (18., middle - 2.)],
+        false => [(12., middle - 4.), (16., middle), (12., middle + 4.)],
+    };
+    paint_polyline(&corners, top, 1.5, color, window);
+}
+
+/// A line through `corners`, from `origin`.
+fn paint_polyline(
+    corners: &[(f32, f32)],
+    origin: Point<Pixels>,
+    width: f32,
+    color: Hsla,
+    window: &mut Window,
+) {
+    let mut path = PathBuilder::stroke(px(width));
+    for (index, (x, y)) in corners.iter().enumerate() {
+        let at = origin + point(px(*x), px(*y));
+        match index {
+            0 => path.move_to(at),
+            _ => path.line_to(at),
+        }
+    }
+    // A path that does not tessellate paints nothing, which is all there is to do about it.
+    if corners.len() > 1
+        && let Ok(path) = path.build()
+    {
+        window.paint_path(path, color);
+    }
+}
+
+/// An automation lane in the timeline area: its line in the track colour, as a note is. While
+/// clips are dragged, where each lands has a light band, and the line that was there before
+/// shows faded under the one it gets.
+fn paint_lane(lane: &LaneShape, timeline: Bounds<Pixels>, window: &mut Window) {
+    let origin = timeline.origin + point(px(0.), px(lane.y));
+    let opacity = if lane.muted { 0.4 } else { 1. };
+    for (across, replaced) in &lane.ghosts {
+        let band = Bounds::new(
+            origin + point(px(across.start.round()), px(1.)),
+            size(px((across.end - across.start).round().max(1.)), px(LANE_HEIGHT - 1.)),
+        );
+        window.paint_quad(fill(band, lane.accent.opacity(0.08 * opacity)));
+        let faded = lane.accent.opacity(0.3 * opacity);
+        window.with_content_mask(Some(ContentMask { bounds: band }), |window| {
+            paint_polyline(replaced, origin, 1.5, faded, window);
+        });
+    }
+    paint_polyline(&lane.line, origin, 1.5, lane.accent.opacity(opacity), window);
+}
+
+/// The mark of a dragged clip whose automation goes along while its lanes are folded away: a
+/// small fade in its top right corner.
+fn paint_automation_mark(body: Bounds<Pixels>, color: Hsla, window: &mut Window) {
+    if body.size.width < px(40.) {
+        return;
+    }
+    let origin = body.top_right();
+    let corners = [(-28., 16.), (-20., 16.), (-10., 8.)];
+    paint_polyline(&corners, origin, 1.5, color, window);
+}
+
+/// A short line of text in a box of the window colour, as a tempo label is, at `origin`.
+fn paint_hint(text: &'static str, origin: Point<Pixels>, window: &mut Window, cx: &mut App) {
+    let theme = cx.theme();
+    let (background, border, color) = (theme.gray_100, theme.alpha_at(0.10), theme.gray_900);
+    let run = TextRun {
+        len: text.len(),
+        font: typography::tabular(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let text = SharedString::from(text);
+    let shaped = window.text_system().shape_line(text, px(12.), &[run], None);
+    let area = Bounds::new(origin, size(shaped.width + px(16.), px(24.)));
+    let solid = BorderStyle::Solid;
+    window.paint_quad(quad(area, px(6.), background, px(1.), border, solid));
+    let at = origin + point(px(8.), px(4.));
+    // A glyph that cannot be painted leaves a gap in a hint. Nothing else depends on it.
+    if let Err(error) = shaped.paint(at, px(17.), TextAlign::Left, None, window, cx) {
+        eprintln!("arrangement view: {error}");
+    }
 }
 
 /// What an audio clip shows, with the peaks of its columns from the overview of its file. The

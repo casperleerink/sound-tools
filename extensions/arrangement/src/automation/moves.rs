@@ -300,6 +300,11 @@ impl AutomationLane {
     ) -> Option<AutomatedNumber> {
         number(track, &Mix::of(state), self, travel)
     }
+
+    /// Whether this lane and `other` move the same number.
+    pub fn same_number(&self, other: &Self) -> bool {
+        same_number(self, other)
+    }
 }
 
 /// Whether two lanes move the same number.
