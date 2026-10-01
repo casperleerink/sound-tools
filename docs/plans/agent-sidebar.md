@@ -56,6 +56,8 @@ Throwaway Python scripts in `/tmp`, run against claude 2.1.286 on this Mac. None
 | Milestone 3: `set_permission_mode` (R10) | Works between `default` and `acceptEdits` on a running process, and applies to the next tool. Switching to `bypassPermissions` fails ("the session was not launched with --dangerously-skip-permissions") unless the process started with `--allow-dangerously-skip-permissions`. That flag only allows the switch; the mode stays the one `--permission-mode` gives. So the driver always passes it, and no restart is needed. |
 | Milestone 3: trimmed flags and `CLAUDE.md` | The project's `CLAUDE.md` loads, and its `@AGENTS.md` import too: the live test asks for a fact that is only in `AGENTS.md`. `initialize` answers without a user message. |
 | Milestone 3: settings in the project | With `--setting-sources project,local`, a `.claude/settings.json` the agent could write itself allows `Bash` without asking, and its `SessionStart` hook runs a command at the next start. `--setting-sources ""` ignores both, but then `CLAUDE.md` does not load either. `--restricted` also drops `CLAUDE.md`, and refuses `bypassPermissions`. `--safe-mode` drops `CLAUDE.md` by design. What works: `--setting-sources "" --add-dir <project>` with `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`. `CLAUDE.md` and its import load, no settings file or hook does, and all three approval modes behave. An ignored live test checks it. |
+| Milestone 6: `set_model` | A control request, `{"subtype": "set_model", "model": <id>}`, on a running process. It applies from the next message, with no restart; haiku to sonnet and back to `default` all worked. An unknown model gets an error answer ("Model '…' not found") and the model stays. Recorded in `set_model.jsonl`. |
+| Milestone 6: read-only commands | Under `acceptEdits` the CLI runs `ls`, `cat`, `head`, `tail`, `wc`, `find`, `grep` and `rg` with no question, also in a pipe, after `&&` and with absolute paths. Under `default` `ls` runs with no question too. What asks: `find … -exec`, and a loop over a command substitution, which is what the milestone 4 run met (`for f in $(find state -name '*.json'); do cat "$f"; done`). `--allowedTools "Bash(find:*)"`-style rules change none of this, so the app adds none. Recorded in `read_only.jsonl`. |
 
 ## 1. Process model
 
@@ -177,7 +179,7 @@ Rejected:
 - The display comes from our log, so reopening needs no provider API and works the same for any provider.
 - If a resume fails (the CLI says "no conversation found"), the old log stays visible, read-only, with "This thread can't continue. Start a new one."
 - A project can have many threads. In v1 the sidebar shows the current thread, and **+** starts a new one. Older threads stay in the index for a thread list later.
-- The model is chosen per thread, from the `models` of `initialize`.
+- The model is one setting of the machine, like the approval mode, picked from the `models` of `initialize`. A change applies from the next message. (The plan first had it per thread; one remembered setting is simpler and enough.)
 - One turn runs at a time per project, because every turn writes the same folder and makes one undo step.
 - While a turn runs, the send button becomes stop, and cmd-period stops too. Both send the `interrupt` control request.
 - A thread's process starts on the first send. It ends when a new thread starts, the project closes or the app quits.
@@ -324,6 +326,8 @@ Each milestone ends green on the README checks, with the docs updated in the sam
    - Unit tests of the markdown block model and of the composer's wrap and cursor math. Both are pure functions.
    - Gallery snapshots of the composer (empty, 3 lines, full) and of the sidebar (working, done with steps open, failed, approval, problems, long thread).
    - A manual run of each setting: "Ask for everything" asks before an edit, "Ask before commands" edits and asks before `cargo build`, and "Never ask" asks nothing.
+
+   Status: done. Settings tests in `crates/agent/src/settings.rs`, history in `view/history.rs`, the mode mapping in the driver's flag test, `Markdown::inline_code` for titles. Window tests: the problems line, up and down in the composer, and the menu's settings reaching the agent with the next message. Window snapshots `agent-*.png` (see `crates/runtime/tests/snapshots/agent.rs`). In place of the manual run, an ignored live test (`each_approval_mode_asks_as_it_says`) with haiku: "Ask for everything" asked before the Write and `git init`, "Ask before commands" only before `git init`, "Never ask" asked nothing, and `ls` asked in no mode. The menu shows the models once the first agent of the window started; until then only the picked one.
 7. **Threads saved and resumed.** The store, resume, **+** and the stale-resume message. Verify:
    - Store tests: a round trip; a damaged line is skipped with a notice; two projects never share a thread.
    - A manual run: quit mid-thread, reopen, and ask "what did we just change?"
@@ -336,7 +340,8 @@ Each milestone ends green on the README checks, with the docs updated in the sam
 ## Open issues
 
 - With the sidebar open, the window can still be made as narrow as `MIN_WINDOW_WIDTH` (1100 pt), which leaves the arrangement 740 pt. The minimum size does not grow with the panel.
-- Under "Ask before commands" the agent asks even before a command that only reads, such as `find state -type f`. The live test of milestone 4 met one in its first turn.
+- Under "Ask before commands" the agent still asks before a compound command that only reads, such as a loop over `$(find …)` or `find -exec` (milestone 6 spike). Plain reads do not ask.
+- The problems line reads the problems when the turn ends. A write the watcher hears after that, within its 100 ms window, is not in it.
 - **Sign out** does nothing visible when `ANTHROPIC_API_KEY` is set in the login shell: Claude Code then counts as signed in with that key, so the sidebar comes back ready.
 
 ## Adding Codex later
