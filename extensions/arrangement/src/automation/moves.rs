@@ -410,6 +410,11 @@ fn taken(points: &[Point<OnTravel>], range: Range<Ticks>) -> Vec<Point<OnTravel>
 /// points before and after stay, and the values just outside stay what they were, by a point
 /// on each edge that has none. So with nothing inside, the place becomes a straight line
 /// between its edges.
+///
+/// Only a point on an edge, just outside the place, is left out when it is on the line: an
+/// edge this made, or one an earlier move made, so nudges do not pile them up. What lands
+/// inside always stays, so a clip that lands where its points are on a flat line still has
+/// them, and takes them along on its next move.
 fn spliced(
     points: &[Point<OnTravel>],
     range: Range<Ticks>,
@@ -430,28 +435,30 @@ fn spliced(
     spliced.extend(inside);
     spliced.extend(edge(range.end));
     spliced.extend(points.iter().filter(|point| point.tick >= range.end));
-    let last = range.end.0.checked_sub(1).map(Ticks);
-    for tick in [before, Some(range.start), last, Some(range.end)] {
+    for tick in [before, Some(range.end)] {
         drop_on_line(&mut spliced, tick);
     }
     spliced
 }
 
-/// Leaves out the point at `tick` when the line is the same without it, within
-/// [`ON_THE_LINE`]: it is on the straight line through its neighbours, or it is first or last
-/// and its one neighbour is at its place. A lane keeps one point.
+/// Leaves out the point at `tick` when the line is the same without it: it is on the straight
+/// line through its neighbours, within [`ON_THE_LINE`], or it is first or last and its one
+/// neighbour has its value, so what is held past it stays exactly. A lane keeps one point.
 fn drop_on_line(points: &mut Vec<Point<OnTravel>>, tick: Option<Ticks>) {
     let Some(index) = points.iter().position(|point| Some(point.tick) == tick) else {
         return;
     };
     let before = index.checked_sub(1).and_then(|before| points.get(before));
     let point = points[index];
-    let line = match (before, points.get(index + 1)) {
-        (Some(before), Some(after)) => before.towards(*after, point.tick).place,
-        (Some(only), None) | (None, Some(only)) => only.value.place,
-        (None, None) => return,
+    let same = match (before, points.get(index + 1)) {
+        (Some(before), Some(after)) => {
+            let line = before.towards(*after, point.tick).place;
+            (line - point.value.place).abs() <= ON_THE_LINE
+        }
+        (Some(only), None) | (None, Some(only)) => only.value.value == point.value.value,
+        (None, None) => false,
     };
-    if (line - point.value.place).abs() <= ON_THE_LINE {
+    if same {
         points.remove(index);
     }
 }
@@ -765,6 +772,20 @@ mod tests {
         );
     }
 
+    /// A clip whose one point lands on a flat line keeps it, so its next move takes it along
+    /// again.
+    #[test]
+    fn a_point_that_lands_on_a_flat_line_stays_for_the_next_move() {
+        let pan = lane(None, "pan", &[(100, 0.5)]);
+        let once = moved_once(vec![pan], 100..200, 400);
+        assert!(ticks(&once[0]).contains(&400), "{:?}", points(&once[0]));
+        let twice = moved_once(once, 400..500, 800);
+        assert_eq!(line(&twice[0], 800), 0.5);
+        assert!(ticks(&twice[0]).contains(&800), "{:?}", points(&twice[0]));
+        let back = moved_once(twice, 800..900, 100);
+        assert!(ticks(&back[0]).contains(&100), "{:?}", points(&back[0]));
+    }
+
     /// A paste puts the line down over what was there, and a cut leaves a straight line.
     #[test]
     fn a_cut_leaves_a_straight_line_and_a_paste_replaces() {
@@ -776,8 +797,11 @@ mod tests {
         assert_eq!(points(&state.automation[0]), [(BAR, -1.)]);
         carried.place(&one, &mut state, Ticks(2 * BAR), &travel);
         let placed = &state.automation[0];
-        // The edge on the last tick of the clip is on the line down to the point after it.
-        assert_eq!(ticks(placed), [BAR, 2 * BAR, 2 * BAR + BAR / 2, 3 * BAR]);
+        // What the clip carries stays, its edge on its last tick too.
+        assert_eq!(
+            ticks(placed),
+            [BAR, 2 * BAR, 2 * BAR + BAR / 2, 3 * BAR - 1, 3 * BAR]
+        );
         for tick in [0, BAR / 4, BAR / 2, BAR - 1] {
             let (now, carried) = (
                 line(placed, 2 * BAR + tick),

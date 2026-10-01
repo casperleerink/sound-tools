@@ -117,7 +117,15 @@ fn a_dragged_clip_takes_its_automation_along_in_one_undo_step(cx: &mut TestAppCo
     let cutoff = points(&mut opened, ONE, "cutoff_hz");
     assert_eq!(
         ticks(&cutoff),
-        [0, BAR - 1, 3 * BAR, 5 * BAR - 1, 5 * BAR, 6 * BAR]
+        [
+            0,
+            BAR - 1,
+            3 * BAR,
+            5 * BAR - 1,
+            5 * BAR,
+            6 * BAR,
+            7 * BAR - 1
+        ]
     );
     let (edge, landed) = (cutoff[1].1, cutoff[4].1);
     assert!((edge - 632.).abs() < 1., "{cutoff:?}");
@@ -247,7 +255,6 @@ fn to_another_track_the_volume_goes_along_and_the_filter_lane_stays(cx: &mut Tes
     // The second track plays at 0 dB, which holds before and after the dip.
     let mut landed = vec![(5 * BAR - 1, 0.)];
     landed.extend(dip(5 * BAR));
-    landed.pop();
     assert_eq!(points(&mut opened, TWO, "gain_db"), landed);
     assert_eq!(points(&mut opened, TWO, "cutoff_hz"), []);
     one_undo_step(&mut opened, "Move clip", &before);
