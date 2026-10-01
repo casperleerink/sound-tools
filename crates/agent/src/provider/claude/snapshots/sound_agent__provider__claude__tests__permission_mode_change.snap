@@ -1,0 +1,77 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"permission_mode\")"
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_01FHfJdYY7hxGL5WpQphtcSr",
+        ),
+        title: "Wrote a.txt",
+    },
+    ApprovalRequested {
+        id: ApprovalId(
+            "6d9832d6-d7a3-411e-b921-5aff49aebe8c",
+        ),
+        title: "Write a.txt",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_01FHfJdYY7hxGL5WpQphtcSr",
+        ),
+        outcome: Done,
+    },
+    TextDelta {
+        text: "done.",
+    },
+    TextDone {
+        text: "done.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    TurnStarted,
+    StepStarted {
+        id: StepId(
+            "toolu_01YXqcXcH5Qpp9qYKkUu4k54",
+        ),
+        title: "Wrote b.txt",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_01YXqcXcH5Qpp9qYKkUu4k54",
+        ),
+        outcome: Done,
+    },
+    TextDelta {
+        text: "done.",
+    },
+    TextDone {
+        text: "done.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

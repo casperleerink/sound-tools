@@ -1,8 +1,12 @@
 [files]
-extend-exclude = ["experiments/*/results", "*.svg", "Cargo.lock"]
+# The agent fixtures are recorded output of the `claude` CLI, with ids and signatures, and
+# their snapshots hold the ids.
+extend-exclude = ["experiments/*/results", "*.svg", "Cargo.lock", "crates/agent/tests/fixtures/claude/*.jsonl", "crates/agent/src/provider/claude/snapshots/*.snap"]
 
 [default.extend-identifiers]
 PNGs = "PNGs"
+# Claude Code marks its own notes in an error list with `[ede_diagnostic]`.
+ede_diagnostic = "ede_diagnostic"
 
 [default.extend-words]
 # A peak in the spectrum of a voice, which makes a vowel.

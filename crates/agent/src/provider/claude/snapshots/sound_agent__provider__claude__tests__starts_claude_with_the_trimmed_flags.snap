@@ -1,0 +1,5 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "flags(ApprovalMode::default(), Session::New)"
+---
+-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio --permission-mode acceptEdits --allow-dangerously-skip-permissions --session-id id --tools Bash,Read,Edit,Write,Glob,Grep --strict-mcp-config --setting-sources  --disable-slash-commands --add-dir /tmp/project --model haiku

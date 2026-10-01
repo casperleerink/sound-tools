@@ -1,0 +1,41 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"crash\")"
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    TextDelta {
+        text: "#",
+    },
+    TextDone {
+        text: "#",
+    },
+    TurnEnded {
+        outcome: Failed {
+            message: "Claude Code stopped during the turn.",
+        },
+    },
+    Exited {
+        reason: Failed {
+            message: "Claude Code stopped unexpectedly.",
+        },
+    },
+]

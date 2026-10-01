@@ -47,6 +47,15 @@ Throwaway Python scripts in `/tmp`, run against claude 2.1.286 on this Mac. None
 | Download | `install.sh` fetches `https://downloads.claude.ai/claude-code-releases/<version>/<platform>/claude` (215 MB) and checks the sha256 in `manifest.json`. We can do the same, unmodified. |
 | Agent SDK (TS, 0.3.273) | It starts the same binary with the same flags and sends the same control messages (about 45 kinds). It adds types, docs, in-process tools and hooks, and helpers that read transcript files. We need none of these for v1. |
 | How others install | The Claude desktop app downloads Claude Code into `Application Support/Claude/claude-code/<version>`. Zed downloads its own Node and ACP adapters. T3 Code uses the CLIs on PATH and asks the user to install them. Conductor bundles them and reuses the Mac's login. |
+| Milestone 3: `interrupt` (R1) | Works. The CLI acknowledges it at once (`still_queued: []`), sends the partial text as an `assistant` message and a user note "[Request interrupted by user]", and ends the turn with a `result` of `error_during_execution` and `terminal_reason: aborted_streaming`. The streamed text block is never closed. The same process takes the next message. |
+| Milestone 3: interrupt during a question | The CLI sends `control_cancel_request` for the open `can_use_tool`, a rejected `tool_result` and a `result` with `stop_reason: tool_use`. The driver ends the turn as interrupted and voids the question. The CLI then exits with code 1 when stdin closes. |
+| Milestone 3: denied tool (R1) | Works. A `deny` answer comes back as a `tool_result` with `is_error: true` and our message, and the turn goes on to a normal `result`. |
+| Milestone 3: error turn (R1) | A model that does not exist: the CLI writes the error as an `assistant` text with no streaming, then a `result` with `is_error: true` and `terminal_reason: api_error`. |
+| Milestone 3: stale resume | `--resume` with an unknown id: no answer to `initialize`, a `result` with `errors: ["No conversation found with session ID: …"]`, the same line on stderr, exit code 1. It comes at once, before any message is sent. The driver ends with `Exited { SessionNotFound }`, and the sidebar turns that into "start a new thread". |
+| Milestone 3: killed process | Stdout ends mid-stream with no `result`, and no stderr. The driver ends the open turn as failed. |
+| Milestone 3: `set_permission_mode` (R10) | Works between `default` and `acceptEdits` on a running process, and applies to the next tool. Switching to `bypassPermissions` fails ("the session was not launched with --dangerously-skip-permissions") unless the process started with `--allow-dangerously-skip-permissions`. That flag only allows the switch; the mode stays the one `--permission-mode` gives. So the driver always passes it, and no restart is needed. |
+| Milestone 3: trimmed flags and `CLAUDE.md` | The project's `CLAUDE.md` loads, and its `@AGENTS.md` import too: the live test asks for a fact that is only in `AGENTS.md`. `initialize` answers without a user message. |
+| Milestone 3: settings in the project | With `--setting-sources project,local`, a `.claude/settings.json` the agent could write itself allows `Bash` without asking, and its `SessionStart` hook runs a command at the next start. `--setting-sources ""` ignores both, but then `CLAUDE.md` does not load either. `--restricted` also drops `CLAUDE.md`, and refuses `bypassPermissions`. `--safe-mode` drops `CLAUDE.md` by design. What works: `--setting-sources "" --add-dir <project>` with `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`. `CLAUDE.md` and its import load, no settings file or hook does, and all three approval modes behave. An ignored live test checks it. |
 
 ## 1. Process model
 
@@ -73,13 +82,15 @@ How it runs:
 - The CLI exits when stdin closes, so quitting the app or "Open project…" also ends it.
 - The environment comes from the login shell (`$SHELL -ilc 'env -0'`, captured once in the background at start), as hooman's `shell-env.ts` and Zed do. An app opened from the Finder has a bare PATH, and the agent needs `cargo` and `git` to build extensions.
 - Remove `CLAUDECODE`, `CLAUDE_CODE_*` and `ELECTRON_RUN_AS_NODE` from that environment. hooman found that a nested session never saves its transcript. Set `DISABLE_AUTOUPDATER=1`.
-- Flags: `-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio --permission-mode <mode> [--resume <id> | --session-id <uuid>] --model <m>`.
+- Flags: `-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio --permission-mode <mode> --allow-dangerously-skip-permissions [--resume <id> | --session-id <uuid>] --model <m>`.
   - Pass every flag explicitly, because the docs say `-p` defaults will change.
-  - Check the `capabilities` list of `system/init` rather than version strings.
-- Trimmed to what a composer needs: `--tools Bash,Read,Edit,Write,Glob,Grep --strict-mcp-config --setting-sources project,local --disable-slash-commands`.
+  - `--allow-dangerously-skip-permissions` lets a running process switch to "Never ask" (R10).
+  - The `capabilities` list of `system/init` (`interrupt_receipt_v1`, `msg_lifecycle_v1` and MCP entries on 2.1.286) names nothing the driver uses, so the driver checks none. The pin and the fixtures are the guard.
+- Trimmed to what a composer needs: `--tools Bash,Read,Edit,Write,Glob,Grep --strict-mcp-config --setting-sources "" --disable-slash-commands --add-dir <project>`, with `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`.
   - The composer's own user-level setup (MCP servers, skills, hooks, plugins) does not load. Every composer gets the same agent, and a slow MCP server cannot delay the start.
+  - No settings file loads, not even the project's. The agent writes in the project, and a permission rule or a hook there would give it more access than the approval mode.
+  - The project comes back as an added folder only so its `CLAUDE.md` (the map) loads (milestone 3).
   - `AskUserQuestion` is not in the list, so the agent asks its questions in plain text.
-  - Check in milestone 3 that the project's `CLAUDE.md` (the map) still loads with these flags.
 - The default config folder (`~/.claude`) stays, so a login made in a terminal or in the Claude app is shared.
 
 ## 2. Install and sign in
@@ -209,14 +220,15 @@ Rejected:
 - The setting is one provider-neutral `enum ApprovalMode`, saved in `support_folder()/agent/settings.json`. Each driver maps it to its own flags with one exhaustive `match`.
 - It applies to every project on the machine. Because it is not in the project, the agent cannot change its own permissions by editing a project file.
 - It sits in the composer's menu (the dropdown of the gallery mockup) as one select, next to the model.
-- A change applies from the next message, through the `set_permission_mode` control request. If that fails on the pinned version, the app restarts the process with `--resume` (R10).
+- A change applies from the next action of the agent, through the `set_permission_mode` control request, with no restart (R10).
+- Under "Ask before commands" Claude Code still runs file commands such as `touch` and `mkdir` in the project without asking, as it counts them as edits. Commands such as `git init` or `cargo build` ask. Decided: that is fine.
 - Under "Never ask", the first message of a thread shows one quiet line above the composer ("The agent does anything without asking"), so the mode is never a surprise.
 
 An approval request shows as the last item of the thread:
 
 - One sentence of what the agent wants to do, for example "Run `cargo build`", with **Allow**, **Allow for this thread** and **Deny**, in lavender.
 - The buttons are tab stops with focus rings. Nothing is modal, and music and editing go on.
-- The answers map to Claude's `allow` and `deny`. For "this thread", the app returns the CLI's `permission_suggestions` scoped to the session.
+- The answers map to Claude's `allow` and `deny`. For "this thread", the app returns the CLI's `permission_suggestions` scoped to the session. When they hold rules, only the rules: for a command the CLI also suggests switching the mode to `acceptEdits`, which "allow this command" should not do.
 
 Rejected:
 
@@ -277,14 +289,14 @@ Diffs come only if composers ask for them.
 
 | # | Risk | Spike |
 | --- | --- | --- |
-| R1 | Claude's control messages are undocumented and could change | Partly removed: initialize, can_use_tool and resume work on 2.1.286. Still to record: `interrupt`, a denied tool and an error turn. Pin the version, check `capabilities`, and test against fixtures |
+| R1 | Claude's control messages are undocumented and could change | Removed for 2.1.286: initialize, can_use_tool, resume, interrupt, a denied tool and an error turn are recorded in `crates/agent/tests/fixtures/claude/`, with snapshot tests. Moving the pin means running `record.py` again and reading the snapshot changes |
 | R2 | `claude auth login` without a terminal might not finish | Partly removed: it opens the browser and listens on localhost. Still to do: finish a real sign-in into a throwaway `CLAUDE_CONFIG_DIR`, check exit code 0 and `auth status`, and check the Keychain item with the default folder |
 | R4 | An app opened from the Finder has a bare PATH, so the agent cannot find `cargo` | Launch the `.app` from the Finder and have the agent run `which cargo`, with and without the login-shell environment |
 | R5 | The agent's last write lands after the turn ends and misses the undo step | A core test with `apply_outside_changes`: a write 50 ms after `end_request` joins the step, and a write 500 ms after starts a new one |
 | R6 | The multi-line composer is the largest UI piece | A gallery spike, before the rest: wrapping, up and down across wrapped lines, and growth to 8 lines |
 | R7 | Parsing a long streaming message on every frame is too slow | Stream a 5 KB answer into a 200-message thread and check frame times in a release build |
 | R9 | Terms change, or Sound Tools stops being open source | Not a spike. Check the terms page before each release |
-| R10 | Claude cannot change its permission mode on a running process | Record a `set_permission_mode` control request on the pinned version in milestone 3. If it fails, restart with `--resume` |
+| R10 | Claude cannot change its permission mode on a running process | Removed: `set_permission_mode` works on 2.1.286. Switching to "Never ask" needs `--allow-dangerously-skip-permissions` at start, which the driver always passes |
 
 ## Milestones
 

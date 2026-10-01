@@ -1,0 +1,55 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"approval_allowed\")"
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_01PnUsbqppj8chqu9DKUvxLU",
+        ),
+        title: "Ran touch marker.txt",
+    },
+    ApprovalRequested {
+        id: ApprovalId(
+            "aa5e25b8-3c0b-4505-8853-58e465a1c380",
+        ),
+        title: "Run `touch marker.txt`",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_01PnUsbqppj8chqu9DKUvxLU",
+        ),
+        outcome: Done,
+    },
+    TextDelta {
+        text: "The marker.txt file has been created.",
+    },
+    TextDone {
+        text: "The marker.txt file has been created.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]

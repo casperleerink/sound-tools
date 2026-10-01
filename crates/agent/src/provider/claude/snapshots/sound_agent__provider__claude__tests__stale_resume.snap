@@ -1,0 +1,15 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"stale_resume\")"
+---
+[
+    TurnStarted,
+    TurnEnded {
+        outcome: Failed {
+            message: "No conversation found with session ID: efb41f7e-d40b-4706-bad9-33e3d780a97e",
+        },
+    },
+    Exited {
+        reason: SessionNotFound,
+    },
+]

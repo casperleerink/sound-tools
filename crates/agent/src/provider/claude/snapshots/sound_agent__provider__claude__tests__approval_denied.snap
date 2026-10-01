@@ -1,0 +1,55 @@
+---
+source: crates/agent/src/provider/claude/tests.rs
+expression: "replay(\"approval_denied\")"
+---
+[
+    TurnStarted,
+    Started {
+        session_id: "session",
+        account: Account {
+            email: Some(
+                "composer@example.com",
+            ),
+            plan: Some(
+                "Claude Max",
+            ),
+        },
+        models: [
+            Model {
+                id: "default",
+                name: "Default (recommended)",
+                description: "Opus 5.5 · Best for everyday, complex tasks",
+            },
+        ],
+    },
+    StepStarted {
+        id: StepId(
+            "toolu_012eNgXhPHPr9pmCqcq7vA7M",
+        ),
+        title: "Ran touch marker.txt",
+    },
+    ApprovalRequested {
+        id: ApprovalId(
+            "f761f169-2e24-49ed-ada9-0317152b5803",
+        ),
+        title: "Run `touch marker.txt`",
+    },
+    StepDone {
+        id: StepId(
+            "toolu_012eNgXhPHPr9pmCqcq7vA7M",
+        ),
+        outcome: Denied,
+    },
+    TextDelta {
+        text: "The permission to run this command was denied by your settings.",
+    },
+    TextDone {
+        text: "The permission to run this command was denied by your settings.",
+    },
+    TurnEnded {
+        outcome: Completed,
+    },
+    Exited {
+        reason: Finished,
+    },
+]
