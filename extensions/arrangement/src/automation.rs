@@ -1,0 +1,266 @@
+//! Automation lanes: a number of a device of a track, or the track's own volume or pan, moving
+//! over the project timeline.
+//!
+//! A lane is saved in the track record, in project ticks, with values in the units of its
+//! number. The behaviour of the track finds each number by its field name, as the device names
+//! it with `BehaviourContext::automation`, and plays the lanes of each device through one
+//! [`LanePlayer`] connected to that device alone. So each player sees the transport the device
+//! sees, with its latency lead, and its events need no device id. The lanes of the track itself
+//! go to its mixer the same way.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sound_core::{
+    Automation, BehaviourContext, BehaviourError, EventOutput, InputEndpoint, OutputEndpoint,
+    ParameterInfo, Ports, PrepareConfig, ProcessContext, Processor,
+};
+use sound_notes::{Point, check_order, value_at};
+
+use crate::decibels;
+use crate::mixer::MIX_PARAMETERS;
+
+/// The output of a track that carries the lanes of the track itself, to its mixer.
+pub(crate) const TRACK_AUTOMATION: &str = "automation";
+
+/// The players of a track: of each device, by its name after this, and of the track itself.
+const PLAYER: &str = "automation";
+
+/// One automation lane, saved in the track record.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationLane {
+    /// The child of the track that holds the number, by its name: `filter` for `filter.json`.
+    /// Left out for the volume and the pan of the track itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    /// The field of the number in the record of the device, or `gain_db` or `pan` of the track.
+    pub parameter: String,
+    /// In project ticks, in tick order, one per tick, at least one. Between two points the
+    /// value moves in a straight line on the travel of the number's knob. Before the first
+    /// point the lane holds the first value, after the last the last.
+    pub points: Vec<Point<AutomationValue>>,
+}
+
+/// The value of a point, in the units of its number: a number, or `"-inf"` for the silence of
+/// a volume, as the track record saves its gain.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct AutomationValue(pub f32);
+
+impl Serialize for AutomationValue {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        decibels::serialize(&self.0, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for AutomationValue {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        decibels::deserialize(deserializer).map(Self)
+    }
+}
+
+impl AutomationLane {
+    /// What the record alone can say is wrong with the lanes of a track: a device that cannot
+    /// be a child, a number of the track that does not exist or a value outside its range,
+    /// points out of order, and a number with two lanes. Whether a device has the number is
+    /// for the behaviour to say, because the device may arrive later.
+    pub(crate) fn check_all(lanes: &[Self]) -> Result<(), String> {
+        for (index, lane) in lanes.iter().enumerate() {
+            let field = format!("automation[{index}]");
+            match &lane.device {
+                Some(device) if !crate::is_child_name(device) => {
+                    return Err(format!(
+                        "{field}.device must be the name of a file in the track folder without `.json`: lowercase letters, digits, `-` and `_`, not {device:?}"
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    let fields = MIX_PARAMETERS.map(|parameter| parameter.field);
+                    let Some(parameter) = MIX_PARAMETERS
+                        .iter()
+                        .find(|parameter| parameter.field == lane.parameter)
+                    else {
+                        return Err(format!(
+                            "{field}.parameter is {:?}. A lane without a device moves the track itself: {}. A lane of a device names it in `device`",
+                            lane.parameter,
+                            fields.join(" or ")
+                        ));
+                    };
+                    lane.check_values(&field, &parameter.info())?;
+                }
+            }
+            if lane.points.is_empty() {
+                return Err(format!(
+                    "{field}.points must hold at least one point. Delete the lane to stop the automation"
+                ));
+            }
+            check_order(&format!("{field}.points"), &lane.points)?;
+            let same =
+                |other: &Self| other.device == lane.device && other.parameter == lane.parameter;
+            if let Some(first) = lanes.iter().take(index).position(same) {
+                return Err(format!(
+                    "{field} moves the same number as automation[{first}]. One number has one lane: put the points in one of them"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// An error that names the first point outside the range of `parameter`.
+    fn check_values(&self, field: &str, parameter: &ParameterInfo) -> Result<(), String> {
+        let mut points = self.points.iter().enumerate();
+        let Some((index, point)) = points.find(|(_, point)| !parameter.contains(point.value.0))
+        else {
+            return Ok(());
+        };
+        let ParameterInfo { min, max, .. } = parameter;
+        Err(format!(
+            "{field}.points[{index}].value must be from {min} to {max}, not {}",
+            point.value.0
+        ))
+    }
+}
+
+/// One lane as it plays: the index of its number, its range and scale, and its points as
+/// places on the travel, so a straight line between them is straight on the knob.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PlayedLane {
+    parameter: u16,
+    info: ParameterInfo,
+    positions: Vec<Point<f32>>,
+}
+
+/// Plays the lanes of one device on the audio thread: every block, the value of each lane at
+/// the end of the block, at offset 0, also while the project does not play. The device ramps to
+/// it over the block, so a sweep follows the line.
+///
+/// Every block and not only when a value moved: a device takes a number that hears nothing in a
+/// block back to its record, which is how it learns that a lane or its player went away.
+#[derive(Default)]
+pub(crate) struct LanePlayer {
+    lanes: Arc<Vec<PlayedLane>>,
+}
+
+impl LanePlayer {
+    pub const OUTPUT: EventOutput<Automation> = EventOutput::new(0);
+}
+
+impl Processor for LanePlayer {
+    type Update = Arc<Vec<PlayedLane>>;
+
+    fn ports(&self) -> Ports {
+        Ports::new().event_output(Self::OUTPUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, update: &mut Self::Update) {
+        // The old lanes ride back to the control thread inside the update.
+        std::mem::swap(&mut self.lanes, update);
+    }
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        // Where the next block starts, so the ramp of this block ends on the line.
+        let tick = context.transport.tick_range.end;
+        for lane in self.lanes.iter() {
+            if let Some(position) = value_at(&lane.positions, tick) {
+                let value = lane.info.value(position);
+                let event = Automation {
+                    parameter: lane.parameter,
+                    value,
+                };
+                context.event_outputs.push(Self::OUTPUT, 0, event);
+            }
+        }
+    }
+}
+
+/// The lanes of a track: one player per device that has lanes, connected to its automation
+/// input, and one for the track itself, which becomes its [`TRACK_AUTOMATION`] output. A lane
+/// whose device or number is not there, or whose values are outside the range of the number,
+/// is reported and plays nothing, and the rest plays.
+pub(crate) fn play(
+    lanes: &[AutomationLane],
+    context: &mut BehaviourContext<'_>,
+) -> Result<(), BehaviourError> {
+    let mut players: BTreeMap<Option<&str>, (Option<InputEndpoint>, Vec<PlayedLane>)> =
+        BTreeMap::new();
+    for (index, lane) in lanes.iter().enumerate() {
+        match resolve(context, index, lane) {
+            Ok((input, played)) => {
+                let player = players.entry(lane.device.as_deref());
+                player.or_insert_with(|| (input, Vec::new())).1.push(played);
+            }
+            Err(message) => context.problem(format!("{message}, so the lane moves nothing")),
+        }
+    }
+    for (device, (input, lanes)) in players {
+        let name = match device {
+            Some(device) => format!("{PLAYER}/{device}"),
+            None => PLAYER.to_string(),
+        };
+        let player = context.processor(&name, LanePlayer::default)?;
+        context.update(player, Arc::new(lanes))?;
+        let output = OutputEndpoint::new(player, LanePlayer::OUTPUT);
+        match input {
+            Some(input) => context.connect(output.to(input))?,
+            None => context.output(TRACK_AUTOMATION, output),
+        }
+    }
+    Ok(())
+}
+
+/// Where a lane goes, `None` for the mixer of the track, and how it plays. The error says why
+/// it cannot play.
+fn resolve(
+    context: &BehaviourContext<'_>,
+    index: usize,
+    lane: &AutomationLane,
+) -> Result<(Option<InputEndpoint>, PlayedLane), String> {
+    let field = format!("automation[{index}]");
+    let track = MIX_PARAMETERS.map(|parameter| parameter.info());
+    let (input, parameters) = match &lane.device {
+        Some(name) => {
+            let (input, parameters) = context
+                .child_automation(name)
+                .ok_or_else(|| missing_device(context, &field, name))?;
+            (Some(input), parameters)
+        }
+        None => (None, &track[..]),
+    };
+    let found = parameters.iter().enumerate();
+    let mut found = found.filter(|(_, info)| info.field == lane.parameter);
+    let Some((place, info)) = found.next() else {
+        let fields: Vec<&str> = parameters.iter().map(|info| info.field).collect();
+        return Err(format!(
+            "{field}.parameter is {:?}, and {} has no number of that name. It has {}",
+            lane.parameter,
+            lane.device.as_deref().unwrap_or("the track"),
+            fields.join(", ")
+        ));
+    };
+    lane.check_values(&field, info)?;
+    let parameter = u16::try_from(place)
+        .map_err(|_| format!("{field}.parameter is past the first {} numbers", u16::MAX))?;
+    let positions = lane.points.iter().map(|point| Point {
+        tick: point.tick,
+        value: info.position(point.value.0),
+    });
+    let played = PlayedLane {
+        parameter,
+        info: *info,
+        positions: positions.collect(),
+    };
+    Ok((input, played))
+}
+
+/// Why a lane has no device behind it: no record at all, or one that takes no automation.
+fn missing_device(context: &BehaviourContext<'_>, field: &str, name: &str) -> String {
+    match context.child_names().any(|child| child == name) {
+        true => format!("{field}.device is {name:?}, and {name}.json takes no automation"),
+        false => format!(
+            "{field}.device is {name:?}, and this track has no {name}.json. Write that record, or take the lane out"
+        ),
+    }
+}
