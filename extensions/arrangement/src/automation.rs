@@ -23,7 +23,7 @@ use sound_core::{
 use sound_notes::{Point, check_order, value_at};
 
 pub(crate) use moves::write;
-pub use moves::{Carried, LaneMove, Travel, moved, travel_in};
+pub use moves::{Carried, LaneMove, Travel, clear, moved, travel_in};
 
 use crate::decibels;
 use crate::mixer::Mixer;
