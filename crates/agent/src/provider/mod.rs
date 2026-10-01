@@ -68,13 +68,14 @@ pub struct ThreadOptions {
     pub environment: HashMap<OsString, OsString>,
 }
 
-/// One step of a turn, such as an edit or a command.
+/// One step of a turn, such as an edit or a command. The id is the provider's; a test that
+/// feeds events with no process makes its own.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct StepId(String);
+pub struct StepId(pub String);
 
 /// One question of the agent, answered with [`Thread::answer`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ApprovalId(String);
+pub struct ApprovalId(pub String);
 
 /// What the agent did, in order. A turn runs from [`AgentEvent::TurnStarted`] to
 /// [`AgentEvent::TurnEnded`], and every turn that starts ends, also when the process dies.
