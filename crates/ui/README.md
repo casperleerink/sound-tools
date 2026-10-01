@@ -31,6 +31,10 @@ drag. Nothing needs to sync.
   so undo and redo wait until the drag ends.
 - **A control on saved state is controlled.** Give it the value on every render and hand its
   `ValueChange` to `ControlEdit::apply`. That one call does the gesture, a key step and a reset.
+- **A number an automation lane moves does not drag.** A device view keeps a `Lanes` of its
+  instance, lays its values over the record it draws from (`Lanes::apply`, with the numbers of
+  its `AutomationInput`), and makes each knob of an automated number `automated`. `Lanes`
+  draws the view again only when a value it shows changes.
 - **Something that should sound now but is not an edit**, such as a preview note, goes through
   `Project::send`. Nothing is saved.
 

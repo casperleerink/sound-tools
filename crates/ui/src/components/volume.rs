@@ -9,6 +9,9 @@
 //! it is, with the pointer, so a press never jumps; with shift ten times finer. A double click
 //! or backspace sets 0 dB. The arrows step 0.5 dB, with shift 0.1 dB. The value is in dB and
 //! `f32::NEG_INFINITY` is the bottom: how an owner saves that is its own business.
+//!
+//! An automated volume shows the gain its lane plays, with the mark of
+//! [`automated`](super::automated) right of the top of the meter, and does not drag.
 
 use std::rc::Rc;
 
@@ -17,6 +20,7 @@ use gpui::{
     Pixels, Point, StyleRefinement, Window, canvas, div, fill, point, prelude::*, px, size,
 };
 
+use crate::components::automated;
 use crate::components::cell::CELL_WIDTH;
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::meter::{self, BAR_GAP, BAR_WIDTH, Level, Meter, SCALE_TOP};
@@ -36,6 +40,8 @@ const FLOOR_DB: f32 = -60.;
 /// The readout under the meter, on the value line of a cell.
 const READOUT_GAP: f32 = 8.;
 const READOUT_HEIGHT: f32 = 14.;
+/// Between the meter and the mark of an automated volume.
+const MARK_GAP: f32 = 2.;
 
 /// A level in dB as the readout shows it, to a tenth.
 pub fn readout(db: f32) -> String {
@@ -97,6 +103,7 @@ pub struct Volume {
     level: Level,
     height: f32,
     disabled: bool,
+    automated: bool,
     on_change: Option<ChangeHandler<f32>>,
     on_clear_clip: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
 }
@@ -111,6 +118,7 @@ impl Volume {
             level: Level::SILENT,
             height: 118.,
             disabled: false,
+            automated: false,
             on_change: None,
             on_clear_clip: None,
         }
@@ -130,6 +138,14 @@ impl Volume {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// An automation lane of the track moves the gain: give the gain it plays. The volume shows
+    /// it with a mark and a tooltip, and the mouse and the keys change nothing. The clip light
+    /// still clears.
+    pub fn automated(mut self, automated: bool) -> Self {
+        self.automated = automated;
         self
     }
 
@@ -197,8 +213,12 @@ fn paint_thumb(bounds: Bounds<Pixels>, position: f32, colors: ThumbColors, windo
 impl RenderOnce for Volume {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| GestureState::new(cx));
-        let disabled = self.disabled;
-        let focus_handle = state.read(cx).focus_handle.clone().tab_stop(!disabled);
+        let (disabled, automated) = (self.disabled, self.automated);
+        let focus_handle = state
+            .read(cx)
+            .focus_handle
+            .clone()
+            .tab_stop(!disabled && !automated);
         let ring_shows = state
             .read(cx)
             .keyboard_focus
@@ -226,7 +246,9 @@ impl RenderOnce for Volume {
         .w(px(meter_width))
         .h(px(height));
 
-        let on_change = self.on_change.filter(|_| !disabled);
+        let on_change = self.on_change.filter(|_| !disabled && !automated);
+        let mark_left = (CELL_WIDTH + meter_width) / 2. + MARK_GAP;
+        let mark = automated.then(|| automated::mark(mark_left, 0., cx));
         let selector = self.id.clone();
         let fader = div()
             .id(self.id.clone())
@@ -289,7 +311,9 @@ impl RenderOnce for Volume {
                         meter.on_clear_clip(move |window, cx| clear(window, cx))
                     }),
             )
-            .child(thumb);
+            .when(automated, automated::tooltip)
+            .child(thumb)
+            .children(mark);
 
         self.base
             .flex()

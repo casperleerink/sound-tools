@@ -1,4 +1,5 @@
-//! The volume, a display handle and two device cards, driven with a simulated mouse and keys.
+//! The volume, a display handle, two device cards and an automated knob and volume, driven with
+//! a simulated mouse and keys.
 
 // Clippy allows unwrap inside `#[test]` functions only, and it does not know `#[gpui::test]`.
 #![allow(clippy::unwrap_used)]
@@ -394,4 +395,60 @@ fn a_press_on_a_handle_is_heard_whether_or_not_it_drags(cx: &mut TestAppContext)
         );
     }
     assert!(view.read_with(cx, |view, _| view.handle.changes.is_empty()));
+}
+
+/// A knob and a volume that an automation lane moves, with a callback that counts what they
+/// send.
+struct Automated {
+    changes: usize,
+}
+
+impl Render for Automated {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let heard = |cx: &Context<Self>| {
+            let view = cx.weak_entity();
+            move |_: ValueChange, _: &mut Window, cx: &mut gpui::App| {
+                view.update(cx, |view, _| view.changes += 1).unwrap();
+            }
+        };
+        div()
+            .flex()
+            .gap(px(40.))
+            .p(px(40.))
+            .child(
+                Knob::new("cutoff")
+                    .value(0.5)
+                    .default_value(0.2)
+                    .automated(true)
+                    .on_change(heard(cx)),
+            )
+            .child(
+                Volume::new("volume", START_DB)
+                    .height(HEIGHT)
+                    .automated(true)
+                    .on_change(heard(cx)),
+            )
+    }
+}
+
+/// An automated control shows its value and changes nothing: a drag, a double click and the
+/// keys send nothing, and tab does not stop on it.
+#[gpui::test]
+fn an_automated_knob_or_volume_does_not_drag_step_or_reset(cx: &mut TestAppContext) {
+    cx.update(sound_ui::init);
+    let (view, cx) = cx.add_window_view(|_, _| Automated { changes: 0 });
+    for selector in ["knob-cutoff", "volume-volume"] {
+        let at = bounds(cx, selector).center();
+        press(cx, at, 1);
+        drag_to(cx, at - point(px(0.), px(40.)), false);
+        release(cx, at - point(px(0.), px(40.)), 1);
+        press(cx, at, 2);
+        release(cx, at, 2);
+    }
+    cx.update(|window, cx| window.focus_next(cx));
+    cx.run_until_parked();
+    assert!(cx.update(|window, cx| window.focused(cx).is_none()));
+    cx.simulate_keystrokes("up backspace");
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |view, _| view.changes), 0);
 }

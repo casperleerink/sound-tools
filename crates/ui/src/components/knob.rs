@@ -10,6 +10,8 @@
 //!
 //! - The arrow keys step by a fiftieth of the travel, with shift by a five-hundredth.
 //! - The ring shows only when the focus came from the keyboard.
+//! - An automated knob shows the value its lane plays, with the mark of
+//!   [`automated`](super::automated), and does not drag, step or reset.
 //!
 //! [`KnobRange`] maps the value to the travel of the knob, linear or logarithmic, and gives
 //! values of three significant digits, so a readout and a saved file stay short.
@@ -21,6 +23,7 @@ use gpui::{
     StyleRefinement, Window, canvas, div, prelude::*, px,
 };
 
+use crate::components::automated;
 use crate::components::cell::{self, CONTROL_HEIGHT};
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::paint;
@@ -39,6 +42,9 @@ const TRACK_WIDTH: f32 = 2.5;
 const FACE: f32 = 21.;
 const POINTER_WIDTH: f32 = 2.;
 const RING_WIDTH: f32 = 2.;
+/// Where the mark of an automated knob sits, from the top left of the dial: in its corner,
+/// clear of the track.
+const MARK_AT: f32 = 1.;
 
 /// The values of a knob and how they spread over its travel: the range of the core, which a
 /// [`Parameter`](sound_core::Parameter) gives with [`KnobRange::of`], so the knob and an
@@ -83,6 +89,7 @@ pub struct Knob {
     label: Option<SharedString>,
     readout: Option<SharedString>,
     disabled: bool,
+    automated: bool,
     /// Values in whole steps of this, and an arrow key moves one step.
     step: Option<f32>,
     on_change: Option<ChangeHandler<f32>>,
@@ -100,6 +107,7 @@ impl Knob {
             label: None,
             readout: None,
             disabled: false,
+            automated: false,
             step: None,
             on_change: None,
         }
@@ -147,6 +155,13 @@ impl Knob {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// An automation lane of the track moves the value: give the value it plays. The knob shows
+    /// it with a mark and a tooltip, and the mouse and the keys change nothing.
+    pub fn automated(mut self, automated: bool) -> Self {
+        self.automated = automated;
         self
     }
 
@@ -309,8 +324,12 @@ pub(crate) fn drags(
 impl RenderOnce for Knob {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| GestureState::new(cx));
-        let disabled = self.disabled;
-        let focus_handle = state.read(cx).focus_handle.clone().tab_stop(!disabled);
+        let (disabled, automated) = (self.disabled, self.automated);
+        let focus_handle = state
+            .read(cx)
+            .focus_handle
+            .clone()
+            .tab_stop(!disabled && !automated);
         let ring_shows = state
             .read(cx)
             .keyboard_focus
@@ -331,7 +350,12 @@ impl RenderOnce for Knob {
         )
         .size_full();
 
-        let on_change = self.on_change.filter(|_| !disabled);
+        let on_change = self.on_change.filter(|_| !disabled && !automated);
+        let marked = self.id.clone();
+        let mark = automated.then(|| {
+            let mark = automated::mark(MARK_AT, MARK_AT, cx);
+            mark.debug_selector(move || format!("automated-{marked}"))
+        });
         let dragged = Dragged {
             range,
             value,
@@ -351,7 +375,9 @@ impl RenderOnce for Knob {
             .when_some(on_change, |d, on_change| {
                 drags(d, dragged, &state, &focus_handle, on_change)
             })
-            .child(dial);
+            .when(automated, automated::tooltip)
+            .child(dial)
+            .children(mark);
 
         cell::frame(
             self.base,

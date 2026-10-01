@@ -15,7 +15,8 @@
 //! number in it, and [`Handle::on_press`] hears every press on it, so that a click selects it.
 //! A handle may also be the whole display, with no dot ([`Handle::area`]): a drag anywhere on
 //! it moves the value, as the position of a wavetable moves. The controls at the top of the
-//! display stay above it.
+//! display stay above it. A handle that moves a number an automation lane moves shows where the
+//! lane is and does not drag, as the knob of that number does not.
 //!
 //! The display knows no device. The owner gives the curve as points on the display and the
 //! handles with their values, and hears what a handle moves.
@@ -33,6 +34,7 @@ use gpui::{
     canvas, div, fill, point, prelude::*, px, size,
 };
 
+use crate::components::automated;
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
 use crate::components::knob::KnobRange;
 use crate::components::paint;
@@ -111,6 +113,7 @@ pub struct Handle {
     label: Option<SharedString>,
     dimmed: bool,
     area: bool,
+    automated: bool,
     on_press: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     on_change: Option<ChangeHandler<HandleValues>>,
 }
@@ -125,6 +128,7 @@ impl Handle {
             label: None,
             dimmed: false,
             area: false,
+            automated: false,
             on_press: None,
             on_change: None,
         }
@@ -154,6 +158,13 @@ impl Handle {
     /// handles.
     pub fn area(mut self) -> Self {
         self.area = true;
+        self
+    }
+
+    /// An automation lane moves a value of the handle: give the value it plays. The handle does
+    /// not drag, and still hears its presses.
+    pub fn automated(mut self, automated: bool) -> Self {
+        self.automated = automated;
         self
     }
 
@@ -512,7 +523,7 @@ fn moved(axis: Axis, travel: &mut Travel, pointer: f32, fine: bool) -> f32 {
 /// The element of one handle, a dot in a larger target centred on its place.
 fn handle_element(
     display: &ElementId,
-    handle: Handle,
+    mut handle: Handle,
     hides_under_files: bool,
     (width, height): (f32, f32),
     (dot, ring): (Hsla, Hsla),
@@ -525,6 +536,10 @@ fn handle_element(
     let key = ElementId::NamedChild(Arc::new(display.clone()), handle.id.to_string().into());
     let state = window.use_keyed_state(key, cx, |_, cx| GestureState::new(cx));
     let focus_handle = state.read(cx).focus_handle.clone();
+    let held = handle.automated;
+    if held {
+        handle.on_change = None;
+    }
     let (x, y) = (handle.x, handle.y);
     let place = point(x.position(), y.position());
     let value = point(x.value, y.value);
@@ -562,6 +577,7 @@ fn handle_element(
         .items_center()
         .justify_center()
         .when(handle.dimmed, |d| d.opacity(0.4))
+        .when(held, automated::tooltip)
         .when(hides_under_files, |d| {
             d.group_drag_over::<ExternalPaths>(INSET_GROUP, |style| style.opacity(0.))
         })
