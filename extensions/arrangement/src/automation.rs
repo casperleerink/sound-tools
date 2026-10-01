@@ -14,12 +14,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sound_core::{
     Automation, BehaviourContext, BehaviourError, EventOutput, InputEndpoint, OutputEndpoint,
-    ParameterInfo, Ports, PrepareConfig, ProcessContext, Processor,
+    ParameterInfo, Ports, PrepareConfig, ProcessContext, Processor, ValueRange,
 };
 use sound_notes::{Point, check_order, value_at};
 
 use crate::decibels;
-use crate::mixer::MIX_PARAMETERS;
+use crate::mixer::Mixer;
 
 /// The output of a track that carries the lanes of the track itself, to its mixer.
 pub(crate) const TRACK_AUTOMATION: &str = "automation";
@@ -61,34 +61,23 @@ impl<'de> Deserialize<'de> for AutomationValue {
 }
 
 impl AutomationLane {
-    /// What the record alone can say is wrong with the lanes of a track: a device that cannot
-    /// be a child, a number of the track that does not exist or a value outside its range,
-    /// points out of order, and a number with two lanes. Whether a device has the number is
-    /// for the behaviour to say, because the device may arrive later.
+    /// The form of the lanes of a track, which the record alone decides: a device that cannot
+    /// be a child, an empty lane, points out of order, and a number with two lanes. A record
+    /// with one of them does not load, as a clip whose lane is out of order does not.
+    ///
+    /// Whether the number exists and its values are in its range is not here: that is up to
+    /// the device, which may arrive later, so the behaviour reports it and leaves the lane out.
+    /// The volume and the pan of the track follow the same rule, so there is one way a lane
+    /// with a wrong number or value fails.
     pub(crate) fn check_all(lanes: &[Self]) -> Result<(), String> {
         for (index, lane) in lanes.iter().enumerate() {
             let field = format!("automation[{index}]");
-            match &lane.device {
-                Some(device) if !crate::is_child_name(device) => {
-                    return Err(format!(
-                        "{field}.device must be the name of a file in the track folder without `.json`: lowercase letters, digits, `-` and `_`, not {device:?}"
-                    ));
-                }
-                Some(_) => {}
-                None => {
-                    let fields = MIX_PARAMETERS.map(|parameter| parameter.field);
-                    let Some(parameter) = MIX_PARAMETERS
-                        .iter()
-                        .find(|parameter| parameter.field == lane.parameter)
-                    else {
-                        return Err(format!(
-                            "{field}.parameter is {:?}. A lane without a device moves the track itself: {}. A lane of a device names it in `device`",
-                            lane.parameter,
-                            fields.join(" or ")
-                        ));
-                    };
-                    lane.check_values(&field, &parameter.info())?;
-                }
+            if let Some(device) = &lane.device
+                && !crate::is_child_name(device)
+            {
+                return Err(format!(
+                    "{field}.device must be the name of a file in the track folder without `.json`: lowercase letters, digits, `-` and `_`, not {device:?}"
+                ));
             }
             if lane.points.is_empty() {
                 return Err(format!(
@@ -109,12 +98,12 @@ impl AutomationLane {
 
     /// An error that names the first point outside the range of `parameter`.
     fn check_values(&self, field: &str, parameter: &ParameterInfo) -> Result<(), String> {
+        let range = parameter.range;
         let mut points = self.points.iter().enumerate();
-        let Some((index, point)) = points.find(|(_, point)| !parameter.contains(point.value.0))
-        else {
+        let Some((index, point)) = points.find(|(_, point)| !range.contains(point.value.0)) else {
             return Ok(());
         };
-        let ParameterInfo { min, max, .. } = parameter;
+        let ValueRange { min, max, .. } = range;
         Err(format!(
             "{field}.points[{index}].value must be from {min} to {max}, not {}",
             point.value.0
@@ -122,12 +111,12 @@ impl AutomationLane {
     }
 }
 
-/// One lane as it plays: the index of its number, its range and scale, and its points as
+/// One automation lane as it plays: the index of its number, its range, and its points as
 /// places on the travel, so a straight line between them is straight on the knob.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PlayedLane {
+pub(crate) struct LaneLine {
     parameter: u16,
-    info: ParameterInfo,
+    range: ValueRange,
     positions: Vec<Point<f32>>,
 }
 
@@ -137,9 +126,12 @@ pub(crate) struct PlayedLane {
 ///
 /// Every block and not only when a value moved: a device takes a number that hears nothing in a
 /// block back to its record, which is how it learns that a lane or its player went away.
+///
+/// A number has one lane, so a block holds at most as many events as the device has numbers,
+/// which `MAX_AUTOMATED` keeps far under the capacity of an event port.
 #[derive(Default)]
 pub(crate) struct LanePlayer {
-    lanes: Arc<Vec<PlayedLane>>,
+    lanes: Arc<Vec<LaneLine>>,
 }
 
 impl LanePlayer {
@@ -147,7 +139,7 @@ impl LanePlayer {
 }
 
 impl Processor for LanePlayer {
-    type Update = Arc<Vec<PlayedLane>>;
+    type Update = Arc<Vec<LaneLine>>;
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::OUTPUT)
@@ -165,7 +157,7 @@ impl Processor for LanePlayer {
         let tick = context.transport.tick_range.end;
         for lane in self.lanes.iter() {
             if let Some(position) = value_at(&lane.positions, tick) {
-                let value = lane.info.value(position);
+                let value = lane.range.exact(position);
                 let event = Automation {
                     parameter: lane.parameter,
                     value,
@@ -184,7 +176,7 @@ pub(crate) fn play(
     lanes: &[AutomationLane],
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
-    let mut players: BTreeMap<Option<&str>, (Option<InputEndpoint>, Vec<PlayedLane>)> =
+    let mut players: BTreeMap<Option<&str>, (Option<InputEndpoint>, Vec<LaneLine>)> =
         BTreeMap::new();
     for (index, lane) in lanes.iter().enumerate() {
         match resolve(context, index, lane) {
@@ -217,9 +209,11 @@ fn resolve(
     context: &BehaviourContext<'_>,
     index: usize,
     lane: &AutomationLane,
-) -> Result<(Option<InputEndpoint>, PlayedLane), String> {
+) -> Result<(Option<InputEndpoint>, LaneLine), String> {
     let field = format!("automation[{index}]");
-    let track = MIX_PARAMETERS.map(|parameter| parameter.info());
+    let track = Mixer::AUTOMATION
+        .parameters()
+        .map(|parameter| parameter.info());
     let (input, parameters) = match &lane.device {
         Some(name) => {
             let (input, parameters) = context
@@ -234,7 +228,7 @@ fn resolve(
     let Some((place, info)) = found.next() else {
         let fields: Vec<&str> = parameters.iter().map(|info| info.field).collect();
         return Err(format!(
-            "{field}.parameter is {:?}, and {} has no number of that name. It has {}",
+            "{field}.parameter is {:?}, and {} takes no automation of a number of that name. It takes {}",
             lane.parameter,
             lane.device.as_deref().unwrap_or("the track"),
             fields.join(", ")
@@ -245,11 +239,11 @@ fn resolve(
         .map_err(|_| format!("{field}.parameter is past the first {} numbers", u16::MAX))?;
     let positions = lane.points.iter().map(|point| Point {
         tick: point.tick,
-        value: info.position(point.value.0),
+        value: info.range.position(point.value.0),
     });
-    let played = PlayedLane {
+    let played = LaneLine {
         parameter,
-        info: *info,
+        range: info.range,
         positions: positions.collect(),
     };
     Ok((input, played))

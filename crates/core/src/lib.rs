@@ -26,7 +26,7 @@ mod saturation;
 mod svf;
 mod transport;
 
-pub use automation::{Automated, Automation, AutomationRamp};
+pub use automation::{Automated, Automation, AutomationInput, MAX_AUTOMATED, Targets};
 pub use clock::{
     Bar, BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, SignatureRun,
     TICKS_PER_QUARTER, Tempo, TempoChange, TempoMap, Ticks, TimeSignature, TimeSignatures,

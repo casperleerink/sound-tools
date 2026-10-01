@@ -1,7 +1,7 @@
 //! Gain, pan and mute of a track, rendered offline with numbers. The probe holds a level for
 //! as long as its note sounds, so the samples are what the mixer did to it and nothing else.
 
-use arrangement::{RAMP_SECONDS, TrackState, channel_gains};
+use arrangement::{Mix, RAMP_SECONDS, TrackState};
 use sound_core::EngineConfig;
 
 use crate::support::{Harness, SAMPLE_RATE, clip, id, note};
@@ -64,7 +64,7 @@ fn a_track_in_the_middle_leaves_every_sample_as_its_instrument_made_it() {
     assert_eq!(peak(&left), LEVEL);
     assert_eq!(left, right);
     assert_eq!(
-        channel_gains(&TrackState::new("piano", Default::default(), 0)),
+        Mix::of(&TrackState::new("piano", Default::default(), 0)).gains(),
         [1.0, 1.0]
     );
 }
@@ -95,18 +95,18 @@ fn the_pan_law_keeps_the_power_from_one_end_to_the_other() {
     let mut track = TrackState::new("piano", Default::default(), 0);
     for step in 0..=200 {
         track.pan = step as f32 / 100.0 - 1.0;
-        let [left, right] = channel_gains(&track);
+        let [left, right] = Mix::of(&track).gains();
         let power = left * left + right * right;
         // Two, because the middle is 1 in each channel.
         assert!((power - 2.0).abs() < 1e-5, "pan {}: {power}", track.pan);
     }
     // The ends are exact, and the middle leaves the samples alone.
     track.pan = -1.0;
-    assert_eq!(channel_gains(&track), [std::f32::consts::SQRT_2, 0.0]);
+    assert_eq!(Mix::of(&track).gains(), [std::f32::consts::SQRT_2, 0.0]);
     track.pan = 1.0;
-    assert_eq!(channel_gains(&track), [0.0, std::f32::consts::SQRT_2]);
+    assert_eq!(Mix::of(&track).gains(), [0.0, std::f32::consts::SQRT_2]);
     track.pan = 0.0;
-    assert_eq!(channel_gains(&track), [1.0, 1.0]);
+    assert_eq!(Mix::of(&track).gains(), [1.0, 1.0]);
 }
 
 #[test]

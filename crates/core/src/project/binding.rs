@@ -11,15 +11,13 @@ use super::assets::Assets;
 use super::file::{PortReference, SavedConnection, SavedDestination};
 use super::instance::{InstanceId, Record, State};
 use super::registry::Registry;
-use crate::automation::Automation;
+use crate::automation::AutomationInput;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
 use crate::graph::{Connection, Destination, GraphError, NodeId};
-use crate::parameter::{Parameter, ParameterInfo};
+use crate::parameter::ParameterInfo;
 use crate::peaks::Peaks;
-use crate::processor::{
-    CHANNELS, EventInput, InputPort, OutputPort, Ports, PrepareConfig, Processor,
-};
+use crate::processor::{CHANNELS, InputPort, OutputPort, Ports, PrepareConfig, Processor};
 
 /// Why a behaviour could not apply a state. It rejects the whole edit group.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -271,18 +269,17 @@ impl BehaviourContext<'_> {
         self.next.inputs.insert(name.to_string(), endpoint);
     }
 
-    /// Lets the owner of this instance automate its numbers: lanes reach `port` of `node` as
-    /// [`Automation`] events, whose `parameter` is the place in `parameters`. Name the list of
-    /// the record, `PARAMETERS`, so its order never changes under a saved lane: the owner
-    /// saves the field and finds the place here each time it runs.
-    pub fn automation<P, S>(
+    /// Lets the owner of this instance automate its numbers: lanes reach `input` of `node` as
+    /// [`Automation`](crate::Automation) events. Name the same constant that the processor
+    /// keeps its [`Automated`](crate::Automated) with, so both read one list: the owner saves
+    /// the field of a number and finds its index here each time it runs.
+    pub fn automation<P, S, const N: usize>(
         &mut self,
         node: Node<P>,
-        port: EventInput<Automation>,
-        parameters: &[&Parameter<S>],
+        input: AutomationInput<S, N>,
     ) {
-        let infos = parameters.iter().map(|parameter| parameter.info());
-        let endpoint = InputEndpoint::new(node, port);
+        let infos = input.parameters().iter().map(|parameter| parameter.info());
+        let endpoint = InputEndpoint::new(node, input.port());
         self.next.automation = Some((endpoint, infos.collect()));
     }
 

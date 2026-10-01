@@ -8,9 +8,8 @@
 //! what it sends on, which is the meter of the track.
 
 use sound_core::{
-    AudioInput, AudioOutput, Automated, Automation, AutomationRamp, CHANNELS, EventInput,
-    Parameter, Peaks, Ports, PrepareConfig, ProcessContext, Processor, Scale, Smoothed, amplitude,
-    pan_gains,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Parameter, Peaks, Ports,
+    PrepareConfig, ProcessContext, Processor, Scale, Smoothed, Targets, amplitude, pan_gains,
 };
 
 use crate::TrackState;
@@ -53,11 +52,6 @@ impl Mix {
     }
 }
 
-/// The gain of each channel of a track, from its record.
-pub fn channel_gains(track: &TrackState) -> ChannelGains {
-    Mix::of(track).gains()
-}
-
 /// The volume of a track, as a lane of the track moves it: on the scale of its fader.
 pub(crate) const GAIN: Parameter<Mix> = Parameter {
     field: "gain_db",
@@ -78,13 +72,10 @@ pub(crate) const PAN: Parameter<Mix> = Parameter {
     set: |mix, value| mix.pan = value,
 };
 
-/// What a lane of the track itself can move, in the order of the index of its events.
-pub(crate) const MIX_PARAMETERS: [&Parameter<Mix>; 2] = [&GAIN, &PAN];
-
 /// One per track. It multiplies each channel by its gain and ramps to a new one.
 pub struct Mixer {
     /// The record, with the values of the lanes of the track.
-    mix: Automated<Mix, { MIX_PARAMETERS.len() }>,
+    mix: Automated<Mix, 2>,
     gains: [Smoothed; CHANNELS],
     /// The frames a change takes. One until `prepare` runs.
     ramp_frames: f32,
@@ -95,21 +86,24 @@ pub struct Mixer {
 impl Mixer {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
-    pub const AUTOMATION: EventInput<Automation> = EventInput::new(0);
+    /// What a lane of the track itself moves.
+    pub const AUTOMATION: AutomationInput<Mix, 2> = AutomationInput::new(0, [&GAIN, &PAN]);
 
     /// Starts at this mix, so a track that opens or is added is not faded in.
     pub fn new(mix: Mix, peaks: Peaks) -> Self {
         Self {
-            mix: Automated::new(MIX_PARAMETERS, mix),
+            mix: Automated::new(Self::AUTOMATION, mix),
             gains: mix.gains().map(Smoothed::new),
             ramp_frames: 1.0,
             peaks,
         }
     }
 
-    /// Aims at the gains of the record and its lanes, reached in `ramp` frames.
-    fn aim(&mut self, ramp: f32) {
-        for (gain, target) in self.gains.iter_mut().zip(self.mix.state().gains()) {
+    /// Aims at the gains of the record and its lanes. Both come from the volume and the pan,
+    /// so they take the longer ramp of the two.
+    fn aim(&mut self, targets: &Targets<Mix, 2>) {
+        let ramp = targets.ramp(&GAIN).max(targets.ramp(&PAN));
+        for (gain, target) in self.gains.iter_mut().zip(targets.state.gains()) {
             gain.set_target(target, ramp);
         }
     }
@@ -122,7 +116,7 @@ impl Processor for Mixer {
         Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
-            .event_input(Self::AUTOMATION)
+            .event_input(Self::AUTOMATION.port())
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -130,15 +124,13 @@ impl Processor for Mixer {
     }
 
     fn update(&mut self, update: &mut Mix) {
-        self.mix.set_record(*update);
-        self.aim(self.ramp_frames);
+        let targets = self.mix.set_record(*update, self.ramp_frames);
+        self.aim(&targets);
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        match self.mix.follow(context.event_inputs.get(Self::AUTOMATION)) {
-            Some(AutomationRamp::Block) => self.aim(context.frames as f32),
-            Some(AutomationRamp::Edit) => self.aim(self.ramp_frames),
-            None => {}
+        if let Some(targets) = self.mix.follow(context, self.ramp_frames) {
+            self.aim(&targets);
         }
         let silent = |gain: &Smoothed| !gain.is_moving() && gain.current() == 0.0;
         if self.gains.iter().all(silent) {

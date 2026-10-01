@@ -57,7 +57,7 @@ pub use automation::{AutomationLane, AutomationValue};
 pub use input::InputChannels;
 use master::Master;
 pub use master::{LimiterState, MasterState};
-pub use mixer::{ChannelGains, Mix, Mixer, RAMP_SECONDS, channel_gains};
+pub use mixer::{ChannelGains, Mix, Mixer, RAMP_SECONDS};
 pub use player::{AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS};
 pub use sequencer::{HELD_CAPACITY, PREVIEW_SECONDS, Sequencer, SequencerUpdate, TrackSnapshot};
 pub use slot::EffectSlot;
@@ -484,7 +484,7 @@ fn apply_arrangement(
             context.connect(sound.to(InputEndpoint::new(mixer, Mixer::INPUT)))?;
         }
         if let Some(lanes) = context.child_output(&name, automation::TRACK_AUTOMATION) {
-            context.connect(lanes.to(InputEndpoint::new(mixer, Mixer::AUTOMATION)))?;
+            context.connect(lanes.to(InputEndpoint::new(mixer, Mixer::AUTOMATION.port())))?;
         }
         let into_master = InputEndpoint::new(master, Master::INPUT);
         context.connect(OutputEndpoint::new(mixer, Mixer::OUTPUT).to(into_master))?;

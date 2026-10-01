@@ -177,7 +177,7 @@ fn apply(state: &FilterState, context: &mut BehaviourContext<'_>) -> Result<(), 
     let filter = context.processor("filter", || Filter::new(*state))?;
     context.update(filter, *state)?;
     context.input(AUDIO_INPUT, InputEndpoint::new(filter, Filter::INPUT));
-    context.automation(filter, Filter::AUTOMATION, &PARAMETERS);
+    context.automation(filter, Filter::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(filter, Filter::OUTPUT));
     Ok(())
 }
