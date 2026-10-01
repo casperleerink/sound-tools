@@ -10,7 +10,6 @@
 //! and follow the rules of the clips: a click, shift-click and cmd-click, and a rectangle.
 
 use std::cell::Cell;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui::{
@@ -30,7 +29,7 @@ use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 
 use super::clipboard::{Copied, CopiedNotes, SharedClipboard};
 use super::gesture::Zone;
-use super::lanes::{DRAG_THRESHOLD, Lane, LaneEdit, Shown, drawn_between};
+use super::lanes::{Lane, LaneEdit, Shown, Stroke};
 use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Rect, RulerBar, Viewport};
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
@@ -74,20 +73,12 @@ enum NoteDragKind {
     /// Across the lane: every bar the pointer passes gets the velocity of its height there.
     /// `last` is where the pointer was at the last mouse move, in the lane.
     DrawVelocity { last: (f32, f32) },
-    /// Across an expression lane: the line the pointer draws, as its height at each tick of
-    /// the clip it passed, over the lane of the clip at mouse down.
-    DrawLane {
+    /// Across an expression lane: the line the pointer draws, or with alt the points it
+    /// erases, over the lane of the clip at mouse down.
+    Expression {
         lane: Lane,
         origin: Clip,
-        drawn: BTreeMap<Ticks, f32>,
-        last: (f32, f32),
-    },
-    /// Alt across an expression lane: the points between the tick of the press and the pointer
-    /// go, from the lane of the clip at mouse down.
-    EraseLane {
-        lane: Lane,
-        origin: Clip,
-        from: Ticks,
+        stroke: Stroke,
     },
 }
 
@@ -99,8 +90,7 @@ impl NoteDragKind {
             Self::Resize { .. } => "Resize note",
             Self::Velocity { .. } => plural(count, "Change velocity", "Change velocities"),
             Self::DrawVelocity { .. } => "Draw velocities",
-            Self::DrawLane { lane, drawn, .. } => lane.label(&LaneEdit::Draw(drawn)),
-            Self::EraseLane { lane, .. } => lane.label(&LaneEdit::Erase(Ticks(0)..=Ticks(0))),
+            Self::Expression { lane, stroke, .. } => lane.label(&stroke.edit()),
         }
     }
 }
@@ -673,18 +663,13 @@ impl NoteEditor {
             }
             return;
         }
-        let kind = match event.modifiers.alt {
-            true => NoteDragKind::EraseLane {
-                lane,
-                origin,
-                from: self.painted.get().tick_at(x),
-            },
-            false => NoteDragKind::DrawLane {
-                lane,
-                origin,
-                drawn: BTreeMap::new(),
-                last: (x, y),
-            },
+        let inside = origin.start..origin.end();
+        let viewport = self.painted.get();
+        let stroke = Stroke::new(event.modifiers.alt, origin.start, inside, &viewport, (x, y));
+        let kind = NoteDragKind::Expression {
+            lane,
+            origin,
+            stroke,
         };
         self.drag = Some(NoteDrag {
             kind,
@@ -706,46 +691,19 @@ impl NoteEditor {
         cx: &mut Context<Self>,
     ) {
         let viewport = self.painted.get();
-        let label = drag.kind.label(0);
-        let (lane, origin, edit) = match &mut drag.kind {
-            NoteDragKind::DrawLane {
-                lane,
-                origin,
-                drawn,
-                last,
-            } => {
-                // A hand that moves a little during a click draws nothing.
-                let still =
-                    (x - last.0).abs() < DRAG_THRESHOLD && (y - last.1).abs() < DRAG_THRESHOLD;
-                if drawn.is_empty() && still {
-                    return;
-                }
-                let inside = clip.start..clip.end();
-                let passed = drawn_between(&viewport, inside, grid, *last, (x, y));
-                let passed = passed.into_iter();
-                drawn.extend(passed.map(|(tick, y)| (tick.saturating_sub(clip.start), y)));
-                *last = (x, y);
-                (*lane, &*origin, LaneEdit::Draw(drawn))
-            }
-            NoteDragKind::EraseLane { lane, origin, from } => {
-                if !drag.begun && (x - viewport.x_of(*from)).abs() < DRAG_THRESHOLD {
-                    return;
-                }
-                let to = viewport.tick_at(x);
-                let (from, to) = match grid.snaps() {
-                    true => (grid.snap(*from), grid.snap(to)),
-                    false => (*from, to),
-                };
-                let (first, last) = ordered(from, to);
-                // In ticks of the clip. All of it before the clip erases nothing.
-                let ticks = match last.0.checked_sub(clip.start.0) {
-                    Some(end) => first.saturating_sub(clip.start)..=Ticks(end),
-                    None => Ticks(1)..=Ticks(0),
-                };
-                (*lane, &*origin, LaneEdit::Erase(ticks))
-            }
-            _ => return,
+        let NoteDragKind::Expression {
+            lane,
+            origin,
+            stroke,
+        } = &mut drag.kind
+        else {
+            return;
         };
+        if !stroke.moved(&viewport, grid, (x, y)) {
+            return;
+        }
+        let (lane, origin, edit) = (*lane, &*origin, stroke.edit());
+        let label = lane.label(&edit);
         let mut next = clip.clone();
         lane.edit(&mut next, origin, &edit);
         if next == *clip {
@@ -876,10 +834,7 @@ impl NoteEditor {
             self.drag = Some(drag);
             return self.end_drag(cx);
         };
-        if matches!(
-            drag.kind,
-            NoteDragKind::DrawLane { .. } | NoteDragKind::EraseLane { .. }
-        ) {
+        if matches!(drag.kind, NoteDragKind::Expression { .. }) {
             self.drag_expression(&mut drag, &clip, (x, y - ROLL_HEIGHT), &grid, cx);
             self.drag = Some(drag);
             return;
@@ -938,9 +893,7 @@ impl NoteEditor {
                 });
                 moved.collect()
             }
-            NoteDragKind::DrawVelocity { .. }
-            | NoteDragKind::DrawLane { .. }
-            | NoteDragKind::EraseLane { .. } => Vec::new(),
+            NoteDragKind::DrawVelocity { .. } | NoteDragKind::Expression { .. } => Vec::new(),
         };
         let changes: Vec<(usize, Note, Note)> = indices
             .into_iter()
@@ -1083,7 +1036,7 @@ impl NoteEditor {
         let hover = match self.drag.as_ref().map(|drag| &drag.kind) {
             Some(NoteDragKind::Resize { .. }) => Hover::Edge,
             Some(NoteDragKind::Velocity { .. } | NoteDragKind::DrawVelocity { .. }) => Hover::Bar,
-            Some(NoteDragKind::DrawLane { .. } | NoteDragKind::EraseLane { .. }) => Hover::Draw,
+            Some(NoteDragKind::Expression { .. }) => Hover::Draw,
             Some(_) => Hover::Nothing,
             None => self.hover,
         };

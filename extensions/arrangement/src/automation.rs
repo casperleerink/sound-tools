@@ -17,19 +17,18 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sound_core::{
-    AutomatedNumber, Automation, BehaviourContext, BehaviourError, EventOutput, InputEndpoint,
-    InstanceId, OutputEndpoint, ParameterInfo, Ports, PrepareConfig, ProcessContext, Processor,
-    Project, ValueRange,
+    Automation, BehaviourContext, BehaviourError, EventOutput, InputEndpoint, InstanceId,
+    OutputEndpoint, ParameterInfo, Ports, PrepareConfig, ProcessContext, Processor, Project,
+    ValueRange,
 };
 use sound_notes::{Point, check_order, value_at};
 
-use moves::own_number;
-pub(crate) use moves::write;
-pub use moves::{Carried, LaneMove, Travel, clear, moved, travel_in};
+pub use moves::{Carried, LaneMove, Moved, Travel, clear, moved, positions, travel_in};
+pub(crate) use moves::{ON_THE_LINE, write};
 
 use crate::TrackState;
 use crate::decibels;
-use crate::mixer::{Mix, Mixer};
+use crate::mixer::Mixer;
 
 /// The output of a track that carries the lanes of the track itself, to its mixer.
 pub(crate) const TRACK_AUTOMATION: &str = "automation";
@@ -121,40 +120,30 @@ impl AutomationLane {
     }
 }
 
-/// A number of a track that a lane can move: of one of its devices, by its name, or of the
-/// track itself, with its range and its value in the record.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Automatable {
-    /// `None` for the volume and the pan of the track.
-    pub device: Option<String>,
-    pub field: &'static str,
-    pub number: AutomatedNumber,
-}
-
-/// Every number of `track`, whose record is `state`, that a lane can move: its own volume and
-/// pan, then those of its instrument and of its effects in the order of the chain, as their
-/// behaviours named them.
-pub fn automatable(project: &Project, track: &InstanceId, state: &TrackState) -> Vec<Automatable> {
-    let mix = Mix::of(state);
+/// Every number of `track`, whose record is `state`, that a lane can move, as a lane with no
+/// points yet: its own volume and pan, then those of its instrument and of its effects in the
+/// order of the chain, as their behaviours named them. [`AutomationLane::number`] gives the
+/// range and the record value of each.
+pub fn automatable(
+    project: &Project,
+    track: &InstanceId,
+    state: &TrackState,
+) -> Vec<AutomationLane> {
+    let lane = |device: Option<&str>, field: &str| AutomationLane {
+        device: device.map(str::to_string),
+        parameter: field.to_string(),
+        points: Vec::new(),
+    };
     let own = Mixer::AUTOMATION.parameters().iter();
-    let own = own.map(|parameter| Automatable {
-        device: None,
-        field: parameter.field,
-        number: own_number(parameter, &mix),
-    });
+    let own = own.map(|parameter| lane(None, parameter.field));
     let effects = state.effects.iter().map(|slot| slot.name.as_str());
     let devices = std::iter::once(crate::INSTRUMENT).chain(effects);
     let devices = devices.filter_map(|name| Some((name, track.child(name).ok()?)));
     let of_devices = devices.flat_map(|(name, device)| {
-        let fields: Vec<&'static str> = project.automatable(&device).collect();
-        let numbers = fields.into_iter().filter_map(|field| {
-            Some(Automatable {
-                device: Some(name.to_string()),
-                field,
-                number: project.automation(&device, field)?,
-            })
-        });
-        numbers.collect::<Vec<_>>()
+        let fields = project.automatable(&device);
+        fields
+            .map(|field| lane(Some(name), field))
+            .collect::<Vec<_>>()
     });
     own.chain(of_devices).collect()
 }
@@ -285,14 +274,10 @@ fn resolve(
     lane.check_values(&field, info)?;
     let parameter = u16::try_from(place)
         .map_err(|_| format!("{field}.parameter is past the first {} numbers", u16::MAX))?;
-    let positions = lane.points.iter().map(|point| Point {
-        tick: point.tick,
-        value: info.range.position(point.value.0),
-    });
     let played = LaneLine {
         parameter,
         range: info.range,
-        positions: positions.collect(),
+        positions: positions(&lane.points, info.range),
     };
     Ok((input, played))
 }

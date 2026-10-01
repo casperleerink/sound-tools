@@ -31,9 +31,9 @@ use crate::mixer::{Mix, Mixer};
 /// knows now, see [`travel_in`]. `None` for a number it does not know.
 pub type Travel<'a> = dyn Fn(&InstanceId, &str) -> Option<AutomatedNumber> + 'a;
 
-/// How far from the straight line through its neighbours, on the travel, a point on an edge may
-/// be and still be left out: far under what a knob shows.
-const ON_THE_LINE: f32 = 1e-4;
+/// How far from the straight line through its neighbours, on the travel, a point may be and
+/// still be left out: far under what a knob shows. Also how a drawn line is thinned.
+pub(crate) const ON_THE_LINE: f32 = 1e-4;
 
 /// The automation one clip takes along: the line of each lane of its track under it, with
 /// ticks from the start of the clip. Each lane has a point at the start and at the last tick of
@@ -48,7 +48,8 @@ pub struct Carried {
 
 impl Carried {
     /// The line of each lane of `state`, the record of `track`, inside `range`, of the lanes
-    /// with a point there.
+    /// with a point there that move. A lane whose points all hold one value holds its knob
+    /// still, and is no line a clip could take along.
     pub fn under(
         track: &InstanceId,
         state: &TrackState,
@@ -58,7 +59,9 @@ impl Carried {
         let mix = Mix::of(state);
         let lanes = state.automation.iter().filter(|lane| {
             let mut points = lane.points.iter();
-            points.any(|point| range.contains(&point.tick))
+            let inside = points.clone().any(|point| range.contains(&point.tick));
+            let first = lane.points.first().map(|point| point.value);
+            inside && points.any(|point| Some(point.value) != first)
         });
         let lanes = lanes.map(|lane| {
             let points = on_travel(&lane.points, range_of(track, &mix, lane, travel));
@@ -90,16 +93,10 @@ impl Carried {
         self.range.end.saturating_sub(self.range.start)
     }
 
-    /// Whether the clip takes any lane along to the track `to`: what a drag shows while it
-    /// goes on.
-    pub fn goes_to(&self, to: &InstanceId) -> bool {
-        self.lanes.iter().any(|lane| self.takes(lane, to))
-    }
-
     /// Whether the clip takes the lane of `number` along to the track `to`: when it carries
     /// it, and it is the volume or the pan, or `to` is the track it came from.
     fn takes(&self, number: &AutomationLane, to: &InstanceId) -> bool {
-        let carries = self.lanes.iter().any(|lane| same_number(lane, number));
+        let carries = self.lanes.iter().any(|lane| lane.same_number(number));
         carries && (number.device.is_none() || self.track == *to)
     }
 
@@ -126,7 +123,7 @@ impl Carried {
             });
             let inside: Vec<_> = inside.collect();
             let mut lanes = state.automation.iter_mut();
-            match lanes.find(|lane| same_number(carried, lane)) {
+            match lanes.find(|lane| carried.same_number(lane)) {
                 Some(lane) => {
                     let points = on_travel(&lane.points, travel);
                     lane.points = values(spliced(&points, range.clone(), inside));
@@ -200,32 +197,55 @@ pub struct LaneMove {
     pub start: Ticks,
 }
 
+/// What [`moved`] gives.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Moved {
+    /// The lanes of every track a moving clip leaves or lands on, changed or not.
+    pub lanes: BTreeMap<InstanceId, Vec<AutomationLane>>,
+    /// For each move, in order, the lanes it takes to where it lands, with ticks from its
+    /// start: what a drag shows while it goes on. Empty for one that takes none.
+    pub carried: Vec<Vec<AutomationLane>>,
+}
+
 /// The lanes after clips move, from `tracks` as they were before the move: each clip takes the
 /// line under it, the place it leaves becomes straight between its edges, and its line
 /// replaces what was where it lands. Every clip takes its line from the tracks as they were,
 /// so clips that move together keep their own lines, also where one lands on where another
 /// was. A clip that stays where it was changes nothing.
 ///
-/// Gives the lanes of every track a moving clip leaves or lands on, changed or not. A drag
-/// calls it with the tracks of mouse down at every move, and so can a preview of the drop.
+/// A drag calls it with the tracks of mouse down at every move, and draws what it carried.
 pub fn moved(
     tracks: &BTreeMap<InstanceId, TrackState>,
     moves: &[LaneMove],
     travel: &Travel<'_>,
-) -> BTreeMap<InstanceId, Vec<AutomationLane>> {
-    let moving = moves
+) -> Moved {
+    let under = |step: &LaneMove| {
+        let moves = step.from != step.to || step.range.start != step.start;
+        let state = tracks.get(&step.from).filter(|_| moves)?;
+        Some(Carried::under(
+            &step.from,
+            state,
+            step.range.clone(),
+            travel,
+        ))
+    };
+    let each: Vec<Option<Carried>> = moves.iter().map(under).collect();
+    let carried_lanes = each.iter().zip(moves).map(|(carried, step)| {
+        let lanes = carried.iter().flat_map(|carried| {
+            let taken = carried.lanes.iter();
+            taken.filter(|lane| carried.takes(lane, &step.to)).cloned()
+        });
+        lanes.collect()
+    });
+    let carried_lanes = carried_lanes.collect();
+    let carried: Vec<(&Carried, &LaneMove)> = each
         .iter()
-        .filter(|step| step.from != step.to || step.range.start != step.start);
-    let carried: Vec<(Carried, &LaneMove)> = moving
-        .filter_map(|step| {
-            let state = tracks.get(&step.from)?;
-            let carried = Carried::under(&step.from, state, step.range.clone(), travel);
-            Some((carried, step))
-        })
+        .zip(moves)
+        .filter_map(|(carried, step)| Some((carried.as_ref()?, step)))
         .collect();
     let taken: Vec<(&Carried, &InstanceId)> = carried
         .iter()
-        .map(|(carried, step)| (carried, &step.to))
+        .map(|(carried, step)| (*carried, &step.to))
         .collect();
     let mut after = BTreeMap::new();
     let left: BTreeSet<&InstanceId> = carried.iter().map(|(_, step)| &step.from).collect();
@@ -240,9 +260,11 @@ pub fn moved(
         }
     }
     let lanes = after.into_iter();
-    lanes
-        .map(|(track, state)| (track, state.automation))
-        .collect()
+    let lanes = lanes.map(|(track, state)| (track, state.automation));
+    Moved {
+        lanes: lanes.collect(),
+        carried: carried_lanes,
+    }
 }
 
 /// The record of `track` as the move has made it so far, from `tracks` the first time.
@@ -303,13 +325,18 @@ impl AutomationLane {
 
     /// Whether this lane and `other` move the same number.
     pub fn same_number(&self, other: &Self) -> bool {
-        same_number(self, other)
+        self.device == other.device && self.parameter == other.parameter
     }
 }
 
-/// Whether two lanes move the same number.
-fn same_number(a: &AutomationLane, b: &AutomationLane) -> bool {
-    a.device == b.device && a.parameter == b.parameter
+/// Points of a lane as places on the travel of `range`, where its line is straight: what
+/// plays, and what the timeline draws.
+pub fn positions(points: &[Point<AutomationValue>], range: ValueRange) -> Vec<Point<f32>> {
+    let points = points.iter().map(|point| Point {
+        tick: point.tick,
+        value: range.position(point.value.0),
+    });
+    points.collect()
 }
 
 /// The volume or the pan of the track that a lane moves. `None` for a lane of a device.
@@ -329,16 +356,11 @@ fn number(
     travel: &Travel<'_>,
 ) -> Option<AutomatedNumber> {
     match &lane.device {
-        None => track_parameter(lane).map(|parameter| own_number(parameter, mix)),
+        None => track_parameter(lane).map(|parameter| AutomatedNumber {
+            range: ValueRange::of(parameter),
+            record: Some((parameter.get)(mix)),
+        }),
         Some(device) => travel(&track.child(device).ok()?, &lane.parameter),
-    }
-}
-
-/// The volume or the pan of a track whose mix is `mix`, as a lane of it moves it.
-pub(super) fn own_number(parameter: &Parameter<Mix>, mix: &Mix) -> AutomatedNumber {
-    AutomatedNumber {
-        range: ValueRange::of(parameter),
-        record: Some((parameter.get)(mix)),
     }
 }
 
@@ -564,7 +586,7 @@ mod tests {
     fn moved_on(lanes: Vec<AutomationLane>, moves: &[LaneMove]) -> Vec<AutomationLane> {
         let tracks = BTreeMap::from([(id("a/one"), track(lanes.clone()))]);
         // A clip that stays where it was leaves its track out.
-        let mut moved = moved(&tracks, moves, &travel);
+        let mut moved = moved(&tracks, moves, &travel).lanes;
         moved.remove(&id("a/one")).unwrap_or(lanes)
     }
 
@@ -782,7 +804,7 @@ mod tests {
             (id("a/one"), track(vec![gain, sweep.clone()])),
             (id("a/two"), other),
         ]);
-        let moved = moved(&tracks, &[step(BAR..2 * BAR, "a/two", 4 * BAR)], &travel);
+        let moved = moved(&tracks, &[step(BAR..2 * BAR, "a/two", 4 * BAR)], &travel).lanes;
         let one = &moved[&id("a/one")];
         assert_eq!(one.len(), 2);
         assert_eq!(one[1], sweep);
@@ -801,18 +823,32 @@ mod tests {
         );
     }
 
-    /// A clip whose one point lands on a flat line keeps it, so its next move takes it along
-    /// again.
+    /// A lane whose points all hold one value holds its knob still: a clip over it takes
+    /// nothing along, to its own track or another, and says it carries nothing. A lane just
+    /// added holds the record value in one point at tick 0.
     #[test]
-    fn a_point_that_lands_on_a_flat_line_stays_for_the_next_move() {
-        let pan = lane(None, "pan", &[(100, 0.5)]);
-        let once = moved_once(vec![pan], 100..200, 400);
-        assert!(ticks(&once[0]).contains(&400), "{:?}", points(&once[0]));
-        let twice = moved_once(once, 400..500, 800);
-        assert_eq!(line(&twice[0], 800), 0.5);
-        assert!(ticks(&twice[0]).contains(&800), "{:?}", points(&twice[0]));
-        let back = moved_once(twice, 800..900, 100);
-        assert!(ticks(&back[0]).contains(&100), "{:?}", points(&back[0]));
+    fn a_lane_that_holds_one_value_carries_nothing() {
+        let added = lane(None, "pan", &[(0, 0.5)]);
+        let held = lane(None, "gain_db", &[(0, -6.), (BAR, -6.), (2 * BAR, -6.)]);
+        let tracks = BTreeMap::from([
+            (id("a/one"), track(vec![added, held])),
+            (id("a/two"), track(Vec::new())),
+        ]);
+        for to in ["a/one", "a/two"] {
+            let moved = moved(&tracks, &[step(0..2 * BAR, to, 4 * BAR)], &travel);
+            assert_eq!(moved.carried, [Vec::<AutomationLane>::new()], "to {to}");
+            for (track, lanes) in &moved.lanes {
+                assert_eq!(lanes, &tracks[track].automation, "to {to}");
+            }
+        }
+        // One point that moves away from the rest is a line, and goes along.
+        let dip = lane(None, "gain_db", &[(0, -6.), (BAR, -12.), (2 * BAR, -6.)]);
+        let tracks = BTreeMap::from([(id("a/one"), track(vec![dip]))]);
+        let moved = moved(&tracks, &[step(0..2 * BAR, "a/one", 4 * BAR)], &travel);
+        let [carried] = &moved.carried[..] else {
+            panic!("one move");
+        };
+        assert_eq!(carried.len(), 1);
     }
 
     /// A paste puts the line down over what was there, and a cut leaves a straight line.

@@ -1,23 +1,27 @@
 //! The automation lanes under a track in the timeline: one per automated number, with its name
 //! and its line in the track colour, on the travel of the knob of the number, as it plays. They
-//! are drawn, erased and cleared as the expression lanes of the note editor are
-//! ([`super::lanes`]), in project ticks. Pure math, no GPUI and no project.
+//! are drawn, erased and cleared as the expression lanes of the note editor are, with a
+//! [`super::lanes::Stroke`] into a [`LaneBox`], in project ticks. Pure math, no GPUI and no
+//! project.
 
 use std::iter::once;
 use std::ops::Range;
 
 use sound_core::{Ticks, ValueRange};
-use sound_notes::{Point, thinned_within, value_at};
+use sound_notes::{thinned_within, value_at};
 
-use super::lanes::LaneEdit;
+use super::lanes::{LaneBox, LaneEdit};
 use super::layout::{LANE_HEIGHT, Viewport};
+use crate::automation::{ON_THE_LINE, positions};
 use crate::{AutomationLane, AutomationValue};
 
 /// The air above the top of the travel and under its bottom, in a lane.
 const LANE_AIR: f32 = 8.0;
-/// How far a drawn point may be from the straight line through the points kept, on the travel,
-/// and still be left out: far under a pixel of a lane.
-const THIN_STEP: f64 = 1e-3;
+/// Where a lane draws the travel of its knob: the bottom of the travel at the bottom.
+pub const LANE_BOX: LaneBox = LaneBox {
+    top: LANE_AIR,
+    bottom: LANE_HEIGHT - LANE_AIR,
+};
 /// The ends of fields that say the unit of a number, which its knob shows instead.
 const UNITS: [&str; 7] = [
     "_hz",
@@ -29,86 +33,58 @@ const UNITS: [&str; 7] = [
     "_semitones",
 ];
 
-/// The height in a lane of a place on the travel: the bottom of the travel at the bottom.
-pub fn y_of(position: f32) -> f32 {
-    let bottom = LANE_HEIGHT - LANE_AIR;
-    bottom - (bottom - LANE_AIR) * position.clamp(0.0, 1.0)
-}
-
-/// The place on the travel at height `y` in a lane. Above the lane it is the top, below it the
-/// bottom.
-pub fn position_at(y: f32) -> f32 {
-    let bottom = LANE_HEIGHT - LANE_AIR;
-    ((bottom - y) / (bottom - LANE_AIR)).clamp(0.0, 1.0)
-}
-
-/// The points of a lane as places on the travel of its number, where its line is straight.
-pub fn on_travel(lane: &AutomationLane, range: ValueRange) -> Vec<Point<f32>> {
-    let points = lane.points.iter().map(|point| Point {
-        tick: point.tick,
-        value: range.position(point.value.0),
-    });
-    points.collect()
-}
-
-/// The line of a lane in the lane across what `ticks` shows, as the places where it turns:
-/// from the left edge to the right edge, level before the first point and after the last.
-pub fn line(viewport: &Viewport, points: &[Point<f32>], ticks: Range<Ticks>) -> Vec<(f32, f32)> {
-    let (Some(start), Some(end)) = (value_at(points, ticks.start), value_at(points, ticks.end))
+/// The line of a lane of a number of `range` across what `ticks` shows, as the places where it
+/// turns, from the left edge to the right edge: level before the first point and after the
+/// last. Only the points that show and one on each side are put on the travel, as a lane may
+/// have many and the timeline shows a few bars of it.
+pub fn line(
+    viewport: &Viewport,
+    lane: &AutomationLane,
+    range: ValueRange,
+    ticks: Range<Ticks>,
+) -> Vec<(f32, f32)> {
+    let points = &lane.points;
+    let from = points.partition_point(|point| point.tick <= ticks.start);
+    let to = points.partition_point(|point| point.tick < ticks.end);
+    let near = points.get(from.saturating_sub(1)..(to + 1).min(points.len()));
+    let near = positions(near.unwrap_or_default(), range);
+    let (Some(start), Some(end)) = (value_at(&near, ticks.start), value_at(&near, ticks.end))
     else {
         return Vec::new();
     };
-    let placed = |tick: Ticks, position: f32| (viewport.x_of(tick), y_of(position));
-    // A lane may have many points and the timeline shows a few bars of it.
-    let from = points.partition_point(|point| point.tick <= ticks.start);
-    let to = points.partition_point(|point| point.tick < ticks.end);
-    let shown = points.get(from..to.max(from)).unwrap_or_default();
+    let placed = |tick: Ticks, position: f32| (viewport.x_of(tick), LANE_BOX.y_of(position));
+    let shown = near.iter().filter(|point| ticks.contains(&point.tick));
+    let shown = shown.filter(|point| point.tick > ticks.start);
     once(placed(ticks.start, start))
-        .chain(shown.iter().map(|point| placed(point.tick, point.value)))
+        .chain(shown.map(|point| placed(point.tick, point.value)))
         .chain(once(placed(ticks.end, end)))
         .collect()
 }
 
 /// `origin`, a lane as it was at mouse down, changed by `edit`, in project ticks. A drawn
 /// height becomes the value of the knob there, in the range of the number, so a value is
-/// never outside it. A number the project does not know, `range` `None`, is not drawn in.
-/// `None` when no point is left: the lane is gone, and the number plays its record again.
+/// never outside it, and the line drawn is thinned on the travel. A number the project does
+/// not know, `range` `None`, is not drawn in. `None` when no point is left: the lane is gone,
+/// and the number plays its record again.
 pub fn edited(
     origin: &AutomationLane,
     range: Option<ValueRange>,
     edit: &LaneEdit,
 ) -> Option<AutomationLane> {
-    let points = match edit {
-        LaneEdit::Draw(drawn) => {
-            let (Some((&first, _)), Some((&last, _)), Some(range)) =
-                (drawn.first_key_value(), drawn.last_key_value(), range)
-            else {
-                return Some(origin.clone());
+    let points = match (edit, range) {
+        (LaneEdit::Draw(_), None) => origin.points.clone(),
+        (_, range) => {
+            let value_at = |y: f32| {
+                let value = range.map(|range| range.value(LANE_BOX.share_at(y)));
+                AutomationValue(value.unwrap_or_default())
             };
-            let line: Vec<Point<f32>> = drawn
-                .iter()
-                .map(|(tick, y)| Point {
-                    tick: *tick,
-                    value: position_at(*y),
-                })
-                .collect();
-            let line = thinned_within(&line, THIN_STEP, f64::from);
-            let line = line.into_iter().map(|point| Point {
-                tick: point.tick,
-                value: AutomationValue(range.value(point.value)),
-            });
-            let before = origin.points.iter().filter(|point| point.tick < first);
-            let after = origin.points.iter().filter(|point| point.tick > last);
-            before.copied().chain(line).chain(after.copied()).collect()
+            let place = |value: AutomationValue| {
+                let place = range.map(|range| range.position(value.0));
+                f64::from(place.unwrap_or_default())
+            };
+            let thin = |line: &[_]| thinned_within(line, f64::from(ON_THE_LINE), place);
+            edit.applied(&origin.points, value_at, thin)
         }
-        LaneEdit::Erase(ticks) => {
-            let kept = origin
-                .points
-                .iter()
-                .filter(|point| !ticks.contains(&point.tick));
-            kept.copied().collect()
-        }
-        LaneEdit::Clear => Vec::new(),
     };
     let lane = AutomationLane {
         points,
@@ -137,17 +113,35 @@ pub fn lane_name(device: Option<&str>, field: &str) -> String {
     }
 }
 
-/// A field in plain words: `lfo_rate_hz` is LFO rate, `filter_1.cutoff` is Filter 1 cutoff.
+/// A field in plain words: `lfo_rate_hz` is LFO rate, and the number of an object in a list
+/// counts from one, so `bands[0].gain_db` is Band 1 gain.
 pub fn number_name(field: &str) -> String {
     let unit = UNITS.iter().find(|unit| field.ends_with(*unit));
     let field = unit.map_or(field, |unit| &field[..field.len() - unit.len()]);
-    let words = field.split(['_', '.']).filter(|word| !word.is_empty());
-    let words = words.map(|word| match word {
-        "lfo" => "LFO".to_string(),
-        "q" => "Q".to_string(),
-        word => word.to_string(),
-    });
-    let name = words.collect::<Vec<_>>().join(" ");
+    let mut words = Vec::new();
+    for part in field.split('.') {
+        let (object, index) = match part.split_once('[') {
+            Some((object, index)) => (object, index.trim_end_matches(']').parse::<usize>().ok()),
+            None => (part, None),
+        };
+        let object = match index {
+            // One of a list of them.
+            Some(_) => object.strip_suffix('s').unwrap_or(object),
+            None => object,
+        };
+        words.extend(
+            object
+                .split('_')
+                .filter(|word| !word.is_empty())
+                .map(|word| match word {
+                    "lfo" => "LFO".to_string(),
+                    "q" => "Q".to_string(),
+                    word => word.to_string(),
+                }),
+        );
+        words.extend(index.map(|index| (index + 1).to_string()));
+    }
+    let name = words.join(" ");
     let mut letters = name.chars();
     match letters.next() {
         Some(first) => first.to_uppercase().chain(letters).collect(),
@@ -170,6 +164,8 @@ pub fn from_menu_value(value: &str) -> Option<(Option<&str>, &str)> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+
+    use sound_notes::Point;
 
     use super::*;
 
@@ -196,12 +192,12 @@ mod tests {
 
     #[test]
     fn a_height_is_a_place_on_the_travel_and_back() {
-        assert_eq!(y_of(0.0), LANE_HEIGHT - LANE_AIR);
-        assert_eq!(y_of(1.0), LANE_AIR);
-        assert_eq!(position_at(-100.0), 1.0);
-        assert_eq!(position_at(500.0), 0.0);
+        assert_eq!(LANE_BOX.y_of(0.0), LANE_HEIGHT - LANE_AIR);
+        assert_eq!(LANE_BOX.y_of(1.0), LANE_AIR);
+        assert_eq!(LANE_BOX.share_at(-100.0), 1.0);
+        assert_eq!(LANE_BOX.share_at(500.0), 0.0);
         for position in [0.0, 0.25, 0.5, 1.0] {
-            assert!((position_at(y_of(position)) - position).abs() < 1e-6);
+            assert!((LANE_BOX.share_at(LANE_BOX.y_of(position)) - position).abs() < 1e-6);
         }
     }
 
@@ -211,7 +207,7 @@ mod tests {
     #[test]
     fn a_draw_puts_values_of_the_knob_over_the_points_it_passes() {
         let origin = lane(&[(0, 200.), (1000, 400.), (2000, 800.), (5000, 1000.)]);
-        let middle = y_of(0.5);
+        let middle = LANE_BOX.y_of(0.5);
         let drawn: BTreeMap<Ticks, f32> = [(500, middle), (1500, middle), (2500, -50.)]
             .into_iter()
             .map(|(tick, y)| (Ticks(tick), y))
@@ -249,23 +245,25 @@ mod tests {
     #[test]
     fn the_line_spans_what_shows() {
         let viewport = Viewport::default();
-        let points = on_travel(&lane(&[(1000, 20.), (2000, 20000.)]), CUTOFF);
-        let line = line(&viewport, &points, Ticks(0)..Ticks(4000));
+        let sweep = lane(&[(1000, 20.), (2000, 20000.), (9000, 20.)]);
+        let line = line(&viewport, &sweep, CUTOFF, Ticks(0)..Ticks(4000));
         let x = |tick: u64| viewport.x_of(Ticks(tick));
+        let y = |position: f32| LANE_BOX.y_of(position);
+        // The point at 9000 is past what shows: it only places the right edge.
+        let right = y(1.0 - 2000. / 7000.);
+        assert_eq!(line.len(), 4);
         assert_eq!(
-            line,
-            [
-                (x(0), y_of(0.0)),
-                (x(1000), y_of(0.0)),
-                (x(2000), y_of(1.0)),
-                (x(4000), y_of(1.0)),
-            ]
+            &line[..3],
+            [(x(0), y(0.0)), (x(1000), y(0.0)), (x(2000), y(1.0))]
         );
+        assert_eq!(line[3].0, x(4000));
+        assert!((line[3].1 - right).abs() < 1e-3, "{line:?}");
         // Between two points, the edges are on the line between them.
-        let inside = super::line(&viewport, &points, Ticks(1250)..Ticks(1750));
+        let inside = super::line(&viewport, &sweep, CUTOFF, Ticks(1250)..Ticks(1750));
         assert_eq!(inside.len(), 2);
-        assert!((inside[0].1 - y_of(0.25)).abs() < 1e-3, "{inside:?}");
-        assert!((inside[1].1 - y_of(0.75)).abs() < 1e-3, "{inside:?}");
+        assert!((inside[0].1 - y(0.25)).abs() < 1e-3, "{inside:?}");
+        assert!((inside[1].1 - y(0.75)).abs() < 1e-3, "{inside:?}");
+        assert!(super::line(&viewport, &lane(&[]), CUTOFF, Ticks(0)..Ticks(10)).is_empty());
     }
 
     #[test]
@@ -277,12 +275,16 @@ mod tests {
             lane_name(Some("Filter"), "lfo_rate_hz"),
             "Filter · LFO rate"
         );
-        assert_eq!(lane_name(Some("EQ"), "q"), "EQ · Q");
-        assert_eq!(
-            lane_name(Some("Wavetable"), "filter_1.cutoff"),
-            "Wavetable · Filter 1 cutoff"
-        );
         assert_eq!(lane_name(Some("Synth"), "decay_seconds"), "Synth · Decay");
+        assert_eq!(
+            lane_name(Some("EQ"), "bands[0].gain_db"),
+            "EQ · Band 1 gain"
+        );
+        assert_eq!(lane_name(Some("EQ"), "bands[3].q"), "EQ · Band 4 Q");
+        assert_eq!(
+            lane_name(Some("Wavetable"), "filter.cutoff_hz"),
+            "Wavetable · Filter cutoff"
+        );
     }
 
     #[test]
