@@ -10,8 +10,8 @@ use gpui::{AppContext, Entity, Focusable, TestAppContext};
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use runtime::{OFFLINE, open_or_create};
 use sound_agent::{
-    Account, AgentEvent, ApprovalId, ApprovalMode, Command, Entry, ExitReason, Installed, Model,
-    Session, Sidebar, StepId, StepOutcome, Thread, TurnOutcome,
+    Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Command, Entry, ExitReason,
+    Installed, Model, Session, Sidebar, StepId, StepOutcome, Thread, TurnOutcome,
 };
 use sound_core::Engine;
 use tempfile::TempDir;
@@ -20,27 +20,39 @@ use crate::support::{self, Opened, mark, one_undo_step, write_outside};
 
 /// The sidebar with a `claude` that cannot start, so no test ever runs the real one: a test
 /// hands the sidebar the events instead. `support` is the support folder of the machine.
-fn install_sidebar(cx: &mut TestAppContext, support: &Path) {
-    let installed = Installed {
+fn install_sidebar(cx: &mut TestAppContext, support: &Path) -> Entity<AgentSettings> {
+    install_sidebar_with(cx, support, Some(nonexistent_claude()))
+}
+
+fn nonexistent_claude() -> Installed {
+    Installed {
         program: PathBuf::from("/nonexistent/claude"),
         environment: HashMap::new(),
-    };
-    install_sidebar_with(cx, support, Some(installed));
+    }
 }
 
 /// The same with `installed` as the program, or not installed. The threads are kept in
-/// `support`.
-fn install_sidebar_with(cx: &mut TestAppContext, support: &Path, installed: Option<Installed>) {
+/// `support`. Every window shares the settings it gives, which are not saved.
+fn install_sidebar_with(
+    cx: &mut TestAppContext,
+    support: &Path,
+    installed: Option<Installed>,
+) -> Entity<AgentSettings> {
     let remembered = runtime::app::left_panel_file(support);
     let threads = runtime::app::threads_folder(support);
     cx.update(|cx| {
+        let settings = cx.new(|cx| AgentSettings::new(None, cx));
+        let shared = settings.clone();
         LeftPanelSlot::new(Some(remembered), move |session, _, cx| {
             let (installed, threads) = (installed.clone(), Some(threads.clone()));
-            let sidebar = cx.new(|cx| Sidebar::with_program(session, installed, threads, cx));
+            let settings = shared.clone();
+            let sidebar =
+                cx.new(|cx| Sidebar::with_program(session, installed, threads, settings, cx));
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
-        .install(cx)
-    });
+        .install(cx);
+        settings
+    })
 }
 
 /// The same project folder in a new window, as quitting and starting the app gives.
@@ -119,6 +131,7 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
         AgentEvent::StepStarted {
             id: step("write"),
             title: "Wrote state/arrangement/track-1/bass.json".to_string(),
+            request_title: "Write state/arrangement/track-1/bass.json".to_string(),
             running_title: "Writing state/arrangement/track-1/bass.json".to_string(),
         },
     ]);
@@ -137,6 +150,7 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
         AgentEvent::StepStarted {
             id: step("edit"),
             title: "Edited state/arrangement/track-1/bass.json".to_string(),
+            request_title: "Edit state/arrangement/track-1/bass.json".to_string(),
             running_title: "Editing state/arrangement/track-1/bass.json".to_string(),
         },
     ]);
@@ -504,6 +518,7 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
         AgentEvent::StepStarted {
             id: step("write"),
             title: "Wrote state/arrangement/track-1/bass.json".to_string(),
+            request_title: "Write state/arrangement/track-1/bass.json".to_string(),
             running_title: "Writing state/arrangement/track-1/bass.json".to_string(),
         },
     ]);
@@ -694,6 +709,32 @@ fn a_turn_shows_the_problems_it_left(cx: &mut TestAppContext) {
     assert!(opened.find("agent-problems-1").is_some());
 }
 
+/// The watcher applies a write after its grouping window, so the last write of a turn can
+/// come just after the turn ended. Its problem is the turn's; one heard later is not.
+#[gpui::test]
+fn a_write_heard_just_after_the_turn_is_the_turns(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+
+    opened.begin("Add a bass line");
+    opened.receive([
+        AgentEvent::TurnStarted,
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        },
+    ]);
+    assert!(opened.find("agent-problems-1").is_none());
+    write_outside(&mut opened, "state/arrangement/track-1/bass.json", "{");
+    let line = opened.control("agent-problems-1");
+    opened.click(line);
+    assert!(opened.find("agent-problem-1-0").is_some());
+
+    after_the_request();
+    write_outside(&mut opened, "state/arrangement/track-1/drums.json", "{");
+    assert!(opened.find("agent-problem-1-1").is_none());
+}
+
 /// Up in an empty composer recalls the earlier messages of the thread, newest first; down
 /// goes forward again and back to empty.
 #[gpui::test]
@@ -707,11 +748,6 @@ fn up_in_the_composer_recalls_earlier_messages(cx: &mut TestAppContext) {
             outcome: TurnOutcome::Completed,
         }]);
     }
-    let sidebar = opened.sidebar();
-    let press = |opened: &mut Opened<'_>, key: &str| {
-        opened.keys(key);
-        opened.cx.read(|cx| sidebar.read(cx).draft(cx).to_string())
-    };
     opened.keys("cmd-l");
     assert_eq!(press(&mut opened, "up"), "Make it louder");
     assert_eq!(press(&mut opened, "up"), "Add a bass line");
@@ -719,10 +755,53 @@ fn up_in_the_composer_recalls_earlier_messages(cx: &mut TestAppContext) {
     assert_eq!(press(&mut opened, "down"), "");
 }
 
-/// The approval mode and the model picked in the menu go to the agent with the next message,
-/// not before. "Never ask" says so above the composer until the thread's first message.
+/// Presses `key` and gives what the composer holds then.
+fn press(opened: &mut Opened<'_>, key: &str) -> String {
+    opened.keys(key);
+    let sidebar = opened.sidebar();
+    opened
+        .cx
+        .read(|cx| sidebar.read(cx).composer().read(cx).text().to_string())
+}
+
+/// A thread opened again from disk recalls its messages too.
 #[gpui::test]
-fn the_menu_settings_go_to_the_agent_with_the_next_message(cx: &mut TestAppContext) {
+fn up_recalls_the_messages_of_a_thread_opened_again(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    opened.begin(MESSAGE);
+    opened.receive([AgentEvent::TurnEnded {
+        outcome: TurnOutcome::Completed,
+    }]);
+    let folder = opened.close();
+
+    let mut opened = open_again(cx, folder);
+    opened.keys("cmd-l");
+    assert_eq!(press(&mut opened, "up"), MESSAGE);
+}
+
+fn model(id: &str) -> Model {
+    Model {
+        id: id.to_string(),
+        name: id.to_string(),
+        description: String::new(),
+        short_name: id.to_string(),
+    }
+}
+
+/// Picks `row` in the composer's menu.
+fn pick(opened: &mut Opened<'_>, row: &str) {
+    let menu = opened.control("account-menu");
+    opened.click(menu);
+    let row = opened.control(row);
+    opened.click(row);
+}
+
+/// The approval mode and the model picked in the menu go to the running agent at once.
+/// "Never ask" says so above the composer until the thread's first message.
+#[gpui::test]
+fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
     let mut opened = support::open_with(cx, |_| {});
@@ -731,11 +810,6 @@ fn the_menu_settings_go_to_the_agent_with_the_next_message(cx: &mut TestAppConte
     opened
         .cx
         .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
-    let model = |id: &str| Model {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: String::new(),
-    };
     opened.receive([AgentEvent::Started {
         session_id: "session".to_string(),
         account: Account::default(),
@@ -743,14 +817,17 @@ fn the_menu_settings_go_to_the_agent_with_the_next_message(cx: &mut TestAppConte
     }]);
 
     assert!(opened.find("agent-never-ask").is_none());
-    for row in ["menu-approval-never-ask", "menu-model-haiku"] {
-        let menu = opened.control("account-menu");
-        opened.click(menu);
-        let row = opened.control(row);
-        opened.click(row);
-    }
+    pick(&mut opened, "menu-approval-never-ask");
+    pick(&mut opened, "menu-model-haiku");
     assert!(opened.find("agent-never-ask").is_some());
-    assert!(commands.try_recv().is_err());
+    let sent: Vec<Command> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+    assert_eq!(
+        sent,
+        [
+            Command::SetApprovalMode(ApprovalMode::NeverAsk),
+            Command::SetModel("haiku".to_string()),
+        ]
+    );
 
     // Into the composer, from the menu's trigger where the focus went back to.
     opened
@@ -758,14 +835,47 @@ fn the_menu_settings_go_to_the_agent_with_the_next_message(cx: &mut TestAppConte
         .update(|window, cx| window.focus(&sidebar.focus_handle(cx), cx));
     opened.cx.simulate_input("Hello");
     opened.keys("enter");
-    let sent: Vec<Command> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
     assert_eq!(
-        sent,
-        [
-            Command::SetApprovalMode(ApprovalMode::NeverAsk),
-            Command::SetModel("haiku".to_string()),
-            Command::Send("Hello".to_string()),
-        ]
+        commands.try_recv().ok(),
+        Some(Command::Send("Hello".to_string()))
     );
     assert!(opened.find("agent-never-ask").is_none());
+
+    // While the turn runs, a change goes to the agent at once too.
+    assert!(opened.cx.read(|cx| sidebar.read(cx).is_busy(cx)));
+    pick(&mut opened, "menu-approval-ask-for-everything");
+    assert_eq!(
+        commands.try_recv().ok(),
+        Some(Command::SetApprovalMode(ApprovalMode::AskForEverything))
+    );
+}
+
+/// Every sidebar of the app shows one setting: a change in one goes to the agents of all.
+#[gpui::test]
+fn two_sidebars_share_one_setting(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    let settings = install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    let (thread, commands) = Thread::without_agent(&Session::New);
+    let (other_thread, other_commands) = Thread::without_agent(&Session::New);
+    let sidebar = opened.sidebar();
+    let session = opened.session.clone();
+    let shared = settings.clone();
+    let other = opened.cx.update(|_, cx| {
+        sidebar.update(cx, |sidebar, _| sidebar.connect(thread));
+        let other = cx
+            .new(|cx| Sidebar::with_program(session, Some(nonexistent_claude()), None, shared, cx));
+        other.update(cx, |other, _| other.connect(other_thread));
+        other
+    });
+
+    pick(&mut opened, "menu-approval-never-ask");
+    let never_ask = Some(Command::SetApprovalMode(ApprovalMode::NeverAsk));
+    assert_eq!(commands.try_recv().ok(), never_ask);
+    assert_eq!(other_commands.try_recv().ok(), never_ask);
+    let approval_mode = opened
+        .cx
+        .read(|cx| settings.read(cx).settings().approval_mode);
+    assert_eq!(approval_mode, ApprovalMode::NeverAsk);
+    drop(other);
 }
