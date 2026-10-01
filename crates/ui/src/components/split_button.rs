@@ -17,6 +17,18 @@ use crate::theme::ActiveTheme;
 
 /// The height of both halves.
 pub const HEIGHT: f32 = 24.;
+/// The size of the icon before the words.
+const ICON_SIZE: f32 = 14.;
+
+/// A split button that is a row of a list, such as a header: as wide as it is given, its main
+/// half taking the room the chevron leaves. Its icon and words start where the row says, from
+/// its left edge, so they line up with what the rows around it show.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Row {
+    pub height: f32,
+    pub icon_left: f32,
+    pub words_left: f32,
+}
 
 /// What a split button says and offers.
 pub struct SplitChoices {
@@ -37,8 +49,7 @@ pub struct SplitButton {
     main_focus: FocusHandle,
     keyboard_focus: KeyboardFocus,
     menu: Entity<DropdownMenu>,
-    /// The height of a split button that is a row, see [`SplitButton::row`].
-    row: Option<f32>,
+    row: Option<Row>,
     /// What a test looks the main half up by. The chevron is `<name>-menu`.
     name: SharedString,
 }
@@ -82,12 +93,11 @@ impl SplitButton {
         self
     }
 
-    /// Makes it a row of a list: as wide as it is given and this tall, its main half taking
-    /// the room the chevron leaves, with its icon 16 pt in.
-    pub fn row(mut self, height: f32, cx: &mut Context<Self>) -> Self {
-        self.row = Some(height);
+    /// Makes it a row of a list, see [`Row`].
+    pub fn row(mut self, row: Row, cx: &mut Context<Self>) -> Self {
+        self.row = Some(row);
         self.menu
-            .update(cx, |menu, cx| menu.set_trigger_height(height, cx));
+            .update(cx, |menu, cx| menu.set_trigger_height(row.height, cx));
         self
     }
 
@@ -115,15 +125,24 @@ impl Render for SplitButton {
         );
         let ring_shows = self.keyboard_focus.shows_ring(&self.main_focus, window);
         let name = self.name.clone();
+        // Inside the border of the focus ring.
+        let (height, padding, gap) = match self.row {
+            Some(row) if self.icon.is_some() => {
+                let gap = row.words_left - row.icon_left - ICON_SIZE;
+                (row.height, row.icon_left - 1., gap)
+            }
+            Some(row) => (row.height, row.words_left - 1., 8.),
+            None => (HEIGHT, 8., 8.),
+        };
         let main = div()
             .id("split-main")
             .debug_selector(move || name.to_string())
             .track_focus(&self.main_focus)
             .flex()
             .items_center()
-            .gap(px(8.))
-            .h(px(self.row.unwrap_or(HEIGHT)))
-            .pl(px(if self.row.is_some() { 16. } else { 8. }))
+            .gap(px(gap))
+            .h(px(height))
+            .pl(px(padding))
             .when(self.row.is_some(), |main| main.flex_1())
             .pr(px(10.))
             .rounded_l(px(6.))
@@ -145,7 +164,7 @@ impl Render for SplitButton {
             // A click, or enter or space while it has the focus.
             .on_click(cx.listener(|this, _, _, cx| cx.emit(MenuPicked(this.main_value.clone()))))
             .when_some(self.icon.clone(), |main, icon| {
-                main.child(Icon::new(icon).size(14.).color(text))
+                main.child(Icon::new(icon).size(ICON_SIZE).color(text))
             })
             .child(self.label.clone());
         div()

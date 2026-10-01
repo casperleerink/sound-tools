@@ -48,7 +48,8 @@ use super::gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, 
 use super::lanes::{LaneEdit, Stroke};
 use super::layout::{
     ADD_LANE_HEIGHT, ADD_ROW_HEIGHT, DOT_LEFT, Extent, HEADER_INSET, HEADER_WIDTH, LANE_HEIGHT,
-    NAME_LEFT, Part, RULER_HEIGHT, Rect, Rows, RulerBar, TRACK_HEIGHT, Viewport, shifted,
+    NAME_LEFT, Part, RULER_HEIGHT, Rect, Rows, RulerBar, TOGGLE_MIDDLE, TRACK_HEIGHT, Viewport,
+    shifted,
 };
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
@@ -3905,8 +3906,8 @@ impl Timeline {
 /// Where the arm toggle of an audio track starts in its header: a 24 pt square that ends 8 pt
 /// from the edge, as the icons of a card header do. The name of an audio track ends before it.
 pub(super) const ARM_LEFT: f32 = HEADER_WIDTH - 8. - 24.;
-/// Where the meter of the input of an armed track starts in its header: 45 pt, to 133.
-pub(super) const ARMED_METER_LEFT: f32 = 88.;
+/// Where the meter of the input of an armed track starts in its header: 45 pt, to 137.
+pub(super) const ARMED_METER_LEFT: f32 = 92.;
 /// The meter is the master meter of the transport, 45 x 8.
 pub(super) const ARMED_METER_HEIGHT: f32 = 8.;
 /// What the header of the track a drop would make says.
@@ -4426,10 +4427,10 @@ fn paint_lanes_toggle(row: &TrackRow, top: Point<Pixels>, window: &mut Window, c
         false => theme.gray_700,
     };
     let color = color.opacity(if row.muted { 0.4 } else { 1. });
-    let middle = TRACK_HEIGHT / 2.;
+    let (x, y) = (TOGGLE_MIDDLE, TRACK_HEIGHT / 2.);
     let corners = match row.expanded {
-        true => [(14., middle - 2.), (18., middle + 2.), (22., middle - 2.)],
-        false => [(16., middle - 4.), (20., middle), (16., middle + 4.)],
+        true => [(x - 4., y - 2.), (x, y + 2.), (x + 4., y - 2.)],
+        false => [(x - 2., y - 4.), (x + 2., y), (x - 2., y + 4.)],
     };
     paint_polyline(&corners, top, 1.5, color, window);
 }

@@ -12,9 +12,11 @@ use sound_ui::Session;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked,
 };
-use sound_ui::components::split_button::{SplitButton, SplitChoices};
+use sound_ui::components::split_button::{Row, SplitButton, SplitChoices};
 
-use super::layout::{ADD_ROW_HEIGHT, HEADER_INSET, HEADER_WIDTH, RULER_HEIGHT};
+use super::layout::{
+    ADD_ROW_HEIGHT, DOT_LEFT, HEADER_INSET, HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT,
+};
 use super::timeline::{DropTarget, Timeline};
 use crate::{ArrangementState, TrackKind};
 
@@ -65,9 +67,15 @@ impl AddTrackButton {
                 menu_label: "Instrument or audio track".into(),
                 entries: vec![MenuEntry::Group(MenuGroup::new().items(items))],
             };
-            SplitButton::new("add-track", choices, cx)
-                .icon("plus")
-                .row(ADD_ROW_HEIGHT - 2. * BUTTON_INSET, cx)
+            SplitButton::new("add-track", choices, cx).icon("plus").row(
+                Row {
+                    height: ADD_ROW_HEIGHT - 2. * BUTTON_INSET,
+                    // The 14 pt plus on the middle of the 8 pt dot of a track.
+                    icon_left: DOT_LEFT - 3. - HEADER_INSET,
+                    words_left: NAME_LEFT - HEADER_INSET,
+                },
+                cx,
+            )
         });
         cx.subscribe(&button, move |_, _, picked: &MenuPicked, cx| {
             let Some(kind) = kind_of(&picked.0) else {
