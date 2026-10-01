@@ -42,8 +42,16 @@ pub const RAMP_SECONDS: f32 = 0.02;
 /// The gain of each channel for a pad, left first: its volume, and its pan with the pan law of
 /// a track (equal power, the middle exactly 1), so a pad keeps its loudness wherever it is.
 pub fn pad_gains(pad: &Pad) -> [f32; 2] {
-    let level = 10.0_f64.powf(f64::from(pad.volume_db) / 20.0);
-    sound_core::pan_gains(level, pad.pan.clamp(-1.0, 1.0))
+    gains_at(level_of(pad), pad.pan)
+}
+
+/// The factor of the volume of a pad.
+fn level_of(pad: &Pad) -> f32 {
+    10.0_f64.powf(f64::from(pad.volume_db) / 20.0) as f32
+}
+
+fn gains_at(level: f32, pan: f32) -> [f32; 2] {
+    sound_core::pan_gains(f64::from(level), pan.clamp(-1.0, 1.0))
 }
 
 /// One pad as the audio thread plays it. Its volume and pan are in the record of the kit.
@@ -133,8 +141,12 @@ pub struct DrumPad {
     /// The record, with the values of the lanes that automate it.
     state: Automated<DrumPadState, { AUTOMATED.len() }>,
     pads: [PadPlay; PADS],
-    /// The gains of each pad, gliding.
-    gains: [[Smoothed; 2]; PADS],
+    /// The factor of the volume and the pan of each pad. They glide apart, each in its own ramp,
+    /// and the gains of a pad are worked out from where both are at the end of each stretch.
+    levels: [Smoothed; PADS],
+    pans: [Smoothed; PADS],
+    /// The gains of each pad at the end of the last stretch, where the next starts.
+    gains: [[f32; 2]; PADS],
     voices: [Option<Voice>; VOICES],
     /// Replaced sounds that voices held, waiting for the next kit to take them back.
     graveyard: [Option<Arc<Rendered>>; VOICES],
@@ -154,7 +166,9 @@ impl DrumPad {
         Self {
             state: Automated::new(Self::AUTOMATION, DrumPadState::default()),
             pads: [PadPlay::SILENT; PADS],
-            gains: std::array::from_fn(|_| [Smoothed::new(0.0), Smoothed::new(0.0)]),
+            levels: std::array::from_fn(|_| Smoothed::new(0.0)),
+            pans: std::array::from_fn(|_| Smoothed::new(0.0)),
+            gains: [[0.0; 2]; PADS],
             voices: std::array::from_fn(|_| None),
             graveyard: std::array::from_fn(|_| None),
             peaks,
@@ -172,21 +186,28 @@ impl DrumPad {
         self.voices.iter().all(Option::is_none)
     }
 
-    /// Aims the gains of every pad at the record and its lanes. Both gains of a pad come from
-    /// its volume and its pan, so they take the longer ramp of the two.
+    /// Aims the volume and the pan of every pad at the record and its lanes, each in its own
+    /// ramp.
     fn aim(&mut self, targets: &DrumTargets) {
-        let idle = self.is_idle();
-        let pads = self.gains.iter_mut().zip(&self.state.pads).zip(&PAD_LANES);
-        for ((gains, pad), [volume, pan]) in pads {
-            let ramp = targets.ramp(volume).max(targets.ramp(pan));
-            for (gain, target) in gains.iter_mut().zip(pad_gains(pad)) {
-                gain.set_target(target, ramp);
-                // Nothing sounds, so there is nothing to glide: the next hit starts on the
-                // new values.
-                if idle {
-                    gain.snap();
-                }
-            }
+        let numbers = self.levels.iter_mut().zip(&mut self.pans);
+        let pads = numbers.zip(&self.state.pads).zip(&PAD_LANES);
+        for (((level, pan), pad), [volume_lane, pan_lane]) in pads {
+            level.set_target(level_of(pad), targets.ramp(volume_lane));
+            pan.set_target(pad.pan, targets.ramp(pan_lane));
+        }
+        // Nothing sounds, so there is nothing to glide: the next hit starts on the new values.
+        if self.is_idle() || targets.snaps() {
+            self.snap();
+        }
+    }
+
+    /// Takes the volume and the pan of every pad at once.
+    fn snap(&mut self) {
+        let numbers = self.levels.iter_mut().zip(&mut self.pans);
+        for ((level, pan), gains) in numbers.zip(&mut self.gains) {
+            level.snap();
+            pan.snap();
+            *gains = gains_at(level.current(), pan.current());
         }
     }
 
@@ -283,10 +304,14 @@ impl DrumPad {
         }
         // Where each pad's gains start and how far they move per frame in this stretch.
         let mut ramps = [[(0.0_f32, 0.0_f32); 2]; PADS];
-        for (ramp, gains) in ramps.iter_mut().zip(&mut self.gains) {
-            for (ramp, gain) in ramp.iter_mut().zip(gains) {
-                let before = gain.current();
-                *ramp = (before, (gain.advance(frames) - before) / frames as f32);
+        let numbers = self.levels.iter_mut().zip(&mut self.pans);
+        for ((level, pan), (ramp, gains)) in numbers.zip(ramps.iter_mut().zip(&mut self.gains)) {
+            let before = *gains;
+            if level.is_moving() || pan.is_moving() {
+                *gains = gains_at(level.advance(frames), pan.advance(frames));
+            }
+            for ((ramp, before), after) in ramp.iter_mut().zip(before).zip(*gains) {
+                *ramp = (before, (after - before) / frames as f32);
             }
         }
         let fade_frames = self.fade_frames as f32;
@@ -373,9 +398,7 @@ impl Processor for DrumPad {
         }
         let events = context.event_inputs.get(Self::NOTES);
         if events.is_empty() && self.is_idle() {
-            for gain in self.gains.iter_mut().flatten() {
-                gain.snap();
-            }
+            self.snap();
             return;
         }
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);

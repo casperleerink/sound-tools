@@ -87,10 +87,15 @@ fn multiply(a: Matrix, b: Matrix) -> Matrix {
 
 /// The gain of each channel at the end: the gain, the pan and mute.
 fn gains(state: &UtilityState) -> [f32; CHANNELS] {
-    if state.mute {
-        return [0.0; CHANNELS];
+    pan_gains(f64::from(level(state)), state.pan)
+}
+
+/// The factor of the gain, 0 when muted.
+fn level(state: &UtilityState) -> f32 {
+    match state.mute {
+        true => 0.0,
+        false => amplitude(state.gain_db),
     }
-    pan_gains(f64::from(amplitude(state.gain_db)), state.pan)
 }
 
 /// What the utility does with a record, once every change has arrived: how much of each input
@@ -215,8 +220,13 @@ pub struct Utility {
     bass_mono: Smoothed,
     /// The crossover frequency as `log2` of hertz, so a glide moves in octaves.
     octaves: Smoothed,
-    /// The gain of each channel at the end.
-    gains: [Smoothed; CHANNELS],
+    /// The factor of the gain at the end, 0 when muted, and the pan. They glide apart, each in
+    /// its own ramp: the level frame by frame, the pan law of the channels from where the pan
+    /// is at the end of each run of frames.
+    level: Smoothed,
+    pan: Smoothed,
+    /// The pan law of each channel at the end of the last run of frames, where the next starts.
+    panned: [f32; CHANNELS],
     /// Whether the factors have to be worked out again although nothing glides: after a snap,
     /// and before the first block.
     stale: bool,
@@ -239,7 +249,9 @@ impl Utility {
             mix: [[0.0; CHANNELS]; CHANNELS].map(|row| row.map(Smoothed::new)),
             bass_mono: Smoothed::new(0.0),
             octaves: Smoothed::new(0.0),
-            gains: [0.0; CHANNELS].map(Smoothed::new),
+            level: Smoothed::new(0.0),
+            pan: Smoothed::new(0.0),
+            panned: [1.0; CHANNELS],
             stale: true,
             factors: Factors::default(),
             crossover: Crossover::default(),
@@ -251,7 +263,7 @@ impl Utility {
 
     /// Sets every target from the record and its lanes, each reached in its own ramp. A choice
     /// changes only in an edit, where every number takes the edit glide, so the matrix takes
-    /// the ramp of the width, and the gains the longer of the gain and the pan.
+    /// the ramp of the width.
     fn aim(&mut self, targets: &UtilityTargets) {
         let (state, edit) = (*self.state, targets.edit());
         let ramp = targets.ramp(&WIDTH);
@@ -264,26 +276,35 @@ impl Utility {
         self.bass_mono.set_target(bass_mono, edit);
         self.octaves
             .set_target(state.bass_mono_hz.log2(), targets.ramp(&BASS_MONO_HZ));
-        let ramp = targets.ramp(&GAIN).max(targets.ramp(&PAN));
-        for (gain, target) in self.gains.iter_mut().zip(gains(&state)) {
-            gain.set_target(target, ramp);
+        self.level.set_target(level(&state), targets.ramp(&GAIN));
+        self.pan.set_target(state.pan, targets.ramp(&PAN));
+        // A number that took its value at once does not move: so nothing else says the factors
+        // are old, and the next run of frames starts at the pan.
+        if targets.snaps() {
+            self.stale = true;
+            self.panned = self.move_pan(0);
         }
-        // A frequency that took its value at once does not move, so nothing else says the
-        // factors are old.
-        self.stale |= targets.snaps();
+    }
+
+    /// Moves the pan `frames` along, and gives the pan law of the channels there.
+    fn move_pan(&mut self, frames: usize) -> [f32; CHANNELS] {
+        pan_gains(1.0, self.pan.advance(frames))
     }
 
     fn smoothers(&mut self) -> impl Iterator<Item = &mut Smoothed> {
         let [left, right] = &mut self.mix;
-        left.iter_mut()
-            .chain(right)
-            .chain([&mut self.bass_mono, &mut self.octaves])
-            .chain(&mut self.gains)
+        left.iter_mut().chain(right).chain([
+            &mut self.bass_mono,
+            &mut self.octaves,
+            &mut self.level,
+            &mut self.pan,
+        ])
     }
 
     /// Takes every target at once. For a utility nobody hears, which has nothing to glide for.
     fn snap(&mut self) {
         self.smoothers().for_each(Smoothed::snap);
+        self.panned = self.move_pan(0);
         self.stale = true;
     }
 
@@ -298,12 +319,13 @@ impl Utility {
             && at(right_left, 0.0)
             && at(right_right, 1.0)
             && at(&self.bass_mono, 0.0)
-            && self.gains.iter().all(|gain| at(gain, 1.0))
+            && at(&self.level, 1.0)
+            && at(&self.pan, 0.0)
     }
 
     /// Whether the output is silent whatever comes in: muted, and the fade to it done.
     fn is_muted(&self) -> bool {
-        (self.gains.iter()).all(|gain| !gain.is_moving() && gain.current() == 0.0)
+        !self.level.is_moving() && self.level.current() == 0.0
     }
 
     /// Whether the crossover is heard, or is on its way in or out.
@@ -379,15 +401,20 @@ impl Processor for Utility {
             .zip(left_out.chunks_mut(FACTOR_FRAMES))
             .zip(right_out.chunks_mut(FACTOR_FRAMES));
         for (((left_in, right_in), left_out), right_out) in chunks {
+            let length = left_in.len();
             if crossover {
-                self.move_factors(left_in.len());
+                self.move_factors(length);
             }
+            let before = self.panned;
+            self.panned = self.move_pan(length);
+            let steps =
+                [0, 1].map(|channel| (self.panned[channel] - before[channel]) / length as f32);
             let frames = left_in
                 .iter()
                 .zip(right_in)
                 .zip(left_out.iter_mut())
                 .zip(right_out.iter_mut());
-            for (((left_in, right_in), left_out), right_out) in frames {
+            for (index, (((left_in, right_in), left_out), right_out)) in frames.enumerate() {
                 let [left, right] = self
                     .mix
                     .each_mut()
@@ -407,7 +434,9 @@ impl Processor for Utility {
                     let side = side + heard * (side_through - side);
                     sound = [mid + side, mid - side];
                 }
-                let [left_gain, right_gain] = self.gains.each_mut().map(|gain| gain.advance(1));
+                let (along, level) = ((index + 1) as f32, self.level.advance(1));
+                let [left_gain, right_gain] =
+                    [0, 1].map(|channel| level * (before[channel] + steps[channel] * along));
                 *left_out = sound[0] * left_gain;
                 *right_out = sound[1] * right_gain;
             }
