@@ -8,7 +8,7 @@ use std::f32::consts::PI;
 use crate::DelayLine;
 
 /// A cutoff stays under this part of the sample rate, below the Nyquist frequency.
-const HIGHEST_PART: f32 = 0.45;
+pub(crate) const HIGHEST_PART: f32 = 0.45;
 
 /// While the input is silent, a memory smaller than this is let go of: -180 dB, far under
 /// anything audible. So a filter after a sound that ended comes to rest and does no work.

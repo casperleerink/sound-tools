@@ -25,7 +25,7 @@ use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
 use serde::{Deserialize, Serialize};
 
-use crate::dsp::REST;
+use crate::dsp::{HIGHEST_PART, REST};
 
 /// Which part of the sound the filter lets through.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,11 +115,10 @@ const BUTTERWORTH_Q: f32 = FRAC_1_SQRT_2;
 /// `1 / (2 cos(3π/8))`. Their product is `1/√2`, so the cutoff is at -3 dB here too.
 const BUTTERWORTH_4: [f32; 2] = [0.541_196_1, 1.306_563];
 
-/// A cutoff pushed past the ends of the range stays inside it, and under a part of the sample
-/// rate, below the Nyquist frequency where the filter's factors would run away.
+/// A cutoff pushed past the ends of the range stays inside it, and under
+/// [`HIGHEST_PART`] of the sample rate, where the filter's factors would run away.
 const LOWEST_HZ: f32 = 20.0;
 const HIGHEST_HZ: f32 = 20_000.0;
-const HIGHEST_PART: f32 = 0.45;
 
 /// The first section at a resonance, with `slope` from 0 (12 dB per octave) to 1 (24 dB): its
 /// Q, and the level of its low and high pass. Resonance raises the Q from its Butterworth value
