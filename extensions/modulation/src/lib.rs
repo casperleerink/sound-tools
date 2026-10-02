@@ -25,7 +25,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
-pub use processor::{MAX_FEEDBACK, Modulation, response, sweep};
+pub use processor::{Modulation, response, sweep};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "modulation";

@@ -30,7 +30,6 @@ use sound_core::{
 };
 use sound_notes::{Clip, RawTake};
 
-pub use beats::{CHORD_US, MIN_ONSETS, Onset, SNAP_US, find_beats, onsets};
 pub use grid::{BeatRate, FIT_SAMPLE_RATE, FitError, Fitted, fit};
 
 /// The name to enable in `project.json`.
@@ -170,13 +169,13 @@ pub fn fit_take(project: &Project, changes: &mut Changes, clip: &Clip) -> Result
         .take
         .clone()
         .ok_or_else(|| ProjectError::InvalidState {
-            id: InstanceId::new(DEFAULT_FIT).unwrap_or_else(|_| unreachable!("a fixed name")),
+            id: fit_id(),
             message: "this clip was not recorded, so there is no take to fit the tempo to"
                 .to_string(),
         })?;
     let id = match fit_of(project) {
         Some(fit) => fit.id().clone(),
-        None => InstanceId::new(DEFAULT_FIT)?,
+        None => fit_id(),
     };
     changes.create(id, FitState::new(take));
     Ok(())

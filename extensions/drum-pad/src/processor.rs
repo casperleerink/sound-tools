@@ -172,11 +172,6 @@ impl DrumPad {
         }
     }
 
-    /// Voices that sound, fading or not. For tests.
-    pub fn sounding(&self) -> usize {
-        self.voices.iter().flatten().count()
-    }
-
     fn is_idle(&self) -> bool {
         self.voices.iter().all(Option::is_none)
     }

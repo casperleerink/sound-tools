@@ -49,7 +49,7 @@ const FACTOR_FRAMES: usize = 16;
 
 /// The feedback at 1. Over it a flanger at full feedback rings for seconds and its peaks are
 /// loud; at it the peaks are 13 dB over the level of a noise.
-pub const MAX_FEEDBACK: f32 = 0.9;
+const MAX_FEEDBACK: f32 = 0.9;
 
 /// The allpass filters of the phaser. Six make three notches.
 const STAGES: usize = 6;
