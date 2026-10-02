@@ -25,6 +25,8 @@ use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
 use serde::{Deserialize, Serialize};
 
+use crate::dsp::REST;
+
 /// Which part of the sound the filter lets through.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -118,11 +120,6 @@ const BUTTERWORTH_4: [f32; 2] = [0.541_196_1, 1.306_563];
 const LOWEST_HZ: f32 = 20.0;
 const HIGHEST_HZ: f32 = 20_000.0;
 const HIGHEST_PART: f32 = 0.45;
-
-/// While the input is silent, a memory smaller than this is let go of: -180 dB, far under
-/// anything audible. So a filter after a sound that ended comes to rest and does no work, also
-/// after the slow ring of a low cutoff at full resonance.
-const REST: f32 = 1e-9;
 
 /// The first section at a resonance, with `slope` from 0 (12 dB per octave) to 1 (24 dB): its
 /// Q, and the level of its low and high pass. Resonance raises the Q from its Butterworth value

@@ -10,6 +10,10 @@ use crate::DelayLine;
 /// A cutoff stays under this part of the sample rate, below the Nyquist frequency.
 const HIGHEST_PART: f32 = 0.45;
 
+/// While the input is silent, a memory smaller than this is let go of: -180 dB, far under
+/// anything audible. So a filter after a sound that ended comes to rest and does no work.
+pub(crate) const REST: f32 = 1e-9;
+
 /// Input louder than this, or not a number, is held to it, so no sample of anyone else's can
 /// make a loop infinite. +36 dBFS: nothing real comes near it.
 const INPUT_LIMIT: f32 = 64.0;
@@ -126,7 +130,12 @@ impl OnePole {
     /// moves, not per frame.
     pub fn factor(hz: f32, sample_rate: f32) -> f32 {
         let hz = hz.max(1.0).min(HIGHEST_PART * sample_rate);
-        let g = (PI * hz / sample_rate).tan();
+        Self::bent_factor((PI * hz / sample_rate).tan())
+    }
+
+    /// The factor of a cutoff that is bent already: `g / (1 + g)` with `g = tan(π cutoff /
+    /// sample rate)`. For a cutoff worked out in its bent form.
+    pub fn bent_factor(g: f32) -> f32 {
         g / (1.0 + g)
     }
 
@@ -143,5 +152,17 @@ impl OnePole {
     #[inline]
     pub fn high(&mut self, factor: f32, input: f32) -> f32 {
         input - self.low(factor, input)
+    }
+
+    /// Lets go of a memory too small to hear, so a filter whose input went silent comes to
+    /// rest. Call it after a block of silent input.
+    pub fn settle(&mut self) {
+        if self.memory.abs() < REST {
+            self.memory = 0.0;
+        }
+    }
+
+    pub fn is_silent(&self) -> bool {
+        self.memory == 0.0
     }
 }

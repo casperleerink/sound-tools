@@ -18,7 +18,7 @@ use std::f32::consts::PI;
 
 use crate::{Curve, DRIVE, MIX, OUTPUT, PARAMETERS, SaturatorState, TONE};
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Oversampler,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, OnePole, Oversampler,
     OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets, held,
     soft_clip,
 };
@@ -54,11 +54,6 @@ const HIGHEST_PART: f32 = 0.45;
 /// While the tone moves, its factors are worked out again this often. Four times per block of
 /// the engine: a sweep has no steps anyone can hear, and a `tan` per frame is not needed.
 const FACTOR_FRAMES: usize = 16;
-
-/// While the input is silent, a memory of the DC blocker or the tone smaller than this is let
-/// go of: -180 dB, far under anything audible. So a saturator after a sound that ended comes to
-/// rest and does no work.
-const REST: f32 = 1e-9;
 
 /// Frames of silent input after which the dry delay and the oversampling hold only zeros: more
 /// than the delay and the memory of every stage.
@@ -240,34 +235,6 @@ pub fn response(state: &SaturatorState, hz: f32, sample_rate: f32) -> f32 {
     real.hypot(imaginary) as f32
 }
 
-/// A one-pole filter in the trapezoidal form (Zavalishin, "The Art of VA Filter Design"): its
-/// low pass, and the high pass as the input less it.
-#[derive(Clone, Copy, Default)]
-struct OnePole {
-    memory: f32,
-}
-
-impl OnePole {
-    /// The low pass of `input`, with the factor of its corner.
-    fn low_pass(&mut self, factor: f32, input: f32) -> f32 {
-        let step = (input - self.memory) * factor;
-        let low = step + self.memory;
-        self.memory = low + step;
-        low
-    }
-
-    fn settle(&mut self) {
-        if self.memory.abs() < REST {
-            self.memory = 0.0;
-        }
-    }
-}
-
-/// The factor of a one-pole filter at a bent corner.
-fn one_pole_factor(corner: f32) -> f32 {
-    corner / (1.0 + corner)
-}
-
 /// What one frame of the curve and the mix is: where every glide is at that frame.
 #[derive(Clone, Copy, Default)]
 struct Frame {
@@ -289,11 +256,11 @@ struct Channel {
 }
 
 impl Channel {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
             oversampler: Oversampler::new(),
-            dc: OnePole { memory: 0.0 },
-            tone: OnePole { memory: 0.0 },
+            dc: OnePole::default(),
+            tone: OnePole::default(),
             dry: [0.0; DRY_FRAMES],
         }
     }
@@ -354,7 +321,7 @@ impl Saturator {
             output: Smoothed::new(1.0),
             mix: Smoothed::new(1.0),
             level: 1.0,
-            dc_factor: one_pole_factor(bent(DC_HZ, sample_rate)),
+            dc_factor: OnePole::factor(DC_HZ, sample_rate),
             tone_factor: 0.0,
             gains: [1.0; 2],
             gains_target: [1.0; 2],
@@ -415,7 +382,7 @@ impl Saturator {
         }
         let tone = self.tone.advance(frames);
         let (crossover, below, above) = tilt(tone, self.sample_rate);
-        self.tone_factor = one_pole_factor(crossover);
+        self.tone_factor = OnePole::bent_factor(crossover);
         self.gains_target = [below, above];
         // After a snap there is nothing to glide from.
         if self.stale {
@@ -459,7 +426,7 @@ impl Saturator {
             && self
                 .channels
                 .iter()
-                .all(|channel| channel.dc.memory == 0.0 && channel.tone.memory == 0.0)
+                .all(|channel| channel.dc.is_silent() && channel.tone.is_silent())
     }
 }
 
@@ -476,7 +443,7 @@ impl Processor for Saturator {
     fn prepare(&mut self, config: &PrepareConfig) {
         self.sample_rate = config.sample_rate as f32;
         self.ramp_frames = (RAMP_SECONDS * self.sample_rate).max(1.0);
-        self.dc_factor = one_pole_factor(bent(DC_HZ, self.sample_rate));
+        self.dc_factor = OnePole::factor(DC_HZ, self.sample_rate);
         self.stale = true;
     }
 
@@ -549,8 +516,8 @@ impl Processor for Saturator {
                 for (index, ((curved, output), frame)) in frames.enumerate() {
                     let delayed = self.write + index + DRY_FRAMES - Oversampler::DELAY_FRAMES;
                     let dry = channel.dry[delayed % DRY_FRAMES];
-                    let blocked = curved - channel.dc.low_pass(self.dc_factor, *curved);
-                    let low = channel.tone.low_pass(self.tone_factor, blocked);
+                    let blocked = curved - channel.dc.low(self.dc_factor, *curved);
+                    let low = channel.tone.low(self.tone_factor, blocked);
                     let along = (index + 1) as f32 / length as f32;
                     let below = below + (to_below - below) * along;
                     let above = above + (to_above - above) * along;
