@@ -235,6 +235,39 @@ fn a_drag_on_a_point_moves_it_and_shift_keeps_one_axis(cx: &mut TestAppContext) 
     assert_eq!(points(&mut opened, "gain_db")[2], (BAR + 1920, value));
 }
 
+/// Escape during a drag of a point puts it back and lets go of it: delete then does nothing.
+#[gpui::test]
+fn escape_puts_a_dragged_point_back_and_lets_go_of_it(cx: &mut TestAppContext) {
+    let mut opened = open(cx, true);
+    let before = mark(&mut opened);
+    let dip = dot(&mut opened, 0, 2);
+    opened.press(dip);
+    opened.drag_to(point(dip.x + px(60.), dip.y - px(20.)));
+    assert_ne!(points(&mut opened, "gain_db"), volume());
+    opened.keys("escape");
+    opened.release(dip);
+    opened.keys("backspace");
+    assert_eq!(points(&mut opened, "gain_db"), volume());
+    assert_eq!(opened.undo_label(), before.undo_label);
+}
+
+/// An undo between the press on a point and the first move takes the lane the drag started
+/// from: the drag ends and does not write it back.
+#[gpui::test]
+fn an_undo_before_the_first_move_ends_the_drag(cx: &mut TestAppContext) {
+    let mut opened = open(cx, true);
+    let added = opened.in_track_lane(5 * BAR, 0, 0, LANE_BOX.y_of(1.));
+    opened.click(added);
+    let dip = dot(&mut opened, 0, 2);
+    opened.press(dip);
+    opened.keys("cmd-z");
+    assert_eq!(points(&mut opened, "gain_db"), volume());
+    let to = point(dip.x + px(60.), dip.y - px(20.));
+    opened.drag_to(to);
+    opened.release(to);
+    assert_eq!(points(&mut opened, "gain_db"), volume());
+}
+
 /// Alt and a drag erase the points between the press and the pointer, on the grid.
 #[gpui::test]
 fn an_alt_drag_erases_points_in_one_undo_step(cx: &mut TestAppContext) {

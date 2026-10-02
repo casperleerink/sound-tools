@@ -470,13 +470,14 @@ struct LaneDrag {
 enum LaneDragKind {
     /// An alt-drag erases the points it covers. In project ticks: the lane counts from tick 0.
     Erase(Stroke),
-    /// A point moves, by its place in `origin`, on the travel of `range`. It waits until the
-    /// pointer has gone a few pixels from `press`, where the press was in the lane, so a click
-    /// only selects it.
+    /// A point moves, by its place in `origin`, on the travel of `range`. `press` is where the
+    /// press was: the tick under it, so a scroll during the drag keeps the point under the
+    /// pointer, and its height in the lane. It waits until the pointer has gone a few pixels,
+    /// so a click only selects it.
     Point {
         point: usize,
         range: ValueRange,
-        press: (f32, f32),
+        press: (Ticks, f32),
         moving: bool,
     },
 }
@@ -2981,6 +2982,10 @@ impl Timeline {
         }
         let track_drag = self.track_drag.take().map(|drag| drag.begun);
         let lane_drag = self.lane_drag.take().map(|drag| drag.begun);
+        // The point goes back, or away when the press added it: it is not selected any more.
+        if lane_drag.is_some() {
+            self.selected_point = None;
+        }
         if let Some(begun) = track_drag.or(lane_drag) {
             if begun {
                 self.session
@@ -3950,14 +3955,14 @@ impl Timeline {
             }
             (false, None) => return,
         };
-        let press = (x, in_lane);
+        let press = (viewport.tick_at(x), in_lane);
         let point_drag = |point| LaneDragKind::Point {
             point,
             range,
             press,
             moving: false,
         };
-        if let Some(point) = track_lanes::point_at(&viewport, &origin, range, press) {
+        if let Some(point) = track_lanes::point_at(&viewport, &origin, range, (x, in_lane)) {
             let key = PointKey::of(track.id(), &origin, origin.points[point].tick);
             self.select_point(Some(key), cx);
             self.lane_drag = Some(drag(origin, point_drag(point), MOVE_POINT_LABEL));
@@ -3988,6 +3993,18 @@ impl Timeline {
             false => self.grid(cx),
         };
         let in_lane = (viewport.content_y(y) - drag.top) as f32;
+        // An undo between mouse down and the first change took the lane the drag started from:
+        // the drag ends, so it does not write that lane back.
+        if !drag.begun {
+            let project = self.session.read(cx).project();
+            let state = project.state(&drag.track);
+            let mut lanes = state.into_iter().flat_map(|state| state.automation.iter());
+            if lanes.find(|lane| lane.same_number(&drag.origin)) != Some(&drag.origin) {
+                self.selected_point = None;
+                cx.notify();
+                return;
+            }
+        }
         let next = match &mut drag.kind {
             LaneDragKind::Erase(stroke) => {
                 if !stroke.moved(&viewport, &grid, (x, in_lane)) {
@@ -4005,7 +4022,7 @@ impl Timeline {
                 press,
                 moving,
             } => {
-                let (mut dx, mut dy) = (x - press.0, in_lane - press.1);
+                let (mut dx, mut dy) = (x - viewport.x_of(press.0), in_lane - press.1);
                 if !*moving && dx.abs() < DRAG_THRESHOLD && dy.abs() < DRAG_THRESHOLD {
                     self.lane_drag = Some(drag);
                     return;
@@ -4018,8 +4035,10 @@ impl Timeline {
                     }
                 }
                 let from = drag.origin.points[*point];
-                let delta =
-                    viewport.tick_at(press.0 + dx).0 as i64 - viewport.tick_at(press.0).0 as i64;
+                let delta = match dx {
+                    0. => 0,
+                    _ => viewport.tick_at(x).0 as i64 - press.0.0 as i64,
+                };
                 let tick = match delta {
                     0 => from.tick,
                     delta => grid.snap(shifted(from.tick, delta)),
