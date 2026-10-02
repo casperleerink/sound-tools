@@ -75,6 +75,8 @@ impl InputDevice {
     pub fn start(self) -> Result<(InputStream, CaptureReader), DeviceError> {
         let (mut writer, reader) = capture(self.sample_rate(), self.channels());
         let gone = reader.status();
+        // Sets the clock up here, not in the first callback.
+        monotonic_nanos();
         let stream = self.device.build_input_stream(
             self.config,
             move |samples: &[f32], info: &cpal::InputCallbackInfo| {
