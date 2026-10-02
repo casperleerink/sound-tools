@@ -25,7 +25,7 @@ use sound_notes::{Amount, Bend, Expression, NoteEvent, Pedal, Pitch, Velocity};
 pub const INPUT_CAPACITY: usize = 1024;
 
 /// Reports the audio thread sends back. The control side reads them every poll.
-pub const REPORT_CAPACITY: usize = 4096;
+const REPORT_CAPACITY: usize = 4096;
 
 /// One message from a keyboard, as far as this application cares.
 ///
@@ -181,8 +181,8 @@ impl Input {
         self.send_at(monotonic_nanos(), played)
     }
 
-    /// Sends one message with the time it arrived. Tests give the time themselves.
-    pub fn send_at(&self, at_nanos: u64, played: Played) -> bool {
+    /// Sends one message with the time it arrived.
+    fn send_at(&self, at_nanos: u64, played: Played) -> bool {
         let arrived = Arrived { at_nanos, played };
         // A device thread that panicked while holding the lock leaves the ring as it was: the
         // producer is a plain value with no invariant of its own to break.

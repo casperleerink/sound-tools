@@ -26,7 +26,7 @@ mod take;
 use sound_core::AgentDoc;
 
 pub use keyboard::{Keyboard, Latency, Lost};
-pub use keys::{Arrived, INPUT_CAPACITY, Input, Keys, Played, REPORT_CAPACITY, Sounded};
+pub use keys::{INPUT_CAPACITY, Input, Played};
 pub use ports::{PortError, Ports};
 pub use take::{Take, TakeEvent};
 

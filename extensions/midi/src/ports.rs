@@ -27,8 +27,8 @@ pub enum PortError {
 /// later works without a restart.
 pub struct Ports {
     input: Input,
-    /// By the stable id the system gives a port, with the name for people.
-    open: BTreeMap<String, (String, MidiInputConnection<Input>)>,
+    /// By the stable id the system gives a port.
+    open: BTreeMap<String, MidiInputConnection<Input>>,
     /// Ports that did not open. They are not tried again until they come back, so one broken
     /// port does not report itself every second.
     failed: BTreeSet<String>,
@@ -41,11 +41,6 @@ impl Ports {
             open: BTreeMap::new(),
             failed: BTreeSet::new(),
         }
-    }
-
-    /// The names of the ports that are open, for people.
-    pub fn open_names(&self) -> Vec<&str> {
-        self.open.values().map(|(name, _)| name.as_str()).collect()
     }
 
     /// Opens ports that appeared and drops ones that went away. Gives the names that opened
@@ -80,7 +75,7 @@ impl Ports {
             };
             match client.connect(port, CLIENT, read, self.input.clone()) {
                 Ok(connection) => {
-                    self.open.insert(id, (name.clone(), connection));
+                    self.open.insert(id, connection);
                     opened.push(name);
                 }
                 Err(failure) => {
