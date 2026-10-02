@@ -3,15 +3,15 @@
 //! gives the frame of the card, whose title says "Synth" and is where another instrument is
 //! picked.
 //!
-//! The view keeps no copy of the state. It reads the record when it renders, and every
-//! change goes through the session, by [`ControlEdit`]: a knob or a handle drag is one gesture
-//! and one undo step, a key step, a reset or a waveform switch is one commit. A handle edits the
-//! same field as its knob, under the same name in the history, and the knob is the way to that
-//! value from the keys. The ranges, the defaults and the travel of each knob come from the
-//! [`Parameter`]s of the crate. What is only about the interface is here: the label, the unit,
-//! the name of the undo step and whether the card is expanded. A number that an automation lane
-//! of the track moves shows the value that plays, on its knob and on the display, and does not
-//! drag ([`Lanes`]).
+//! The view keeps no copy of the state. It reads the record when it renders, and every change goes
+//! through the session, by [`ControlEdit`]: a knob or a handle drag is one gesture and one undo
+//! step, a key step, a reset or a waveform switch is one commit. A handle edits the same field as
+//! its knob, under the same name in the history, and the knob is the way to that value from the
+//! keys. The ranges, the defaults and the travel of each knob come from the
+//! [`Parameter`](crate::Parameter)s of the crate. What is only about the interface is here: the
+//! label, the unit, the name of the undo step and whether the card is expanded. A number that an
+//! automation lane of the track moves shows the value that plays, on its knob and on the display,
+//! and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -19,13 +19,14 @@ use sound_ui::components::curves::{Adsr, EnvelopeHandle, envelope_display};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::Display;
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{
+    Knob, ParameterKnob, hertz_readout, percent_readout, seconds_readout,
+};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
 use crate::{
-    ATTACK, CUTOFF, DECAY, GAIN, Parameter, RELEASE, RESONANCE, SUSTAIN, Synth, SynthState,
-    Waveform,
+    ATTACK, CUTOFF, DECAY, GAIN, RELEASE, RESONANCE, SUSTAIN, Synth, SynthState, Waveform,
 };
 
 /// The name the rack puts on the card of a synth.
@@ -40,55 +41,17 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Hertz,
-    Seconds,
-    /// A part of one, shown as a percentage.
-    Part,
-}
-
 /// A knob of the view.
-struct Control {
-    parameter: &'static Parameter,
-    label: &'static str,
-    undo_label: &'static str,
-    unit: Unit,
-}
+type Control = ParameterKnob<SynthState>;
 
-impl Control {
-    const fn new(
-        parameter: &'static Parameter,
-        label: &'static str,
-        undo_label: &'static str,
-        unit: Unit,
-    ) -> Self {
-        Self {
-            parameter,
-            label,
-            undo_label,
-            unit,
-        }
-    }
-
-    fn range(&self) -> KnobRange {
-        KnobRange::of(self.parameter)
-    }
-
-    /// A value as the parameter takes it: a handle may ask for one past its ends.
-    fn clamp(&self, value: f32) -> f32 {
-        value.clamp(self.parameter.min, self.parameter.max)
-    }
-}
-
-const CUTOFF_KNOB: Control = Control::new(&CUTOFF, "Cutoff", "Change cutoff", Unit::Hertz);
+const CUTOFF_KNOB: Control = Control::new(&CUTOFF, "Cutoff", "Change cutoff", hertz_readout);
 const RESONANCE_KNOB: Control =
-    Control::new(&RESONANCE, "Resonance", "Change resonance", Unit::Part);
-const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", Unit::Part);
-const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", Unit::Seconds);
-const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", Unit::Seconds);
-const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain", Unit::Part);
-const RELEASE_KNOB: Control = Control::new(&RELEASE, "Release", "Change release", Unit::Seconds);
+    Control::new(&RESONANCE, "Resonance", "Change resonance", percent_readout);
+const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", percent_readout);
+const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", seconds_readout);
+const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", seconds_readout);
+const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain", percent_readout);
+const RELEASE_KNOB: Control = Control::new(&RELEASE, "Release", "Change release", seconds_readout);
 
 /// Every knob, for the test of their ranges.
 #[cfg(test)]
@@ -107,17 +70,6 @@ const WAVEFORMS: [(Waveform, &str, &str); 2] = [
     (Waveform::Saw, "saw", "Saw"),
     (Waveform::Square, "square", "Square"),
 ];
-
-/// A value with its unit, as the knob shows it: `632 Hz`, `2 kHz`, `5 ms`, `1.5 s`, `70%`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Hertz if value < 1_000.0 => format!("{} Hz", short(value)),
-        Unit::Hertz => format!("{} kHz", short(value / 1_000.0)),
-        Unit::Seconds if value < 1.0 => format!("{} ms", short(value * 1_000.0)),
-        Unit::Seconds => format!("{} s", short(value)),
-        Unit::Part => format!("{}%", short(value * 100.0)),
-    }
-}
 
 /// The width of the display: the synth card is 352 pt, with two columns of cells.
 const DISPLAY_WIDTH: f32 = 200.;
@@ -171,22 +123,17 @@ impl SynthView {
         self.edit.finish(&self.session, cx);
     }
 
-    fn on_knob(&mut self, control: &Control, change: ValueChange, cx: &mut Context<Self>) {
+    fn on_knob(&mut self, control: Control, change: ValueChange, cx: &mut Context<Self>) {
         let (session, synth) = (&self.session, &self.synth);
         let (label, set) = (control.undo_label, control.parameter.set);
         self.edit.apply(session, synth, label, change, set, cx);
     }
 
-    fn knob(&self, control: &'static Control, state: &SynthState, cx: &mut Context<Self>) -> Knob {
-        let value = (control.parameter.get)(state);
+    fn knob(&self, control: Control, state: &SynthState, cx: &mut Context<Self>) -> Knob {
         let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        Knob::new(control.parameter.field)
-            .range(control.range())
-            .value(value)
+        control
+            .knob(state)
             .automated(automated)
-            .default_value(control.parameter.default)
-            .label(control.label)
-            .readout(readout(control.unit, value))
             .on_change(weak_callback(cx, move |view, change, cx| {
                 view.on_knob(control, change, cx)
             }))
@@ -236,10 +183,10 @@ impl SynthView {
         );
         let caption = format!(
             "A {} · D {} · S {} · R {}",
-            readout(Unit::Seconds, adsr.attack),
-            readout(Unit::Seconds, adsr.decay),
-            readout(Unit::Part, adsr.sustain),
-            readout(Unit::Seconds, adsr.release),
+            seconds_readout(adsr.attack),
+            seconds_readout(adsr.decay),
+            percent_readout(adsr.sustain),
+            seconds_readout(adsr.release),
         );
         // The synth's own stages are drawn straight.
         let straight = [0.; 3];
@@ -288,19 +235,19 @@ impl Render for SynthView {
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()
-                .top(knob(&CUTOFF_KNOB, cx))
-                .bottom(knob(&GAIN_KNOB, cx)),
-            Column::new().top(knob(&RESONANCE_KNOB, cx)),
+                .top(knob(CUTOFF_KNOB, cx))
+                .bottom(knob(GAIN_KNOB, cx)),
+            Column::new().top(knob(RESONANCE_KNOB, cx)),
         ];
         // Behind expand: the times and the level the handles of the display move, so the keys
         // reach every one of them. Read across as A, D, then S, R.
         let hidden = [
             Column::new()
-                .top(knob(&ATTACK_KNOB, cx))
-                .bottom(knob(&SUSTAIN_KNOB, cx)),
+                .top(knob(ATTACK_KNOB, cx))
+                .bottom(knob(SUSTAIN_KNOB, cx)),
             Column::new()
-                .top(knob(&DECAY_KNOB, cx))
-                .bottom(knob(&RELEASE_KNOB, cx)),
+                .top(knob(DECAY_KNOB, cx))
+                .bottom(knob(RELEASE_KNOB, cx)),
         ];
         let expand = cx.listener(|view, _, _, cx| {
             view.expanded = !view.expanded;
@@ -324,33 +271,6 @@ impl Render for SynthView {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(readout(Unit::Hertz, 20.0), "20 Hz");
-        assert_eq!(readout(Unit::Hertz, 632.0), "632 Hz");
-        assert_eq!(readout(Unit::Hertz, 999.0), "999 Hz");
-        assert_eq!(readout(Unit::Hertz, 1_000.0), "1 kHz");
-        assert_eq!(readout(Unit::Hertz, 2_140.0), "2.14 kHz");
-        assert_eq!(readout(Unit::Hertz, 20_000.0), "20 kHz");
-        assert_eq!(readout(Unit::Seconds, 0.001), "1 ms");
-        assert_eq!(readout(Unit::Seconds, 0.005), "5 ms");
-        assert_eq!(readout(Unit::Seconds, 0.0155), "15.5 ms");
-        assert_eq!(readout(Unit::Seconds, 0.3), "300 ms");
-        assert_eq!(readout(Unit::Seconds, 1.0), "1 s");
-        assert_eq!(readout(Unit::Seconds, 1.5), "1.5 s");
-        assert_eq!(readout(Unit::Seconds, 10.0), "10 s");
-        assert_eq!(readout(Unit::Part, 0.0), "0%");
-        assert_eq!(readout(Unit::Part, 0.155), "15.5%");
-        assert_eq!(readout(Unit::Part, 0.7), "70%");
-        assert_eq!(readout(Unit::Part, 1.0), "100%");
-    }
-
-    #[test]
-    fn a_value_written_by_hand_is_shown_short_too() {
-        assert_eq!(readout(Unit::Hertz, 2_143.553), "2.14 kHz");
-        assert_eq!(readout(Unit::Part, 0.123_456), "12.3%");
-    }
 
     /// The defaults and both ends of every range, through the travel of its knob and back.
     #[test]

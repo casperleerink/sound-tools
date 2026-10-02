@@ -3,13 +3,13 @@
 //! decay as knobs. The rack gives the view a [`CardFrame`]: the picker of the slot as the title,
 //! and the close icon.
 //!
-//! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one gesture
-//! and one undo step, a key step, a reset or a switch is one commit. The ranges, the defaults
-//! and the travel of each knob come from the [`Parameter`]s of the crate. What is only about
-//! the interface is here: the label, the unit, the name of the undo step and whether the card
-//! is expanded. A number that an automation lane of the track moves shows the value that plays,
-//! on its knob and on the display, and does not drag ([`Lanes`]).
+//! The view keeps no copy of the state. It reads the record when it renders, and every change goes
+//! through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one gesture and one
+//! undo step, a key step, a reset or a switch is one commit. The ranges, the defaults and the
+//! travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. What is only
+//! about the interface is here: the label, the unit, the name of the undo step and whether the card
+//! is expanded. A number that an automation lane of the track moves shows the value that plays, on
+//! its knob and on the display, and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -17,13 +17,15 @@ use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{
+    Knob, ParameterKnob, hertz_readout, milliseconds_readout, percent_readout, seconds_readout,
+};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
 use crate::{
-    DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PRE_DELAY, Parameter, Reverb, ReverbState,
-    SIZE, WIDTH, high_decay_seconds, reflections,
+    DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PRE_DELAY, Reverb, ReverbState, SIZE, WIDTH,
+    high_decay_seconds, reflections,
 };
 
 /// The name the rack puts on the card of a reverb.
@@ -42,62 +44,25 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Hertz,
-    Milliseconds,
-    Seconds,
-    /// A part of one, shown as a percentage.
-    Part,
-}
-
 /// A knob of the card.
-struct Control {
-    parameter: &'static Parameter,
-    label: &'static str,
-    undo_label: &'static str,
-    scale: KnobRange,
-    unit: Unit,
-}
+type Control = ParameterKnob<ReverbState>;
 
-impl Control {
-    const fn new(
-        parameter: &'static Parameter,
-        label: &'static str,
-        undo_label: &'static str,
-        unit: Unit,
-    ) -> Self {
-        Self {
-            parameter,
-            label,
-            undo_label,
-            scale: KnobRange::of(parameter),
-            unit,
-        }
-    }
-
-    /// A value a handle gives, inside the range of the field. A handle's travel reaches past
-    /// the range, because it starts where another value ends.
-    fn clamp(&self, value: f32) -> f32 {
-        value.clamp(self.parameter.min, self.parameter.max)
-    }
-}
-
-const SIZE_KNOB: Control = Control::new(&SIZE, "Size", "Change size", Unit::Part);
-const DAMPING_KNOB: Control = Control::new(&DAMPING, "Damping", "Change damping", Unit::Part);
-const WIDTH_KNOB: Control = Control::new(&WIDTH, "Width", "Change width", Unit::Part);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::Part);
-const LOW_CUT_KNOB: Control = Control::new(&LOW_CUT, "Low cut", "Change low cut", Unit::Hertz);
-const HIGH_CUT_KNOB: Control = Control::new(&HIGH_CUT, "High cut", "Change high cut", Unit::Hertz);
+const SIZE_KNOB: Control = Control::new(&SIZE, "Size", "Change size", percent_readout);
+const DAMPING_KNOB: Control = Control::new(&DAMPING, "Damping", "Change damping", percent_readout);
+const WIDTH_KNOB: Control = Control::new(&WIDTH, "Width", "Change width", percent_readout);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
+const LOW_CUT_KNOB: Control = Control::new(&LOW_CUT, "Low cut", "Change low cut", hertz_readout);
+const HIGH_CUT_KNOB: Control =
+    Control::new(&HIGH_CUT, "High cut", "Change high cut", hertz_readout);
 const DIFFUSION_KNOB: Control =
-    Control::new(&DIFFUSION, "Diffusion", "Change diffusion", Unit::Part);
+    Control::new(&DIFFUSION, "Diffusion", "Change diffusion", percent_readout);
 const PRE_DELAY_KNOB: Control = Control::new(
     &PRE_DELAY,
     "Pre-delay",
     "Change pre-delay",
-    Unit::Milliseconds,
+    milliseconds_readout,
 );
-const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", Unit::Seconds);
+const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", seconds_readout);
 
 /// Every knob, in the order of the card: shown, then hidden.
 #[cfg(test)]
@@ -112,18 +77,6 @@ const KNOBS: [&Control; 9] = [
     &PRE_DELAY_KNOB,
     &DECAY_KNOB,
 ];
-
-/// A value with its unit, as a knob shows it: `632 Hz`, `8 kHz`, `20 ms`, `2.4 s`, `30%`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Hertz if value < 1_000.0 => format!("{} Hz", short(value)),
-        Unit::Hertz => format!("{} kHz", short(value / 1_000.0)),
-        Unit::Milliseconds => format!("{} ms", short(value)),
-        Unit::Seconds if value < 1.0 => format!("{} ms", short(value * 1_000.0)),
-        Unit::Seconds => format!("{} s", short(value)),
-        Unit::Part => format!("{}%", short(value * 100.0)),
-    }
-}
 
 /// Where the decay sits in its display, as places from 0 to 1, `y` up.
 ///
@@ -169,8 +122,8 @@ mod layout {
 /// The places across of the start of the tail and of its end.
 fn start_and_end(state: &ReverbState) -> (f32, f32) {
     use layout::{DECAY_ZONE, LEFT, PRE_DELAY_ZONE, SHORTEST_TAIL};
-    let start = LEFT + PRE_DELAY_ZONE * PRE_DELAY_KNOB.scale.position(state.pre_delay_ms);
-    let end = start + SHORTEST_TAIL + DECAY_ZONE * DECAY_KNOB.scale.position(state.decay_seconds);
+    let start = LEFT + PRE_DELAY_ZONE * PRE_DELAY_KNOB.range().position(state.pre_delay_ms);
+    let end = start + SHORTEST_TAIL + DECAY_ZONE * DECAY_KNOB.range().position(state.decay_seconds);
     (start, end)
 }
 
@@ -263,19 +216,13 @@ impl ReverbView {
         self.edit.apply(session, reverb, label, change, set, cx);
     }
 
-    fn knob(&self, control: &'static Control, state: &ReverbState, cx: &mut Context<Self>) -> Knob {
-        let value = (control.parameter.get)(state);
+    fn knob(&self, control: Control, state: &ReverbState, cx: &mut Context<Self>) -> Knob {
         let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        Knob::new(control.parameter.field)
-            .range(control.scale)
-            .value(value)
+        control
+            .knob(state)
             .automated(automated)
-            .default_value(control.parameter.default)
-            .label(control.label)
-            .readout(readout(control.unit, value))
             .on_change(weak_callback(cx, move |view, change, cx| {
-                let set = control.parameter.set;
-                view.change(control.undo_label, change, set, cx);
+                view.change(control.undo_label, change, control.parameter.set, cx);
             }))
     }
 
@@ -284,14 +231,14 @@ impl ReverbView {
     fn time_handle(
         &self,
         id: &'static str,
-        control: &'static Control,
+        control: Control,
         (start, zone, height): (f32, f32, f32),
         state: &ReverbState,
         cx: &mut Context<Self>,
     ) -> Handle {
         let parameter = control.parameter;
         let x = Axis::new(
-            layout::time_axis(control.scale, start, zone),
+            layout::time_axis(control.range(), start, zone),
             (parameter.get)(state),
             parameter.default,
         );
@@ -318,13 +265,13 @@ impl ReverbView {
         } = drawing(state);
         let start = tail[0].x;
         let pre_delay = (LEFT, PRE_DELAY_ZONE, TOP);
-        let pre_delay = self.time_handle("pre-delay", &PRE_DELAY_KNOB, pre_delay, state, cx);
+        let pre_delay = self.time_handle("pre-delay", PRE_DELAY_KNOB, pre_delay, state, cx);
         let decay = (start + SHORTEST_TAIL, DECAY_ZONE, FLOOR);
-        let decay = self.time_handle("decay", &DECAY_KNOB, decay, state, cx);
+        let decay = self.time_handle("decay", DECAY_KNOB, decay, state, cx);
         let caption = format!(
             "Pre-delay {} · Decay {}",
-            readout(Unit::Milliseconds, state.pre_delay_ms),
-            readout(Unit::Seconds, state.decay_seconds),
+            milliseconds_readout(state.pre_delay_ms),
+            seconds_readout(state.decay_seconds),
         );
         Display::new("display", DISPLAY_WIDTH)
             .curve(tail)
@@ -359,22 +306,22 @@ impl Render for ReverbView {
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()
-                .top(knob(&SIZE_KNOB, cx))
-                .bottom(knob(&WIDTH_KNOB, cx)),
+                .top(knob(SIZE_KNOB, cx))
+                .bottom(knob(WIDTH_KNOB, cx)),
             Column::new()
-                .top(knob(&DAMPING_KNOB, cx))
-                .bottom(knob(&MIX_KNOB, cx)),
+                .top(knob(DAMPING_KNOB, cx))
+                .bottom(knob(MIX_KNOB, cx)),
         ];
         let hidden = [
             Column::new()
-                .top(knob(&LOW_CUT_KNOB, cx))
-                .bottom(knob(&DIFFUSION_KNOB, cx)),
+                .top(knob(LOW_CUT_KNOB, cx))
+                .bottom(knob(DIFFUSION_KNOB, cx)),
             Column::new()
-                .top(knob(&HIGH_CUT_KNOB, cx))
-                .bottom(knob(&PRE_DELAY_KNOB, cx)),
+                .top(knob(HIGH_CUT_KNOB, cx))
+                .bottom(knob(PRE_DELAY_KNOB, cx)),
             Column::new()
                 .top(self.freeze(&state, cx))
-                .bottom(knob(&DECAY_KNOB, cx)),
+                .bottom(knob(DECAY_KNOB, cx)),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
@@ -396,23 +343,11 @@ impl Render for ReverbView {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(readout(Unit::Hertz, 100.0), "100 Hz");
-        assert_eq!(readout(Unit::Hertz, 8_000.0), "8 kHz");
-        assert_eq!(readout(Unit::Milliseconds, 0.5), "0.5 ms");
-        assert_eq!(readout(Unit::Milliseconds, 20.0), "20 ms");
-        assert_eq!(readout(Unit::Seconds, 0.2), "200 ms");
-        assert_eq!(readout(Unit::Seconds, 2.4), "2.4 s");
-        assert_eq!(readout(Unit::Seconds, 60.0), "60 s");
-        assert_eq!(readout(Unit::Part, 0.3), "30%");
-    }
-
     /// The defaults and both ends of every range, through the travel of its knob and back.
     #[test]
     fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
         for control in KNOBS {
-            let (range, parameter) = (control.scale, control.parameter);
+            let (range, parameter) = (control.range(), control.parameter);
             assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
             assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
             for value in [parameter.min, parameter.default, parameter.max] {
@@ -434,13 +369,13 @@ mod tests {
                     ..ReverbState::default()
                 };
                 let (start, end) = start_and_end(&state);
-                let at = |start, zone, control: &Control| {
+                let at = |start, zone, control: Control| {
                     let value = (control.parameter.get)(&state);
-                    layout::time_axis(control.scale, start, zone).position(value)
+                    layout::time_axis(control.range(), start, zone).position(value)
                 };
-                let handle_start = at(layout::LEFT, layout::PRE_DELAY_ZONE, &PRE_DELAY_KNOB);
+                let handle_start = at(layout::LEFT, layout::PRE_DELAY_ZONE, PRE_DELAY_KNOB);
                 let decay_start = start + layout::SHORTEST_TAIL;
-                let handle_end = at(decay_start, layout::DECAY_ZONE, &DECAY_KNOB);
+                let handle_end = at(decay_start, layout::DECAY_ZONE, DECAY_KNOB);
                 assert!((handle_start - start).abs() < 1e-4, "{state:?}");
                 assert!((handle_end - end).abs() < 1e-4, "{state:?}");
                 assert!(start > 0.0 && end < 1.0 && start < end, "{state:?}");
