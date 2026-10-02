@@ -13,8 +13,8 @@
 use std::f32::consts::LN_10;
 
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Peaks, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets, held,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, Peaks, Ports,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Taps, Targets, held,
 };
 
 use crate::{CompressorState, KNEE, Lookahead, MAKEUP, MIX, PARAMETERS, RATIO, THRESHOLD};
@@ -184,19 +184,13 @@ pub struct Compressor {
     detector: Detector,
     /// The reduction now, in dB, 0 or more.
     reduction: f64,
-    /// The lookahead: every frame of the input, both channels, for 10 ms and one frame.
-    delay: Vec<[f32; CHANNELS]>,
-    /// Where the next frame goes.
-    write: usize,
-    /// The delay of the lookahead before a change and after it, in frames, and how far the
-    /// sound has faded from the one to the other, 0 to 1. A new lookahead is a glide between
-    /// two taps of one line, not a jump.
-    from_frames: usize,
-    to_frames: usize,
-    fade: Smoothed,
-    /// A lookahead that came while the fade to the one before still ran. It waits for that
-    /// fade to end: a new fade from the middle of one would jump.
-    pending: Option<usize>,
+    /// The lookahead: the input of each channel for 10 ms.
+    lines: [DelayLine; CHANNELS],
+    /// Where both lines write the next frame.
+    position: usize,
+    /// Where the lookahead is read. A new lookahead is a fade between two taps of one line, not
+    /// a jump.
+    tap: Taps<1>,
     /// Frames in a row of silent input, up to what a silence needs to leave everything.
     quiet: usize,
 }
@@ -225,12 +219,9 @@ impl Compressor {
             release: 0.0,
             detector: Detector::new(sample_rate),
             reduction: 0.0,
-            delay: Vec::new(),
-            write: 0,
-            from_frames: lookahead,
-            to_frames: lookahead,
-            fade: Smoothed::new(1.0),
-            pending: None,
+            lines: [(); CHANNELS].map(|_| DelayLine::new(1)),
+            position: 0,
+            tap: Taps::new([lookahead]),
             quiet: 0,
         };
         compressor.start(sample_rate);
@@ -243,16 +234,15 @@ impl Compressor {
         self.sample_rate = sample_rate;
         self.ramp_frames = (RAMP_SECONDS * sample_rate).max(1.0);
         self.detector = Detector::new(sample_rate);
-        self.delay = vec![[0.0; CHANNELS]; Lookahead::Ten.frames(sample_rate) + 1];
-        self.write = 0;
+        let longest = Lookahead::Ten.frames(sample_rate);
+        self.lines = [(); CHANNELS].map(|_| DelayLine::new(longest));
+        self.position = 0;
         self.reduction = 0.0;
-        let lookahead = self.state.lookahead.frames(sample_rate);
-        (self.from_frames, self.to_frames) = (lookahead, lookahead);
         self.aim(&self.state.targets(self.ramp_frames));
         self.snap();
         // At rest: nothing has come in, so the first sound restarts the detector and its
         // stretches begin with it, whatever ran before.
-        self.quiet = self.delay.len() + self.detector.window_frames();
+        self.quiet = self.silence_frames();
     }
 
     /// Sets every target from the record and its lanes, each reached in its own ramp.
@@ -269,30 +259,16 @@ impl Compressor {
         self.attack = pole(state.attack_ms / 1_000.0, self.sample_rate);
         self.release = pole(state.release_ms / 1_000.0, self.sample_rate);
         let lookahead = state.lookahead.frames(self.sample_rate);
-        self.pending = (lookahead != self.to_frames).then_some(lookahead);
-        if !self.fade.is_moving() {
-            self.fade_to_pending();
-        }
+        self.tap.aim([lookahead], self.ramp_frames);
     }
 
-    /// Starts the fade to the lookahead that waits, if one does.
-    fn fade_to_pending(&mut self) {
-        if let Some(lookahead) = self.pending.take() {
-            self.from_frames = self.to_frames;
-            self.to_frames = lookahead;
-            self.fade = Smoothed::new(0.0);
-            self.fade.set_target(1.0, self.ramp_frames);
-        }
-    }
-
-    fn smoothers(&mut self) -> [&mut Smoothed; 6] {
+    fn smoothers(&mut self) -> [&mut Smoothed; 5] {
         [
             &mut self.threshold,
             &mut self.slope,
             &mut self.knee,
             &mut self.makeup,
             &mut self.mix,
-            &mut self.fade,
         ]
     }
 
@@ -300,21 +276,18 @@ impl Compressor {
     /// for.
     fn snap(&mut self) {
         self.smoothers().into_iter().for_each(Smoothed::snap);
-        if let Some(lookahead) = self.pending.take() {
-            self.to_frames = lookahead;
-        }
-        self.from_frames = self.to_frames;
+        self.tap.snap();
+    }
+
+    /// The frames after which a silence has left the longest lookahead and the detector.
+    fn silence_frames(&self) -> usize {
+        Lookahead::Ten.frames(self.sample_rate) + 1 + self.detector.window_frames()
     }
 
     /// Whether a silent block changes nothing: the silence has left the detector and the
     /// lookahead, and the reduction has let go.
     fn is_resting(&self) -> bool {
-        self.reduction == 0.0 && self.quiet >= self.delay.len() + self.detector.window_frames()
-    }
-
-    fn tap(&self, frames: usize) -> [f32; CHANNELS] {
-        let length = self.delay.len();
-        self.delay[(self.write + length - frames.min(length - 1)) % length]
+        self.reduction == 0.0 && self.quiet >= self.silence_frames()
     }
 }
 
@@ -340,7 +313,7 @@ impl Processor for Compressor {
     /// Where the lookahead goes, also while it waits for a fade: that is the delay the sound
     /// has once the change has arrived.
     fn latency(&self) -> u32 {
-        self.pending.unwrap_or(self.to_frames) as u32
+        self.state.lookahead.frames(self.sample_rate) as u32
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
@@ -380,7 +353,9 @@ impl Processor for Compressor {
                 true => self.quiet.saturating_add(1),
                 false => 0,
             };
-            self.delay[self.write] = input;
+            for (line, sample) in self.lines.iter_mut().zip(input) {
+                line.write(self.position, sample);
+            }
             let level = self.detector.next(input[0].abs().max(input[1].abs()));
             loudest = loudest.max(level);
             let level_db = 20.0 * level.max(FLOOR).log10();
@@ -399,14 +374,15 @@ impl Processor for Compressor {
             most = most.max(self.reduction);
             let gain = decibels_to_gain(self.makeup.advance(1) - self.reduction as f32);
             let gain = 1.0 + self.mix.advance(1) * (gain - 1.0);
-            let fade = self.fade.advance(1);
-            let (from, to) = (self.tap(self.from_frames), self.tap(self.to_frames));
-            if !self.fade.is_moving() {
-                self.fade_to_pending();
-            }
-            *left_out = (from[0] + fade * (to[0] - from[0])) * gain;
-            *right_out = (from[1] + fade * (to[1] - from[1])) * gain;
-            self.write = (self.write + 1) % self.delay.len();
+            let fade = self.tap.weight();
+            let [left, right] = self
+                .lines
+                .each_ref()
+                .map(|line| self.tap.read(line, 0, self.position, fade));
+            *left_out = left * gain;
+            *right_out = right * gain;
+            self.tap.advance();
+            self.position = self.position.wrapping_add(1);
         }
         self.meters.level.record(0, loudest);
         self.meters.reduction.record(0, most as f32);
