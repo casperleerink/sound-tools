@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_void};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use vst3::Steinberg::Vst::{
     IAttributeList, IAttributeList_iid, IAttributeListTrait, IComponentHandler,
@@ -320,9 +320,6 @@ pub struct Handler {
     midi_mapping_changed: AtomicBool,
     /// The plugin changed which parameters it has, so the host lists them again.
     ids_changed: AtomicBool,
-    /// How many edits are open (`beginEdit` without `endEdit`). Only for the log of the test
-    /// plugin and to keep the pair balanced; nothing of the host depends on it.
-    open_edits: AtomicI32,
     /// The newest value of every parameter the controller has edited and the processor has not
     /// been given yet. By parameter, so the value a composer left a knob on is never the one
     /// that is dropped: a knob drag is hundreds of edits of one parameter and only the last of
@@ -411,7 +408,6 @@ const RESTART: RestartFlags = RestartFlags_::kLatencyChanged | RestartFlags_::kI
 
 impl IComponentHandlerTrait for Handler {
     unsafe fn beginEdit(&self, _id: ParamID) -> tresult {
-        self.open_edits.fetch_add(1, Ordering::AcqRel);
         kResultOk
     }
 
@@ -427,7 +423,6 @@ impl IComponentHandlerTrait for Handler {
     }
 
     unsafe fn endEdit(&self, _id: ParamID) -> tresult {
-        self.open_edits.fetch_sub(1, Ordering::AcqRel);
         kResultOk
     }
 
