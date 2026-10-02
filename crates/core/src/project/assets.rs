@@ -9,6 +9,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use super::instance::follows_name_rule;
+
 /// The folder of every asset, under the project folder.
 pub const ASSETS_FOLDER: &str = "assets";
 
@@ -48,7 +50,7 @@ impl AssetName {
     pub fn new(folder: &str, name: &str, extension: &str) -> Result<Self, InvalidAssetName> {
         let whole = format!("{folder}/{name}.{extension}");
         for part in [folder, name, extension] {
-            if part.is_empty() || !part.chars().all(is_name_character) {
+            if !follows_name_rule(part) {
                 return Err(InvalidAssetName {
                     part: part.to_string(),
                     whole,
@@ -86,10 +88,6 @@ impl std::fmt::Display for AssetName {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.as_str())
     }
-}
-
-fn is_name_character(character: char) -> bool {
-    character.is_ascii_lowercase() || character.is_ascii_digit() || "-_".contains(character)
 }
 
 /// The `assets/` folder of one project. Cheap to clone: it is one path.

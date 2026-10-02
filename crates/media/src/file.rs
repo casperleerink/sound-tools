@@ -197,7 +197,7 @@ impl Audio {
 
     /// How long the file plays at its own rate.
     pub fn seconds(&self) -> f64 {
-        self.frames as f64 / f64::from(self.sample_rate)
+        self.info().seconds()
     }
 
     /// The bytes this file takes in memory, which is its size on disk.

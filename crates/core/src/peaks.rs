@@ -34,30 +34,41 @@ impl Peaks {
     /// have, is ignored. So a sample that is not a number never shows as the loudest, and
     /// neither does -0.0, whose sign bit would sort above every positive value.
     pub fn record(&self, channel: usize, value: f32) {
-        let Some(peak) = self.0.get(channel) else {
-            return;
-        };
-        if value > 0.0 {
-            peak.fetch_max(value.to_bits(), Ordering::Relaxed);
+        if let Some(peak) = self.0.get(channel) {
+            keep_largest(peak, value);
         }
     }
 
     /// Keeps the largest absolute sample of each channel of one block. Realtime safe.
     pub fn record_block(&self, channels: [&[f32]; CHANNELS]) {
         for (channel, samples) in channels.into_iter().enumerate() {
-            let peak = samples
-                .iter()
-                .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
-            self.record(channel, peak);
+            self.record(channel, loudest(samples));
         }
     }
 
     /// The largest value of each channel since the last take, and zero from now on.
     pub fn take(&self) -> [f32; CHANNELS] {
-        self.0
-            .each_ref()
-            .map(|peak| f32::from_bits(peak.swap(0, Ordering::Relaxed)))
+        self.0.each_ref().map(take)
     }
+}
+
+/// The largest absolute value of `samples`, 0 for none.
+pub(crate) fn loudest<'a>(samples: impl IntoIterator<Item = &'a f32>) -> f32 {
+    let samples = samples.into_iter();
+    samples.fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
+}
+
+/// Keeps `value` in `peak` when it is the largest since the last take, as [`Peaks::record`]
+/// does. Realtime safe.
+pub(crate) fn keep_largest(peak: &AtomicU32, value: f32) {
+    if value > 0.0 {
+        peak.fetch_max(value.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// The value kept in `peak`, and zero from now on.
+pub(crate) fn take(peak: &AtomicU32) -> f32 {
+    f32::from_bits(peak.swap(0, Ordering::Relaxed))
 }
 
 #[cfg(test)]

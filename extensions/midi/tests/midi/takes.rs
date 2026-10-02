@@ -220,6 +220,7 @@ fn the_wheels_are_in_the_raw_take_and_thinned_in_its_clip() {
     );
     assert!(
         raw.json()
+            .unwrap()
             .contains(r#"{"kind":"mod_wheel","time_us":0,"sounded_us":0,"value":64},"#)
     );
     let clip = take.clip(&clock()).unwrap();
@@ -250,8 +251,8 @@ fn every_take_gets_a_name_of_its_own_and_never_writes_over_one() {
     assert_eq!(third.raw(&clock()).write(&assets).unwrap(), "take-3");
 
     let of = |name: &str| std::fs::read_to_string(assets.path(&take_asset(name).unwrap())).unwrap();
-    assert_eq!(of("take-1"), first.raw(&clock()).json());
-    assert_eq!(of("take-2"), second.raw(&clock()).json());
+    assert_eq!(of("take-1"), first.raw(&clock()).json().unwrap());
+    assert_eq!(of("take-2"), second.raw(&clock()).json().unwrap());
     assert_ne!(of("take-1"), of("take-2"));
 }
 

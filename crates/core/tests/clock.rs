@@ -66,6 +66,13 @@ fn time_signatures(runs: &[(&str, u32)]) -> TimeSignatures {
     TimeSignatures::new(runs).unwrap()
 }
 
+/// The tick of a position that exists.
+fn ticks_of(time_signatures: &TimeSignatures, position: BarBeat) -> Ticks {
+    let bar = time_signatures.bar(position.bar).unwrap();
+    let beat = bar.signature.ticks_per_beat();
+    bar.start + Ticks(u64::from(position.beat - 1) * beat + u64::from(position.tick))
+}
+
 fn any_signature() -> impl Strategy<Value = TimeSignature> {
     let denominator = prop::sample::select(vec![1_u32, 2, 4, 8, 16, 32]);
     (1_u32..=32, denominator)
@@ -142,7 +149,7 @@ proptest! {
         prop_assert_eq!(position.bar, bar.number);
         prop_assert!((1..=bar.signature.numerator()).contains(&position.beat));
         prop_assert!(u64::from(position.tick) < bar.signature.ticks_per_beat());
-        prop_assert_eq!(time_signatures.ticks_of(position), Ok(Ticks(tick)));
+        prop_assert_eq!(ticks_of(&time_signatures, position), Ticks(tick));
     }
 
     #[test]
@@ -258,7 +265,6 @@ fn bars_and_beats_count_from_one() {
         tick: 0,
     };
     assert_eq!(four_four.bar_beat_of(Ticks(0)), first);
-    assert_eq!(four_four.ticks_of(first), Ok(Ticks(0)));
     let position = four_four.bar_beat_of(Ticks(3 * 3840 + 2 * 960 + 5));
     assert_eq!(position.to_string(), "4:3:005");
 
@@ -271,53 +277,7 @@ fn bars_and_beats_count_from_one() {
         beat: 6,
         tick: 479,
     };
-    assert_eq!(
-        six_eight.ticks_of(position),
-        Ok(Ticks(2880 + 5 * 480 + 479))
-    );
-}
-
-#[test]
-fn positions_outside_the_time_signature_are_errors() {
-    let four_four = TimeSignatures::default();
-    for (bar, beat, tick) in [
-        (0, 1, 0),
-        (1, 0, 0),
-        (1, 5, 0),
-        (1, 1, 960),
-        (u64::MAX, 4, 0),
-    ] {
-        let position = BarBeat { bar, beat, tick };
-        assert_eq!(
-            four_four.ticks_of(position),
-            Err(ClockError::InvalidBarBeat {
-                position,
-                time_signature: TimeSignature::default()
-            })
-        );
-    }
-    // Beat 3 exists in bar 1 but not in bar 2, which is in 2/8.
-    let changing = time_signatures(&[("3/8", 1), ("2/8", 1)]);
-    assert_eq!(
-        changing.ticks_of(BarBeat {
-            bar: 1,
-            beat: 3,
-            tick: 0
-        }),
-        Ok(Ticks(960))
-    );
-    let position = BarBeat {
-        bar: 2,
-        beat: 3,
-        tick: 0,
-    };
-    assert_eq!(
-        changing.ticks_of(position),
-        Err(ClockError::InvalidBarBeat {
-            position,
-            time_signature: signature("2/8")
-        })
-    );
+    assert_eq!(six_eight.bar_beat_of(Ticks(2880 + 5 * 480 + 479)), position);
 }
 
 /// The opening of the Danse sacrale: a new time signature almost every bar.

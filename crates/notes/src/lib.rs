@@ -38,9 +38,7 @@ use sound_core::{Place, State, Ticks};
 
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
-pub use lane::{
-    ExpressionValue, LaneValue, Point, check_order, cut, thinned, thinned_within, value_at,
-};
+pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };
@@ -470,14 +468,9 @@ impl Clip {
     }
 
     /// Whether `name` may name a raw take: it becomes a file name, so it follows the rule of
-    /// an instance name. Without this a record could point outside the project folder.
+    /// an asset name. Without this a record could point outside the project folder.
     pub fn is_valid_take_name(name: &str) -> bool {
-        !name.is_empty()
-            && name.chars().all(|character| {
-                character.is_ascii_lowercase()
-                    || character.is_ascii_digit()
-                    || "-_".contains(character)
-            })
+        take_asset(name).is_ok()
     }
 
     /// The first tick after the clip.
