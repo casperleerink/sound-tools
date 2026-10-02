@@ -13,6 +13,8 @@
 
 use std::f64::consts::{PI, TAU};
 
+use sound_core::poly_blep;
+
 use crate::Sound;
 
 /// -60 dB, as the exponent of `e`: a level falls by this in the decay time.
@@ -452,22 +454,12 @@ impl Metal {
         for (phase, step) in &mut self.squares {
             let naive = if *phase < 0.5 { 1.0 } else { -1.0 };
             let half = (*phase + 0.5).fract();
-            sum += naive + blep(*phase, *step) - blep(half, *step);
+            // The rounding is in `f32`, far finer than the `f32` samples of the kit.
+            let step_f32 = *step as f32;
+            let rounding = poly_blep(*phase as f32, step_f32) - poly_blep(half as f32, step_f32);
+            sum += naive + f64::from(rounding);
             *phase = (*phase + *step).fract();
         }
         sum / self.squares.len().max(1) as f64
-    }
-}
-
-/// What to add near a step of a waveform, at `phase` of a cycle, to round it off.
-fn blep(phase: f64, step: f64) -> f64 {
-    if phase < step {
-        let t = phase / step;
-        t + t - t * t - 1.0
-    } else if phase > 1.0 - step {
-        let t = (phase - 1.0) / step;
-        t * t + t + t + 1.0
-    } else {
-        0.0
     }
 }

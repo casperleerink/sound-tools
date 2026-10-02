@@ -18,9 +18,9 @@ use std::f32::consts::PI;
 
 use crate::{Curve, DRIVE, MIX, OUTPUT, PARAMETERS, SaturatorState, TONE};
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Oversampler,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, OnePole, Oversampler,
     OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
-    soft_clip,
+    amplitude, held, soft_clip,
 };
 
 /// Every number of the saturator can be automated.
@@ -54,15 +54,6 @@ const HIGHEST_PART: f32 = 0.45;
 /// While the tone moves, its factors are worked out again this often. Four times per block of
 /// the engine: a sweep has no steps anyone can hear, and a `tan` per frame is not needed.
 const FACTOR_FRAMES: usize = 16;
-
-/// Input louder than this, or not a number, is held to it before anything else, so no sample of
-/// anyone else's can make the saturator's memory infinite. +36 dBFS: nothing real comes near.
-const INPUT_LIMIT: f32 = 64.0;
-
-/// While the input is silent, a memory of the DC blocker or the tone smaller than this is let
-/// go of: -180 dB, far under anything audible. So a saturator after a sound that ended comes to
-/// rest and does no work.
-const REST: f32 = 1e-9;
 
 /// Frames of silent input after which the dry delay and the oversampling hold only zeros: more
 /// than the delay and the memory of every stage.
@@ -164,22 +155,18 @@ fn level_gain(shape: impl Fn(f32) -> f32, drive: f32) -> f32 {
     REFERENCE * 2.0 / (shape(driven) - shape(-driven))
 }
 
-fn decibels_to_gain(db: f32) -> f32 {
-    10_f32.powf(db / 20.0)
-}
-
 /// The automatic gain of a curve at a drive, as a factor: what the saturator turns the curved
 /// sound down by, so a sine at -12 dBFS keeps its level.
 pub fn auto_gain(curve: Curve, drive_db: f32) -> f32 {
-    level_gain(|sample| shape(curve, sample), decibels_to_gain(drive_db))
+    level_gain(|sample| shape(curve, sample), amplitude(drive_db))
 }
 
 /// What comes out for a steady `input` from -1 to 1 once every change has arrived, with the
 /// drive, the curve, the automatic gain, the output and the mix. The tone and the DC blocker
 /// are left out: they are about frequency, and this is the shape. The card draws it.
 pub fn transfer(state: &SaturatorState, input: f32) -> f32 {
-    let drive = decibels_to_gain(state.drive_db);
-    let wet = decibels_to_gain(state.output_db)
+    let drive = amplitude(state.drive_db);
+    let wet = amplitude(state.output_db)
         * auto_gain(state.curve, state.drive_db)
         * shape(state.curve, drive * input);
     input + state.mix * (wet - input)
@@ -195,7 +182,7 @@ fn bent(hz: f32, sample_rate: f32) -> f32 {
 /// pivot `ω` times `k` keeps the pivot at its level: `(k s + ω) / (s + ω k)` has size 1 at
 /// `s = jω`. It is exact for the bent frequencies, so the crossover is the bent pivot times `k`.
 fn tilt(tone_db: f32, sample_rate: f32) -> (f32, f32, f32) {
-    let above = decibels_to_gain(tone_db / 2.0);
+    let above = amplitude(tone_db / 2.0);
     let highest = bent(HIGHEST_PART * sample_rate, sample_rate);
     let crossover = (bent(PIVOT_HZ, sample_rate) * above).min(highest);
     (crossover, 1.0 / above, above)
@@ -231,9 +218,9 @@ pub fn response(state: &SaturatorState, hz: f32, sample_rate: f32) -> f32 {
     let dc = low_pass(bent(DC_HZ, sample_rate));
     let dc = (1.0 - dc.0, -dc.1);
     let gain = f64::from(
-        decibels_to_gain(state.drive_db)
+        amplitude(state.drive_db)
             * auto_gain(state.curve, state.drive_db)
-            * decibels_to_gain(state.output_db),
+            * amplitude(state.output_db),
     );
     let wet = (
         gain * (tone.0 * dc.0 - tone.1 * dc.1),
@@ -242,43 +229,6 @@ pub fn response(state: &SaturatorState, hz: f32, sample_rate: f32) -> f32 {
     let mix = f64::from(state.mix);
     let (real, imaginary) = (1.0 - mix + mix * wet.0, mix * wet.1);
     real.hypot(imaginary) as f32
-}
-
-/// A one-pole filter in the trapezoidal form (Zavalishin, "The Art of VA Filter Design"): its
-/// low pass, and the high pass as the input less it.
-#[derive(Clone, Copy, Default)]
-struct OnePole {
-    memory: f32,
-}
-
-impl OnePole {
-    /// The low pass of `input`, with the factor of its corner.
-    fn low_pass(&mut self, factor: f32, input: f32) -> f32 {
-        let step = (input - self.memory) * factor;
-        let low = step + self.memory;
-        self.memory = low + step;
-        low
-    }
-
-    fn settle(&mut self) {
-        if self.memory.abs() < REST {
-            self.memory = 0.0;
-        }
-    }
-}
-
-/// The factor of a one-pole filter at a bent corner.
-fn one_pole_factor(corner: f32) -> f32 {
-    corner / (1.0 + corner)
-}
-
-/// A sample of the input as the saturator takes it: held to [`INPUT_LIMIT`], and silence for
-/// anything that is not a number.
-fn held(sample: f32) -> f32 {
-    if sample.is_nan() {
-        return 0.0;
-    }
-    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
 /// What one frame of the curve and the mix is: where every glide is at that frame.
@@ -302,11 +252,11 @@ struct Channel {
 }
 
 impl Channel {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
             oversampler: Oversampler::new(),
-            dc: OnePole { memory: 0.0 },
-            tone: OnePole { memory: 0.0 },
+            dc: OnePole::default(),
+            tone: OnePole::default(),
             dry: [0.0; DRY_FRAMES],
         }
     }
@@ -367,7 +317,7 @@ impl Saturator {
             output: Smoothed::new(1.0),
             mix: Smoothed::new(1.0),
             level: 1.0,
-            dc_factor: one_pole_factor(bent(DC_HZ, sample_rate)),
+            dc_factor: OnePole::factor(DC_HZ, sample_rate),
             tone_factor: 0.0,
             gains: [1.0; 2],
             gains_target: [1.0; 2],
@@ -385,13 +335,13 @@ impl Saturator {
     fn aim(&mut self, targets: &SaturatorTargets) {
         let state = *self.state;
         self.drive
-            .set_target(decibels_to_gain(state.drive_db), targets.ramp(&DRIVE));
+            .set_target(amplitude(state.drive_db), targets.ramp(&DRIVE));
         for (weight, target) in self.weights.iter_mut().zip(weights(state.curve)) {
             weight.set_target(target, targets.edit());
         }
         self.tone.set_target(state.tone_db, targets.ramp(&TONE));
         self.output
-            .set_target(decibels_to_gain(state.output_db), targets.ramp(&OUTPUT));
+            .set_target(amplitude(state.output_db), targets.ramp(&OUTPUT));
         self.mix.set_target(state.mix, targets.ramp(&MIX));
         // A number that took its value at once does not move, so nothing else says the
         // factors are old.
@@ -428,7 +378,7 @@ impl Saturator {
         }
         let tone = self.tone.advance(frames);
         let (crossover, below, above) = tilt(tone, self.sample_rate);
-        self.tone_factor = one_pole_factor(crossover);
+        self.tone_factor = OnePole::bent_factor(crossover);
         self.gains_target = [below, above];
         // After a snap there is nothing to glide from.
         if self.stale {
@@ -472,7 +422,7 @@ impl Saturator {
             && self
                 .channels
                 .iter()
-                .all(|channel| channel.dc.memory == 0.0 && channel.tone.memory == 0.0)
+                .all(|channel| channel.dc.is_silent() && channel.tone.is_silent())
     }
 }
 
@@ -489,7 +439,7 @@ impl Processor for Saturator {
     fn prepare(&mut self, config: &PrepareConfig) {
         self.sample_rate = config.sample_rate as f32;
         self.ramp_frames = (RAMP_SECONDS * self.sample_rate).max(1.0);
-        self.dc_factor = one_pole_factor(bent(DC_HZ, self.sample_rate));
+        self.dc_factor = OnePole::factor(DC_HZ, self.sample_rate);
         self.stale = true;
     }
 
@@ -562,8 +512,8 @@ impl Processor for Saturator {
                 for (index, ((curved, output), frame)) in frames.enumerate() {
                     let delayed = self.write + index + DRY_FRAMES - Oversampler::DELAY_FRAMES;
                     let dry = channel.dry[delayed % DRY_FRAMES];
-                    let blocked = curved - channel.dc.low_pass(self.dc_factor, *curved);
-                    let low = channel.tone.low_pass(self.tone_factor, blocked);
+                    let blocked = curved - channel.dc.low(self.dc_factor, *curved);
+                    let low = channel.tone.low(self.tone_factor, blocked);
                     let along = (index + 1) as f32 / length as f32;
                     let below = below + (to_below - below) * along;
                     let above = above + (to_above - above) * along;

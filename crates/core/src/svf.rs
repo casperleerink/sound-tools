@@ -1,5 +1,6 @@
 //! The state variable filter of the built-in Filter effect and the Wavetable synth: low, band,
-//! high pass and notch, at 12 or 24 dB per octave, with resonance. Next to
+//! high pass and notch, at 12 or 24 dB per octave, with resonance. The EQ and the Utility mix
+//! its raw outputs in their own shapes ([`SvfSection::band_and_low`]). Next to
 //! [`Smoothed`](crate::Smoothed), a helper a processor uses per frame. The core itself filters
 //! nothing.
 //!
@@ -23,6 +24,8 @@
 use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
 use serde::{Deserialize, Serialize};
+
+use crate::dsp::{HIGHEST_PART, REST};
 
 /// Which part of the sound the filter lets through.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,16 +115,10 @@ const BUTTERWORTH_Q: f32 = FRAC_1_SQRT_2;
 /// `1 / (2 cos(3π/8))`. Their product is `1/√2`, so the cutoff is at -3 dB here too.
 const BUTTERWORTH_4: [f32; 2] = [0.541_196_1, 1.306_563];
 
-/// A cutoff pushed past the ends of the range stays inside it, and under a part of the sample
-/// rate, below the Nyquist frequency where the filter's factors would run away.
+/// A cutoff pushed past the ends of the range stays inside it, and under
+/// [`HIGHEST_PART`] of the sample rate, where the filter's factors would run away.
 const LOWEST_HZ: f32 = 20.0;
 const HIGHEST_HZ: f32 = 20_000.0;
-const HIGHEST_PART: f32 = 0.45;
-
-/// While the input is silent, a memory smaller than this is let go of: -180 dB, far under
-/// anything audible. So a filter after a sound that ended comes to rest and does no work, also
-/// after the slow ring of a low cutoff at full resonance.
-const REST: f32 = 1e-9;
 
 /// The first section at a resonance, with `slope` from 0 (12 dB per octave) to 1 (24 dB): its
 /// Q, and the level of its low and high pass. Resonance raises the Q from its Butterworth value
@@ -206,9 +203,9 @@ pub struct SvfFactors {
 }
 
 impl SvfFactors {
-    /// `g` is `tan(π cutoff / sample rate)`.
-    fn new(g: f32, q: f32) -> Self {
-        let k = 1.0 / q;
+    /// `g` is [`Self::cutoff_factor`] and `k` the damping, `1 / Q`. For a filter of its own
+    /// shape; [`Self::sections`] gives the ones of this filter.
+    pub fn new(g: f32, k: f32) -> Self {
         let a1 = 1.0 / (1.0 + g * (g + k));
         let a2 = g * a1;
         Self {
@@ -217,6 +214,12 @@ impl SvfFactors {
             a2,
             a3: g * a2,
         }
+    }
+
+    /// `g` of a cutoff, `tan(π cutoff / sample rate)`, with the cutoff held inside what the
+    /// sample rate allows. A `tan`: work it out when the cutoff moves, not per frame.
+    pub fn cutoff_factor(cutoff_hz: f32, sample_rate: f32) -> f32 {
+        (PI * usable_hz(cutoff_hz, sample_rate) / sample_rate).tan()
     }
 
     /// Both sections of a filter at a cutoff, a resonance from 0 to 1 and a slope weight from 0
@@ -229,10 +232,9 @@ impl SvfFactors {
         slope: f32,
         sample_rate: f32,
     ) -> ([Self; 2], f32) {
-        let hz = usable_hz(cutoff_hz, sample_rate);
-        let g = (PI * hz / sample_rate).tan();
+        let g = Self::cutoff_factor(cutoff_hz, sample_rate);
         let (q, level) = first_section(resonance, slope);
-        ([Self::new(g, q), Self::new(g, SECOND_Q)], level)
+        ([Self::new(g, 1.0 / q), Self::new(g, 1.0 / SECOND_Q)], level)
     }
 }
 
@@ -254,15 +256,23 @@ impl SvfSection {
         level: f32,
         input: f32,
     ) -> f32 {
-        let SvfFactors { k, a1, a2, a3 } = *factors;
+        let (v1, v2) = self.band_and_low(factors, input);
+        let high_pass = input - factors.k * v1 - v2;
+        let band_pass = factors.k * v1;
+        level * (low * v2 + high * high_pass) + band * band_pass + notch * (input - band_pass)
+    }
+
+    /// One frame, before any mix: the band pass and the low pass, from which every other output
+    /// is made. This band pass is not scaled by `k`, so its peak is Q and not 1.
+    #[inline]
+    pub fn band_and_low(&mut self, factors: &SvfFactors, input: f32) -> (f32, f32) {
+        let SvfFactors { a1, a2, a3, .. } = *factors;
         let v3 = input - self.ic2;
         let v1 = a1 * self.ic1 + a2 * v3;
         let v2 = self.ic2 + a2 * self.ic1 + a3 * v3;
         self.ic1 = 2.0 * v1 - self.ic1;
         self.ic2 = 2.0 * v2 - self.ic2;
-        let high_pass = input - k * v1 - v2;
-        let band_pass = k * v1;
-        level * (low * v2 + high * high_pass) + band * band_pass + notch * (input - band_pass)
+        (v1, v2)
     }
 
     /// Lets go of a memory too small to hear, so a filter whose input went silent comes to

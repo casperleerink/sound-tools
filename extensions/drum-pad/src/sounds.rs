@@ -337,16 +337,14 @@ fn make_sounds() {
 /// The frames of one sound.
 fn make(job: &Job) -> Result<Vec<[f32; 2]>, MediaError> {
     let pad = &job.pad;
-    match (&job.recipe, &pad.source) {
-        (Recipe::Synthesized { sound, rate, .. }, _) => {
+    let (Recipe::Synthesized { rate, .. } | Recipe::Sampled { rate, .. }) = job.recipe;
+    match &pad.source {
+        Source::Sound(sound) => {
             let pitch = semitones_to_ratio(pad.pitch_semitones);
             let decay = f64::from(pad.decay_ms) / 1000.0;
-            Ok(kit::synthesize(*sound, pitch, decay, *rate))
+            Ok(kit::synthesize(*sound, pitch, decay, rate))
         }
-        (Recipe::Sampled { rate, .. }, Source::Sample(asset)) => {
-            sampled(&job.assets, asset, pad.pitch_semitones, *rate)
-        }
-        (Recipe::Sampled { .. }, Source::Sound(_)) => Ok(Vec::new()),
+        Source::Sample(asset) => sampled(&job.assets, asset, pad.pitch_semitones, rate),
     }
 }
 

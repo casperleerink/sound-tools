@@ -97,8 +97,8 @@ fn the_gain_makes_a_quiet_sound_louder_up_to_the_ceiling() {
     assert!(tail > amplitude(-1.05), "{tail}");
 }
 
-/// A sample that is not a number or is infinite is silence to the limiter. The output stays
-/// under the ceiling and the sound goes on as it would have.
+/// A sample that is not a number is silence to the limiter, and an infinite one is held to
+/// +36 dBFS. The output stays under the ceiling and the sound goes on as it would have.
 #[test]
 fn input_that_is_not_a_number_or_infinite_does_not_reach_the_output() {
     let mut frame = 0_usize;

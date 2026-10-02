@@ -19,8 +19,8 @@
 //! No modulation and no randomness: a render is the same every time and does not depend on
 //! where a session started.
 //!
-//! Every delay line is allocated when the processor is made and again when the sample rate is
-//! set, for the largest size and pre-delay, and never in `process`. A change of size or
+//! Every delay line is allocated in `prepare`, for the sample rate and the largest size and
+//! pre-delay, and never in `process`. A change of size or
 //! pre-delay does not move a read position: it fades over 20 ms from the old tap to the new one,
 //! so nothing clicks and no pitch slides.
 
@@ -243,13 +243,11 @@ impl Reverb {
     pub const AUTOMATION: AutomationInput<ReverbState, { PARAMETERS.len() }> =
         AutomationInput::new(0, PARAMETERS);
 
-    /// Allocates its delay lines for 48 kHz, and again in `prepare` for another rate. Starts at
-    /// these values, so a reverb that is added or opened does not glide in.
+    /// Its delay lines are allocated in `prepare`, which also takes the record at once.
     pub fn new(state: ReverbState) -> Self {
-        let sample_rate = 48_000.0;
-        let mut reverb = Self {
-            sample_rate,
-            ramp_frames: RAMP_SECONDS * sample_rate,
+        Self {
+            sample_rate: 0.0,
+            ramp_frames: 1.0,
             state: Automated::new(Self::AUTOMATION, state),
             position: 0,
             pre_delay: [(); CHANNELS].map(|_| DelayLine::new(1)),
@@ -277,12 +275,11 @@ impl Reverb {
             stale: true,
             snapped: true,
             quiet_frames: 0,
-        };
-        reverb.allocate(sample_rate);
-        reverb
+        }
     }
 
-    /// Makes every delay line for a sample rate, empty, and takes the record at once.
+    /// Makes every delay line for a sample rate, empty, and takes the record at once, so a
+    /// reverb that is added or opened does not glide in.
     fn allocate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
         self.ramp_frames = (RAMP_SECONDS * sample_rate).max(1.0);
@@ -503,10 +500,7 @@ impl Processor for Reverb {
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
-        let sample_rate = config.sample_rate as f32;
-        if sample_rate != self.sample_rate {
-            self.allocate(sample_rate);
-        }
+        self.allocate(config.sample_rate as f32);
     }
 
     fn update(&mut self, update: &mut ReverbState) {
@@ -606,6 +600,10 @@ mod tests {
         let mut reverb = Reverb::new(ReverbState {
             freeze: true,
             ..ReverbState::default()
+        });
+        reverb.prepare(&PrepareConfig {
+            sample_rate: 48_000,
+            offline: true,
         });
         reverb.move_factors(16);
         assert_eq!(reverb.line_gains, [1.0; LINES]);

@@ -7,7 +7,8 @@
 //! nothing spreads it across the stereo field, which halves the work of its filters.
 
 use sound_core::{
-    EnvelopeState, Lfo, MAX_BLOCK, Oversampler, SvfFactors, SvfSection, pan_gains, soft_clip,
+    EnvelopeState, HIGHEST_PHASE_STEP, Lfo, MAX_BLOCK, Oversampler, SvfFactors, SvfSection,
+    pan_gains, poly_blep, soft_clip,
 };
 use sound_notes::{Velocity, frequency_hz};
 
@@ -16,9 +17,6 @@ use crate::matrix::{Destination, KEY_SEMITONES, Modulation, Source, Sources};
 use crate::state::Effect;
 use crate::synth::{Block, FACTOR_FRAMES, FilterBlock, MAX_UNISON, OscillatorBlock, Ramp};
 use crate::tables::{LevelView, Wavetable};
-
-/// Above this a cycle is about two frames: a note this high plays at this pitch.
-const HIGHEST_PHASE_STEP: f32 = 0.45;
 
 /// How far the unison copies spread at amount 1, either way.
 const UNISON_CENTS: f32 = 50.0;
@@ -516,22 +514,6 @@ impl Frames {
     }
 }
 
-/// What rounds off a jump at the start of a cycle, times half the jump, for a phase that moves
-/// by `step`: from 0 far from the jump to 1 just before it and -1 just after it, so both
-/// samples next to the jump meet in the middle.
-#[inline]
-fn step_rounding(phase: f32, step: f32) -> f32 {
-    if phase < step {
-        let t = phase / step;
-        t + t - t * t - 1.0
-    } else if phase > 1.0 - step {
-        let t = (phase - 1.0) / step;
-        t * t + t + t + 1.0
-    } else {
-        0.0
-    }
-}
-
 /// Reads a level at a phase from 0 to 1, between two of its frames: in a straight line
 /// between the two samples around the phase in each, and `mix` of the second. A frame is
 /// `length + 1` samples, the last a copy of the first.
@@ -705,7 +687,7 @@ impl Copies<'_> {
                     let read_at = |phase| read(first, second, length, mix, phase);
                     let mut value = shape(read_at(warp(phase, setting)), setting);
                     if let Some(end) = restart(setting) {
-                        let rounding = step_rounding(phase, step);
+                        let rounding = poly_blep(phase, step);
                         if rounding != 0.0 {
                             value += 0.5 * (read_at(0.0) - read_at(end)) * rounding;
                         }

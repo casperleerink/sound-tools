@@ -29,7 +29,8 @@ use sound_core::{
 use sound_media::AudioAsset;
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
 
-pub use processor::{DrumPad, DrumUpdate, FADE_SECONDS, RAMP_SECONDS, VOICES, pad_gains};
+use processor::{DrumPad, DrumUpdate};
+pub use processor::{FADE_SECONDS, RAMP_SECONDS, VOICES, pad_gains};
 pub use sounds::{
     MAX_SAMPLE_SECONDS, Rendered, SAMPLE_END_SECONDS, sounds_pending, take_ready, wait_for_sounds,
 };

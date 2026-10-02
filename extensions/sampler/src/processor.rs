@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use sound_core::{
     AudioOutput, Automated, AutomationInput, Envelope, EnvelopeState, EventInput, MAX_BLOCK, Peaks,
-    Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
+    Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets, amplitude,
 };
 use sound_media::{Audio, SCRATCH_FRAMES, Varispeed, varispeed};
 use sound_notes::{NoteEvent, Pitch, Velocity, Voice as _, Voices, Wheels};
@@ -81,7 +81,7 @@ impl Settings {
             sustain: state.sustain,
             release_seconds: state.release_seconds,
             velocity_to_volume: state.velocity_to_volume,
-            gain: 10_f32.powf(state.gain_db / 20.0),
+            gain: amplitude(state.gain_db),
         }
     }
 }

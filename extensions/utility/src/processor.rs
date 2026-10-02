@@ -18,11 +18,12 @@
 //! one, so the input is copied to the output and every sample comes out as it went in, to the
 //! bit.
 
-use std::f32::consts::{PI, SQRT_2};
+use std::f32::consts::SQRT_2;
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets, amplitude, pan_gains,
+    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, amplitude, held,
+    pan_gains,
 };
 
 use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, PARAMETERS, UtilityState, WIDTH};
@@ -35,19 +36,6 @@ const RAMP_SECONDS: f32 = 0.02;
 
 /// While the crossover frequency moves, its factors are worked out again this often.
 const FACTOR_FRAMES: usize = 16;
-
-/// The crossover stays under this part of the sample rate, below the Nyquist frequency where
-/// its factors would run away.
-const HIGHEST_PART: f32 = 0.45;
-
-/// Input louder than this, or not a number, is held to it once the utility changes anything, as
-/// the other effects hold theirs, so no sample of anyone else's can make the memory of the
-/// crossover infinite or pass on what is not a number. +36 dBFS: nothing real comes near it.
-const INPUT_LIMIT: f32 = 64.0;
-
-/// While the input is silent, a memory smaller than this is let go of: -180 dB. So a crossover
-/// after a sound that ended comes to rest and does no work.
-const REST: f32 = 1e-9;
 
 /// `1 / Q` of every section: Butterworth, so two in a row are the Linkwitz-Riley filter whose low
 /// and high pass add up to an all-pass.
@@ -113,99 +101,44 @@ pub fn matrix(state: &UtilityState) -> [[f32; CHANNELS]; CHANNELS] {
     ]
 }
 
-/// The factors of one section for one frequency.
-#[derive(Copy, Clone, Default)]
-struct Factors {
-    a1: f32,
-    a2: f32,
-    a3: f32,
+/// The factors of every section of the crossover at a frequency.
+fn factors(hz: f32, sample_rate: f32) -> SvfFactors {
+    SvfFactors::new(SvfFactors::cutoff_factor(hz, sample_rate), DAMPING)
 }
 
-impl Factors {
-    fn new(hz: f32, sample_rate: f32) -> Self {
-        // Not `clamp`: nothing may panic on the audio thread.
-        let hz = hz.min(HIGHEST_PART * sample_rate);
-        let g = (PI * hz / sample_rate).tan();
-        let a1 = 1.0 / (1.0 + g * (g + DAMPING));
-        let a2 = g * a1;
-        Self { a1, a2, a3: g * a2 }
-    }
+fn high_pass(section: &mut SvfSection, factors: &SvfFactors, input: f32) -> f32 {
+    let (band, low) = section.band_and_low(factors, input);
+    input - DAMPING * band - low
 }
 
-/// The memory of one section: the two integrators.
-#[derive(Copy, Clone, Default)]
-struct Section {
-    ic1: f32,
-    ic2: f32,
-}
-
-impl Section {
-    /// One frame. Returns the band pass and the low pass, from which the others are made.
-    fn next(&mut self, factors: &Factors, input: f32) -> (f32, f32) {
-        let Factors { a1, a2, a3 } = *factors;
-        let v3 = input - self.ic2;
-        let v1 = a1 * self.ic1 + a2 * v3;
-        let v2 = self.ic2 + a2 * self.ic1 + a3 * v3;
-        self.ic1 = 2.0 * v1 - self.ic1;
-        self.ic2 = 2.0 * v2 - self.ic2;
-        (v1, v2)
-    }
-
-    fn high_pass(&mut self, factors: &Factors, input: f32) -> f32 {
-        let (band, low) = self.next(factors, input);
-        input - DAMPING * band - low
-    }
-
-    /// The low pass plus the high pass less the band: a flat gain that only turns the phase.
-    fn all_pass(&mut self, factors: &Factors, input: f32) -> f32 {
-        let (band, _) = self.next(factors, input);
-        input - 2.0 * DAMPING * band
-    }
-
-    fn settle(&mut self) {
-        for memory in [&mut self.ic1, &mut self.ic2] {
-            if memory.abs() < REST {
-                *memory = 0.0;
-            }
-        }
-    }
-
-    fn is_silent(&self) -> bool {
-        self.ic1 == 0.0 && self.ic2 == 0.0
-    }
+/// The low pass plus the high pass less the band: a flat gain that only turns the phase.
+fn all_pass(section: &mut SvfSection, factors: &SvfFactors, input: f32) -> f32 {
+    let (band, _) = section.band_and_low(factors, input);
+    input - 2.0 * DAMPING * band
 }
 
 /// The crossover of bass mono: the all-pass of the mid, and the two high passes of the side.
 #[derive(Copy, Clone, Default)]
 struct Crossover {
-    mid: Section,
-    side: [Section; 2],
+    mid: SvfSection,
+    side: [SvfSection; 2],
 }
 
 impl Crossover {
-    fn next(&mut self, factors: &Factors, mid: f32, side: f32) -> (f32, f32) {
-        let mid = self.mid.all_pass(factors, mid);
+    fn next(&mut self, factors: &SvfFactors, mid: f32, side: f32) -> (f32, f32) {
+        let mid = all_pass(&mut self.mid, factors, mid);
         let [first, second] = &mut self.side;
-        let side = second.high_pass(factors, first.high_pass(factors, side));
+        let side = high_pass(second, factors, high_pass(first, factors, side));
         (mid, side)
     }
 
-    fn sections(&mut self) -> impl Iterator<Item = &mut Section> {
+    fn sections(&mut self) -> impl Iterator<Item = &mut SvfSection> {
         std::iter::once(&mut self.mid).chain(&mut self.side)
     }
 
     fn is_silent(&self) -> bool {
-        self.mid.is_silent() && self.side.iter().all(Section::is_silent)
+        self.mid.is_silent() && self.side.iter().all(SvfSection::is_silent)
     }
-}
-
-/// A sample as the utility takes it: held to [`INPUT_LIMIT`], and silence for anything that
-/// is not a number.
-fn held(sample: f32) -> f32 {
-    if sample.is_nan() {
-        return 0.0;
-    }
-    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
 pub struct Utility {
@@ -230,7 +163,7 @@ pub struct Utility {
     /// Whether the factors have to be worked out again although nothing glides: after a snap,
     /// and before the first block.
     stale: bool,
-    factors: Factors,
+    factors: SvfFactors,
     crossover: Crossover,
 }
 
@@ -253,7 +186,7 @@ impl Utility {
             pan: Smoothed::new(0.0),
             panned: [1.0; CHANNELS],
             stale: true,
-            factors: Factors::default(),
+            factors: SvfFactors::default(),
             crossover: Crossover::default(),
         };
         utility.aim(&utility.state.targets(utility.ramp_frames));
@@ -339,7 +272,7 @@ impl Utility {
         let changes = self.stale || self.octaves.is_moving();
         let octaves = self.octaves.advance(frames);
         if changes {
-            self.factors = Factors::new(octaves.exp2(), self.sample_rate);
+            self.factors = factors(octaves.exp2(), self.sample_rate);
             self.stale = false;
         }
     }
@@ -448,7 +381,7 @@ impl Processor for Utility {
             self.stale = true;
         }
         if silent_input {
-            self.crossover.sections().for_each(Section::settle);
+            self.crossover.sections().for_each(SvfSection::settle);
         }
     }
 }
