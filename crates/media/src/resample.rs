@@ -33,11 +33,7 @@ pub const SCRATCH_FRAMES: usize = 16_384;
 pub struct Resampler {
     /// File frames per engine frame, as a fraction in lowest terms.
     step: (u64, u64),
-    /// Taps each side of a position.
-    half: usize,
-    phases: usize,
-    /// `phases + 1` rows of `2 * half` taps, each row summing to 1.
-    table: Box<[f32]>,
+    table: SincTable,
 }
 
 impl Resampler {
@@ -49,9 +45,7 @@ impl Resampler {
         if step.0 == step.1 {
             return Self {
                 step,
-                half: 0,
-                phases: 0,
-                table: Box::default(),
+                table: SincTable::default(),
             };
         }
         // Kaiser's design, at the lower of the two rates.
@@ -67,34 +61,9 @@ impl Resampler {
         // The middle of the transition, relative to the Nyquist frequency of the file.
         let cutoff = (pass + nyquist) / 2.0 / (file as f64 / 2.0);
         let beta = 0.1102 * (STOP_DB - 8.7);
-        let normal = bessel_i0(beta);
-
-        let width = 2 * half;
-        let mut table = vec![0.0_f32; (phases + 1) * width];
-        let mut values = vec![0.0_f64; width];
-        for (phase, row) in table.chunks_exact_mut(width).enumerate() {
-            let fraction = phase as f64 / phases as f64;
-            for (tap, value) in values.iter_mut().enumerate() {
-                // The distance of this tap's sample from the position, in file frames.
-                let distance = (tap as f64 - half as f64 + 1.0) - fraction;
-                let edge = distance / half as f64;
-                let window = match edge.abs() < 1.0 {
-                    true => bessel_i0(beta * (1.0 - edge * edge).sqrt()) / normal,
-                    false => 0.0,
-                };
-                *value = cutoff * sinc(cutoff * distance) * window;
-            }
-            // A steady level comes out at exactly that level.
-            let sum: f64 = values.iter().sum();
-            for (cell, value) in row.iter_mut().zip(&values) {
-                *cell = (value / sum) as f32;
-            }
-        }
         Self {
             step,
-            half,
-            phases,
-            table: table.into_boxed_slice(),
+            table: SincTable::new(half, phases, cutoff, beta),
         }
     }
 
@@ -131,17 +100,17 @@ impl Resampler {
             return;
         }
         let (file, engine) = self.step;
-        let width = 2 * self.half;
+        let half = self.table.half;
         // Output frames per round, so their input fits the scratch.
-        let room = scratch.len().saturating_sub(width + 1) as u128;
+        let room = scratch.len().saturating_sub(2 * half + 1) as u128;
         let per_round = (room * u128::from(engine) / u128::from(file)).max(1);
         let per_round = usize::try_from(per_round).unwrap_or(usize::MAX);
         let mut done = 0_u64;
         for chunk in out.chunks_mut(per_round) {
             let start = first + done;
             let end = start + chunk.len() as u64 - 1;
-            let window = self.position(origin, start).0 as i64 - self.half as i64 + 1;
-            let length = (self.position(origin, end).0 as i64 + self.half as i64 + 1 - window)
+            let window = self.position(origin, start).0 as i64 - half as i64 + 1;
+            let length = (self.position(origin, end).0 as i64 + half as i64 + 1 - window)
                 .clamp(0, scratch.len() as i64) as usize;
             let Some(input) = scratch.get_mut(..length) else {
                 chunk.fill([0.0; 2]);
@@ -151,36 +120,98 @@ impl Resampler {
             let input = &*input;
             for (index, frame) in chunk.iter_mut().enumerate() {
                 let (sample, fraction) = self.position(origin, start + index as u64);
-                let phase = fraction * self.phases as f64;
-                let row = (phase as usize).min(self.phases - 1);
-                let between = (phase - row as f64) as f32;
-                let first_tap = (sample as i64 - self.half as i64 + 1 - window) as usize;
-                let lower = self.table.get(row * width..(row + 1) * width);
-                let upper = self.table.get((row + 1) * width..(row + 2) * width);
-                let samples = input.get(first_tap..first_tap + width);
-                let (Some(lower), Some(upper), Some(samples)) = (lower, upper, samples) else {
-                    *frame = [0.0; 2];
-                    continue;
-                };
-                let mut sum = [0.0_f32; 2];
-                for ((sample, lower), upper) in samples.iter().zip(lower).zip(upper) {
-                    let weight = lower + between * (upper - lower);
-                    sum[0] += sample[0] * weight;
-                    sum[1] += sample[1] * weight;
-                }
-                *frame = sum;
+                let first_tap = (sample as i64 - half as i64 + 1 - window) as usize;
+                *frame = self.table.apply(input, first_tap, fraction);
             }
             done += chunk.len() as u64;
         }
     }
 }
 
+/// A windowed sinc (Kaiser window) from a table of phases, with a straight line between two
+/// phases. The filter of [`Resampler`] and of [`Varispeed`](crate::Varispeed).
+#[derive(Debug, Default)]
+pub(crate) struct SincTable {
+    /// Taps each side of a place.
+    pub(crate) half: usize,
+    pub(crate) phases: usize,
+    /// `phases + 1` rows of `2 * half` taps, each row summing to 1.
+    pub(crate) rows: Box<[f32]>,
+}
+
+impl SincTable {
+    /// `cutoff` is a part of the Nyquist frequency of the file, and `beta` the shape of the
+    /// window.
+    pub(crate) fn new(half: usize, phases: usize, cutoff: f64, beta: f64) -> Self {
+        let normal = bessel_i0(beta);
+        let width = 2 * half;
+        let mut rows = vec![0.0_f32; (phases + 1) * width];
+        let mut values = vec![0.0_f64; width];
+        for (phase, row) in rows.chunks_exact_mut(width).enumerate() {
+            let fraction = phase as f64 / phases as f64;
+            for (tap, value) in values.iter_mut().enumerate() {
+                // The distance of this tap's sample from the place, in frames of the file.
+                let distance = (tap as f64 - half as f64 + 1.0) - fraction;
+                let window = kaiser(distance / half as f64, beta, normal);
+                *value = cutoff * sinc(cutoff * distance) * window;
+            }
+            // A steady level comes out at exactly that level.
+            let sum: f64 = values.iter().sum();
+            for (cell, value) in row.iter_mut().zip(&values) {
+                *cell = (value / sum) as f32;
+            }
+        }
+        Self {
+            half,
+            phases,
+            rows: rows.into_boxed_slice(),
+        }
+    }
+
+    /// The filtered frame `fraction` (0 to 1) past the frame `input[first_tap + half - 1]`.
+    /// Silence when its taps do not fit in `input`.
+    #[inline]
+    pub(crate) fn apply(&self, input: &[[f32; 2]], first_tap: usize, fraction: f64) -> [f32; 2] {
+        let width = 2 * self.half;
+        let phase = fraction * self.phases as f64;
+        let row = (phase as usize).min(self.phases.saturating_sub(1));
+        let between = (phase - row as f64) as f32;
+        let lower = self.rows.get(row * width..(row + 1) * width);
+        let upper = self.rows.get((row + 1) * width..(row + 2) * width);
+        let samples = input.get(first_tap..first_tap + width);
+        let (Some(lower), Some(upper), Some(samples)) = (lower, upper, samples) else {
+            return [0.0; 2];
+        };
+        let mut sum = [0.0_f32; 2];
+        for ((sample, lower), upper) in samples.iter().zip(lower).zip(upper) {
+            let weight = lower + between * (upper - lower);
+            sum[0] += sample[0] * weight;
+            sum[1] += sample[1] * weight;
+        }
+        sum
+    }
+}
+
+/// `sin(πx) / (πx)`: exactly 1 at 0, and exactly 0 at every other whole `x`, where `sin` alone
+/// is a little off. So a filter with its cutoff at the Nyquist frequency gives the sample itself
+/// at a whole place, and nothing of its neighbours.
 pub(crate) fn sinc(x: f64) -> f64 {
     if x.abs() < 1e-12 {
         return 1.0;
     }
+    if x == x.round() {
+        return 0.0;
+    }
     let angle = std::f64::consts::PI * x;
     angle.sin() / angle
+}
+
+/// The Kaiser window at `edge`, from -1 to 1 across it. `normal` is `bessel_i0(beta)`.
+pub(crate) fn kaiser(edge: f64, beta: f64, normal: f64) -> f64 {
+    match edge.abs() < 1.0 {
+        true => bessel_i0(beta * (1.0 - edge * edge).sqrt()) / normal,
+        false => 0.0,
+    }
 }
 
 /// The modified Bessel function of the first kind, order 0, for the Kaiser window.
@@ -227,7 +258,7 @@ mod tests {
             (384_000, 8_000),
         ] {
             let resampler = Resampler::new(file, engine);
-            let width = 2 * resampler.half;
+            let width = 2 * resampler.table.half;
             let block = sound_core::MAX_BLOCK * (file / engine + 1) as usize;
             assert!(
                 width + block < SCRATCH_FRAMES,
@@ -235,9 +266,9 @@ mod tests {
             );
             println!(
                 "{file} Hz to {engine} Hz: {width} taps, {} phases",
-                resampler.phases
+                resampler.table.phases
             );
-            for row in resampler.table.chunks_exact(width) {
+            for row in resampler.table.rows.chunks_exact(width) {
                 let sum: f32 = row.iter().sum();
                 assert!((sum - 1.0).abs() < 1e-5, "{sum}");
             }

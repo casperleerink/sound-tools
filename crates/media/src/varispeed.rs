@@ -22,7 +22,7 @@
 use std::sync::LazyLock;
 
 use crate::file::Audio;
-use crate::resample::{bessel_i0, sinc};
+use crate::resample::{SincTable, bessel_i0, kaiser, sinc};
 
 /// Taps each side of a place.
 const HALF: usize = 16;
@@ -40,8 +40,8 @@ pub const MAX_STEP: f64 = 8.0;
 
 /// The filter that reads a file at any place. There is one, [`varispeed`].
 pub struct Varispeed {
-    /// `PHASES + 1` rows of `WIDTH` taps, each row summing to 1. Row 0 is a single 1.
-    table: Box<[f32]>,
+    /// Row 0 is a single 1.
+    table: SincTable,
     /// The kernel itself at every `1 / PHASES` from `-HALF` to `HALF`, for the stretched one.
     curve: Box<[f32]>,
 }
@@ -57,43 +57,12 @@ pub fn varispeed() -> &'static Varispeed {
 impl Varispeed {
     fn new() -> Self {
         let normal = bessel_i0(BETA);
-        let mut table = vec![0.0_f32; (PHASES + 1) * WIDTH];
-        let mut values = [0.0_f64; WIDTH];
-        for (phase, row) in table.chunks_exact_mut(WIDTH).enumerate() {
-            let fraction = phase as f64 / PHASES as f64;
-            for (tap, value) in values.iter_mut().enumerate() {
-                // The distance of this tap's sample from the place, in frames of the file.
-                let distance = (tap as f64 - HALF as f64 + 1.0) - fraction;
-                let edge = distance / HALF as f64;
-                let window = match edge.abs() < 1.0 {
-                    true => bessel_i0(BETA * (1.0 - edge * edge).sqrt()) / normal,
-                    false => 0.0,
-                };
-                // At a whole distance the sinc is 0, but `sin` does not say so exactly. A
-                // whole place must give its sample and nothing of its neighbours.
-                let whole = distance == distance.round() && distance != 0.0;
-                *value = match whole {
-                    true => 0.0,
-                    false => sinc(distance) * window,
-                };
-            }
-            // A steady level comes out at exactly that level.
-            let sum: f64 = values.iter().sum();
-            for (cell, value) in row.iter_mut().zip(&values) {
-                *cell = (value / sum) as f32;
-            }
-        }
         let curve = (0..=WIDTH * PHASES).map(|index| {
             let distance = index as f64 / PHASES as f64 - HALF as f64;
-            let edge = distance / HALF as f64;
-            let window = match edge.abs() < 1.0 {
-                true => bessel_i0(BETA * (1.0 - edge * edge).sqrt()) / normal,
-                false => 0.0,
-            };
-            (sinc(distance) * window) as f32
+            (sinc(distance) * kaiser(distance / HALF as f64, BETA, normal)) as f32
         });
         Self {
-            table: table.into_boxed_slice(),
+            table: SincTable::new(HALF, PHASES, 1.0, BETA),
             curve: curve.collect(),
         }
     }
@@ -150,24 +119,8 @@ impl Varispeed {
             for (index, frame) in chunk.iter_mut().enumerate() {
                 let at = first + step * index as f64;
                 let whole = at.floor();
-                let phase = (at - whole) * PHASES as f64;
-                let row = (phase as usize).min(PHASES - 1);
-                let between = (phase - row as f64) as f32;
                 let first_tap = (whole as i64 - HALF as i64 + 1 - window) as usize;
-                let lower = self.table.get(row * WIDTH..(row + 1) * WIDTH);
-                let upper = self.table.get((row + 1) * WIDTH..(row + 2) * WIDTH);
-                let samples = input.get(first_tap..first_tap + WIDTH);
-                let (Some(lower), Some(upper), Some(samples)) = (lower, upper, samples) else {
-                    *frame = [0.0; 2];
-                    continue;
-                };
-                let mut sum = [0.0_f32; 2];
-                for ((sample, lower), upper) in samples.iter().zip(lower).zip(upper) {
-                    let weight = lower + between * (upper - lower);
-                    sum[0] += sample[0] * weight;
-                    sum[1] += sample[1] * weight;
-                }
-                *frame = sum;
+                *frame = self.table.apply(input, first_tap, at - whole);
             }
             done += chunk.len();
         }
@@ -237,11 +190,11 @@ mod tests {
     #[test]
     fn every_row_passes_a_steady_level_and_the_first_is_the_sample_itself() {
         let varispeed = Varispeed::new();
-        for row in varispeed.table.chunks_exact(WIDTH) {
+        for row in varispeed.table.rows.chunks_exact(WIDTH) {
             let sum: f32 = row.iter().sum();
             assert!((sum - 1.0).abs() < 1e-5, "{sum}");
         }
-        let first = &varispeed.table[..WIDTH];
+        let first = &varispeed.table.rows[..WIDTH];
         for (tap, weight) in first.iter().enumerate() {
             let expected = if tap == HALF - 1 { 1.0 } else { 0.0 };
             assert_eq!(*weight, expected, "tap {tap}");
