@@ -10,8 +10,8 @@ pub mod audio_input;
 mod project_menu;
 pub mod recording;
 mod start;
-pub mod steadiness;
-pub mod tempo;
+mod steadiness;
+mod tempo;
 pub mod transport;
 
 use std::path::{Path, PathBuf};
