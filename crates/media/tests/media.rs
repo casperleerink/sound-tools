@@ -760,3 +760,19 @@ fn a_data_chunk_of_no_length_is_empty_when_a_chunk_follows_and_streamed_when_non
     let audio = Audio::parse(empty_data_then(&samples)).unwrap();
     assert_eq!(audio.frames(), 2);
 }
+
+/// The header of a file is read in parts. A chunk after the empty data that is longer than
+/// the first part still makes a file with no samples, as it does when the whole file is read.
+#[test]
+fn a_data_chunk_of_no_length_followed_by_a_long_chunk_probes_as_it_loads() {
+    let mut list = b"LIST".to_vec();
+    let body = vec![b'a'; 100_000];
+    list.extend((body.len() as u32).to_le_bytes());
+    list.extend(body);
+    let bytes = empty_data_then(&list);
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("empty.wav");
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(sound_media::probe(&path).unwrap().frames, 0);
+    assert_eq!(Audio::parse(bytes).unwrap().frames(), 0);
+}

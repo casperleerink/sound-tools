@@ -7,8 +7,8 @@ use sound_core::{
 };
 
 use crate::tools::{
-    BANK_RECORD, Dc, Harness, SAMPLE_RATE, dc_record, dc_to_device, dc_to_device_channel, id,
-    level_record, project_file, records, registry, write,
+    BANK_RECORD, CHAIN_RECORD, Dc, Harness, SAMPLE_RATE, dc_record, dc_to_device,
+    dc_to_device_channel, id, level_record, project_file, records, registry, write,
 };
 
 /// A project with one connected `test.dc` at 0.25.
@@ -308,11 +308,12 @@ fn a_folder_without_a_record_is_reported_until_the_record_arrives() {
 fn project_file_changes_apply_live() {
     let mut harness = one_dc();
     harness.project.engine().play();
-    harness.level();
+    let batches = harness.batches();
 
-    // Disconnect and halve the tempo in one outside edit.
+    // Disconnect and halve the tempo in one outside edit, which is one engine batch.
     let slow = project_file("").replace("120.0", "60.0");
     assert_eq!(harness.write_and_apply("project.json", &slow), 1);
+    assert_eq!(harness.batches(), batches + 1);
     assert_eq!(harness.level(), 0.0);
     let clock = harness.project.engine().clock().clone();
     assert_eq!(clock.frame_of(Ticks(960)).0, u64::from(SAMPLE_RATE));
@@ -377,6 +378,22 @@ fn a_connection_that_closes_a_cycle_stays_saved_unused_and_reported() {
     let fixed = project_file(&amplifier_link("first", "second"));
     assert_eq!(harness.write_and_apply("project.json", &fixed), 1);
     assert_eq!(harness.project.problems(), []);
+}
+
+#[test]
+fn a_cycle_through_a_behaviour_connection_leaves_out_the_saved_line() {
+    let mut harness = Harness::new();
+    harness.write_and_apply("state/chain.json", CHAIN_RECORD);
+    let cyclic = project_file(&amplifier_link("chain", "chain"));
+    assert_eq!(harness.write_and_apply("project.json", &cyclic), 1);
+    let problem = harness.problem_at("project.json").unwrap();
+    assert!(problem.contains("closes a cycle"), "{problem}");
+    assert_eq!(harness.project.problems().len(), 1);
+
+    // It opens like this too, with the chain still there.
+    let harness = harness.reopen();
+    assert_eq!(harness.project.instances().count(), 1);
+    assert_eq!(harness.project.problems().len(), 1);
 }
 
 #[test]

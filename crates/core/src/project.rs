@@ -500,6 +500,7 @@ impl Project {
             .iter()
             .any(|change| matches!(change, Change::ProjectFile(_)));
         let project_file_before = self.project_file.clone();
+        let derive_problems_before = self.derive_problems.clone();
         let problems_before = self.bindings.connection_problems().to_vec();
         // What behaviours said last time, so that `problems.txt` and the views follow a
         // behaviour that starts or stops reporting. Empty in a project with nothing to report.
@@ -526,11 +527,10 @@ impl Project {
                 };
             }
             self.project_file = project_file_before;
+            self.derive_problems = derive_problems_before;
             return Err(error);
         }
 
-        self.engine
-            .set_tempo_map(self.project_file.tempo_map.clone());
         for change in &records {
             let id = change.id.clone();
             self.events.push(match (&change.before, &change.after) {
@@ -756,11 +756,15 @@ impl Project {
         Ok(())
     }
 
-    /// Removes everything `id` owns, children before parents.
+    /// Removes everything `id` owns, children before parents, and the saved connections that
+    /// name them.
     fn stage_delete_inside(&mut self, id: &InstanceId, records: &mut Vec<RecordChange>) {
         let inside = id.inside(&self.instances);
         let inside: Vec<InstanceId> = inside.map(|(id, _)| id.clone()).collect();
         for id in inside.into_iter().rev() {
+            self.project_file
+                .connections
+                .retain(|connection| !connection.touches(&id));
             if let Some(before) = self.instances.remove(&id) {
                 records.push(RecordChange {
                     id,
@@ -812,6 +816,7 @@ impl Project {
             unbound: &unbound,
             dirty,
             connections: &self.project_file.connections,
+            tempo_map: &self.project_file.tempo_map,
         };
         Ok(self
             .bindings
