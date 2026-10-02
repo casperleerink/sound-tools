@@ -122,6 +122,14 @@ pub struct Sounded {
     pub playing: bool,
 }
 
+/// What the audio thread tells the control side, in the order it happened.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Report {
+    Sounded(Sounded),
+    /// A release is out: the live input holds no note, no pedal and no wheel away from rest.
+    Released,
+}
+
 struct Shared {
     /// The lock is taken by device threads only. Several MIDI ports share one ring, and one
     /// ring with a lock on the writing side is simpler than one ring per port with a list the
@@ -222,7 +230,7 @@ impl Input {
 /// update type is `()`.
 pub struct Keys {
     input: rtrb::Consumer<Arrived>,
-    reports: rtrb::Producer<Sounded>,
+    reports: rtrb::Producer<Report>,
     lost_reports: Arc<AtomicU64>,
     /// Asked for by anything that wants the live input to let go, see [`Input::release_held`].
     release: Arc<Release>,
@@ -243,7 +251,7 @@ impl Keys {
 
     /// The processor, the handle a device layer writes into, the reports and the counter of
     /// reports that did not fit.
-    pub(crate) fn new() -> (Self, Input, rtrb::Consumer<Sounded>, Arc<AtomicU64>) {
+    pub(crate) fn new() -> (Self, Input, rtrb::Consumer<Report>, Arc<AtomicU64>) {
         let (producer, input) = rtrb::RingBuffer::new(INPUT_CAPACITY);
         let (reports, read_reports) = rtrb::RingBuffer::new(REPORT_CAPACITY);
         let lost_reports = Arc::new(AtomicU64::new(0));
@@ -322,6 +330,14 @@ impl Keys {
             }
         }
     }
+
+    fn report(&mut self, report: Report) {
+        if self.reports.push(report).is_err() {
+            // Only the take, the latency and the control side's copy of what is held lose
+            // this. The sound went out.
+            self.lost_reports.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 
 impl Processor for Keys {
@@ -357,7 +373,9 @@ impl Processor for Keys {
         if self.releasing {
             self.release(event_outputs);
             if !self.releasing {
-                // Out. Whoever waits for it may now take the connection away.
+                // Out. The control side lets go of its copy of what is held, and whoever waits
+                // for it may now take the connection away.
+                self.report(Report::Released);
                 self.release.released.store(self.taken, Ordering::Relaxed);
             }
         }
@@ -371,16 +389,12 @@ impl Processor for Keys {
                 break;
             }
             self.note(arrived.played);
-            let sounded = Sounded {
+            self.report(Report::Sounded(Sounded {
                 arrived,
                 frame: *start_frame,
                 tick: transport.heard_tick,
                 playing: transport.playing,
-            };
-            if self.reports.push(sounded).is_err() {
-                // Only the take and the latency lose this. The sound went out.
-                self.lost_reports.fetch_add(1, Ordering::Relaxed);
-            }
+            }));
         }
     }
 }
