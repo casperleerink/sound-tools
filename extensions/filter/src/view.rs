@@ -2,13 +2,13 @@
 //! Cutoff, Resonance, Drive and Mix, and behind expand the slope and the LFO. The rack gives the
 //! view a [`CardFrame`]: the picker of the slot as the title, and the close icon.
 //!
-//! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one
-//! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
-//! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
-//! about the interface is here: the label, the unit, the name of the undo step and whether the
-//! card is expanded. A number that an automation lane of the track moves shows the value that
-//! plays, on its knob and on the display, and does not drag ([`Lanes`]).
+//! The view keeps no copy of the state. It reads the record when it renders, and every change goes
+//! through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one gesture and
+//! one undo step, a key step, a reset or a switch is one commit. The ranges, the defaults and the
+//! travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. What is only
+//! about the interface is here: the label, the unit, the name of the undo step and whether the card
+//! is expanded. A number that an automation lane of the track moves shows the value that plays, on
+//! its knob and on the display, and does not drag ([`Lanes`]).
 
 use gpui::{App, Context, Entity, Point, SharedString, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -19,13 +19,15 @@ use sound_ui::components::curves::{
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{
+    Knob, ParameterKnob, decibels_readout, hertz_readout, percent_readout, short,
+};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
 use crate::{
-    CUTOFF, DRIVE, Filter, FilterState, FilterType, LFO_DEPTH, LFO_RATE, MIX, Parameter, RESONANCE,
-    Slope, response,
+    CUTOFF, DRIVE, Filter, FilterState, FilterType, LFO_DEPTH, LFO_RATE, MIX, RESONANCE, Slope,
+    response,
 };
 
 /// The name the rack puts on the card of a filter.
@@ -44,49 +46,17 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Hertz,
-    Decibels,
-    /// A part of one, shown as a percentage.
-    Part,
-    Octaves,
-}
-
 /// A knob of the card.
-struct Control {
-    parameter: &'static Parameter,
-    label: &'static str,
-    undo_label: &'static str,
-    scale: KnobRange,
-    unit: Unit,
-}
+type Control = ParameterKnob<FilterState>;
 
-impl Control {
-    const fn new(
-        parameter: &'static Parameter,
-        label: &'static str,
-        undo_label: &'static str,
-        unit: Unit,
-    ) -> Self {
-        Self {
-            parameter,
-            label,
-            undo_label,
-            scale: KnobRange::of(parameter),
-            unit,
-        }
-    }
-}
-
-const CUTOFF_KNOB: Control = Control::new(&CUTOFF, "Cutoff", "Change cutoff", Unit::Hertz);
+const CUTOFF_KNOB: Control = Control::new(&CUTOFF, "Cutoff", "Change cutoff", hertz_readout);
 const RESONANCE_KNOB: Control =
-    Control::new(&RESONANCE, "Resonance", "Change resonance", Unit::Part);
-const DRIVE_KNOB: Control = Control::new(&DRIVE, "Drive", "Change drive", Unit::Decibels);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::Part);
-const RATE_KNOB: Control = Control::new(&LFO_RATE, "LFO rate", "Change LFO rate", Unit::Hertz);
+    Control::new(&RESONANCE, "Resonance", "Change resonance", percent_readout);
+const DRIVE_KNOB: Control = Control::new(&DRIVE, "Drive", "Change drive", decibels_readout);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
+const RATE_KNOB: Control = Control::new(&LFO_RATE, "LFO rate", "Change LFO rate", hertz_readout);
 const DEPTH_KNOB: Control =
-    Control::new(&LFO_DEPTH, "LFO depth", "Change LFO depth", Unit::Octaves);
+    Control::new(&LFO_DEPTH, "LFO depth", "Change LFO depth", octaves_readout);
 
 /// Every knob, in the order of the card: shown, then hidden.
 #[cfg(test)]
@@ -110,15 +80,9 @@ const TYPES: [(FilterType, &str, &str); 4] = [
 const SLOPES: [(Slope, &str, &str); 2] =
     [(Slope::Twelve, "12", "12"), (Slope::TwentyFour, "24", "24")];
 
-/// A value with its unit, as a knob shows it: `632 Hz`, `1.2 kHz`, `6 dB`, `30%`, `2 oct`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Hertz if value < 1_000.0 => format!("{} Hz", short(value)),
-        Unit::Hertz => format!("{} kHz", short(value / 1_000.0)),
-        Unit::Decibels => format!("{} dB", short(value)),
-        Unit::Part => format!("{}%", short(value * 100.0)),
-        Unit::Octaves => format!("{} oct", short(value)),
-    }
+/// A depth in octaves: `2 oct`.
+fn octaves_readout(octaves: f32) -> String {
+    format!("{} oct", short(octaves))
 }
 
 pub struct FilterView {
@@ -188,26 +152,20 @@ impl FilterView {
         self.edit.apply(session, filter, label, change, set, cx);
     }
 
-    fn knob(&self, control: &'static Control, state: &FilterState, cx: &mut Context<Self>) -> Knob {
-        let value = (control.parameter.get)(state);
+    fn knob(&self, control: Control, state: &FilterState, cx: &mut Context<Self>) -> Knob {
         let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        Knob::new(control.parameter.field)
-            .range(control.scale)
-            .value(value)
+        control
+            .knob(state)
             .automated(automated)
-            .default_value(control.parameter.default)
-            .label(control.label)
-            .readout(readout(control.unit, value))
             .on_change(weak_callback(cx, move |view, change, cx| {
-                let set = control.parameter.set;
-                view.change(control.undo_label, change, set, cx);
+                view.change(control.undo_label, change, control.parameter.set, cx);
             }))
     }
 
     /// The handle at the cutoff: sideways is cutoff, up and down is resonance. One drag of it
     /// is one undo step for both.
     fn handle(&self, state: &FilterState, cx: &mut Context<Self>) -> Handle {
-        let x = Axis::new(CUTOFF_KNOB.scale, state.cutoff_hz, CUTOFF.default);
+        let x = Axis::new(CUTOFF_KNOB.range(), state.cutoff_hz, CUTOFF.default);
         let y = Axis::new(
             resonance_travel(state.slope),
             state.resonance,
@@ -276,17 +234,17 @@ impl Render for FilterView {
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()
-                .top(knob(&CUTOFF_KNOB, cx))
-                .bottom(knob(&DRIVE_KNOB, cx)),
+                .top(knob(CUTOFF_KNOB, cx))
+                .bottom(knob(DRIVE_KNOB, cx)),
             Column::new()
-                .top(knob(&RESONANCE_KNOB, cx))
-                .bottom(knob(&MIX_KNOB, cx)),
+                .top(knob(RESONANCE_KNOB, cx))
+                .bottom(knob(MIX_KNOB, cx)),
         ];
         let hidden = [
             Column::new().top(self.slope(&state, cx)),
             Column::new()
-                .top(knob(&RATE_KNOB, cx))
-                .bottom(knob(&DEPTH_KNOB, cx)),
+                .top(knob(RATE_KNOB, cx))
+                .bottom(knob(DEPTH_KNOB, cx)),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
@@ -309,21 +267,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(readout(Unit::Hertz, 20.0), "20 Hz");
-        assert_eq!(readout(Unit::Hertz, 1_200.0), "1.2 kHz");
-        assert_eq!(readout(Unit::Hertz, 0.05), "0.05 Hz");
-        assert_eq!(readout(Unit::Decibels, 0.0), "0 dB");
-        assert_eq!(readout(Unit::Decibels, 12.5), "12.5 dB");
-        assert_eq!(readout(Unit::Part, 0.3), "30%");
-        assert_eq!(readout(Unit::Octaves, 2.0), "2 oct");
+    fn a_depth_reads_in_octaves() {
+        assert_eq!(octaves_readout(2.0), "2 oct");
+        assert_eq!(octaves_readout(0.25), "0.25 oct");
     }
 
     /// The defaults and both ends of every range, through the travel of its knob and back.
     #[test]
     fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
         for control in KNOBS {
-            let (range, parameter) = (control.scale, control.parameter);
+            let (range, parameter) = (control.range(), control.parameter);
             assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
             assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
             for value in [parameter.min, parameter.default, parameter.max] {

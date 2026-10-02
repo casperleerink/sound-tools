@@ -3,13 +3,13 @@
 //! ping-pong. The rack gives the view a [`CardFrame`]: the picker of the slot as the title, and
 //! the close icon.
 //!
-//! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one
-//! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
-//! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
-//! about the interface is here: the label, the unit, the name of the undo step and whether the
-//! card is expanded. A number that an automation lane of the track moves shows the value that
-//! plays, on its knob and on the display, and does not drag ([`Lanes`]).
+//! The view keeps no copy of the state. It reads the record when it renders, and every change goes
+//! through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one gesture and
+//! one undo step, a key step, a reset or a switch is one commit. The ranges, the defaults and the
+//! travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. What is only
+//! about the interface is here: the label, the unit, the name of the undo step and whether the card
+//! is expanded. A number that an automation lane of the track moves shows the value that plays, on
+//! its knob and on the display, and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -17,12 +17,14 @@ use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{
+    Knob, KnobRange, ParameterKnob, hertz_readout, milliseconds_readout, percent_readout,
+};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
-use crate::{Delay, DelayState, Division, FEEDBACK, Feel, HIGH_CUT, LOW_CUT, MIX, Parameter, TIME};
+use crate::{Delay, DelayState, Division, FEEDBACK, Feel, HIGH_CUT, LOW_CUT, MIX, TIME};
 
 /// The name the rack puts on the card of a delay.
 pub const NAME: &str = "Delay";
@@ -40,45 +42,16 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Hertz,
-    Milliseconds,
-    /// A part of one, shown as a percentage.
-    Part,
-}
-
 /// A knob of the card.
-struct Control {
-    parameter: &'static Parameter,
-    label: &'static str,
-    undo_label: &'static str,
-    scale: KnobRange,
-    unit: Unit,
-}
+type Control = ParameterKnob<DelayState>;
 
-impl Control {
-    const fn new(
-        parameter: &'static Parameter,
-        label: &'static str,
-        undo_label: &'static str,
-        unit: Unit,
-    ) -> Self {
-        Self {
-            parameter,
-            label,
-            undo_label,
-            scale: KnobRange::of(parameter),
-            unit,
-        }
-    }
-}
-
-const TIME_KNOB: Control = Control::new(&TIME, "Time", "Change time", Unit::Milliseconds);
-const FEEDBACK_KNOB: Control = Control::new(&FEEDBACK, "Feedback", "Change feedback", Unit::Part);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::Part);
-const LOW_CUT_KNOB: Control = Control::new(&LOW_CUT, "Low cut", "Change low cut", Unit::Hertz);
-const HIGH_CUT_KNOB: Control = Control::new(&HIGH_CUT, "High cut", "Change high cut", Unit::Hertz);
+const TIME_KNOB: Control = Control::new(&TIME, "Time", "Change time", milliseconds_readout);
+const FEEDBACK_KNOB: Control =
+    Control::new(&FEEDBACK, "Feedback", "Change feedback", percent_readout);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
+const LOW_CUT_KNOB: Control = Control::new(&LOW_CUT, "Low cut", "Change low cut", hertz_readout);
+const HIGH_CUT_KNOB: Control =
+    Control::new(&HIGH_CUT, "High cut", "Change high cut", hertz_readout);
 
 /// Every knob of a number, in the order of the card: shown, then hidden.
 #[cfg(test)]
@@ -113,22 +86,11 @@ const FEELS: [(Feel, &str, &str); 3] = [
     (Feel::Triplet, "triplet", "Triplet"),
 ];
 
-/// A value with its unit, as a knob shows it: `632 Hz`, `8 kHz`, `250 ms`, `1.5 s`, `30%`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Hertz if value < 1_000.0 => format!("{} Hz", short(value)),
-        Unit::Hertz => format!("{} kHz", short(value / 1_000.0)),
-        Unit::Milliseconds if value < 1_000.0 => format!("{} ms", short(value)),
-        Unit::Milliseconds => format!("{} s", short(value / 1_000.0)),
-        Unit::Part => format!("{}%", short(value * 100.0)),
-    }
-}
-
 /// The time as the Time knob shows it: the note while it syncs, with `.` when dotted and `t`
 /// for a triplet, as in `1/8.` and `1/8t`, else the ms.
 fn time_readout(state: &DelayState) -> String {
     if !state.sync {
-        return readout(Unit::Milliseconds, state.time_ms);
+        return milliseconds_readout(state.time_ms);
     }
     let feel = match state.feel {
         Feel::Straight => "",
@@ -190,7 +152,7 @@ fn time_travel(state: &DelayState) -> (KnobRange, f32, f32) {
         let default = place_of(DelayState::default().division);
         (DIVISIONS, place_of(state.division), default)
     } else {
-        (TIME_KNOB.scale, state.time_ms, TIME.default)
+        (TIME_KNOB.range(), state.time_ms, TIME.default)
     }
 }
 
@@ -288,26 +250,20 @@ impl DelayView {
         self.edit.apply(session, delay, label, change, set, cx);
     }
 
-    fn knob(&self, control: &'static Control, state: &DelayState, cx: &mut Context<Self>) -> Knob {
-        let value = (control.parameter.get)(state);
+    fn knob(&self, control: Control, state: &DelayState, cx: &mut Context<Self>) -> Knob {
         let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        Knob::new(control.parameter.field)
-            .range(control.scale)
-            .value(value)
+        control
+            .knob(state)
             .automated(automated)
-            .default_value(control.parameter.default)
-            .label(control.label)
-            .readout(readout(control.unit, value))
             .on_change(weak_callback(cx, move |view, change, cx| {
-                let set = control.parameter.set;
-                view.change(control.undo_label, change, set, cx);
+                view.change(control.undo_label, change, control.parameter.set, cx);
             }))
     }
 
     /// The Time knob: the ms, or while it syncs the division, a step at a time.
     fn time_knob(&self, state: &DelayState, cx: &mut Context<Self>) -> Knob {
         if !state.sync {
-            return self.knob(&TIME_KNOB, state, cx);
+            return self.knob(TIME_KNOB, state, cx);
         }
         let (range, value, default) = time_travel(state);
         Knob::new("division")
@@ -360,7 +316,7 @@ impl DelayView {
         let caption = format!(
             "Time {} · Feedback {}",
             time_readout(state),
-            readout(Unit::Part, state.feedback),
+            percent_readout(state.feedback),
         );
         let display = Display::new("display", DISPLAY_WIDTH)
             .curve(repeats(state))
@@ -431,13 +387,13 @@ impl Render for DelayView {
         let columns = [
             Column::new()
                 .top(self.time_knob(&state, cx))
-                .bottom(knob(&FEEDBACK_KNOB, cx)),
-            Column::new().top(sync).bottom(knob(&MIX_KNOB, cx)),
+                .bottom(knob(FEEDBACK_KNOB, cx)),
+            Column::new().top(sync).bottom(knob(MIX_KNOB, cx)),
         ];
         let hidden = [
             Column::new()
-                .top(knob(&LOW_CUT_KNOB, cx))
-                .bottom(knob(&HIGH_CUT_KNOB, cx)),
+                .top(knob(LOW_CUT_KNOB, cx))
+                .bottom(knob(HIGH_CUT_KNOB, cx)),
             Column::new().top(ping_pong),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
@@ -461,16 +417,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(readout(Unit::Hertz, 100.0), "100 Hz");
-        assert_eq!(readout(Unit::Hertz, 8_000.0), "8 kHz");
-        assert_eq!(readout(Unit::Milliseconds, 1.0), "1 ms");
-        assert_eq!(readout(Unit::Milliseconds, 250.0), "250 ms");
-        assert_eq!(readout(Unit::Milliseconds, 1_500.0), "1.5 s");
-        assert_eq!(readout(Unit::Part, 0.4), "40%");
-    }
-
-    #[test]
     fn the_time_reads_as_a_note_while_it_syncs_and_as_ms_else() {
         let at = |sync, division, feel| {
             time_readout(&DelayState {
@@ -491,7 +437,7 @@ mod tests {
     #[test]
     fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
         for control in KNOBS {
-            let (range, parameter) = (control.scale, control.parameter);
+            let (range, parameter) = (control.range(), control.parameter);
             assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
             assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
             for value in [parameter.min, parameter.default, parameter.max] {
@@ -561,7 +507,7 @@ mod tests {
     /// A stretched range is the same range over its zone, for both scales.
     #[test]
     fn a_stretched_range_puts_the_travel_in_its_zone() {
-        for range in [DIVISIONS, TIME_KNOB.scale] {
+        for range in [DIVISIONS, TIME_KNOB.range()] {
             let stretched = layout::stretched(range, 0.1, 0.8);
             for position in [0., 0.25, 0.5, 1.] {
                 let value = range.scale.value(range.min, range.max, position);
