@@ -317,12 +317,14 @@ pub fn tell_the_plugin(log: Option<&Path>, events: Option<u32>) {
     // one exists, so no other thread can be reading the environment.
     unsafe {
         match log {
-            Some(path) => std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_LOG", path),
-            None => std::env::remove_var("SOUND_TOOLS_TEST_PLUGIN_LOG"),
+            Some(path) => std::env::set_var(test_plugin_support::LOG_VARIABLE, path),
+            None => std::env::remove_var(test_plugin_support::LOG_VARIABLE),
         }
         match events {
-            Some(count) => std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_EVENTS", count.to_string()),
-            None => std::env::remove_var("SOUND_TOOLS_TEST_PLUGIN_EVENTS"),
+            Some(count) => {
+                std::env::set_var(test_plugin_support::EVENTS_VARIABLE, count.to_string())
+            }
+            None => std::env::remove_var(test_plugin_support::EVENTS_VARIABLE),
         }
     }
 }
@@ -332,7 +334,7 @@ pub fn tell_the_plugin(log: Option<&Path>, events: Option<u32>) {
 pub fn tell_the_plugin_to_go_silent() {
     // SAFETY: nextest runs one test per process and this is called before any thread but this
     // one exists, so no other thread can be reading the environment.
-    unsafe { std::env::set_var("SOUND_TOOLS_TEST_PLUGIN_SILENT", "1") };
+    unsafe { std::env::set_var(test_plugin_support::SILENT_VARIABLE, "1") };
 }
 
 /// Makes the VST 3 test plugin ask to be loaded and started again every time it is given its

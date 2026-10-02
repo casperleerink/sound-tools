@@ -40,7 +40,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use vst3::Steinberg::Vst::{IEditController, IEditControllerTrait, ViewType};
 use vst3::Steinberg::{
     IPlugFrame, IPlugFrameTrait, IPlugView, IPlugViewTrait, ViewRect, kInvalidArgument,
-    kPlatformTypeNSView, kResultFalse, kResultOk, kResultTrue, tresult,
+    kPlatformTypeNSView, kResultFalse, kResultOk, tresult,
 };
 use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
@@ -140,7 +140,7 @@ impl PluginGui for Vst3Gui {
         // SAFETY: the view came from the plugin and is alive. The frame belongs to this object,
         // which outlives the view: `destroy` gives the view a null frame before it is released.
         let result = unsafe { not_ours(|| view.setFrame(frame.as_ptr())) };
-        if result != kResultOk && result != kResultTrue {
+        if result != kResultOk {
             self.frame.holds(std::ptr::null_mut());
             return Err(self.refused("setFrame", result));
         }
@@ -158,7 +158,7 @@ impl PluginGui for Vst3Gui {
         };
         // SAFETY: the view came from the plugin and is alive, and `rect` outlives the call.
         let result = unsafe { not_ours(|| view.getSize(&mut rect)) };
-        if result != kResultOk && result != kResultTrue {
+        if result != kResultOk {
             return None;
         }
         window_size(&rect)
@@ -171,7 +171,7 @@ impl PluginGui for Vst3Gui {
         // SAFETY: the view is alive, and the caller says `parent` is an `NSView` that lives
         // until `destroy` has run, which is what `removed` needs.
         let result = unsafe { not_ours(|| view.attached(parent.as_ptr(), kPlatformTypeNSView)) };
-        if result != kResultOk && result != kResultTrue {
+        if result != kResultOk {
             return Err(self.refused("attached", result));
         }
         self.attached = true;
@@ -190,7 +190,7 @@ impl PluginGui for Vst3Gui {
         };
         // SAFETY: the view came from the plugin and is alive.
         let result = unsafe { not_ours(|| view.canResize()) };
-        result == kResultOk || result == kResultTrue
+        result == kResultOk
     }
 
     /// `checkSizeConstraint` makes a size the view takes of the one the composer dragged to,
@@ -244,7 +244,7 @@ impl PluginGui for Vst3Gui {
                 KeyDirection::Up => view.onKeyUp(character, code, modifiers),
             })
         };
-        result == kResultOk || result == kResultTrue
+        result == kResultOk
     }
 
     /// The order is the one Steinberg's `editorhost.cpp` takes in `closePlugView`: the frame
@@ -319,7 +319,7 @@ impl PlugFrame {
         };
         // SAFETY: the caller keeps the contract, and the rectangle outlives the call.
         let result = unsafe { not_ours(|| view.getSize(&mut rect)) };
-        match result == kResultOk || result == kResultTrue {
+        match result == kResultOk {
             true => window_size(&rect),
             false => None,
         }
@@ -453,7 +453,7 @@ fn vst3_key(keystroke: &Keystroke) -> Vst3Key {
 fn supports_nsview(view: &ComPtr<IPlugView>) -> bool {
     // SAFETY: the view came from the plugin and is alive, and the type is a static C string.
     let result = unsafe { not_ours(|| view.isPlatformTypeSupported(kPlatformTypeNSView)) };
-    result == kResultOk || result == kResultTrue
+    result == kResultOk
 }
 
 /// A window size out of a view rectangle. `None` says the rectangle is empty, which is no size

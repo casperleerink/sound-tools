@@ -20,7 +20,7 @@ const DEADLINE: Duration = Duration::from_millis(300);
 /// A scanner where the bundle of one format never answers.
 fn one_bundle_hangs(format: PluginFormat) -> ScanCommand {
     scanner()
-        .with_environment("SOUND_TOOLS_TEST_PLUGIN_HANG", format.as_str())
+        .with_environment(test_plugin_support::HANG_VARIABLE, format.as_str())
         .with_timeout(DEADLINE)
 }
 
@@ -192,7 +192,7 @@ fn a_bundle_that_crashed_is_remembered_and_not_tried_again() {
     let folder = tempfile::tempdir().unwrap();
     let cache = ScanCache::at(folder.path().join("plugins.json"));
     let search = vec![plugin_folder_of(folder.path(), PluginFormat::Clap)];
-    let crashing = scanner().with_environment("SOUND_TOOLS_TEST_PLUGIN_CRASH", "1");
+    let crashing = scanner().with_environment(test_plugin_support::CRASH_VARIABLE, "1");
 
     let plugins = Plugins::new(search.clone(), crashing, cache.clone());
     assert_eq!(plugins.scan().failures.len(), 1);

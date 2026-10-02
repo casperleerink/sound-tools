@@ -343,10 +343,45 @@ fn read(draining: Option<Draining>, deadline: Instant) -> String {
 /// How deep to look inside a search folder. Plugins usually sit one folder per vendor deep.
 const MAX_DEPTH: usize = 4;
 
-/// Every folder this machine keeps plugins in, for every format this build hosts.
+/// Every folder this machine keeps plugins in, for every format this build hosts. The lists
+/// are the ones the specifications give: `entry.h` for CLAP, and Steinberg's for VST 3. Each
+/// format also takes more folders from an environment variable.
 pub fn default_search_paths() -> Vec<PathBuf> {
-    let mut paths = crate::clap::default_search_paths();
-    paths.extend(crate::vst3::default_search_paths());
+    let mut paths = Vec::new();
+    if cfg!(target_os = "macos") {
+        paths.extend(search_paths(
+            "Library/Audio/Plug-Ins/CLAP",
+            &["/Library/Audio/Plug-Ins/CLAP"],
+            "CLAP_PATH",
+        ));
+        paths.extend(search_paths(
+            "Library/Audio/Plug-Ins/VST3",
+            &[
+                "/Library/Audio/Plug-Ins/VST3",
+                "/Network/Library/Audio/Plug-Ins/VST3",
+            ],
+            "VST3_PATH",
+        ));
+    } else {
+        paths.extend(search_paths(".clap", &["/usr/lib/clap"], "CLAP_PATH"));
+        paths.extend(search_paths(
+            ".vst3",
+            &["/usr/lib/vst3", "/usr/local/lib/vst3"],
+            "VST3_PATH",
+        ));
+    }
+    paths
+}
+
+/// The folder `in_home` under the home folder, the `system` folders, and the folders the
+/// environment `variable` names.
+fn search_paths(in_home: &str, system: &[&str], variable: &str) -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME").map(|home| PathBuf::from(home).join(in_home));
+    let mut paths: Vec<PathBuf> = home.into_iter().collect();
+    paths.extend(system.iter().map(PathBuf::from));
+    if let Some(extra) = std::env::var_os(variable) {
+        paths.extend(std::env::split_paths(&extra));
+    }
     paths
 }
 
