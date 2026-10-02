@@ -113,18 +113,19 @@ impl Project {
         } else {
             &problems
         };
-        self.storage
-            .write_generated(PROBLEMS_FILE, Some(problems))?;
-        self.storage
-            .write_generated(AGENT_DOC_FILE, Some(&self.agent_doc()))?;
-        self.storage
-            .write_generated(CLAUDE_FILE, Some(CLAUDE_TEXT))?;
         let docs: BTreeMap<String, String> = self
             .agent_docs()
             .map(|doc| (format!("{}.md", doc.name), self.agent_doc_text(&doc)))
             .collect();
-        self.storage
-            .write_generated_folder(AGENT_DOCS_FOLDER, docs)?;
+        // Every file is tried, so one that fails does not keep the others stale for good.
+        let results = [
+            self.storage.write_generated(PROBLEMS_FILE, Some(problems)),
+            self.storage
+                .write_generated(AGENT_DOC_FILE, Some(&self.agent_doc())),
+            self.storage.write_generated(CLAUDE_FILE, Some(CLAUDE_TEXT)),
+            self.storage.write_generated_folder(AGENT_DOCS_FOLDER, docs),
+        ];
+        results.into_iter().collect::<Result<(), _>>()?;
         Ok(())
     }
 }
