@@ -214,9 +214,16 @@ impl Keyboard {
         if self.input.release_is_pending() {
             return Ok(());
         }
-        let Some(destination) = self.wanted.take() else {
+        let Some(destination) = self.wanted else {
             return Ok(());
         };
+        // A key pressed since `play_into` went to the old instrument. It is released there
+        // first, or it would sound there for ever.
+        if self.holds_anything() {
+            self.release_held();
+            return Ok(());
+        }
+        self.wanted = None;
         let notes = OutputEndpoint::new(self.node, Keys::NOTES);
         let mut edit = engine.edit();
         if let Some(old) = self.destination {

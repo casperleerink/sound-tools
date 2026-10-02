@@ -3,7 +3,7 @@
 
 use midi::INPUT_CAPACITY;
 use sound_core::Ticks;
-use sound_notes::{Amount, Bend, NoteEvent, Pedal};
+use sound_notes::{Amount, Bend, NoteEvent, Pedal, Velocity};
 
 use crate::support::{Harness, bend, off, on, pedal, pitch};
 
@@ -170,6 +170,37 @@ fn switching_the_port_releases_what_is_held_into_the_port_it_plays_into() {
     harness.run(64, 64);
     assert_eq!(harness.heard(), []);
     assert_eq!(harness.heard_by(other).len(), 1);
+}
+
+/// A key pressed after the track was switched, but before the poll that moves the keyboard,
+/// sounds in the old instrument. It is released there before the keyboard moves on.
+#[test]
+fn a_key_pressed_while_the_port_switches_is_released_where_it_sounded() {
+    let mut harness = Harness::new();
+    let other = harness.add_ears();
+    harness
+        .keyboard
+        .play_into(&mut harness.control, Some(other))
+        .unwrap();
+    harness.input.send(on(60, 88));
+    for _ in 0..4 {
+        harness.run(64, 64);
+    }
+    assert_eq!(harness.keyboard.destination(), Some(other));
+    assert_eq!(
+        harness.heard(),
+        [
+            (
+                0,
+                NoteEvent::On {
+                    pitch: pitch(60),
+                    velocity: Velocity::new(88).unwrap()
+                }
+            ),
+            (64, NoteEvent::Off { pitch: pitch(60) }),
+        ]
+    );
+    assert_eq!(harness.heard_by(other), []);
 }
 
 /// A keyboard that is unplugged while it holds keys sends no note off, ever. The device layer
