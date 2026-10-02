@@ -2,7 +2,9 @@
 
 use std::os::unix::fs::PermissionsExt;
 
-use sound_core::{Changes, PortReference, ProjectError, ProjectEvent, SavedConnection};
+use sound_core::{
+    Changes, PortReference, ProjectError, ProjectEvent, SavedConnection, SavedDestination,
+};
 
 use crate::tools::{Amplifier, BANK_OUTPUT, Bank, Dc, Harness, Level, Reporter, dc_record, id};
 
@@ -331,6 +333,29 @@ fn a_tool_that_owns_no_children_cannot_get_one() {
     let problem = harness.problem_at("state/dc/a.json").unwrap();
     assert!(problem.contains("owns no children"), "{problem}");
     assert_eq!(harness.project.instances().count(), 1);
+}
+
+#[test]
+fn a_tool_change_to_one_that_owns_nothing_drops_the_connections_to_its_children() {
+    let mut harness = Harness::new();
+    let mut changes = Changes::new();
+    let bank = changes.create(id("bank"), Bank { gain: 0.5 });
+    let output = bank.id().child(BANK_OUTPUT).unwrap();
+    changes.create(output.clone(), Amplifier { gain: 2.0 });
+    let dc = changes.create(id("dc"), Dc { value: 0.25 });
+    changes.connect(SavedConnection {
+        from: PortReference::new(dc.id(), "out"),
+        to: SavedDestination::Input(PortReference::new(&output, "in")),
+    });
+    harness.project.commit("Add", changes).unwrap();
+    assert_eq!(harness.project.project_file().connections.len(), 1);
+
+    let mut changes = Changes::new();
+    changes.create(id("bank"), Dc { value: 0.5 });
+    harness.project.commit("Change tool", changes).unwrap();
+    assert_eq!(harness.project.instances().count(), 2);
+    assert_eq!(harness.project.project_file().connections, []);
+    assert_eq!(harness.project.problems(), []);
 }
 
 #[test]
