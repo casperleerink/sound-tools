@@ -15,7 +15,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -144,6 +144,17 @@ pub struct Bundle {
     pub format: PluginFormat,
 }
 
+/// Why one bundle was not scanned.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ScanError {
+    /// The child crashed, hung or printed something unreadable. That is the bundle's own doing,
+    /// so it is remembered and not tried again at every start.
+    Bundle(String),
+    /// This process could not start, watch or read the child. That says nothing about the
+    /// bundle, so the next scan tries it again.
+    Host(String),
+}
+
 /// How to start the child that scans one bundle.
 #[derive(Clone, Debug)]
 pub struct ScanCommand {
@@ -186,9 +197,8 @@ impl ScanCommand {
         self
     }
 
-    /// Scans one bundle in a child process. An error here is the child's, not ours: it failed
-    /// to start, crashed, or printed something we could not read.
-    fn scan(&self, bundle: &Bundle) -> Result<Vec<ScannedPlugin>, String> {
+    /// Scans one bundle in a child process.
+    fn scan(&self, bundle: &Bundle) -> Result<Vec<ScannedPlugin>, ScanError> {
         let mut command = Command::new(&self.program);
         command
             .args(&self.arguments)
@@ -203,33 +213,39 @@ impl ScanCommand {
         #[allow(clippy::disallowed_methods)]
         let mut child = command
             .spawn()
-            .map_err(|error| format!("the scanner did not start: {error}"))?;
+            .map_err(|error| ScanError::Host(format!("the scanner did not start: {error}")))?;
         // Both pipes are read while the child runs and not after it ends. A plugin that prints
         // more than a pipe holds while it loads, which real ones do, would otherwise block on
         // its own write and be killed at the deadline as if it had hung.
-        let output = drain(child.stdout.take());
-        let errors = drain(child.stderr.take());
+        let (output, errors) = match (drain(child.stdout.take()), drain(child.stderr.take())) {
+            (Ok(output), Ok(errors)) => (output, errors),
+            (Err(error), _) | (_, Err(error)) => {
+                let reason = format!("the scanner's output could not be read: {error}");
+                return Err(ScanError::Host(stop(&mut child, reason)));
+            }
+        };
         let deadline = Instant::now() + self.timeout;
         loop {
             match child.try_wait() {
                 Ok(Some(_)) => break,
                 Ok(None) => {}
-                Err(error) => return Err(format!("the scanner could not be waited for: {error}")),
+                Err(error) => {
+                    let reason = format!("the scanner could not be waited for: {error}");
+                    return Err(ScanError::Host(stop(&mut child, reason)));
+                }
             }
             if Instant::now() >= deadline {
-                // Killed and then waited for, so no child of this process is left behind.
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
+                let reason = format!(
                     "the scanner did not finish within {:?} and was stopped. The plugin hangs while it is listed",
                     self.timeout
-                ));
+                );
+                return Err(ScanError::Bundle(stop(&mut child, reason)));
             }
             std::thread::sleep(POLL_INTERVAL);
         }
         let status = child
             .wait()
-            .map_err(|error| format!("the scanner could not be read: {error}"))?;
+            .map_err(|error| ScanError::Host(format!("the scanner could not be read: {error}")))?;
         // The readers get what is left of the bundle's deadline, and no more than the grace: a
         // pipe that a descendant of the child holds open would otherwise hold the scan.
         let until = deadline.min(Instant::now() + READER_GRACE);
@@ -243,16 +259,26 @@ impl ScanCommand {
             } else {
                 message.to_string()
             };
-            return Err(reason);
+            return Err(ScanError::Bundle(reason));
         }
         let mut plugins = Vec::new();
         // Anything the plugin itself printed is between these lines. It is not ours to read.
         for line in text.lines().filter_map(|line| line.strip_prefix(MARK)) {
-            let plugin = serde_json::from_str(line)
-                .map_err(|error| format!("the scanner printed something unreadable: {error}"))?;
+            let plugin = serde_json::from_str(line).map_err(|error| {
+                ScanError::Bundle(format!("the scanner printed something unreadable: {error}"))
+            })?;
             plugins.push(plugin);
         }
         Ok(plugins)
+    }
+}
+
+/// Kills the child and waits for it, so no child of this process is left behind. Gives
+/// `reason`, with why the child could not be stopped when it could not.
+fn stop(child: &mut Child, reason: String) -> String {
+    match child.kill().and_then(|()| child.wait()) {
+        Ok(_) => reason,
+        Err(error) => format!("{reason}. The scanner could not be stopped: {error}"),
     }
 }
 
@@ -270,8 +296,10 @@ struct Draining {
 /// the last writer lets go of it, and a plugin may leave a helper process behind that inherited
 /// it: then this thread waits for that helper and not for the plugin. The bundle is still read,
 /// because what the child printed is already here.
-fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Option<Draining> {
-    let mut pipe = pipe?;
+fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> std::io::Result<Option<Draining>> {
+    let Some(mut pipe) = pipe else {
+        return Ok(None);
+    };
     let bytes = Arc::new(Mutex::new(Vec::new()));
     let filling = bytes.clone();
     let reader = std::thread::Builder::new()
@@ -288,9 +316,8 @@ fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Option<Draining> 
                 };
                 held.extend_from_slice(&chunk[..read]);
             }
-        })
-        .ok()?;
-    Some(Draining { reader, bytes })
+        })?;
+    Ok(Some(Draining { reader, bytes }))
 }
 
 /// What such a thread has read, waiting for it no longer than the deadline of the bundle.
@@ -690,18 +717,24 @@ pub fn scan_folders(
         });
         let found = match known {
             Some(entry) => match &entry.failure {
-                Some(message) => Err(message.clone()),
+                Some(message) => Err(ScanError::Bundle(message.clone())),
                 None => Ok(entry.plugins.clone()),
             },
             None => command.scan(&bundle),
         };
-        if let Some(stamp) = stamp {
+        // What went wrong on this side says nothing about the bundle, so it is not remembered.
+        let outcome = match &found {
+            Ok(plugins) => Some((plugins.clone(), None)),
+            Err(ScanError::Bundle(message)) => Some((Vec::new(), Some(message.clone()))),
+            Err(ScanError::Host(_)) => None,
+        };
+        if let (Some(stamp), Some((plugins, failure))) = (stamp, outcome) {
             to_remember.push(CachedBundle {
                 path: bundle.path.clone(),
                 format: bundle.format,
                 stamp,
-                plugins: found.clone().unwrap_or_default(),
-                failure: found.as_ref().err().cloned(),
+                plugins,
+                failure,
             });
         }
         match found {
@@ -711,10 +744,12 @@ pub fn scan_folders(
                     path: bundle.path.clone(),
                     ..plugin
                 })),
-            Err(message) => scan.failures.push(ScanFailure {
-                path: bundle.path,
-                message,
-            }),
+            Err(ScanError::Bundle(message) | ScanError::Host(message)) => {
+                scan.failures.push(ScanFailure {
+                    path: bundle.path,
+                    message,
+                })
+            }
         }
         progress(&scan);
     }
@@ -884,6 +919,24 @@ mod tests {
             .flatten()
             .collect();
         assert_eq!(left.len(), 1, "{left:?}");
+    }
+
+    /// A scanner that did not start says nothing about the bundle. It is reported, and tried
+    /// again by the next scan instead of being remembered as a bundle that failed.
+    #[test]
+    fn a_scanner_that_did_not_start_is_not_remembered_as_a_failed_bundle() {
+        let folder = tempfile::tempdir().unwrap();
+        bundle_in(folder.path());
+        let cache = ScanCache::at(folder.path().join("plugins.json"));
+        let scan = scan_folders(
+            &[folder.path().to_path_buf()],
+            &ScanCommand::new("/definitely/not/a/program", []),
+            &cache,
+            &AtomicBool::new(false),
+            |_| {},
+        );
+        assert_eq!(scan.failures.len(), 1);
+        assert_eq!(cache.read(), []);
     }
 
     /// A plugin folder may hold a link to a bundle that was taken away. It is remembered like
