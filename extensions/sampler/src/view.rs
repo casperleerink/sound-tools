@@ -18,12 +18,9 @@
 
 use std::path::PathBuf;
 
-use gpui::{
-    AnyElement, Context, Entity, FocusHandle, PathPromptOptions, Point, Task, Window, div, point,
-    prelude::*,
-};
+use gpui::{AnyElement, Context, Entity, FocusHandle, Point, Task, Window, div, point, prelude::*};
 use sound_core::{Changes, Instance, ProjectEvent, State};
-use sound_media::{Cached, Info};
+use sound_media::{Cached, Imported, Info};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Handle};
@@ -34,6 +31,7 @@ use sound_ui::components::knob::{
 use sound_ui::components::waveform_display::{
     FileDrop, NoFile, WaveformDisplay, clamped_end, clamped_start, place,
 };
+use sound_ui::import;
 use sound_ui::{
     ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, Waveforms, every_poll, weak_callback,
 };
@@ -196,29 +194,11 @@ impl SamplerView {
     /// Copies a file into `assets/audio/` on a background thread and makes it the sample, as
     /// one undo step. A file that does not play is not copied, and the notice says why.
     pub fn load_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let assets = self.session.read(cx).project().assets().clone();
-        let importing = cx.background_spawn(async move { sound_media::import(&assets, &path) });
-        cx.spawn(async move |view, cx| {
-            let imported = importing.await;
-            view.update(cx, |view, cx| view.use_imported(imported, cx))
-                .ok();
-        })
-        .detach();
+        import::import_file(&self.session, path, cx, Self::use_imported);
     }
 
-    fn use_imported(
-        &mut self,
-        imported: Result<sound_media::Imported, sound_media::MediaError>,
-        cx: &mut Context<Self>,
-    ) {
+    fn use_imported(&mut self, imported: Imported, cx: &mut Context<Self>) {
         let session = self.session.clone();
-        let imported = match imported {
-            Ok(imported) => imported,
-            Err(error) => {
-                session.update(cx, |session, cx| session.report(error, cx));
-                return;
-            }
-        };
         let Some(mut state) = session.read(cx).project().state(&self.sampler).cloned() else {
             return;
         };
@@ -248,31 +228,7 @@ impl SamplerView {
 
     /// The file panel of macOS, for one audio file.
     fn choose_file(&mut self, cx: &mut Context<Self>) {
-        let chosen = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Load".into()),
-        });
-        cx.spawn(async move |view, cx| {
-            let paths = match chosen.await {
-                Ok(Ok(paths)) => paths,
-                Ok(Err(error)) => {
-                    view.update(cx, |view, cx| {
-                        let session = view.session.clone();
-                        session.update(cx, |session, cx| session.report(error, cx));
-                    })
-                    .ok();
-                    return;
-                }
-                // The panel went away without an answer.
-                Err(_) => return,
-            };
-            if let Some(path) = paths.and_then(|paths| paths.into_iter().next()) {
-                view.update(cx, |view, cx| view.load_file(path, cx)).ok();
-            }
-        })
-        .detach();
+        import::choose_file(&self.session, "Load", cx, Self::load_file);
     }
 
     fn change<V>(

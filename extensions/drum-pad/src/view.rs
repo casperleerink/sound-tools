@@ -20,11 +20,10 @@
 use std::path::PathBuf;
 
 use gpui::{
-    Context, Entity, FocusHandle, KeyDownEvent, MouseButton, PathPromptOptions, Task, Window, div,
-    prelude::*, px,
+    Context, Entity, FocusHandle, KeyDownEvent, MouseButton, Task, Window, div, prelude::*, px,
 };
 use sound_core::{Instance, ProjectEvent, State};
-use sound_media::{Cached, Imported, MediaError};
+use sound_media::{Cached, Imported};
 use sound_notes::Velocity;
 use sound_ui::components::cell::{CELL_WIDTH, Cell};
 use sound_ui::components::device_card::{CardFrame, Column};
@@ -37,6 +36,7 @@ use sound_ui::components::knob::{
 };
 use sound_ui::components::pad::{PAD_GAP, PAD_HEIGHT, PAD_WIDTH, Pad as PadElement, PadGlyph};
 use sound_ui::components::toggle::Toggle;
+use sound_ui::import;
 use sound_ui::lanes::object_of;
 use sound_ui::{
     ActiveTheme, ControlEdit, DeviceLabel, Devices, KeyboardFocus, Lanes, Session, Views,
@@ -347,30 +347,9 @@ impl DrumPadView {
     /// Opens the file panel of macOS for a sample for pad `pad`: the keyboard path to a sample
     /// pad.
     pub fn choose_file(&mut self, pad: usize, cx: &mut Context<Self>) {
-        let chosen = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Choose".into()),
+        import::choose_file(&self.session, "Choose", cx, move |view, path, cx| {
+            view.load_files(pad, vec![path], cx)
         });
-        cx.spawn(async move |view, cx| {
-            let paths = match chosen.await {
-                Ok(Ok(Some(paths))) => paths,
-                // Cancelled, or the panel went away: nothing to load.
-                Ok(Ok(None)) | Err(_) => return,
-                Ok(Err(error)) => {
-                    view.update(cx, |view, cx| {
-                        let session = view.session.clone();
-                        session.update(cx, |session, cx| session.report(error, cx));
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            view.update(cx, |view, cx| view.load_files(pad, paths, cx))
-                .ok();
-        })
-        .detach();
     }
 
     /// Copies the first of `paths` into `assets/audio/` away from the thread that draws, then
@@ -380,30 +359,12 @@ impl DrumPadView {
         let Some(path) = paths.into_iter().next() else {
             return;
         };
-        let assets = self.session.read(cx).project().assets().clone();
-        let importing = cx.background_spawn(async move { sound_media::import(&assets, &path) });
-        cx.spawn(async move |view, cx| {
-            let imported = importing.await;
-            view.update(cx, |view, cx| view.take_sample(pad, imported, cx))
-                .ok();
-        })
-        .detach();
+        import::import_file(&self.session, path, cx, move |view, imported, cx| {
+            view.take_sample(pad, imported, cx)
+        });
     }
 
-    fn take_sample(
-        &mut self,
-        pad: usize,
-        imported: Result<Imported, MediaError>,
-        cx: &mut Context<Self>,
-    ) {
-        let imported = match imported {
-            Ok(imported) => imported,
-            Err(error) => {
-                let session = self.session.clone();
-                session.update(cx, |session, cx| session.report(error, cx));
-                return;
-            }
-        };
+    fn take_sample(&mut self, pad: usize, imported: Imported, cx: &mut Context<Self>) {
         let (asset, seconds) = (imported.asset.clone(), imported.audio.seconds());
         let set = move |state: &mut DrumPadState, (): ()| {
             state.pads[pad].load_sample(asset, seconds);
