@@ -1,5 +1,5 @@
 //! Opens the gallery in a window.
-//! `GALLERY_SECTION=inputs cargo run -p gallery` shows one section only.
+//! `GALLERY_SECTION=foundation cargo run -p gallery` shows one section only.
 //! `cargo test -p gallery --test snapshots` renders every section to PNG without opening a window.
 
 use gallery::Gallery;
