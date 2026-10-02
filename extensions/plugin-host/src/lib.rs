@@ -41,7 +41,7 @@ mod clap;
 mod host;
 mod placements;
 mod processor;
-pub mod scan;
+mod scan;
 pub mod view;
 mod vst3;
 mod window;
@@ -53,8 +53,9 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
+use crate::processor::HostedPlugin;
+
 pub use host::{PluginProblem, Plugins, WeakPlugins};
-pub use processor::HostedPlugin;
 pub use scan::{
     SCAN_ARGUMENT, ScanCache, ScanCommand, ScannedPlugin, default_search_paths, scan_one_bundle,
 };
