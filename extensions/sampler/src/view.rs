@@ -28,7 +28,9 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{
+    Knob, KnobRange, ParameterKnob, decibels_readout, percent_readout, seconds_readout,
+};
 use sound_ui::components::waveform_display::{
     FileDrop, NoFile, WaveformDisplay, clamped_end, clamped_start, place,
 };
@@ -37,8 +39,7 @@ use sound_ui::{
 };
 
 use crate::{
-    ATTACK, DECAY, GAIN, POSITION, Parameter, RELEASE, ROOT, SUSTAIN, Sampler, SamplerState,
-    VELOCITY,
+    ATTACK, DECAY, GAIN, POSITION, RELEASE, ROOT, SUSTAIN, Sampler, SamplerState, VELOCITY,
 };
 
 /// The name the rack puts on the card of a sampler.
@@ -61,83 +62,21 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Seconds,
-    /// A part of one, shown as a percentage.
-    Part,
-    Decibels,
-    /// A note number, shown by its name.
-    Note,
-}
-
 /// A knob of the view on a number with a fixed range.
-struct Control {
-    parameter: &'static Parameter,
-    label: &'static str,
-    undo_label: &'static str,
-    unit: Unit,
-}
+type Control = ParameterKnob<SamplerState>;
 
-impl Control {
-    /// A value as the parameter takes it: a handle may ask for one past its ends.
-    fn clamp(&self, value: f32) -> f32 {
-        value.clamp(self.parameter.min, self.parameter.max)
-    }
-}
+const ROOT_KNOB: Control = Control::new(&ROOT, "Root", "Change root", note_readout);
+const VELOCITY_KNOB: Control =
+    Control::new(&VELOCITY, "Velocity", "Change velocity", percent_readout);
+const RELEASE_KNOB: Control = Control::new(&RELEASE, "Release", "Change release", seconds_readout);
+const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", decibels_readout);
+const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", seconds_readout);
+const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", seconds_readout);
+const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain", percent_readout);
 
-const ROOT_KNOB: Control = Control {
-    parameter: &ROOT,
-    label: "Root",
-    undo_label: "Change root",
-    unit: Unit::Note,
-};
-const VELOCITY_KNOB: Control = Control {
-    parameter: &VELOCITY,
-    label: "Velocity",
-    undo_label: "Change velocity",
-    unit: Unit::Part,
-};
-const RELEASE_KNOB: Control = Control {
-    parameter: &RELEASE,
-    label: "Release",
-    undo_label: "Change release",
-    unit: Unit::Seconds,
-};
-const GAIN_KNOB: Control = Control {
-    parameter: &GAIN,
-    label: "Gain",
-    undo_label: "Change gain",
-    unit: Unit::Decibels,
-};
-const ATTACK_KNOB: Control = Control {
-    parameter: &ATTACK,
-    label: "Attack",
-    undo_label: "Change attack",
-    unit: Unit::Seconds,
-};
-const DECAY_KNOB: Control = Control {
-    parameter: &DECAY,
-    label: "Decay",
-    undo_label: "Change decay",
-    unit: Unit::Seconds,
-};
-const SUSTAIN_KNOB: Control = Control {
-    parameter: &SUSTAIN,
-    label: "Sustain",
-    undo_label: "Change sustain",
-    unit: Unit::Part,
-};
-
-/// A value with its unit, as the knob shows it: `2 ms`, `1.18 s`, `55%`, `-6 dB`, `C4`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Seconds if value < 1.0 => format!("{} ms", short(value * 1_000.0)),
-        Unit::Seconds => format!("{} s", short(value)),
-        Unit::Part => format!("{}%", short(value * 100.0)),
-        Unit::Decibels => format!("{} dB", short(value)),
-        Unit::Note => sound_notes::Pitch::nearest(value.round() as i64).name(),
-    }
+/// A note number by its name: `C4`, `C#4`.
+fn note_readout(note: f32) -> String {
+    sound_notes::Pitch::nearest(note.round() as i64).name()
 }
 
 /// Where the envelope sits in the display, `y` up: full level near the top, so its handles can
@@ -347,30 +286,14 @@ impl SamplerView {
         self.edit.apply(session, sampler, label, change, set, cx);
     }
 
-    fn knob(
-        &self,
-        control: &'static Control,
-        state: &SamplerState,
-        cx: &mut Context<Self>,
-    ) -> Knob {
-        let value = (control.parameter.get)(state);
+    fn knob(&self, control: Control, state: &SamplerState, cx: &mut Context<Self>) -> Knob {
         let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        let knob = Knob::new(control.parameter.field)
-            .range(KnobRange::of(control.parameter))
-            .value(value)
+        control
+            .knob(state)
             .automated(automated)
-            .default_value(control.parameter.default)
-            .label(control.label)
-            .readout(readout(control.unit, value))
             .on_change(weak_callback(cx, move |view, change, cx| {
-                let (label, set) = (control.undo_label, control.parameter.set);
-                view.change(label, change, set, cx);
-            }));
-        match control.unit {
-            // A root between two notes is no root.
-            Unit::Note => knob.step(1.),
-            _ => knob,
-        }
+                view.change(control.undo_label, change, control.parameter.set, cx);
+            }))
     }
 
     /// Start and End: seconds of the file, whose length is their range. With no file that
@@ -379,7 +302,7 @@ impl SamplerView {
         let file = self.file(cx);
         let length = file.map_or(1.0, |file| file.seconds());
         let end = state.end_seconds.unwrap_or(length);
-        let seconds = |value: f64| readout(Unit::Seconds, value as f32);
+        let seconds = |value: f64| seconds_readout(value as f32);
         let start = Knob::new("start")
             .range(KnobRange::linear(0., length as f32))
             .value(state.start_seconds as f32)
@@ -543,9 +466,9 @@ impl SamplerView {
         let (curve, handles) = self.envelope(state, length, cx);
         let caption = format!(
             "{name} · A {} · D {} · S {}",
-            readout(Unit::Seconds, state.attack_seconds),
-            readout(Unit::Seconds, state.decay_seconds),
-            readout(Unit::Part, state.sustain),
+            seconds_readout(state.attack_seconds),
+            seconds_readout(state.decay_seconds),
+            percent_readout(state.sustain),
         );
         let display =
             WaveformDisplay::new("sampler-display", DISPLAY_WIDTH, overview, length as f32)
@@ -583,11 +506,12 @@ impl Render for SamplerView {
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()
-                .top(knob(&ROOT_KNOB, cx))
-                .bottom(knob(&RELEASE_KNOB, cx)),
+                // A root between two notes is no root.
+                .top(knob(ROOT_KNOB, cx).step(1.))
+                .bottom(knob(RELEASE_KNOB, cx)),
             Column::new()
-                .top(knob(&VELOCITY_KNOB, cx))
-                .bottom(knob(&GAIN_KNOB, cx)),
+                .top(knob(VELOCITY_KNOB, cx))
+                .bottom(knob(GAIN_KNOB, cx)),
         ];
         // Behind expand: the values the handles of the display move, so the keys reach every
         // one of them.
@@ -595,9 +519,9 @@ impl Render for SamplerView {
         let hidden = [
             Column::new().top(start).bottom(end),
             Column::new()
-                .top(knob(&ATTACK_KNOB, cx))
-                .bottom(knob(&DECAY_KNOB, cx)),
-            Column::new().top(knob(&SUSTAIN_KNOB, cx)),
+                .top(knob(ATTACK_KNOB, cx))
+                .bottom(knob(DECAY_KNOB, cx)),
+            Column::new().top(knob(SUSTAIN_KNOB, cx)),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
@@ -620,15 +544,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_readout_has_its_unit() {
-        assert_eq!(readout(Unit::Seconds, 0.002), "2 ms");
-        assert_eq!(readout(Unit::Seconds, 0.012), "12 ms");
-        assert_eq!(readout(Unit::Seconds, 1.18), "1.18 s");
-        assert_eq!(readout(Unit::Part, 0.55), "55%");
-        assert_eq!(readout(Unit::Decibels, 0.), "0 dB");
-        assert_eq!(readout(Unit::Decibels, -6.), "-6 dB");
-        assert_eq!(readout(Unit::Note, 60.), "C4");
-        assert_eq!(readout(Unit::Note, 61.), "C#4");
+    fn a_root_reads_as_a_note() {
+        assert_eq!(note_readout(60.), "C4");
+        assert_eq!(note_readout(61.), "C#4");
     }
 
     #[test]
