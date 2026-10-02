@@ -28,18 +28,17 @@ use crate::{
 };
 
 /// Where raw takes live under `assets/`.
-pub const TAKES_FOLDER: &str = "assets/takes";
+pub const TAKES_FOLDER: &str = "takes";
 
 /// Names are `take-1`, `take-2` and so on, counted by the asset facility of the core. It never
 /// writes over a file that is there, so the next free number is always past every take this
 /// project ever made, also past the ones an undo took the clip of.
-const FOLDER: &str = "takes";
 const NAME: &str = "take";
 const EXTENSION: &str = "json";
 
 /// The asset of the raw take called `name`, for example `take-1`.
 pub fn take_asset(name: &str) -> Result<AssetName, InvalidAssetName> {
-    AssetName::new(FOLDER, name, EXTENSION)
+    AssetName::new(TAKES_FOLDER, name, EXTENSION)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -52,6 +51,8 @@ pub enum TakeError {
     Invalid { name: String, message: String },
     #[error("{0}")]
     Asset(String),
+    #[error("the take could not be written as JSON: {0}")]
+    Encode(String),
 }
 
 /// The longest one recording can be: an hour. A take is one performance, and every reader of
@@ -136,56 +137,6 @@ impl RawEvent {
             | Self::Bend { sounded_us, .. }
             | Self::ModWheel { sounded_us, .. }
             | Self::Pressure { sounded_us, .. } => sounded_us,
-        }
-    }
-
-    /// One line of the file. It cannot fail: every field is a number or a fixed name.
-    fn json(self) -> String {
-        match self {
-            Self::On {
-                time_us,
-                sounded_us,
-                pitch,
-                velocity,
-            } => format!(
-                r#"{{"kind":"on","time_us":{time_us},"sounded_us":{sounded_us},"pitch":{pitch},"velocity":{velocity}}}"#
-            ),
-            Self::Off {
-                time_us,
-                sounded_us,
-                pitch,
-                velocity,
-            } => format!(
-                r#"{{"kind":"off","time_us":{time_us},"sounded_us":{sounded_us},"pitch":{pitch},"velocity":{velocity}}}"#
-            ),
-            Self::Pedal {
-                time_us,
-                sounded_us,
-                value,
-            } => format!(
-                r#"{{"kind":"pedal","time_us":{time_us},"sounded_us":{sounded_us},"value":{value}}}"#
-            ),
-            Self::Bend {
-                time_us,
-                sounded_us,
-                value,
-            } => format!(
-                r#"{{"kind":"bend","time_us":{time_us},"sounded_us":{sounded_us},"value":{value}}}"#
-            ),
-            Self::ModWheel {
-                time_us,
-                sounded_us,
-                value,
-            } => format!(
-                r#"{{"kind":"mod_wheel","time_us":{time_us},"sounded_us":{sounded_us},"value":{value}}}"#
-            ),
-            Self::Pressure {
-                time_us,
-                sounded_us,
-                value,
-            } => format!(
-                r#"{{"kind":"pressure","time_us":{time_us},"sounded_us":{sounded_us},"value":{value}}}"#
-            ),
         }
     }
 }
@@ -280,16 +231,20 @@ impl RawTake {
     /// performance this program has written can be lost, whatever happened to its clip. The
     /// runtime never writes it again and never removes it, not even on undo.
     pub fn write(&self, assets: &Assets) -> Result<String, TakeError> {
-        let name = AssetName::new(FOLDER, NAME, EXTENSION)?;
-        let written = assets.create(&name, self.json().as_bytes())?;
+        let name = AssetName::new(TAKES_FOLDER, NAME, EXTENSION)?;
+        let json = self
+            .json()
+            .map_err(|error| TakeError::Encode(error.to_string()))?;
+        let written = assets.create(&name, json.as_bytes())?;
         Ok(written.name().to_string())
     }
 
     /// The take as it is written: one message per line, like a note of a clip, so a minute of
     /// playing is a file an agent can read and git can show.
-    pub fn json(&self) -> String {
-        let lines: Vec<String> = self.events.iter().map(|event| event.json()).collect();
-        format!(
+    pub fn json(&self) -> Result<String, serde_json::Error> {
+        let lines = self.events.iter().map(serde_json::to_string);
+        let lines = lines.collect::<Result<Vec<_>, _>>()?;
+        Ok(format!(
             "{{\n  \"start_us\": {},\n  \"end_us\": {},\n  \"start_tick\": {},\n  \"end_tick\": {},\n  \"pedal_at_start\": {},\n  \"events\": [\n    {}\n  ]\n}}\n",
             self.start_us,
             self.end_us,
@@ -297,7 +252,7 @@ impl RawTake {
             self.end_tick,
             self.pedal_at_start,
             lines.join(",\n    ")
-        )
+        ))
     }
 
     /// Whether anything was played. An empty take makes no clip and no file.
