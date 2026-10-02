@@ -2,7 +2,8 @@
 //!
 //! VST 3 is a COM API. The `vst3` crate gives the raw interfaces generated from Steinberg's
 //! headers and nothing else, so the safe layer is here. Every call into a plugin is `unsafe`
-//! and every one of them is in this folder.
+//! and every one of them is in this folder. `kResultTrue` is the same number as `kResultOk`, so
+//! a call that worked is checked against `kResultOk` alone.
 //!
 //! What a plugin is made of, and which thread each part belongs to:
 //!

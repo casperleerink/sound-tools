@@ -18,7 +18,7 @@ use vst3::Steinberg::Vst::{
     IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait, NoteOffEvent, NoteOnEvent,
     ParamID, ParamValue, ProcessData, ProcessModes_, SymbolicSampleSizes_,
 };
-use vst3::Steinberg::{int32, kInvalidArgument, kResultFalse, kResultOk, kResultTrue, tresult};
+use vst3::Steinberg::{int32, kInvalidArgument, kResultFalse, kResultOk, tresult};
 use vst3::{Class, ComPtr, ComWrapper};
 
 use super::context::Handler;
@@ -272,7 +272,7 @@ impl Started for Vst3Processor {
             // VST 3 puts `setProcessing` on the thread that processes, which is this one.
             // SAFETY: the processor came from the plugin and is alive.
             let result = not_ours(|| unsafe { self.processor.setProcessing(1) });
-            if result != kResultOk && result != kResultTrue {
+            if result != kResultOk {
                 return false;
             }
             self.processing = true;
@@ -302,7 +302,7 @@ impl Started for Vst3Processor {
         // SAFETY: every pointer in `data` belongs to this processor and outlives the call, and
         // the buffers are as long as `numSamples` says.
         let result = not_ours(|| unsafe { self.processor.process(&mut data) });
-        if result != kResultOk && result != kResultTrue {
+        if result != kResultOk {
             return false;
         }
         self.output_changes.report_into(&mut self.reports);

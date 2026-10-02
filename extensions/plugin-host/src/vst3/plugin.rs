@@ -25,9 +25,7 @@ use vst3::Steinberg::Vst::{
     ParamID, ParamValue, ParameterInfo, ParameterInfo_::ParameterFlags_, ProcessSetup, SpeakerArr,
     SpeakerArrangement, SymbolicSampleSizes_,
 };
-use vst3::Steinberg::{
-    IPluginBaseTrait, TUID, int32, kNotImplemented, kResultFalse, kResultOk, kResultTrue,
-};
+use vst3::Steinberg::{IPluginBaseTrait, TUID, int32, kNotImplemented, kResultFalse, kResultOk};
 use vst3::{ComPtr, ComWrapper};
 
 use super::context::{Handler, HostContext, as_handler, as_unknown};
@@ -75,7 +73,7 @@ pub fn load(
                 fail("the bundle has no plugin with this class id, or it is not a component".into())
             })?;
         let result = not_ours(|| component.initialize(host.as_ptr()));
-        if result != kResultOk && result != kResultTrue {
+        if result != kResultOk {
             return Err(refused(&plugin_id, "initialize", result));
         }
         let mut joined = Joined {
@@ -99,7 +97,7 @@ pub fn load(
             .flatten();
         if let Some(controller) = &joined.separate {
             let result = not_ours(|| controller.initialize(host.as_ptr()));
-            if result != kResultOk && result != kResultTrue {
+            if result != kResultOk {
                 return Err(refused(&plugin_id, "the controller's initialize", result));
             }
         }
@@ -147,11 +145,11 @@ pub fn load(
             sampleRate: f64::from(config.sample_rate),
         };
         let result = processor.setupProcessing(&mut setup);
-        if result != kResultOk && result != kResultTrue {
+        if result != kResultOk {
             return Err(refused(&plugin_id, "setupProcessing", result));
         }
         let result = not_ours(|| component.setActive(1));
-        if result != kResultOk && result != kResultTrue {
+        if result != kResultOk {
             return Err(refused(&plugin_id, "setActive", result));
         }
         // After `setActive`, which is when a plugin's latency is settled.
@@ -487,7 +485,7 @@ impl LoadedPlugin for Vst3Plugin {
             let buses = prepare_buses(component, &self.processor);
             (buses, not_ours(|| component.setActive(1)))
         };
-        if result != kResultOk && result != kResultTrue {
+        if result != kResultOk {
             return Some(Err(did_not_restart("setActive", result)));
         }
         self.takes_notes = buses.takes_notes;
@@ -775,7 +773,7 @@ unsafe fn asked_for_state(
     let stream = as_stream(&written).ok_or("the state stream")?;
     // SAFETY: the caller keeps the contract, and the stream outlives the call.
     let result = not_ours(|| call(stream.as_ptr()));
-    if result == kResultOk || result == kResultTrue {
+    if result == kResultOk {
         return Ok(Some(written.written()));
     }
     // The two ways VST 3 has of saying "not mine". Everything else is a failure.
@@ -858,7 +856,7 @@ unsafe fn read_state(
     // other failure code is one, and the plugin does not load: a plugin that came up with half
     // of its state would write that half over the good file at the next save.
     let took = |whose: &str, call: &str, result: int32| {
-        let answered = result == kResultOk || result == kResultTrue;
+        let answered = result == kResultOk;
         let not_mine = result == kNotImplemented || result == kResultFalse;
         match answered || not_mine {
             true => Ok(()),
@@ -868,7 +866,7 @@ unsafe fn read_state(
     // SAFETY: the caller keeps the contract, and the stream outlives every call below.
     unsafe {
         let result = not_ours(|| component.setState(stream.as_ptr()));
-        if result != kResultOk && result != kResultTrue {
+        if result != kResultOk {
             return Err(not_read(format!(
                 "the plugin answered {result} to setState"
             )));
