@@ -24,7 +24,7 @@ Rules are traps to avoid, not general advice. Add a rule only when it is non-obv
 - Every dependency is declared once in `[workspace.dependencies]`. Every crate uses the workspace lints.
 - Extensions depend on the SDK and on small shared contract crates, never on each other. `tooling/workspace-rules` fails the tests if one does. This keeps the build wide and parallel.
 - Warnings fail CI only (`.cargo/ci-config.toml`), never a local build: a warning in agent-written code must not break a composer's build.
-- Never vary `rustflags` or environment variables between builds. Any change rebuilds everything. The sanitizer run below is the one exception.
+- Never vary `rustflags` or environment variables between builds. Any change rebuilds everything. CI's `RTSAN_ENABLE=1` is the one exception.
 
 ## The audio engine
 
@@ -62,8 +62,7 @@ How the engine keeps to that:
 
 `Engine::process_block` is marked `#[nonblocking]` with `rtsan-standalone`. It does nothing unless the build sets `RTSAN_ENABLE=1`. Then it aborts on any allocation, lock or system call inside `process_block`, which covers every `update` and `process`. The input device callback (`CaptureWriter::write`) is marked the same way.
 
-- The CI job `sanitizer` in `.github/workflows/ci.yml` runs the tests of every crate with a processor, and then `runtime --test projects`, which plays real projects with file edits and recording.
-- Add every new crate with a processor to that list.
+- The CI job `test` in `.github/workflows/ci.yml` runs the whole test suite with the sanitizer on.
 - A test in `crates/core/tests/engine.rs` starts a child that allocates inside `process` and expects the abort, so a sanitizer that is silently off fails CI.
 - `HostedPlugin` wraps each call into a third-party plugin in a `ScopedDisabler`: what a plugin does inside itself is not ours to check. Because that could hide our own buffers growing, the plugin host is also tested with a counting global allocator.
 
@@ -88,7 +87,7 @@ How the engine keeps to that:
 - The two snapshot tests render the component gallery and the window to PNGs without a display. Look at the PNGs after a UI change. `WINDOW_SNAPSHOT_ONLY` picks a subset of window states.
 - A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
 
-CI runs the commands of [README.md](README.md), "Checks", plus the sanitizer job. The jobs (lint, tests, snapshots, sanitizer, Linux) run side by side. Lint, snapshots and the sanitizer run on macOS; the Linux job builds and runs the tests on Ubuntu. Add Miri for new unsafe code.
+CI runs the commands of [README.md](README.md), "Checks", with the realtime sanitizer on for the macOS tests. The jobs (lint, test, Linux) run side by side. Lint and test run on macOS; the Linux job builds and runs the tests on Ubuntu. Add Miri for new unsafe code.
 
 To try Linux from a Mac: an `ubuntu:24.04` Docker container with the README packages, `CARGO_TARGET_DIR` on a volume, run as a normal user (root can write into the read-only folders some tests make). For the window add `xvfb` and `mesa-vulkan-drivers` and a null sound card. Set `CARGO_BUILD_JOBS=4` on Docker Desktop's default memory.
 

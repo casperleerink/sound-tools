@@ -11,9 +11,13 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # `.cargo/config.toml` builds into /private/tmp. rust-cache only saves a target folder inside
+  # the workspace, so CI builds there.
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
-# Five jobs run side by side. Each builds what it needs and keeps its own cache. A change that
-# only touches `docs/` runs the lint job and skips the others.
+# Three jobs run side by side. Each builds what it needs and keeps its own cache. Only main saves
+# the caches, so pull requests do not push main's out of the 10 GB limit. A change that only
+# touches `docs/` runs the lint job and skips the others.
 jobs:
   changes:
     runs-on: ubuntu-latest
@@ -43,7 +47,7 @@ jobs:
         run: mkdir -p ../.cargo && cp .cargo/ci-config.toml ../.cargo/config.toml
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ". -> /private/tmp/sound-tools-timing/target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-shear,cargo-deny,typos
@@ -66,45 +70,25 @@ jobs:
         run: mkdir -p ../.cargo && cp .cargo/ci-config.toml ../.cargo/config.toml
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ". -> /private/tmp/sound-tools-timing/target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
       # Before the tests: they load the repository's own CLAP and VST 3 plugins, which are
       # dynamic libraries that `cargo test` does not build.
-      - run: cargo build --workspace --locked
+      - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
+      # With the realtime sanitizer on: any test that allocates, locks or makes a system call
+      # inside Engine::process_block aborts.
       - run: cargo nextest run --workspace --locked
+        env:
+          RTSAN_ENABLE: 1
 
-  snapshots:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: macos-15
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install the pinned toolchain
-        run: rustup toolchain install
-      - name: Deny warnings
-        run: mkdir -p ../.cargo && cp .cargo/ci-config.toml ../.cargo/config.toml
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> /private/tmp/sound-tools-timing/target"
-      # The window snapshots show plugin cards, so the test plugins must be built.
-      - run: cargo build --workspace --locked
-      - name: Render gallery snapshots
-        run: cargo test -p gallery --test snapshots --locked
-      - name: Render window snapshots
-        run: cargo test -p runtime --test snapshots --locked
-
-  # Linux builds and runs the tests. The snapshots render with Metal, so they stay on macOS.
+  # Linux builds and runs the tests.
   linux:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      # `.cargo/config.toml` builds into /private/tmp, a folder of macOS.
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v4
       - name: Install the system libraries
@@ -118,39 +102,10 @@ jobs:
       - name: Deny warnings
         run: mkdir -p ../.cargo && cp .cargo/ci-config.toml ../.cargo/config.toml
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - run: cargo build --workspace --locked
+      - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
       - run: cargo nextest run --workspace --locked
-
-  sanitizer:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: macos-15
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install the pinned toolchain
-        run: rustup toolchain install
-      - name: Deny warnings
-        run: mkdir -p ../.cargo && cp .cargo/ci-config.toml ../.cargo/config.toml
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> /private/tmp/sound-tools-timing/target"
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-      # The project tests load the test plugins, which this plain build makes.
-      - run: cargo build --workspace --locked
-      # The variable rebuilds the audio crates. The sanitizer aborts any test that allocates,
-      # locks or makes a system call inside Engine::process_block.
-      - name: Realtime sanitizer
-        run: |
-          cargo nextest run -p sound-core -p sound-media -p tone -p instrument -p filter -p eq -p reverb -p saturator -p delay -p compressor -p limiter -p drum-pad -p sound-notes -p arrangement -p metronome -p midi -p plugin-host -p sampler -p utility -p modulation -p wavetable --locked
-          # Real projects: the sequencer of every track into its synth, with live file edits,
-          # a whole recording from the MIDI input into a clip, and tracks whose instrument is
-          # a hosted CLAP or VST 3 plugin.
-          cargo nextest run -p runtime --test projects --locked
-        env:
-          RTSAN_ENABLE: 1
