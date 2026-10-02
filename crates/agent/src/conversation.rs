@@ -6,6 +6,7 @@
 //! Times are the wall clock, not `Instant`: a saved thread replays its events with the times
 //! they came at, and gets the same conversation back, "Worked for" included.
 
+use std::collections::VecDeque;
 use std::time::{Duration, SystemTime};
 
 use crate::{AgentEvent, ApprovalId, ExitReason, StepId, StepOutcome, TurnOutcome};
@@ -42,8 +43,9 @@ pub struct Turn {
     /// The block that streams, until its whole text comes.
     pub streaming: String,
     pub steps: Vec<Step>,
-    /// The question the agent waits on. It is void when the turn ends.
-    pub approval: Option<Approval>,
+    /// The questions the agent waits on, oldest first. The oldest is shown, and each waits
+    /// for its own answer. They are void when the turn ends.
+    pub approvals: VecDeque<Approval>,
     started: SystemTime,
     /// `None` while the agent works.
     pub end: Option<TurnEnd>,
@@ -91,10 +93,15 @@ impl Turn {
             blocks: Vec::new(),
             streaming: String::new(),
             steps: Vec::new(),
-            approval: None,
+            approvals: VecDeque::new(),
             started,
             end: None,
         }
+    }
+
+    /// The question shown: the oldest one still waiting.
+    pub fn approval(&self) -> Option<&Approval> {
+        self.approvals.front()
     }
 
     /// The newest step, which the working line shows.
@@ -107,7 +114,7 @@ impl Turn {
         if !self.streaming.is_empty() {
             self.blocks.push(std::mem::take(&mut self.streaming));
         }
-        self.approval = None;
+        self.approvals.clear();
         self.end = Some(TurnEnd {
             outcome,
             // A clock set back during the turn gives nothing rather than nonsense.
@@ -143,7 +150,7 @@ impl Conversation {
     pub fn approval(&self) -> Option<&Approval> {
         let index = self.open_turn_index()?;
         match self.entries.get(index) {
-            Some(Entry::Turn(turn)) => turn.approval.as_ref(),
+            Some(Entry::Turn(turn)) => turn.approval(),
             _ => None,
         }
     }
@@ -154,12 +161,12 @@ impl Conversation {
         self.entries.push(Entry::Turn(Turn::new(now)));
     }
 
-    /// Answered: the row goes, and the turn goes on. Gives the question's id and the index of
-    /// its turn.
+    /// The question shown was answered: its row goes, and the next question or the turn goes
+    /// on. Gives the question's id and the index of its turn.
     pub fn answered(&mut self) -> Option<(ApprovalId, usize)> {
         let index = self.open_turn_index()?;
         let turn = self.open_turn()?;
-        let approval = turn.approval.take()?;
+        let approval = turn.approvals.pop_front()?;
         Some((approval.id, index))
     }
 
@@ -223,7 +230,7 @@ impl Conversation {
                 }
             }),
             AgentEvent::ApprovalRequested { id, title } => {
-                self.update_open_turn(|turn| turn.approval = Some(Approval { id, title }))
+                self.update_open_turn(|turn| turn.approvals.push_back(Approval { id, title }))
             }
             AgentEvent::TurnEnded { outcome } => {
                 self.update_open_turn(|turn| turn.finish(outcome, now))
@@ -401,6 +408,36 @@ mod tests {
         assert!(conversation.approval().is_none());
         // The text of an interrupted answer stays.
         assert_eq!(turn(&conversation).blocks, ["Half"]);
+    }
+
+    /// The agent can ask a second question before the first is answered. Each waits for its
+    /// own answer, the oldest first.
+    #[test]
+    fn a_second_approval_waits_behind_the_first() {
+        let now = SystemTime::now();
+        let mut conversation = Conversation::default();
+        conversation.send("Build it", now);
+        for (id, title) in [
+            ("first", "Run `cargo build`"),
+            ("second", "Run `cargo test`"),
+        ] {
+            let asked = AgentEvent::ApprovalRequested {
+                id: ApprovalId(id.to_string()),
+                title: title.to_string(),
+            };
+            conversation.apply(asked, now);
+        }
+        let shown = |conversation: &Conversation| {
+            let approval = conversation.approval();
+            approval.map(|approval| approval.title.clone())
+        };
+        assert_eq!(shown(&conversation).as_deref(), Some("Run `cargo build`"));
+        let answered = conversation.answered();
+        assert_eq!(answered, Some((ApprovalId("first".to_string()), 1)));
+        assert_eq!(shown(&conversation).as_deref(), Some("Run `cargo test`"));
+        let answered = conversation.answered();
+        assert_eq!(answered, Some((ApprovalId("second".to_string()), 1)));
+        assert_eq!(shown(&conversation), None);
     }
 
     fn notices(conversation: &Conversation) -> Vec<&str> {

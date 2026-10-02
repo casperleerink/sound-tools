@@ -187,3 +187,33 @@ fn a_double_click_clears_the_lane(cx: &mut TestAppContext) {
     opened.click(velocity);
     assert_eq!(shown(&mut opened), Shown::Velocity);
 }
+
+/// An undo between the press and the first move gives the lane back: the drag draws over the
+/// lane as it is now and does not write the one from before the undo.
+#[gpui::test]
+fn an_undo_before_the_first_move_draws_over_the_lane_it_gave_back(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::default()
+    };
+    let (from, to) = (
+        opened.in_lane_at(2 * BAR - 240, height(0)),
+        opened.in_lane_at(2 * BAR + 240, height(0)),
+    );
+    opened.drag_with(from, to, alt);
+    assert_eq!(bend(&mut opened), [(0, 0), (BAR + 960, 0)]);
+    let (from, to) = (
+        opened.in_lane_at(BAR + 240, height(-4096)),
+        opened.in_lane_at(BAR + 720, height(-4096)),
+    );
+    opened.press(from);
+    opened.keys("cmd-z");
+    assert_eq!(bend(&mut opened), [(0, 0), (BAR, 4096), (BAR + 960, 0)]);
+    opened.drag_to(to);
+    opened.release(to);
+    let drawn = bend(&mut opened);
+    assert_eq!(drawn.first(), Some(&(0, 0)));
+    assert_eq!(drawn[drawn.len() - 2..], [(BAR, 4096), (BAR + 960, 0)]);
+    assert_eq!(opened.undo_label().as_deref(), Some("Draw bend"));
+}

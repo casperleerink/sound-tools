@@ -11,7 +11,7 @@ use sound_core::{
 
 use sound_notes::{Expression, NoteEvent, Pedal};
 
-use crate::keys::{Input, Keys, Played, Sounded};
+use crate::keys::{Input, Keys, Played, Report};
 use crate::take::{Take, TakeEvent};
 
 /// The name of the processor in the engine graph. Instance processors are named
@@ -100,7 +100,7 @@ struct Recording {
 pub struct Keyboard {
     node: Node<Keys>,
     input: Input,
-    reports: rtrb::Consumer<Sounded>,
+    reports: rtrb::Consumer<Report>,
     lost_reports: Arc<AtomicU64>,
     destination: Option<InputEndpoint>,
     /// Where the live input should go next. The change waits for the next [`Self::poll`], so
@@ -214,9 +214,16 @@ impl Keyboard {
         if self.input.release_is_pending() {
             return Ok(());
         }
-        let Some(destination) = self.wanted.take() else {
+        let Some(destination) = self.wanted else {
             return Ok(());
         };
+        // A key pressed since `play_into` went to the old instrument. It is released there
+        // first, or it would sound there for ever.
+        if self.holds_anything() {
+            self.release_held();
+            return Ok(());
+        }
+        self.wanted = None;
         let notes = OutputEndpoint::new(self.node, Keys::NOTES);
         let mut edit = engine.edit();
         if let Some(old) = self.destination {
@@ -237,7 +244,16 @@ impl Keyboard {
 
     fn take_reports(&mut self, timing: Option<&StreamTiming>) {
         self.seen_lost_reports = self.lost_reports.load(Ordering::Relaxed);
-        while let Ok(sounded) = self.reports.pop() {
+        while let Ok(report) = self.reports.pop() {
+            let sounded = match report {
+                Report::Sounded(sounded) => sounded,
+                Report::Released => {
+                    self.live_notes = 0;
+                    self.live_pedal = Pedal::UP;
+                    self.live_expression = Expression::REST;
+                    continue;
+                }
+            };
             if let Some(timing) = timing
                 && let Some(sound_nanos) = timing.sound_time_nanos(sounded.frame)
             {

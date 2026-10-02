@@ -88,6 +88,9 @@ pub enum GraphError {
     Cycle {
         connection: Connection,
         description: String,
+        /// Every connection on the cycle, `connection` among them. Leaving out any one of
+        /// them may break it.
+        cycle: Vec<Connection>,
     },
     #[error("the connection does not exist")]
     UnknownConnection(Connection),
@@ -331,13 +334,13 @@ impl Graph {
     }
 
     /// Every processor left in `blocked` has a source that is also left. Walking back along
-    /// first sources must reach some processor twice, and that processor is on a cycle.
+    /// first sources must reach some processor twice, and the walk from there is a cycle.
     fn cycle_error(
         &self,
         blocked: &BTreeMap<NodeId, BTreeMap<NodeId, Connection>>,
         start: NodeId,
     ) -> GraphError {
-        let mut visited = BTreeSet::new();
+        let mut walked = vec![start];
         let mut destination = start;
         loop {
             let Some((source, connection)) = blocked
@@ -346,12 +349,26 @@ impl Graph {
             else {
                 return GraphError::UnknownNode(destination);
             };
-            if !visited.insert(destination) {
+            if let Some(position) = walked.iter().position(|node| node == source) {
+                // Each processor of the walk is fed by the next one, and the last by the first.
+                let nodes = walked.split_off(position);
+                let fed_by: BTreeSet<(NodeId, NodeId)> = nodes
+                    .iter()
+                    .copied()
+                    .zip(nodes.iter().copied().skip(1).chain([*source]))
+                    .collect();
+                let cycle = self
+                    .node_connections()
+                    .filter(|(source, destination, _)| fed_by.contains(&(*destination, *source)))
+                    .map(|(_, _, connection)| *connection)
+                    .collect();
                 return GraphError::Cycle {
                     connection: *connection,
                     description: self.describe(connection),
+                    cycle,
                 };
             }
+            walked.push(*source);
             destination = *source;
         }
     }
@@ -585,11 +602,18 @@ mod tests {
                 .any(|(source, destination, _)| reaches(&built, destination, source));
 
             match built.compile(0, 4) {
-                Err(GraphError::Cycle { connection, .. }) => {
+                Err(GraphError::Cycle { connection, cycle, .. }) => {
                     let Destination::Node(destination, _) = connection.destination else {
                         panic!("a device connection cannot close a cycle");
                     };
                     prop_assert!(built.connections.contains(&connection));
+                    prop_assert!(cycle.contains(&connection));
+                    for on_cycle in &cycle {
+                        let Destination::Node(destination, _) = on_cycle.destination else {
+                            panic!("a device connection cannot be on a cycle");
+                        };
+                        prop_assert!(reaches(&built, destination, on_cycle.source));
+                    }
                     prop_assert!(reaches(&built, destination, connection.source));
                 }
                 Err(other) => panic!("unexpected error {other}"),

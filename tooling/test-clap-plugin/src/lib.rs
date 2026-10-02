@@ -553,7 +553,10 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
         for index in 0..self.events_out {
             let pckn = Pckn::new(0_u16, 0_u16, 60_u16, Match::All);
             let event = NoteEndEvent::new(index.min(frames as u32 - 1), pckn);
-            let _ = events.output.try_push(event.as_unknown());
+            // A host with no room left takes none of the rest either.
+            if events.output.try_push(event.as_unknown()).is_err() {
+                break;
+            }
         }
         Ok(ProcessStatus::Continue)
     }

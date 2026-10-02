@@ -82,13 +82,9 @@ pub fn scan_bundle(bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
 /// `.vstpreset` file holds, so the id in a record is the one a plugin's maker publishes. A
 /// class id never changes, which is what makes it the name of a plugin for good.
 pub fn class_id_text(id: &TUID) -> String {
-    let mut text = String::with_capacity(32);
-    for byte in id {
-        use std::fmt::Write as _;
-        // The digits cannot fail to be written into a string.
-        let _ = write!(text, "{:02X}", byte.to_ne_bytes()[0]);
-    }
-    text
+    id.iter()
+        .map(|byte| format!("{:02X}", byte.to_ne_bytes()[0]))
+        .collect()
 }
 
 /// The sixteen bytes of a class id, from what a record holds. `None` when the text is not

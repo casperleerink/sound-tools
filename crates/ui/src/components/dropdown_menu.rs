@@ -690,8 +690,10 @@ impl DropdownMenu {
             "down" => self.step(1, cx),
             "up" => self.step(-1, cx),
             "enter" => {
+                // A row can turn disabled under the highlight, as Undo does with nothing to undo.
                 let value = flat(&self.entries)
                     .get(self.highlighted)
+                    .filter(|item| !item.is_disabled())
                     .map(|item| item.value.clone());
                 if let Some(value) = value {
                     self.pick(value, window, cx);

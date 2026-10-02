@@ -205,3 +205,25 @@ fn a_wheel_held_when_recording_begins_is_in_the_take() {
     assert_eq!(wheel, [(0, 70)]);
     assert!(clip.bend.is_empty() && clip.pressure.is_empty());
 }
+
+/// A keyboard unplugged with the pedal down and a wheel moved is released. The next recording
+/// starts with nothing held, and not with the pedal down for ever.
+#[test]
+fn a_recording_after_a_release_starts_with_nothing_held() {
+    let mut harness = Harness::new();
+    harness.input.send(pedal(127));
+    harness.input.send(mod_wheel(70));
+    harness.run(64, 64);
+    // What `Ports::refresh` calls when a port is gone from the machine.
+    harness.input.release_held();
+    harness.run(64, 64);
+    harness.control.play();
+    harness.run(64, 64);
+    let from = harness.playhead();
+    harness.keyboard.start_recording(from);
+    harness.run(640, 64);
+    let until = harness.playhead();
+    let take = harness.keyboard.finish_recording(until).unwrap();
+    assert_eq!(take.pedal_at_start, sound_notes::Pedal::UP);
+    assert_eq!(take.events, []);
+}

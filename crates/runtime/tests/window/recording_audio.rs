@@ -538,3 +538,33 @@ fn an_input_that_goes_away_is_told_once(cx: &mut TestAppContext) {
     }
     assert_eq!(opened.notice(), None);
 }
+
+/// A take that ends before the input opens, and an input that then fails to open: the take
+/// still ends, with no clip, and the record control starts the next one.
+#[gpui::test]
+fn a_take_ended_before_its_input_failed_to_open_lets_the_next_one_start(cx: &mut TestAppContext) {
+    let (mut opened, input) = open(cx);
+    input
+        .fails
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let header = opened.track_header(1);
+    opened.click(header);
+    opened.settle();
+    let transport = opened.transport();
+    opened.cx.update(|_, cx| {
+        transport.update(cx, |pill, cx| {
+            pill.toggle_recording(cx);
+            pill.toggle_recording(cx);
+        });
+    });
+    opened.settle();
+    assert!(!opened.is_recording());
+    assert!(audio_clips(&mut opened, VOICE).is_empty());
+
+    input
+        .fails
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    opened.keys("r");
+    opened.settle();
+    assert!(opened.is_recording(), "the record control did nothing");
+}

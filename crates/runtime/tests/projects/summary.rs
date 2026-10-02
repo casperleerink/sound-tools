@@ -124,3 +124,18 @@ fn inspecting_prints_the_same_project_without_loading_a_plugin() {
     assert!(loading.contains("com.example.nowhere"), "{loading}");
     assert!(loading.contains("problems: 1"), "{loading}");
 }
+
+/// Ids sort as text, so a second arrangement `arrangement-2` comes between `arrangement` and
+/// what is inside it. What the first one summarised is still not printed again.
+#[test]
+fn a_second_arrangement_does_not_print_the_tracks_of_the_first_again() {
+    let mut harness = Harness::piece();
+    harness.write_and_apply(
+        "state/arrangement-2/instance.json",
+        r#"{"tool": "arrangement", "state": {}}"#,
+    );
+    assert_eq!(harness.project.problems(), []);
+    let summary = runtime::summary(&harness.project);
+    assert!(summary.contains("arrangement `arrangement-2`"), "{summary}");
+    assert!(!summary.contains("instance `arrangement/"), "{summary}");
+}

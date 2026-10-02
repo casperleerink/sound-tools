@@ -231,15 +231,24 @@ fn inspect(folder: &Path) -> Result<()> {
 enum Span {
     /// From the start, this long, with no tail. Whatever the clips say.
     Seconds(f64),
-    /// From the start to the end of the last clip, and the tail.
-    Project,
     /// This range and the tail, as the window exports selected clips.
     Range(Ticks, Ticks),
 }
 
-fn render(folder: &Path, wav: &Path, span: Span) -> Result<()> {
+/// Renders `span`, or with none the project from the start to the end of the last clip, and
+/// the tail.
+fn render(folder: &Path, wav: &Path, span: Option<Span>) -> Result<()> {
     let (mut project, mut engine, plugins) = open_read_only(folder)?;
     print_problems(&project);
+    // Before the file is made, so a render that cannot happen leaves no empty file behind.
+    let span = match span {
+        Some(span) => span,
+        None => {
+            let end = runtime::project_end(&project)
+                .context("the project has no clips, so there is nothing to render")?;
+            Span::Range(Ticks(0), end)
+        }
+    };
     let mut writer = hound::WavWriter::create(
         wav,
         hound::WavSpec {
@@ -265,12 +274,6 @@ fn render(folder: &Path, wav: &Path, span: Span) -> Result<()> {
             project.engine().play();
             let frames = (seconds * f64::from(OFFLINE.sample_rate)) as usize;
             runtime::render_into(&mut project, &mut engine, &plugins, frames, write)?
-        }
-        Span::Project => {
-            let Some(end) = runtime::project_end(&project) else {
-                bail!("the project has no clips, so there is nothing to render");
-            };
-            runtime::render_range(&mut project, &mut engine, &plugins, Ticks(0), end, write)?
         }
         Span::Range(from, to) => {
             runtime::render_range(&mut project, &mut engine, &plugins, from, to, write)?
@@ -378,16 +381,23 @@ fn main() -> Result<()> {
         // The child of a plugin scan. It loads one bundle, which is why it is a process of
         // its own: a plugin that crashes while it is looked at costs this child and no more.
         [plugin_host::SCAN_ARGUMENT, format, bundle] => scan_one_bundle(format, Path::new(bundle)),
-        [folder, "--render", wav] => render(Path::new(folder), Path::new(wav), Span::Project),
+        [folder, "--render", wav] => render(Path::new(folder), Path::new(wav), None),
         [folder, "--render", wav, "--seconds", seconds] => {
             let seconds = seconds.parse().context("--seconds takes a number")?;
-            render(Path::new(folder), Path::new(wav), Span::Seconds(seconds))
+            render(
+                Path::new(folder),
+                Path::new(wav),
+                Some(Span::Seconds(seconds)),
+            )
         }
         [folder, "--render", wav, "--from", from, "--to", to] => {
             let from = from.parse().context("--from takes a position in ticks")?;
             let to = to.parse().context("--to takes a position in ticks")?;
+            if to <= from {
+                bail!("--to must come after --from");
+            }
             let span = Span::Range(Ticks(from), Ticks(to));
-            render(Path::new(folder), Path::new(wav), span)
+            render(Path::new(folder), Path::new(wav), Some(span))
         }
         _ => bail!(
             "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [--seconds <n> | --from <ticks> --to <ticks>]]]\n       sound-tools --plugins | --version"

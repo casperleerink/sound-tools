@@ -90,9 +90,8 @@ pub fn point_at(
         viewport.tick_at(x + POINT_REACH),
     );
     let first = lane.points.partition_point(|point| point.tick < from);
-    let near = lane.points[first..]
-        .iter()
-        .take_while(|point| point.tick <= to);
+    let near = lane.points.iter().skip(first);
+    let near = near.take_while(|point| point.tick <= to);
     let distances = near.enumerate().map(|(offset, point)| {
         let (px, py) = place(viewport, range, point);
         (first + offset, (px - x).hypot(py - y))
@@ -119,8 +118,8 @@ pub fn with_point(
     let mut lane = origin.clone();
     let at = lane.points.partition_point(|point| point.tick < tick);
     let added = Point { tick, value };
-    match lane.points.get(at) {
-        Some(point) if point.tick == tick => lane.points[at] = added,
+    match lane.points.get_mut(at) {
+        Some(point) if point.tick == tick => *point = added,
         _ => lane.points.insert(at, added),
     }
     (lane, at)
@@ -136,9 +135,10 @@ pub fn moved_point(
     value: AutomationValue,
 ) -> AutomationLane {
     let mut lane = origin.clone();
-    let earliest = index
+    let before = index
         .checked_sub(1)
-        .map_or(Ticks(0), |before| Ticks(lane.points[before].tick.0 + 1));
+        .and_then(|before| lane.points.get(before));
+    let earliest = before.map_or(Ticks(0), |before| Ticks(before.tick.0 + 1));
     let latest = lane.points.get(index + 1).map_or(Ticks(u64::MAX), |after| {
         Ticks(after.tick.0.saturating_sub(1))
     });
@@ -289,6 +289,11 @@ mod tests {
         assert_eq!(values(&past)[1], (1999, 500.));
         let before = moved_point(&origin, 1, Ticks(0), AutomationValue(500.));
         assert_eq!(values(&before)[1], (1, 500.));
+        // A point the lane does not have moves nothing.
+        assert_eq!(
+            moved_point(&origin, 5, Ticks(0), AutomationValue(1.)),
+            origin
+        );
     }
 
     /// An erase takes the points it covers, and a lane with none left is gone, as a delete of

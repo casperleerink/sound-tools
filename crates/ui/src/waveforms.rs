@@ -81,8 +81,9 @@ impl Waveforms {
             Cached::DoesNotPlay(_) | Cached::Missing => return None,
         };
         let path = assets.path(asset.asset_name());
-        let entity = Self::entity(cx);
-        if let Some(entry) = entity.read(cx).known.get(&path) {
+        if let Some(GlobalWaveforms(entity)) = cx.try_global::<GlobalWaveforms>()
+            && let Some(entry) = entity.read(cx).known.get(&path)
+        {
             let same = entry.info == info || (info.is_none() && entry.info.is_some());
             match &entry.state {
                 State::Ready(overview) if same => return Some(overview.clone()),
@@ -91,6 +92,20 @@ impl Waveforms {
                 State::Ready(_) | State::Failed => {}
             }
         }
+        // A view asks while it draws, where no entity may change: it starts after the frame.
+        let (assets, asset) = (assets.clone(), asset.clone());
+        cx.defer(move |cx| Self::make(assets, asset, path, info, cx));
+        None
+    }
+
+    /// Reads the file and makes its overview on a background thread.
+    fn make(assets: Assets, asset: AudioAsset, path: PathBuf, info: Option<Info>, cx: &mut App) {
+        let entity = Self::entity(cx);
+        // Asked twice in one frame: the first one makes it.
+        let known = entity.read(cx).known.get(&path);
+        if known.is_some_and(|entry| matches!(entry.state, State::Making)) {
+            return;
+        }
         let making = Entry {
             info,
             state: State::Making,
@@ -98,7 +113,6 @@ impl Waveforms {
         entity.update(cx, |waveforms, _| {
             waveforms.known.insert(path.clone(), making)
         });
-        let (assets, asset) = (assets.clone(), asset.clone());
         let work = cx.background_spawn(async move {
             // What the file is, for the cache of sound-media, then the file and its overview.
             let info = sound_media::info(&assets, &asset).ok();
@@ -118,7 +132,6 @@ impl Waveforms {
             });
         })
         .detach();
-        None
     }
 }
 

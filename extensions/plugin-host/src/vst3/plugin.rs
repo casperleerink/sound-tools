@@ -723,13 +723,14 @@ unsafe fn arrange(processor: &ComPtr<IAudioProcessor>, inputs: &[usize], outputs
 }
 
 /// The speaker arrangement of a channel count. Anything this host does not know by name is
-/// asked for as the count of low bits, which is what the VST 3 arrangements are.
+/// asked for as the count of low bits, which is what the VST 3 arrangements are. A bus wider
+/// than the 64 bits an arrangement has is asked for as all of them.
 fn speakers(channels: usize) -> SpeakerArrangement {
     match channels {
         0 => 0,
         1 => SpeakerArr::kMono,
         2 => SpeakerArr::kStereo,
-        count => (1_u64 << count) - 1,
+        count => u64::MAX >> (64 - count.min(64)),
     }
 }
 
@@ -955,5 +956,8 @@ mod tests {
         assert_eq!(speakers(2), SpeakerArr::kStereo);
         assert_eq!(speakers(4), 0b1111);
         assert_eq!(speakers(0), 0);
+        assert_eq!(speakers(63), u64::MAX >> 1);
+        assert_eq!(speakers(64), u64::MAX);
+        assert_eq!(speakers(65), u64::MAX);
     }
 }

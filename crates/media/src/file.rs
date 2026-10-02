@@ -153,7 +153,7 @@ impl fmt::Debug for Audio {
 impl Audio {
     /// Reads the layout of a WAV or AIFF file from its bytes and keeps them.
     pub fn parse(bytes: Vec<u8>) -> Result<Self, FormatError> {
-        let layout = checked_layout(&bytes)?;
+        let layout = checked_layout(&bytes, bytes.len())?;
         let frames = frames_of(&layout, bytes.len());
         Ok(Self {
             bytes,
@@ -296,10 +296,11 @@ fn decode<const SIZE: usize>(
 }
 
 /// The layout of a file from its first bytes, with what this reads checked: the one place
-/// that decides whether a file plays, for [`Audio::parse`] and [`probe`] alike.
-fn checked_layout(bytes: &[u8]) -> Result<Layout, FormatError> {
+/// that decides whether a file plays, for [`Audio::parse`] and [`probe`] alike. `size` is the
+/// length of the whole file, of which `bytes` may be only the start.
+fn checked_layout(bytes: &[u8], size: usize) -> Result<Layout, FormatError> {
     let layout = match bytes.get(..4) {
-        Some(b"RIFF") => wav(bytes)?,
+        Some(b"RIFF") => wav(bytes, size)?,
         Some(b"FORM") => aiff(bytes)?,
         Some(b"RF64") => return Err(FormatError::Unsupported("RF64".to_string())),
         _ => return Err(FormatError::NotAudio),
@@ -338,6 +339,7 @@ pub(crate) fn probe(path: &std::path::Path) -> Result<Info, ProbeError> {
     use std::io::{Read, Seek};
     let mut file = std::fs::File::open(path).map_err(ProbeError::Io)?;
     let size = file.metadata().map_err(ProbeError::Io)?.len();
+    let whole = usize::try_from(size).unwrap_or(usize::MAX);
     let mut wanted = 64 * 1024_u64;
     loop {
         file.rewind().map_err(ProbeError::Io)?;
@@ -346,9 +348,9 @@ pub(crate) fn probe(path: &std::path::Path) -> Result<Info, ProbeError> {
             .take(wanted)
             .read_to_end(&mut bytes)
             .map_err(ProbeError::Io)?;
-        match checked_layout(&bytes) {
+        match checked_layout(&bytes, whole) {
             Ok(layout) => {
-                let frames = frames_of(&layout, usize::try_from(size).unwrap_or(usize::MAX));
+                let frames = frames_of(&layout, whole);
                 return Ok(Info {
                     frames,
                     channels: layout.channels,
@@ -394,18 +396,21 @@ fn chunks(bytes: &[u8], little_endian: bool) -> impl Iterator<Item = ([u8; 4], u
     })
 }
 
-/// Whether a whole chunk of a RIFF file starts at `at`: an id of four letters, digits or
-/// spaces, and a body that fits in the file.
-fn chunk_at(bytes: &[u8], at: usize) -> bool {
-    let Some(header) = bytes.get(at..at.saturating_add(8)) else {
-        return false;
-    };
+/// Whether a whole chunk of a RIFF file of `file_size` bytes starts at `at`: an id of four
+/// letters, digits or spaces, and a body that fits in the file. `None` while its header lies
+/// past `bytes`, the part of the file read so far.
+fn chunk_at(bytes: &[u8], at: usize, file_size: usize) -> Option<bool> {
+    let body = at.saturating_add(8);
+    if body > file_size {
+        return Some(false);
+    }
+    let header = bytes.get(at..body)?;
     let id = header.get(..4).unwrap_or_default();
     let named = id
         .iter()
         .all(|byte| byte.is_ascii_alphanumeric() || *byte == b' ');
-    let size = u32_at(bytes, at + 4, true).unwrap_or(u32::MAX) as usize;
-    named && at.saturating_add(8).saturating_add(size) <= bytes.len()
+    let length = u32_at(bytes, at + 4, true).unwrap_or(u32::MAX) as usize;
+    Some(named && body.saturating_add(length) <= file_size)
 }
 
 fn u16_at(bytes: &[u8], at: usize, little_endian: bool) -> Option<u16> {
@@ -430,7 +435,7 @@ const WAVE_FORMAT_PCM: u16 = 1;
 const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
 const WAVE_FORMAT_EXTENSIBLE: u16 = 0xFFFE;
 
-fn wav(bytes: &[u8]) -> Result<Layout, FormatError> {
+fn wav(bytes: &[u8], file_size: usize) -> Result<Layout, FormatError> {
     if bytes.get(8..12) != Some(b"WAVE") {
         return Err(FormatError::NotAudio);
     }
@@ -479,7 +484,12 @@ fn wav(bytes: &[u8]) -> Result<Layout, FormatError> {
     })?;
     // Writers that stream leave the length at its largest, or at zero with nothing after it.
     // A zero followed by another chunk is a file with no samples.
-    let streamed = length == u32::MAX as usize || (length == 0 && !chunk_at(bytes, data));
+    let streamed = match length {
+        0 => !chunk_at(bytes, data, file_size).ok_or(FormatError::Damaged(
+            "the chunk after its data is not read yet",
+        ))?,
+        length => length == u32::MAX as usize,
+    };
     let length = (!streamed).then_some(length);
     Ok(Layout {
         data,

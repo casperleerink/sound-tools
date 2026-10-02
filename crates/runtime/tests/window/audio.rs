@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 
 use arrangement::view::DropTarget;
 use arrangement::view::clip_card::ClipCard;
-use arrangement::{AudioClip, Colour, TrackKind, TrackState};
+use arrangement::{AudioClip, AutomationLane, AutomationValue, Colour, TrackKind, TrackState};
 use gpui::{
     Entity, ExternalPaths, FileDropEvent, Modifiers, Pixels, Point, TestAppContext, point, px,
 };
-use sound_core::{Changes, Project, Ticks};
+use sound_core::{Changes, Project, Tempo, TempoChange, TempoMap, Ticks, TimeSignature};
 use sound_media::AudioAsset;
 
 use crate::support::{self, Opened, id, mark, one_undo_step, write_outside};
@@ -242,6 +242,104 @@ fn the_handles_drag_the_fades_and_the_gain(cx: &mut TestAppContext) {
     opened.drag(handle, handle + point(px(0.), px(200. / 72. * 6.)));
     assert_eq!(audio_clip(&mut opened, LONG).unwrap().gain_db, -6.);
     one_undo_step(&mut opened, "Change gain", &before);
+}
+
+/// An undo between the press on an edge or a handle and the first move: the drag goes on from
+/// the clip the undo gave back, and does not write the one from before the undo.
+#[gpui::test]
+fn an_undo_before_the_first_move_of_a_trim_a_fade_or_the_gain_goes_on_from_the_undo(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open(cx);
+    // The left edge in by a second, then half a second from where the undo put it.
+    let left = right(opened.at(BAR, 1), 2.);
+    opened.drag(left, right(left, BAR_WIDTH / 2.));
+    let left = right(opened.at(BAR + SECOND, 1), 2.);
+    opened.press(left);
+    opened.keys("cmd-z");
+    let to = right(left, BAR_WIDTH / 4.);
+    opened.drag_to(to);
+    opened.release(to);
+    let long = audio_clip(&mut opened, LONG).unwrap();
+    assert_eq!(
+        (long.start, long.file_start_seconds),
+        (Ticks(BAR + SECOND / 2), 0.5)
+    );
+    opened.keys("cmd-z");
+
+    // The fade in a second long, then a quarter of a second from no fade.
+    let handle = right(in_clip(&mut opened, BAR, 1, 7.), 5.);
+    opened.drag(handle, right(handle, BAR_WIDTH / 2.));
+    let handle = right(handle, BAR_WIDTH / 2.);
+    opened.press(handle);
+    opened.keys("cmd-z");
+    let to = right(handle, BAR_WIDTH / 8.);
+    opened.drag_to(to);
+    opened.release(to);
+    assert_eq!(audio_clip(&mut opened, LONG).unwrap().fade_in_ms, 250.);
+    opened.keys("cmd-z");
+
+    // The gain down by six decibels, then by three from 0 dB.
+    let handle = in_clip(&mut opened, BAR + 2 * SECOND, 1, 7.);
+    opened.drag(handle, handle + point(px(0.), px(200. / 72. * 6.)));
+    opened.press(handle);
+    opened.keys("cmd-z");
+    let to = handle + point(px(0.), px(200. / 72. * 3.));
+    opened.drag_to(to);
+    opened.release(to);
+    assert_eq!(audio_clip(&mut opened, LONG).unwrap().gain_db, -3.);
+}
+
+/// A dragged audio clip takes the automation under where it was along. Its length in ticks
+/// depends on the tempo, so it is measured where it was and not where the drag has it.
+#[gpui::test]
+fn a_dragged_audio_clip_takes_the_automation_under_where_it_was(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    // Twice as fast from bar 5, where the four seconds of the long clip are four bars. A volume
+    // point under the clip and one at bar 4, after it.
+    let tempo = |tick: u64, bpm: f64| TempoChange {
+        tick: Ticks(tick),
+        bpm: Tempo::from_bpm(bpm).unwrap(),
+    };
+    let tempo_map = TempoMap::new(
+        TimeSignature::default(),
+        vec![tempo(0, 120.), tempo(5 * BAR, 240.)],
+    )
+    .unwrap();
+    let volume = |tick: u64, value: f32| sound_notes::Point {
+        tick: Ticks(tick),
+        value: AutomationValue(value),
+    };
+    opened.edit(|project| {
+        let voice = project.resolve::<TrackState>(&id(VOICE)).unwrap();
+        let mut state = project.state(&voice).unwrap().clone();
+        state.automation = vec![AutomationLane {
+            device: None,
+            parameter: "gain_db".to_string(),
+            points: vec![volume(2 * BAR, -12.), volume(4 * BAR, 6.)],
+        }];
+        let mut changes = Changes::new();
+        changes.set_tempo_map(tempo_map);
+        changes.set(&voice, state);
+        project.commit("Tempo and volume", changes)
+    });
+    let (from, past) = (opened.at(BAR + SECOND, 1), opened.at(5 * BAR + SECOND, 1));
+    opened.press(from);
+    opened.drag_to(past);
+    let to = opened.at(6 * BAR + SECOND, 1);
+    opened.drag_to(to);
+    opened.release(to);
+    assert_eq!(audio_clip(&mut opened, LONG).unwrap().start, Ticks(6 * BAR));
+    let points = opened.project(|project| {
+        let voice = project.resolve::<TrackState>(&id(VOICE)).unwrap();
+        let lane = &project.state(&voice).unwrap().automation[0];
+        let points = lane.points.iter();
+        points
+            .map(|point| (point.tick.0, point.value.0))
+            .collect::<Vec<_>>()
+    });
+    assert!(points.contains(&(4 * BAR, 6.)), "{points:?}");
+    assert!(points.contains(&(7 * BAR, -12.)), "{points:?}");
 }
 
 #[gpui::test]

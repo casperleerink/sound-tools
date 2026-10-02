@@ -235,6 +235,19 @@ fn a_read_only_project_writes_no_generated_files() {
 }
 
 #[test]
+fn a_generated_file_that_cannot_be_written_does_not_stop_the_others() {
+    let folder = tempfile::tempdir().unwrap();
+    let blocked = folder.path().join(PROBLEMS_FILE).join("blocked");
+    std::fs::create_dir_all(blocked).unwrap();
+    let (control, _engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
+    assert!(Project::open(folder.path(), registry(), control).is_err());
+    let doc = format!("{AGENT_DOCS_FOLDER}/test-tools.md");
+    for file in [AGENT_DOC_FILE, "CLAUDE.md", &doc] {
+        assert!(folder.path().join(file).exists(), "{file}");
+    }
+}
+
+#[test]
 fn a_tool_summarises_itself_and_what_it_owns() {
     let mut harness = Harness::new();
     harness.write_and_apply("state/bank/instance.json", BANK_RECORD);

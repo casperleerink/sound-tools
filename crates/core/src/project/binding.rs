@@ -13,6 +13,7 @@ use super::file::{PortReference, SavedConnection, SavedDestination};
 use super::instance::{InstanceId, Record, State};
 use super::registry::Registry;
 use crate::automation::{AutomationInput, PlayedLanes};
+use crate::clock::TempoMap;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
 use crate::graph::{Connection, Destination, GraphError, NodeId};
@@ -367,6 +368,8 @@ pub(crate) struct EngineChange<'a> {
     /// Instances whose behaviour runs again.
     pub dirty: BTreeSet<InstanceId>,
     pub connections: &'a [SavedConnection],
+    /// Sent in the same batch, so the clock and the processors change in the same block.
+    pub tempo_map: &'a TempoMap,
 }
 
 #[derive(Default)]
@@ -558,6 +561,7 @@ impl Bindings {
                 ..Run::default()
             };
             let mut edit = control.edit();
+            edit.set_tempo_map(change.tempo_map.clone());
             let result = self
                 .run(&mut edit, assets, &change, &mut run)
                 .and_then(|()| Ok(edit.commit()?));
@@ -572,14 +576,22 @@ impl Bindings {
                 }
                 Err(error) => error,
             };
-            // Who made the connection, before the bindings go back to how they were.
             let cycle = match &error {
-                BindError::Graph(GraphError::Cycle { connection, .. }) => Some(*connection),
-                _ => None,
+                BindError::Graph(GraphError::Cycle { cycle, .. }) => cycle.as_slice(),
+                _ => &[],
             };
-            let declared_by = cycle.and_then(|cycle| {
-                let declares =
-                    |(_, binding): &(&InstanceId, &Binding)| binding.connections.contains(&cycle);
+            // A `project.json` line on the cycle is left out in the next attempt.
+            let saved_line = cycle
+                .iter()
+                .filter_map(|connection| run.resolved.get(connection))
+                .find(|index| !skipped.contains(*index))
+                .copied();
+            // Else the cycle is made by behaviours. Who made it, before the bindings go back
+            // to how they were.
+            let declared_by = cycle.iter().find_map(|connection| {
+                let declares = |(_, binding): &(&InstanceId, &Binding)| {
+                    binding.connections.contains(connection)
+                };
                 let (id, _) = self.by_instance.iter().find(declares)?;
                 Some(id.clone())
             });
@@ -589,20 +601,17 @@ impl Bindings {
                     None => self.by_instance.remove(&id),
                 };
             }
-            match (cycle, declared_by, error) {
-                (Some(cycle), _, _)
-                    if run
-                        .resolved
-                        .get(&cycle)
-                        .is_some_and(|index| skipped.insert(*index)) => {}
-                (Some(_), Some(instance), BindError::Graph(error)) => {
-                    return Err(BindError::Behaviour {
-                        instance,
-                        source: error.into(),
-                    });
-                }
-                (_, _, error) => return Err(error),
+            if let Some(index) = saved_line {
+                skipped.insert(index);
+                continue;
             }
+            return Err(match (declared_by, error) {
+                (Some(instance), BindError::Graph(error)) => BindError::Behaviour {
+                    instance,
+                    source: error.into(),
+                },
+                (_, error) => error,
+            });
         }
     }
 

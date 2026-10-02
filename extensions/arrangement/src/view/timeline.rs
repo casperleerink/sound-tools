@@ -278,7 +278,7 @@ impl Scene {
 
 #[derive(Clone)]
 /// One selected clip during a move: where it is now, the id it had at mouse down, the row of
-/// its track then, and its start. When the live clip is not what the drag wrote, something else
+/// its track then, and where it was. When the live clip is not what the drag wrote, something else
 /// changed it: an undo between mouse down and the first move, or an agent.
 struct MovedClip {
     /// The clip now. Its id changes when the drag takes it to another track.
@@ -289,7 +289,9 @@ struct MovedClip {
     /// The kind of track it goes on, which is the kind it is.
     kind: TrackKind,
     row: usize,
-    start: Ticks,
+    /// From its start to its end before the move. The length of an audio clip in ticks depends
+    /// on the tempo where it is, so it is measured there and not where the drag has it now.
+    range: Range<Ticks>,
     written: Ticks,
 }
 
@@ -2231,7 +2233,7 @@ impl Timeline {
                 home: id,
                 kind: clip.kind(),
                 row,
-                start: clip.start(),
+                range: range_of(project, &clip),
                 written: clip.start(),
             });
         }
@@ -2598,18 +2600,20 @@ impl Timeline {
         // have moved a clip.
         if !drag.begun {
             for (moved, live) in clips.iter_mut().zip(&lives) {
-                if live.start() != moved.written {
-                    (moved.start, moved.written) = (live.start(), live.start());
-                }
+                (moved.range, moved.written) = (range_of(project, live), live.start());
             }
             *tracks = track_states(project, self.arrangement.id());
         }
         let viewport = self.painted.get();
-        let earliest = clips.iter().map(|moved| moved.start.0).min().unwrap_or(0);
+        let earliest = clips
+            .iter()
+            .map(|moved| moved.range.start.0)
+            .min()
+            .unwrap_or(0);
         // The clip under the pointer lands on the grid, and the others move with it.
         let anchor = clips
             .get(index)
-            .map_or(Ticks(earliest), |moved| moved.start);
+            .map_or(Ticks(earliest), |moved| moved.range.start);
         let delta = grid.delta(anchor, drag.grab, viewport.tick_at(x));
         let delta = delta.max(-(earliest as i64));
         let rows = self.order.len();
@@ -2633,18 +2637,17 @@ impl Timeline {
                 self.drag = Some(drag);
                 return;
             };
-            let length = live.end(project).saturating_sub(live.start());
-            let next = live.with_start(shifted(moved.start, delta));
+            let next = live.with_start(shifted(moved.range.start, delta));
             steps.push(LaneMove {
                 from,
-                range: moved.start..moved.start + length,
+                range: moved.range.clone(),
                 to: to.id().clone(),
                 start: next.start(),
             });
             moves.push(ClipMove {
                 clip: moved.clip.clone(),
                 home: moved.home.clone(),
-                was: moved.start..moved.start + length,
+                was: moved.range.clone(),
                 to,
                 next,
             });
@@ -2746,7 +2749,7 @@ impl Timeline {
     /// A move of an edge of an audio clip: the part of its file that plays. The left edge keeps
     /// the sound where it is in time.
     fn drag_trim(&mut self, x: f32, grid: Grid, cx: &mut Context<Self>) {
-        let Some(drag) = self.drag.take() else {
+        let Some(mut drag) = self.drag.take() else {
             return;
         };
         let ClipDragKind::Trim {
@@ -2754,7 +2757,7 @@ impl Timeline {
             edge,
             origin,
             file,
-        } = &drag.kind
+        } = &mut drag.kind
         else {
             self.drag = Some(drag);
             return;
@@ -2764,6 +2767,10 @@ impl Timeline {
             self.drag = Some(drag);
             return self.end_drag(cx);
         };
+        // An undo between mouse down and the first change may have changed the clip.
+        if !drag.begun {
+            *origin = live.clone();
+        }
         let clock = project.clock();
         let anchor = match edge {
             Edge::Left => origin.start,
@@ -2797,7 +2804,7 @@ impl Timeline {
     /// A move of a fade handle: the fade grows by the time the pointer went, in the time of the
     /// clip. No snap: a fade is a time and not a place on the grid.
     fn drag_fade(&mut self, x: f32, cx: &mut Context<Self>) {
-        let Some(drag) = self.drag.take() else {
+        let Some(mut drag) = self.drag.take() else {
             return;
         };
         let ClipDragKind::Fade {
@@ -2805,7 +2812,7 @@ impl Timeline {
             edge,
             origin,
             file,
-        } = &drag.kind
+        } = &mut drag.kind
         else {
             self.drag = Some(drag);
             return;
@@ -2815,6 +2822,10 @@ impl Timeline {
             self.drag = Some(drag);
             return self.end_drag(cx);
         };
+        // An undo between mouse down and the first change may have changed the fades.
+        if !drag.begun {
+            *origin = live.clone();
+        }
         let clock = project.clock();
         let went = clock.seconds_of(self.painted.get().tick_at(x)) - clock.seconds_of(drag.grab);
         let went = (went * 1000.) as f32;
@@ -2855,6 +2866,10 @@ impl Timeline {
         };
         if fine != *was_fine {
             (*from_db, *from_y, *was_fine) = (live.gain_db, y, fine);
+        }
+        // An undo between mouse down and the first change may have changed the gain.
+        if !drag.begun {
+            *from_db = live.gain_db;
         }
         let (bottom, top) = GAIN_DB;
         let speed = if fine { 0.1 } else { 1. };
@@ -3599,7 +3614,7 @@ impl Timeline {
                 clip: clip.clone(),
                 kind: next.kind(),
                 row,
-                start: next.start(),
+                range: range_of(project, &next),
                 written: next.start(),
             };
             clips.push((moved, next));
@@ -3621,7 +3636,7 @@ impl Timeline {
             moves.push(ClipMove {
                 clip: moved.clip,
                 home: moved.home,
-                was: range_of(project, &next),
+                was: moved.range,
                 to,
                 next,
             });
@@ -3962,8 +3977,10 @@ impl Timeline {
             press,
             moving: false,
         };
-        if let Some(point) = track_lanes::point_at(&viewport, &origin, range, (x, in_lane)) {
-            let key = PointKey::of(track.id(), &origin, origin.points[point].tick);
+        if let Some(point) = track_lanes::point_at(&viewport, &origin, range, (x, in_lane))
+            && let Some(pressed) = origin.points.get(point)
+        {
+            let key = PointKey::of(track.id(), &origin, pressed.tick);
             self.select_point(Some(key), cx);
             self.lane_drag = Some(drag(origin, point_drag(point), MOVE_POINT_LABEL));
             return;
@@ -4012,7 +4029,8 @@ impl Timeline {
                     return;
                 }
                 let LaneEdit::Erase(ticks) = stroke.edit() else {
-                    unreachable!("an erase stroke erases")
+                    self.lane_drag = Some(drag);
+                    return;
                 };
                 track_lanes::erased(&drag.origin, &ticks)
             }
@@ -4034,7 +4052,10 @@ impl Timeline {
                         false => dx = 0.,
                     }
                 }
-                let from = drag.origin.points[*point];
+                let Some(&from) = drag.origin.points.get(*point) else {
+                    self.lane_drag = Some(drag);
+                    return;
+                };
                 let delta = match dx {
                     0. => 0,
                     _ => viewport.tick_at(x).0 as i64 - press.0.0 as i64,
@@ -4051,7 +4072,7 @@ impl Timeline {
                     }
                 };
                 let moved = track_lanes::moved_point(&drag.origin, *point, tick, value);
-                let tick = moved.points[*point].tick;
+                let tick = moved.points.get(*point).map_or(tick, |point| point.tick);
                 self.selected_point = Some(PointKey::of(drag.track.id(), &moved, tick));
                 Some(moved)
             }
@@ -4074,14 +4095,12 @@ impl Timeline {
             return self.end_drag(cx);
         };
         let mut automation = state.automation.clone();
-        let at = automation
-            .iter()
-            .position(|lane| lane.same_number(&drag.origin));
-        match (at, next) {
-            (Some(at), Some(lane)) => automation[at] = lane,
-            (Some(at), None) => {
-                automation.remove(at);
-            }
+        let found = automation
+            .iter_mut()
+            .find(|lane| lane.same_number(&drag.origin));
+        match (found, next) {
+            (Some(found), Some(lane)) => *found = lane,
+            (Some(_), None) => automation.retain(|lane| !lane.same_number(&drag.origin)),
             (None, Some(lane)) => automation.insert(drag.index.min(automation.len()), lane),
             (None, None) => {}
         }
@@ -4133,7 +4152,7 @@ impl Timeline {
         let top = scene.layout.lane_top(row, index);
         let in_lane = (scene.viewport.content_y(y) - top) as f32;
         let point = track_lanes::point_at(&scene.viewport, lane, range, (x, in_lane))?;
-        Some(PointKey::of(track.id(), lane, lane.points[point].tick))
+        Some(PointKey::of(track.id(), lane, lane.points.get(point)?.tick))
     }
 
     /// Delete with a point selected: it goes, and the lane with it when it was the last, as
@@ -4151,22 +4170,16 @@ impl Timeline {
             return false;
         };
         let mut state = state.clone();
-        let Some(at) = state
-            .automation
-            .iter()
-            .position(|lane| key.is_in(&key.track, lane))
-        else {
+        let is_lane = |lane: &AutomationLane| key.is_in(&key.track, lane);
+        let Some(lane) = state.automation.iter_mut().find(|lane| is_lane(lane)) else {
             return false;
         };
-        let lane = &state.automation[at];
         let Some(point) = lane.points.iter().position(|point| point.tick == key.tick) else {
             return false;
         };
         match track_lanes::without_point(lane, point) {
-            Some(lane) => state.automation[at] = lane,
-            None => {
-                state.automation.remove(at);
-            }
+            Some(left) => *lane = left,
+            None => state.automation.retain(|lane| !is_lane(lane)),
         }
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {

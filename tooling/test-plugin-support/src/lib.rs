@@ -448,12 +448,15 @@ pub fn log(call: &str, plugin: u64, processed: u64) {
     // SAFETY: `pthread_self` takes nothing and cannot fail.
     let thread = unsafe { pthread_self() };
     let line = format!("{call} plugin={plugin} thread={thread} processed={processed}\n");
-    if let Ok(mut file) = std::fs::OpenOptions::new()
+    let written = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
-    {
-        let _ = file.write_all(line.as_bytes());
+        .and_then(|mut file| file.write_all(line.as_bytes()));
+    // A plugin may not panic into its host. A test that reads the log finds the line missing,
+    // and this says why.
+    if let Err(error) = written {
+        eprintln!("the test plugin could not write {call:?} to its log: {error}");
     }
 }
 

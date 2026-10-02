@@ -15,7 +15,8 @@ use crate::engine::Engine;
 /// One clock for the device callback and for anything outside it whose time is compared with a
 /// frame of the engine, such as the moment a MIDI message arrived. `Instant` itself cannot be
 /// shared through an atomic, and two clocks with two starting points cannot be subtracted.
-/// Never call this on the audio thread: see [`StreamTiming`], which the callback fills in.
+/// The first call sets the clock up, which may lock. So a stream calls it once before it
+/// starts, and its callback only reads the clock.
 pub fn monotonic_nanos() -> u64 {
     static START: OnceLock<Instant> = OnceLock::new();
     let nanos = START.get_or_init(Instant::now).elapsed().as_nanos();
@@ -98,6 +99,8 @@ impl OutputDevice {
         let (error_sender, errors) = mpsc::channel();
         let channels = self.channels().max(1) as u64;
         let sample_rate = u64::from(self.sample_rate().max(1));
+        // Sets the clock up here, not in the first callback.
+        monotonic_nanos();
 
         let stream = self.device.build_output_stream(
             self.config,
