@@ -20,7 +20,9 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{
+    Knob, KnobRange, ParameterKnob, decibels_readout, milliseconds_readout, percent_readout, short,
+};
 use sound_ui::components::meter::GainReduction;
 use sound_ui::{
     ActiveTheme, ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, every_poll,
@@ -28,8 +30,8 @@ use sound_ui::{
 };
 
 use crate::{
-    ATTACK, Compressor, CompressorState, KNEE, Lookahead, MAKEUP, MIX, Meters, Parameter, RATIO,
-    RELEASE, THRESHOLD, reduction_db,
+    ATTACK, Compressor, CompressorState, KNEE, Lookahead, MAKEUP, MIX, Meters, RATIO, RELEASE,
+    THRESHOLD, reduction_db,
 };
 
 /// The name the rack puts on the card of a compressor.
@@ -63,50 +65,22 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Decibels,
-    Ratio,
-    Milliseconds,
-    /// A part of one, shown as a percentage.
-    Part,
-}
-
 /// A knob of the card.
-struct Control {
-    parameter: &'static Parameter,
-    label: &'static str,
-    undo_label: &'static str,
-    scale: KnobRange,
-    unit: Unit,
-}
+type Control = ParameterKnob<CompressorState>;
 
-impl Control {
-    const fn new(
-        parameter: &'static Parameter,
-        label: &'static str,
-        undo_label: &'static str,
-        unit: Unit,
-    ) -> Self {
-        Self {
-            parameter,
-            label,
-            undo_label,
-            scale: KnobRange::of(parameter),
-            unit,
-        }
-    }
-}
-
-const THRESHOLD_KNOB: Control =
-    Control::new(&THRESHOLD, "Threshold", "Change threshold", Unit::Decibels);
-const RATIO_KNOB: Control = Control::new(&RATIO, "Ratio", "Change ratio", Unit::Ratio);
-const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", Unit::Milliseconds);
+const THRESHOLD_KNOB: Control = Control::new(
+    &THRESHOLD,
+    "Threshold",
+    "Change threshold",
+    decibels_readout,
+);
+const RATIO_KNOB: Control = Control::new(&RATIO, "Ratio", "Change ratio", ratio_readout);
+const ATTACK_KNOB: Control = Control::new(&ATTACK, "Attack", "Change attack", milliseconds_readout);
 const RELEASE_KNOB: Control =
-    Control::new(&RELEASE, "Release", "Change release", Unit::Milliseconds);
-const KNEE_KNOB: Control = Control::new(&KNEE, "Knee", "Change knee", Unit::Decibels);
-const MAKEUP_KNOB: Control = Control::new(&MAKEUP, "Makeup", "Change makeup", Unit::Decibels);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::Part);
+    Control::new(&RELEASE, "Release", "Change release", milliseconds_readout);
+const KNEE_KNOB: Control = Control::new(&KNEE, "Knee", "Change knee", decibels_readout);
+const MAKEUP_KNOB: Control = Control::new(&MAKEUP, "Makeup", "Change makeup", decibels_readout);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
 
 /// Every knob, in the order of the card: shown, then hidden.
 #[cfg(test)]
@@ -138,15 +112,9 @@ fn lookahead_value(lookahead: Lookahead) -> &'static str {
 /// The width of the open list of the lookahead select.
 const LOOKAHEAD_MENU_WIDTH: f32 = 96.;
 
-/// A value with its unit, as a knob shows it: `-18 dB`, `4:1`, `10 ms`, `1.2 s`, `30%`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Decibels => format!("{} dB", short(value)),
-        Unit::Ratio => format!("{}:1", short(value)),
-        Unit::Milliseconds if value < 1_000.0 => format!("{} ms", short(value)),
-        Unit::Milliseconds => format!("{} s", short(value / 1_000.0)),
-        Unit::Part => format!("{}%", short(value * 100.0)),
-    }
+/// A ratio: `4:1`, `2.5:1`.
+fn ratio_readout(ratio: f32) -> String {
+    format!("{}:1", short(ratio))
 }
 
 /// The gain reduction under the display, to a tenth of a dB: `GR 0 dB`, `GR -6.8 dB`.
@@ -365,24 +333,13 @@ impl CompressorView {
         self.edit.apply(session, compressor, label, change, set, cx);
     }
 
-    fn knob(
-        &self,
-        control: &'static Control,
-        state: &CompressorState,
-        cx: &mut Context<Self>,
-    ) -> Knob {
-        let value = (control.parameter.get)(state);
+    fn knob(&self, control: Control, state: &CompressorState, cx: &mut Context<Self>) -> Knob {
         let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        Knob::new(control.parameter.field)
-            .range(control.scale)
-            .value(value)
+        control
+            .knob(state)
             .automated(automated)
-            .default_value(control.parameter.default)
-            .label(control.label)
-            .readout(readout(control.unit, value))
             .on_change(weak_callback(cx, move |view, change, cx| {
-                let set = control.parameter.set;
-                view.change(control.undo_label, change, set, cx);
+                view.change(control.undo_label, change, control.parameter.set, cx);
             }))
     }
 
@@ -478,17 +435,17 @@ impl Render for CompressorView {
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()
-                .top(knob(&THRESHOLD_KNOB, cx))
-                .bottom(knob(&ATTACK_KNOB, cx)),
+                .top(knob(THRESHOLD_KNOB, cx))
+                .bottom(knob(ATTACK_KNOB, cx)),
             Column::new()
-                .top(knob(&RATIO_KNOB, cx))
-                .bottom(knob(&RELEASE_KNOB, cx)),
+                .top(knob(RATIO_KNOB, cx))
+                .bottom(knob(RELEASE_KNOB, cx)),
         ];
         let hidden = [
             Column::new()
-                .top(knob(&KNEE_KNOB, cx))
-                .bottom(knob(&MAKEUP_KNOB, cx)),
-            Column::new().top(knob(&MIX_KNOB, cx)).bottom(
+                .top(knob(KNEE_KNOB, cx))
+                .bottom(knob(MAKEUP_KNOB, cx)),
+            Column::new().top(knob(MIX_KNOB, cx)).bottom(
                 Cell::new(self.lookahead.clone())
                     .label("Lookahead")
                     .value("ms"),
@@ -516,13 +473,8 @@ mod tests {
 
     #[test]
     fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(readout(Unit::Decibels, -18.0), "-18 dB");
-        assert_eq!(readout(Unit::Ratio, 4.0), "4:1");
-        assert_eq!(readout(Unit::Ratio, 2.5), "2.5:1");
-        assert_eq!(readout(Unit::Milliseconds, 0.1), "0.1 ms");
-        assert_eq!(readout(Unit::Milliseconds, 120.0), "120 ms");
-        assert_eq!(readout(Unit::Milliseconds, 1_200.0), "1.2 s");
-        assert_eq!(readout(Unit::Part, 0.3), "30%");
+        assert_eq!(ratio_readout(4.0), "4:1");
+        assert_eq!(ratio_readout(2.5), "2.5:1");
         assert_eq!(reduction_readout(0.0), "GR 0 dB");
         assert_eq!(reduction_readout(0.04), "GR 0 dB");
         assert_eq!(reduction_readout(6.83), "GR -6.8 dB");
@@ -541,7 +493,7 @@ mod tests {
     #[test]
     fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
         for control in KNOBS {
-            let (range, parameter) = (control.scale, control.parameter);
+            let (range, parameter) = (control.range(), control.parameter);
             assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
             assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
             for value in [parameter.min, parameter.default, parameter.max] {

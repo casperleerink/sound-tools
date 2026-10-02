@@ -2,26 +2,26 @@
 //! out, in dBFS, with a handle at its bend and the curves at its top, then Drive, Tone, Output and Mix. The rack gives the view
 //! a [`CardFrame`]: the picker of the slot as the title, and the power and close icons.
 //!
-//! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one
-//! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
-//! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
-//! about the interface is here: the label, the unit and the name of the undo step. A number
-//! that an automation lane of the track moves shows the value that plays, on its knob and on the
-//! display, and does not drag ([`Lanes`]).
+//! The view keeps no copy of the state. It reads the record when it renders, and every change goes
+//! through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one gesture and
+//! one undo step, a key step, a reset or a switch is one commit. The ranges, the defaults and the
+//! travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. What is only
+//! about the interface is here: the label, the unit and the name of the undo step. A number that an
+//! automation lane of the track moves shows the value that plays, on its knob and on the display,
+//! and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{
+    Knob, KnobRange, ParameterKnob, decibels_readout, percent_readout, short,
+};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
-use crate::{
-    Curve, DRIVE, MIX, OUTPUT, Parameter, Saturator, SaturatorState, TONE, auto_gain, transfer,
-};
+use crate::{Curve, DRIVE, MIX, OUTPUT, Saturator, SaturatorState, TONE, auto_gain, transfer};
 
 /// The name the rack puts on the card of a saturator.
 pub const NAME: &str = "Saturator";
@@ -50,45 +50,14 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Decibels,
-    /// A part of one, shown as a percentage.
-    Part,
-}
-
 /// A knob of the card. A range that goes both ways from 0 has its arc start at the top.
-struct Control {
-    parameter: &'static Parameter,
-    label: &'static str,
-    undo_label: &'static str,
-    unit: Unit,
-}
+type Control = ParameterKnob<SaturatorState>;
 
-const DRIVE_KNOB: Control = Control {
-    parameter: &DRIVE,
-    label: "Drive",
-    undo_label: "Change drive",
-    unit: Unit::Decibels,
-};
-const TONE_KNOB: Control = Control {
-    parameter: &TONE,
-    label: "Tone",
-    undo_label: "Change tone",
-    unit: Unit::Decibels,
-};
-const OUTPUT_KNOB: Control = Control {
-    parameter: &OUTPUT,
-    label: "Output",
-    undo_label: "Change output",
-    unit: Unit::Decibels,
-};
-const MIX_KNOB: Control = Control {
-    parameter: &MIX,
-    label: "Mix",
-    undo_label: "Change mix",
-    unit: Unit::Part,
-};
+const DRIVE_KNOB: Control = Control::new(&DRIVE, "Drive", "Change drive", decibels_readout);
+const TONE_KNOB: Control = Control::new(&TONE, "Tone", "Change tone", decibels_readout).bipolar();
+const OUTPUT_KNOB: Control =
+    Control::new(&OUTPUT, "Output", "Change output", decibels_readout).bipolar();
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
 
 /// Every knob, in the order of the card.
 #[cfg(test)]
@@ -101,14 +70,6 @@ const CURVES: [(Curve, &str, &str); 4] = [
     (Curve::Tube, "tube", "Tube"),
     (Curve::Clip, "clip", "Clip"),
 ];
-
-/// A value with its unit, as a knob shows it: `6 dB`, `-3.5 dB`, `30%`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Decibels => format!("{} dB", short(value)),
-        Unit::Part => format!("{}%", short(value * 100.0)),
-    }
-}
 
 /// The automatic gain under the display, to a tenth of a dB: `Auto gain -4.2 dB`.
 fn auto_gain_readout(state: &SaturatorState) -> String {
@@ -207,26 +168,13 @@ impl SaturatorView {
         self.edit.apply(session, saturator, label, change, set, cx);
     }
 
-    fn knob(
-        &self,
-        control: &'static Control,
-        state: &SaturatorState,
-        cx: &mut Context<Self>,
-    ) -> Knob {
-        let parameter = control.parameter;
-        let value = (parameter.get)(state);
-        let automated = self.lanes.read(cx).is_automated(parameter.field);
-        Knob::new(parameter.field)
-            .range(KnobRange::of(parameter))
-            .value(value)
+    fn knob(&self, control: Control, state: &SaturatorState, cx: &mut Context<Self>) -> Knob {
+        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
+        control
+            .knob(state)
             .automated(automated)
-            .default_value(parameter.default)
-            .bipolar(parameter.min < 0.)
-            .label(control.label)
-            .readout(readout(control.unit, value))
             .on_change(weak_callback(cx, move |view, change, cx| {
-                let set = control.parameter.set;
-                view.change(control.undo_label, change, set, cx);
+                view.change(control.undo_label, change, control.parameter.set, cx);
             }))
     }
 
@@ -287,11 +235,11 @@ impl Render for SaturatorView {
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()
-                .top(knob(&DRIVE_KNOB, cx))
-                .bottom(knob(&OUTPUT_KNOB, cx)),
+                .top(knob(DRIVE_KNOB, cx))
+                .bottom(knob(OUTPUT_KNOB, cx)),
             Column::new()
-                .top(knob(&TONE_KNOB, cx))
-                .bottom(knob(&MIX_KNOB, cx)),
+                .top(knob(TONE_KNOB, cx))
+                .bottom(knob(MIX_KNOB, cx)),
         ];
         let card = self.frame.card().display(self.display(&state, cx));
         let card = columns
@@ -306,11 +254,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(readout(Unit::Decibels, 0.0), "0 dB");
-        assert_eq!(readout(Unit::Decibels, -3.5), "-3.5 dB");
-        assert_eq!(readout(Unit::Decibels, 12.26), "12.3 dB");
-        assert_eq!(readout(Unit::Part, 0.3), "30%");
+    fn the_auto_gain_reads_to_a_tenth_of_a_db() {
         let state = SaturatorState {
             curve: Curve::Clip,
             drive_db: 24.0,
@@ -323,8 +267,7 @@ mod tests {
     #[test]
     fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
         for control in KNOBS {
-            let parameter = control.parameter;
-            let range = KnobRange::of(parameter);
+            let (range, parameter) = (control.range(), control.parameter);
             assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
             assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
             for value in [parameter.min, parameter.default, parameter.max] {
