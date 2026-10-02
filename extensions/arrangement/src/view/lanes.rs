@@ -7,8 +7,8 @@
 //! press and the pointer, and a double click clears the lane. Each works from the lane as it
 //! was at mouse down, so a drag there and back ends where it began.
 //!
-//! The automation lanes of the timeline are drawn and erased the same way: with a [`Stroke`],
-//! into a [`LaneBox`], by a [`LaneEdit`].
+//! The automation lanes of the timeline draw into a [`LaneBox`] too, and erase the ticks of
+//! [`erase_range`].
 
 use std::collections::BTreeMap;
 use std::iter::once;
@@ -17,7 +17,7 @@ use std::ops::{Range, RangeInclusive};
 use sound_core::Ticks;
 use sound_notes::{Clip, ExpressionValue, Point, cut, thinned};
 
-use super::layout::Viewport;
+use super::layout::{Viewport, ordered};
 use super::roll::{VELOCITY_BOTTOM, VELOCITY_HEIGHT, VELOCITY_TOP};
 use super::snap::Grid;
 
@@ -101,58 +101,15 @@ pub enum LaneEdit<'a> {
     Clear,
 }
 
-impl LaneEdit<'_> {
-    /// `points` changed by this edit. A drawn height becomes a value by `value_at`, and the
-    /// line drawn is thinned by `thin`.
-    pub fn applied<V: Copy>(
-        &self,
-        points: &[Point<V>],
-        value_at: impl Fn(f32) -> V,
-        thin: impl Fn(&[Point<V>]) -> Vec<Point<V>>,
-    ) -> Vec<Point<V>> {
-        match self {
-            Self::Draw(drawn) => {
-                let (Some((&first, _)), Some((&last, _))) =
-                    (drawn.first_key_value(), drawn.last_key_value())
-                else {
-                    return points.to_vec();
-                };
-                let line: Vec<Point<V>> = drawn
-                    .iter()
-                    .map(|(tick, y)| Point {
-                        tick: *tick,
-                        value: value_at(*y),
-                    })
-                    .collect();
-                let before = points.iter().filter(|point| point.tick < first);
-                let after = points.iter().filter(|point| point.tick > last);
-                before
-                    .copied()
-                    .chain(thin(&line))
-                    .chain(after.copied())
-                    .collect()
-            }
-            Self::Erase(ticks) => {
-                let kept = points.iter().filter(|point| !ticks.contains(&point.tick));
-                kept.copied().collect()
-            }
-            Self::Clear => Vec::new(),
-        }
-    }
-}
-
 impl Lane {
     /// `clip` with this lane of `origin` changed by `edit`. The rest of `clip` stays as it is,
     /// also what changed in it since `origin`, and the lane fits it when it got shorter.
     pub fn edit(self, clip: &mut Clip, origin: &Clip, edit: &LaneEdit) {
-        fn applied<V: ExpressionValue>(edit: &LaneEdit, points: &[Point<V>]) -> Vec<Point<V>> {
-            edit.applied(points, value_at_y, thinned)
-        }
         let inside = Ticks(0)..clip.length.ticks();
         match self {
-            Self::Bend => clip.bend = cut(&applied(edit, &origin.bend), inside),
-            Self::ModWheel => clip.mod_wheel = cut(&applied(edit, &origin.mod_wheel), inside),
-            Self::Pressure => clip.pressure = cut(&applied(edit, &origin.pressure), inside),
+            Self::Bend => clip.bend = cut(&edited(&origin.bend, edit), inside),
+            Self::ModWheel => clip.mod_wheel = cut(&edited(&origin.mod_wheel, edit), inside),
+            Self::Pressure => clip.pressure = cut(&edited(&origin.pressure, edit), inside),
         }
     }
 
@@ -195,6 +152,52 @@ impl Lane {
             (Self::Pressure, LaneEdit::Clear) => "Clear pressure",
         }
     }
+}
+
+/// `points` changed by `edit`. A drawn height becomes a value, and the line drawn is thinned.
+fn edited<V: ExpressionValue>(points: &[Point<V>], edit: &LaneEdit) -> Vec<Point<V>> {
+    match edit {
+        LaneEdit::Draw(drawn) => {
+            let (Some((&first, _)), Some((&last, _))) =
+                (drawn.first_key_value(), drawn.last_key_value())
+            else {
+                return points.to_vec();
+            };
+            let line: Vec<Point<V>> = drawn
+                .iter()
+                .map(|(tick, y)| Point {
+                    tick: *tick,
+                    value: value_at_y(*y),
+                })
+                .collect();
+            let before = points.iter().filter(|point| point.tick < first);
+            let after = points.iter().filter(|point| point.tick > last);
+            before
+                .copied()
+                .chain(thinned(&line))
+                .chain(after.copied())
+                .collect()
+        }
+        LaneEdit::Erase(ticks) => without(points, ticks),
+        LaneEdit::Clear => Vec::new(),
+    }
+}
+
+/// `points` without those in `ticks`, as an erase leaves them.
+pub fn without<V: Copy>(points: &[Point<V>], ticks: &RangeInclusive<Ticks>) -> Vec<Point<V>> {
+    let kept = points.iter().filter(|point| !ticks.contains(&point.tick));
+    kept.copied().collect()
+}
+
+/// The ticks an erase covers, from the tick of the press to the tick of the pointer, on the
+/// grid when it snaps.
+pub fn erase_range(grid: &Grid, from: Ticks, to: Ticks) -> RangeInclusive<Ticks> {
+    let (from, to) = match grid.snaps() {
+        true => (grid.snap(from), grid.snap(to)),
+        false => (from, to),
+    };
+    let (first, last) = ordered(from, to);
+    first..=last
 }
 
 fn line<V: ExpressionValue>(
@@ -253,7 +256,7 @@ enum StrokeKind {
     /// when it snaps, once the pointer has moved.
     Erase {
         from: Ticks,
-        covered: Option<(Ticks, Ticks)>,
+        covered: Option<RangeInclusive<Ticks>>,
     },
 }
 
@@ -307,12 +310,7 @@ impl Stroke {
                 if covered.is_none() && (x - viewport.x_of(*from)).abs() < DRAG_THRESHOLD {
                     return false;
                 }
-                let to = viewport.tick_at(x);
-                let (from, to) = match grid.snaps() {
-                    true => (grid.snap(*from), grid.snap(to)),
-                    false => (*from, to),
-                };
-                *covered = Some(if from <= to { (from, to) } else { (to, from) });
+                *covered = Some(erase_range(grid, *from, viewport.tick_at(x)));
             }
         }
         true
@@ -324,9 +322,9 @@ impl Stroke {
             StrokeKind::Draw { drawn, .. } => LaneEdit::Draw(drawn),
             // All of it before the lane, or no move yet, erases nothing.
             StrokeKind::Erase { covered, .. } => {
-                let covered = covered.and_then(|(first, last)| {
-                    let end = last.0.checked_sub(self.start.0)?;
-                    Some(first.saturating_sub(self.start)..=Ticks(end))
+                let covered = covered.as_ref().and_then(|covered| {
+                    let end = covered.end().0.checked_sub(self.start.0)?;
+                    Some(covered.start().saturating_sub(self.start)..=Ticks(end))
                 });
                 LaneEdit::Erase(covered.unwrap_or(Ticks(1)..=Ticks(0)))
             }
@@ -337,9 +335,8 @@ impl Stroke {
 /// What a drag draws between two places in a lane, `(x, y)` from the last move to this one:
 /// the ticks it passes, each with the height of the pointer there. On the grid lines when the
 /// grid snaps, the one nearest the pointer included, else every few pixels. Only ticks
-/// `inside`, such as those of a clip, and in project ticks. The automation lanes of the
-/// timeline draw the same way.
-pub fn drawn_between(
+/// `inside`, such as those of a clip, and in project ticks.
+fn drawn_between(
     viewport: &Viewport,
     inside: Range<Ticks>,
     grid: &Grid,
