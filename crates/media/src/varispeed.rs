@@ -1,5 +1,5 @@
 //! Plays a file at any speed: what an instrument needs that plays a sample at the pitch of a
-//! key, such as the Sampler and the Drum pad.
+//! key, such as the Sampler.
 //!
 //! [`Resampler`](crate::Resampler) is exact for one pair of sample rates, a fraction worked out
 //! in integers. A key plays at a ratio that is no fraction, `2^(semitones / 12)` times the ratio
