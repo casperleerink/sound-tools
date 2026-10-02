@@ -101,7 +101,7 @@ impl Axis {
 }
 
 /// The values of a handle: `x` sideways, `y` up and down.
-pub type HandleValues = Point<f32>;
+type HandleValues = Point<f32>;
 
 #[derive(Clone)]
 pub struct Handle {

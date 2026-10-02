@@ -44,7 +44,7 @@ pub const HEADER_HEIGHT: f32 = 32.;
 /// From the sides of the card to its body, and from its left edge to the title.
 pub const CARD_PADDING: f32 = 16.;
 /// Between the display and the first column of cells.
-pub const DISPLAY_GAP: f32 = 8.;
+const DISPLAY_GAP: f32 = 8.;
 const ICON_TARGET: f32 = 24.;
 const ICON_GLYPH: f32 = 12.;
 const ICON_GAP: f32 = 4.;

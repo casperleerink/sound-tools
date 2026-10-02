@@ -25,7 +25,7 @@ pub const PAD_HEIGHT: f32 = 32.;
 /// Between two pads of a grid.
 pub const PAD_GAP: f32 = 4.;
 /// The fill of a sounding pad at full level.
-pub const SOUNDING_OPACITY: f32 = 0.24;
+const SOUNDING_OPACITY: f32 = 0.24;
 const GLYPH: f32 = 12.;
 /// From the edge of the pad to its name and its glyph.
 const INSET: f32 = 8.;

@@ -83,11 +83,11 @@ icons!(
     "zap",
 );
 
-pub const FONT_REGULAR: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Regular.ttf");
-pub const FONT_MEDIUM: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Medium.ttf");
-pub const FONT_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/InterDisplay-SemiBold.ttf");
+const FONT_REGULAR: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Regular.ttf");
+const FONT_MEDIUM: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Medium.ttf");
+const FONT_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/InterDisplay-SemiBold.ttf");
 /// For emphasis in the agent's answers. Bold italic shows as bold.
-pub const FONT_ITALIC: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Italic.ttf");
+const FONT_ITALIC: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Italic.ttf");
 
 pub struct Assets;
 

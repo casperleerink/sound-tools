@@ -26,15 +26,15 @@ use crate::theme::ActiveTheme;
 use crate::typography;
 
 /// The centre of the handles, this far below the top of the clip.
-pub const HANDLE_DOWN: f32 = 7.;
+const HANDLE_DOWN: f32 = 7.;
 /// The dot of a handle.
-pub const HANDLE_SIZE: f32 = 10.;
+const HANDLE_SIZE: f32 = 10.;
 /// The target of a handle is larger than its dot: a trackpad is not a mouse.
-pub const HANDLE_TARGET: f32 = 18.;
+const HANDLE_TARGET: f32 = 18.;
 /// A clip narrower than this shows no handles: they would cover each other and the edges.
-pub const MIN_HANDLES_WIDTH: f32 = 3. * HANDLE_TARGET;
+const MIN_HANDLES_WIDTH: f32 = 3. * HANDLE_TARGET;
 /// The most the waveform reaches from the middle, each way.
-pub const WAVEFORM_REACH: f32 = 22.;
+const WAVEFORM_REACH: f32 = 22.;
 const HANDLE_RING: f32 = 1.5;
 const FADE_LINE: f32 = 1.5;
 /// The waveform of the track colour, and the part of the file a trim hides.
@@ -79,7 +79,7 @@ impl ClipHandles {
     }
 
     /// The centre of one handle.
-    pub fn of_handle(&self, handle: ClipHandle) -> (f32, f32) {
+    fn of_handle(&self, handle: ClipHandle) -> (f32, f32) {
         match handle {
             ClipHandle::FadeIn => self.fade_in,
             ClipHandle::FadeOut => self.fade_out,

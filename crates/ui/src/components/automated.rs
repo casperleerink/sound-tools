@@ -10,7 +10,7 @@ use crate::components::tooltip::Tooltip;
 use crate::theme::ActiveTheme;
 
 /// What the tooltip of an automated control says.
-pub const TOOLTIP: &str = "Follows the automation of the track";
+const TOOLTIP: &str = "Follows the automation of the track";
 /// The size of the dot.
 pub(crate) const MARK: f32 = 4.;
 
