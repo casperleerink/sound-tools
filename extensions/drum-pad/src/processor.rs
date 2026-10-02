@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use sound_core::{
     AudioOutput, Automated, AutomationInput, EventInput, Peaks, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets,
+    ProcessContext, Processor, Smoothed, Targets, amplitude,
 };
 use sound_notes::{NoteEvent, Velocity};
 
@@ -42,12 +42,7 @@ pub const RAMP_SECONDS: f32 = 0.02;
 /// The gain of each channel for a pad, left first: its volume, and its pan with the pan law of
 /// a track (equal power, the middle exactly 1), so a pad keeps its loudness wherever it is.
 pub fn pad_gains(pad: &Pad) -> [f32; 2] {
-    gains_at(level_of(pad), pad.pan)
-}
-
-/// The factor of the volume of a pad.
-fn level_of(pad: &Pad) -> f32 {
-    10.0_f64.powf(f64::from(pad.volume_db) / 20.0) as f32
+    gains_at(amplitude(pad.volume_db), pad.pan)
 }
 
 fn gains_at(level: f32, pan: f32) -> [f32; 2] {
@@ -192,7 +187,7 @@ impl DrumPad {
         let numbers = self.levels.iter_mut().zip(&mut self.pans);
         let pads = numbers.zip(&self.state.pads).zip(&PAD_LANES);
         for (((level, pan), pad), [volume_lane, pan_lane]) in pads {
-            level.set_target(level_of(pad), targets.ramp(volume_lane));
+            level.set_target(amplitude(pad.volume_db), targets.ramp(volume_lane));
             pan.set_target(pad.pan, targets.ramp(pan_lane));
         }
         // Nothing sounds, so there is nothing to glide: the next hit starts on the new values.

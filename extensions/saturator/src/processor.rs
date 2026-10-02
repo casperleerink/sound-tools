@@ -19,8 +19,8 @@ use std::f32::consts::PI;
 use crate::{Curve, DRIVE, MIX, OUTPUT, PARAMETERS, SaturatorState, TONE};
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, OnePole, Oversampler,
-    OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets, held,
-    soft_clip,
+    OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
+    amplitude, held, soft_clip,
 };
 
 /// Every number of the saturator can be automated.
@@ -155,22 +155,18 @@ fn level_gain(shape: impl Fn(f32) -> f32, drive: f32) -> f32 {
     REFERENCE * 2.0 / (shape(driven) - shape(-driven))
 }
 
-fn decibels_to_gain(db: f32) -> f32 {
-    10_f32.powf(db / 20.0)
-}
-
 /// The automatic gain of a curve at a drive, as a factor: what the saturator turns the curved
 /// sound down by, so a sine at -12 dBFS keeps its level.
 pub fn auto_gain(curve: Curve, drive_db: f32) -> f32 {
-    level_gain(|sample| shape(curve, sample), decibels_to_gain(drive_db))
+    level_gain(|sample| shape(curve, sample), amplitude(drive_db))
 }
 
 /// What comes out for a steady `input` from -1 to 1 once every change has arrived, with the
 /// drive, the curve, the automatic gain, the output and the mix. The tone and the DC blocker
 /// are left out: they are about frequency, and this is the shape. The card draws it.
 pub fn transfer(state: &SaturatorState, input: f32) -> f32 {
-    let drive = decibels_to_gain(state.drive_db);
-    let wet = decibels_to_gain(state.output_db)
+    let drive = amplitude(state.drive_db);
+    let wet = amplitude(state.output_db)
         * auto_gain(state.curve, state.drive_db)
         * shape(state.curve, drive * input);
     input + state.mix * (wet - input)
@@ -186,7 +182,7 @@ fn bent(hz: f32, sample_rate: f32) -> f32 {
 /// pivot `ω` times `k` keeps the pivot at its level: `(k s + ω) / (s + ω k)` has size 1 at
 /// `s = jω`. It is exact for the bent frequencies, so the crossover is the bent pivot times `k`.
 fn tilt(tone_db: f32, sample_rate: f32) -> (f32, f32, f32) {
-    let above = decibels_to_gain(tone_db / 2.0);
+    let above = amplitude(tone_db / 2.0);
     let highest = bent(HIGHEST_PART * sample_rate, sample_rate);
     let crossover = (bent(PIVOT_HZ, sample_rate) * above).min(highest);
     (crossover, 1.0 / above, above)
@@ -222,9 +218,9 @@ pub fn response(state: &SaturatorState, hz: f32, sample_rate: f32) -> f32 {
     let dc = low_pass(bent(DC_HZ, sample_rate));
     let dc = (1.0 - dc.0, -dc.1);
     let gain = f64::from(
-        decibels_to_gain(state.drive_db)
+        amplitude(state.drive_db)
             * auto_gain(state.curve, state.drive_db)
-            * decibels_to_gain(state.output_db),
+            * amplitude(state.output_db),
     );
     let wet = (
         gain * (tone.0 * dc.0 - tone.1 * dc.1),
@@ -339,13 +335,13 @@ impl Saturator {
     fn aim(&mut self, targets: &SaturatorTargets) {
         let state = *self.state;
         self.drive
-            .set_target(decibels_to_gain(state.drive_db), targets.ramp(&DRIVE));
+            .set_target(amplitude(state.drive_db), targets.ramp(&DRIVE));
         for (weight, target) in self.weights.iter_mut().zip(weights(state.curve)) {
             weight.set_target(target, targets.edit());
         }
         self.tone.set_target(state.tone_db, targets.ramp(&TONE));
         self.output
-            .set_target(decibels_to_gain(state.output_db), targets.ramp(&OUTPUT));
+            .set_target(amplitude(state.output_db), targets.ramp(&OUTPUT));
         self.mix.set_target(state.mix, targets.ramp(&MIX));
         // A number that took its value at once does not move, so nothing else says the
         // factors are old.

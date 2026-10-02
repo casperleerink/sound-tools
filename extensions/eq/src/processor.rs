@@ -26,7 +26,7 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, held,
+    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, amplitude, held,
 };
 
 use crate::{AUTOMATED, BAND_LANES, BANDS, Band, EqState, OUTPUT_GAIN, Parameter, Shape};
@@ -308,7 +308,7 @@ impl Eq {
         for ((glide, band), lanes) in bands.zip(&BAND_LANES) {
             glide.aim(band, lanes, targets);
         }
-        let output = 10_f32.powf(self.state.output_gain_db / 20.0);
+        let output = amplitude(self.state.output_gain_db);
         self.output.set_target(output, targets.ramp(&OUTPUT_GAIN));
         // A number that took its value at once does not move, so nothing else says the
         // factors are old.

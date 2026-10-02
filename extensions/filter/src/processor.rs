@@ -7,8 +7,8 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Lfo, LfoShape, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, held,
-    soft_clip, svf_response,
+    PrepareConfig, ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, amplitude,
+    held, soft_clip, svf_response,
 };
 
 use crate::{CUTOFF, DRIVE, FilterState, LFO_DEPTH, MIX, PARAMETERS, RESONANCE};
@@ -118,7 +118,7 @@ impl Filter {
         for (tap, target) in self.taps.iter_mut().zip(state.kind.taps()) {
             tap.set_target(target, edit);
         }
-        let drive = 10_f32.powf(state.drive_db / 20.0);
+        let drive = amplitude(state.drive_db);
         self.drive.set_target(drive, targets.ramp(&DRIVE));
         self.mix.set_target(state.mix, targets.ramp(&MIX));
         self.lfo_depth
