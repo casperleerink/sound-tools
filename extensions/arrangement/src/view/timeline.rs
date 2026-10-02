@@ -1767,10 +1767,14 @@ impl Timeline {
                 key.as_ref()
                     .is_some_and(|key| key.is_in(track, lane) && key.tick == tick)
             };
-            let shown = lane
+            // A lane may have many points and the timeline shows a few bars of it.
+            let from = lane
                 .points
-                .iter()
-                .filter(|point| visible.contains(&point.tick));
+                .partition_point(|point| point.tick < visible.start);
+            let to = lane
+                .points
+                .partition_point(|point| point.tick < visible.end);
+            let shown = lane.points.get(from..to).unwrap_or_default().iter();
             let points = range.map(|range| {
                 let points = shown.map(|point| {
                     let (x, y) = track_lanes::place(viewport, range, point);
