@@ -38,9 +38,7 @@ use sound_core::{Place, State, Ticks};
 
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
-pub use lane::{
-    ExpressionValue, LaneValue, Point, check_order, cut, thinned, thinned_within, value_at,
-};
+pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };

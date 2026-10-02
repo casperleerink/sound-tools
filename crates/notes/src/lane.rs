@@ -141,16 +141,7 @@ pub fn value_at<V: LaneValue>(points: &[Point<V>], tick: Ticks) -> Option<V> {
 /// it is read.
 pub fn thinned<V: ExpressionValue>(points: &[Point<V>]) -> Vec<Point<V>> {
     let number = |value: V| f64::from(value.number());
-    thinned_within(points, f64::from(V::STEP), number)
-}
-
-/// [`thinned`] for any value, as the number `number` gives, within `step` of it: the line of
-/// an automation lane is thinned on the travel of its knob.
-pub fn thinned_within<V: Copy>(
-    points: &[Point<V>],
-    step: f64,
-    number: impl Fn(V) -> f64,
-) -> Vec<Point<V>> {
+    let step = f64::from(V::STEP);
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return Vec::new();
     };
