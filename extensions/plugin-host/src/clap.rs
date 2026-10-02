@@ -69,7 +69,8 @@ pub struct SharedCallbacks {
 
 impl<'a> SharedHandler<'a> for SharedCallbacks {
     fn initializing(&self, instance: InitializingPluginHandle<'a>) {
-        let _ = self.state.set(instance.get_extension());
+        // CLAP calls this once per instance, so there is never a value here already.
+        self.state.get_or_init(|| instance.get_extension());
     }
 
     fn request_restart(&self) {
