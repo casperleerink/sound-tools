@@ -248,12 +248,15 @@ fn a_cycle_is_rejected_by_name_and_leaves_the_engine_unchanged() {
     let GraphError::Cycle {
         connection,
         description,
+        cycle,
     } = &error
     else {
         panic!("expected a cycle error, got {error}");
     };
     let forward = Connection::new(first.id(), OUTPUT, second.id(), INPUT);
     assert!([closing, forward].contains(connection));
+    assert_eq!(cycle.len(), 2);
+    assert!(cycle.contains(&closing) && cycle.contains(&forward));
     assert!(description.contains("first") && description.contains("second"));
     assert!(error.to_string().contains("closes a cycle"));
 

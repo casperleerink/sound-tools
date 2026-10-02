@@ -572,14 +572,22 @@ impl Bindings {
                 }
                 Err(error) => error,
             };
-            // Who made the connection, before the bindings go back to how they were.
             let cycle = match &error {
-                BindError::Graph(GraphError::Cycle { connection, .. }) => Some(*connection),
-                _ => None,
+                BindError::Graph(GraphError::Cycle { cycle, .. }) => cycle.as_slice(),
+                _ => &[],
             };
-            let declared_by = cycle.and_then(|cycle| {
-                let declares =
-                    |(_, binding): &(&InstanceId, &Binding)| binding.connections.contains(&cycle);
+            // A `project.json` line on the cycle is left out in the next attempt.
+            let saved_line = cycle
+                .iter()
+                .filter_map(|connection| run.resolved.get(connection))
+                .find(|index| !skipped.contains(*index))
+                .copied();
+            // Else the cycle is made by behaviours. Who made it, before the bindings go back
+            // to how they were.
+            let declared_by = cycle.iter().find_map(|connection| {
+                let declares = |(_, binding): &(&InstanceId, &Binding)| {
+                    binding.connections.contains(connection)
+                };
                 let (id, _) = self.by_instance.iter().find(declares)?;
                 Some(id.clone())
             });
@@ -589,20 +597,17 @@ impl Bindings {
                     None => self.by_instance.remove(&id),
                 };
             }
-            match (cycle, declared_by, error) {
-                (Some(cycle), _, _)
-                    if run
-                        .resolved
-                        .get(&cycle)
-                        .is_some_and(|index| skipped.insert(*index)) => {}
-                (Some(_), Some(instance), BindError::Graph(error)) => {
-                    return Err(BindError::Behaviour {
-                        instance,
-                        source: error.into(),
-                    });
-                }
-                (_, _, error) => return Err(error),
+            if let Some(index) = saved_line {
+                skipped.insert(index);
+                continue;
             }
+            return Err(match (declared_by, error) {
+                (Some(instance), BindError::Graph(error)) => BindError::Behaviour {
+                    instance,
+                    source: error.into(),
+                },
+                (_, error) => error,
+            });
         }
     }
 

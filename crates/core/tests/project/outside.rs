@@ -7,8 +7,8 @@ use sound_core::{
 };
 
 use crate::tools::{
-    BANK_RECORD, Dc, Harness, SAMPLE_RATE, dc_record, dc_to_device, dc_to_device_channel, id,
-    level_record, project_file, records, registry, write,
+    BANK_RECORD, CHAIN_RECORD, Dc, Harness, SAMPLE_RATE, dc_record, dc_to_device,
+    dc_to_device_channel, id, level_record, project_file, records, registry, write,
 };
 
 /// A project with one connected `test.dc` at 0.25.
@@ -377,6 +377,22 @@ fn a_connection_that_closes_a_cycle_stays_saved_unused_and_reported() {
     let fixed = project_file(&amplifier_link("first", "second"));
     assert_eq!(harness.write_and_apply("project.json", &fixed), 1);
     assert_eq!(harness.project.problems(), []);
+}
+
+#[test]
+fn a_cycle_through_a_behaviour_connection_leaves_out_the_saved_line() {
+    let mut harness = Harness::new();
+    harness.write_and_apply("state/chain.json", CHAIN_RECORD);
+    let cyclic = project_file(&amplifier_link("chain", "chain"));
+    assert_eq!(harness.write_and_apply("project.json", &cyclic), 1);
+    let problem = harness.problem_at("project.json").unwrap();
+    assert!(problem.contains("closes a cycle"), "{problem}");
+    assert_eq!(harness.project.problems().len(), 1);
+
+    // It opens like this too, with the chain still there.
+    let harness = harness.reopen();
+    assert_eq!(harness.project.instances().count(), 1);
+    assert_eq!(harness.project.problems().len(), 1);
 }
 
 #[test]

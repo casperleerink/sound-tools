@@ -6,6 +6,7 @@
 //!   reads them into one snapshot for its one processor. It sends its signal through its
 //!   owned `output` child, a `test.amplifier`, and on to the device with no `project.json`
 //!   connection. This is the shape of a track with clips and an instrument.
+//! - `test.chain`: two gains in a row, connected by its behaviour.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -145,6 +146,27 @@ fn apply_amplifier(
     Ok(())
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Chain {}
+
+impl State for Chain {
+    const TOOL: &'static str = "test.chain";
+}
+
+pub const CHAIN_RECORD: &str = r#"{"tool": "test.chain", "state": {}}"#;
+
+/// The last gain is made first, so the connection between the two goes to the lower id.
+fn apply_chain(_: &Chain, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    let last = context.processor("last", || Gain::new(1.0))?;
+    let first = context.processor("first", || Gain::new(1.0))?;
+    let output = OutputEndpoint::new(first, Gain::OUTPUT);
+    context.connect(output.to(InputEndpoint::new(last, Gain::INPUT)))?;
+    context.input("in", InputEndpoint::new(first, Gain::INPUT));
+    context.output("out", OutputEndpoint::new(last, Gain::OUTPUT));
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bank {
@@ -228,6 +250,10 @@ pub fn registry() -> Registry {
         .tool::<Amplifier>(EXTENSION)
         .unwrap()
         .behaviour(apply_amplifier);
+    registry
+        .tool::<Chain>(EXTENSION)
+        .unwrap()
+        .behaviour(apply_chain);
     registry
         .tool::<Bank>(EXTENSION)
         .unwrap()
