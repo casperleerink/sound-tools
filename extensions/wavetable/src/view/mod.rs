@@ -29,7 +29,10 @@ use sound_ui::components::curves::{
 use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, pan_readout, short};
+use sound_ui::components::knob::{
+    Knob, KnobRange, decibels_readout, hertz_readout, pan_readout, percent_readout,
+    seconds_readout, short,
+};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::select::Select;
 use sound_ui::components::toggle::Toggle;
@@ -87,15 +90,13 @@ fn readout(unit: Unit, value: f32) -> String {
         false => short(value),
     };
     match unit {
-        Unit::Part => format!("{}%", short(value * 100.)),
-        Unit::Hertz if value < 1_000. => format!("{} Hz", short(value)),
-        Unit::Hertz => format!("{} kHz", short(value / 1_000.)),
-        Unit::Seconds if value < 1. => format!("{} ms", short(value * 1_000.)),
-        Unit::Seconds => format!("{} s", short(value)),
+        Unit::Part => percent_readout(value),
+        Unit::Hertz => hertz_readout(value),
+        Unit::Seconds => seconds_readout(value),
         Unit::Octaves => format!("{} oct", signed(value)),
         Unit::Semitones => format!("{} st", signed(value)),
         Unit::Cents => format!("{} ct", signed(value)),
-        Unit::Decibels => format!("{} dB", short(value)),
+        Unit::Decibels => decibels_readout(value),
         Unit::Pan => pan_readout(value),
         Unit::Count => format!("{value}"),
     }

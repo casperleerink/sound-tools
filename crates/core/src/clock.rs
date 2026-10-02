@@ -64,11 +64,6 @@ pub enum ClockError {
     NoTempoAtStart,
     #[error("tempo changes must be sorted by tick, each tick used once: see tick {}", .0.0)]
     TempoChangesNotSorted(Ticks),
-    #[error("{position} is not a position in {time_signature}")]
-    InvalidBarBeat {
-        position: BarBeat,
-        time_signature: TimeSignature,
-    },
     #[error("time_signatures needs at least one entry")]
     NoTimeSignature,
     #[error("the runs of time_signatures reach past the last tick")]
@@ -394,26 +389,6 @@ impl TimeSignatures {
             beat: (in_bar / beat) as u32 + 1,
             tick: (in_bar % beat) as u32,
         }
-    }
-
-    /// Fails when the position does not exist, for example beat 5 of a bar in 4/4.
-    pub fn ticks_of(&self, position: BarBeat) -> Result<Ticks, ClockError> {
-        let invalid = |time_signature| ClockError::InvalidBarBeat {
-            position,
-            time_signature,
-        };
-        let bar = self.bar(position.bar).ok_or(invalid(self.first()))?;
-        let signature = bar.signature;
-        let beat_exists = (1..=signature.numerator()).contains(&position.beat);
-        let tick_exists = u64::from(position.tick) < signature.ticks_per_beat();
-        if !beat_exists || !tick_exists {
-            return Err(invalid(signature));
-        }
-        let in_bar =
-            u64::from(position.beat - 1) * signature.ticks_per_beat() + u64::from(position.tick);
-        (bar.start.0.checked_add(in_bar))
-            .map(Ticks)
-            .ok_or(invalid(signature))
     }
 
     /// The first bar of the last of the first `count` later runs, or bar 1 when `count` is 0.

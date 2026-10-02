@@ -89,13 +89,6 @@ impl SavedConnection {
         }
     }
 
-    pub fn to_input(from: PortReference, input: PortReference) -> Self {
-        Self {
-            from,
-            to: SavedDestination::Input(input),
-        }
-    }
-
     /// Whether an end is `id` or an instance inside it.
     pub(crate) fn touches(&self, id: &InstanceId) -> bool {
         let names = |port: &PortReference| &port.instance == id || port.instance.is_inside(id);

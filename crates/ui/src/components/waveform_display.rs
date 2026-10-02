@@ -27,7 +27,7 @@ use crate::components::knob::KnobRange;
 use crate::theme::ActiveTheme;
 
 /// The handles of the start and end lines sit this far above the bottom of the display.
-pub const TRIM_HANDLE_RISE: f32 = 8.;
+const TRIM_HANDLE_RISE: f32 = 8.;
 
 #[derive(IntoElement)]
 pub struct WaveformDisplay {

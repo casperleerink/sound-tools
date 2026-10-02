@@ -112,7 +112,7 @@ select, toast, `Icon` type, `h_flex()/v_flex()`. Those are all `crates/ui` work.
 Prefer headless snapshots. They open no window, so they do not disturb the user's screen:
 ```sh
 cargo test -p gallery --test snapshots                      # all sections
-GALLERY_SECTION=inputs cargo test -p gallery --test snapshots
+GALLERY_SECTION=foundation cargo test -p gallery --test snapshots
 # PNGs (2x) land in <target>/gallery-snapshots, or $GALLERY_SNAPSHOT_DIR
 ```
 It uses `gpui::HeadlessAppContext` with the Metal offscreen renderer

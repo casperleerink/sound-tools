@@ -19,7 +19,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use gpui::{Keystroke, WindowHandle, WindowId};
@@ -428,12 +428,7 @@ impl Plugins {
     }
 
     fn known(&self) -> Scan {
-        match self.0.scanned.lock() {
-            Ok(scanned) => scanned.scan.clone(),
-            // A scan thread that panicked leaves what it had. Nothing of ours can panic while
-            // it holds this lock, so this is only so that a project still opens.
-            Err(poisoned) => poisoned.into_inner().scan.clone(),
-        }
+        scanning(&self.0.scanned).scan.clone()
     }
 
     /// A number that goes up whenever the scan learns something, and once more when it ends.
@@ -442,20 +437,13 @@ impl Plugins {
     /// picker built while a scan ran holds a part of the list and a line that says so. It
     /// copies nothing, so a poll may ask on every frame.
     pub fn scan_generation(&self) -> u64 {
-        match self.0.scanned.lock() {
-            Ok(scanned) => scanned.generation,
-            Err(poisoned) => poisoned.into_inner().generation,
-        }
+        scanning(&self.0.scanned).generation
     }
 
     /// Whether a scan is still running. The picker says so quietly while it is, and whoever
     /// polls asks on every poll, so this copies nothing.
     pub fn scan_is_running(&self) -> bool {
-        let finished = match self.0.scanned.lock() {
-            Ok(scanned) => scanned.scan.finished,
-            Err(poisoned) => poisoned.into_inner().scan.finished,
-        };
-        self.0.started.get() && !finished
+        self.0.started.get() && !scanning(&self.0.scanned).scan.finished
     }
 
     /// Looks at the plugin folders of this machine again, on a thread of its own, for a plugin
@@ -474,9 +462,7 @@ impl Plugins {
             return;
         }
         {
-            let Ok(mut scanned) = self.0.scanned.lock() else {
-                return;
-            };
+            let mut scanned = scanning(&self.0.scanned);
             if !scanned.scan.finished || scanned.looking_again {
                 return;
             }
@@ -503,9 +489,7 @@ impl Plugins {
             });
         if let Err(error) = spawned {
             eprintln!("error: looking for plugins again needs a thread: {error}");
-            if let Ok(mut scanned) = self.0.scanned.lock() {
-                scanned.looking_again = false;
-            }
+            scanning(&self.0.scanned).looking_again = false;
         }
     }
 
@@ -536,10 +520,7 @@ impl Plugins {
 
     /// Lines about the scan that a person should see once, such as a bundle that crashed.
     pub fn take_notices(&self) -> Vec<String> {
-        match self.0.scanned.lock() {
-            Ok(mut scanned) => std::mem::take(&mut scanned.notices),
-            Err(poisoned) => std::mem::take(&mut poisoned.into_inner().notices),
-        }
+        std::mem::take(&mut scanning(&self.0.scanned).notices)
     }
 
     /// Every instrument this machine has, of every format, in one line each, for a picker. It
@@ -570,15 +551,17 @@ impl Plugins {
     ///
     /// A card asks on every frame it draws, so this scans nothing and copies one name.
     pub fn installed_name(&self, format: PluginFormat, plugin_id: &str) -> Option<String> {
-        let scanned = self.0.scanned.lock().ok()?;
+        let scanned = scanning(&self.0.scanned);
         Some(scanned.scan.find(format, plugin_id)?.name.clone())
     }
 
     /// What this machine knows of the plugin with this id, for the line on its card. `None`
     /// when it is missing.
     pub fn installed(&self, format: PluginFormat, plugin_id: &str) -> Option<ScannedPlugin> {
-        let scanned = self.0.scanned.lock().ok()?;
-        scanned.scan.find(format, plugin_id).cloned()
+        scanning(&self.0.scanned)
+            .scan
+            .find(format, plugin_id)
+            .cloned()
     }
 
     /// Loads the plugin the record names and gives it to the caller for the engine.
@@ -1109,11 +1092,6 @@ impl Plugins {
         self.poll_at(project, Instant::now())
     }
 
-    /// [`Self::poll`] with the time given, so a test can move it.
-    pub fn poll_at(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
-        self.serve(project, now)
-    }
-
     /// Whether a plugin is waiting for [`Self::send_restarts`]. Cheap, so a caller that has to
     /// ask for the project mutably only does so while this is true.
     pub fn restarts_pending(&self) -> bool {
@@ -1179,7 +1157,8 @@ impl Plugins {
         updates
     }
 
-    fn serve(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
+    /// [`Self::poll`] with the time given, so a test can move it.
+    pub fn poll_at(&self, project: &Project, now: Instant) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
         self.remember_the_windows(project, &mut problems);
         self.note_what_the_scan_found(project);
@@ -1345,10 +1324,7 @@ impl Plugins {
             .waiting
             .borrow_mut()
             .retain(|id| project.resolve::<PluginRecord>(id).is_some());
-        let generation = match self.0.scanned.lock() {
-            Ok(scanned) => scanned.generation,
-            Err(poisoned) => poisoned.into_inner().generation,
-        };
+        let generation = scanning(&self.0.scanned).generation;
         if self.0.seen.replace(generation) == generation {
             return;
         }
@@ -1375,19 +1351,24 @@ impl Plugins {
     }
 }
 
+/// What the scan has found so far.
+///
+/// A scan thread that panicked leaves what it had. Nothing of ours can panic while it holds
+/// this lock, so going on with it is only so that a project still opens.
+fn scanning(scanned: &Mutex<Scanning>) -> MutexGuard<'_, Scanning> {
+    scanned
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Says the scan is over, however its thread ended.
 struct Over(Arc<Mutex<Scanning>>);
 
 impl Drop for Over {
     fn drop(&mut self) {
-        let held = match self.0.lock() {
-            Ok(held) => Some(held),
-            Err(poisoned) => Some(poisoned.into_inner()),
-        };
-        if let Some(mut held) = held {
-            held.scan.finished = true;
-            held.generation += 1;
-        }
+        let mut held = scanning(&self.0);
+        held.scan.finished = true;
+        held.generation += 1;
     }
 }
 
@@ -1396,21 +1377,15 @@ struct DoneLooking(Arc<Mutex<Scanning>>);
 
 impl Drop for DoneLooking {
     fn drop(&mut self) {
-        let mut held = match self.0.lock() {
-            Ok(held) => held,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        held.looking_again = false;
+        scanning(&self.0).looking_again = false;
     }
 }
 
 /// Puts what a look again found where the host can read it, when it is not what the host
 /// already knew. Only then is the change counted, so a look that found nothing new fills no
 /// picker again and tries no waiting record again, and nothing looks again because of it.
-fn publish_again(scanned: &Arc<Mutex<Scanning>>, scan: Scan) {
-    let Ok(mut held) = scanned.lock() else {
-        return;
-    };
+fn publish_again(scanned: &Mutex<Scanning>, scan: Scan) {
+    let mut held = scanning(scanned);
     if held.scan.plugins == scan.plugins && held.scan.failures == scan.failures {
         return;
     }
@@ -1430,10 +1405,8 @@ fn publish_again(scanned: &Arc<Mutex<Scanning>>, scan: Scan) {
 
 /// Puts what the scan has found where the host can read it, and counts the change so that a
 /// record that is waiting for a plugin is tried again.
-fn publish(scanned: &Arc<Mutex<Scanning>>, scan: &Scan) {
-    let Ok(mut held) = scanned.lock() else {
-        return;
-    };
+fn publish(scanned: &Mutex<Scanning>, scan: &Scan) {
+    let mut held = scanning(scanned);
     let said = held.scan.failures.len().min(scan.failures.len());
     for failure in &scan.failures[said..] {
         held.notices.push(format!(

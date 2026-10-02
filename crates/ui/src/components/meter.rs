@@ -55,7 +55,7 @@ pub const SCALE_TOP: f32 = LIGHT + LIGHT_GAP;
 
 /// Which way the bars of a meter run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Orientation {
+enum Orientation {
     /// Up, 5 pt bars with the clip light on top: the meter under the volume.
     #[default]
     Vertical,
@@ -111,7 +111,7 @@ pub struct Ballistics {
 }
 
 impl Ballistics {
-    pub const FALL_DB_PER_SECOND: f32 = 20.;
+    const FALL_DB_PER_SECOND: f32 = 20.;
     pub const HOLD_SECONDS: f32 = 1.5;
 
     /// One reading: the highest level of each channel since the last one, in dBFS, and the

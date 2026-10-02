@@ -6,8 +6,9 @@
 use std::f32::consts::{PI, SQRT_2};
 
 use sound_core::{
-    AudioOutput, Automated, AutomationInput, Envelope, EnvelopeState, EventInput, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
+    AudioOutput, Automated, AutomationInput, Envelope, EnvelopeState, EventInput,
+    HIGHEST_PHASE_STEP, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
+    poly_blep,
 };
 use sound_notes::{NoteEvent, Velocity, Voice as _, Voices, Wheels, frequency_hz};
 
@@ -28,9 +29,6 @@ const HIGHEST_Q: f32 = 16.0;
 /// A new voice starts here in its cycle. Both waveforms are far from a step at this phase, so
 /// the very first frame of a note already gives output.
 const START_PHASE: f32 = 0.25;
-
-/// Above this a cycle is about two frames and the waveform corrections overlap.
-const HIGHEST_PHASE_STEP: f32 = 0.45;
 
 /// The envelope of the synth, from its state.
 fn envelope(state: &SynthState, sample_rate: f32) -> Envelope {
@@ -93,22 +91,9 @@ struct Voice {
     filter_state: [f32; 2],
 }
 
-/// The naive sawtooth steps from 1 to -1 where the phase wraps. This is what to subtract near
-/// that step to round it off over two frames (PolyBLEP), which removes most of the aliasing.
-fn step_correction(phase: f32, phase_step: f32) -> f32 {
-    if phase < phase_step {
-        let t = phase / phase_step;
-        t + t - t * t - 1.0
-    } else if phase > 1.0 - phase_step {
-        let t = (phase - 1.0) / phase_step;
-        t * t + t + t + 1.0
-    } else {
-        0.0
-    }
-}
-
+/// The naive sawtooth steps from 1 to -1 where the phase wraps, rounded off there.
 fn sawtooth(phase: f32, phase_step: f32) -> f32 {
-    2.0 * phase - 1.0 - step_correction(phase, phase_step)
+    2.0 * phase - 1.0 - poly_blep(phase, phase_step)
 }
 
 /// The sample rate is what a voice reads from the synth to start or move.

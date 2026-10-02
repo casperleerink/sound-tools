@@ -20,11 +20,10 @@
 use std::path::PathBuf;
 
 use gpui::{
-    Context, Entity, FocusHandle, KeyDownEvent, MouseButton, PathPromptOptions, Task, Window, div,
-    prelude::*, px,
+    Context, Entity, FocusHandle, KeyDownEvent, MouseButton, Task, Window, div, prelude::*, px,
 };
 use sound_core::{Instance, ProjectEvent, State};
-use sound_media::{Cached, Imported, MediaError};
+use sound_media::{Cached, Imported};
 use sound_notes::Velocity;
 use sound_ui::components::cell::{CELL_WIDTH, Cell};
 use sound_ui::components::device_card::{CardFrame, Column};
@@ -32,9 +31,12 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, pan_readout, short};
+use sound_ui::components::knob::{
+    Knob, ParameterKnob, decibels_readout, milliseconds_readout, pan_readout, short,
+};
 use sound_ui::components::pad::{PAD_GAP, PAD_HEIGHT, PAD_WIDTH, Pad as PadElement, PadGlyph};
 use sound_ui::components::toggle::Toggle;
+use sound_ui::import;
 use sound_ui::lanes::object_of;
 use sound_ui::{
     ActiveTheme, ControlEdit, DeviceLabel, Devices, KeyboardFocus, Lanes, Session, Views,
@@ -43,7 +45,7 @@ use sound_ui::{
 
 use crate::{
     DECAY, DrumPad, DrumPadState, DrumUpdate, PAD_LANES, PADS, PAN, PARAMETERS, PITCH, PROCESSOR,
-    Pad, PadParameter, Sound, Source, VOLUME, note_of, peaks_name,
+    Pad, Sound, Source, VOLUME, note_of, peaks_name,
 };
 
 /// The name the rack puts on the card of a Drum pad.
@@ -80,62 +82,22 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Decibels,
-    Semitones,
-    Milliseconds,
-    Pan,
+/// The knobs of pad `pad`, from 0: Volume, Pitch, Decay and Pan.
+fn knobs(pad: usize) -> [ParameterKnob<Pad>; 4] {
+    let [volume, pitch, decay, pan] =
+        [VOLUME, PITCH, DECAY, PAN].map(|number| &PARAMETERS[pad % PADS][number]);
+    [
+        ParameterKnob::new(volume, "Volume", "Change volume", decibels_readout),
+        // Pitch and pan go both ways from the middle, so their arcs start at the top.
+        ParameterKnob::new(pitch, "Pitch", "Change pitch", semitones_readout).bipolar(),
+        ParameterKnob::new(decay, "Decay", "Change decay", milliseconds_readout),
+        ParameterKnob::new(pan, "Pan", "Change pan", pan_readout).bipolar(),
+    ]
 }
 
-/// A knob of the card, on one number of the selected pad.
-struct Control {
-    number: usize,
-    label: &'static str,
-    undo_label: &'static str,
-    unit: Unit,
-}
-
-const VOLUME_KNOB: Control = Control {
-    number: VOLUME,
-    label: "Volume",
-    undo_label: "Change volume",
-    unit: Unit::Decibels,
-};
-const PITCH_KNOB: Control = Control {
-    number: PITCH,
-    label: "Pitch",
-    undo_label: "Change pitch",
-    unit: Unit::Semitones,
-};
-const DECAY_KNOB: Control = Control {
-    number: DECAY,
-    label: "Decay",
-    undo_label: "Change decay",
-    unit: Unit::Milliseconds,
-};
-const PAN_KNOB: Control = Control {
-    number: PAN,
-    label: "Pan",
-    undo_label: "Change pan",
-    unit: Unit::Pan,
-};
-
-impl Control {
-    fn parameter(&self, pad: usize) -> &'static PadParameter {
-        &PARAMETERS[pad % PADS][self.number]
-    }
-}
-
-/// A value with its unit, as a knob shows it: `0 dB`, `-7 st`, `180 ms`, `1.8 s`, `C`, `25L`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Decibels => format!("{} dB", short(value)),
-        Unit::Semitones => format!("{} st", short(value)),
-        Unit::Milliseconds if value < 1_000.0 => format!("{} ms", short(value)),
-        Unit::Milliseconds => format!("{} s", short(value / 1_000.0)),
-        Unit::Pan => pan_readout(value),
-    }
+/// A pitch in semitones: `-7 st`.
+fn semitones_readout(semitones: f32) -> String {
+    format!("{} st", short(semitones))
 }
 
 /// The pad an arrow key moves the selection to, from `pad`: sideways within a row, up and down
@@ -385,30 +347,9 @@ impl DrumPadView {
     /// Opens the file panel of macOS for a sample for pad `pad`: the keyboard path to a sample
     /// pad.
     pub fn choose_file(&mut self, pad: usize, cx: &mut Context<Self>) {
-        let chosen = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Choose".into()),
+        import::choose_file(&self.session, "Choose", cx, move |view, path, cx| {
+            view.load_files(pad, vec![path], cx)
         });
-        cx.spawn(async move |view, cx| {
-            let paths = match chosen.await {
-                Ok(Ok(Some(paths))) => paths,
-                // Cancelled, or the panel went away: nothing to load.
-                Ok(Ok(None)) | Err(_) => return,
-                Ok(Err(error)) => {
-                    view.update(cx, |view, cx| {
-                        let session = view.session.clone();
-                        session.update(cx, |session, cx| session.report(error, cx));
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            view.update(cx, |view, cx| view.load_files(pad, paths, cx))
-                .ok();
-        })
-        .detach();
     }
 
     /// Copies the first of `paths` into `assets/audio/` away from the thread that draws, then
@@ -418,30 +359,12 @@ impl DrumPadView {
         let Some(path) = paths.into_iter().next() else {
             return;
         };
-        let assets = self.session.read(cx).project().assets().clone();
-        let importing = cx.background_spawn(async move { sound_media::import(&assets, &path) });
-        cx.spawn(async move |view, cx| {
-            let imported = importing.await;
-            view.update(cx, |view, cx| view.take_sample(pad, imported, cx))
-                .ok();
-        })
-        .detach();
+        import::import_file(&self.session, path, cx, move |view, imported, cx| {
+            view.take_sample(pad, imported, cx)
+        });
     }
 
-    fn take_sample(
-        &mut self,
-        pad: usize,
-        imported: Result<Imported, MediaError>,
-        cx: &mut Context<Self>,
-    ) {
-        let imported = match imported {
-            Ok(imported) => imported,
-            Err(error) => {
-                let session = self.session.clone();
-                session.update(cx, |session, cx| session.report(error, cx));
-                return;
-            }
-        };
+    fn take_sample(&mut self, pad: usize, imported: Imported, cx: &mut Context<Self>) {
         let (asset, seconds) = (imported.asset.clone(), imported.audio.seconds());
         let set = move |state: &mut DrumPadState, (): ()| {
             state.pads[pad].load_sample(asset, seconds);
@@ -452,28 +375,20 @@ impl DrumPadView {
         self.select(pad, cx);
     }
 
-    fn knob(&self, control: &'static Control, pad: &Pad, cx: &mut Context<Self>) -> Knob {
+    fn knob(&self, control: ParameterKnob<Pad>, pad: &Pad, cx: &mut Context<Self>) -> Knob {
         let selected = self.selected;
-        let parameter = control.parameter(selected);
-        let value = (parameter.get)(pad);
         // The lane of this number of the selected pad is named by its path: `pads.36.pan`.
         let pad_path = object_of(PAD_LANES[selected][0].field);
         let automated = self
             .lanes
             .read(cx)
-            .is_automated_in(pad_path, parameter.field);
-        Knob::new(parameter.field)
-            .range(KnobRange::of(parameter))
-            .value(value)
+            .is_automated_in(pad_path, control.parameter.field);
+        control
+            .knob(pad)
             .automated(automated)
-            .default_value(parameter.default)
-            // Pitch and pan go both ways from the middle, so their arcs start at the top.
-            .bipolar(matches!(control.unit, Unit::Semitones | Unit::Pan))
-            .label(control.label)
-            .readout(readout(control.unit, value))
             .on_change(weak_callback(cx, move |view, change, cx| {
                 let set = move |state: &mut DrumPadState, value| {
-                    (parameter.set)(&mut state.pads[selected], value);
+                    (control.parameter.set)(&mut state.pads[selected], value);
                 };
                 view.change(control.undo_label, change, set, cx);
             }))
@@ -567,13 +482,11 @@ impl gpui::Render for DrumPadView {
             return div().into_any_element();
         };
         let pad = &state.pads[self.selected];
+        let [volume, pitch, decay, pan] =
+            knobs(self.selected).map(|control| self.knob(control, pad, cx));
         let columns = [
-            Column::new()
-                .top(self.knob(&VOLUME_KNOB, pad, cx))
-                .bottom(self.knob(&DECAY_KNOB, pad, cx)),
-            Column::new()
-                .top(self.knob(&PITCH_KNOB, pad, cx))
-                .bottom(self.knob(&PAN_KNOB, pad, cx)),
+            Column::new().top(volume).bottom(decay),
+            Column::new().top(pitch).bottom(pan),
         ];
         let kind = match pad.source {
             Source::Sound(_) => "Synthesized",
@@ -642,22 +555,17 @@ mod tests {
     }
 
     #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(readout(Unit::Decibels, 0.0), "0 dB");
-        assert_eq!(readout(Unit::Semitones, -7.0), "-7 st");
-        assert_eq!(readout(Unit::Milliseconds, 180.0), "180 ms");
-        assert_eq!(readout(Unit::Milliseconds, 1_800.0), "1.8 s");
-        assert_eq!(readout(Unit::Pan, 0.0), "C");
-        assert_eq!(readout(Unit::Pan, -0.25), "25L");
+    fn a_pitch_reads_in_semitones() {
+        assert_eq!(semitones_readout(-7.0), "-7 st");
+        assert_eq!(semitones_readout(12.0), "12 st");
     }
 
     /// The defaults and both ends of every range, through the travel of its knob.
     #[test]
     fn every_knob_gives_the_ends_of_its_range() {
         for pad in 0..PADS {
-            for control in [&VOLUME_KNOB, &PITCH_KNOB, &DECAY_KNOB, &PAN_KNOB] {
-                let parameter = control.parameter(pad);
-                let range = KnobRange::of(parameter);
+            for control in knobs(pad) {
+                let (range, parameter) = (control.range(), control.parameter);
                 assert_eq!(range.value(0.0), parameter.min);
                 assert_eq!(range.value(1.0), parameter.max);
                 let default = range.value(range.position(parameter.default));

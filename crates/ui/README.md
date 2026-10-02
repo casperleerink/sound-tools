@@ -31,6 +31,11 @@ drag. Nothing needs to sync.
   so undo and redo wait until the drag ends.
 - **A control on saved state is controlled.** Give it the value on every render and hand its
   `ValueChange` to `ControlEdit::apply`. That one call does the gesture, a key step and a reset.
+- **A knob on a number of the record is a `ParameterKnob`.** Its name, range and default come
+  from the `Parameter`; the card gives the label, the name of the undo step and a readout such
+  as `hertz_readout`.
+- **A file from the composer goes through `import`:** `choose_file` opens the file panel, and
+  `import_file` copies the file into the assets on a background thread.
 - **A number an automation lane moves does not drag.** A device view keeps a
   `Lanes::follow(session, instance, Device::AUTOMATION)`, draws from `Lanes::state`, the record
   with the lanes over it, and makes each knob or handle of an automated number `automated`. A

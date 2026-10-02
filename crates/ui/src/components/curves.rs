@@ -42,12 +42,12 @@ pub mod envelope {
     /// Where the attack starts.
     pub const LEFT: f32 = 0.04;
     /// The zone of one time.
-    pub const ZONE: f32 = 0.28;
+    pub(super) const ZONE: f32 = 0.28;
     /// How long a held note is drawn at the sustain level.
     pub const HOLD: f32 = 0.1;
     /// Full level and silence, clear of the edges so a handle there can be taken.
     pub const TOP: f32 = 0.88;
-    pub const BOTTOM: f32 = 0.08;
+    pub(super) const BOTTOM: f32 = 0.08;
 
     /// The range of a time whose zone starts at `start`: `time.position(value)` of the knob,
     /// squeezed into the zone and moved to its start. A logarithmic range stays one when it is
@@ -59,7 +59,7 @@ pub mod envelope {
     }
 
     /// The range of the sustain level, from silence at `BOTTOM` to full level at `TOP`.
-    pub fn level_axis() -> KnobRange {
+    pub(super) fn level_axis() -> KnobRange {
         let min = -BOTTOM / (TOP - BOTTOM);
         KnobRange::linear(min, min + 1. / (TOP - BOTTOM))
     }
@@ -81,7 +81,7 @@ const STAGE_POINTS: usize = 24;
 /// `[attack, decay, release]`, from 0, straight, to 1, as
 /// [`EnvelopeCurves`](sound_core::EnvelopeCurves) bends it. The release is drawn from the
 /// sustain level over its whole zone.
-pub fn envelope_curve(time: KnobRange, adsr: Adsr, curves: [f32; 3]) -> Vec<Point<f32>> {
+fn envelope_curve(time: KnobRange, adsr: Adsr, curves: [f32; 3]) -> Vec<Point<f32>> {
     use envelope::{BOTTOM, LEFT, TOP};
     let [peak, decayed, held, released] =
         envelope::stages(time, adsr.attack, adsr.decay, adsr.release);

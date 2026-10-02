@@ -1,12 +1,11 @@
-//! Foundation section: the palette, button, text input, kbd, indicator, card, empty state and
-//! notice, with every variant, size and state.
+//! Foundation section: the palette, button, text input, kbd, indicator, empty state and notice,
+//! with every variant, size and state.
 
 use gpui::{
     AnyElement, App, AppContext, FontWeight, IntoElement, ParentElement, SharedString, Styled,
     Window, div, px,
 };
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::card::Card;
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::kbd::Kbd;
@@ -68,7 +67,6 @@ fn row(
 pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let theme = cx.theme();
     let (lavender, green, red, peach) = (theme.lavender, theme.green, theme.red, theme.peach);
-    let muted = theme.gray_700;
     let inputs = window.use_keyed_state("foundation-inputs", cx, |_, cx| {
         [
             cx.new(|cx| TextInput::new(cx).placeholder("Small").size(InputSize::Sm)),
@@ -120,7 +118,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         ("xs", ButtonSize::Xs),
         ("sm", ButtonSize::Sm),
         ("md", ButtonSize::Md),
-        ("lg", ButtonSize::Lg),
     ];
 
     div()
@@ -140,9 +137,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                         Button::new("b-subtle", "Subtle")
                             .variant(ButtonVariant::Subtle)
                             .into_any_element(),
-                        Button::new("b-outline", "Outline")
-                            .variant(ButtonVariant::Outline)
-                            .into_any_element(),
                         Button::new("b-ghost", "Ghost")
                             .variant(ButtonVariant::Ghost)
                             .into_any_element(),
@@ -157,9 +151,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                             .into_any_element(),
                         Button::new("b-csubtle", "Subtle")
                             .variant(ButtonVariant::SubtleColor(lavender))
-                            .into_any_element(),
-                        Button::new("b-coutline", "Outline")
-                            .variant(ButtonVariant::OutlineColor(lavender))
                             .into_any_element(),
                         Button::new("b-cghost", "Ghost")
                             .variant(ButtonVariant::GhostColor(lavender))
@@ -176,9 +167,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                         Button::new("b-gsubtle", "Subtle")
                             .variant(ButtonVariant::SubtleColor(green))
                             .into_any_element(),
-                        Button::new("b-goutline", "Outline")
-                            .variant(ButtonVariant::OutlineColor(green))
-                            .into_any_element(),
                         Button::new("b-gghost", "Ghost")
                             .variant(ButtonVariant::GhostColor(green))
                             .into_any_element(),
@@ -193,9 +181,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                             .into_any_element(),
                         Button::new("b-rsubtle", "Subtle")
                             .variant(ButtonVariant::SubtleColor(red))
-                            .into_any_element(),
-                        Button::new("b-routline", "Outline")
-                            .variant(ButtonVariant::OutlineColor(red))
                             .into_any_element(),
                         Button::new("b-rghost", "Ghost")
                             .variant(ButtonVariant::GhostColor(red))
@@ -244,7 +229,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                             .rounded(true)
                             .into_any_element(),
                         Button::icon_only("b-pill-icon", "plus")
-                            .variant(ButtonVariant::Outline)
+                            .variant(ButtonVariant::Ghost)
                             .rounded(true)
                             .into_any_element(),
                     ],
@@ -258,10 +243,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                             .into_any_element(),
                         Button::new("b-d-subtle", "Subtle")
                             .variant(ButtonVariant::Subtle)
-                            .disabled(true)
-                            .into_any_element(),
-                        Button::new("b-d-outline", "Outline")
-                            .variant(ButtonVariant::Outline)
                             .disabled(true)
                             .into_any_element(),
                         Button::new("b-d-ghost", "Ghost")
@@ -359,24 +340,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                         .into_any_element()],
                 ),
             ],
-        ))
-        .child(block(
-            "Card",
-            cx,
-            [row(
-                "card",
-                cx,
-                [Card::new()
-                    .title("Sampler")
-                    .w(px(320.))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(muted)
-                            .child("The plain card of the rack until step 1b."),
-                    )
-                    .into_any_element()],
-            )],
         ))
         .child(block(
             "Empty state",

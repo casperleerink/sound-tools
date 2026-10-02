@@ -259,18 +259,16 @@ impl PluginWindow {
         // rest of its life can be checked without a display. See `tests/plugin_host/window.rs`.
         let attached = match view {
             // SAFETY: the view belongs to the window that was just opened. Every way that
-            // window can go frees the plugin's resources for it first: `give_up`, the window's
-            // own close control, and the check in `Plugins::settle_windows` for a window that
-            // went without saying so. The application ends before a window it still has.
+            // window can go frees the plugin's resources for it first: `give_up`, and the
+            // `closed` subscription, which runs while the window still holds the view, see
+            // `open_window`. The application ends before a window it still has.
             Some(view) => unsafe { gui.set_parent(view) },
             None => Ok(()),
         };
         match attached.and_then(|()| gui.show()) {
             Ok(()) => Ok(()),
-            Err(problem) => match self.give_up(Some(gui)) {
-                Some(handle) => Err((problem, handle)),
-                None => Ok(()),
-            },
+            // `give_up` gives back the handle kept above, which is `handle`.
+            Err(problem) => Err((problem, self.give_up(Some(gui)).unwrap_or(handle))),
         }
     }
 

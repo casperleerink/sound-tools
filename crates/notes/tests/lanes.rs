@@ -242,7 +242,7 @@ fn a_take_holds_the_wheels_one_message_per_line() {
         ],
         ..RawTake::default()
     };
-    let json = take.json();
+    let json = take.json().unwrap();
     assert!(
         json.contains(r#"{"kind":"bend","time_us":0,"sounded_us":0,"value":-8192},"#),
         "{json}"

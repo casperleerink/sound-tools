@@ -3,13 +3,13 @@
 //! the two channels. The rack gives the view a [`CardFrame`]: the picker of the slot as the
 //! title, and the power and close icons.
 //!
-//! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one
-//! gesture and one undo step, a key step, a reset or a switch is one commit. The ranges, the
-//! defaults and the travel of each knob come from the [`Parameter`]s of the crate. What is only
-//! about the interface is here: the label, the unit, the name of the undo step and whether the
-//! card is expanded. A number that an automation lane of the track moves shows the value that
-//! plays, on its knob and on the display, and does not drag ([`Lanes`]).
+//! The view keeps no copy of the state. It reads the record when it renders, and every change goes
+//! through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one gesture and
+//! one undo step, a key step, a reset or a switch is one commit. The ranges, the defaults and the
+//! travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. What is only
+//! about the interface is here: the label, the unit, the name of the undo step and whether the card
+//! is expanded. A number that an automation lane of the track moves shows the value that plays, on
+//! its knob and on the display, and does not drag ([`Lanes`]).
 
 use std::f32::consts::FRAC_PI_4;
 
@@ -19,14 +19,16 @@ use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, pan_readout, short};
+use sound_ui::components::knob::{
+    Knob, ParameterKnob, decibels_readout, hertz_readout, pan_readout, percent_readout,
+};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{
     ActiveTheme, ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback,
 };
 
-use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, Parameter, Utility, UtilityState, WIDTH, matrix};
+use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, Utility, UtilityState, WIDTH, matrix};
 
 /// The name the rack puts on the card of a utility.
 pub const NAME: &str = "Utility";
@@ -44,63 +46,23 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Decibels,
-    Pan,
-    /// A part of one, shown as a percentage.
-    Part,
-    Hertz,
-}
+/// A knob of the card. Gain, pan and width have their default in the middle, and their arc
+/// starts there.
+type Control = ParameterKnob<UtilityState>;
 
-/// A knob of the card.
-struct Control {
-    parameter: &'static Parameter,
-    label: &'static str,
-    undo_label: &'static str,
-    scale: KnobRange,
-    unit: Unit,
-}
-
-impl Control {
-    const fn new(
-        parameter: &'static Parameter,
-        label: &'static str,
-        undo_label: &'static str,
-        unit: Unit,
-    ) -> Self {
-        Self {
-            parameter,
-            label,
-            undo_label,
-            scale: KnobRange::of(parameter),
-            unit,
-        }
-    }
-
-    /// Gain, pan and width have their default in the middle, and their arc starts there.
-    fn bipolar(&self) -> bool {
-        !matches!(self.unit, Unit::Hertz)
-    }
-
-    /// The name of the knob: its field. Pan is `utility-pan`, because the mixer strip of the
-    /// track, in the same panel, has a `pan` of its own, and a test finds a control by its name.
-    fn id(&self) -> &'static str {
-        match self.unit {
-            Unit::Pan => "utility-pan",
-            _ => self.parameter.field,
-        }
-    }
-}
-
-const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", Unit::Decibels);
-const PAN_KNOB: Control = Control::new(&PAN, "Pan", "Change pan", Unit::Pan);
-const WIDTH_KNOB: Control = Control::new(&WIDTH, "Width", "Change width", Unit::Part);
+const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", decibels_readout).bipolar();
+/// `utility-pan`, because the mixer strip of the track, in the same panel, has a `pan` of its
+/// own, and a test finds a control by its name.
+const PAN_KNOB: Control = Control::new(&PAN, "Pan", "Change pan", pan_readout)
+    .bipolar()
+    .id("utility-pan");
+const WIDTH_KNOB: Control =
+    Control::new(&WIDTH, "Width", "Change width", percent_readout).bipolar();
 const BASS_KNOB: Control = Control::new(
     &BASS_MONO_HZ,
     "Below",
     "Change bass mono frequency",
-    Unit::Hertz,
+    hertz_readout,
 );
 
 /// A switch of the card, on or off.
@@ -159,16 +121,6 @@ const CHANNELS: [(Channels, &str, &str); 4] = [
     (Channels::Right, "right", "Right"),
     (Channels::Swap, "swap", "Swap"),
 ];
-
-/// A value with its unit, as a knob shows it: `-6 dB`, `30L`, `C`, `150%`, `120 Hz`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Decibels => format!("{} dB", short(value)),
-        Unit::Pan => pan_readout(value),
-        Unit::Part => format!("{}%", short(value * 100.0)),
-        Unit::Hertz => format!("{} Hz", short(value)),
-    }
-}
 
 /// Where things are on the display, as places from 0 to 1, `y` up.
 ///
@@ -308,25 +260,13 @@ impl UtilityView {
         self.edit.apply(session, utility, label, change, set, cx);
     }
 
-    fn knob(
-        &self,
-        control: &'static Control,
-        state: &UtilityState,
-        cx: &mut Context<Self>,
-    ) -> Knob {
-        let value = (control.parameter.get)(state);
+    fn knob(&self, control: Control, state: &UtilityState, cx: &mut Context<Self>) -> Knob {
         let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        Knob::new(control.id())
+        control
+            .knob(state)
             .automated(automated)
-            .range(control.scale)
-            .bipolar(control.bipolar())
-            .value(value)
-            .default_value(control.parameter.default)
-            .label(control.label)
-            .readout(readout(control.unit, value))
             .on_change(weak_callback(cx, move |view, change, cx| {
-                let set = control.parameter.set;
-                view.change(control.undo_label, change, set, cx);
+                view.change(control.undo_label, change, control.parameter.set, cx);
             }))
     }
 
@@ -384,7 +324,7 @@ impl UtilityView {
             }));
         let caption = format!(
             "Gain {} · Pan {}",
-            readout(Unit::Decibels, state.gain_db),
+            decibels_readout(state.gain_db),
             pan_readout(state.pan)
         );
         Display::new("display", DISPLAY_WIDTH)
@@ -413,14 +353,14 @@ impl Render for UtilityView {
         let mute = Cell::new(self.toggle(&MUTE, &state, cx).color(peach)).label(MUTE.label);
         let columns = [
             Column::new()
-                .top(knob(&GAIN_KNOB, cx))
-                .bottom(knob(&WIDTH_KNOB, cx)),
-            Column::new().top(knob(&PAN_KNOB, cx)).bottom(mute),
+                .top(knob(GAIN_KNOB, cx))
+                .bottom(knob(WIDTH_KNOB, cx)),
+            Column::new().top(knob(PAN_KNOB, cx)).bottom(mute),
         ];
         let hidden = [
             Column::new()
                 .top(toggle(&BASS_MONO, cx))
-                .bottom(knob(&BASS_KNOB, cx)),
+                .bottom(knob(BASS_KNOB, cx)),
             Column::new()
                 .top(toggle(&INVERT_LEFT, cx))
                 .bottom(toggle(&INVERT_RIGHT, cx)),
@@ -445,21 +385,11 @@ impl Render for UtilityView {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(readout(Unit::Decibels, -6.0), "-6 dB");
-        assert_eq!(readout(Unit::Decibels, 0.0), "0 dB");
-        assert_eq!(readout(Unit::Pan, -0.3), "30L");
-        assert_eq!(readout(Unit::Pan, 0.0), "C");
-        assert_eq!(readout(Unit::Part, 1.5), "150%");
-        assert_eq!(readout(Unit::Hertz, 120.0), "120 Hz");
-    }
-
     /// The defaults and both ends of every range, through the travel of its knob and back.
     #[test]
     fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
         for control in KNOBS {
-            let (range, parameter) = (control.scale, control.parameter);
+            let (range, parameter) = (control.range(), control.parameter);
             assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
             assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
             for value in [parameter.min, parameter.default, parameter.max] {

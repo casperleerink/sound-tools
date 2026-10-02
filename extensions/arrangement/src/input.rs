@@ -46,10 +46,6 @@ impl InputChannels {
         alone.chain(pairs).collect()
     }
 
-    pub fn is_stereo(&self) -> bool {
-        self.stereo
-    }
-
     /// The channels of the device, counted from 0.
     pub fn device_channels(&self) -> Range<usize> {
         let first = usize::from(self.first - 1);

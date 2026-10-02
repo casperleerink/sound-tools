@@ -22,6 +22,7 @@ use gpui::{
     App, Bounds, CursorStyle, Div, ElementId, MouseButton, MouseDownEvent, Pixels, SharedString,
     StyleRefinement, Window, canvas, div, prelude::*, px,
 };
+use sound_core::Parameter;
 
 use crate::components::automated;
 use crate::components::cell::{self, CONTROL_HEIGHT};
@@ -75,6 +76,119 @@ pub fn short(value: f32) -> String {
     match text.contains('.') {
         true => text.trim_end_matches('0').trim_end_matches('.').into(),
         false => text,
+    }
+}
+
+/// A frequency: `632 Hz`, `1.2 kHz`.
+pub fn hertz_readout(hz: f32) -> String {
+    match hz < 1_000. {
+        true => format!("{} Hz", short(hz)),
+        false => format!("{} kHz", short(hz / 1_000.)),
+    }
+}
+
+/// A gain: `-4.5 dB`.
+pub fn decibels_readout(db: f32) -> String {
+    format!("{} dB", short(db))
+}
+
+/// A part of one as a percentage: `30%`.
+pub fn percent_readout(part: f32) -> String {
+    format!("{}%", short(part * 100.))
+}
+
+/// A time in milliseconds: `250 ms`, `1.5 s`.
+pub fn milliseconds_readout(ms: f32) -> String {
+    match ms < 1_000. {
+        true => format!("{} ms", short(ms)),
+        false => format!("{} s", short(ms / 1_000.)),
+    }
+}
+
+/// A time in seconds: `5 ms`, `1.5 s`.
+pub fn seconds_readout(seconds: f32) -> String {
+    match seconds < 1. {
+        true => format!("{} ms", short(seconds * 1_000.)),
+        false => format!("{} s", short(seconds)),
+    }
+}
+
+/// A knob of a device card on one number of a record. The name of the knob, its range and its
+/// default come from the [`Parameter`]; the card says the label, the name of the undo step and
+/// how the value reads. A const of the card, and `Copy`, so a callback can keep it.
+pub struct ParameterKnob<S: 'static> {
+    pub parameter: &'static Parameter<S>,
+    pub label: &'static str,
+    pub undo_label: &'static str,
+    /// The value with its unit, such as [`hertz_readout`].
+    readout: fn(f32) -> String,
+    bipolar: bool,
+    id: &'static str,
+}
+
+impl<S> Clone for ParameterKnob<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S> Copy for ParameterKnob<S> {}
+
+impl<S> ParameterKnob<S> {
+    pub const fn new(
+        parameter: &'static Parameter<S>,
+        label: &'static str,
+        undo_label: &'static str,
+        readout: fn(f32) -> String,
+    ) -> Self {
+        Self {
+            parameter,
+            label,
+            undo_label,
+            readout,
+            bipolar: false,
+            id: parameter.field,
+        }
+    }
+
+    /// The arc starts at the top, for a value with a middle such as a gain or a pan.
+    pub const fn bipolar(self) -> Self {
+        Self {
+            bipolar: true,
+            ..self
+        }
+    }
+
+    /// Another name than the field, for a knob whose field another control in the same panel
+    /// has too.
+    pub const fn id(self, id: &'static str) -> Self {
+        Self { id, ..self }
+    }
+
+    pub const fn range(&self) -> KnobRange {
+        KnobRange::of(self.parameter)
+    }
+
+    /// A value as the parameter takes it: a handle may ask for one past its ends.
+    pub fn clamp(&self, value: f32) -> f32 {
+        value.clamp(self.parameter.min, self.parameter.max)
+    }
+
+    pub fn readout(&self, value: f32) -> String {
+        (self.readout)(value)
+    }
+
+    /// The knob at the value of `of`. The card adds whether a lane moves it and what a change
+    /// does.
+    pub fn knob(&self, of: &S) -> Knob {
+        let value = (self.parameter.get)(of);
+        Knob::new(self.id)
+            .range(self.range())
+            .value(value)
+            .default_value(self.parameter.default)
+            .bipolar(self.bipolar)
+            .label(self.label)
+            .readout(self.readout(value))
     }
 }
 
@@ -404,6 +518,28 @@ mod tests {
         KnobRange::logarithmic(20., 20_000.),
         KnobRange::logarithmic(0.001, 10.),
     ];
+
+    #[test]
+    fn a_readout_has_its_unit_and_three_digits_at_most() {
+        assert_eq!(hertz_readout(0.05), "0.05 Hz");
+        assert_eq!(hertz_readout(632.), "632 Hz");
+        assert_eq!(hertz_readout(999.), "999 Hz");
+        assert_eq!(hertz_readout(1_000.), "1 kHz");
+        assert_eq!(hertz_readout(2_143.553), "2.14 kHz");
+        assert_eq!(decibels_readout(0.), "0 dB");
+        assert_eq!(decibels_readout(-4.5), "-4.5 dB");
+        assert_eq!(decibels_readout(12.26), "12.3 dB");
+        assert_eq!(percent_readout(0.), "0%");
+        assert_eq!(percent_readout(0.123_456), "12.3%");
+        assert_eq!(percent_readout(1.5), "150%");
+        assert_eq!(milliseconds_readout(0.1), "0.1 ms");
+        assert_eq!(milliseconds_readout(250.), "250 ms");
+        assert_eq!(milliseconds_readout(1_500.), "1.5 s");
+        assert_eq!(seconds_readout(0.001), "1 ms");
+        assert_eq!(seconds_readout(0.0155), "15.5 ms");
+        assert_eq!(seconds_readout(1.), "1 s");
+        assert_eq!(seconds_readout(60.), "60 s");
+    }
 
     #[test]
     fn the_ends_of_the_travel_are_the_ends_of_the_range() {

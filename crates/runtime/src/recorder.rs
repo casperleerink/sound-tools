@@ -311,7 +311,7 @@ fn reopen(assets: &Assets, asset: AudioAsset) -> Option<Imported> {
 /// The device plays project frame `project_frame` at engine frame `engine_frame`, and has for a
 /// while: what ties a moment the composer heard to the timeline.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct PlayingAt {
+struct PlayingAt {
     pub engine_frame: u64,
     pub project_frame: Frames,
 }
@@ -341,7 +341,7 @@ impl PlayingAt {
 /// The engine frame whose sound started at the device at `nanos`: what the composer heard in
 /// that moment. Without a device, as for an engine a test runs by hand, engine frame `n`
 /// sounds at `n / sample_rate` seconds on the clock.
-pub fn frame_sounding_at(timing: Option<&StreamTiming>, sample_rate: u32, nanos: u64) -> i64 {
+fn frame_sounding_at(timing: Option<&StreamTiming>, sample_rate: u32, nanos: u64) -> i64 {
     if let Some(frame) = timing.and_then(|timing| timing.frame_sounding_at(nanos)) {
         return frame;
     }
@@ -352,7 +352,7 @@ pub fn frame_sounding_at(timing: Option<&StreamTiming>, sample_rate: u32, nanos:
 /// Where a take lies: the project frame, at the rate of the engine, at which the composer heard
 /// what the first frame of the take holds. `first_heard` is the engine frame sounding when
 /// that frame was captured, see [`frame_sounding_at`].
-pub fn take_head(first_heard: i64, playing: PlayingAt) -> i128 {
+fn take_head(first_heard: i64, playing: PlayingAt) -> i128 {
     let offset = i128::from(playing.project_frame.0) - i128::from(playing.engine_frame);
     i128::from(first_heard) + offset
 }

@@ -2,7 +2,8 @@
 //!
 //! VST 3 is a COM API. The `vst3` crate gives the raw interfaces generated from Steinberg's
 //! headers and nothing else, so the safe layer is here. Every call into a plugin is `unsafe`
-//! and every one of them is in this folder.
+//! and every one of them is in this folder. `kResultTrue` is the same number as `kResultOk`, so
+//! a call that worked is checked against `kResultOk` alone.
 //!
 //! What a plugin is made of, and which thread each part belongs to:
 //!
@@ -10,8 +11,8 @@
 //!   context, and it owns the buses and the state. Main thread.
 //! - `IAudioProcessor` is the same object asked for another interface. `setProcessing` and
 //!   `process` belong to the thread that processes; `setupProcessing` and `setActive` belong to
-//!   the main thread while nothing is processing. Same rule as CLAP, so the host that step 4a
-//!   built holds for both.
+//!   the main thread while nothing is processing. Same rule as CLAP, so the one host in
+//!   `host.rs` holds both.
 //! - `IEditController` is the interface side. It may be the same object or a second one, and
 //!   the two are joined by `IConnectionPoint`. It is what knows the MIDI mapping, which is how
 //!   the sustain pedal and the wheels reach a VST 3 plugin, and it is what makes the plugin's
@@ -36,26 +37,6 @@ pub use plugin::load;
 
 use crate::scan::ScannedPlugin;
 use crate::{PluginFormat, PluginProblem};
-
-/// The folders the system keeps VST 3 plugins in, plus `VST3_PATH` from the environment. The
-/// lists and the variable are Steinberg's, from the VST 3 specification.
-pub fn default_search_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    if cfg!(target_os = "macos") {
-        paths.extend(home.map(|home| home.join("Library/Audio/Plug-Ins/VST3")));
-        paths.push(PathBuf::from("/Library/Audio/Plug-Ins/VST3"));
-        paths.push(PathBuf::from("/Network/Library/Audio/Plug-Ins/VST3"));
-    } else {
-        paths.extend(home.map(|home| home.join(".vst3")));
-        paths.push(PathBuf::from("/usr/lib/vst3"));
-        paths.push(PathBuf::from("/usr/local/lib/vst3"));
-    }
-    if let Some(extra) = std::env::var_os("VST3_PATH") {
-        paths.extend(std::env::split_paths(&extra));
-    }
-    paths
-}
 
 /// Lists one bundle. This runs in a child process: loading a bundle runs the plugin's own code.
 pub fn scan_bundle(bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {

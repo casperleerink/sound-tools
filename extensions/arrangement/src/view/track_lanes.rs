@@ -2,7 +2,7 @@
 //! and its line in the track colour, on the travel of the knob of the number, as it plays. Each
 //! point shows as a dot: a press on one selects it and a drag moves it, a press anywhere else in
 //! the lane adds one there. An alt-drag erases points as in the expression lanes of the note
-//! editor, with a [`super::lanes::Stroke`]. Pure math, no GPUI and no project.
+//! editor, over the ticks of [`super::lanes::erase_range`]. Pure math, no GPUI and no project.
 
 use std::iter::once;
 use std::ops::{Range, RangeInclusive};
@@ -10,7 +10,7 @@ use std::ops::{Range, RangeInclusive};
 use sound_core::{Ticks, ValueRange};
 use sound_notes::{Point, value_at};
 
-use super::lanes::LaneBox;
+use super::lanes::{LaneBox, without};
 use super::layout::{LANE_HEIGHT, Viewport};
 use crate::automation::positions;
 use crate::{AutomationLane, AutomationValue};
@@ -66,12 +66,8 @@ pub fn line(
 /// `origin` without the points in `ticks`, as an alt-drag erases them. `None` when no point is
 /// left: the lane is gone, and the number plays its record again.
 pub fn erased(origin: &AutomationLane, ticks: &RangeInclusive<Ticks>) -> Option<AutomationLane> {
-    let kept = origin
-        .points
-        .iter()
-        .filter(|point| !ticks.contains(&point.tick));
     let lane = AutomationLane {
-        points: kept.copied().collect(),
+        points: without(&origin.points, ticks),
         ..origin.clone()
     };
     (!lane.points.is_empty()).then_some(lane)

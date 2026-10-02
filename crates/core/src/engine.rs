@@ -11,7 +11,7 @@ use rtsan_standalone::nonblocking;
 
 use crate::clock::{Clock, Frames, Ticks};
 use crate::graph::Schedule;
-use crate::peaks::Peaks;
+use crate::peaks::{Peaks, loudest};
 use crate::processor::{
     AudioInputs, AudioOutputs, CHANNELS, EventInputs, EventOutputs, MAX_BLOCK, ProcessContext,
     Processor,
@@ -468,8 +468,7 @@ impl Engine {
         // The first two device channels, left and right, as the master meter shows them.
         for channel in 0..CHANNELS.min(channels) {
             let samples = output.iter().skip(channel).step_by(channels);
-            let peak = samples.fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
-            self.output_peaks.record(channel, peak);
+            self.output_peaks.record(channel, loudest(samples));
         }
         self.status.frames += frames as u64;
         self.status.port_misuses += port_misuses.get();

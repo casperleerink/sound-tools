@@ -24,11 +24,9 @@
 //! mixes. On and off is a glide of the mix towards `1, 0, 0`. Nothing a composer or an agent
 //! changes jumps.
 
-use std::f32::consts::PI;
-
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets,
+    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, amplitude, held,
 };
 
 use crate::{AUTOMATED, BAND_LANES, BANDS, Band, EqState, OUTPUT_GAIN, Parameter, Shape};
@@ -39,12 +37,6 @@ type EqTargets = Targets<EqState, { AUTOMATED.len() }>;
 /// How long a change takes to arrive. A jump would click, or step in the sound.
 const RAMP_SECONDS: f32 = 0.02;
 
-/// A frequency stays inside the range, and under a part of the sample rate, below the Nyquist
-/// frequency where the factor `tan` runs away.
-const LOWEST_HZ: f32 = 20.0;
-const HIGHEST_HZ: f32 = 20_000.0;
-const HIGHEST_PART: f32 = 0.45;
-
 /// The highest Q a shelf uses. Above 0.71 a shelf gets a bump at its frequency and a dip on its
 /// other side, and the bump grows fast: at Q 18 a shelf of +15 dB would peak at +38 dB. At 1.5
 /// the bump is at most 3.2 dB past the gain. A cut keeps the whole range of Q, because a
@@ -54,24 +46,9 @@ pub const SHELF_MAX_Q: f32 = 1.5;
 /// While something moves, the factors are worked out again this often, as in the Filter.
 const FACTOR_FRAMES: usize = 16;
 
-/// Input louder than this, or not a number, is held to it before anything else, so no sample of
-/// anyone else's can make the memory of a band infinite. +36 dBFS: nothing real comes near it.
-const INPUT_LIMIT: f32 = 64.0;
-
-/// While the input is silent, a memory smaller than this is let go of: -180 dB. So an EQ after
-/// a sound that ended comes to rest and does no work.
-const REST: f32 = 1e-9;
-
 /// What a band does to the input, `input`, the band pass `band` and the low pass `low` of its
 /// memory, added up.
 const THROUGH: [f32; 3] = [1.0, 0.0, 0.0];
-
-/// The frequency the EQ really uses: inside what the sample rate allows.
-fn usable_hz(hz: f32, sample_rate: f32) -> f32 {
-    // Not `clamp`: it panics when the bounds cross, and nothing may panic on the audio thread.
-    hz.max(LOWEST_HZ)
-        .min(HIGHEST_HZ.min(HIGHEST_PART * sample_rate))
-}
 
 /// One band at one setting: its cutoff factor, its damping, and its mix of input, band pass
 /// and low pass.
@@ -84,7 +61,7 @@ struct Shaped {
 
 /// The table of the module documentation.
 fn shaped(shape: Shape, hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> Shaped {
-    let g = (PI * usable_hz(hz, sample_rate) / sample_rate).tan();
+    let g = SvfFactors::cutoff_factor(hz, sample_rate);
     let a = 10_f32.powf(gain_db / 40.0);
     let k = 1.0 / q;
     let shelf_k = 1.0 / q.min(SHELF_MAX_Q);
@@ -171,63 +148,6 @@ pub fn response(state: &EqState, hz: f32, sample_rate: f32) -> f32 {
     (output * real.hypot(imaginary)) as f32
 }
 
-/// The factors of one band's filter for one `g` and `k`.
-#[derive(Copy, Clone, Default)]
-struct Factors {
-    a1: f32,
-    a2: f32,
-    a3: f32,
-}
-
-impl Factors {
-    fn new(g: f32, k: f32) -> Self {
-        let a1 = 1.0 / (1.0 + g * (g + k));
-        let a2 = g * a1;
-        Self { a1, a2, a3: g * a2 }
-    }
-}
-
-/// The memory of one band in one channel: the two integrators.
-#[derive(Copy, Clone, Default)]
-struct Section {
-    ic1: f32,
-    ic2: f32,
-}
-
-impl Section {
-    /// One frame: the band pass and the low pass.
-    fn next(&mut self, factors: &Factors, input: f32) -> (f32, f32) {
-        let Factors { a1, a2, a3 } = *factors;
-        let v3 = input - self.ic2;
-        let band = a1 * self.ic1 + a2 * v3;
-        let low = self.ic2 + a2 * self.ic1 + a3 * v3;
-        self.ic1 = 2.0 * band - self.ic1;
-        self.ic2 = 2.0 * low - self.ic2;
-        (band, low)
-    }
-
-    fn settle(&mut self) {
-        for memory in [&mut self.ic1, &mut self.ic2] {
-            if memory.abs() < REST {
-                *memory = 0.0;
-            }
-        }
-    }
-
-    fn is_silent(&self) -> bool {
-        self.ic1 == 0.0 && self.ic2 == 0.0
-    }
-}
-
-/// A sample of the input as the EQ takes it: held to [`INPUT_LIMIT`], and silence for anything
-/// that is not a number.
-fn held(sample: f32) -> f32 {
-    if sample.is_nan() {
-        return 0.0;
-    }
-    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
-}
-
 /// One band: where its settings are on their glides, its factors, and its memory.
 struct BandGlide {
     /// The frequency as `log2` of hertz, so a glide moves it in octaves.
@@ -239,12 +159,12 @@ struct BandGlide {
     shapes: [Smoothed; 6],
     /// 1 is on, 0 is off.
     on: Smoothed,
-    factors: Factors,
+    factors: SvfFactors,
     /// The mix at the end of the last run of frames, and where it is going in the run now. It
     /// moves frame by frame inside a run, so a gain glide makes no steps.
     mix: [f32; 3],
     mix_target: [f32; 3],
-    sections: [Section; CHANNELS],
+    sections: [SvfSection; CHANNELS],
 }
 
 impl BandGlide {
@@ -255,10 +175,10 @@ impl BandGlide {
             q_octaves: Smoothed::new(0.0),
             shapes: [0.0; 6].map(Smoothed::new),
             on: Smoothed::new(0.0),
-            factors: Factors::default(),
+            factors: SvfFactors::default(),
             mix: THROUGH,
             mix_target: THROUGH,
-            sections: [Section::default(); CHANNELS],
+            sections: [SvfSection::default(); CHANNELS],
         }
     }
 
@@ -334,7 +254,7 @@ impl BandGlide {
                 }
             }
         };
-        self.factors = Factors::new(g, k);
+        self.factors = SvfFactors::new(g, k);
         self.mix_target = if on == 1.0 {
             mix
         } else {
@@ -388,7 +308,7 @@ impl Eq {
         for ((glide, band), lanes) in bands.zip(&BAND_LANES) {
             glide.aim(band, lanes, targets);
         }
-        let output = 10_f32.powf(self.state.output_gain_db / 20.0);
+        let output = amplitude(self.state.output_gain_db);
         self.output.set_target(output, targets.ramp(&OUTPUT_GAIN));
         // A number that took its value at once does not move, so nothing else says the
         // factors are old.
@@ -408,7 +328,7 @@ impl Eq {
         self.bands
             .iter()
             .flat_map(|band| &band.sections)
-            .all(Section::is_silent)
+            .all(SvfSection::is_silent)
     }
 }
 
@@ -471,7 +391,7 @@ impl Processor for Eq {
                         band.mix[part] + (band.mix_target[part] - band.mix[part]) * along
                     });
                     for (section, sample) in band.sections.iter_mut().zip(&mut sound) {
-                        let (band_out, low_out) = section.next(&band.factors, *sample);
+                        let (band_out, low_out) = section.band_and_low(&band.factors, *sample);
                         *sample = input * *sample + band_pass * band_out + low_pass * low_out;
                     }
                 }
@@ -481,7 +401,7 @@ impl Processor for Eq {
         }
         if silent_input {
             let sections = self.bands.iter_mut().flat_map(|band| &mut band.sections);
-            sections.for_each(Section::settle);
+            sections.for_each(SvfSection::settle);
         }
     }
 }

@@ -164,7 +164,7 @@ impl EnvelopeState {
     }
 
     /// In its attack or its decay and sustain: the key is down.
-    pub fn is_held(&self) -> bool {
+    fn is_held(&self) -> bool {
         matches!(self.stage, EnvelopeStage::Attack | EnvelopeStage::Decay)
     }
 

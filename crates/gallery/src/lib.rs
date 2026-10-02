@@ -1,6 +1,5 @@
 //! Storybook for the UI SDK. Shows every component and variant.
 
-pub mod composed;
 pub mod sections;
 
 use gpui::{
@@ -10,14 +9,13 @@ use sound_ui::{ActiveTheme, typography};
 
 /// `focus` shows one of each control that the keyboard reaches: tab gives each the focus in
 /// turn, and one window has one focus, so its snapshot is taken once per tab.
-pub const SECTIONS: [&str; 9] = [
+pub const SECTIONS: [&str; 8] = [
     "foundation",
     "rack",
     "focus",
     "audio",
     "drums",
     "overlays",
-    "composed",
     "markdown",
     "onboarding",
 ];
@@ -93,9 +91,6 @@ impl Render for Gallery {
             })
             .when(show("overlays"), |d| {
                 d.child(sections::overlays::section(window, cx))
-            })
-            .when(show("composed"), |d| {
-                d.child(sections::composed::section(window, cx))
             })
             .when(show("markdown"), |d| {
                 d.child(sections::markdown::section(window, cx))

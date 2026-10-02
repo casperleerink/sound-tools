@@ -79,7 +79,7 @@ struct Ended {
 }
 
 /// The height of the pill, in the 48 pt title row.
-pub const HEIGHT: f32 = 36.;
+const HEIGHT: f32 = 36.;
 const STRIP_WIDTH: f32 = 200.;
 const STRIP_HEIGHT: f32 = 16.;
 const KNOB: f32 = 8.;

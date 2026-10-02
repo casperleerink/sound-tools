@@ -23,6 +23,12 @@ pub fn monotonic_nanos() -> u64 {
     u64::try_from(nanos).unwrap_or(u64::MAX)
 }
 
+/// How long `frames` frames last at `sample_rate`, in nanoseconds. A rate of 0 counts as 1.
+pub(crate) fn nanos_of(frames: u64, sample_rate: u32) -> u64 {
+    let nanos = u128::from(frames) * 1_000_000_000 / u128::from(sample_rate.max(1));
+    u64::try_from(nanos).unwrap_or(u64::MAX)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DeviceError {
     #[error("no default audio output device")]
@@ -154,7 +160,7 @@ impl OutputDevice {
 /// instead of the last pair makes both numbers independent, so a reader can never take the
 /// time of one callback with the frame count of another.
 pub struct StreamTiming {
-    sample_rate: u64,
+    sample_rate: u32,
     /// The monotonic time at which engine frame 0 played. 0 before the first callback.
     frame_zero_nanos: AtomicU64,
     /// What the device adds after the callback rendered: the reported playback time of a
@@ -180,16 +186,11 @@ impl StreamTiming {
 
     fn new(sample_rate: u32) -> Self {
         Self {
-            sample_rate: u64::from(sample_rate.max(1)),
+            sample_rate: sample_rate.max(1),
             frame_zero_nanos: AtomicU64::new(0),
             output_delay_nanos: AtomicU64::new(0),
             callbacks: AtomicU64::new(0),
         }
-    }
-
-    fn nanos_of(&self, frames: u64) -> u64 {
-        let nanos = u128::from(frames) * 1_000_000_000 / u128::from(self.sample_rate);
-        u64::try_from(nanos).unwrap_or(u64::MAX)
     }
 
     /// The audio thread, at the start of a callback: `now` on the monotonic clock, `frame` the
@@ -200,8 +201,10 @@ impl StreamTiming {
             .playback
             .saturating_duration_since(timestamp.callback);
         let delay = u64::try_from(delay.as_nanos()).unwrap_or(u64::MAX);
-        self.frame_zero_nanos
-            .store(now.saturating_sub(self.nanos_of(frame)), Ordering::Relaxed);
+        self.frame_zero_nanos.store(
+            now.saturating_sub(nanos_of(frame, self.sample_rate)),
+            Ordering::Relaxed,
+        );
         self.output_delay_nanos.store(delay, Ordering::Relaxed);
         self.callbacks.fetch_add(1, Ordering::Relaxed);
     }
@@ -221,7 +224,7 @@ impl StreamTiming {
         let delay = self.output_delay_nanos.load(Ordering::Relaxed);
         Some(
             start
-                .saturating_add(self.nanos_of(frame))
+                .saturating_add(nanos_of(frame, self.sample_rate))
                 .saturating_add(delay),
         )
     }

@@ -45,8 +45,8 @@ pub fn new_clip(at: Ticks, grid: &Grid) -> Clip {
 
 /// A shape does not get shorter than `unit` (see [`super::snap::Grid::unit_at`]), or than it
 /// already was.
-pub(super) fn shortest(length: Length, unit: Ticks) -> u64 {
-    unit.0.min(length.ticks().0)
+pub(super) fn shortest(length: Ticks, unit: Ticks) -> u64 {
+    unit.0.min(length.0)
 }
 
 /// The clip with its right edge moved by `delta`. Notes that would start outside are dropped,
@@ -57,7 +57,7 @@ pub fn resized_right(origin: &Clip, delta: i64, unit: Ticks) -> Clip {
     if delta != 0 {
         let length = shifted(origin.length.ticks(), delta).0;
         clip.set_length(Length::at_least_one(Ticks(
-            length.max(shortest(origin.length, unit)),
+            length.max(shortest(origin.length.ticks(), unit)),
         )));
     }
     clip
@@ -68,7 +68,7 @@ pub fn resized_right(origin: &Clip, delta: i64, unit: Ticks) -> Clip {
 /// the first note, and at tick 0, and one `unit` before the right edge.
 pub fn resized_left(origin: &Clip, delta: i64, unit: Ticks) -> Clip {
     let first_note = origin.notes.iter().map(|note| note.start.0).min();
-    let room = origin.length.ticks().0 - shortest(origin.length, unit);
+    let room = origin.length.ticks().0 - shortest(origin.length.ticks(), unit);
     let latest = first_note.map_or(room, |first| first.min(room));
     let delta = delta.clamp(-(origin.start.0 as i64), latest as i64);
     let mut clip = origin.clone();

@@ -13,8 +13,8 @@
 //! A synced time follows the tempo of the transport where the block starts, playing or not, so
 //! a tempo change moves the repeats with it. A new time, from the record or from the tempo, does
 //! not move a read position: it fades over 20 ms from the old tap to the new one, so nothing
-//! clicks and no pitch slides. The lines are allocated when the processor is made and again
-//! when the sample rate is set, for [`LONGEST_SECONDS`], and never in `process`.
+//! clicks and no pitch slides. The lines are allocated in `prepare`, for the sample rate and
+//! [`LONGEST_SECONDS`], and never in `process`.
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, OnePole, Ports,
@@ -94,14 +94,11 @@ impl Delay {
     pub const AUTOMATION: AutomationInput<DelayState, { PARAMETERS.len() }> =
         AutomationInput::new(0, PARAMETERS);
 
-    /// Allocates its lines for 48 kHz, and again in `prepare` for another rate. Starts at these
-    /// values, at 120 bpm until the first block says the tempo, so a delay that is added or
-    /// opened does not glide in.
+    /// Its lines are allocated in `prepare`, which also takes the record at once.
     pub fn new(state: DelayState) -> Self {
-        let sample_rate = 48_000.0;
-        let mut delay = Self {
-            sample_rate,
-            ramp_frames: RAMP_SECONDS * sample_rate,
+        Self {
+            sample_rate: 0.0,
+            ramp_frames: 1.0,
             state: Automated::new(Self::AUTOMATION, state),
             longest: 1,
             position: 0,
@@ -116,12 +113,12 @@ impl Delay {
             mix: Smoothed::new(0.0),
             stale: true,
             quiet_frames: 0,
-        };
-        delay.allocate(sample_rate);
-        delay
+        }
     }
 
-    /// Makes both lines for a sample rate, empty, and takes the record at once.
+    /// Makes both lines for a sample rate, empty, and takes the record at once: at 120 bpm
+    /// until the first block says the tempo, so a delay that is added or opened does not glide
+    /// in.
     fn allocate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
         self.ramp_frames = (RAMP_SECONDS * sample_rate).max(1.0);
@@ -247,10 +244,7 @@ impl Processor for Delay {
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
-        let sample_rate = config.sample_rate as f32;
-        if sample_rate != self.sample_rate {
-            self.allocate(sample_rate);
-        }
+        self.allocate(config.sample_rate as f32);
     }
 
     fn update(&mut self, update: &mut DelayState) {

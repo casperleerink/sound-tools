@@ -3,13 +3,13 @@
 //! the spread. The rack gives the view a [`CardFrame`]: the picker of the slot as the title,
 //! and the close icon.
 //!
-//! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one gesture
-//! and one undo step, a key step, a reset or a switch is one commit. The ranges, the defaults
-//! and the travel of each knob come from the [`Parameter`]s of the crate. What is only about
-//! the interface is here: the label, the unit, the name of the undo step and whether the card
-//! is expanded. A number that an automation lane of the track moves shows the value that plays,
-//! on its knob and on the display, and does not drag ([`Lanes`]).
+//! The view keeps no copy of the state. It reads the record when it renders, and every change goes
+//! through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one gesture and one
+//! undo step, a key step, a reset or a switch is one commit. The ranges, the defaults and the
+//! travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. What is only
+//! about the interface is here: the label, the unit, the name of the undo step and whether the card
+//! is expanded. A number that an automation lane of the track moves shows the value that plays, on
+//! its knob and on the display, and does not drag ([`Lanes`]).
 
 use std::f32::consts::TAU;
 
@@ -18,13 +18,11 @@ use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{Knob, ParameterKnob, hertz_readout, percent_readout, short};
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
-use crate::{
-    DEPTH, FEEDBACK, MIX, Mode, Modulation, ModulationState, Parameter, RATE, SPREAD, sweep,
-};
+use crate::{DEPTH, FEEDBACK, MIX, Mode, Modulation, ModulationState, RATE, SPREAD, sweep};
 
 /// The name the rack puts on the card of a modulation.
 pub const NAME: &str = "Modulation";
@@ -45,52 +43,15 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Hertz,
-    /// A part of one, shown as a percentage.
-    Part,
-    /// A part of half a cycle, shown in degrees.
-    HalfCycle,
-}
-
 /// A knob of the card.
-struct Control {
-    parameter: &'static Parameter,
-    label: &'static str,
-    undo_label: &'static str,
-    scale: KnobRange,
-    unit: Unit,
-}
+type Control = ParameterKnob<ModulationState>;
 
-impl Control {
-    const fn new(
-        parameter: &'static Parameter,
-        label: &'static str,
-        undo_label: &'static str,
-        unit: Unit,
-    ) -> Self {
-        Self {
-            parameter,
-            label,
-            undo_label,
-            scale: KnobRange::of(parameter),
-            unit,
-        }
-    }
-
-    /// A value a handle gives, inside the range of the field. A handle's travel reaches past
-    /// the range, because it sits on the line and not at the edge of the display.
-    fn clamp(&self, value: f32) -> f32 {
-        value.clamp(self.parameter.min, self.parameter.max)
-    }
-}
-
-const RATE_KNOB: Control = Control::new(&RATE, "Rate", "Change rate", Unit::Hertz);
-const DEPTH_KNOB: Control = Control::new(&DEPTH, "Depth", "Change depth", Unit::Part);
-const FEEDBACK_KNOB: Control = Control::new(&FEEDBACK, "Feedback", "Change feedback", Unit::Part);
-const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", Unit::Part);
-const SPREAD_KNOB: Control = Control::new(&SPREAD, "Spread", "Change spread", Unit::HalfCycle);
+const RATE_KNOB: Control = Control::new(&RATE, "Rate", "Change rate", hertz_readout);
+const DEPTH_KNOB: Control = Control::new(&DEPTH, "Depth", "Change depth", percent_readout);
+const FEEDBACK_KNOB: Control =
+    Control::new(&FEEDBACK, "Feedback", "Change feedback", percent_readout);
+const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
+const SPREAD_KNOB: Control = Control::new(&SPREAD, "Spread", "Change spread", degrees_readout);
 
 /// Every knob, in the order of the card: shown, then hidden.
 #[cfg(test)]
@@ -109,13 +70,9 @@ const MODES: [(Mode, &str, &str); 3] = [
     (Mode::Phaser, "phaser", "Phaser"),
 ];
 
-/// A value with its unit, as a knob shows it: `0.5 Hz`, `30%`, `90°`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Hertz => format!("{} Hz", short(value)),
-        Unit::Part => format!("{}%", short(value * 100.0)),
-        Unit::HalfCycle => format!("{}°", short(value * 180.0)),
-    }
+/// A part of half a cycle, in degrees: `90°`.
+fn degrees_readout(half_cycles: f32) -> String {
+    format!("{}°", short(half_cycles * 180.0))
 }
 
 /// How far the LFO swings, in the unit of the mode: `7.37 – 19.5 ms`, `250 Hz – 4 kHz`.
@@ -229,24 +186,13 @@ impl ModulationView {
         self.edit.apply(session, modulation, label, change, set, cx);
     }
 
-    fn knob(
-        &self,
-        control: &'static Control,
-        state: &ModulationState,
-        cx: &mut Context<Self>,
-    ) -> Knob {
-        let value = (control.parameter.get)(state);
+    fn knob(&self, control: Control, state: &ModulationState, cx: &mut Context<Self>) -> Knob {
         let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        Knob::new(control.parameter.field)
-            .range(control.scale)
-            .value(value)
+        control
+            .knob(state)
             .automated(automated)
-            .default_value(control.parameter.default)
-            .label(control.label)
-            .readout(readout(control.unit, value))
             .on_change(weak_callback(cx, move |view, change, cx| {
-                let set = control.parameter.set;
-                view.change(control.undo_label, change, set, cx);
+                view.change(control.undo_label, change, control.parameter.set, cx);
             }))
     }
 
@@ -255,7 +201,7 @@ impl ModulationView {
     fn handle(
         &self,
         id: &'static str,
-        control: &'static Control,
+        control: Control,
         (x, y): (Axis, Axis),
         cx: &mut Context<Self>,
     ) -> Handle {
@@ -291,10 +237,10 @@ impl ModulationView {
                 }
             }));
         let depth = Axis::new(DEPTH_TRAVEL, state.depth, DEPTH.default);
-        let depth = self.handle("depth", &DEPTH_KNOB, (Axis::fixed(DEPTH_AT), depth), cx);
+        let depth = self.handle("depth", DEPTH_KNOB, (Axis::fixed(DEPTH_AT), depth), cx);
         let spread = Axis::new(SPREAD_TRAVEL, state.spread, SPREAD.default);
         let height = Axis::fixed(peak(state.depth));
-        let spread = self.handle("spread", &SPREAD_KNOB, (spread, height), cx);
+        let spread = self.handle("spread", SPREAD_KNOB, (spread, height), cx);
         Display::new("display", DISPLAY_WIDTH)
             .curve(line(state.depth, 0.))
             .dashed(line(state.depth, 0.5 * state.spread))
@@ -316,13 +262,13 @@ impl Render for ModulationView {
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
         let columns = [
             Column::new()
-                .top(knob(&RATE_KNOB, cx))
-                .bottom(knob(&FEEDBACK_KNOB, cx)),
+                .top(knob(RATE_KNOB, cx))
+                .bottom(knob(FEEDBACK_KNOB, cx)),
             Column::new()
-                .top(knob(&DEPTH_KNOB, cx))
-                .bottom(knob(&MIX_KNOB, cx)),
+                .top(knob(DEPTH_KNOB, cx))
+                .bottom(knob(MIX_KNOB, cx)),
         ];
-        let hidden = [Column::new().top(knob(&SPREAD_KNOB, cx))];
+        let hidden = [Column::new().top(knob(SPREAD_KNOB, cx))];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
             .frame
@@ -344,12 +290,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(readout(Unit::Hertz, 0.05), "0.05 Hz");
-        assert_eq!(readout(Unit::Hertz, 10.0), "10 Hz");
-        assert_eq!(readout(Unit::Part, 0.2), "20%");
-        assert_eq!(readout(Unit::HalfCycle, 0.5), "90°");
-        assert_eq!(readout(Unit::HalfCycle, 1.0), "180°");
+    fn a_spread_reads_in_degrees() {
+        assert_eq!(degrees_readout(0.5), "90°");
+        assert_eq!(degrees_readout(1.0), "180°");
     }
 
     #[test]
@@ -370,7 +313,7 @@ mod tests {
     #[test]
     fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
         for control in KNOBS {
-            let (range, parameter) = (control.scale, control.parameter);
+            let (range, parameter) = (control.range(), control.parameter);
             assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
             assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
             for value in [parameter.min, parameter.default, parameter.max] {

@@ -37,7 +37,8 @@ pub const BEAT_HZ: f32 = 1000.0;
 /// How loud a click starts. No control: the click is a reference, not part of the mix.
 pub const LEVEL: f32 = 0.25;
 
-/// How long one click sounds. Short enough that two beats never overlap at 1000 bpm.
+/// How long one click sounds: as long as an eighth at 1000 bpm, the highest tempo. A shorter
+/// beat, a sixteenth or a 32nd at a high tempo, cuts the click before it with its own.
 pub const CLICK_SECONDS: f32 = 0.03;
 
 /// The amplitude a click has decayed to when it ends, so its end is silent.
@@ -84,8 +85,8 @@ impl Click {
     }
 }
 
-/// One click, from its onset until it has decayed. There is one at a time: a beat is always
-/// longer than [`CLICK_SECONDS`] within the tempo bounds of the clock.
+/// One click, from its onset until it has decayed. There is one at a time: a beat that comes
+/// before [`CLICK_SECONDS`] have passed starts a new click and cuts the one before.
 #[derive(Default)]
 struct Burst {
     /// Frames until the burst is over. 0 is silence.

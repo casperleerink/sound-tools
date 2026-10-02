@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gpui::{Font, FontFeatures, FontStyle, FontWeight};
 
-pub const FAMILY: &str = "Inter Display";
+const FAMILY: &str = "Inter Display";
 pub const MONO: &str = "Menlo";
 
 fn font(weight: FontWeight, features: &[&str]) -> Font {

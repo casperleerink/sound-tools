@@ -3,7 +3,8 @@
 //! would write. So the docs cannot rot.
 
 use sound_core::{
-    AGENT_DOC_FILE, AGENT_DOCS_FOLDER, Changes, InstanceId, Tempo, TempoMap, TimeSignatures,
+    AGENT_DOC_FILE, AGENT_DOCS_FOLDER, ASSETS_FOLDER, Changes, InstanceId, Tempo, TempoMap,
+    TimeSignatures,
 };
 
 use crate::support::{Harness, write};
@@ -177,9 +178,9 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
     for (path, body) in &assets {
         let raw: sound_notes::RawTake = serde_json::from_str(body).unwrap();
         // The bytes are those the runtime writes, so an agent reads the real thing.
-        assert_eq!(&raw.json(), body, "{path}");
+        assert_eq!(&raw.json().unwrap(), body, "{path}");
         // A take lives under its own name, which no clip id decides.
-        let folder = format!("{}/", sound_notes::TAKES_FOLDER);
+        let folder = format!("{ASSETS_FOLDER}/{}/", sound_notes::TAKES_FOLDER);
         let name = path
             .strip_prefix(&folder)
             .and_then(|it| it.strip_suffix(".json"));

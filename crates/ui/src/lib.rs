@@ -6,6 +6,7 @@ pub mod components;
 pub mod control_edit;
 pub mod devices;
 pub mod focus;
+pub mod import;
 pub mod lanes;
 pub mod metering;
 pub mod recording;

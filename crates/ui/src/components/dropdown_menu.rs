@@ -620,14 +620,14 @@ impl DropdownMenu {
         cx.notify();
     }
 
-    /// Changes what the trigger says, for a menu whose label is what it last picked, such as
-    /// the instrument of a track.
     /// Makes the trigger this tall, such as the chevron of a split button that is a row.
     pub fn set_trigger_height(&mut self, height: f32, cx: &mut Context<Self>) {
         self.trigger_height = Some(height);
         cx.notify();
     }
 
+    /// Changes what the trigger says, for a menu whose label is what it last picked, such as
+    /// the instrument of a track.
     pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
         let label = label.into();
         if self.label != label {

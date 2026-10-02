@@ -90,17 +90,20 @@ pub fn add_audio_take_clips(
     changes: &mut Changes,
     clips: Vec<(InstanceId, AudioClip)>,
 ) -> Result<(), ProjectError> {
-    let placed: Vec<_> = clips
+    // The tracks and names are lent to the arrangement and the clips handed over, so no clip
+    // is copied.
+    let (named, clips): (Vec<_>, Vec<_>) = clips
         .into_iter()
         .filter_map(|(track, clip)| {
             let track = project.resolve::<TrackState>(&track)?;
             let name = clip.asset.asset_name().name().to_string();
-            Some((track, name, clip))
+            Some(((track, name), clip))
         })
-        .collect();
-    let placed = placed
+        .unzip();
+    let placed = named
         .iter()
-        .map(|(track, name, clip)| (track, name.as_str(), clip.clone()));
+        .zip(clips)
+        .map(|((track, name), clip)| (track, name.as_str(), clip));
     arrangement::add_audio_clips(project, changes, placed)?;
     Ok(())
 }

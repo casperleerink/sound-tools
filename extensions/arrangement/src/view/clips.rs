@@ -15,6 +15,7 @@ use sound_media::{Cached, Info};
 use sound_notes::Clip;
 use sound_ui::components::waveform_display::{clamped_end, clamped_start, latest_start};
 
+use super::gesture::shortest;
 use super::layout::shifted;
 use crate::{AudioClip, TrackKind};
 
@@ -100,16 +101,6 @@ pub fn shown_end(project: &Project, clip: &AudioClip) -> Ticks {
     }
 }
 
-/// Seconds from the start of the project to a tick, through the clock.
-fn seconds(clock: &Clock, tick: Ticks) -> f64 {
-    clock.seconds_of(tick)
-}
-
-/// The shortest an edge drag makes a clip, in ticks: one `unit`, or what it was when shorter.
-fn shortest(length: Ticks, unit: Ticks) -> u64 {
-    unit.0.min(length.0)
-}
-
 /// The clip with its left edge moved by `delta` ticks. The sound stays where it is in time, so
 /// the start of the file that plays moves with the edge. It stops at the start of the file, at
 /// tick 0, and one `unit` before the right edge.
@@ -123,12 +114,12 @@ pub fn trimmed_left(
     let end = origin.end(Some(file), clock);
     let length = end.saturating_sub(origin.start);
     // The tick where the file itself starts, which the edge cannot pass.
-    let file_start = seconds(clock, origin.start) - origin.file_start_seconds;
+    let file_start = clock.seconds_of(origin.start) - origin.file_start_seconds;
     let earliest = clock.tick_at_seconds(file_start.max(0.0));
     let latest = end.saturating_sub(Ticks(shortest(length, unit)));
     let start =
         shifted(origin.start, delta).clamp(earliest.min(origin.start), latest.max(origin.start));
-    let moved = seconds(clock, start) - seconds(clock, origin.start);
+    let moved = clock.seconds_of(start) - clock.seconds_of(origin.start);
     let trimmed = AudioClip {
         start,
         file_start_seconds: (origin.file_start_seconds + moved).max(0.0),
@@ -159,7 +150,7 @@ pub fn trimmed_right(
     if next >= latest {
         return fitted(whole, file);
     }
-    let played = seconds(clock, next) - seconds(clock, origin.start);
+    let played = clock.seconds_of(next) - clock.seconds_of(origin.start);
     let trimmed = AudioClip {
         file_end_seconds: Some(origin.file_start_seconds + played),
         ..origin.clone()

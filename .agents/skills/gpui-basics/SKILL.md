@@ -73,7 +73,7 @@ There is no `WindowOptions.title`; it is `titlebar: Some(TitlebarOptions { title
 - Globals: `cx.set_global(Theme)`, `cx.global::<Theme>()`, `cx.update_global::<Theme, _>(|t, cx| ..)`,
   `cx.observe_global::<Theme>(|this, cx| ..)`.
 
-### The repaint pitfall (from experiments/core-lifecycle)
+### The repaint pitfall
 The code pattern above is correct; verified with a traced build of `examples/app.rs`: a 500 ms
 `cx.spawn` timer + `cx.notify()` produced one `render` per tick while the window was on screen.
 Rendering on macOS only happens from a `CVDisplayLink` tick, and gpui stops that link when the

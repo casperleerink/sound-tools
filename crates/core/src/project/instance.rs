@@ -189,11 +189,16 @@ impl InstanceId {
     }
 }
 
-/// The one rule for a name the runtime writes into the project folder: an instance name, and
-/// the name of an agent doc.
+/// An instance name, and the name of an agent doc: the name rule, and not the name of the
+/// record of a folder.
 pub(crate) fn is_valid_name(name: &str) -> bool {
+    name != FOLDER_RECORD && follows_name_rule(name)
+}
+
+/// The one rule for a name the runtime writes into the project folder: lowercase letters,
+/// digits, `-` and `_`, at least one. A name of the rule never reaches outside its folder.
+pub(crate) fn follows_name_rule(name: &str) -> bool {
     !name.is_empty()
-        && name != FOLDER_RECORD
         && name.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
         })

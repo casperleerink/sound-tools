@@ -4,12 +4,12 @@
 //! gives the view a [`CardFrame`]: the picker of the slot as the title, and the power and close
 //! icons.
 //!
-//! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session, by [`ControlEdit`]: a drag of a knob or of the ceiling handle is one
-//! gesture and one undo step, a key step, a reset or a pick is one commit. The ranges, the
-//! defaults and the travel of each knob come from the [`Parameter`]s of the crate. A number that
-//! an automation lane of the track moves shows the value that plays on its knob, and does not
-//! drag ([`Lanes`]).
+//! The view keeps no copy of the state. It reads the record when it renders, and every change goes
+//! through the session, by [`ControlEdit`]: a drag of a knob or of the ceiling handle is one
+//! gesture and one undo step, a key step, a reset or a pick is one commit. The ranges, the defaults
+//! and the travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. A
+//! number that an automation lane of the track moves shows the value that plays on its knob, and
+//! does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, Task, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent, State};
@@ -19,13 +19,13 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{Knob, ParameterKnob, decibels_readout, milliseconds_readout};
 use sound_ui::components::limiter_display::LimiterHistory;
 use sound_ui::{
     ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, every_poll, weak_callback,
 };
 
-use crate::{CEILING, GAIN, Limiter, LimiterState, Lookahead, Meters, Parameter, RELEASE};
+use crate::{CEILING, GAIN, Limiter, LimiterState, Lookahead, Meters, RELEASE};
 
 /// The name the rack puts on the card of a limiter.
 pub const NAME: &str = "Limiter";
@@ -40,35 +40,12 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 }
 
 /// A knob of the card.
-struct Control {
-    parameter: &'static Parameter,
-    label: &'static str,
-    undo_label: &'static str,
-    scale: KnobRange,
-    unit: &'static str,
-}
+type Control = ParameterKnob<LimiterState>;
 
-const GAIN_KNOB: Control = Control {
-    parameter: &GAIN,
-    label: "Gain",
-    undo_label: "Change gain",
-    scale: KnobRange::of(&GAIN),
-    unit: "dB",
-};
-const CEILING_KNOB: Control = Control {
-    parameter: &CEILING,
-    label: "Ceiling",
-    undo_label: "Change ceiling",
-    scale: KnobRange::of(&CEILING),
-    unit: "dB",
-};
-const RELEASE_KNOB: Control = Control {
-    parameter: &RELEASE,
-    label: "Release",
-    undo_label: "Change release",
-    scale: KnobRange::of(&RELEASE),
-    unit: "ms",
-};
+const GAIN_KNOB: Control = Control::new(&GAIN, "Gain", "Change gain", decibels_readout);
+const CEILING_KNOB: Control = Control::new(&CEILING, "Ceiling", "Change ceiling", decibels_readout);
+const RELEASE_KNOB: Control =
+    Control::new(&RELEASE, "Release", "Change release", milliseconds_readout);
 
 /// Every knob, in the order of the card.
 #[cfg(test)]
@@ -170,7 +147,7 @@ impl LimiterView {
             edit: ControlEdit::default(),
             lanes,
             lookahead,
-            history: LimiterHistory::new(CEILING_KNOB.scale),
+            history: LimiterHistory::new(CEILING_KNOB.range()),
             _metering: every_poll(cx, Self::read_meters),
         }
     }
@@ -224,24 +201,13 @@ impl LimiterView {
         self.edit.apply(session, limiter, label, change, set, cx);
     }
 
-    fn knob(
-        &self,
-        control: &'static Control,
-        state: &LimiterState,
-        cx: &mut Context<Self>,
-    ) -> Knob {
-        let value = (control.parameter.get)(state);
+    fn knob(&self, control: Control, state: &LimiterState, cx: &mut Context<Self>) -> Knob {
         let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        Knob::new(control.parameter.field)
-            .range(control.scale)
-            .value(value)
+        control
+            .knob(state)
             .automated(automated)
-            .default_value(control.parameter.default)
-            .label(control.label)
-            .readout(format!("{} {}", short(value), control.unit))
             .on_change(weak_callback(cx, move |view, change, cx| {
-                let set = control.parameter.set;
-                view.change(control.undo_label, change, set, cx);
+                view.change(control.undo_label, change, control.parameter.set, cx);
             }))
     }
 }
@@ -276,12 +242,12 @@ impl Render for LimiterView {
             .display(display)
             .column(
                 Column::new()
-                    .top(self.knob(&GAIN_KNOB, &state, cx))
-                    .bottom(self.knob(&RELEASE_KNOB, &state, cx)),
+                    .top(self.knob(GAIN_KNOB, &state, cx))
+                    .bottom(self.knob(RELEASE_KNOB, &state, cx)),
             )
             .column(
                 Column::new()
-                    .top(self.knob(&CEILING_KNOB, &state, cx))
+                    .top(self.knob(CEILING_KNOB, &state, cx))
                     .bottom(lookahead),
             )
             .into_any_element()
@@ -296,7 +262,7 @@ mod tests {
     #[test]
     fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
         for control in KNOBS {
-            let (range, parameter) = (control.scale, control.parameter);
+            let (range, parameter) = (control.range(), control.parameter);
             assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
             assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
             for value in [parameter.min, parameter.default, parameter.max] {
