@@ -87,7 +87,7 @@ How the engine keeps to that:
 - The two snapshot tests render the component gallery and the window to PNGs without a display. Look at the PNGs after a UI change. `WINDOW_SNAPSHOT_ONLY` picks a subset of window states.
 - A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
 
-CI runs the commands of [README.md](README.md), "Checks", with the realtime sanitizer on for the macOS tests. The jobs (lint, test, snapshots, Linux) run side by side. Lint, test and snapshots run on macOS; the Linux job builds and runs the tests on Ubuntu. Add Miri for new unsafe code.
+CI runs the commands of [README.md](README.md), "Checks", with the realtime sanitizer on for the macOS tests. The jobs (lint, test, Linux) run side by side. Lint and test run on macOS; the Linux job builds and runs the tests on Ubuntu. Add Miri for new unsafe code.
 
 To try Linux from a Mac: an `ubuntu:24.04` Docker container with the README packages, `CARGO_TARGET_DIR` on a volume, run as a normal user (root can write into the read-only folders some tests make). For the window add `xvfb` and `mesa-vulkan-drivers` and a null sound card. Set `CARGO_BUILD_JOBS=4` on Docker Desktop's default memory.
 
