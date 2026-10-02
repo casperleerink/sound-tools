@@ -113,14 +113,16 @@ impl AssetSource for Assets {
     }
 }
 
-/// Load the InterDisplay fonts. Call once at startup, before opening a window.
+/// Load the InterDisplay fonts. Call once at startup, before opening a window. Without them
+/// the app still works, in the font of the system.
 pub fn load_fonts(cx: &mut App) {
-    cx.text_system()
-        .add_fonts(vec![
-            Cow::Borrowed(FONT_REGULAR),
-            Cow::Borrowed(FONT_MEDIUM),
-            Cow::Borrowed(FONT_SEMIBOLD),
-            Cow::Borrowed(FONT_ITALIC),
-        ])
-        .expect("load InterDisplay");
+    let loaded = cx.text_system().add_fonts(vec![
+        Cow::Borrowed(FONT_REGULAR),
+        Cow::Borrowed(FONT_MEDIUM),
+        Cow::Borrowed(FONT_SEMIBOLD),
+        Cow::Borrowed(FONT_ITALIC),
+    ]);
+    if let Err(error) = loaded {
+        eprintln!("error: InterDisplay did not load: {error:#}");
+    }
 }
