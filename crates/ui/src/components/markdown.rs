@@ -2,8 +2,7 @@
 //! and `MarkdownText` draws it. An answer arrives streaming, so the caller parses the whole
 //! message again on each batch; a 5 KB answer parses in well under a millisecond.
 //!
-//! No syntax colours and no selection. Tables and HTML are shown as their source, images as
-//! their alt text.
+//! No syntax colours and no selection. HTML is shown as its source, images as their alt text.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -12,7 +11,7 @@ use gpui::{
     AnyElement, App, Div, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText,
     SharedString, StyleRefinement, StyledText, UnderlineStyle, Window, div, prelude::*, px,
 };
-use pulldown_cmark::{Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
 
 use crate::theme::{ActiveTheme, Theme};
 use crate::typography::MONO;
@@ -37,9 +36,16 @@ enum Block {
         items: Vec<Vec<Block>>,
     },
     Quote(Vec<Block>),
-    /// Also a table, as its source text.
     Code(SharedString),
+    Table(Table),
     Rule,
+}
+
+/// The first row is the header. Every row has one cell per column, `None` when it is empty.
+#[derive(Clone, Debug, PartialEq)]
+struct Table {
+    alignments: Vec<Alignment>,
+    rows: Vec<Vec<Option<Inline>>>,
 }
 
 /// Six heading levels are too many for a sidebar: `#` and `##` are large, the rest small.
@@ -78,17 +84,8 @@ impl Markdown {
     /// fence while the answer streams, reads as far as it goes.
     pub fn parse(source: &str) -> Self {
         let mut builder = Builder::default();
-        let mut in_table = false;
-        for (event, range) in Parser::new_ext(source, Options::ENABLE_TABLES).into_offset_iter() {
-            match event {
-                Event::Start(Tag::Table(_)) => {
-                    in_table = true;
-                    builder.table(source.get(range).unwrap_or_default());
-                }
-                Event::End(TagEnd::Table) => in_table = false,
-                _ if in_table => {}
-                event => builder.event(event),
-            }
+        for event in Parser::new_ext(source, Options::ENABLE_TABLES) {
+            builder.event(event);
         }
         Self {
             blocks: builder.finish().into(),
@@ -141,6 +138,7 @@ struct Builder {
     /// paragraph around it, so text starts one by itself and the next block ends it.
     inline: InlineBuilder,
     code: Option<String>,
+    table: Option<Table>,
     bold: usize,
     italic: usize,
     /// One entry per open link, `None` for a link that does not open.
@@ -194,6 +192,19 @@ impl Builder {
                 self.end_paragraph();
                 self.code = Some(String::new());
             }
+            Tag::Table(alignments) => {
+                self.end_paragraph();
+                self.table = Some(Table {
+                    alignments,
+                    rows: Vec::new(),
+                });
+            }
+            // The cells of the header come with no row around them.
+            Tag::TableHead | Tag::TableRow => {
+                if let Some(table) = &mut self.table {
+                    table.rows.push(Vec::new());
+                }
+            }
             _ => self.end_paragraph(),
         }
     }
@@ -222,6 +233,22 @@ impl Builder {
                 }
             }
             TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::Item => self.close(),
+            TagEnd::TableCell => {
+                let cell = std::mem::take(&mut self.inline).finish();
+                if let Some(row) = self.table.as_mut().and_then(|table| table.rows.last_mut()) {
+                    row.push(cell);
+                }
+            }
+            TagEnd::Table => {
+                if let Some(mut table) = self.table.take() {
+                    // A short row would shift the cells after it into the wrong column.
+                    for row in &mut table.rows {
+                        row.resize(table.alignments.len(), None);
+                    }
+                    self.push_block(Block::Table(table));
+                }
+            }
+            TagEnd::TableHead | TagEnd::TableRow => {}
             _ => self.end_paragraph(),
         }
     }
@@ -234,28 +261,6 @@ impl Builder {
             link: self.links.last().cloned().flatten(),
         };
         self.inline.push(text, style);
-    }
-
-    /// A table becomes its source in monospace, which lines up without a grid. Inside a quote
-    /// or a list item, every line after the first still has the quote marks and the indent.
-    fn table(&mut self, source: &str) {
-        let quotes = self
-            .open
-            .iter()
-            .filter(|container| matches!(container, Container::Quote(_)))
-            .count();
-        let lines: Vec<&str> = source
-            .trim_end()
-            .lines()
-            .map(|line| {
-                let mut line = line.trim_start();
-                for _ in 0..quotes {
-                    line = line.strip_prefix('>').unwrap_or(line).trim_start();
-                }
-                line
-            })
-            .collect();
-        self.push_block(Block::Code(lines.join("\n").into()));
     }
 
     fn open(&mut self, container: Container) {
@@ -449,8 +454,8 @@ impl Renderer {
                 .text_color(self.theme.gray_800)
                 .children(self.blocks(blocks))
                 .into_any_element(),
-            // A long line scrolls sideways rather than wraps, so a table keeps its columns. Up
-            // and down still scroll the thread around it.
+            // A long line scrolls sideways rather than wraps. Up and down still scroll the
+            // thread around it.
             Block::Code(code) => div()
                 .id(self.id("code"))
                 .flex()
@@ -466,6 +471,7 @@ impl Renderer {
                 .text_color(self.theme.gray_900)
                 .child(div().flex_none().whitespace_nowrap().child(code.clone()))
                 .into_any_element(),
+            Block::Table(table) => self.table(table),
             Block::Rule => div()
                 .h(px(1.))
                 .my(px(4.))
@@ -513,6 +519,47 @@ impl Renderer {
                             .children(self.blocks(item)),
                     )
             }))
+            .into_any_element()
+    }
+
+    /// Each column is as wide as its widest cell. When the table is wider than the text, the
+    /// wide columns share what is left and their cells wrap.
+    fn table(&mut self, table: &Table) -> AnyElement {
+        let columns = table.alignments.len();
+        let (head_fill, rule) = (self.theme.alpha_at(0.04), self.theme.alpha_at(0.10));
+        let mut cells = Vec::new();
+        for (row, contents) in table.rows.iter().enumerate() {
+            for (column, (cell, alignment)) in contents.iter().zip(&table.alignments).enumerate() {
+                let cell = div()
+                    .px(px(10.))
+                    .py(px(6.))
+                    .overflow_hidden()
+                    .when(row == 0, |cell| {
+                        cell.bg(head_fill)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .when(column == 0, |cell| cell.rounded_tl(px(7.)))
+                            .when(column + 1 == columns, |cell| cell.rounded_tr(px(7.)))
+                    })
+                    .when(row > 0, |cell| cell.border_t_1().border_color(rule))
+                    .map(|cell| match alignment {
+                        Alignment::Center => cell.text_center(),
+                        Alignment::Right => cell.text_right(),
+                        Alignment::Left | Alignment::None => cell,
+                    })
+                    .children(cell.as_ref().map(|text| self.inline(text)));
+                cells.push(cell.into_any_element());
+            }
+        }
+        div()
+            .self_start()
+            .grid()
+            .grid_cols_max_content(u16::try_from(columns).unwrap_or(u16::MAX))
+            .border_1()
+            .border_color(rule)
+            .rounded(px(8.))
+            .text_size(px(13.))
+            .line_height(px(20.))
+            .children(cells)
             .into_any_element()
     }
 
@@ -628,6 +675,7 @@ mod tests {
                 Block::Paragraph(text) | Block::Heading { text, .. } => vec![text],
                 Block::List { items, .. } => items.iter().flat_map(|item| inlines(item)).collect(),
                 Block::Quote(blocks) => inlines(blocks),
+                Block::Table(table) => table.rows.iter().flatten().flatten().collect(),
                 Block::Code(_) | Block::Rule => Vec::new(),
             })
             .collect()
@@ -846,27 +894,44 @@ mod tests {
     }
 
     #[test]
-    fn a_table_is_its_source_in_a_code_block() {
-        let source = "| Track | Gain |\n| --- | --- |\n| Bass | -3 dB |\n\nafter";
+    fn a_table_keeps_its_cells_and_alignment() {
+        let source = "| Track | Gain |\n| --- | ---: |\n| **Bass** | -3 dB |\n| Lead |\n\nafter";
         let markdown = Markdown::parse(source);
+        let [Block::Table(table), Block::Paragraph(after)] = markdown.blocks() else {
+            panic!("not a table and a paragraph: {:?}", markdown.blocks());
+        };
+        assert_eq!(table.alignments, [Alignment::None, Alignment::Right]);
+        let rows: Vec<Vec<Option<&str>>> = table
+            .rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| cell.as_ref().map(|cell| cell.text.as_ref()))
+                    .collect()
+            })
+            .collect();
         assert_eq!(
-            markdown.blocks(),
+            rows,
             [
-                Block::Code("| Track | Gain |\n| --- | --- |\n| Bass | -3 dB |".into()),
-                Block::Paragraph(only_paragraph("after")),
+                [Some("Track"), Some("Gain")],
+                [Some("Bass"), Some("-3 dB")],
+                [Some("Lead"), None],
             ]
         );
+        assert_eq!(
+            table.rows[1][0].as_ref().map(spans),
+            Some(vec![("Bass", bold())])
+        );
+        assert_eq!(after.text.as_ref(), "after");
     }
 
     #[test]
-    fn a_table_in_a_quote_loses_the_quote_marks() {
+    fn a_table_in_a_quote() {
         let markdown = Markdown::parse("> | a | b |\n> | - | - |\n> | 1 | 2 |\n");
-        assert_eq!(
-            markdown.blocks(),
-            [Block::Quote(vec![Block::Code(
-                "| a | b |\n| - | - |\n| 1 | 2 |".into()
-            )])]
-        );
+        let [Block::Quote(inside)] = markdown.blocks() else {
+            panic!("not a quote: {:?}", markdown.blocks());
+        };
+        assert!(matches!(inside.as_slice(), [Block::Table(table)] if table.rows.len() == 2));
     }
 
     #[test]

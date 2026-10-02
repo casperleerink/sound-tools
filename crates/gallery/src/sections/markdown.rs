@@ -25,9 +25,16 @@ The bass now has its own **filter** with a *slow* attack, set in `bass/state.jso
 { "type": "filter", "cutoff": 800, "resonance": 0.3 }
 ```
 
-| Track | Gain | Filter |
+| Bars | Section | What plays |
 | --- | --- | --- |
-| Bass | -3 dB | 800 Hz low-pass |
+| 1–32 | **A** | Intro, then the theme on the lead |
+| 33–38 | **B1**, a breath | New chords, the bass drops out |
+| 39–44 | **B2** | The pad comes back, set in `pad/state.json` |
+
+| Track | Gain |
+| --- | ---: |
+| Bass | -3 dB |
+| Lead | 0 dB |
 
 ---
 
