@@ -41,7 +41,7 @@ use gpui::{
     FontWeight, Hsla, KeyDownEvent, ScrollHandle, SharedString, Task, Window, canvas, div, fill,
     linear_color_stop, linear_gradient, prelude::*, px,
 };
-use sound_core::{Changes, Instance, InstanceId, ProjectEvent};
+use sound_core::{Changes, Instance, InstanceId, ProjectError, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CONTROL_HEIGHT, ROW_HEIGHT, VALUE_LINE};
 use sound_ui::components::device_card::{
@@ -812,7 +812,7 @@ impl TrackPanel {
     /// step named after it. The slot keeps its record and whether it is bypassed.
     ///
     /// A slot that is where it would go already, or that the track does not list, which a drop
-    /// from another track's panel would be, is no edit.
+    /// from another track's panel would be, is no edit. Any other error is reported.
     fn move_effect(&mut self, slot: &InstanceId, to: usize, cx: &mut Context<Self>) {
         let name = device_label(&self.session, slot, Slot::Effect, cx).name;
         let (track, slot) = (self.track.clone(), slot.clone());
@@ -820,7 +820,13 @@ impl TrackPanel {
         let mut changes = Changes::new();
         match crate::move_effect(project, &mut changes, &track, &slot, to) {
             Ok(true) => {}
-            Ok(false) | Err(_) => return,
+            Ok(false) => return,
+            Err(ProjectError::MissingInstance(missing)) if missing == slot => return,
+            Err(error) => {
+                self.session
+                    .update(cx, |session, cx| session.report(error, cx));
+                return;
+            }
         }
         self.end_drag(cx);
         self.session.update(cx, |session, cx| {
