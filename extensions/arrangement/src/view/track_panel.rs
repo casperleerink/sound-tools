@@ -41,7 +41,7 @@ use gpui::{
     FontWeight, Hsla, KeyDownEvent, ScrollHandle, SharedString, Task, Window, canvas, div, fill,
     linear_color_stop, linear_gradient, prelude::*, px,
 };
-use sound_core::{Changes, Instance, InstanceId, ProjectEvent};
+use sound_core::{Changes, Instance, InstanceId, ProjectError, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CONTROL_HEIGHT, ROW_HEIGHT, VALUE_LINE};
 use sound_ui::components::device_card::{
@@ -191,13 +191,15 @@ fn offer_entries(
             _ => item,
         }
     };
-    let groups = sorted.chunk_by(|a, b| a.group == b.group).map(|group| {
-        MenuEntry::Group(
-            MenuGroup::new()
-                .label(group[0].group.label())
-                .items(group.iter().map(item)),
-        )
-    });
+    let groups = sorted
+        .chunk_by(|a, b| a.group == b.group)
+        .filter_map(|group| {
+            Some(MenuEntry::Group(
+                MenuGroup::new()
+                    .label(group.first()?.group.label())
+                    .items(group.iter().map(item)),
+            ))
+        });
     let mut entries: Vec<MenuEntry> = groups.collect();
     // What a source of offers has to say under them: that it is still looking at this
     // machine, and what it owes whoever made what it offers.
@@ -419,20 +421,20 @@ impl TrackPanel {
             }
             // A slot got another tool, lost its record or got one: from a file or an undo.
             // While the tool stays, the view of the device follows its record by itself.
-            let Some(index) = panel.devices.iter().position(|device| device.slot == *id) else {
+            let session = panel.session.clone();
+            let Some(device) = panel.devices.iter_mut().find(|device| device.slot == *id) else {
                 return;
             };
-            let session = panel.session.clone();
-            let kind = panel.devices[index].kind;
-            if panel.devices[index].tool != session.read(cx).project().tool_of(id) {
-                panel.devices[index] = Device::new(&session, id.clone(), kind, window, cx);
+            let kind = device.kind;
+            if device.tool != session.read(cx).project().tool_of(id) {
+                *device = Device::new(&session, id.clone(), kind, window, cx);
                 cx.notify();
                 return;
             }
             // The tool stayed but its record changed, and a plugin record carries the name of
             // the card: another plugin id, from a file or an undo, renames it.
             let label = device_label(&session, id, kind, cx);
-            let picker = panel.devices[index].picker.clone();
+            let picker = device.picker.clone();
             picker.update(cx, |picker, cx| {
                 picker.set_label(label.name, cx);
                 if let Some(key) = label.key {
@@ -812,7 +814,7 @@ impl TrackPanel {
     /// step named after it. The slot keeps its record and whether it is bypassed.
     ///
     /// A slot that is where it would go already, or that the track does not list, which a drop
-    /// from another track's panel would be, is no edit.
+    /// from another track's panel would be, is no edit. Any other error is reported.
     fn move_effect(&mut self, slot: &InstanceId, to: usize, cx: &mut Context<Self>) {
         let name = device_label(&self.session, slot, Slot::Effect, cx).name;
         let (track, slot) = (self.track.clone(), slot.clone());
@@ -820,7 +822,13 @@ impl TrackPanel {
         let mut changes = Changes::new();
         match crate::move_effect(project, &mut changes, &track, &slot, to) {
             Ok(true) => {}
-            Ok(false) | Err(_) => return,
+            Ok(false) => return,
+            Err(ProjectError::MissingInstance(missing)) if missing == slot => return,
+            Err(error) => {
+                self.session
+                    .update(cx, |session, cx| session.report(error, cx));
+                return;
+            }
         }
         self.end_drag(cx);
         self.session.update(cx, |session, cx| {

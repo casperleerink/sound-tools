@@ -699,6 +699,11 @@ impl NoteEditor {
         else {
             return;
         };
+        // An undo between mouse down and the first change may have changed the lane: the
+        // stroke works from the clip as it is now, so it does not write the old lane back.
+        if !drag.begun {
+            *origin = clip.clone();
+        }
         if !stroke.moved(&viewport, grid, (x, y)) {
             return;
         }
@@ -857,17 +862,16 @@ impl NoteEditor {
                 indices.push(index);
             }
         }
-        if kept.is_empty() {
+        let Some(first) = kept.first().map(|tracked| tracked.origin) else {
             self.drag = Some(drag);
             return self.end_drag(cx);
-        }
+        };
         drag.notes = kept;
         let origins: Vec<Note> = drag.notes.iter().map(|tracked| tracked.origin).collect();
         let pointer = viewport.tick_at(x);
         let next: Vec<Note> = match &drag.kind {
             NoteDragKind::Draw { down } => {
-                let origin = origins[0];
-                vec![drawn_note(&clip, *down, pointer, origin.pitch, &grid).unwrap_or(origin)]
+                vec![drawn_note(&clip, *down, pointer, first.pitch, &grid).unwrap_or(first)]
             }
             NoteDragKind::Move {
                 grab,
@@ -880,10 +884,9 @@ impl NoteEditor {
                 moved_notes(clip.length, &origins, delta, semitones)
             }
             NoteDragKind::Resize { grab } => {
-                let origin = origins[0];
-                let end = clip.start + origin.end();
+                let end = clip.start + first.end();
                 let delta = grid.delta(end, *grab, pointer);
-                vec![resized_note(clip.length, origin, delta, grid.unit_at(end))]
+                vec![resized_note(clip.length, first, delta, grid.unit_at(end))]
             }
             NoteDragKind::Velocity { grab } => {
                 let dy = y - ROLL_HEIGHT - grab;
