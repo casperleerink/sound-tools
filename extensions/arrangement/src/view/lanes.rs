@@ -343,18 +343,10 @@ fn drawn_between(
     from: (f32, f32),
     to: (f32, f32),
 ) -> Vec<(Ticks, f32)> {
-    let (left, right) = if from.0 <= to.0 {
-        (from, to)
-    } else {
-        (to, from)
-    };
-    let height_at = |x: f32| match right.0 - left.0 {
-        across if across < f32::EPSILON => to.1,
-        across => left.1 + (right.1 - left.1) * ((x - left.0) / across).clamp(0.0, 1.0),
-    };
+    let (left, right) = ordered(from.0, to.0);
     let ticks: Vec<Ticks> = if grid.snaps() {
-        let last = viewport.tick_at(right.0);
-        let first = viewport.tick_at(left.0);
+        let last = viewport.tick_at(right);
+        let first = viewport.tick_at(left);
         let mut line = grid.floor(first);
         if line < first {
             line = grid.next_line(line);
@@ -366,18 +358,27 @@ fn drawn_between(
         }
         lines
     } else {
-        let steps = ((right.0 - left.0) / DRAW_SPACING) as usize;
-        let passed = (0..=steps).map(|step| left.0 + step as f32 * DRAW_SPACING);
+        let steps = ((right - left) / DRAW_SPACING) as usize;
+        let passed = (0..=steps).map(|step| left + step as f32 * DRAW_SPACING);
         passed
-            .chain(once(right.0))
+            .chain(once(right))
             .map(|x| viewport.tick_at(x))
             .collect()
     };
     ticks
         .into_iter()
         .filter(|tick| inside.contains(tick))
-        .map(|tick| (tick, height_at(viewport.x_of(tick))))
+        .map(|tick| (tick, height_at(from, to, viewport.x_of(tick))))
         .collect()
+}
+
+/// The height at `x` of the straight line from `from` to `to`, two places `(x, y)`. Level past
+/// its ends, and the height of `to` when both are at one `x`.
+pub fn height_at(from: (f32, f32), to: (f32, f32), x: f32) -> f32 {
+    match to.0 - from.0 {
+        across if across.abs() < f32::EPSILON => to.1,
+        across => from.1 + (to.1 - from.1) * ((x - from.0) / across).clamp(0.0, 1.0),
+    }
 }
 
 #[cfg(test)]

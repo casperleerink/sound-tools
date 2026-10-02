@@ -26,7 +26,7 @@ use sound_ui::{
 };
 
 use super::layout::{DOT_LEFT, HEADER_WIDTH, NAME_LEFT};
-use super::track_panel::{RACK_LEFT, RACK_TOP, ROW_TOP, TITLE_MIDDLE, VOLUME_LEFT};
+use super::track_panel::{RACK_LEFT, RACK_TOP, ROW_TOP, TITLE_MIDDLE, VOLUME_LEFT, volume_db};
 use crate::{ArrangementState, LimiterState, MasterState};
 
 /// What the panel asks of the view that holds it.
@@ -304,10 +304,7 @@ impl Render for MasterPanel {
                 }))
                 .on_change(weak_callback(cx, |panel, change: ValueChange, cx| {
                     let set = |master: &mut MasterState, db: f32| {
-                        master.gain_db = match db.is_nan() {
-                            true => f32::NEG_INFINITY,
-                            false => db.min(MasterState::MAX_GAIN_DB),
-                        };
+                        master.gain_db = volume_db(db, MasterState::MAX_GAIN_DB);
                     };
                     panel.apply("Change master volume", change, set, cx);
                 }));

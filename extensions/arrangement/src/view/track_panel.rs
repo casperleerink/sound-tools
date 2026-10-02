@@ -957,7 +957,9 @@ impl TrackPanel {
             }))
             .on_change(weak_callback(cx, |panel, change: ValueChange, cx| {
                 let (session, track) = (&panel.session, &panel.track);
-                let set = |track: &mut TrackState, db: f32| track.gain_db = volume_db(db);
+                let set = |track: &mut TrackState, db: f32| {
+                    track.gain_db = volume_db(db, TrackState::MAX_GAIN_DB)
+                };
                 panel
                     .edit
                     .apply(session, track, VOLUME_LABEL, change, set, cx);
@@ -1015,11 +1017,11 @@ impl TrackPanel {
 }
 
 /// The gain a volume control saves: its bottom is `-inf`, which the record keeps as silence,
-/// and nothing goes over the top of the record.
-pub(super) fn volume_db(db: f32) -> f32 {
+/// and nothing goes over `most`, the top of the record.
+pub(super) fn volume_db(db: f32, most: f32) -> f32 {
     match db.is_nan() {
         true => f32::NEG_INFINITY,
-        false => db.min(TrackState::MAX_GAIN_DB),
+        false => db.min(most),
     }
 }
 
