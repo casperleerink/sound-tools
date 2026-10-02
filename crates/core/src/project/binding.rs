@@ -13,6 +13,7 @@ use super::file::{PortReference, SavedConnection, SavedDestination};
 use super::instance::{InstanceId, Record, State};
 use super::registry::Registry;
 use crate::automation::{AutomationInput, PlayedLanes};
+use crate::clock::TempoMap;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
 use crate::graph::{Connection, Destination, GraphError, NodeId};
@@ -367,6 +368,8 @@ pub(crate) struct EngineChange<'a> {
     /// Instances whose behaviour runs again.
     pub dirty: BTreeSet<InstanceId>,
     pub connections: &'a [SavedConnection],
+    /// Sent in the same batch, so the clock and the processors change in the same block.
+    pub tempo_map: &'a TempoMap,
 }
 
 #[derive(Default)]
@@ -558,6 +561,7 @@ impl Bindings {
                 ..Run::default()
             };
             let mut edit = control.edit();
+            edit.set_tempo_map(change.tempo_map.clone());
             let result = self
                 .run(&mut edit, assets, &change, &mut run)
                 .and_then(|()| Ok(edit.commit()?));

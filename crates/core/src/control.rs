@@ -146,6 +146,7 @@ impl EngineControl {
     pub fn edit(&mut self) -> Edit<'_> {
         Edit {
             graph: None,
+            clock: None,
             commands: Vec::new(),
             control: self,
         }
@@ -189,11 +190,9 @@ impl EngineControl {
     /// A map equal to the current one sends nothing. A change moves the frame position to the
     /// frame of the next tick, and a project file saved again unchanged must not do that.
     pub fn set_tempo_map(&mut self, tempo_map: TempoMap) {
-        if *self.clock.tempo_map() == tempo_map {
-            return;
-        }
-        self.clock = Arc::new(self.clock.with_tempo_map(tempo_map));
-        self.send(Command::SetClock(self.clock.clone()));
+        let mut edit = self.edit();
+        edit.set_tempo_map(tempo_map);
+        edit.send();
     }
 
     /// The clock of the tempo map set last. The audio thread switches to it at its next block.
@@ -257,6 +256,8 @@ pub struct Edit<'a> {
     /// A changed copy of the graph. `None` until the edit changes processors or connections,
     /// so plain updates cost no copy and no compile.
     graph: Option<Graph>,
+    /// The clock of a new tempo map, set when the edit commits.
+    clock: Option<Arc<Clock>>,
     commands: Batch,
 }
 
@@ -337,6 +338,14 @@ impl Edit<'_> {
         self.update_erased(node.id, Box::new(update))
     }
 
+    /// Replaces the tempo map in the same batch as the rest of the edit, see
+    /// [`EngineControl::set_tempo_map`].
+    pub fn set_tempo_map(&mut self, tempo_map: TempoMap) {
+        let clock = &self.control.clock;
+        let changed = *clock.tempo_map() != tempo_map;
+        self.clock = changed.then(|| Arc::new(clock.with_tempo_map(tempo_map)));
+    }
+
     /// Whether the edit changed processors or connections, so that `commit` compiles.
     pub(crate) fn changes_graph(&self) -> bool {
         self.graph.is_some()
@@ -357,16 +366,25 @@ impl Edit<'_> {
     /// Validates and compiles the whole edit, then queues it for the audio thread. On error
     /// nothing is sent and the graph stays as it was.
     pub fn commit(mut self) -> Result<(), GraphError> {
-        if let Some(graph) = self.graph {
+        if let Some(graph) = self.graph.take() {
             let config = &self.control.config;
             let schedule = graph.compile(config.channels, config.event_capacity)?;
             self.commands.push(Command::SetSchedule(Box::new(schedule)));
             self.control.graph = graph;
         }
+        self.send();
+        Ok(())
+    }
+
+    /// Queues the commands, once the graph is compiled or unchanged.
+    fn send(mut self) {
+        if let Some(clock) = self.clock {
+            self.control.clock = clock.clone();
+            self.commands.push(Command::SetClock(clock));
+        }
         if !self.commands.is_empty() {
             self.control.pending.push_back(self.commands);
             self.control.flush();
         }
-        Ok(())
     }
 }

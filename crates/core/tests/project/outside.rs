@@ -308,11 +308,12 @@ fn a_folder_without_a_record_is_reported_until_the_record_arrives() {
 fn project_file_changes_apply_live() {
     let mut harness = one_dc();
     harness.project.engine().play();
-    harness.level();
+    let batches = harness.batches();
 
-    // Disconnect and halve the tempo in one outside edit.
+    // Disconnect and halve the tempo in one outside edit, which is one engine batch.
     let slow = project_file("").replace("120.0", "60.0");
     assert_eq!(harness.write_and_apply("project.json", &slow), 1);
+    assert_eq!(harness.batches(), batches + 1);
     assert_eq!(harness.level(), 0.0);
     let clock = harness.project.engine().clock().clone();
     assert_eq!(clock.frame_of(Ticks(960)).0, u64::from(SAMPLE_RATE));

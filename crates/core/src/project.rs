@@ -529,8 +529,6 @@ impl Project {
             return Err(error);
         }
 
-        self.engine
-            .set_tempo_map(self.project_file.tempo_map.clone());
         for change in &records {
             let id = change.id.clone();
             self.events.push(match (&change.before, &change.after) {
@@ -812,6 +810,7 @@ impl Project {
             unbound: &unbound,
             dirty,
             connections: &self.project_file.connections,
+            tempo_map: &self.project_file.tempo_map,
         };
         Ok(self
             .bindings
