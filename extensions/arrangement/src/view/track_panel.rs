@@ -191,13 +191,15 @@ fn offer_entries(
             _ => item,
         }
     };
-    let groups = sorted.chunk_by(|a, b| a.group == b.group).map(|group| {
-        MenuEntry::Group(
-            MenuGroup::new()
-                .label(group[0].group.label())
-                .items(group.iter().map(item)),
-        )
-    });
+    let groups = sorted
+        .chunk_by(|a, b| a.group == b.group)
+        .filter_map(|group| {
+            Some(MenuEntry::Group(
+                MenuGroup::new()
+                    .label(group.first()?.group.label())
+                    .items(group.iter().map(item)),
+            ))
+        });
     let mut entries: Vec<MenuEntry> = groups.collect();
     // What a source of offers has to say under them: that it is still looking at this
     // machine, and what it owes whoever made what it offers.
@@ -419,20 +421,20 @@ impl TrackPanel {
             }
             // A slot got another tool, lost its record or got one: from a file or an undo.
             // While the tool stays, the view of the device follows its record by itself.
-            let Some(index) = panel.devices.iter().position(|device| device.slot == *id) else {
+            let session = panel.session.clone();
+            let Some(device) = panel.devices.iter_mut().find(|device| device.slot == *id) else {
                 return;
             };
-            let session = panel.session.clone();
-            let kind = panel.devices[index].kind;
-            if panel.devices[index].tool != session.read(cx).project().tool_of(id) {
-                panel.devices[index] = Device::new(&session, id.clone(), kind, window, cx);
+            let kind = device.kind;
+            if device.tool != session.read(cx).project().tool_of(id) {
+                *device = Device::new(&session, id.clone(), kind, window, cx);
                 cx.notify();
                 return;
             }
             // The tool stayed but its record changed, and a plugin record carries the name of
             // the card: another plugin id, from a file or an undo, renames it.
             let label = device_label(&session, id, kind, cx);
-            let picker = panel.devices[index].picker.clone();
+            let picker = device.picker.clone();
             picker.update(cx, |picker, cx| {
                 picker.set_label(label.name, cx);
                 if let Some(key) = label.key {

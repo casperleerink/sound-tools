@@ -496,11 +496,11 @@ fn spliced(
 /// line through its neighbours, within [`ON_THE_LINE`], or it is first or last and its one
 /// neighbour has its value, so what is held past it stays exactly. A lane keeps one point.
 fn drop_on_line(points: &mut Vec<Point<OnTravel>>, tick: Option<Ticks>) {
-    let Some(index) = points.iter().position(|point| Some(point.tick) == tick) else {
+    let mut found = points.iter().enumerate();
+    let Some((index, &point)) = found.find(|(_, point)| Some(point.tick) == tick) else {
         return;
     };
     let before = index.checked_sub(1).and_then(|before| points.get(before));
-    let point = points[index];
     let same = match (before, points.get(index + 1)) {
         (Some(before), Some(after)) => {
             let line = before.towards(*after, point.tick).place;

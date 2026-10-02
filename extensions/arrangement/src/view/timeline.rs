@@ -3977,8 +3977,10 @@ impl Timeline {
             press,
             moving: false,
         };
-        if let Some(point) = track_lanes::point_at(&viewport, &origin, range, (x, in_lane)) {
-            let key = PointKey::of(track.id(), &origin, origin.points[point].tick);
+        if let Some(point) = track_lanes::point_at(&viewport, &origin, range, (x, in_lane))
+            && let Some(pressed) = origin.points.get(point)
+        {
+            let key = PointKey::of(track.id(), &origin, pressed.tick);
             self.select_point(Some(key), cx);
             self.lane_drag = Some(drag(origin, point_drag(point), MOVE_POINT_LABEL));
             return;
@@ -4027,7 +4029,8 @@ impl Timeline {
                     return;
                 }
                 let LaneEdit::Erase(ticks) = stroke.edit() else {
-                    unreachable!("an erase stroke erases")
+                    self.lane_drag = Some(drag);
+                    return;
                 };
                 track_lanes::erased(&drag.origin, &ticks)
             }
@@ -4049,7 +4052,10 @@ impl Timeline {
                         false => dx = 0.,
                     }
                 }
-                let from = drag.origin.points[*point];
+                let Some(&from) = drag.origin.points.get(*point) else {
+                    self.lane_drag = Some(drag);
+                    return;
+                };
                 let delta = match dx {
                     0. => 0,
                     _ => viewport.tick_at(x).0 as i64 - press.0.0 as i64,
@@ -4066,7 +4072,7 @@ impl Timeline {
                     }
                 };
                 let moved = track_lanes::moved_point(&drag.origin, *point, tick, value);
-                let tick = moved.points[*point].tick;
+                let tick = moved.points.get(*point).map_or(tick, |point| point.tick);
                 self.selected_point = Some(PointKey::of(drag.track.id(), &moved, tick));
                 Some(moved)
             }
@@ -4089,14 +4095,12 @@ impl Timeline {
             return self.end_drag(cx);
         };
         let mut automation = state.automation.clone();
-        let at = automation
-            .iter()
-            .position(|lane| lane.same_number(&drag.origin));
-        match (at, next) {
-            (Some(at), Some(lane)) => automation[at] = lane,
-            (Some(at), None) => {
-                automation.remove(at);
-            }
+        let found = automation
+            .iter_mut()
+            .find(|lane| lane.same_number(&drag.origin));
+        match (found, next) {
+            (Some(found), Some(lane)) => *found = lane,
+            (Some(_), None) => automation.retain(|lane| !lane.same_number(&drag.origin)),
             (None, Some(lane)) => automation.insert(drag.index.min(automation.len()), lane),
             (None, None) => {}
         }
@@ -4148,7 +4152,7 @@ impl Timeline {
         let top = scene.layout.lane_top(row, index);
         let in_lane = (scene.viewport.content_y(y) - top) as f32;
         let point = track_lanes::point_at(&scene.viewport, lane, range, (x, in_lane))?;
-        Some(PointKey::of(track.id(), lane, lane.points[point].tick))
+        Some(PointKey::of(track.id(), lane, lane.points.get(point)?.tick))
     }
 
     /// Delete with a point selected: it goes, and the lane with it when it was the last, as
@@ -4166,22 +4170,16 @@ impl Timeline {
             return false;
         };
         let mut state = state.clone();
-        let Some(at) = state
-            .automation
-            .iter()
-            .position(|lane| key.is_in(&key.track, lane))
-        else {
+        let is_lane = |lane: &AutomationLane| key.is_in(&key.track, lane);
+        let Some(lane) = state.automation.iter_mut().find(|lane| is_lane(lane)) else {
             return false;
         };
-        let lane = &state.automation[at];
         let Some(point) = lane.points.iter().position(|point| point.tick == key.tick) else {
             return false;
         };
         match track_lanes::without_point(lane, point) {
-            Some(lane) => state.automation[at] = lane,
-            None => {
-                state.automation.remove(at);
-            }
+            Some(left) => *lane = left,
+            None => state.automation.retain(|lane| !is_lane(lane)),
         }
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {

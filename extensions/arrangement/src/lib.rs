@@ -293,7 +293,8 @@ impl State for TrackState {
                     "effects[{index}] must not be {INSTRUMENT:?}: the instrument of a track is its own slot and plays before every effect"
                 ));
             }
-            if self.effects[..index].iter().any(|slot| slot.name == *name) {
+            let mut earlier = self.effects.iter().take(index);
+            if earlier.any(|slot| slot.name == *name) {
                 return Err(format!(
                     "effects[{index}] is {name:?}, which the list already has. One effect is one child record: copy the file under another name to use it twice"
                 ));
