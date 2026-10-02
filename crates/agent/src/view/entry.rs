@@ -134,7 +134,7 @@ pub fn turn(
         .enumerate()
         .map(|(block, markdown)| MarkdownText::new(("answer", block), markdown.clone()));
     // While a question waits, the question is what the agent does.
-    let working = (turn.end.is_none() && turn.approval.is_none()).then(|| {
+    let working = (turn.end.is_none() && turn.approvals.is_empty()).then(|| {
         let line = turn
             .current_step()
             .map_or("Working", |step| match step.outcome {

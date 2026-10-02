@@ -1026,7 +1026,7 @@ impl Sidebar {
             Some(Entry::Message(text)) => entry::message(text, cx),
             Some(Entry::Notice(text)) => entry::notice(text, cx),
             Some(Entry::Turn(turn)) => {
-                let below = match (&turn.approval, self.problems_left.get(&index)) {
+                let below = match (turn.approval(), self.problems_left.get(&index)) {
                     (Some(approval), _) => Some(self.approval_row(&approval.title, cx)),
                     (None, Some(problems)) => {
                         let open = self.problems_open.contains(&index);
