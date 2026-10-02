@@ -15,7 +15,7 @@ env:
   # the workspace, so CI builds there.
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
-# Five jobs run side by side. Each builds what it needs and keeps its own cache. Only main saves
+# Four jobs run side by side. Each builds what it needs and keeps its own cache. Only main saves
 # the caches, so pull requests do not push main's out of the 10 GB limit. A change that only
 # touches `docs/` runs the lint job and skips the others.
 jobs:
@@ -77,7 +77,11 @@ jobs:
       # Before the tests: they load the repository's own CLAP and VST 3 plugins, which are
       # dynamic libraries that `cargo test` does not build.
       - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
+      # With the realtime sanitizer on: any test that allocates, locks or makes a system call
+      # inside Engine::process_block aborts.
       - run: cargo nextest run --workspace --locked
+        env:
+          RTSAN_ENABLE: 1
 
   snapshots:
     needs: changes
@@ -126,34 +130,3 @@ jobs:
           tool: cargo-nextest
       - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
       - run: cargo nextest run --workspace --locked
-
-  sanitizer:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: macos-15
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install the pinned toolchain
-        run: rustup toolchain install
-      - name: Deny warnings
-        run: mkdir -p ../.cargo && cp .cargo/ci-config.toml ../.cargo/config.toml
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-      # The project tests load the test plugins, which this plain build makes.
-      - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
-      # The variable rebuilds the audio crates. The sanitizer aborts any test that allocates,
-      # locks or makes a system call inside Engine::process_block.
-      - name: Realtime sanitizer
-        run: |
-          cargo nextest run -p sound-core -p sound-media -p tone -p instrument -p filter -p eq -p reverb -p saturator -p delay -p compressor -p limiter -p drum-pad -p sound-notes -p arrangement -p metronome -p midi -p plugin-host -p sampler -p utility -p modulation -p wavetable --locked
-          # Real projects: the sequencer of every track into its synth, with live file edits,
-          # a whole recording from the MIDI input into a clip, and tracks whose instrument is
-          # a hosted CLAP or VST 3 plugin.
-          cargo nextest run -p runtime --test projects --locked
-        env:
-          RTSAN_ENABLE: 1
