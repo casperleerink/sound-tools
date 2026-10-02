@@ -54,3 +54,33 @@ fn new_labels_keep_the_highlight_and_new_items_drop_it(cx: &mut TestAppContext) 
     assert_eq!(*picked.borrow(), ["undo"]);
     assert!(menu.read_with(cx, |menu, _| menu.is_open()));
 }
+
+#[gpui::test]
+fn enter_on_a_row_that_turned_disabled_picks_nothing(cx: &mut TestAppContext) {
+    cx.update(sound_ui::init);
+    let (menu, cx) = cx.add_window_view(|_, cx| {
+        DropdownMenu::new("Project", entries("first", &["add", "undo"]), cx)
+    });
+    let picked: Rc<RefCell<Vec<SharedString>>> = Rc::default();
+    cx.update(|_, cx| {
+        let picked = picked.clone();
+        cx.subscribe(&menu, move |_, event: &MenuPicked, _| {
+            picked.borrow_mut().push(event.0.clone())
+        })
+        .detach();
+    });
+    menu.update_in(cx, |menu, window, cx| menu.open(window, cx));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down down");
+    // The same items, so the highlight stays on `undo`, which has nothing to undo now.
+    let items = ["add", "undo"].map(|value| {
+        MenuItem::new(value, value)
+            .selectable(false)
+            .disabled(value == "undo")
+    });
+    let disabled = vec![MenuEntry::Group(MenuGroup::new().items(items))];
+    menu.update(cx, |menu, cx| menu.set_entries(disabled, cx));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    assert!(picked.borrow().is_empty());
+}
