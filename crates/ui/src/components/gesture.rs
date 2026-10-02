@@ -160,7 +160,7 @@ pub(crate) struct GestureState<V> {
 }
 
 impl<V: Copy + PartialEq + 'static> GestureState<V> {
-    pub fn new(cx: &mut App) -> Self {
+    pub(crate) fn new(cx: &mut App) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             keyboard_focus: KeyboardFocus::default(),

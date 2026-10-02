@@ -47,13 +47,13 @@ pub(crate) struct PlacementStore {
 }
 
 impl PlacementStore {
-    pub fn new(path: Option<PathBuf>, kept: Kept) -> Self {
+    pub(crate) fn new(path: Option<PathBuf>, kept: Kept) -> Self {
         Self { path, kept }
     }
 
     /// What this machine remembers of the project in `project`, a folder. A write a crash left
     /// behind is taken away on the way, as the scan cache does; one that cannot be is the error.
-    pub fn read(&self, project: &Path) -> Result<Placements, String> {
+    pub(crate) fn read(&self, project: &Path) -> Result<Placements, String> {
         let key = key(project);
         let Some(path) = &self.path else {
             let kept = self
@@ -70,7 +70,7 @@ impl PlacementStore {
 
     /// Keeps `placements` for the project in `project`. Nothing is written when the file would
     /// not change.
-    pub fn write(&self, project: &Path, placements: &Placements) -> Result<(), String> {
+    pub(crate) fn write(&self, project: &Path, placements: &Placements) -> Result<(), String> {
         let key = key(project);
         let Some(path) = &self.path else {
             let mut kept = self

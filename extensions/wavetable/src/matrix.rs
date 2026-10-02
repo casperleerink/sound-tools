@@ -226,7 +226,7 @@ pub(crate) struct Modulation {
 }
 
 impl Modulation {
-    pub fn new(routes: &[Route], sources: &Sources) -> Self {
+    pub(crate) fn new(routes: &[Route], sources: &Sources) -> Self {
         let mut modulation = Self {
             sums: [0.0; Destination::ALL.len()],
             amp: 1.0,
@@ -255,12 +255,12 @@ impl Modulation {
     }
 
     /// What the routes add to a destination, in its unit. Not for [`Destination::AmpLevel`].
-    pub fn get(&self, destination: Destination) -> f32 {
+    pub(crate) fn get(&self, destination: Destination) -> f32 {
         self.sums[destination as usize]
     }
 
     /// The factor on the level of the voice, from 0 to 1.
-    pub fn amp(&self) -> f32 {
+    pub(crate) fn amp(&self) -> f32 {
         self.amp
     }
 }

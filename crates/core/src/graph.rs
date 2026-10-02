@@ -122,7 +122,7 @@ pub(crate) struct Graph {
 }
 
 impl Graph {
-    pub fn with_slots(slot_count: usize) -> Self {
+    pub(crate) fn with_slots(slot_count: usize) -> Self {
         Self {
             slot_count,
             free_slots: (0..slot_count).rev().collect(),
@@ -132,7 +132,7 @@ impl Graph {
 
     /// Returns the slot of the new node, and the slot table size the audio side needs when
     /// the current table is too small. The caller supplies a fresh id.
-    pub fn add_node(
+    pub(crate) fn add_node(
         &mut self,
         id: NodeId,
         name: &str,
@@ -158,7 +158,7 @@ impl Graph {
     }
 
     /// Removes the node and every connection that touches it. Returns its slot.
-    pub fn remove_node(&mut self, id: NodeId) -> Result<usize, GraphError> {
+    pub(crate) fn remove_node(&mut self, id: NodeId) -> Result<usize, GraphError> {
         let node = self.nodes.remove(&id).ok_or(GraphError::UnknownNode(id))?;
         self.connections.retain(|connection| {
             connection.source != id
@@ -168,11 +168,15 @@ impl Graph {
         Ok(node.slot)
     }
 
-    pub fn slot(&self, id: NodeId) -> Result<usize, GraphError> {
+    pub(crate) fn slot(&self, id: NodeId) -> Result<usize, GraphError> {
         Ok(self.node(id)?.slot)
     }
 
-    pub fn connect(&mut self, connection: Connection, channels: usize) -> Result<(), GraphError> {
+    pub(crate) fn connect(
+        &mut self,
+        connection: Connection,
+        channels: usize,
+    ) -> Result<(), GraphError> {
         let source = self.node(connection.source)?;
         let unknown_output = || GraphError::UnknownOutput {
             node: source.name.clone(),
@@ -238,7 +242,7 @@ impl Graph {
         Ok(())
     }
 
-    pub fn disconnect(&mut self, connection: &Connection) -> Result<(), GraphError> {
+    pub(crate) fn disconnect(&mut self, connection: &Connection) -> Result<(), GraphError> {
         if self.connections.remove(connection) {
             Ok(())
         } else {
@@ -374,7 +378,11 @@ impl Graph {
     }
 
     /// Validates the whole graph and builds the schedule with all its buffers.
-    pub fn compile(&self, channels: usize, event_capacity: usize) -> Result<Schedule, GraphError> {
+    pub(crate) fn compile(
+        &self,
+        channels: usize,
+        event_capacity: usize,
+    ) -> Result<Schedule, GraphError> {
         let order = self.sorted()?;
         let mut schedule = Schedule {
             device_sources: vec![Vec::new(); channels],

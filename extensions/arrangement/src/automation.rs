@@ -24,7 +24,8 @@ use sound_core::{
 use sound_notes::{Point, check_order, value_at};
 
 pub(crate) use moves::write;
-pub use moves::{Carried, LaneMove, Moved, Travel, clear, moved, positions, travel_in};
+pub use moves::{Carried, LaneMove, Moved, Travel, moved, travel_in};
+pub(crate) use moves::{clear, positions};
 
 use crate::TrackState;
 use crate::decibels;
@@ -193,7 +194,7 @@ pub(crate) struct LanePlayer {
 }
 
 impl LanePlayer {
-    pub const OUTPUT: EventOutput<Automation> = EventOutput::new(0);
+    pub(crate) const OUTPUT: EventOutput<Automation> = EventOutput::new(0);
 }
 
 impl Processor for LanePlayer {

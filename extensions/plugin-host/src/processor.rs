@@ -35,7 +35,7 @@ use sound_notes::{Amount, Bend, NoteEvent, Pedal};
 
 /// How many events one block can carry into the plugin. An `AllOff` alone can be 132 of them.
 /// Anything above this is counted and dropped, never allocated.
-pub const EVENT_CAPACITY: usize = 512;
+pub(crate) const EVENT_CAPACITY: usize = 512;
 
 /// One thing to tell the plugin, at a frame offset in the block. This is the note contract with
 /// `AllOff` already expanded into the keys that are really down and the controls that moved.
@@ -127,7 +127,7 @@ pub trait Started: Send {
 /// Everything a plugin does inside its own code. The realtime sanitizer is switched off for
 /// exactly the call and nothing around it: what a plugin allocates is its business, what this
 /// crate allocates is a bug.
-pub fn not_ours<T>(call: impl FnOnce() -> T) -> T {
+pub(crate) fn not_ours<T>(call: impl FnOnce() -> T) -> T {
     let _disabled = rtsan_standalone::ScopedDisabler::default();
     call()
 }
@@ -145,7 +145,7 @@ fn pass_through(input: [&[f32]; CHANNELS], left: &mut [f32], right: &mut [f32], 
 /// one signal puts it. A plugin that takes more than two gets silence in the rest, as it did
 /// before effects existed. A plugin with no audio input takes nothing: what came before it in
 /// the chain is lost, and what it plays takes its place.
-pub fn copy_in(channels: &mut [Vec<f32>], frames: usize, input: [&[f32]; CHANNELS]) {
+pub(crate) fn copy_in(channels: &mut [Vec<f32>], frames: usize, input: [&[f32]; CHANNELS]) {
     for (index, channel) in channels.iter_mut().enumerate() {
         match input.get(index) {
             Some(samples) => channel[..frames].copy_from_slice(&samples[..frames]),
@@ -156,7 +156,7 @@ pub fn copy_in(channels: &mut [Vec<f32>], frames: usize, input: [&[f32]; CHANNEL
 
 /// Copies the channels a plugin wrote into our one stereo port. A plugin with one channel is
 /// heard on both, as every processor that makes one signal.
-pub fn copy_out(channels: &[Vec<f32>], frames: usize, left: &mut [f32], right: &mut [f32]) {
+pub(crate) fn copy_out(channels: &[Vec<f32>], frames: usize, left: &mut [f32], right: &mut [f32]) {
     match channels.len() {
         0 => {}
         1 => {
@@ -172,7 +172,7 @@ pub fn copy_out(channels: &[Vec<f32>], frames: usize, left: &mut [f32], right: &
 
 /// The processor an instance of the plugin tool keeps. It is silent until the control side
 /// sends it a plugin, and silent again when it is sent `None`.
-pub struct HostedPlugin {
+pub(crate) struct HostedPlugin {
     plugin: Option<Box<dyn Started>>,
     /// Whether the plugin's own `run` failed. It is left silent instead of called again.
     failed: bool,
@@ -187,15 +187,15 @@ pub struct HostedPlugin {
 
 /// What the control side sends: the plugin to play, or nothing. The one that was there rides
 /// back to the control thread inside the update and is dropped there.
-pub type HostedUpdate = Option<Box<dyn Started>>;
+pub(crate) type HostedUpdate = Option<Box<dyn Started>>;
 
 impl HostedPlugin {
-    pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
-    pub const INPUT: AudioInput = AudioInput::new(0);
-    pub const AUDIO: AudioOutput = AudioOutput::new(0);
+    pub(crate) const NOTES: EventInput<NoteEvent> = EventInput::new(0);
+    pub(crate) const INPUT: AudioInput = AudioInput::new(0);
+    pub(crate) const AUDIO: AudioOutput = AudioOutput::new(0);
 
     /// A processor with no plugin. It makes no sound.
-    pub fn silent() -> Self {
+    pub(crate) fn silent() -> Self {
         Self {
             plugin: None,
             failed: false,

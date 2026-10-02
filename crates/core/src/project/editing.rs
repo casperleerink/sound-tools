@@ -120,7 +120,7 @@ pub(crate) struct Step {
 }
 
 impl Step {
-    pub fn absorb(&mut self, applied: Applied) {
+    pub(super) fn absorb(&mut self, applied: Applied) {
         for change in applied.records {
             let entry = self
                 .records
@@ -216,7 +216,7 @@ impl History {
     /// Keeps `committed` current after a state application. A change from a file or from
     /// history to a record under an open edit gets the committed state as its before side, in
     /// place of the state in the middle of the gesture.
-    pub fn note_committed(&mut self, change: &mut RecordChange, source: Source) {
+    pub(super) fn note_committed(&mut self, change: &mut RecordChange, source: Source) {
         match source {
             Source::Load => {}
             Source::Interface => {
@@ -236,7 +236,7 @@ impl History {
     /// The same for `project.json`. A tempo drag publishes a whole tempo map per mouse move,
     /// so without this a file change during the drag would take the tempo of one mouse move as
     /// its before side, and undo would land there.
-    pub fn note_committed_project_file(
+    pub(super) fn note_committed_project_file(
         &mut self,
         change: &mut Option<(ProjectFile, ProjectFile)>,
         source: Source,
@@ -274,7 +274,7 @@ impl History {
     }
 
     /// A new step. What was undone before can no longer be redone.
-    pub fn push(&mut self, step: Step) {
+    pub(super) fn push(&mut self, step: Step) {
         self.last_outside = None;
         if !step.is_empty() {
             self.undo.push(step);
@@ -286,7 +286,7 @@ impl History {
     /// outside step with nothing in between, of the open request or from less than
     /// [`OUTSIDE_UNDO_WINDOW`] before. The joined step keeps its older before side and takes
     /// the newer after side.
-    pub fn push_outside(&mut self, label: &str, applied: Applied, at: Instant) {
+    pub(super) fn push_outside(&mut self, label: &str, applied: Applied, at: Instant) {
         let quiet_since_end = self
             .request
             .as_ref()
@@ -330,7 +330,7 @@ impl History {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         *self = Self::default();
     }
 }

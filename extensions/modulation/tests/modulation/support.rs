@@ -8,22 +8,22 @@ use sound_core::{
     ProcessContext, Processor,
 };
 
-pub const SAMPLE_RATE: u32 = 48_000;
-pub const SECOND: usize = SAMPLE_RATE as usize;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SECOND: usize = SAMPLE_RATE as usize;
 
 /// Makes the next frame of a signal, left and right. Called on the audio thread.
-pub type Signal = Box<dyn FnMut() -> [f32; 2] + Send>;
+pub(crate) type Signal = Box<dyn FnMut() -> [f32; 2] + Send>;
 
 /// A processor that plays a signal. The closure is made on the control thread; calling it
 /// allocates nothing.
-pub struct Source {
+pub(crate) struct Source {
     signal: Signal,
 }
 
 impl Source {
-    pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
 
-    pub fn new(signal: Signal) -> Self {
+    pub(crate) fn new(signal: Signal) -> Self {
         Self { signal }
     }
 }
@@ -48,7 +48,7 @@ impl Processor for Source {
 }
 
 /// A sine of this frequency and amplitude in both channels, from phase 0.
-pub fn sine(hz: f64, amplitude: f32) -> Signal {
+pub(crate) fn sine(hz: f64, amplitude: f32) -> Signal {
     let mut phase = 0.0_f64;
     let step = hz / f64::from(SAMPLE_RATE);
     Box::new(move || {
@@ -59,7 +59,7 @@ pub fn sine(hz: f64, amplitude: f32) -> Signal {
 }
 
 /// White noise from -amplitude to amplitude, the same every run, other in each channel.
-pub fn noise(amplitude: f32) -> Signal {
+pub(crate) fn noise(amplitude: f32) -> Signal {
     let mut state = 0x2545_f491_4f6c_dd1d_u64;
     let mut next = move || {
         state ^= state << 13;
@@ -71,7 +71,7 @@ pub fn noise(amplitude: f32) -> Signal {
 }
 
 /// A signal for `frames` frames, then silence.
-pub fn for_frames(mut signal: Signal, frames: usize) -> Signal {
+pub(crate) fn for_frames(mut signal: Signal, frames: usize) -> Signal {
     let mut played = 0_usize;
     Box::new(move || {
         played += 1;
@@ -80,14 +80,14 @@ pub fn for_frames(mut signal: Signal, frames: usize) -> Signal {
 }
 
 /// A source, a modulation and the device, rendering offline.
-pub struct Rig {
+pub(crate) struct Rig {
     pub control: EngineControl,
     pub engine: Engine,
     pub modulation: Node<Modulation>,
 }
 
 impl Rig {
-    pub fn new(state: ModulationState, signal: Signal) -> Self {
+    pub(crate) fn new(state: ModulationState, signal: Signal) -> Self {
         let (mut control, engine) =
             Engine::new(EngineConfig::new(SAMPLE_RATE, 2).rendering_offline());
         let mut edit = control.edit();
@@ -118,7 +118,7 @@ impl Rig {
 
     /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
     /// Left and right.
-    pub fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
+    pub(crate) fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
         let mut output = vec![0.0; frames * 2];
         for buffer in output.chunks_mut(480 * 2) {
             self.engine.process_block(buffer);
@@ -127,14 +127,14 @@ impl Rig {
         [channel(0), channel(1)]
     }
 
-    pub fn update(&mut self, state: ModulationState) {
+    pub(crate) fn update(&mut self, state: ModulationState) {
         self.control.update(self.modulation, state).unwrap();
     }
 }
 
 /// The amplitude of the part of `samples` at `hz`, by correlation with a sine and a cosine of
 /// that frequency. `samples` start at frame `start` of a signal whose phase was 0 at frame 0.
-pub fn amplitude_at(samples: &[f32], start: usize, hz: f64) -> f64 {
+pub(crate) fn amplitude_at(samples: &[f32], start: usize, hz: f64) -> f64 {
     let (mut sine, mut cosine) = (0.0, 0.0);
     for (offset, sample) in samples.iter().enumerate() {
         let angle = TAU * hz * (start + offset) as f64 / f64::from(SAMPLE_RATE);
@@ -146,7 +146,7 @@ pub fn amplitude_at(samples: &[f32], start: usize, hz: f64) -> f64 {
 
 /// The frequency of a tone over time: the time of each rising zero crossing, placed between
 /// its two frames, and the frequency from the crossing before to it. In frames and Hz.
-pub fn frequencies(samples: &[f32]) -> Vec<(f64, f64)> {
+pub(crate) fn frequencies(samples: &[f32]) -> Vec<(f64, f64)> {
     let crossings: Vec<f64> = samples
         .windows(2)
         .enumerate()
@@ -163,7 +163,7 @@ pub fn frequencies(samples: &[f32]) -> Vec<(f64, f64)> {
 }
 
 /// The pitch of a tone in bins of `frames`: the mean of the frequencies of its crossings in each.
-pub fn pitch_in_bins(samples: &[f32], frames: usize) -> Vec<f64> {
+pub(crate) fn pitch_in_bins(samples: &[f32], frames: usize) -> Vec<f64> {
     let mut bins = vec![(0.0, 0_usize); samples.len() / frames];
     for (time, hz) in frequencies(samples) {
         if let Some((sum, count)) = bins.get_mut(time as usize / frames) {
@@ -177,7 +177,7 @@ pub fn pitch_in_bins(samples: &[f32], frames: usize) -> Vec<f64> {
 }
 
 /// The correlation of two lists of numbers, from -1 to 1.
-pub fn correlation(a: &[f64], b: &[f64]) -> f64 {
+pub(crate) fn correlation(a: &[f64], b: &[f64]) -> f64 {
     let mean = |values: &[f64]| values.iter().sum::<f64>() / values.len() as f64;
     let (a_mean, b_mean) = (mean(a), mean(b));
     let (mut both, mut a_square, mut b_square) = (0.0, 0.0, 0.0);
@@ -189,13 +189,13 @@ pub fn correlation(a: &[f64], b: &[f64]) -> f64 {
     both / (a_square * b_square).sqrt()
 }
 
-pub fn peak(samples: &[f32]) -> f32 {
+pub(crate) fn peak(samples: &[f32]) -> f32 {
     samples
         .iter()
         .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
-pub fn rms(samples: &[f32]) -> f64 {
+pub(crate) fn rms(samples: &[f32]) -> f64 {
     let energy: f64 = samples
         .iter()
         .map(|sample| f64::from(*sample).powi(2))
@@ -203,7 +203,7 @@ pub fn rms(samples: &[f32]) -> f64 {
     (energy / samples.len().max(1) as f64).sqrt()
 }
 
-pub fn db(value: f64) -> f64 {
+pub(crate) fn db(value: f64) -> f64 {
     20.0 * value.log10()
 }
 
@@ -211,7 +211,7 @@ pub fn db(value: f64) -> f64 {
 /// takes a tone of `ω` radians per frame down to `ω⁶` of its level, a few millionths for a tone
 /// of 440 Hz at full scale, and keeps a step or a corner at about its own size: a click stands
 /// out by thousands of times, however the level of the tone swells and falls.
-pub fn crackle(samples: &[f32]) -> f32 {
+pub(crate) fn crackle(samples: &[f32]) -> f32 {
     samples
         .windows(7)
         .map(|seven| {

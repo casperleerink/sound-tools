@@ -53,7 +53,7 @@ use crate::window::WindowSize;
 
 /// The plugin's own window, from the VST 3 side. One of these per loaded plugin that has an
 /// edit controller; [`Vst3Gui::is_offered`] says whether that controller really has a window.
-pub struct Vst3Gui {
+pub(super) struct Vst3Gui {
     /// The half of the plugin that makes views. Kept as a reference of its own, so the view
     /// cannot outlive the object it came from.
     controller: ComPtr<IEditController>,
@@ -70,7 +70,10 @@ pub struct Vst3Gui {
 impl Vst3Gui {
     /// The window side of a plugin that has an edit controller. A plugin without one has no
     /// window at all and gets `None`.
-    pub fn new(controller: Option<&ComPtr<IEditController>>, plugin_id: &str) -> Option<Self> {
+    pub(super) fn new(
+        controller: Option<&ComPtr<IEditController>>,
+        plugin_id: &str,
+    ) -> Option<Self> {
         Some(Self {
             controller: controller?.clone(),
             frame: ComWrapper::new(PlugFrame::default()),
@@ -81,7 +84,7 @@ impl Vst3Gui {
     }
 
     /// A size the plugin asked for since the last call, for [`crate::backend::Requests`].
-    pub fn take_wanted_size(&self) -> Option<WindowSize> {
+    pub(super) fn take_wanted_size(&self) -> Option<WindowSize> {
         self.frame.take_wanted_size()
     }
 
@@ -278,7 +281,7 @@ impl PluginGui for Vst3Gui {
 /// It is one object per plugin and lives as long as the plugin does. A view is given a null
 /// frame before it is released, so no plugin holds this after the host has let go of it.
 #[derive(Default)]
-pub struct PlugFrame {
+pub(super) struct PlugFrame {
     /// A size the plugin asked for, packed into one number. Zero means none. Packed and not two
     /// fields, so a width and a height are always the pair the plugin asked for.
     wanted: AtomicU64,

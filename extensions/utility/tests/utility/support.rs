@@ -8,21 +8,21 @@ use sound_core::{
 };
 use utility::{Utility, UtilityState};
 
-pub const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
 /// Makes the next frame of a signal, left and right. Called on the audio thread.
-pub type Signal = Box<dyn FnMut() -> [f32; 2] + Send>;
+pub(crate) type Signal = Box<dyn FnMut() -> [f32; 2] + Send>;
 
 /// A processor that plays a signal. The closure is made on the control thread; calling it
 /// allocates nothing.
-pub struct Source {
+pub(crate) struct Source {
     signal: Signal,
 }
 
 impl Source {
-    pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
 
-    pub fn new(signal: Signal) -> Self {
+    pub(crate) fn new(signal: Signal) -> Self {
         Self { signal }
     }
 }
@@ -48,12 +48,12 @@ impl Processor for Source {
 
 /// A sine of this frequency, from phase 0, with its amplitude on the left and on the right. A
 /// negative amplitude is the sine upside down.
-pub fn sine(hz: f64, amplitude: [f32; 2]) -> Signal {
+pub(crate) fn sine(hz: f64, amplitude: [f32; 2]) -> Signal {
     sine_at(hz, amplitude, SAMPLE_RATE)
 }
 
 /// The same at another sample rate.
-pub fn sine_at(hz: f64, [left, right]: [f32; 2], sample_rate: u32) -> Signal {
+pub(crate) fn sine_at(hz: f64, [left, right]: [f32; 2], sample_rate: u32) -> Signal {
     let mut phase = 0.0_f64;
     let step = hz / f64::from(sample_rate);
     Box::new(move || {
@@ -65,7 +65,7 @@ pub fn sine_at(hz: f64, [left, right]: [f32; 2], sample_rate: u32) -> Signal {
 
 /// A sine of one frequency on the left and one of another on the right, so every channel can be
 /// told apart.
-pub fn two_sines(left_hz: f64, right_hz: f64, amplitude: f32) -> Signal {
+pub(crate) fn two_sines(left_hz: f64, right_hz: f64, amplitude: f32) -> Signal {
     let [mut left, mut right] = [
         sine(left_hz, [amplitude; 2]),
         sine(right_hz, [amplitude; 2]),
@@ -74,7 +74,7 @@ pub fn two_sines(left_hz: f64, right_hz: f64, amplitude: f32) -> Signal {
 }
 
 /// White noise from -amplitude to amplitude, the same every run, other in each channel.
-pub fn noise(amplitude: f32) -> Signal {
+pub(crate) fn noise(amplitude: f32) -> Signal {
     let mut state = 0x2545_f491_4f6c_dd1d_u64;
     let mut next = move || {
         state ^= state << 13;
@@ -86,24 +86,24 @@ pub fn noise(amplitude: f32) -> Signal {
 }
 
 /// The first `frames` of a signal, left and right: what the utility hears.
-pub fn frames_of(mut signal: Signal, frames: usize) -> [Vec<f32>; 2] {
+pub(crate) fn frames_of(mut signal: Signal, frames: usize) -> [Vec<f32>; 2] {
     let frames: Vec<[f32; 2]> = (0..frames).map(|_| signal()).collect();
     [0, 1].map(|channel| frames.iter().map(|frame| frame[channel]).collect())
 }
 
 /// A source, a utility and the device, rendering offline.
-pub struct Rig {
+pub(crate) struct Rig {
     pub control: EngineControl,
     pub engine: Engine,
     pub utility: Node<Utility>,
 }
 
 impl Rig {
-    pub fn new(state: UtilityState, signal: Signal) -> Self {
+    pub(crate) fn new(state: UtilityState, signal: Signal) -> Self {
         Self::at_rate(state, signal, SAMPLE_RATE)
     }
 
-    pub fn at_rate(state: UtilityState, signal: Signal, sample_rate: u32) -> Self {
+    pub(crate) fn at_rate(state: UtilityState, signal: Signal, sample_rate: u32) -> Self {
         let (mut control, engine) =
             Engine::new(EngineConfig::new(sample_rate, 2).rendering_offline());
         let mut edit = control.edit();
@@ -128,7 +128,7 @@ impl Rig {
 
     /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
     /// Left and right.
-    pub fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
+    pub(crate) fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
         let mut output = vec![0.0; frames * 2];
         for buffer in output.chunks_mut(480 * 2) {
             self.engine.process_block(buffer);
@@ -137,14 +137,14 @@ impl Rig {
         [channel(0), channel(1)]
     }
 
-    pub fn update(&mut self, state: UtilityState) {
+    pub(crate) fn update(&mut self, state: UtilityState) {
         self.control.update(self.utility, state).unwrap();
     }
 }
 
 /// The amplitude of the part of `samples` at `hz`, by correlation with a sine and a cosine of
 /// that frequency. `samples` start at frame `start` of a signal whose phase was 0 at frame 0.
-pub fn amplitude_at(samples: &[f32], start: usize, hz: f64, sample_rate: u32) -> f64 {
+pub(crate) fn amplitude_at(samples: &[f32], start: usize, hz: f64, sample_rate: u32) -> f64 {
     let (mut sine, mut cosine) = (0.0, 0.0);
     for (offset, sample) in samples.iter().enumerate() {
         let angle = TAU * hz * (start + offset) as f64 / f64::from(sample_rate);
@@ -155,12 +155,17 @@ pub fn amplitude_at(samples: &[f32], start: usize, hz: f64, sample_rate: u32) ->
 }
 
 /// The amplitude of a sine through a utility on the left and on the right, once it has settled.
-pub fn measured(state: UtilityState, hz: f64, input: [f32; 2]) -> [f64; 2] {
+pub(crate) fn measured(state: UtilityState, hz: f64, input: [f32; 2]) -> [f64; 2] {
     measured_at(state, hz, input, SAMPLE_RATE)
 }
 
 /// The same at another sample rate.
-pub fn measured_at(state: UtilityState, hz: f64, input: [f32; 2], sample_rate: u32) -> [f64; 2] {
+pub(crate) fn measured_at(
+    state: UtilityState,
+    hz: f64,
+    input: [f32; 2],
+    sample_rate: u32,
+) -> [f64; 2] {
     // Long enough for the slowest crossover to settle, then whole cycles over about a quarter
     // of a second, so the correlation sees no part of a cycle.
     let settle = sample_rate as usize;
@@ -172,14 +177,14 @@ pub fn measured_at(state: UtilityState, hz: f64, input: [f32; 2], sample_rate: u
         .map(|channel| amplitude_at(&channel, settle, hz, sample_rate))
 }
 
-pub fn peak(samples: &[f32]) -> f32 {
+pub(crate) fn peak(samples: &[f32]) -> f32 {
     samples
         .iter()
         .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
 /// The largest step from one sample to the next.
-pub fn largest_step(samples: &[f32]) -> f32 {
+pub(crate) fn largest_step(samples: &[f32]) -> f32 {
     samples
         .windows(2)
         .map(|pair| (pair[1] - pair[0]).abs())

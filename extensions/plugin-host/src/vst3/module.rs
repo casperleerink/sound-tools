@@ -39,7 +39,7 @@ const AUDIO_MODULE_CLASS: &str = "Audio Module Class";
 
 /// One loaded bundle. Dropping it releases our reference to the factory and leaves the binary
 /// where it is, see the module documentation.
-pub struct Module {
+pub(super) struct Module {
     factory: ComPtr<IPluginFactory>,
 }
 
@@ -48,7 +48,7 @@ impl Module {
     ///
     /// Loading runs the plugin's own code: its static initializers and `bundleEntry`. That is
     /// why a scan does this in a child process.
-    pub fn load(bundle: &Path) -> Result<Rc<Self>, String> {
+    pub(super) fn load(bundle: &Path) -> Result<Rc<Self>, String> {
         thread_local! {
             static LOADED: RefCell<BTreeMap<PathBuf, Rc<Module>>> = const {
                 RefCell::new(BTreeMap::new())
@@ -79,13 +79,13 @@ impl Module {
         Ok(Self { factory })
     }
 
-    pub fn factory(&self) -> &ComPtr<IPluginFactory> {
+    pub(super) fn factory(&self) -> &ComPtr<IPluginFactory> {
         &self.factory
     }
 
     /// Every plugin class in this bundle: its id, what its maker calls it and what it says it
     /// is. Classes that are not audio modules, such as a plugin's controller, are left out.
-    pub fn classes(&self) -> Vec<ClassInfo> {
+    pub(super) fn classes(&self) -> Vec<ClassInfo> {
         let factory2 = self.factory.cast::<IPluginFactory2>();
         let mut classes = Vec::new();
         // SAFETY: the factory came from the plugin and is alive. Every `info` is written by the
@@ -118,7 +118,7 @@ impl Module {
 }
 
 /// What a bundle says about one of its classes.
-pub struct ClassInfo {
+pub(super) struct ClassInfo {
     pub id: TUID,
     pub category: String,
     pub name: String,

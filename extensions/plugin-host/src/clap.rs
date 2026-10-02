@@ -38,7 +38,7 @@ use crate::window::WindowSize;
 use crate::{PluginFormat, PluginProblem};
 
 /// The handlers a CLAP plugin calls. One set per plugin instance.
-pub struct SoundToolsHost;
+pub(crate) struct SoundToolsHost;
 
 impl HostHandlers for SoundToolsHost {
     type Shared<'a> = SharedCallbacks;
@@ -56,7 +56,7 @@ impl HostHandlers for SoundToolsHost {
 /// Callbacks a plugin may make from any thread. They only note what was asked for; the work
 /// happens in the poll on the main thread.
 #[derive(Default)]
-pub struct SharedCallbacks {
+pub(crate) struct SharedCallbacks {
     callback_requested: AtomicBool,
     restart_requested: AtomicBool,
     /// The plugin closed its own window, or lost it. The next poll frees what is left.
@@ -118,7 +118,7 @@ impl HostGuiImpl for SharedCallbacks {
     }
 }
 
-pub struct MainThreadCallbacks<'a> {
+pub(crate) struct MainThreadCallbacks<'a> {
     /// Only here for its lifetime, which ties this handler to the shared one of the same
     /// instance.
     _shared: &'a SharedCallbacks,
@@ -143,7 +143,7 @@ impl HostLatencyImpl for MainThreadCallbacks<'_> {
 
 /// The child side of a scan: loads one bundle and says what is in it. Everything that can go
 /// wrong here is the plugin's, which is why the caller is a process of its own.
-pub fn scan_bundle(bundle: &std::path::Path) -> Result<Vec<ScannedPlugin>, String> {
+pub(crate) fn scan_bundle(bundle: &std::path::Path) -> Result<Vec<ScannedPlugin>, String> {
     // SAFETY: loading a plugin runs its code, which no host can check in advance. This is why
     // the scan runs in a child process. See `scan.rs`.
     let entry = unsafe { clack_host::entry::PluginEntry::load(bundle) }
@@ -176,7 +176,7 @@ pub fn scan_bundle(bundle: &std::path::Path) -> Result<Vec<ScannedPlugin>, Strin
 }
 
 /// Loads the plugin `found` names, with `saved` as its own state, and starts it.
-pub fn load(
+pub(crate) fn load(
     found: &ScannedPlugin,
     saved: Option<&[u8]>,
     config: PrepareConfig,
@@ -293,7 +293,7 @@ fn activate(
 }
 
 /// One loaded CLAP plugin, from the control thread.
-pub struct ClapPlugin {
+pub(crate) struct ClapPlugin {
     plugin_id: String,
     instance: PluginInstance<SoundToolsHost>,
     /// Whether the plugin holds what it made for a window, so that `create` is never called

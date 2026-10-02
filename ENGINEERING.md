@@ -22,6 +22,7 @@ Rules are traps to avoid, not general advice. Add a rule only when it is non-obv
 - Audio thread: nothing from "What may not happen on the audio thread" below.
 - Check a crate's current version and changelog before using it from memory. Agents tend to write code for older APIs.
 - Every dependency is declared once in `[workspace.dependencies]`. Every crate uses the workspace lints.
+- Before writing DSP math, a knob or a file picker in an extension, look in `sound_core` and `sound_ui`. Extensions kept copying `held`, filters and knob code. A helper a second crate needs moves there, not into a copy.
 - Extensions depend on the SDK and on small shared contract crates, never on each other. `tooling/workspace-rules` fails the tests if one does. This keeps the build wide and parallel.
 - Warnings fail CI only (`.cargo/ci-config.toml`), never a local build: a warning in agent-written code must not break a composer's build.
 - Never vary `rustflags` or environment variables between builds. Any change rebuilds everything. CI's `RTSAN_ENABLE=1` is the one exception.

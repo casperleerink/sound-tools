@@ -89,6 +89,10 @@ uuid = { version = "1", features = ["v4", "v5"] }
 vst3 = "0.3"
 wmidi = "4"
 
+# A `pub` item no other crate can reach is private in fact. Saying so shows what is unused.
+[workspace.lints.rust]
+unreachable_pub = "warn"
+
 # Deny a short list of real mistakes. Allow the style group so agents do not fight style lints.
 [workspace.lints.clippy]
 dbg_macro = "deny"

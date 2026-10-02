@@ -26,7 +26,7 @@ fn lane(device: Option<&str>, parameter: &str, points: &[(u64, f32)]) -> Automat
     }
 }
 
-pub fn snapshots(
+pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
 ) -> Result<()> {

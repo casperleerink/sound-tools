@@ -6,27 +6,27 @@
 //! that was never fitted has the transport it always had.
 
 /// Percent per point of a plain drag. With shift it is a tenth, as for every drag.
-pub const DRAG_PER_POINT: f64 = 1.0;
+pub(super) const DRAG_PER_POINT: f64 = 1.0;
 /// The step a plain drag moves by, from the value it began on. It does not snap the result.
 /// With shift it is a tenth.
-pub const DRAG_STEP: f64 = 1.0;
+pub(super) const DRAG_STEP: f64 = 1.0;
 /// What one arrow key adds, plain and with shift.
-pub const KEY_STEP: f64 = 5.0;
-pub const FINE_KEY_STEP: f64 = 1.0;
+pub(super) const KEY_STEP: f64 = 5.0;
+pub(super) const FINE_KEY_STEP: f64 = 1.0;
 
 /// The percentage as the transport shows it: whole percent, so the readout is short and the
 /// pill does not move while it is dragged.
-pub fn percent_text(percent: f64) -> String {
+pub(super) fn percent_text(percent: f64) -> String {
     format!("{}%", percent.round() as i64)
 }
 
 /// A saved steadiness, 0 to 1, as the percentage the control works in.
-pub fn percent_of(steadiness: f32) -> f64 {
+pub(super) fn percent_of(steadiness: f32) -> f64 {
     f64::from(steadiness.clamp(0.0, 1.0)) * 100.0
 }
 
 /// The percentage as a saved steadiness, 0 to 1.
-pub fn steadiness_of(percent: f64) -> f32 {
+pub(super) fn steadiness_of(percent: f64) -> f32 {
     (percent.clamp(0.0, 100.0) / 100.0) as f32
 }
 

@@ -15,12 +15,12 @@ use sound_notes::{
     Velocity,
 };
 
-pub const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
 /// The smallest owner of an instrument: its notes are in its own record.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Track {
+pub(crate) struct Track {
     pub notes: Vec<Note>,
     /// Sustain pedal moves at their ticks, as a clip holds them.
     #[serde(default)]
@@ -39,11 +39,11 @@ impl State for Track {
 }
 
 /// The name of the child a track plays.
-pub const INSTRUMENT: &str = "instrument";
+pub(crate) const INSTRUMENT: &str = "instrument";
 
 /// What the track sends: its notes, its pedal moves and its wheel moves.
 #[derive(Default, PartialEq, Eq)]
-pub struct Part {
+pub(crate) struct Part {
     pub notes: Vec<Note>,
     pub pedal: Vec<PedalChange>,
     pub wheels: Vec<(Ticks, NoteEvent)>,
@@ -52,10 +52,10 @@ pub struct Part {
 /// Sends the notes of one immutable snapshot from the transport tick range. It keeps no list
 /// of held notes: when the transport stops or jumps it sends one `AllOff`.
 #[derive(Default)]
-pub struct Sequencer(Arc<Part>);
+pub(crate) struct Sequencer(Arc<Part>);
 
 impl Sequencer {
-    pub const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
+    pub(crate) const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
 }
 
 impl Processor for Sequencer {
@@ -134,7 +134,7 @@ fn apply_track(state: &Track, context: &mut BehaviourContext<'_>) -> Result<(), 
     Ok(())
 }
 
-pub fn registry() -> Registry {
+pub(crate) fn registry() -> Registry {
     let mut registry = Registry::new();
     instrument::register(&mut registry).unwrap();
     registry
@@ -144,11 +144,11 @@ pub fn registry() -> Registry {
     registry
 }
 
-pub fn id(id: &str) -> InstanceId {
+pub(crate) fn id(id: &str) -> InstanceId {
     InstanceId::new(id).unwrap()
 }
 
-pub fn note(start: u64, length: u64, pitch: u8, velocity: u8) -> Note {
+pub(crate) fn note(start: u64, length: u64, pitch: u8, velocity: u8) -> Note {
     Note {
         start: Ticks(start),
         length: Length::new(Ticks(length)).unwrap(),
@@ -158,7 +158,7 @@ pub fn note(start: u64, length: u64, pitch: u8, velocity: u8) -> Note {
 }
 
 /// An open project on a temporary folder with an offline mono engine.
-pub struct Harness {
+pub(crate) struct Harness {
     pub project: Project,
     pub engine: Engine,
     /// Last, so the folder outlives the project that holds its lock.
@@ -166,11 +166,11 @@ pub struct Harness {
 }
 
 impl Harness {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_config(EngineConfig::new(SAMPLE_RATE, 1))
     }
 
-    pub fn with_config(config: EngineConfig) -> Self {
+    pub(crate) fn with_config(config: EngineConfig) -> Self {
         let folder = tempfile::tempdir().unwrap();
         let (control, engine) = Engine::new(config);
         let project = Project::open(folder.path(), registry(), control).unwrap();
@@ -182,13 +182,13 @@ impl Harness {
     }
 
     /// One track named `track` with these notes and a synth as its instrument.
-    pub fn with_track(notes: Vec<Note>, synth: SynthState) -> Self {
+    pub(crate) fn with_track(notes: Vec<Note>, synth: SynthState) -> Self {
         let mut harness = Self::new();
         harness.add_track("track", notes, synth);
         harness
     }
 
-    pub fn add_track(&mut self, name: &str, notes: Vec<Note>, synth: SynthState) {
+    pub(crate) fn add_track(&mut self, name: &str, notes: Vec<Note>, synth: SynthState) {
         let mut changes = Changes::new();
         let track = changes.create(
             id(name),
@@ -202,14 +202,14 @@ impl Harness {
     }
 
     /// Writes a file and applies it, as the watcher would.
-    pub fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
+    pub(crate) fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
         let path: PathBuf = self.project.root().join(relative);
         std::fs::write(&path, contents).unwrap();
         self.project.apply_outside_changes(&[path]).unwrap()
     }
 
     /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
-    pub fn render(&mut self, frames: usize) -> Vec<f32> {
+    pub(crate) fn render(&mut self, frames: usize) -> Vec<f32> {
         let mut output = vec![0.0; frames];
         for buffer in output.chunks_mut(480) {
             self.engine.process_block(buffer);
@@ -221,34 +221,34 @@ impl Harness {
     }
 
     /// Plays from the start and renders.
-    pub fn play(&mut self, frames: usize) -> Vec<f32> {
+    pub(crate) fn play(&mut self, frames: usize) -> Vec<f32> {
         self.project.engine().play();
         self.render(frames)
     }
 }
 
 /// A pedal move at a tick, for the record of a test track.
-pub fn pedal(start: u64, value: u8) -> PedalChange {
+pub(crate) fn pedal(start: u64, value: u8) -> PedalChange {
     PedalChange {
         start: Ticks(start),
         value: Pedal::new(value).unwrap(),
     }
 }
 
-pub fn peak(samples: &[f32]) -> f32 {
+pub(crate) fn peak(samples: &[f32]) -> f32 {
     samples
         .iter()
         .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
-pub fn largest_step(samples: &[f32]) -> f32 {
+pub(crate) fn largest_step(samples: &[f32]) -> f32 {
     samples
         .windows(2)
         .fold(0.0, |step, pair| step.max((pair[1] - pair[0]).abs()))
 }
 
 /// The frames at which the signal crosses zero upward.
-pub fn rising_zero_crossings(samples: &[f32]) -> Vec<usize> {
+pub(crate) fn rising_zero_crossings(samples: &[f32]) -> Vec<usize> {
     let pairs = samples.windows(2).enumerate();
     pairs
         .filter(|(_, pair)| pair[0] < 0.0 && pair[1] >= 0.0)
@@ -257,7 +257,7 @@ pub fn rising_zero_crossings(samples: &[f32]) -> Vec<usize> {
 }
 
 /// The amplitude of the part of the signal at one frequency (one bin of a Fourier transform).
-pub fn level_at(samples: &[f32], frequency_hz: f32) -> f32 {
+pub(crate) fn level_at(samples: &[f32], frequency_hz: f32) -> f32 {
     let step = std::f64::consts::TAU * f64::from(frequency_hz) / f64::from(SAMPLE_RATE);
     let (mut real, mut imaginary) = (0.0, 0.0);
     for (frame, sample) in samples.iter().enumerate() {

@@ -183,7 +183,7 @@ impl sound_notes::Voice for Voice {
 }
 
 impl Voice {
-    pub fn idle() -> Self {
+    pub(crate) fn idle() -> Self {
         Self {
             pitch: 60.0,
             velocity: 0.0,
@@ -202,12 +202,12 @@ impl Voice {
     }
 
     /// Clears what an oscillator at four times the rate remembers, for a new effect.
-    pub fn reset_oscillator(&mut self, index: usize) {
+    pub(crate) fn reset_oscillator(&mut self, index: usize) {
         self.oscillators[index].oversamplers = [Oversampler::new(); 2];
     }
 
     /// Adds this voice to `output`, left and right, over the frames of `block`.
-    pub fn render(&mut self, output: [&mut [f32]; 2], block: &Block<'_>) {
+    pub(crate) fn render(&mut self, output: [&mut [f32]; 2], block: &Block<'_>) {
         let frames = block.frames;
         let modulation = self.modulate(block);
         let targets = self.targets(block, &modulation);

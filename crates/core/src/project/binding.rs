@@ -481,30 +481,30 @@ fn device_clashes(lines: &[(usize, Connection)]) -> BTreeMap<usize, LeftOut> {
 }
 
 impl Bindings {
-    pub fn connection_problems(&self) -> &[String] {
+    pub(super) fn connection_problems(&self) -> &[String] {
         &self.connection_problems
     }
 
     /// What every behaviour reported about its own instance the last time it ran.
-    pub fn instance_problems(&self) -> impl Iterator<Item = (&InstanceId, &String)> {
+    pub(super) fn instance_problems(&self) -> impl Iterator<Item = (&InstanceId, &String)> {
         let bindings = self.by_instance.iter();
         bindings.flat_map(|(id, binding)| binding.problems.iter().map(move |message| (id, message)))
     }
 
     /// The processor that the behaviour of `instance` declared under `name`, when it is a `P`.
-    pub fn node<P: Processor>(&self, instance: &InstanceId, name: &str) -> Option<Node<P>> {
+    pub(super) fn node<P: Processor>(&self, instance: &InstanceId, name: &str) -> Option<Node<P>> {
         let (node, processor_type) = self.by_instance.get(instance)?.nodes.get(name)?;
         (*processor_type == TypeId::of::<P>()).then(|| Node::from_id(*node))
     }
 
     /// The peaks that the behaviour of `instance` keeps under `name`.
-    pub fn peaks(&self, instance: &InstanceId, name: &str) -> Option<&Peaks> {
+    pub(super) fn peaks(&self, instance: &InstanceId, name: &str) -> Option<&Peaks> {
         self.by_instance.get(instance)?.peaks.get(name)
     }
 
     /// The number `field` that the behaviour of `instance` takes automation for, see
     /// [`BehaviourContext::automation`].
-    pub fn automation(&self, instance: &InstanceId, field: &str) -> Option<AutomatedNumber> {
+    pub(super) fn automation(&self, instance: &InstanceId, field: &str) -> Option<AutomatedNumber> {
         let automatable = self.by_instance.get(instance)?.automation.as_ref()?;
         let parameters = automatable.parameters.iter();
         let index = parameters
@@ -518,7 +518,10 @@ impl Bindings {
 
     /// The fields of every number the behaviour of `instance` takes automation for, in the
     /// order it named them.
-    pub fn automatable(&self, instance: &InstanceId) -> impl Iterator<Item = &'static str> + '_ {
+    pub(super) fn automatable(
+        &self,
+        instance: &InstanceId,
+    ) -> impl Iterator<Item = &'static str> + '_ {
         let automatable = self.by_instance.get(instance);
         let automatable = automatable.and_then(|binding| binding.automation.as_ref());
         let parameters = automatable.map(|automatable| automatable.parameters.iter());
@@ -528,7 +531,7 @@ impl Bindings {
     /// The lanes that play into the numbers of `instance`, from its own behaviour or from the
     /// behaviour of its owner, see [`BehaviourContext::show_lanes`].
     /// A view asks every frame while the project plays, so it allocates nothing.
-    pub fn lanes(&self, instance: &InstanceId) -> Option<&dyn PlayedLanes> {
+    pub(super) fn lanes(&self, instance: &InstanceId) -> Option<&dyn PlayedLanes> {
         let shown_by = |owner: &str| self.by_instance.get(owner)?.lanes.get(instance);
         let owner = instance.as_str().rsplit_once('/').map(|(owner, _)| owner);
         let lanes = shown_by(instance.as_str()).or_else(|| shown_by(owner?));
@@ -537,7 +540,7 @@ impl Bindings {
 
     /// The input port that the behaviour of `instance` named, as `project.json` connections
     /// and its owner see it.
-    pub fn input(&self, instance: &InstanceId, port: &str) -> Option<InputEndpoint> {
+    pub(super) fn input(&self, instance: &InstanceId, port: &str) -> Option<InputEndpoint> {
         self.by_instance.get(instance)?.inputs.get(port).copied()
     }
 
@@ -546,7 +549,7 @@ impl Bindings {
     ///
     /// A `project.json` connection that closes a cycle does not fail the edit. It stays saved,
     /// unused and reported, like a connection to an instance that does not exist.
-    pub fn apply(
+    pub(super) fn apply(
         &mut self,
         control: &mut EngineControl,
         assets: &Assets,

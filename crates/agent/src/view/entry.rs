@@ -21,7 +21,7 @@ const LINE_HEIGHT: f32 = 22.;
 const SMALL_TEXT_SIZE: f32 = 12.;
 const SMALL_LINE_HEIGHT: f32 = 16.;
 
-pub fn message(text: &str, cx: &App) -> AnyElement {
+pub(super) fn message(text: &str, cx: &App) -> AnyElement {
     div()
         .p(px(14.))
         .rounded(px(12.))
@@ -32,7 +32,7 @@ pub fn message(text: &str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-pub fn notice(text: &str, cx: &App) -> AnyElement {
+pub(super) fn notice(text: &str, cx: &App) -> AnyElement {
     div()
         .text_size(px(SMALL_TEXT_SIZE))
         .text_color(cx.theme().gray_700)
@@ -41,12 +41,12 @@ pub fn notice(text: &str, cx: &App) -> AnyElement {
 }
 
 /// A line the app writes, such as a step or a question, with its commands as code.
-pub fn title(id: impl Into<ElementId>, line: &str) -> MarkdownText {
+pub(super) fn title(id: impl Into<ElementId>, line: &str) -> MarkdownText {
     MarkdownText::new(id, Markdown::inline_code(line))
 }
 
 /// The answers of the agent, its blocks parsed once per batch of events.
-pub fn answer(turn: &Turn) -> Vec<Markdown> {
+pub(super) fn answer(turn: &Turn) -> Vec<Markdown> {
     let streaming = (!turn.streaming.is_empty()).then_some(&turn.streaming);
     turn.blocks
         .iter()
@@ -58,7 +58,7 @@ pub fn answer(turn: &Turn) -> Vec<Markdown> {
 /// One turn: the meta line once it ended, the steps behind it, the answer, and while it works
 /// the working line. `below` comes last: the question it waits on, or once it ended the
 /// problems it left.
-pub fn turn(
+pub(super) fn turn(
     turn: &Turn,
     index: usize,
     answer: &[Markdown],
@@ -180,7 +180,7 @@ pub fn turn(
 
 /// The problems a turn left that were not there before it: one peach line that opens to
 /// `path: message` lines.
-pub fn problems(
+pub(super) fn problems(
     problems: &[Problem],
     index: usize,
     open: bool,

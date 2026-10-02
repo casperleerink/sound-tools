@@ -10,7 +10,7 @@ use sound_notes::{RawEvent, RawTake};
 
 /// How the tempo moves while the take is played. The tempo is quarter notes a minute.
 #[derive(Copy, Clone, Debug)]
-pub enum Curve {
+pub(crate) enum Curve {
     Steady(f64),
     /// A slow give and take around `base`, `depth` of it at most, over `beats` beats.
     Rubato {
@@ -54,7 +54,7 @@ impl Curve {
 
 /// What the hand plays on the grid.
 #[derive(Copy, Clone, Debug)]
-pub enum Playing {
+pub(crate) enum Playing {
     /// A chord of three notes on every beat.
     Chords,
     /// Chords on beats, with notes between them and some beats left empty.
@@ -65,7 +65,7 @@ pub enum Playing {
 
 /// One case: everything a take is made from.
 #[derive(Copy, Clone, Debug)]
-pub struct Case {
+pub(crate) struct Case {
     pub name: &'static str,
     pub time_signature: &'static str,
     pub curve: Curve,
@@ -80,14 +80,14 @@ pub struct Case {
 }
 
 impl Case {
-    pub fn signature(&self) -> TimeSignature {
+    pub(crate) fn signature(&self) -> TimeSignature {
         self.time_signature
             .parse()
             .unwrap_or_else(|_| panic!("{} is no time signature", self.time_signature))
     }
 
     /// The take, and the true beat times on the project timeline in microseconds.
-    pub fn take(&self) -> (RawTake, Vec<u64>) {
+    pub(crate) fn take(&self) -> (RawTake, Vec<u64>) {
         let signature = self.signature();
         let beats = self.bars * signature.numerator() as usize;
         let mut random = Random::new(self.name);
@@ -179,10 +179,10 @@ fn sounded(time_us: u64) -> u64 {
 
 /// A small generator with a fixed start, so that a case is the same take on every run and on
 /// every machine. The constants are Knuth's.
-pub struct Random(u64);
+pub(crate) struct Random(u64);
 
 impl Random {
-    pub fn new(seed: &str) -> Self {
+    pub(crate) fn new(seed: &str) -> Self {
         let mut state = 0x2545_F491_4F6C_DD1D_u64;
         for byte in seed.bytes() {
             state = state
@@ -202,7 +202,7 @@ impl Random {
 
     /// A number from -1 to 1, as the sum of three draws so that the middle is more likely,
     /// which is what a hand does.
-    pub fn symmetric(&mut self) -> f64 {
+    pub(crate) fn symmetric(&mut self) -> f64 {
         let draw = |it: &mut Self| (it.next() >> 11) as f64 / (1_u64 << 53) as f64 * 2.0 - 1.0;
         (draw(self) + draw(self) + draw(self)) / 3.0 * 1.5
     }

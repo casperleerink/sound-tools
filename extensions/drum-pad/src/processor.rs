@@ -50,7 +50,7 @@ fn gains_at(level: f32, pan: f32) -> [f32; 2] {
 }
 
 /// One pad as the audio thread plays it. Its volume and pan are in the record of the kit.
-pub struct PadPlay {
+pub(crate) struct PadPlay {
     /// `None` when the pad is silent, such as a sample pad whose file is not there.
     sound: Option<Arc<Rendered>>,
     /// Frames from the hit to silence.
@@ -75,7 +75,7 @@ impl PadPlay {
 }
 
 /// Every pad and the record, and room for what the audio thread gives back.
-pub struct Kit {
+pub(crate) struct Kit {
     pads: [PadPlay; PADS],
     state: DrumPadState,
     /// Sounds that voices held after an edit replaced them, going back to be let go of.
@@ -83,7 +83,7 @@ pub struct Kit {
 }
 
 /// What a [`DrumPad`] gets: every pad from its behaviour, or one hit from an interface.
-pub enum DrumUpdate {
+pub(crate) enum DrumUpdate {
     Kit(Box<Kit>),
     /// Plays a pad now, as a click on it does. Not an edit.
     Hit {
@@ -102,7 +102,7 @@ impl DrumUpdate {
     }
 
     /// Plays pad `pad`, 0 to 15, as a note of it at `velocity` would.
-    pub fn hit(pad: usize, velocity: Velocity) -> Self {
+    pub(crate) fn hit(pad: usize, velocity: Velocity) -> Self {
         Self::Hit { pad, velocity }
     }
 }
@@ -132,7 +132,7 @@ impl Voice {
     }
 }
 
-pub struct DrumPad {
+pub(crate) struct DrumPad {
     /// The record, with the values of the lanes that automate it.
     state: Automated<DrumPadState, { AUTOMATED.len() }>,
     pads: [PadPlay; PADS],
@@ -152,12 +152,12 @@ pub struct DrumPad {
 }
 
 impl DrumPad {
-    pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
-    pub const OUTPUT: AudioOutput = AudioOutput::new(0);
-    pub const AUTOMATION: AutomationInput<DrumPadState, { AUTOMATED.len() }> =
+    pub(crate) const NOTES: EventInput<NoteEvent> = EventInput::new(0);
+    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub(crate) const AUTOMATION: AutomationInput<DrumPadState, { AUTOMATED.len() }> =
         AutomationInput::new(1, AUTOMATED);
 
-    pub fn new(peaks: [Peaks; PADS]) -> Self {
+    pub(crate) fn new(peaks: [Peaks; PADS]) -> Self {
         Self {
             state: Automated::new(Self::AUTOMATION, DrumPadState::default()),
             pads: [PadPlay::SILENT; PADS],

@@ -35,7 +35,7 @@ use crate::host::WeakPlugins;
 /// How big a plugin's window is, in logical pixels. The formats each have a type of their own
 /// for this and they say the same thing.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct WindowSize {
+pub(crate) struct WindowSize {
     pub width: u32,
     pub height: u32,
 }
@@ -77,7 +77,7 @@ fn reachable(x: i32, y: i32, width: f32, height: f32) -> bool {
 /// The root view of a plugin's window. It draws nothing: the plugin's own view is in the same
 /// window and covers it. It is what hears the window move and resize, and what gets a key while
 /// the plugin's own view does not have the keyboard.
-pub struct PluginFrame {
+pub(crate) struct PluginFrame {
     owner: WindowOwner,
     /// The window's own focus, which nothing else in it takes. GPUI gives a key to what has
     /// the focus and to what is around it, so this is what makes the frame hear keys.
@@ -181,19 +181,19 @@ pub(crate) struct PluginWindow {
 }
 
 impl PluginWindow {
-    pub fn is_open(&self) -> bool {
+    pub(crate) fn is_open(&self) -> bool {
         self.open.is_some()
     }
 
     /// Whether `id` is this window. A window that went may still report a move on its way.
-    pub fn is(&self, id: WindowId) -> bool {
+    pub(crate) fn is(&self, id: WindowId) -> bool {
         self.open.is_some_and(|handle| handle.window_id() == id)
     }
 
     /// The plugin asked its window to be this big. Plugins do it as they open, and again when
     /// their own interface changes. Nothing of ours has to follow: the window holds the plugin
     /// and nothing else.
-    pub fn wants_size(&mut self, wanted: WindowSize) {
+    pub(crate) fn wants_size(&mut self, wanted: WindowSize) {
         self.wanted_size = Some(wanted);
         self.size = Some(wanted);
     }
@@ -202,7 +202,7 @@ impl PluginWindow {
     /// drag of its edge: the plugin makes a size it takes of it, takes it, and the window is
     /// given that size at the next poll. Anything else is the window taking a size this host
     /// gave it, and there is nothing to tell the plugin.
-    pub fn resized(&mut self, gui: &mut dyn PluginGui, content: WindowSize) {
+    pub(crate) fn resized(&mut self, gui: &mut dyn PluginGui, content: WindowSize) {
         if !self.resizable || self.size == Some(content) {
             return;
         }
@@ -215,7 +215,7 @@ impl PluginWindow {
 
     /// The window and the size its plugin last asked for, once.
     #[must_use]
-    pub fn take_wanted_size(&mut self) -> Option<(WindowHandle<PluginFrame>, WindowSize)> {
+    pub(crate) fn take_wanted_size(&mut self) -> Option<(WindowHandle<PluginFrame>, WindowSize)> {
         let handle = self.open?;
         Some((handle, self.wanted_size.take()?))
     }
@@ -225,7 +225,7 @@ impl PluginWindow {
     ///
     /// The order for an embedded window: create, ask how big, put the view in a window, show.
     /// The scale is left alone, as both formats say for Cocoa, where sizes are already logical.
-    pub fn prepare(&mut self, gui: &mut dyn PluginGui) -> Result<Prepared, PluginProblem> {
+    pub(crate) fn prepare(&mut self, gui: &mut dyn PluginGui) -> Result<Prepared, PluginProblem> {
         if let Some(handle) = self.open {
             return Ok(Prepared::AlreadyOpen(handle));
         }
@@ -239,13 +239,13 @@ impl PluginWindow {
     }
 
     /// Whether the composer may drag the edge of the window [`Self::prepare`] made ready.
-    pub fn resizable(&self) -> bool {
+    pub(crate) fn resizable(&self) -> bool {
         self.resizable
     }
 
     /// The second half: the plugin fills the window that was made for it. On a failure the
     /// window comes back, for the caller to take down once nothing is borrowed.
-    pub fn attach(
+    pub(crate) fn attach(
         &mut self,
         gui: &mut dyn PluginGui,
         handle: WindowHandle<PluginFrame>,
@@ -277,7 +277,7 @@ impl PluginWindow {
     /// take down, which includes an attempt whose window never opened. Nothing of the plugin's
     /// sound or state is touched: a plugin goes on playing with no window.
     #[must_use]
-    pub fn give_up(
+    pub(crate) fn give_up(
         &mut self,
         gui: Option<&mut dyn PluginGui>,
     ) -> Option<WindowHandle<PluginFrame>> {

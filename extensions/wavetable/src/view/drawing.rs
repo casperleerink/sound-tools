@@ -26,7 +26,7 @@ const POINTS: usize = 96;
 
 /// The middle line of the frame at a position, from the front at 0 to the back at 1: where
 /// its line is, and where a drag up and down on the display moves the position.
-pub const POSITION_TRAVEL: KnobRange =
+pub(super) const POSITION_TRAVEL: KnobRange =
     KnobRange::linear(-FRONT / DEPTH_UP, (1. - FRONT) / DEPTH_UP);
 
 /// A frame at a position as a line: `sample(index)` is its level at a sample of one cycle.
@@ -44,7 +44,7 @@ fn line(position: f32, sample: impl Fn(usize) -> f32) -> Vec<Point<f32>> {
 
 /// The quiet lines of the frames, from the back to the front, so a front one draws over the
 /// ones behind it.
-pub fn frames(table: &Wavetable) -> Vec<Vec<Point<f32>>> {
+pub(super) fn frames(table: &Wavetable) -> Vec<Vec<Point<f32>>> {
     let count = table.frames();
     let last = count.saturating_sub(1).max(1) as f32;
     let shown = count.min(SHOWN_FRAMES);
@@ -62,7 +62,7 @@ pub fn frames(table: &Wavetable) -> Vec<Vec<Point<f32>>> {
 }
 
 /// The frame that plays at `position`, from 0 to 1: the mix of the two frames it is between.
-pub fn playing(table: &Wavetable, position: f32) -> Vec<Point<f32>> {
+pub(super) fn playing(table: &Wavetable, position: f32) -> Vec<Point<f32>> {
     let position = position.clamp(0., 1.);
     let at = position * table.frames().saturating_sub(1) as f32;
     let (first, mix) = (at.floor() as usize, at.fract());
@@ -74,7 +74,7 @@ pub fn playing(table: &Wavetable, position: f32) -> Vec<Point<f32>> {
 
 /// The frame at `position`, counted from 1, and how many frames the table has: what the line
 /// under the display says.
-pub fn frame_number(table: &Wavetable, position: f32) -> (usize, usize) {
+pub(super) fn frame_number(table: &Wavetable, position: f32) -> (usize, usize) {
     let count = table.frames();
     let at = position.clamp(0., 1.) * count.saturating_sub(1) as f32;
     (at.round() as usize + 1, count)

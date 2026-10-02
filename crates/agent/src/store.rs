@@ -34,7 +34,7 @@ const BAD_INDEX: &str = "index.json.bad";
 
 /// One thread in the index.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SavedThread {
+pub(crate) struct SavedThread {
     /// Also the name of its log.
     pub id: String,
     /// The session the agent works in, from [`crate::Thread::session_id`]. `None` until an
@@ -44,7 +44,7 @@ pub struct SavedThread {
 
 impl SavedThread {
     /// A thread no message has gone to yet.
-    pub fn fresh() -> Self {
+    pub(crate) fn fresh() -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             session_id: None,
@@ -63,7 +63,7 @@ struct Index {
 /// One line of a thread's log.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Line {
+pub(crate) enum Line {
     /// The composer's message.
     Sent {
         at: SystemTime,
@@ -78,7 +78,7 @@ pub enum Line {
 impl Line {
     /// The line of `event`, or `None` when a replay does not need it: a text delta, because
     /// [`AgentEvent::TextDone`] brings the whole text, and the start, which shows nothing.
-    pub fn of(event: &AgentEvent, at: SystemTime) -> Option<Line> {
+    pub(crate) fn of(event: &AgentEvent, at: SystemTime) -> Option<Line> {
         let needed = !matches!(
             event,
             AgentEvent::TextDelta { .. } | AgentEvent::Started { .. }
@@ -92,7 +92,7 @@ impl Line {
 
 /// What the sidebar keeps, in the order it happened.
 #[derive(Debug)]
-pub enum Write {
+pub(crate) enum Write {
     /// The thread the sidebar shows, added to the index or updated there, or none after **+**.
     Current(Option<SavedThread>),
     /// Adds to the log of the thread with this id.
@@ -102,14 +102,14 @@ pub enum Write {
 /// The threads of one project. Every method reads or writes files: call them on the
 /// background executor.
 #[derive(Clone, Debug)]
-pub struct ThreadStore {
+pub(crate) struct ThreadStore {
     folder: PathBuf,
 }
 
 impl ThreadStore {
     /// The threads of the project in the folder `project`, kept in `threads`, which is
     /// `agent/threads` in the support folder.
-    pub fn new(threads: &Path, project: &Path) -> Self {
+    pub(crate) fn new(threads: &Path, project: &Path) -> Self {
         Self {
             folder: threads.join(key(project)),
         }
@@ -117,7 +117,7 @@ impl ThreadStore {
 
     /// The current thread, and what it showed. A line that does not read is left out, with a
     /// notice in its place.
-    pub fn current(&self) -> Result<Option<(SavedThread, Conversation)>, String> {
+    pub(crate) fn current(&self) -> Result<Option<(SavedThread, Conversation)>, String> {
         let mut index = self.index()?;
         let Some(current) = index.current else {
             return Ok(None);
@@ -135,7 +135,7 @@ impl ThreadStore {
         Ok(Some((thread, replay(&text))))
     }
 
-    pub fn write(&self, write: &Write) -> Result<(), String> {
+    pub(crate) fn write(&self, write: &Write) -> Result<(), String> {
         fs::create_dir_all(&self.folder)
             .map_err(|error| format!("{} could not be made: {error}", self.folder.display()))?;
         match write {
@@ -230,7 +230,7 @@ impl ThreadStore {
 /// Writes `text` as the whole of the file at `path`: through a file of its own and a rename,
 /// so a crash never leaves half a file. The other file's name is new each time, so no other
 /// write can be halfway through it.
-pub fn write_whole(path: &Path, text: &str) -> io::Result<()> {
+pub(crate) fn write_whole(path: &Path, text: &str) -> io::Result<()> {
     let mut temporary = path.as_os_str().to_owned();
     temporary.push(format!(".{}.tmp", Uuid::new_v4()));
     fs::write(&temporary, text)?;

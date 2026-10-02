@@ -90,29 +90,29 @@ mod layout {
     use sound_ui::components::knob::KnobRange;
 
     /// Where the pre-delay starts.
-    pub const LEFT: f32 = 0.04;
+    pub(super) const LEFT: f32 = 0.04;
     /// The zones of the pre-delay and of the decay.
-    pub const PRE_DELAY_ZONE: f32 = 0.14;
-    pub const DECAY_ZONE: f32 = 0.74;
+    pub(super) const PRE_DELAY_ZONE: f32 = 0.14;
+    pub(super) const DECAY_ZONE: f32 = 0.74;
     /// The shortest tail is this long, so it still falls and its end can be taken apart from
     /// its start.
-    pub const SHORTEST_TAIL: f32 = 0.04;
+    pub(super) const SHORTEST_TAIL: f32 = 0.04;
     /// How far after the start the reflections of the largest room reach. A smaller room
     /// takes a part of it, from half at size 0.
-    pub const EARLY_ZONE: f32 = 0.3;
+    pub(super) const EARLY_ZONE: f32 = 0.3;
     /// Every so many lines is drawn as a reflection, so the marks stay apart.
-    pub const EVERY: usize = 2;
+    pub(super) const EVERY: usize = 2;
     /// Full level and the floor 60 dB under it, clear of the edges so a handle there can be
     /// taken.
-    pub const TOP: f32 = 0.88;
-    pub const FLOOR: f32 = 0.08;
+    pub(super) const TOP: f32 = 0.88;
+    pub(super) const FLOOR: f32 = 0.08;
     /// A reflection is drawn up to this part of the height of the tail where it is.
-    pub const MARK_HEIGHT: f32 = 0.85;
+    pub(super) const MARK_HEIGHT: f32 = 0.85;
 
     /// The range of a time whose zone starts at `start`: `time.position(value)` of the knob,
     /// squeezed into the zone and moved to its start. A logarithmic range stays one when it is
     /// stretched and moved, with other ends.
-    pub fn time_axis(time: KnobRange, start: f32, zone: f32) -> KnobRange {
+    pub(super) fn time_axis(time: KnobRange, start: f32, zone: f32) -> KnobRange {
         let ratio = time.max / time.min;
         let min = time.min * ratio.powf(-start / zone);
         KnobRange::logarithmic(min, min * ratio.powf(1. / zone))

@@ -38,7 +38,7 @@ const ANSWER: &str = "Added a **bass line** in bars 5 to 8:
 
 Say *softer* if it sits too loud.";
 
-pub fn snapshots(
+pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
 ) -> Result<()> {

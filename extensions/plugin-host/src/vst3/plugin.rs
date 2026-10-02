@@ -47,7 +47,7 @@ use sound_notes::Pedal;
 const MAGIC: [u8; 4] = *b"SVT3";
 
 /// Loads the plugin `found` names, with `saved` as its own state, and starts it.
-pub fn load(
+pub(crate) fn load(
     found: &ScannedPlugin,
     saved: Option<&[u8]>,
     config: PrepareConfig,
@@ -273,7 +273,7 @@ impl Drop for Joined {
 }
 
 /// One loaded VST 3 plugin, from the control thread.
-pub struct Vst3Plugin {
+pub(super) struct Vst3Plugin {
     plugin_id: String,
     /// The bundle this plugin came out of. Nothing unloads one, but a plugin owning its module
     /// says so rather than leaving it to a table somewhere else.

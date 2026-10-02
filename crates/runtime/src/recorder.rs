@@ -320,7 +320,7 @@ impl PlayingAt {
     /// From two engine statuses one after the other: when the project played through both and
     /// its position moved exactly as far as the engine did. So the playhead was not waiting
     /// for latency after a play, and no seek, stop or tempo change came between them.
-    pub fn between(before: &EngineStatus, after: &EngineStatus) -> Option<Self> {
+    pub(crate) fn between(before: &EngineStatus, after: &EngineStatus) -> Option<Self> {
         let engine = after.frames.checked_sub(before.frames)?;
         let project = after
             .playhead_frame

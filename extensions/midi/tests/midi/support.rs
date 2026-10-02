@@ -8,19 +8,19 @@ use sound_core::{
 };
 use sound_notes::{NoteEvent, Pedal, Pitch, Velocity};
 
-pub const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 /// Frames per tick at 120 bpm and 48 kHz.
-pub const TICK: usize = 25;
+pub(crate) const TICK: usize = 25;
 
 /// An event that reached the instrument, with the engine frame it landed on.
-pub type Heard = (u64, NoteEvent);
+pub(crate) type Heard = (u64, NoteEvent);
 
 /// An instrument that makes no sound and only says what it was sent and when. It reports
 /// through a ring, like everything else that leaves the audio thread here.
-pub struct Ears(rtrb::Producer<Heard>);
+pub(crate) struct Ears(rtrb::Producer<Heard>);
 
 impl Ears {
-    pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
+    pub(crate) const NOTES: EventInput<NoteEvent> = EventInput::new(0);
 }
 
 impl Processor for Ears {
@@ -45,7 +45,7 @@ impl Processor for Ears {
 }
 
 /// The engine with a keyboard playing into one instrument.
-pub struct Harness {
+pub(crate) struct Harness {
     pub control: EngineControl,
     pub engine: Engine,
     pub keyboard: Keyboard,
@@ -57,7 +57,7 @@ pub struct Harness {
 }
 
 impl Harness {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let (mut control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let keyboard = Keyboard::attach(&mut control).unwrap();
         let (producer, heard) = rtrb::RingBuffer::new(4096);
@@ -80,13 +80,13 @@ impl Harness {
     }
 
     /// The `notes` input of the instrument.
-    pub fn notes_input(&self) -> InputEndpoint {
+    pub(crate) fn notes_input(&self) -> InputEndpoint {
         InputEndpoint::new(self.ears, Ears::NOTES)
     }
 
     /// A second instrument in the same engine, as another track's synth is. Gives its `notes`
     /// port, and [`Self::heard_by`] says what reached it.
-    pub fn add_ears(&mut self) -> InputEndpoint {
+    pub(crate) fn add_ears(&mut self) -> InputEndpoint {
         let (producer, heard) = rtrb::RingBuffer::new(4096);
         let mut edit = self.control.edit();
         let name = format!("ears-{}", self.others.len() + 2);
@@ -98,7 +98,7 @@ impl Harness {
     }
 
     /// Everything a second instrument heard since the last call.
-    pub fn heard_by(&mut self, port: InputEndpoint) -> Vec<Heard> {
+    pub(crate) fn heard_by(&mut self, port: InputEndpoint) -> Vec<Heard> {
         let found = self.others.iter_mut().find(|(other, _)| *other == port);
         let (_, ring) = found.expect("no such instrument");
         let mut heard = Vec::new();
@@ -110,7 +110,7 @@ impl Harness {
 
     /// Runs the engine for `frames` frames in device buffers of `block` frames, and polls the
     /// keyboard after each of them, as the interface does.
-    pub fn run(&mut self, frames: usize, block: usize) {
+    pub(crate) fn run(&mut self, frames: usize, block: usize) {
         let mut buffer = vec![0.0_f32; block * 2];
         let mut left = frames;
         while left > 0 {
@@ -123,14 +123,14 @@ impl Harness {
     }
 
     /// One poll of the control side, as the interface does it.
-    pub fn poll(&mut self) {
+    pub(crate) fn poll(&mut self) {
         self.keyboard.poll(&mut self.control, None).unwrap();
     }
 
     /// Sends the live input to a port and runs until the change has happened, as the window
     /// does over its polls: the release of what was held goes out into the port it played
     /// into, a block before the connection changes.
-    pub fn wire(&mut self, destination: Option<InputEndpoint>) {
+    pub(crate) fn wire(&mut self, destination: Option<InputEndpoint>) {
         self.keyboard
             .play_into(&mut self.control, destination)
             .unwrap();
@@ -145,7 +145,7 @@ impl Harness {
     }
 
     /// Everything the instrument heard since the last call.
-    pub fn heard(&mut self) -> Vec<Heard> {
+    pub(crate) fn heard(&mut self) -> Vec<Heard> {
         let mut heard = Vec::new();
         while let Ok(event) = self.heard.pop() {
             heard.push(event);
@@ -154,41 +154,41 @@ impl Harness {
     }
 
     /// Where the project position is, as the interface reads it. Recording starts here.
-    pub fn playhead(&mut self) -> Ticks {
+    pub(crate) fn playhead(&mut self) -> Ticks {
         self.control.poll().unwrap().playhead_tick
     }
 }
 
-pub fn pitch(number: u8) -> Pitch {
+pub(crate) fn pitch(number: u8) -> Pitch {
     Pitch::new(number).unwrap()
 }
 
-pub fn on(number: u8, velocity: u8) -> Played {
+pub(crate) fn on(number: u8, velocity: u8) -> Played {
     Played::On {
         pitch: pitch(number),
         velocity: Velocity::new(velocity).unwrap(),
     }
 }
 
-pub fn off(number: u8) -> Played {
+pub(crate) fn off(number: u8) -> Played {
     Played::Off {
         pitch: pitch(number),
         velocity: 64,
     }
 }
 
-pub fn pedal(value: u8) -> Played {
+pub(crate) fn pedal(value: u8) -> Played {
     Played::Pedal(Pedal::new(value).unwrap())
 }
 
-pub fn bend(value: i16) -> Played {
+pub(crate) fn bend(value: i16) -> Played {
     Played::Bend(sound_notes::Bend::new(value).unwrap())
 }
 
-pub fn mod_wheel(value: u8) -> Played {
+pub(crate) fn mod_wheel(value: u8) -> Played {
     Played::ModWheel(sound_notes::Amount::new(value).unwrap())
 }
 
-pub fn pressure(value: u8) -> Played {
+pub(crate) fn pressure(value: u8) -> Played {
     Played::Pressure(sound_notes::Amount::new(value).unwrap())
 }

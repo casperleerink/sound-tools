@@ -41,7 +41,7 @@ fn open_panel(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<Entity<Mod
     })
 }
 
-pub fn snapshots(
+pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
 ) -> Result<()> {

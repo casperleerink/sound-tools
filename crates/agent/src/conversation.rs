@@ -292,7 +292,7 @@ impl Conversation {
 
 /// The undo label of a request: the message on one line, cut at a word to about 40
 /// characters.
-pub fn request_label(message: &str) -> String {
+pub(crate) fn request_label(message: &str) -> String {
     let line = message.split_whitespace().collect::<Vec<_>>().join(" ");
     if line.chars().count() <= LABEL_LENGTH {
         return line;

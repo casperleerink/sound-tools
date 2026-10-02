@@ -8,7 +8,7 @@ use crate::support::{
 };
 
 /// One oscillator straight out: no second oscillator, no filter, no routes.
-pub fn plain(osc_1: Oscillator) -> WavetableState {
+pub(crate) fn plain(osc_1: Oscillator) -> WavetableState {
     WavetableState {
         osc_1,
         osc_2: Oscillator {
@@ -25,7 +25,7 @@ pub fn plain(osc_1: Oscillator) -> WavetableState {
 }
 
 /// Half a second of a held note, once its attack and decay are over.
-pub fn steady(harness: &mut Harness) -> Vec<f32> {
+pub(crate) fn steady(harness: &mut Harness) -> Vec<f32> {
     let left = harness.play_left(frames(1.0));
     left[frames(0.5)..frames(0.5) + 16_384].to_vec()
 }

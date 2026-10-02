@@ -32,17 +32,17 @@
 use sound_notes::RawEvent;
 
 /// Note ons this far apart are one onset. A chord is played in about 30 ms.
-pub const CHORD_US: u64 = 40_000;
+pub(crate) const CHORD_US: u64 = 40_000;
 
 /// The grid the search runs on: 5 ms a frame. Snapping puts the beats back on exact times.
-pub const FRAME_HZ: u64 = 200;
+pub(crate) const FRAME_HZ: u64 = 200;
 
 /// The periods the comb looks at, as beats per minute.
 const MIN_SEARCH_BPM: f64 = 40.0;
 const MAX_SEARCH_BPM: f64 = 208.0;
 
 /// Where the prior over periods sits, in seconds: 120 bpm.
-pub const PRIOR_CENTRE_SECONDS: f64 = 0.5;
+pub(crate) const PRIOR_CENTRE_SECONDS: f64 = 0.5;
 /// How wide it is, in octaves. Wide, because it only has to decide between a period, its half
 /// and its double.
 const PRIOR_OCTAVES: f64 = 1.0;
@@ -61,7 +61,7 @@ const TEMPO_STEP_SECONDS: f64 = 1.0;
 const TIGHTNESS: f64 = 20.0;
 
 /// A beat moves to an onset this close to it.
-pub const SNAP_US: u64 = 30_000;
+pub(crate) const SNAP_US: u64 = 30_000;
 
 /// The most frames the search ever lays out, from the longest take a file may hold.
 const MAX_FRAMES: usize = (sound_notes::MAX_TAKE_MICROS / 1_000_000 * FRAME_HZ) as usize + 1;
@@ -74,7 +74,7 @@ const BASS_WEIGHT: f64 = 2.0;
 
 /// Notes that were played together, as one moment with a weight.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Onset {
+pub(crate) struct Onset {
     pub time_us: u64,
     pub weight: f64,
     /// The lowest note of the group, which decides part of the weight.
@@ -82,7 +82,7 @@ pub struct Onset {
 }
 
 /// The note ons of a take as onsets, in order. Times are the take's own, in microseconds.
-pub fn onsets(events: &[RawEvent]) -> Vec<Onset> {
+pub(crate) fn onsets(events: &[RawEvent]) -> Vec<Onset> {
     let mut played: Vec<(u64, u8)> = events
         .iter()
         .filter_map(|event| match event {
@@ -140,7 +140,7 @@ fn weigh_the_bass(onsets: &mut [Onset]) {
 ///
 /// Empty when the take has fewer than [`MIN_ONSETS`] onsets: there is nothing to find a period
 /// in, and a grid guessed from two notes would be worse than no fit.
-pub fn find_beats(events: &[RawEvent]) -> Vec<u64> {
+pub(crate) fn find_beats(events: &[RawEvent]) -> Vec<u64> {
     let onsets = onsets(events);
     if onsets.len() < MIN_ONSETS {
         return Vec::new();
@@ -166,7 +166,7 @@ pub fn find_beats(events: &[RawEvent]) -> Vec<u64> {
 }
 
 /// Fewer onsets than this and there is no period to find.
-pub const MIN_ONSETS: usize = 8;
+pub(crate) const MIN_ONSETS: usize = 8;
 
 /// The onsets on the search grid. Frame 0 is the start of the recording.
 ///

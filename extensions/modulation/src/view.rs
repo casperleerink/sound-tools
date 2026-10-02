@@ -94,21 +94,22 @@ fn caption(state: &ModulationState) -> String {
 mod layout {
     use sound_ui::components::knob::KnobRange;
 
-    pub const CYCLES: f32 = 2.;
+    pub(super) const CYCLES: f32 = 2.;
     /// The middle of the swing, and how far depth 1 reaches from it, under the mode at the top.
-    pub const MIDDLE: f32 = 0.4;
-    pub const SWING: f32 = 0.3;
+    pub(super) const MIDDLE: f32 = 0.4;
+    pub(super) const SWING: f32 = 0.3;
     /// Where the depth handle sits across: the second peak of the left side, which the spread
     /// handle never reaches.
-    pub const DEPTH_AT: f32 = 0.625;
+    pub(super) const DEPTH_AT: f32 = 0.625;
 
     /// Up and down is depth, placed so that the handle sits on the peak of the line.
-    pub const DEPTH_TRAVEL: KnobRange = KnobRange::linear(-MIDDLE / SWING, (1. - MIDDLE) / SWING);
+    pub(super) const DEPTH_TRAVEL: KnobRange =
+        KnobRange::linear(-MIDDLE / SWING, (1. - MIDDLE) / SWING);
     /// Sideways is spread, placed so that the handle sits on the first peak of the right side.
-    pub const SPREAD_TRAVEL: KnobRange = KnobRange::linear(-0.5, 3.5);
+    pub(super) const SPREAD_TRAVEL: KnobRange = KnobRange::linear(-0.5, 3.5);
 
     /// The height of the peak at a depth.
-    pub fn peak(depth: f32) -> f32 {
+    pub(super) fn peak(depth: f32) -> f32 {
         MIDDLE + SWING * depth
     }
 }

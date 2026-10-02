@@ -134,23 +134,23 @@ mod layout {
     use crate::GAIN;
 
     /// A place in the stereo field: -1 is the left speaker and 1 the right.
-    pub const WIDEST: f32 = 2.;
-    pub const FLOOR: f32 = 0.08;
-    pub const TOP: f32 = 0.72;
+    pub(super) const WIDEST: f32 = 2.;
+    pub(super) const FLOOR: f32 = 0.08;
+    pub(super) const TOP: f32 = 0.72;
 
-    pub fn across(place: f32) -> f32 {
+    pub(super) fn across(place: f32) -> f32 {
         0.5 + place / (2. * WIDEST)
     }
 
     /// The places of the gain up the display: `position` of a gain is where it is drawn.
-    pub fn gain_axis() -> KnobRange {
+    pub(super) fn gain_axis() -> KnobRange {
         let span = (GAIN.max - GAIN.min) / (TOP - FLOOR);
         let min = GAIN.min - FLOOR * span;
         KnobRange::linear(min, min + span)
     }
 
     /// The places across of the handle: those of the stereo field.
-    pub fn place_axis() -> KnobRange {
+    pub(super) fn place_axis() -> KnobRange {
         KnobRange::linear(-WIDEST, WIDEST)
     }
 }

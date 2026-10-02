@@ -6,17 +6,17 @@ use runtime::OFFLINE;
 use sound_core::{Engine, Project};
 
 /// Frames per bar at 120 bpm in 4/4 and 48 kHz.
-pub const BAR: usize = 96_000;
+pub(crate) const BAR: usize = 96_000;
 
-pub const TRACK: &str =
+pub(crate) const TRACK: &str =
     r#"{"tool": "arrangement.track", "state": {"name": "NAME", "order": ORDER}}"#;
 
-pub fn synth(gain: f32) -> String {
+pub(crate) fn synth(gain: f32) -> String {
     format!(r#"{{"tool": "instrument.synth", "state": {{"gain": {gain:?}}}}}"#)
 }
 
 /// A clip record with (start, length, pitch) notes at velocity 100.
-pub fn clip(start: u64, length: u64, notes: &[(u64, u64, u8)]) -> String {
+pub(crate) fn clip(start: u64, length: u64, notes: &[(u64, u64, u8)]) -> String {
     let notes: Vec<String> = notes
         .iter()
         .map(|(start, length, pitch)| {
@@ -32,7 +32,7 @@ pub fn clip(start: u64, length: u64, notes: &[(u64, u64, u8)]) -> String {
 }
 
 /// A live project on a temporary folder with the offline stereo engine.
-pub struct Harness {
+pub(crate) struct Harness {
     pub project: Project,
     pub engine: Engine,
     /// The plugin host of this project. A render polls it for every buffer, which is what the
@@ -47,11 +47,11 @@ pub struct Harness {
 
 impl Harness {
     /// The default project.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::open(tempfile::tempdir().unwrap())
     }
 
-    pub fn open(folder: tempfile::TempDir) -> Self {
+    pub(crate) fn open(folder: tempfile::TempDir) -> Self {
         let (control, engine) = Engine::new(OFFLINE);
         let (project, plugins) = runtime::open_or_create(folder.path(), control).unwrap();
         Self {
@@ -66,7 +66,7 @@ impl Harness {
     /// A project whose plugin host looks only in `plugins/` inside the project folder, where
     /// the repository's own test plugin is put. No plugin of this machine is used, so these
     /// tests run the same in CI.
-    pub fn with_test_plugin(folder: tempfile::TempDir) -> (Self, Plugins) {
+    pub(crate) fn with_test_plugin(folder: tempfile::TempDir) -> (Self, Plugins) {
         let (control, engine) = Engine::new(OFFLINE);
         let plugins = test_plugin_host(folder.path(), true);
         let project =
@@ -82,7 +82,7 @@ impl Harness {
     }
 
     /// The same folder again, as closing and reopening the project does.
-    pub fn reopen_with_test_plugin(self) -> (Self, Plugins) {
+    pub(crate) fn reopen_with_test_plugin(self) -> (Self, Plugins) {
         let Self {
             project,
             engine,
@@ -93,7 +93,7 @@ impl Harness {
         Self::with_test_plugin(folder)
     }
 
-    pub fn reopen(self) -> Self {
+    pub(crate) fn reopen(self) -> Self {
         let Self {
             project,
             engine,
@@ -106,7 +106,7 @@ impl Harness {
 
     /// The default project plus a piano with a chord per bar over four bars and a pad with
     /// one long note. Both sound all the time, so a disturbance would show.
-    pub fn piece() -> Self {
+    pub(crate) fn piece() -> Self {
         let mut harness = Self::new();
         let chords = [
             (0, 3800, 48),
@@ -126,16 +126,22 @@ impl Harness {
         harness
     }
 
-    pub fn path(&self, relative: &str) -> PathBuf {
+    pub(crate) fn path(&self, relative: &str) -> PathBuf {
         self.project.root().join(relative)
     }
 
-    pub fn write(&self, relative: &str, contents: &str) -> PathBuf {
+    pub(crate) fn write(&self, relative: &str, contents: &str) -> PathBuf {
         write(self.project.root(), relative, contents)
     }
 
     /// Writes a track folder the way an agent would and applies it as one group.
-    pub fn write_track(&mut self, name: &str, order: u32, gain: f32, clips: &[(&str, String)]) {
+    pub(crate) fn write_track(
+        &mut self,
+        name: &str,
+        order: u32,
+        gain: f32,
+        clips: &[(&str, String)],
+    ) {
         let folder = format!("state/arrangement/{name}");
         let track = TRACK
             .replace("NAME", name)
@@ -152,7 +158,7 @@ impl Harness {
     /// Turns the limiter of the master off, for a test whose render goes over full scale on
     /// purpose, such as two test plugins at full level: the limiter would hold it at full
     /// scale, which is its job and not what such a test is about.
-    pub fn bypass_limiter(&mut self) {
+    pub(crate) fn bypass_limiter(&mut self) {
         let record =
             r#"{"tool": "arrangement", "state": {"master": {"limiter": {"bypass": true}}}}"#;
         assert_eq!(
@@ -161,18 +167,18 @@ impl Harness {
         );
     }
 
-    pub fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
+    pub(crate) fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
         let path = self.write(relative, contents);
         self.apply(&[path])
     }
 
-    pub fn apply(&mut self, paths: &[PathBuf]) -> usize {
+    pub(crate) fn apply(&mut self, paths: &[PathBuf]) -> usize {
         self.now += Duration::from_secs(60);
         let changed = self.project.apply_outside_changes_at(paths, self.now);
         changed.unwrap()
     }
 
-    pub fn render(&mut self, frames: usize) -> Vec<f32> {
+    pub(crate) fn render(&mut self, frames: usize) -> Vec<f32> {
         let output =
             runtime::render(&mut self.project, &mut self.engine, &self.plugins, frames).unwrap();
         let status = self.project.engine().poll().unwrap();
@@ -180,7 +186,7 @@ impl Harness {
         output
     }
 
-    pub fn play(&mut self, frames: usize) -> Vec<f32> {
+    pub(crate) fn play(&mut self, frames: usize) -> Vec<f32> {
         self.project.engine().play();
         self.render(frames)
     }
@@ -188,7 +194,7 @@ impl Harness {
     /// Plays from the start of the piece, so two renders of one session can be compared
     /// frame for frame. The plugins are told to release what they hold first, which a stop
     /// and a seek both do.
-    pub fn play_from_the_start(&mut self, frames: usize) -> Vec<f32> {
+    pub(crate) fn play_from_the_start(&mut self, frames: usize) -> Vec<f32> {
         self.project.engine().stop();
         self.project.engine().seek(sound_core::Ticks(0));
         self.render(64);
@@ -200,7 +206,7 @@ impl Harness {
 /// scanner is the real `runtime` executable with its scan argument, so the child process of a
 /// scan is the one the application uses. No plugin of this machine is ever listed, and the
 /// cache of this machine is never read or written.
-pub fn test_plugin_host(root: &Path, writes_state: bool) -> Plugins {
+pub(crate) fn test_plugin_host(root: &Path, writes_state: bool) -> Plugins {
     let folder = root.join("plugins");
     test_clap_plugin::install_into(&folder);
     test_vst3_plugin::install_into(&folder);
@@ -217,7 +223,7 @@ pub fn test_plugin_host(root: &Path, writes_state: bool) -> Plugins {
 
 /// The same folder of test plugins, with the host `--inspect` opens: it says which plugins are
 /// there and loads none of them.
-pub fn test_plugin_host_that_only_lists(root: &Path) -> Plugins {
+pub(crate) fn test_plugin_host_that_only_lists(root: &Path) -> Plugins {
     let folder = root.join("plugins");
     test_clap_plugin::install_into(&folder);
     test_vst3_plugin::install_into(&folder);
@@ -229,13 +235,13 @@ pub fn test_plugin_host_that_only_lists(root: &Path) -> Plugins {
 }
 
 /// The record of a CLAP plugin instrument that names the repository's test plugin.
-pub fn test_plugin(state_asset: &str) -> String {
+pub(crate) fn test_plugin(state_asset: &str) -> String {
     test_plugin_of(PluginFormat::Clap, state_asset)
 }
 
 /// The same for either format. Both test plugins are the same instrument, so a project can
 /// hold one of each and a test can compare what they play.
-pub fn test_plugin_of(format: PluginFormat, state_asset: &str) -> String {
+pub(crate) fn test_plugin_of(format: PluginFormat, state_asset: &str) -> String {
     let plugin_id = match format {
         PluginFormat::Clap => test_clap_plugin::PLUGIN_ID,
         PluginFormat::Vst3 => test_vst3_plugin::PLUGIN_ID,
@@ -252,7 +258,7 @@ pub fn test_plugin_of(format: PluginFormat, state_asset: &str) -> String {
 /// A CLAP asset is the plugin's own bytes. A VST 3 asset is the container the host writes,
 /// because VST 3 keeps two states: `SVT3`, the component's state with its length, then the
 /// controller's.
-pub fn plugin_state(format: PluginFormat, offset: i32) -> Vec<u8> {
+pub(crate) fn plugin_state(format: PluginFormat, offset: i32) -> Vec<u8> {
     let state = test_plugin_support::SavedState {
         offset,
         ..Default::default()
@@ -261,7 +267,10 @@ pub fn plugin_state(format: PluginFormat, offset: i32) -> Vec<u8> {
 }
 
 /// A state asset of the test plugin that holds `state`, in the form of each format.
-pub fn plugin_state_of(format: PluginFormat, state: test_plugin_support::SavedState) -> Vec<u8> {
+pub(crate) fn plugin_state_of(
+    format: PluginFormat,
+    state: test_plugin_support::SavedState,
+) -> Vec<u8> {
     let own = test_plugin_support::save_state(state);
     match format {
         PluginFormat::Clap => own,
@@ -276,7 +285,7 @@ pub fn plugin_state_of(format: PluginFormat, state: test_plugin_support::SavedSt
 }
 
 /// What the effect half of the test plugin saved in an asset, in hundredths.
-pub fn saved_offset(format: PluginFormat, bytes: &[u8]) -> i32 {
+pub(crate) fn saved_offset(format: PluginFormat, bytes: &[u8]) -> i32 {
     let own = match format {
         PluginFormat::Clap => bytes,
         PluginFormat::Vst3 => {
@@ -290,7 +299,7 @@ pub fn saved_offset(format: PluginFormat, bytes: &[u8]) -> i32 {
         .offset
 }
 
-pub fn write(root: &Path, relative: &str, contents: &str) -> PathBuf {
+pub(crate) fn write(root: &Path, relative: &str, contents: &str) -> PathBuf {
     let path = root.join(relative);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, contents).unwrap();
@@ -298,7 +307,7 @@ pub fn write(root: &Path, relative: &str, contents: &str) -> PathBuf {
 }
 
 /// A mono float WAV of `seconds` of these samples at `rate`, in `assets/audio/`.
-pub fn write_samples(
+pub(crate) fn write_samples(
     harness: &Harness,
     name: &str,
     rate: u32,
@@ -323,7 +332,7 @@ pub fn write_samples(
 }
 
 /// The first and the last frame on which two renders differ.
-pub fn difference(a: &[f32], b: &[f32]) -> Option<(usize, usize)> {
+pub(crate) fn difference(a: &[f32], b: &[f32]) -> Option<(usize, usize)> {
     assert_eq!(a.len(), b.len());
     let differs = |(a, b): (&[f32], &[f32])| a != b;
     let mut frames = a.chunks(2).zip(b.chunks(2));
