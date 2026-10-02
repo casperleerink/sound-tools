@@ -7,6 +7,7 @@
 //!   owned `output` child, a `test.amplifier`, and on to the device with no `project.json`
 //!   connection. This is the shape of a track with clips and an instrument.
 //! - `test.chain`: two gains in a row, connected by its behaviour.
+//! - `test.reporter`: data only, with a derive that reports problems.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,9 +15,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    AgentDoc, AudioInput, AudioOutput, BehaviourContext, BehaviourError, Engine, EngineConfig,
-    InputEndpoint, InstanceId, OutputEndpoint, Place, Ports, PrepareConfig, ProcessContext,
-    Processor, Project, ProjectError, Registry, State,
+    AgentDoc, AudioInput, AudioOutput, BehaviourContext, BehaviourError, Derived, Engine,
+    EngineConfig, InputEndpoint, InstanceId, OutputEndpoint, Place, Ports, PrepareConfig,
+    ProcessContext, Processor, Project, ProjectError, Registry, State, Was,
 };
 
 pub const EXTENSION: &str = "test";
@@ -167,6 +168,33 @@ fn apply_chain(_: &Chain, context: &mut BehaviourContext<'_>) -> Result<(), Beha
     Ok(())
 }
 
+/// Its derive reports its message as a problem. The message "fail" also derives an invalid
+/// record, so the whole group fails.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Reporter {
+    pub message: String,
+}
+
+impl State for Reporter {
+    const TOOL: &'static str = "test.reporter";
+}
+
+fn derive_reporter(
+    project: &Project,
+    reporter: &sound_core::Instance<Reporter>,
+    _: Was<'_, Reporter>,
+    derived: &mut Derived,
+) {
+    let Some(state) = project.state(reporter) else {
+        return;
+    };
+    derived.problem(state.message.clone());
+    if state.message == "fail" {
+        derived.changes().create(id("dc"), Dc { value: 5.0 });
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bank {
@@ -254,6 +282,10 @@ pub fn registry() -> Registry {
         .tool::<Chain>(EXTENSION)
         .unwrap()
         .behaviour(apply_chain);
+    registry
+        .tool::<Reporter>(EXTENSION)
+        .unwrap()
+        .derive(derive_reporter);
     registry
         .tool::<Bank>(EXTENSION)
         .unwrap()

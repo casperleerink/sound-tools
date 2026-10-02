@@ -500,6 +500,7 @@ impl Project {
             .iter()
             .any(|change| matches!(change, Change::ProjectFile(_)));
         let project_file_before = self.project_file.clone();
+        let derive_problems_before = self.derive_problems.clone();
         let problems_before = self.bindings.connection_problems().to_vec();
         // What behaviours said last time, so that `problems.txt` and the views follow a
         // behaviour that starts or stops reporting. Empty in a project with nothing to report.
@@ -526,6 +527,7 @@ impl Project {
                 };
             }
             self.project_file = project_file_before;
+            self.derive_problems = derive_problems_before;
             return Err(error);
         }
 

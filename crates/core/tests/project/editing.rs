@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use sound_core::{Changes, PortReference, ProjectError, ProjectEvent, SavedConnection};
 
-use crate::tools::{Amplifier, BANK_OUTPUT, Bank, Dc, Harness, Level, dc_record, id};
+use crate::tools::{Amplifier, BANK_OUTPUT, Bank, Dc, Harness, Level, Reporter, dc_record, id};
 
 fn connected_dc(harness: &mut Harness, name: &str, value: f32) -> sound_core::Instance<Dc> {
     let mut changes = Changes::new();
@@ -580,4 +580,32 @@ fn a_project_with_one_time_signature_is_written_with_the_list() {
         "{written}"
     );
     assert!(!written.contains(r#""time_signature":"#), "{written}");
+}
+
+#[test]
+fn a_failed_group_keeps_what_derives_reported_before() {
+    let mut harness = Harness::new();
+    let messages = |harness: &Harness| -> Vec<String> {
+        let problems = harness.project.problems().into_iter();
+        problems.map(|problem| problem.message).collect()
+    };
+    let mut changes = Changes::new();
+    let first = Reporter {
+        message: "first".to_string(),
+    };
+    let reporter = changes.create(id("reporter"), first);
+    harness.project.commit("Add reporter", changes).unwrap();
+    assert_eq!(messages(&harness), ["first"]);
+
+    let mut changes = Changes::new();
+    let fail = Reporter {
+        message: "fail".to_string(),
+    };
+    changes.set(&reporter, fail);
+    let error = harness.project.commit("Fail", changes).unwrap_err();
+    assert!(
+        matches!(error, ProjectError::InvalidState { .. }),
+        "{error}"
+    );
+    assert_eq!(messages(&harness), ["first"]);
 }
