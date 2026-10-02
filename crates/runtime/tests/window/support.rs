@@ -2,7 +2,7 @@
 //! and releases at the place of a tick, a track or a pitch, and the keys.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
@@ -234,12 +234,17 @@ pub struct SimulatedInput {
     written: Arc<AtomicU64>,
     /// Times the window opened it.
     pub openings: Arc<AtomicU32>,
+    /// Whether opening it fails, as a device that is in use or not allowed.
+    pub fails: Arc<AtomicBool>,
 }
 
 impl SimulatedInput {
     pub fn opener(&self) -> OpenInput {
         let input = self.clone();
         Arc::new(move || {
+            if input.fails.load(Ordering::Relaxed) {
+                return Err(sound_core::DeviceError::NoInputDevice);
+            }
             let (writer, reader) = sound_core::capture(48_000, 2);
             *input.writer.lock().unwrap() = Some(writer);
             input.written.store(0, Ordering::Relaxed);

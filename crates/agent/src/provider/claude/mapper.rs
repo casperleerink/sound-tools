@@ -533,8 +533,10 @@ fn relative(path: &str, folder: &Path) -> String {
 
 /// The first line, cut to fit one line of the sidebar.
 fn shorten(text: &str) -> String {
-    let line = text.lines().next().unwrap_or_default().trim();
-    let more = text.trim().lines().nth(1).is_some();
+    // Trimmed first, so a command that starts with a blank line is not shown empty.
+    let mut lines = text.trim().lines();
+    let line = lines.next().unwrap_or_default().trim();
+    let more = lines.next().is_some();
     if line.chars().count() <= TITLE_DETAIL_CHARACTERS && !more {
         return line.to_string();
     }
@@ -550,5 +552,16 @@ fn code(text: &str) -> String {
         text.to_string()
     } else {
         format!("`{text}`")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shorten;
+
+    #[test]
+    fn a_command_that_starts_with_a_blank_line_shows_its_first_line() {
+        assert_eq!(shorten("\n  cargo build\n"), "cargo build");
+        assert_eq!(shorten("\ncargo build\ncargo test"), "cargo build…");
     }
 }
