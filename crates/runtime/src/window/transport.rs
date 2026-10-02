@@ -626,8 +626,13 @@ impl TransportPill {
                     recording.retain_armed(|_| false, cx);
                     recording.set_takes(Vec::new(), cx);
                 });
-                if let Some(take) = &mut self.take {
+                let ended = self.take.as_mut().is_some_and(|take| {
                     take.audio = None;
+                    take.ended.is_some()
+                });
+                // A take that ended while the input opened waited for audio that never comes.
+                if ended {
+                    self.make_clips(Vec::new(), cx);
                 }
             }
         }
