@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtsan_standalone::nonblocking;
 
-use crate::device::{DeviceError, monotonic_nanos};
+use crate::device::{DeviceError, monotonic_nanos, nanos_of};
+use crate::peaks::{keep_largest, loudest, take};
 
 /// How much input the ring holds for a reader that fell behind. A reader that is late by more
 /// than this loses frames, which [`CaptureReader::lost_frames`] counts and reads as silence.
@@ -125,13 +126,6 @@ struct Shared {
     levels: Box<[AtomicU32]>,
 }
 
-impl Shared {
-    fn nanos_of(&self, frames: u64) -> u64 {
-        let nanos = u128::from(frames) * 1_000_000_000 / u128::from(self.sample_rate.max(1));
-        u64::try_from(nanos).unwrap_or(u64::MAX)
-    }
-}
-
 /// A ring from the thread that captures to the one that records, and a handle for whoever
 /// shows the level. A device makes one in [`InputDevice::start`]; a test makes one here and
 /// writes into it what a device would have captured.
@@ -195,12 +189,10 @@ impl CaptureWriter {
         let whole = samples.len() - samples.len() % channels;
         let samples = samples.get(..whole).unwrap_or_default();
         for (channel, level) in self.shared.levels.iter().enumerate() {
-            let channel_samples = samples.iter().skip(channel).step_by(channels);
-            let peak = channel_samples.fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
-            // Not a number is no level, and -0.0 would sort above every level.
-            if peak > 0.0 {
-                level.fetch_max(peak.to_bits(), Ordering::Relaxed);
-            }
+            keep_largest(
+                level,
+                loudest(samples.iter().skip(channel).step_by(channels)),
+            );
         }
         let frames = (whole / channels) as u64;
         let room = self.producer.slots() >= samples.len();
@@ -224,7 +216,7 @@ impl CaptureWriter {
         if self.producer.push_entire_slice(samples).is_err() {
             return;
         }
-        let zero = capture_nanos.saturating_sub(self.shared.nanos_of(self.position));
+        let zero = capture_nanos.saturating_sub(nanos_of(self.position, self.shared.sample_rate));
         self.shared.frame_zero_nanos.store(zero, Ordering::Relaxed);
         self.position += frames;
         self.shared.written.store(self.position, Ordering::Relaxed);
@@ -303,7 +295,7 @@ impl CaptureReader {
             return None;
         }
         let zero = self.shared.frame_zero_nanos.load(Ordering::Relaxed);
-        Some(zero.saturating_add(self.shared.nanos_of(frame)))
+        Some(zero.saturating_add(nanos_of(frame, self.shared.sample_rate)))
     }
 
     /// Frames the ring had no room for, because this reader fell behind. They are read as
@@ -336,10 +328,7 @@ impl CaptureStatus {
     /// The loudest sample of each channel since the last take, and zero from now on. One
     /// reader: a take empties them.
     pub fn take_levels(&self) -> Vec<f32> {
-        let levels = self.0.levels.iter();
-        levels
-            .map(|level| f32::from_bits(level.swap(0, Ordering::Relaxed)))
-            .collect()
+        self.0.levels.iter().map(take).collect()
     }
 
     /// The input went away: the device was unplugged or stopped, or the writer was dropped.
