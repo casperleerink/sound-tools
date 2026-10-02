@@ -278,7 +278,7 @@ impl Scene {
 
 #[derive(Clone)]
 /// One selected clip during a move: where it is now, the id it had at mouse down, the row of
-/// its track then, and its start. When the live clip is not what the drag wrote, something else
+/// its track then, and where it was. When the live clip is not what the drag wrote, something else
 /// changed it: an undo between mouse down and the first move, or an agent.
 struct MovedClip {
     /// The clip now. Its id changes when the drag takes it to another track.
@@ -289,7 +289,9 @@ struct MovedClip {
     /// The kind of track it goes on, which is the kind it is.
     kind: TrackKind,
     row: usize,
-    start: Ticks,
+    /// From its start to its end before the move. The length of an audio clip in ticks depends
+    /// on the tempo where it is, so it is measured there and not where the drag has it now.
+    range: Range<Ticks>,
     written: Ticks,
 }
 
@@ -2231,7 +2233,7 @@ impl Timeline {
                 home: id,
                 kind: clip.kind(),
                 row,
-                start: clip.start(),
+                range: range_of(project, &clip),
                 written: clip.start(),
             });
         }
@@ -2598,18 +2600,20 @@ impl Timeline {
         // have moved a clip.
         if !drag.begun {
             for (moved, live) in clips.iter_mut().zip(&lives) {
-                if live.start() != moved.written {
-                    (moved.start, moved.written) = (live.start(), live.start());
-                }
+                (moved.range, moved.written) = (range_of(project, live), live.start());
             }
             *tracks = track_states(project, self.arrangement.id());
         }
         let viewport = self.painted.get();
-        let earliest = clips.iter().map(|moved| moved.start.0).min().unwrap_or(0);
+        let earliest = clips
+            .iter()
+            .map(|moved| moved.range.start.0)
+            .min()
+            .unwrap_or(0);
         // The clip under the pointer lands on the grid, and the others move with it.
         let anchor = clips
             .get(index)
-            .map_or(Ticks(earliest), |moved| moved.start);
+            .map_or(Ticks(earliest), |moved| moved.range.start);
         let delta = grid.delta(anchor, drag.grab, viewport.tick_at(x));
         let delta = delta.max(-(earliest as i64));
         let rows = self.order.len();
@@ -2633,18 +2637,17 @@ impl Timeline {
                 self.drag = Some(drag);
                 return;
             };
-            let length = live.end(project).saturating_sub(live.start());
-            let next = live.with_start(shifted(moved.start, delta));
+            let next = live.with_start(shifted(moved.range.start, delta));
             steps.push(LaneMove {
                 from,
-                range: moved.start..moved.start + length,
+                range: moved.range.clone(),
                 to: to.id().clone(),
                 start: next.start(),
             });
             moves.push(ClipMove {
                 clip: moved.clip.clone(),
                 home: moved.home.clone(),
-                was: moved.start..moved.start + length,
+                was: moved.range.clone(),
                 to,
                 next,
             });
@@ -3611,7 +3614,7 @@ impl Timeline {
                 clip: clip.clone(),
                 kind: next.kind(),
                 row,
-                start: next.start(),
+                range: range_of(project, &next),
                 written: next.start(),
             };
             clips.push((moved, next));
@@ -3633,7 +3636,7 @@ impl Timeline {
             moves.push(ClipMove {
                 clip: moved.clip,
                 home: moved.home,
-                was: range_of(project, &next),
+                was: moved.range,
                 to,
                 next,
             });
