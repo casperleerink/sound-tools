@@ -26,9 +26,10 @@ use crate::processor::{
     Control, EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours,
 };
 
-/// How many parameters one block may carry, in each direction. The pedal, the wheels and the
-/// key pressure are the only ones this host sends; a plugin that reports more than this while it plays loses the rest until the
-/// next block, which the composer hears as nothing at all.
+/// How many parameters one block may carry, in each direction. Going in, they are the pedal,
+/// the wheels, the key pressure and the composer's edits in the plugin's own window; an edit
+/// that does not fit waits for the next block. Coming out, a plugin that reports more than
+/// this while it plays loses the rest until the next block.
 const PARAMETER_CAPACITY: usize = 64;
 
 /// How many points one parameter may have in one block.

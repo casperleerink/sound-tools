@@ -119,9 +119,11 @@ impl HostGuiImpl for SharedCallbacks {
 }
 
 pub struct MainThreadCallbacks<'a> {
-    /// The plugin may call `mark_dirty` while it initializes, before the table knows it.
-    /// The lifetime ties this handler to the shared one of the same instance.
+    /// Only here for its lifetime, which ties this handler to the shared one of the same
+    /// instance.
     _shared: &'a SharedCallbacks,
+    /// Set by `mark_dirty`, which the plugin may call while it initializes, before the table
+    /// knows it.
     state_is_dirty: Cell<bool>,
 }
 

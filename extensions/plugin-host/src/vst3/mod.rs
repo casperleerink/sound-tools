@@ -11,8 +11,8 @@
 //!   context, and it owns the buses and the state. Main thread.
 //! - `IAudioProcessor` is the same object asked for another interface. `setProcessing` and
 //!   `process` belong to the thread that processes; `setupProcessing` and `setActive` belong to
-//!   the main thread while nothing is processing. Same rule as CLAP, so the host that step 4a
-//!   built holds for both.
+//!   the main thread while nothing is processing. Same rule as CLAP, so the one host in
+//!   `host.rs` holds both.
 //! - `IEditController` is the interface side. It may be the same object or a second one, and
 //!   the two are joined by `IConnectionPoint`. It is what knows the MIDI mapping, which is how
 //!   the sustain pedal and the wheels reach a VST 3 plugin, and it is what makes the plugin's
