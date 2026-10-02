@@ -59,6 +59,14 @@ pub fn shifted(tick: Ticks, delta: i64) -> Ticks {
     Ticks(tick.0.saturating_add_signed(delta))
 }
 
+/// Two values, the smaller first.
+pub fn ordered<T: PartialOrd>(a: T, b: T) -> (T, T) {
+    match a <= b {
+        true => (a, b),
+        false => (b, a),
+    }
+}
+
 /// What a height in a track row is.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Part {

@@ -1,6 +1,7 @@
 //! What a clip takes along of the automation of its track when it moves, is cut or is copied:
-//! the line of each lane under it, from its start to its end. Pure, apart from the two last
-//! functions: the timeline writes what these give, and a drag can draw it before the drop.
+//! the line of each lane under it, from its start to its end. Pure, apart from [`travel_in`]
+//! and [`write`], which read the project: the timeline writes what these give, and a drag can
+//! draw it before the drop.
 //!
 //! A clip takes a lane only when the lane has a point inside the clip. Over a stretch with no
 //! points the lane is not the clip's, so a move never puts a held value into a line elsewhere.
@@ -76,11 +77,6 @@ impl Carried {
             range: range.clone(),
             lanes: lanes.collect(),
         }
-    }
-
-    /// The lanes, with ticks from the start of the clip.
-    pub fn lanes(&self) -> &[AutomationLane] {
-        &self.lanes
     }
 
     /// The track the clip was on.
@@ -640,7 +636,7 @@ mod tests {
         let sweep = lane(Some("dark"), "cutoff_hz", &[(0, 100.), (2 * BAR, 400.)]);
         let tracks = track(vec![sweep]);
         let carried = Carried::under(&id("a/one"), &tracks, Ticks(BAR)..Ticks(3 * BAR), &travel);
-        let [carried] = carried.lanes() else {
+        let [carried] = &carried.lanes[..] else {
             panic!("one lane");
         };
         let (start, point) = (carried.points[0], carried.points[1]);
@@ -868,10 +864,7 @@ mod tests {
             [BAR, 2 * BAR, 2 * BAR + BAR / 2, 3 * BAR - 1, 3 * BAR]
         );
         for tick in [0, BAR / 4, BAR / 2, BAR - 1] {
-            let (now, carried) = (
-                line(placed, 2 * BAR + tick),
-                line(&carried.lanes()[0], tick),
-            );
+            let (now, carried) = (line(placed, 2 * BAR + tick), line(&carried.lanes[0], tick));
             assert!(
                 (now - carried).abs() < 1e-3,
                 "at {tick}: {now} for {carried}"

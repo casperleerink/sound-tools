@@ -45,15 +45,16 @@ use super::clips::{
     gain_moved, shown_end, time_label, trimmed_left, trimmed_right,
 };
 use super::gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
-use super::lanes::{DRAG_THRESHOLD, LaneEdit, Stroke};
+use super::lanes::{DRAG_THRESHOLD, erase_range};
 use super::layout::{
     ADD_LANE_HEIGHT, ADD_ROW_HEIGHT, DOT_LEFT, Extent, HEADER_INSET, HEADER_WIDTH, LANE_HEIGHT,
     LANES_MIDDLE, NAME_LEFT, NAME_MIDDLE, Part, RULER_HEIGHT, Rect, Rows, RulerBar, TRACK_HEIGHT,
-    Viewport, shifted,
+    Viewport, ordered, shifted,
 };
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
 };
+use super::plural;
 use super::selection::Selection;
 use super::snap::{Grid, SharedSnap, Snap};
 use super::track_lanes::{self, LANE_BOX};
@@ -470,8 +471,9 @@ struct LaneDrag {
 }
 
 enum LaneDragKind {
-    /// An alt-drag erases the points it covers. In project ticks: the lane counts from tick 0.
-    Erase(Stroke),
+    /// An alt-drag erases the points between the tick of the press and the pointer, once it has
+    /// gone a few pixels. In project ticks: the lane counts from tick 0.
+    Erase { from: Ticks, moving: bool },
     /// A point moves, by its place in `origin`, on the travel of `range`. `press` is where the
     /// press was: the tick under it, so a scroll during the drag keeps the point under the
     /// pointer, and its height in the lane. It waits until the pointer has gone a few pixels,
@@ -759,14 +761,6 @@ fn wrong_track(track: &InstanceId, name: &str, kind: TrackKind) -> ProjectError 
     ProjectError::WrongPlace {
         id,
         message: message.to_string(),
-    }
-}
-
-/// The undo label for one thing or several.
-fn plural(count: usize, one: &'static str, several: &'static str) -> &'static str {
-    match count {
-        1 => one,
-        _ => several,
     }
 }
 
@@ -1773,10 +1767,14 @@ impl Timeline {
                 key.as_ref()
                     .is_some_and(|key| key.is_in(track, lane) && key.tick == tick)
             };
-            let shown = lane
+            // A lane may have many points and the timeline shows a few bars of it.
+            let from = lane
                 .points
-                .iter()
-                .filter(|point| visible.contains(&point.tick));
+                .partition_point(|point| point.tick < visible.start);
+            let to = lane
+                .points
+                .partition_point(|point| point.tick < visible.end);
+            let shown = lane.points.get(from..to).unwrap_or_default().iter();
             let points = range.map(|range| {
                 let points = shown.map(|point| {
                     let (x, y) = track_lanes::place(viewport, range, point);
@@ -3071,7 +3069,7 @@ impl Timeline {
         }
         if let Some(drag) = &self.lane_drag {
             return Some(match drag.kind {
-                LaneDragKind::Erase(_) => CursorStyle::Crosshair,
+                LaneDragKind::Erase { .. } => CursorStyle::Crosshair,
                 LaneDragKind::Point { .. } => CursorStyle::PointingHand,
             });
         }
@@ -3962,10 +3960,12 @@ impl Timeline {
         let range = match (event.modifiers.alt, range) {
             (false, Some(range)) => range,
             (true, _) => {
-                let everywhere = Ticks(0)..Ticks(u64::MAX);
-                let stroke = Stroke::new(true, Ticks(0), everywhere, &viewport, (x, in_lane));
+                let kind = LaneDragKind::Erase {
+                    from: viewport.tick_at(x),
+                    moving: false,
+                };
                 self.select_point(None, cx);
-                self.lane_drag = Some(drag(origin, LaneDragKind::Erase(stroke), ERASE_LABEL));
+                self.lane_drag = Some(drag(origin, kind, ERASE_LABEL));
                 return;
             }
             (false, None) => return,
@@ -4023,15 +4023,13 @@ impl Timeline {
             }
         }
         let next = match &mut drag.kind {
-            LaneDragKind::Erase(stroke) => {
-                if !stroke.moved(&viewport, &grid, (x, in_lane)) {
+            LaneDragKind::Erase { from, moving } => {
+                if !*moving && (x - viewport.x_of(*from)).abs() < DRAG_THRESHOLD {
                     self.lane_drag = Some(drag);
                     return;
                 }
-                let LaneEdit::Erase(ticks) = stroke.edit() else {
-                    self.lane_drag = Some(drag);
-                    return;
-                };
+                *moving = true;
+                let ticks = erase_range(&grid, *from, viewport.tick_at(x));
                 track_lanes::erased(&drag.origin, &ticks)
             }
             LaneDragKind::Point {
@@ -4261,14 +4259,6 @@ fn live_shape(
         label: None,
         missing: None,
         handles: false,
-    }
-}
-
-/// Two values, the smaller first.
-fn ordered<T: PartialOrd>(a: T, b: T) -> (T, T) {
-    match a <= b {
-        true => (a, b),
-        false => (b, a),
     }
 }
 

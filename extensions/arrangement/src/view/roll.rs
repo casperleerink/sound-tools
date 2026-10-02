@@ -297,7 +297,7 @@ pub fn resized_note(clip_length: Length, origin: Note, delta: i64, unit: Ticks) 
     }
     let room = clip_length.ticks().0.saturating_sub(origin.start.0);
     let length = shifted(origin.length.ticks(), delta).0;
-    let length = length.max(shortest(origin.length, unit)).min(room);
+    let length = length.max(shortest(origin.length.ticks(), unit)).min(room);
     Note {
         length: Length::at_least_one(Ticks(length)),
         ..origin

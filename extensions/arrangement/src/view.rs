@@ -67,6 +67,14 @@ pub use track_panel::TrackPanel;
 use track_panel::TrackPanelEvent;
 
 /// Registers the view of the `arrangement` tool. Its add track button calls `add_track`.
+/// The undo label for one thing or several.
+fn plural(count: usize, one: &'static str, several: &'static str) -> &'static str {
+    match count {
+        1 => one,
+        _ => several,
+    }
+}
+
 pub fn register(views: &mut Views, add_track: AddTrack) {
     views.register(move |session, arrangement, window, cx| {
         ArrangementView::new(session, arrangement, add_track, window, cx)

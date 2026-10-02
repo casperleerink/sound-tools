@@ -29,11 +29,12 @@ use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 
 use super::clipboard::{Copied, CopiedNotes, SharedClipboard};
 use super::gesture::Zone;
-use super::lanes::{Lane, LaneEdit, Shown, Stroke};
-use super::layout::{HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rect, RulerBar, Viewport};
+use super::lanes::{Lane, LaneEdit, Shown, Stroke, height_at};
+use super::layout::{HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rect, RulerBar, Viewport, ordered};
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
 };
+use super::plural;
 use super::roll::{
     DRAWN_VELOCITY, KEY_HEIGHT, KEYS_WIDTH, ROLL_HEIGHT, VELOCITY_HEIGHT, clamped, drawn_note,
     is_black_key, key_label, moved_notes, moved_velocity, nearest_pitch, note_at, note_rect,
@@ -1398,32 +1399,16 @@ fn drawn_velocities(
     to: (f32, f32),
 ) -> Vec<(usize, Note, Note)> {
     let passed = velocity_bars_between(viewport, clip, from.0, to.0);
-    let height_at = |x: f32| match to.0 - from.0 {
-        across if across.abs() < f32::EPSILON => to.1,
-        across => from.1 + (to.1 - from.1) * ((x - from.0) / across).clamp(0.0, 1.0),
-    };
     passed
         .into_iter()
         .filter_map(|index| {
             let note = *clip.notes.get(index)?;
             let bar = velocity_bar(viewport, clip, &note);
-            let velocity = velocity_at(height_at(bar.x));
+            let velocity = velocity_at(height_at(from, to, bar.x));
             let next = Note { velocity, ..note };
             (next != note).then_some((index, note, next))
         })
         .collect()
-}
-
-/// The undo label for one note or several.
-fn plural(count: usize, one: &'static str, several: &'static str) -> &'static str {
-    match count {
-        1 => one,
-        _ => several,
-    }
-}
-
-fn ordered<T: PartialOrd>(a: T, b: T) -> (T, T) {
-    if a <= b { (a, b) } else { (b, a) }
 }
 
 /// What one paint of the editor shows, in the coordinates of [`super::roll`].
