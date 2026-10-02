@@ -32,8 +32,8 @@ use crate::mixer::{Mix, Mixer};
 pub type Travel<'a> = dyn Fn(&InstanceId, &str) -> Option<AutomatedNumber> + 'a;
 
 /// How far from the straight line through its neighbours, on the travel, a point may be and
-/// still be left out: far under what a knob shows. Also how a drawn line is thinned.
-pub(crate) const ON_THE_LINE: f32 = 1e-4;
+/// still be left out: far under what a knob shows.
+const ON_THE_LINE: f32 = 1e-4;
 
 /// The automation one clip takes along: the line of each lane of its track under it, with
 /// ticks from the start of the clip. Each lane has a point at the start and at the last tick of

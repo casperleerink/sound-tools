@@ -1,18 +1,18 @@
 //! The automation lanes under a track in the timeline: one per automated number, with its name
-//! and its line in the track colour, on the travel of the knob of the number, as it plays. They
-//! are drawn, erased and cleared as the expression lanes of the note editor are, with a
-//! [`super::lanes::Stroke`] into a [`LaneBox`], in project ticks. Pure math, no GPUI and no
-//! project.
+//! and its line in the track colour, on the travel of the knob of the number, as it plays. Each
+//! point shows as a dot: a press on one selects it and a drag moves it, a press anywhere else in
+//! the lane adds one there. An alt-drag erases points as in the expression lanes of the note
+//! editor, with a [`super::lanes::Stroke`]. Pure math, no GPUI and no project.
 
 use std::iter::once;
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 
 use sound_core::{Ticks, ValueRange};
-use sound_notes::{thinned_within, value_at};
+use sound_notes::{Point, value_at};
 
-use super::lanes::{LaneBox, LaneEdit};
+use super::lanes::LaneBox;
 use super::layout::{LANE_HEIGHT, Viewport};
-use crate::automation::{ON_THE_LINE, positions};
+use crate::automation::positions;
 use crate::{AutomationLane, AutomationValue};
 
 /// The air above the top of the travel and under its bottom, in a lane.
@@ -22,6 +22,8 @@ pub const LANE_BOX: LaneBox = LaneBox {
     top: LANE_AIR,
     bottom: LANE_HEIGHT - LANE_AIR,
 };
+/// How far from the middle of the dot of a point a press still takes it, in pixels.
+pub const POINT_REACH: f32 = 6.0;
 /// The ends of fields that say the unit of a number, which its knob shows instead.
 const UNITS: [&str; 7] = [
     "_hz",
@@ -61,45 +63,98 @@ pub fn line(
         .collect()
 }
 
-/// `origin`, a lane as it was at mouse down, changed by `edit`, in project ticks. A drawn
-/// height becomes the value of the knob there, in the range of the number, so a value is
-/// never outside it, and the line drawn is thinned on the travel. A number the project does
-/// not know, `range` `None`, is not drawn in. `None` when no point is left: the lane is gone,
-/// and the number plays its record again.
-pub fn edited(
-    origin: &AutomationLane,
-    range: Option<ValueRange>,
-    edit: &LaneEdit,
-) -> Option<AutomationLane> {
-    let points = match (edit, range) {
-        (LaneEdit::Draw(_), None) => origin.points.clone(),
-        (_, range) => {
-            let value_at = |y: f32| {
-                let value = range.map(|range| range.value(LANE_BOX.share_at(y)));
-                AutomationValue(value.unwrap_or_default())
-            };
-            let place = |value: AutomationValue| {
-                let place = range.map(|range| range.position(value.0));
-                f64::from(place.unwrap_or_default())
-            };
-            let thin = |line: &[_]| thinned_within(line, f64::from(ON_THE_LINE), place);
-            edit.applied(&origin.points, value_at, thin)
-        }
-    };
+/// `origin` without the points in `ticks`, as an alt-drag erases them. `None` when no point is
+/// left: the lane is gone, and the number plays its record again.
+pub fn erased(origin: &AutomationLane, ticks: &RangeInclusive<Ticks>) -> Option<AutomationLane> {
+    let kept = origin
+        .points
+        .iter()
+        .filter(|point| !ticks.contains(&point.tick));
     let lane = AutomationLane {
-        points,
+        points: kept.copied().collect(),
         ..origin.clone()
     };
     (!lane.points.is_empty()).then_some(lane)
 }
 
-/// The undo label of an edit of a lane.
-pub fn label(edit: &LaneEdit) -> &'static str {
-    match edit {
-        LaneEdit::Draw(_) => "Draw automation",
-        LaneEdit::Erase(_) => "Erase automation",
-        LaneEdit::Clear => "Clear automation",
+/// The point of `lane` of a number of `range` whose dot is under `(x, y)` in the lane, the
+/// nearest when dots overlap.
+pub fn point_at(
+    viewport: &Viewport,
+    lane: &AutomationLane,
+    range: ValueRange,
+    (x, y): (f32, f32),
+) -> Option<usize> {
+    let (from, to) = (
+        viewport.tick_at(x - POINT_REACH),
+        viewport.tick_at(x + POINT_REACH),
+    );
+    let first = lane.points.partition_point(|point| point.tick < from);
+    let near = lane.points[first..]
+        .iter()
+        .take_while(|point| point.tick <= to);
+    let distances = near.enumerate().map(|(offset, point)| {
+        let (px, py) = place(viewport, range, point);
+        (first + offset, (px - x).hypot(py - y))
+    });
+    let reached = distances.filter(|(_, distance)| *distance <= POINT_REACH);
+    reached
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(index, _)| index)
+}
+
+/// Where the dot of a point is in its lane.
+pub fn place(viewport: &Viewport, range: ValueRange, point: &Point<AutomationValue>) -> (f32, f32) {
+    let y = LANE_BOX.y_of(range.position(point.value.0));
+    (viewport.x_of(point.tick), y)
+}
+
+/// `origin` with a point at `tick`, where a press on no point adds one, and where it is. One
+/// that was at that tick takes the value.
+pub fn with_point(
+    origin: &AutomationLane,
+    tick: Ticks,
+    value: AutomationValue,
+) -> (AutomationLane, usize) {
+    let mut lane = origin.clone();
+    let at = lane.points.partition_point(|point| point.tick < tick);
+    let added = Point { tick, value };
+    match lane.points.get(at) {
+        Some(point) if point.tick == tick => lane.points[at] = added,
+        _ => lane.points.insert(at, added),
     }
+    (lane, at)
+}
+
+/// `origin` with its point at `index` moved to `tick` and `value`. It stays between its
+/// neighbours: a point does not pass another, so the order of the line is the order of the
+/// drag.
+pub fn moved_point(
+    origin: &AutomationLane,
+    index: usize,
+    tick: Ticks,
+    value: AutomationValue,
+) -> AutomationLane {
+    let mut lane = origin.clone();
+    let earliest = index
+        .checked_sub(1)
+        .map_or(Ticks(0), |before| Ticks(lane.points[before].tick.0 + 1));
+    let latest = lane.points.get(index + 1).map_or(Ticks(u64::MAX), |after| {
+        Ticks(after.tick.0.saturating_sub(1))
+    });
+    if let Some(point) = lane.points.get_mut(index) {
+        *point = Point {
+            tick: tick.clamp(earliest, latest.max(earliest)),
+            value,
+        };
+    }
+    lane
+}
+
+/// `origin` without its point at `index`. `None` when it was the last: the lane goes.
+pub fn without_point(origin: &AutomationLane, index: usize) -> Option<AutomationLane> {
+    let tick = origin.points.get(index)?.tick;
+    erased(origin, &(tick..=tick))
 }
 
 /// What a lane is called in its header: the volume and the pan of the track by those words,
@@ -163,10 +218,6 @@ pub fn from_menu_value(value: &str) -> Option<(Option<&str>, &str)> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
-    use sound_notes::Point;
-
     use super::*;
 
     fn lane(points: &[(u64, f32)]) -> AutomationLane {
@@ -201,44 +252,56 @@ mod tests {
         }
     }
 
-    /// A drawn line goes in as values of the knob over the points it passes, the level part of
-    /// it as its two ends, and the points around it stay. The top of the lane is the top of the
-    /// range, and no height gives a value outside it.
+    /// A press finds the dot under it, the nearest of two, and nothing past its reach.
     #[test]
-    fn a_draw_puts_values_of_the_knob_over_the_points_it_passes() {
-        let origin = lane(&[(0, 200.), (1000, 400.), (2000, 800.), (5000, 1000.)]);
-        let middle = LANE_BOX.y_of(0.5);
-        let drawn: BTreeMap<Ticks, f32> = [(500, middle), (1500, middle), (2500, -50.)]
-            .into_iter()
-            .map(|(tick, y)| (Ticks(tick), y))
-            .collect();
-        let drawn_lane = edited(&origin, Some(CUTOFF), &LaneEdit::Draw(&drawn)).unwrap();
-        // Halfway up a logarithmic knob from 20 Hz to 20 kHz is 632 Hz, with three digits.
+    fn a_press_finds_the_dot_under_it() {
+        let viewport = Viewport::default();
+        let sweep = lane(&[(0, 20.), (960, 20000.), (1000, 20.)]);
+        let dot = |index: usize| place(&viewport, CUTOFF, &sweep.points[index]);
+        let (x, y) = dot(1);
         assert_eq!(
-            values(&drawn_lane),
-            [
-                (0, 200.),
-                (500, 632.),
-                (1500, 632.),
-                (2500, 20000.),
-                (5000, 1000.)
-            ]
+            point_at(&viewport, &sweep, CUTOFF, (x + 2., y - 2.)),
+            Some(1)
         );
-        assert_eq!(drawn_lane.device, origin.device);
-        // A number the project does not know is not drawn in.
-        let unknown = edited(&origin, None, &LaneEdit::Draw(&drawn));
-        assert_eq!(unknown.as_ref(), Some(&origin));
+        let (x, y) = dot(2);
+        assert_eq!(point_at(&viewport, &sweep, CUTOFF, (x, y + 3.)), Some(2));
+        let far = (x, y - POINT_REACH - 1.);
+        assert_eq!(point_at(&viewport, &sweep, CUTOFF, far), None);
     }
 
-    /// An erase takes the points it covers, and a lane with none left is gone, as a clear is.
+    /// A point is added in its place, or takes the value of one at its tick, and a moved point
+    /// stays between its neighbours.
+    #[test]
+    fn points_are_added_and_moved_in_order() {
+        let origin = lane(&[(0, 200.), (1000, 400.), (2000, 800.)]);
+        let (added, at) = with_point(&origin, Ticks(1500), AutomationValue(600.));
+        assert_eq!(at, 2);
+        assert_eq!(
+            values(&added),
+            [(0, 200.), (1000, 400.), (1500, 600.), (2000, 800.)]
+        );
+        let (replaced, at) = with_point(&origin, Ticks(1000), AutomationValue(300.));
+        assert_eq!((at, values(&replaced)[1]), (1, (1000, 300.)));
+
+        let moved = moved_point(&origin, 1, Ticks(1200), AutomationValue(500.));
+        assert_eq!(values(&moved), [(0, 200.), (1200, 500.), (2000, 800.)]);
+        let past = moved_point(&origin, 1, Ticks(5000), AutomationValue(500.));
+        assert_eq!(values(&past)[1], (1999, 500.));
+        let before = moved_point(&origin, 1, Ticks(0), AutomationValue(500.));
+        assert_eq!(values(&before)[1], (1, 500.));
+    }
+
+    /// An erase takes the points it covers, and a lane with none left is gone, as a delete of
+    /// its last point is.
     #[test]
     fn an_erase_takes_points_and_the_last_takes_the_lane() {
         let origin = lane(&[(0, 200.), (1000, 400.), (2000, 800.)]);
-        let erased = edited(&origin, None, &LaneEdit::Erase(Ticks(500)..=Ticks(1000)));
-        assert_eq!(values(&erased.unwrap()), [(0, 200.), (2000, 800.)]);
-        let all = LaneEdit::Erase(Ticks(0)..=Ticks(2000));
-        assert_eq!(edited(&origin, Some(CUTOFF), &all), None);
-        assert_eq!(edited(&origin, Some(CUTOFF), &LaneEdit::Clear), None);
+        let erased_lane = erased(&origin, &(Ticks(500)..=Ticks(1000)));
+        assert_eq!(values(&erased_lane.unwrap()), [(0, 200.), (2000, 800.)]);
+        assert_eq!(erased(&origin, &(Ticks(0)..=Ticks(2000))), None);
+        let one = without_point(&origin, 1).unwrap();
+        assert_eq!(values(&one), [(0, 200.), (2000, 800.)]);
+        assert_eq!(without_point(&lane(&[(0, 200.)]), 0), None);
     }
 
     /// The line spans what shows, level outside the points, and turns at each point between.
