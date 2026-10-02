@@ -23,8 +23,8 @@ use sound_core::{
 };
 use sound_notes::{Point, check_order, value_at};
 
+pub(crate) use moves::write;
 pub use moves::{Carried, LaneMove, Moved, Travel, clear, moved, positions, travel_in};
-pub(crate) use moves::{ON_THE_LINE, write};
 
 use crate::TrackState;
 use crate::decibels;

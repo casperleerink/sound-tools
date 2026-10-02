@@ -4,8 +4,8 @@
 //! trimmed, faded and turned up or down from its handles, audio files are dropped in from the
 //! Finder, a track is renamed in its header, tempo changes are added and removed in the ruler,
 //! and the snap setting sits in the corner. Under a track its automation lanes show at the
-//! toggle in its header, where they are added, drawn, erased and cleared
-//! ([`super::track_lanes`]).
+//! toggle in its header, where lanes are added and their points added, moved, deleted and
+//! erased ([`super::track_lanes`]).
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,7 +45,7 @@ use super::clips::{
     gain_moved, shown_end, time_label, trimmed_left, trimmed_right,
 };
 use super::gesture::{Zone, new_clip, nudged_track, resized_left, resized_right, zone_at};
-use super::lanes::{LaneEdit, Stroke};
+use super::lanes::{DRAG_THRESHOLD, LaneEdit, Stroke};
 use super::layout::{
     ADD_LANE_HEIGHT, ADD_ROW_HEIGHT, DOT_LEFT, Extent, HEADER_INSET, HEADER_WIDTH, LANE_HEIGHT,
     LANES_MIDDLE, NAME_LEFT, NAME_MIDDLE, Part, RULER_HEIGHT, Rect, Rows, RulerBar, TRACK_HEIGHT,
@@ -56,7 +56,7 @@ use super::paint::{
 };
 use super::selection::Selection;
 use super::snap::{Grid, SharedSnap, Snap};
-use super::track_lanes;
+use super::track_lanes::{self, LANE_BOX};
 use crate::{
     ArrangementState, AudioClip, AutomationLane, AutomationValue, Carried, Colour, FreeIds,
     LaneMove, Moved, TrackKind, TrackState, Travel, add_audio_clips, add_audio_track, add_clip,
@@ -99,6 +99,43 @@ struct LaneShape {
     /// While clips are dragged: where across each lands with the line it takes along, and the
     /// line that was there before, faded.
     ghosts: Vec<(Range<f32>, Vec<(f32, f32)>)>,
+    /// The dots of the points that show.
+    points: Vec<LanePoint>,
+}
+
+/// The dot of a point of an automation lane, in the lane.
+struct LanePoint {
+    x: f32,
+    y: f32,
+    /// Under the pointer or selected: the dot is bigger, and a selected one has a ring.
+    hovered: bool,
+    selected: bool,
+}
+
+/// A point of an automation lane: the track, the number of the lane and the tick of the point.
+/// What is selected and what is under the pointer. Interface state: not saved, no undo step.
+#[derive(Clone, Debug, PartialEq)]
+struct PointKey {
+    track: InstanceId,
+    device: Option<String>,
+    parameter: String,
+    tick: Ticks,
+}
+
+impl PointKey {
+    fn of(track: &InstanceId, lane: &AutomationLane, tick: Ticks) -> Self {
+        Self {
+            track: track.clone(),
+            device: lane.device.clone(),
+            parameter: lane.parameter.clone(),
+            tick,
+        }
+    }
+
+    /// Whether it is a point of `lane` of `track`.
+    fn is_in(&self, track: &InstanceId, lane: &AutomationLane) -> bool {
+        self.track == *track && self.device == lane.device && self.parameter == lane.parameter
+    }
 }
 
 /// What a clip shows: the notes of a note clip, or the waveform of an audio clip.
@@ -418,17 +455,38 @@ struct Marquee {
 /// session, which opens with the first change.
 struct LaneDrag {
     track: Instance<TrackState>,
-    /// The lane at mouse down, its place among the lanes of the track, and the range of its
-    /// number. `None` for a number the project does not know, which is not drawn in.
+    /// The lane at mouse down, with the point a press added, and its place among the lanes of
+    /// the track.
     origin: AutomationLane,
     index: usize,
-    range: Option<ValueRange>,
     /// The top of the lane from the top of the first track, at mouse down.
     top: f64,
-    /// In project ticks: the lane counts from tick 0.
-    stroke: Stroke,
+    kind: LaneDragKind,
+    /// The undo step it makes.
+    label: &'static str,
     begun: bool,
 }
+
+enum LaneDragKind {
+    /// An alt-drag erases the points it covers. In project ticks: the lane counts from tick 0.
+    Erase(Stroke),
+    /// A point moves, by its place in `origin`, on the travel of `range`. `press` is where the
+    /// press was: the tick under it, so a scroll during the drag keeps the point under the
+    /// pointer, and its height in the lane. It waits until the pointer has gone a few pixels,
+    /// so a click only selects it.
+    Point {
+        point: usize,
+        range: ValueRange,
+        press: (Ticks, f32),
+        moving: bool,
+    },
+}
+
+/// The undo steps of the points of an automation lane.
+const ADD_POINT_LABEL: &str = "Add automation point";
+const MOVE_POINT_LABEL: &str = "Move automation point";
+const DELETE_POINT_LABEL: &str = "Delete automation point";
+const ERASE_LABEL: &str = "Erase automation";
 
 /// The select under the lanes of a track that adds one: a number of the track or of one of its
 /// devices that has none yet.
@@ -793,6 +851,10 @@ pub struct Timeline {
     marquee: Option<Marquee>,
     track_drag: Option<TrackDrag>,
     lane_drag: Option<LaneDrag>,
+    /// The selected point of an automation lane, which delete removes, and the one under the
+    /// pointer.
+    selected_point: Option<PointKey>,
+    hovered_point: Option<PointKey>,
     /// The tracks that show their automation lanes. Interface state: not saved, no undo step.
     expanded: BTreeSet<InstanceId>,
     /// The select that adds a lane, of each track that shows its lanes.
@@ -976,6 +1038,8 @@ impl Timeline {
             marquee: None,
             track_drag: None,
             lane_drag: None,
+            selected_point: None,
+            hovered_point: None,
             expanded: BTreeSet::new(),
             lane_menus: BTreeMap::new(),
             clipboard,
@@ -1093,6 +1157,14 @@ impl Timeline {
         if !shown {
             self.expanded.remove(track);
             self.lane_menus.remove(track);
+            // A point that does not show is not selected: delete would take it unseen.
+            if self
+                .selected_point
+                .as_ref()
+                .is_some_and(|key| key.track == *track)
+            {
+                self.selected_point = None;
+            }
             cx.notify();
             return;
         }
@@ -1399,6 +1471,7 @@ impl Timeline {
         if self.clips != before {
             if !self.clips.is_empty() {
                 self.selected_tempo = None;
+                self.selected_point = None;
             }
             self.publish_selection(cx);
             cx.notify();
@@ -1450,6 +1523,7 @@ impl Timeline {
     fn select_tempo(&mut self, tick: Option<Ticks>, cx: &mut Context<Self>) {
         if tick.is_some() {
             self.select_clip(None, cx);
+            self.selected_point = None;
         }
         if self.selected_tempo != tick {
             self.selected_tempo = tick;
@@ -1693,6 +1767,28 @@ impl Timeline {
             });
             let name = lane.device.as_ref();
             let name = name.map(|device| self.device_name(track, device, cx));
+            let is = |key: &Option<PointKey>, tick| {
+                key.as_ref()
+                    .is_some_and(|key| key.is_in(track, lane) && key.tick == tick)
+            };
+            let shown = lane
+                .points
+                .iter()
+                .filter(|point| visible.contains(&point.tick));
+            let points = range.map(|range| {
+                let points = shown.map(|point| {
+                    let (x, y) = track_lanes::place(viewport, range, point);
+                    let hovered = is(&self.hovered_point, point.tick);
+                    let selected = is(&self.selected_point, point.tick);
+                    LanePoint {
+                        x,
+                        y,
+                        hovered,
+                        selected,
+                    }
+                });
+                points.collect()
+            });
             LaneShape {
                 y,
                 name: track_lanes::lane_name(name.as_deref(), &lane.parameter).into(),
@@ -1700,6 +1796,7 @@ impl Timeline {
                 muted: state.mute,
                 line: line(lane, visible.clone()),
                 ghosts: ghosts.collect(),
+                points: points.unwrap_or_default(),
             }
         });
         lanes.collect()
@@ -1914,6 +2011,9 @@ impl Timeline {
         let (shift, cmd) = (event.modifiers.shift, event.modifiers.platform);
         let adds = shift || cmd;
         let part = scene.viewport.part_at(&scene.layout, y);
+        if x < 0.0 || y < 0.0 || !matches!(part, Some((_, Part::Lane(_)))) {
+            self.select_point(None, cx);
+        }
         if x < 0.0 {
             // The corner above the headers holds the snap setting, which takes its own clicks.
             if y < 0.0 {
@@ -2307,17 +2407,21 @@ impl Timeline {
         }
     }
 
-    /// Alt pressed or let go during a move of clips: the move again where the pointer is, so
-    /// the automation goes along or stays at once, not at the next mouse move.
+    /// Alt pressed or let go during a move of clips, or shift or cmd during a move of a point:
+    /// the move again where the pointer is, so the automation goes along or stays, or the point
+    /// takes its axis or the grid, at once and not at the next mouse move.
     fn modifiers_changed(&mut self, modifiers: Modifiers, window: &Window, cx: &mut Context<Self>) {
-        let moving = self.drag.as_ref().map(|drag| &drag.kind);
-        if !matches!(moving, Some(ClipDragKind::Move { .. })) {
-            return;
-        }
         let bounds = self.painted_bounds.get();
         let (x, y) = Self::timeline_position(bounds, window.mouse_position());
-        let keys = (modifiers.platform, modifiers.shift, modifiers.alt);
-        self.drag_to(x, y, keys, cx);
+        let moving = self.drag.as_ref().map(|drag| &drag.kind);
+        if matches!(moving, Some(ClipDragKind::Move { .. })) {
+            let keys = (modifiers.platform, modifiers.shift, modifiers.alt);
+            self.drag_to(x, y, keys, cx);
+        }
+        let point = self.lane_drag.as_ref().map(|drag| &drag.kind);
+        if matches!(point, Some(LaneDragKind::Point { moving: true, .. })) {
+            self.drag_lane(x, y, modifiers, cx);
+        }
     }
 
     /// Whether the mouse has something: clips, a rectangle or a track. Keys then wait, as they
@@ -2878,6 +2982,10 @@ impl Timeline {
         }
         let track_drag = self.track_drag.take().map(|drag| drag.begun);
         let lane_drag = self.lane_drag.take().map(|drag| drag.begun);
+        // The point goes back, or away when the press added it: it is not selected any more.
+        if lane_drag.is_some() {
+            self.selected_point = None;
+        }
         if let Some(begun) = track_drag.or(lane_drag) {
             if begun {
                 self.session
@@ -2916,24 +3024,28 @@ impl Timeline {
             Grip::Handle(ClipHandle::Gain) => Some(CursorStyle::ResizeUpDown),
         });
         let hovered = zone.map(|(shape, _)| shape.id.clone());
-        // A drag in a lane draws.
+        // In a lane, a press on a dot takes the point, and anywhere else adds one.
         let in_lane = matches!(
             scene.viewport.part_at(&scene.layout, y),
             Some((_, Part::Lane(_)))
         );
-        let cursor = match inside && in_lane {
-            true => Some(CursorStyle::Crosshair),
-            false => cursor,
+        let point = self.point_at(x, y, scene, cx).filter(|_| inside);
+        let cursor = match (inside && in_lane, &point) {
+            (true, Some(_)) => Some(CursorStyle::PointingHand),
+            (true, None) => Some(CursorStyle::Crosshair),
+            (false, _) => cursor,
         };
-        if self.hover_cursor != cursor || self.hovered != hovered {
+        if self.hover_cursor != cursor || self.hovered != hovered || self.hovered_point != point {
             (self.hover_cursor, self.hovered) = (cursor, hovered);
+            self.hovered_point = point;
             cx.notify();
         }
     }
 
     /// The pointer left the timeline: no clip shows its handles for it any more.
     fn unhover(&mut self, cx: &mut Context<Self>) {
-        if self.hovered.take().is_some() || self.hover_cursor.take().is_some() {
+        let left = self.hovered_point.take().is_some();
+        if self.hovered.take().is_some() || self.hover_cursor.take().is_some() || left {
             cx.notify();
         }
     }
@@ -2942,8 +3054,11 @@ impl Timeline {
         if self.track_drag.as_ref().is_some_and(|drag| drag.moving) {
             return Some(CursorStyle::ClosedHand);
         }
-        if self.lane_drag.is_some() {
-            return Some(CursorStyle::Crosshair);
+        if let Some(drag) = &self.lane_drag {
+            return Some(match drag.kind {
+                LaneDragKind::Erase(_) => CursorStyle::Crosshair,
+                LaneDragKind::Point { .. } => CursorStyle::PointingHand,
+            });
         }
         match &self.drag {
             Some(drag) => drag.cursor(),
@@ -3045,9 +3160,14 @@ impl Timeline {
             if self.cancel_drag(cx) {
                 return true;
             }
-            // Then a selected tempo change lets go, and only then the panel below closes.
+            // Then a selected tempo change or point lets go, and only then the panel below
+            // closes.
             if self.selected_tempo.is_some() {
                 self.select_tempo(None, cx);
+                return true;
+            }
+            if self.selected_point.is_some() {
+                self.select_point(None, cx);
                 return true;
             }
             return false;
@@ -3074,6 +3194,9 @@ impl Timeline {
             && matches!(key, "backspace" | "delete")
         {
             self.remove_tempo_change(tick, cx);
+            return true;
+        }
+        if matches!(key, "backspace" | "delete") && self.delete_point(cx) {
             return true;
         }
         let project = self.session.read(cx).project();
@@ -3784,10 +3907,10 @@ impl Timeline {
             .children(selects)
     }
 
-    /// A press in an automation lane, at `y` in the timeline area. A drag from it draws the
-    /// line of the pointer, with alt it erases, and a double click clears the lane: it goes,
-    /// and its number plays its record again. A press alone changes nothing, so the first
-    /// click of a double click is no undo step.
+    /// A press in an automation lane, at `y` in the timeline area. On the dot of a point it
+    /// selects the point, and a drag moves it. Anywhere else it adds a point there, on the grid
+    /// unless cmd is held, selected, and a drag goes on to move it. With alt a drag erases the
+    /// points it covers. A number the project does not know only erases.
     fn press_lane(
         &mut self,
         row: usize,
@@ -3810,59 +3933,146 @@ impl Timeline {
         let viewport = self.painted.get();
         let top = self.rows(cx).lane_top(row, lane);
         let in_lane = (viewport.content_y(y) - top) as f32;
-        if event.click_count == 2 {
-            let mut state = state.clone();
-            state.automation.retain(|lane| !lane.same_number(&origin));
-            self.session.update(cx, |session, cx| {
-                session.edit(cx, |project| {
-                    let mut changes = Changes::new();
-                    changes.set(&track, state);
-                    project.commit(track_lanes::label(&LaneEdit::Clear), changes)
-                })
-            });
-            return;
-        }
         let range = origin.number(track.id(), state, &travel_in(project));
-        let everywhere = Ticks(0)..Ticks(u64::MAX);
-        let erase = event.modifiers.alt;
-        let stroke = Stroke::new(erase, Ticks(0), everywhere, &viewport, (x, in_lane));
-        self.lane_drag = Some(LaneDrag {
-            track,
+        let range = range.map(|number| number.range);
+        let drag = |origin, kind, label| LaneDrag {
+            track: track.clone(),
             origin,
             index: lane,
-            range: range.map(|number| number.range),
             top,
-            stroke,
+            kind,
+            label,
             begun: false,
-        });
+        };
+        let range = match (event.modifiers.alt, range) {
+            (false, Some(range)) => range,
+            (true, _) => {
+                let everywhere = Ticks(0)..Ticks(u64::MAX);
+                let stroke = Stroke::new(true, Ticks(0), everywhere, &viewport, (x, in_lane));
+                self.select_point(None, cx);
+                self.lane_drag = Some(drag(origin, LaneDragKind::Erase(stroke), ERASE_LABEL));
+                return;
+            }
+            (false, None) => return,
+        };
+        let press = (viewport.tick_at(x), in_lane);
+        let point_drag = |point| LaneDragKind::Point {
+            point,
+            range,
+            press,
+            moving: false,
+        };
+        if let Some(point) = track_lanes::point_at(&viewport, &origin, range, (x, in_lane)) {
+            let key = PointKey::of(track.id(), &origin, origin.points[point].tick);
+            self.select_point(Some(key), cx);
+            self.lane_drag = Some(drag(origin, point_drag(point), MOVE_POINT_LABEL));
+            return;
+        }
+        let tick = viewport.tick_at(x);
+        let tick = match event.modifiers.platform {
+            true => tick,
+            false => self.grid(cx).snap(tick),
+        };
+        let value = AutomationValue(range.value(LANE_BOX.share_at(in_lane)));
+        let (added, point) = track_lanes::with_point(&origin, tick, value);
+        self.select_point(Some(PointKey::of(track.id(), &added, tick)), cx);
+        let lane_drag = drag(added.clone(), point_drag(point), ADD_POINT_LABEL);
+        self.write_lane(lane_drag, Some(added), cx);
     }
 
     /// One mouse move of a drag in a lane, into the gesture of the session, which opens with
-    /// the first change. `free` is cmd held: the drag draws every few pixels, not on the grid.
-    fn drag_lane(&mut self, x: f32, y: f32, free: bool, cx: &mut Context<Self>) {
+    /// the first change. A point moves on the grid unless cmd is held, and with shift only up
+    /// and down or only sideways, the way the pointer went furthest.
+    fn drag_lane(&mut self, x: f32, y: f32, modifiers: Modifiers, cx: &mut Context<Self>) {
         let Some(mut drag) = self.lane_drag.take() else {
             return;
         };
         let viewport = self.painted.get();
-        let grid = match free {
+        let grid = match modifiers.platform {
             true => self.grid(cx).free(),
             false => self.grid(cx),
         };
         let in_lane = (viewport.content_y(y) - drag.top) as f32;
-        if !drag.stroke.moved(&viewport, &grid, (x, in_lane)) {
-            self.lane_drag = Some(drag);
-            return;
+        // An undo between mouse down and the first change took the lane the drag started from:
+        // the drag ends, so it does not write that lane back.
+        if !drag.begun {
+            let project = self.session.read(cx).project();
+            let state = project.state(&drag.track);
+            let mut lanes = state.into_iter().flat_map(|state| state.automation.iter());
+            if lanes.find(|lane| lane.same_number(&drag.origin)) != Some(&drag.origin) {
+                self.selected_point = None;
+                cx.notify();
+                return;
+            }
         }
-        let edit = drag.stroke.edit();
-        let label = track_lanes::label(&edit);
-        let next = track_lanes::edited(&drag.origin, drag.range, &edit);
+        let next = match &mut drag.kind {
+            LaneDragKind::Erase(stroke) => {
+                if !stroke.moved(&viewport, &grid, (x, in_lane)) {
+                    self.lane_drag = Some(drag);
+                    return;
+                }
+                let LaneEdit::Erase(ticks) = stroke.edit() else {
+                    unreachable!("an erase stroke erases")
+                };
+                track_lanes::erased(&drag.origin, &ticks)
+            }
+            LaneDragKind::Point {
+                point,
+                range,
+                press,
+                moving,
+            } => {
+                let (mut dx, mut dy) = (x - viewport.x_of(press.0), in_lane - press.1);
+                if !*moving && dx.abs() < DRAG_THRESHOLD && dy.abs() < DRAG_THRESHOLD {
+                    self.lane_drag = Some(drag);
+                    return;
+                }
+                *moving = true;
+                if modifiers.shift {
+                    match dx.abs() >= dy.abs() {
+                        true => dy = 0.,
+                        false => dx = 0.,
+                    }
+                }
+                let from = drag.origin.points[*point];
+                let delta = match dx {
+                    0. => 0,
+                    _ => viewport.tick_at(x).0 as i64 - press.0.0 as i64,
+                };
+                let tick = match delta {
+                    0 => from.tick,
+                    delta => grid.snap(shifted(from.tick, delta)),
+                };
+                let value = match dy {
+                    0. => from.value,
+                    dy => {
+                        let y = LANE_BOX.y_of(range.position(from.value.0)) + dy;
+                        AutomationValue(range.value(LANE_BOX.share_at(y)))
+                    }
+                };
+                let moved = track_lanes::moved_point(&drag.origin, *point, tick, value);
+                let tick = moved.points[*point].tick;
+                self.selected_point = Some(PointKey::of(drag.track.id(), &moved, tick));
+                Some(moved)
+            }
+        };
+        self.write_lane(drag, next, cx);
+    }
+
+    /// Puts `next`, the lane of a drag, in its place among the lanes of its track now, from
+    /// where it was at mouse down: `None` takes it away, and a drag back puts it back there.
+    /// The first change opens the gesture.
+    fn write_lane(
+        &mut self,
+        mut drag: LaneDrag,
+        next: Option<AutomationLane>,
+        cx: &mut Context<Self>,
+    ) {
         let project = self.session.read(cx).project();
         let Some(state) = project.state(&drag.track) else {
             self.lane_drag = Some(drag);
             return self.end_drag(cx);
         };
-        // The lane in its place among the lanes of the track now, from where it was at mouse
-        // down. An erase of every point takes it away, and a drag back puts it back there.
         let mut automation = state.automation.clone();
         let at = automation
             .iter()
@@ -3884,7 +4094,7 @@ impl Timeline {
             ..state.clone()
         };
         let begun = std::mem::replace(&mut drag.begun, true);
-        let track = drag.track.clone();
+        let (track, label) = (drag.track.clone(), drag.label);
         self.lane_drag = Some(drag);
         self.session.update(cx, |session, cx| {
             if !begun {
@@ -3896,6 +4106,76 @@ impl Timeline {
                 project.publish(edit, changes)
             })
         });
+    }
+
+    /// Selects a point of an automation lane and no clip or tempo change, so delete removes it.
+    fn select_point(&mut self, point: Option<PointKey>, cx: &mut Context<Self>) {
+        if point.is_some() {
+            self.select_clip(None, cx);
+            self.select_tempo(None, cx);
+        }
+        if self.selected_point != point {
+            self.selected_point = point;
+            cx.notify();
+        }
+    }
+
+    /// The point of a lane whose dot is at `(x, y)` in the timeline area.
+    fn point_at(&self, x: f32, y: f32, scene: &Scene, cx: &App) -> Option<PointKey> {
+        let Some((row, Part::Lane(index))) = scene.viewport.part_at(&scene.layout, y) else {
+            return None;
+        };
+        let track = self.order.get(row)?;
+        let project = self.session.read(cx).project();
+        let state = project.state(track)?;
+        let lane = state.automation.get(index)?;
+        let range = lane.number(track.id(), state, &travel_in(project))?.range;
+        let top = scene.layout.lane_top(row, index);
+        let in_lane = (scene.viewport.content_y(y) - top) as f32;
+        let point = track_lanes::point_at(&scene.viewport, lane, range, (x, in_lane))?;
+        Some(PointKey::of(track.id(), lane, lane.points[point].tick))
+    }
+
+    /// Delete with a point selected: it goes, and the lane with it when it was the last, as
+    /// one undo step. Whether the point was there.
+    fn delete_point(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(key) = self.selected_point.take() else {
+            return false;
+        };
+        cx.notify();
+        let project = self.session.read(cx).project();
+        let Some(track) = project.resolve::<TrackState>(&key.track) else {
+            return false;
+        };
+        let Some(state) = project.state(&track) else {
+            return false;
+        };
+        let mut state = state.clone();
+        let Some(at) = state
+            .automation
+            .iter()
+            .position(|lane| key.is_in(&key.track, lane))
+        else {
+            return false;
+        };
+        let lane = &state.automation[at];
+        let Some(point) = lane.points.iter().position(|point| point.tick == key.tick) else {
+            return false;
+        };
+        match track_lanes::without_point(lane, point) {
+            Some(lane) => state.automation[at] = lane,
+            None => {
+                state.automation.remove(at);
+            }
+        }
+        self.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.set(&track, state);
+                project.commit(DELETE_POINT_LABEL, changes)
+            })
+        });
+        true
     }
 
     /// The snap setting in the corner above the track headers, on the line of the ruler.
@@ -4135,7 +4415,7 @@ fn listen(
                 } else if timeline.track_drag.is_some() {
                     timeline.drag_track(y, cx);
                 } else if timeline.lane_drag.is_some() {
-                    timeline.drag_lane(x, y, event.modifiers.platform, cx);
+                    timeline.drag_lane(x, y, event.modifiers, cx);
                 } else {
                     let modifiers = event.modifiers;
                     let keys = (modifiers.platform, modifiers.shift, modifiers.alt);
@@ -4492,6 +4772,7 @@ fn paint_polyline(
 /// clips are dragged, where each lands has a light band, and the line that was there before
 /// shows faded under the one it gets.
 fn paint_lane(lane: &LaneShape, timeline: Bounds<Pixels>, window: &mut Window, cx: &App) {
+    let selection = cx.theme().gray_950;
     let origin = timeline.origin + point(px(0.), px(lane.y));
     // An area takes no track colour: the band is the fill of a marquee.
     let band_fill = cx.theme().alpha_at(0.05);
@@ -4517,6 +4798,25 @@ fn paint_lane(lane: &LaneShape, timeline: Bounds<Pixels>, window: &mut Window, c
         lane.accent.opacity(opacity),
         window,
     );
+    // A dot on each point, bigger under the pointer, and a selected one with the ring of a
+    // selected clip.
+    let solid = BorderStyle::Solid;
+    for dot in &lane.points {
+        let radius: f32 = match dot.hovered || dot.selected {
+            true => 4.5,
+            false => 3.,
+        };
+        let bounds = Bounds::new(
+            origin + point(px(dot.x - radius), px(dot.y - radius)),
+            size(px(2. * radius), px(2. * radius)),
+        );
+        let (ring, edge) = match dot.selected {
+            true => (px(1.5), selection),
+            false => (px(0.), Hsla::transparent_black()),
+        };
+        let color = lane.accent.opacity(opacity);
+        window.paint_quad(quad(bounds, px(radius), color, ring, edge, solid));
+    }
 }
 
 /// The mark of a dragged clip whose automation goes along while its lanes are folded away: a

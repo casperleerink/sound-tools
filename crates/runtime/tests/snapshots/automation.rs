@@ -2,6 +2,8 @@
 //!
 //! - `automation-lanes.png`: the bass of the piece with a Filter, its lanes shown: a volume
 //!   that fades in from silence and out again, and a sweep of the cutoff up and back down.
+//! - `automation-point.png`: the top of the cutoff sweep, at bar 9, pressed and dragged up and
+//!   to the right, the button still down: its dot bigger with the ring of a selected point.
 //! - `automation-add-lane.png`: the same with the select under the lanes open, which offers
 //!   the pan and the numbers of the Filter.
 //! - `automation-drag.png`: the second bass clip dragged two bars on, the button still down:
@@ -12,7 +14,8 @@
 
 use anyhow::{Context as _, Result};
 use arrangement::view::layout::{ADD_LANE_HEIGHT, HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
-use arrangement::{AutomationLane, AutomationValue, TrackState};
+use arrangement::view::track_lanes::LANE_BOX;
+use arrangement::{AutomationLane, AutomationValue, TrackState, travel_in};
 use gpui::{HeadlessAppContext, Pixels, Point, point, px};
 use sound_core::{Changes, InstanceId, Ticks};
 
@@ -73,6 +76,29 @@ pub fn snapshots(
     };
     show(true, cx);
     save(cx, &opened, "automation-lanes")?;
+
+    // The dot of the cutoff at bar 9, the second lane of the bass.
+    let dot = cx.update(|cx| -> Result<Point<Pixels>> {
+        let project = opened.session.read(cx).project();
+        let track = project.resolve::<TrackState>(&bass).context("no bass")?;
+        let state = project.state(&track).context("a track")?;
+        let lane = &state.automation[1];
+        let number = lane.number(track.id(), state, &travel_in(project));
+        let range = number.context("a cutoff")?.range;
+        let timeline = timeline.read(cx);
+        let (viewport, rows) = (timeline.viewport(), timeline.rows(cx));
+        let top = viewport.y_at(rows.lane_top(1, 1));
+        let y = LANE_BOX.y_of(range.position(8000.));
+        Ok(point(
+            px(HEADER_WIDTH + viewport.x_of(Ticks(8 * BAR))),
+            px(48. + RULER_HEIGHT + top + y),
+        ))
+    })?;
+    let moved = point(dot.x + px(60.), dot.y - px(10.));
+    opened.press_and_move(dot, moved, cx)?;
+    save(cx, &opened, "automation-point")?;
+    opened.key("escape", cx)?;
+    opened.release(moved, cx)?;
 
     // The select in the row under the two lanes of the bass, at the left of its words.
     let menu = cx.update(|cx| {

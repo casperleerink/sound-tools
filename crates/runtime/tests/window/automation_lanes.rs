@@ -1,8 +1,9 @@
-//! The automation lanes under a track: the toggle on the second line of its header shows them, the select under
-//! them adds one, a drag draws its line, alt and a drag erase points, and a double click clears
-//! it. Each edit is one undo step that undo gives back byte for byte. A clip dragged with its
-//! automation shows what the drop will be. `a` on the selected track shows the lanes too, and
-//! tab reaches the select.
+//! The automation lanes under a track: the toggle on the second line of its header shows them,
+//! the select under them adds one, a click adds a point, a drag on a point moves it (with shift
+//! along one axis), delete removes the selected point, and alt and a drag erase points. Each
+//! edit is one undo step that undo gives back byte for byte. A clip dragged with its automation
+//! shows what the drop will be. `a` on the selected track shows the lanes too, and tab reaches
+//! the select.
 
 use arrangement::view::layout::{LANES_MIDDLE, NAME_LEFT, TRACK_HEIGHT};
 use arrangement::view::track_lanes::LANE_BOX;
@@ -116,6 +117,27 @@ fn alt() -> Modifiers {
     }
 }
 
+fn shift() -> Modifiers {
+    Modifiers {
+        shift: true,
+        ..Modifiers::default()
+    }
+}
+
+/// The middle of the dot of a point of a lane of the first track.
+fn dot(opened: &mut Opened<'_>, lane: usize, point: usize) -> gpui::Point<gpui::Pixels> {
+    let (tick, y) = opened.project(|project| {
+        let track = project.resolve::<TrackState>(&id(ONE)).unwrap();
+        let state = project.state(&track).unwrap();
+        let lane = &state.automation[lane];
+        let number = lane.number(track.id(), state, &travel_in(project));
+        let range = number.unwrap().range;
+        let point = lane.points[point];
+        (point.tick.0, LANE_BOX.y_of(range.position(point.value.0)))
+    });
+    opened.in_track_lane(tick, 0, lane, y)
+}
+
 /// The toggle shows the lanes and folds them away again. It is no edit: no file changes and
 /// there is no undo step.
 #[gpui::test]
@@ -160,26 +182,90 @@ fn the_select_adds_a_lane_in_one_undo_step(cx: &mut TestAppContext) {
     one_undo_step(&mut opened, "Add automation", &before);
 }
 
-/// A drag across a lane draws on the sixteenths it passes, over the points that were there. A
-/// level line is its two ends, and above the lane is the top of the range.
+/// A click in a lane away from the dots adds a point there, on the grid, at the height of the
+/// click: one undo step. It is selected, and delete takes it away again.
 #[gpui::test]
-fn a_drag_draws_the_line_in_one_undo_step(cx: &mut TestAppContext) {
+fn a_click_adds_a_point_and_delete_removes_it(cx: &mut TestAppContext) {
     let mut opened = open(cx, true);
     let before = mark(&mut opened);
-    let (from, to) = (
-        opened.in_track_lane(5 * BAR, 0, 0, LANE_BOX.y_of(1.)),
-        opened.in_track_lane(6 * BAR, 0, 0, -20.),
-    );
-    opened.press(from);
-    // A press is no edit.
+    let top = opened.in_track_lane(5 * BAR + 20, 0, 0, LANE_BOX.y_of(1.));
+    opened.click(top);
+    let mut added = volume();
+    added.push((5 * BAR, 6.));
+    assert_eq!(points(&mut opened, "gain_db"), added);
+    one_undo_step(&mut opened, "Add automation point", &before);
+
+    let before = mark(&mut opened);
+    opened.keys("backspace");
+    assert_eq!(points(&mut opened, "gain_db"), volume());
+    one_undo_step(&mut opened, "Delete automation point", &before);
+}
+
+/// A click on a dot selects its point and changes nothing. A drag moves it on the grid, and
+/// with shift only the way the pointer went furthest.
+#[gpui::test]
+fn a_drag_on_a_point_moves_it_and_shift_keeps_one_axis(cx: &mut TestAppContext) {
+    let mut opened = open(cx, true);
+    let before = mark(&mut opened);
+    let dip = dot(&mut opened, 0, 2);
+    opened.click(dip);
+    assert_eq!(points(&mut opened, "gain_db"), volume());
     assert!(!opened.gesture_open());
-    opened.drag_to(point(from.x + px(48.), from.y));
+    assert_eq!(opened.undo_label(), before.undo_label);
+
+    let to = opened.in_track_lane(BAR + 1440 + 30, 0, 0, LANE_BOX.y_of(1.));
+    opened.drag(dip, to);
+    let mut moved = volume();
+    moved[2] = (BAR + 1440, 6.);
+    assert_eq!(points(&mut opened, "gain_db"), moved);
+    one_undo_step(&mut opened, "Move automation point", &before);
+
+    // Mostly down with shift: the point keeps its tick.
+    let peak = dot(&mut opened, 0, 2);
+    let down = point(peak.x + px(8.), peak.y + px(30.));
+    opened.drag_with(peak, down, shift());
+    let (tick, value) = points(&mut opened, "gain_db")[2];
+    assert_eq!(tick, BAR + 1440);
+    assert!(value < 6., "{value}");
+    // Mostly sideways with shift: it keeps its value.
+    let point_now = dot(&mut opened, 0, 2);
+    let side = opened.in_track_lane(BAR + 1920, 0, 0, 0.);
+    let side = point(side.x, point_now.y + px(6.));
+    opened.drag_with(point_now, side, shift());
+    assert_eq!(points(&mut opened, "gain_db")[2], (BAR + 1920, value));
+}
+
+/// Escape during a drag of a point puts it back and lets go of it: delete then does nothing.
+#[gpui::test]
+fn escape_puts_a_dragged_point_back_and_lets_go_of_it(cx: &mut TestAppContext) {
+    let mut opened = open(cx, true);
+    let before = mark(&mut opened);
+    let dip = dot(&mut opened, 0, 2);
+    opened.press(dip);
+    opened.drag_to(point(dip.x + px(60.), dip.y - px(20.)));
+    assert_ne!(points(&mut opened, "gain_db"), volume());
+    opened.keys("escape");
+    opened.release(dip);
+    opened.keys("backspace");
+    assert_eq!(points(&mut opened, "gain_db"), volume());
+    assert_eq!(opened.undo_label(), before.undo_label);
+}
+
+/// An undo between the press on a point and the first move takes the lane the drag started
+/// from: the drag ends and does not write it back.
+#[gpui::test]
+fn an_undo_before_the_first_move_ends_the_drag(cx: &mut TestAppContext) {
+    let mut opened = open(cx, true);
+    let added = opened.in_track_lane(5 * BAR, 0, 0, LANE_BOX.y_of(1.));
+    opened.click(added);
+    let dip = dot(&mut opened, 0, 2);
+    opened.press(dip);
+    opened.keys("cmd-z");
+    assert_eq!(points(&mut opened, "gain_db"), volume());
+    let to = point(dip.x + px(60.), dip.y - px(20.));
     opened.drag_to(to);
     opened.release(to);
-    let mut drawn = volume();
-    drawn.extend([(5 * BAR, 6.), (6 * BAR, 6.)]);
-    assert_eq!(points(&mut opened, "gain_db"), drawn);
-    one_undo_step(&mut opened, "Draw automation", &before);
+    assert_eq!(points(&mut opened, "gain_db"), volume());
 }
 
 /// Alt and a drag erase the points between the press and the pointer, on the grid.
@@ -205,23 +291,6 @@ fn erasing_every_point_takes_the_lane_away(cx: &mut TestAppContext) {
     assert_eq!(points(&mut opened, "cutoff_hz"), []);
     assert_eq!(lanes(&mut opened).len(), 1);
     one_undo_step(&mut opened, "Erase automation", &before);
-}
-
-/// A double click clears a lane: it goes, the number plays its record again, and the lanes
-/// under it move up.
-#[gpui::test]
-fn a_double_click_clears_the_lane_in_one_undo_step(cx: &mut TestAppContext) {
-    let mut opened = open(cx, true);
-    let before = mark(&mut opened);
-    let volume_lane = opened.in_track_lane(4 * BAR, 0, 0, 20.);
-    opened.double_click(volume_lane);
-    let left: Vec<String> = lanes(&mut opened)
-        .into_iter()
-        .map(|lane| lane.parameter)
-        .collect();
-    assert_eq!(left, ["cutoff_hz"]);
-    assert_eq!(opened.project(|project| project.problems().len()), 0);
-    one_undo_step(&mut opened, "Clear automation", &before);
 }
 
 /// What a drag of a clip shows is what it drops: the lanes while the button is down are those

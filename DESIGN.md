@@ -117,9 +117,12 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Arrangement | while a clip drag takes automation along | In each lane it takes, the line it takes follows over a light band, and the line it replaces fades. `Automation moves · alt to leave it` shows in the top left of the clip. With the lanes folded away, the clip carries a small mark instead. What shows is what drops |
 | Arrangement | **Automation**, the second line of a track header, or `a` with a track and no clip selected | Show its automation lanes under it, or fold them away. It counts the lanes (`Automation · 2`) and is brighter when the track has any. Not saved, no undo step |
 | Arrangement | Add lane, under the lanes of a track | Pick a number of the track (volume, pan) or of one of its devices that has no lane yet. The lane holds the value of its knob, so nothing sounds different yet. Tab reaches it. Gone when every number has a lane |
-| Arrangement | drag across an automation lane | Draw its line, on the travel of its knob, as the bend lane of the note editor: one point per snap step, or every few pixels with snap off or cmd. Above or below the lane is the end of the range |
+| Arrangement | an automation lane | Each point is a dot on the line, in the track colour. Over a dot the cursor is a hand and the dot grows; elsewhere in the lane it is a crosshair: a press there adds a point |
+| Arrangement | click in an automation lane, off a dot | Add a point there, on the grid (cmd: off the grid), at the height of the pointer, on the travel of the knob. It is selected, and a drag before the button comes up moves it. One undo step |
+| Arrangement | click a dot / drag a dot | Select the point (a ring shows it) / move it, on the grid unless cmd is held. A point stays between its neighbours. Above or below the lane is the end of the range |
+| Arrangement | shift while dragging a dot | Only up and down or only sideways: the way the pointer went furthest. Pressed or let go during the drag, it takes effect at once |
+| Arrangement | delete, with a point selected | Delete it. Without points the lane goes, and the knob gets the value of its record back. Escape lets go of the point |
 | Arrangement | alt-drag across an automation lane | Erase the points it covers. Without points the lane goes |
-| Arrangement | double click in an automation lane | Clear it: the lane goes, and the knob gets the value of its record back |
 | Arrangement | drag the left or right edge of a clip | Resize it. The left edge stops at the first note. On an audio clip it trims the file and keeps the sound in place |
 | Arrangement | drag a fade handle or the gain handle of an audio clip | Fade in or out, or change its gain. The value shows while dragging |
 | Arrangement | alt-up, alt-down | The gain of the selected audio clips by 1 dB |
