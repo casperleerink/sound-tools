@@ -37,13 +37,14 @@ jobs:
     needs: version
     runs-on: macos-15
     timeout-minutes: 45
+    env:
+      # rust-cache only saves a target folder inside the workspace.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> /private/tmp/sound-tools-timing/target"
       - run: tooling/bundle-macos.sh --zip
       - uses: actions/upload-artifact@v4
         with:
