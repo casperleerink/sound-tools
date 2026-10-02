@@ -14,7 +14,7 @@ use std::f32::consts::LN_10;
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Peaks, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets,
+    ProcessContext, Processor, Smoothed, Targets, held,
 };
 
 use crate::{CompressorState, KNEE, Lookahead, MAKEUP, MIX, PARAMETERS, RATIO, THRESHOLD};
@@ -34,12 +34,6 @@ const SEGMENT_SECONDS: f32 = 0.001;
 
 /// How long a peak stays in the level after it passed: the release starts that much later.
 pub const HOLD_SECONDS: f32 = SEGMENTS as f32 * SEGMENT_SECONDS;
-
-/// Input louder than this is held to it, and input that is not a number or smaller than
-/// [`TINY`] is silence, so nothing that comes in can make the output infinite or leave numbers
-/// too small for the processor to work with at full speed. +36 dBFS: nothing real comes near.
-const INPUT_LIMIT: f32 = 64.0;
-const TINY: f32 = 1e-30;
 
 /// A level under this is -180 dB, far under the lowest threshold and its knee.
 const FLOOR: f32 = 1e-9;
@@ -155,15 +149,6 @@ impl Detector {
 /// the step it would take is smaller than the precision of the reduction.
 fn pole(seconds: f32, sample_rate: f32) -> f64 {
     (-1.0 / (f64::from(seconds) * f64::from(sample_rate))).exp()
-}
-
-/// A sample as the compressor takes it: held to [`INPUT_LIMIT`], and silence for anything that
-/// is not a number or is too small to matter.
-fn held(sample: f32) -> f32 {
-    if sample.is_nan() || sample.abs() < TINY {
-        return 0.0;
-    }
-    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
 /// What the compressor shows on its card, from the audio thread: the largest level of each

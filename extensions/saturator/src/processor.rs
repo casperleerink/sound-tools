@@ -19,7 +19,7 @@ use std::f32::consts::PI;
 use crate::{Curve, DRIVE, MIX, OUTPUT, PARAMETERS, SaturatorState, TONE};
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Oversampler,
-    OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
+    OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets, held,
     soft_clip,
 };
 
@@ -54,10 +54,6 @@ const HIGHEST_PART: f32 = 0.45;
 /// While the tone moves, its factors are worked out again this often. Four times per block of
 /// the engine: a sweep has no steps anyone can hear, and a `tan` per frame is not needed.
 const FACTOR_FRAMES: usize = 16;
-
-/// Input louder than this, or not a number, is held to it before anything else, so no sample of
-/// anyone else's can make the saturator's memory infinite. +36 dBFS: nothing real comes near.
-const INPUT_LIMIT: f32 = 64.0;
 
 /// While the input is silent, a memory of the DC blocker or the tone smaller than this is let
 /// go of: -180 dB, far under anything audible. So a saturator after a sound that ended comes to
@@ -270,15 +266,6 @@ impl OnePole {
 /// The factor of a one-pole filter at a bent corner.
 fn one_pole_factor(corner: f32) -> f32 {
     corner / (1.0 + corner)
-}
-
-/// A sample of the input as the saturator takes it: held to [`INPUT_LIMIT`], and silence for
-/// anything that is not a number.
-fn held(sample: f32) -> f32 {
-    if sample.is_nan() {
-        return 0.0;
-    }
-    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
 /// What one frame of the curve and the mix is: where every glide is at that frame.

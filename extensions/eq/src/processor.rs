@@ -28,7 +28,7 @@ use std::f32::consts::PI;
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets,
+    ProcessContext, Processor, Smoothed, Targets, held,
 };
 
 use crate::{AUTOMATED, BAND_LANES, BANDS, Band, EqState, OUTPUT_GAIN, Parameter, Shape};
@@ -53,10 +53,6 @@ pub const SHELF_MAX_Q: f32 = 1.5;
 
 /// While something moves, the factors are worked out again this often, as in the Filter.
 const FACTOR_FRAMES: usize = 16;
-
-/// Input louder than this, or not a number, is held to it before anything else, so no sample of
-/// anyone else's can make the memory of a band infinite. +36 dBFS: nothing real comes near it.
-const INPUT_LIMIT: f32 = 64.0;
 
 /// While the input is silent, a memory smaller than this is let go of: -180 dB. So an EQ after
 /// a sound that ended comes to rest and does no work.
@@ -217,15 +213,6 @@ impl Section {
     fn is_silent(&self) -> bool {
         self.ic1 == 0.0 && self.ic2 == 0.0
     }
-}
-
-/// A sample of the input as the EQ takes it: held to [`INPUT_LIMIT`], and silence for anything
-/// that is not a number.
-fn held(sample: f32) -> f32 {
-    if sample.is_nan() {
-        return 0.0;
-    }
-    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
 /// One band: where its settings are on their glides, its factors, and its memory.

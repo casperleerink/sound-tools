@@ -7,8 +7,8 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Lfo, LfoShape, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, soft_clip,
-    svf_response,
+    PrepareConfig, ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, held,
+    soft_clip, svf_response,
 };
 
 use crate::{CUTOFF, DRIVE, FilterState, LFO_DEPTH, MIX, PARAMETERS, RESONANCE};
@@ -22,10 +22,6 @@ const RAMP_SECONDS: f32 = 0.02;
 /// While something moves, the factors are worked out again this often. Four times per block
 /// of the engine: a sweep has no steps anyone can hear, and a `tan` per frame is not needed.
 const FACTOR_FRAMES: usize = 16;
-
-/// Input louder than this, or not a number, is held to it before anything else, so no sample of
-/// anyone else's can make the filter's memory infinite. +36 dBFS: nothing real comes near it.
-const INPUT_LIMIT: f32 = 64.0;
 
 /// The gain at `hz` of a filter with this record, as a factor, once every change has arrived:
 /// what a quiet steady sine comes out with, at the cutoff the record says and with its mix.
@@ -45,15 +41,6 @@ pub fn response(state: &FilterState, hz: f32, sample_rate: f32) -> f32 {
     let mix = f64::from(state.mix);
     let (real, imaginary) = (mix * filtered.0 + (1.0 - mix), mix * filtered.1);
     real.hypot(imaginary) as f32
-}
-
-/// A sample of the input as the filter takes it: held to [`INPUT_LIMIT`], and silence for
-/// anything that is not a number.
-fn held(sample: f32) -> f32 {
-    if sample.is_nan() {
-        return 0.0;
-    }
-    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
 pub struct Filter {

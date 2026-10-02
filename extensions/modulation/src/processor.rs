@@ -28,7 +28,7 @@ use std::f64::consts::TAU;
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, Lfo, LfoShape, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Targets, held,
 };
 
 use crate::{DEPTH, FEEDBACK, MIX, Mode, ModulationState, PARAMETERS, RATE, SPREAD};
@@ -56,11 +56,6 @@ const STAGES: usize = 6;
 
 /// The allpass filters stay under this part of the sample rate, below the Nyquist frequency.
 const HIGHEST_PART: f32 = 0.45;
-
-/// Input louder than this, or not a number, is held to it before it goes into the effect, so
-/// no sample of anyone else's can make the feedback infinite. +36 dBFS: nothing real comes
-/// near it.
-const INPUT_LIMIT: f32 = 64.0;
 
 /// While the input is silent and nothing in the effect is louder than this, -180 dB, it has
 /// rung out: it does no work and its output is silent.
@@ -203,15 +198,6 @@ fn divide(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
         (a.0 * b.0 + a.1 * b.1) / size,
         (a.1 * b.0 - a.0 * b.1) / size,
     )
-}
-
-/// A sample of the input as the effect takes it: held to [`INPUT_LIMIT`], and silence for
-/// anything that is not a number.
-fn held(sample: f32) -> f32 {
-    if sample.is_nan() {
-        return 0.0;
-    }
-    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
 /// What one channel keeps from frame to frame.

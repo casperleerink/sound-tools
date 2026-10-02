@@ -3,7 +3,7 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, PeakLimiter, Peaks, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets, amplitude,
+    ProcessContext, Processor, Smoothed, Targets, amplitude, held,
 };
 
 use crate::{GAIN, LimiterState, Lookahead, RELEASE};
@@ -16,18 +16,6 @@ type LimiterTargets = Targets<LimiterState, { AUTOMATED.len() }>;
 
 /// How long a change of the gain takes to arrive. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
-
-/// Input louder than this is held to it, and input that is not a number or infinite is
-/// silence, so the gain can never make a sample infinite. +36 dBFS: nothing real comes near.
-const INPUT_LIMIT: f32 = 64.0;
-
-/// A sample as the limiter takes it.
-fn held(sample: f32) -> f32 {
-    match sample.is_finite() {
-        true => sample.clamp(-INPUT_LIMIT, INPUT_LIMIT),
-        false => 0.0,
-    }
-}
 
 /// What the limiter shows on its card, from the audio thread: the peaks of what it sends out,
 /// and the largest reduction of each block on channel 0, as the factor the sound was above what

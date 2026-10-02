@@ -22,7 +22,7 @@ use std::f32::consts::{PI, SQRT_2};
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets, amplitude, pan_gains,
+    ProcessContext, Processor, Smoothed, Targets, amplitude, held, pan_gains,
 };
 
 use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, PARAMETERS, UtilityState, WIDTH};
@@ -39,11 +39,6 @@ const FACTOR_FRAMES: usize = 16;
 /// The crossover stays under this part of the sample rate, below the Nyquist frequency where
 /// its factors would run away.
 const HIGHEST_PART: f32 = 0.45;
-
-/// Input louder than this, or not a number, is held to it once the utility changes anything, as
-/// the other effects hold theirs, so no sample of anyone else's can make the memory of the
-/// crossover infinite or pass on what is not a number. +36 dBFS: nothing real comes near it.
-const INPUT_LIMIT: f32 = 64.0;
 
 /// While the input is silent, a memory smaller than this is let go of: -180 dB. So a crossover
 /// after a sound that ended comes to rest and does no work.
@@ -197,15 +192,6 @@ impl Crossover {
     fn is_silent(&self) -> bool {
         self.mid.is_silent() && self.side.iter().all(Section::is_silent)
     }
-}
-
-/// A sample as the utility takes it: held to [`INPUT_LIMIT`], and silence for anything that
-/// is not a number.
-fn held(sample: f32) -> f32 {
-    if sample.is_nan() {
-        return 0.0;
-    }
-    sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
 pub struct Utility {
