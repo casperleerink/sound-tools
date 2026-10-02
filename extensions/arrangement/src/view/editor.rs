@@ -699,6 +699,11 @@ impl NoteEditor {
         else {
             return;
         };
+        // An undo between mouse down and the first change may have changed the lane: the
+        // stroke works from the clip as it is now, so it does not write the old lane back.
+        if !drag.begun {
+            *origin = clip.clone();
+        }
         if !stroke.moved(&viewport, grid, (x, y)) {
             return;
         }
