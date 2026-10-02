@@ -62,7 +62,7 @@ fn a_plugin_that_crashes_while_it_is_scanned_is_reported_and_this_process_lives(
 
 fn a_crash_while_scanned(format: PluginFormat) {
     let folder = tempfile::tempdir().unwrap();
-    let crashing = scanner().with_environment("SOUND_TOOLS_TEST_PLUGIN_CRASH", "1");
+    let crashing = scanner().with_environment(test_plugin_support::CRASH_VARIABLE, "1");
     let search = vec![plugin_folder_of(folder.path(), format)];
     let plugins = Plugins::new(search.clone(), crashing, no_cache());
     let scan = plugins.scan();
@@ -93,7 +93,7 @@ fn a_crash_while_scanned(format: PluginFormat) {
 #[test]
 fn a_plugin_that_prints_while_it_is_scanned_is_still_found() {
     let folder = tempfile::tempdir().unwrap();
-    let chatty = scanner().with_environment("SOUND_TOOLS_TEST_PLUGIN_CHATTER", "1");
+    let chatty = scanner().with_environment(test_plugin_support::CHATTER_VARIABLE, "1");
     let plugins = Plugins::new(vec![plugin_folder(folder.path())], chatty, no_cache());
     let scan = plugins.scan();
     assert_eq!(scan.failures, []);
@@ -121,7 +121,7 @@ fn a_helper_that_outlives_the_child(format: PluginFormat) {
     let (stop, done) = (with_suffix(&helper, ".stop"), with_suffix(&helper, ".done"));
     let with_helper = scanner()
         .with_environment(
-            "SOUND_TOOLS_TEST_PLUGIN_DESCENDANT",
+            test_plugin_support::DESCENDANT_VARIABLE,
             helper.to_str().expect("a path"),
         )
         .with_timeout(Duration::from_secs(5));
@@ -190,7 +190,7 @@ fn a_plugin_that_hangs_while_it_is_scanned_is_given_up_on_and_reported() {
 fn a_hang_while_scanned(format: PluginFormat) {
     let folder = tempfile::tempdir().unwrap();
     let hanging = scanner()
-        .with_environment("SOUND_TOOLS_TEST_PLUGIN_HANG", "1")
+        .with_environment(test_plugin_support::HANG_VARIABLE, "1")
         .with_timeout(Duration::from_millis(300));
     let search = vec![plugin_folder_of(folder.path(), format)];
     let plugins = Plugins::new(search, hanging, no_cache());
