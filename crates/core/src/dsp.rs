@@ -48,10 +48,11 @@ impl<const N: usize> Taps<N> {
         }
     }
 
-    /// Aims at other lengths, reached in a fade of `fade_frames` frames.
+    /// Aims at other lengths, reached in a fade of `fade_frames` frames, at least one.
     pub fn aim(&mut self, next: [usize; N], fade_frames: f32) {
         self.next = next;
-        self.step = 1.0 / fade_frames;
+        // `max` first: it gives 1 for a length that is not a number.
+        self.step = 1.0 / fade_frames.max(1.0);
         if !self.is_fading() {
             self.start();
         }
@@ -95,20 +96,28 @@ impl<const N: usize> Taps<N> {
         *self = Self::new(self.next);
     }
 
-    /// The length of tap `index` now, between the two it fades between.
+    /// The length of tap `index` now, between the two it fades between. 0 for a tap that
+    /// does not exist.
     pub fn length(&self, index: usize) -> f32 {
-        let (from, to) = (self.from[index] as f32, self.to[index] as f32);
+        let (Some(&from), Some(&to)) = (self.from.get(index), self.to.get(index)) else {
+            return 0.0;
+        };
+        let (from, to) = (from as f32, to as f32);
         from + (to - from) * self.fade
     }
 
-    /// Reads tap `index` of `line` at `position`, with `fade` of the new tap.
+    /// Reads tap `index` of `line` at `position`, with `fade` of the new tap. Silence for a
+    /// tap that does not exist.
     #[inline]
     pub fn read(&self, line: &DelayLine, index: usize, position: usize, fade: f32) -> f32 {
-        let to = line.read(position, self.to[index]);
+        let (Some(&from), Some(&to)) = (self.from.get(index), self.to.get(index)) else {
+            return 0.0;
+        };
+        let to = line.read(position, to);
         if fade >= 1.0 {
             return to;
         }
-        let from = line.read(position, self.from[index]);
+        let from = line.read(position, from);
         from + (to - from) * fade
     }
 }
@@ -143,5 +152,30 @@ impl OnePole {
     #[inline]
     pub fn high(&mut self, factor: f32, input: f32) -> f32 {
         input - self.low(factor, input)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fade_of_no_frames_or_not_a_number_ends_after_one_frame() {
+        for fade_frames in [0.0, -5.0, f32::NAN] {
+            let mut taps = Taps::new([10]);
+            taps.aim([20], fade_frames);
+            assert!(taps.is_fading());
+            taps.advance();
+            assert!(!taps.is_fading(), "{fade_frames}");
+            assert_eq!(taps.length(0), 20.0);
+        }
+    }
+
+    #[test]
+    fn a_tap_that_does_not_exist_is_silent() {
+        let taps = Taps::new([1]);
+        let line = DelayLine::new(8);
+        assert_eq!(taps.length(1), 0.0);
+        assert_eq!(taps.read(&line, 1, 0, 0.5), 0.0);
     }
 }
