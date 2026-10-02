@@ -38,26 +38,6 @@ pub use plugin::load;
 use crate::scan::ScannedPlugin;
 use crate::{PluginFormat, PluginProblem};
 
-/// The folders the system keeps VST 3 plugins in, plus `VST3_PATH` from the environment. The
-/// lists and the variable are Steinberg's, from the VST 3 specification.
-pub fn default_search_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    if cfg!(target_os = "macos") {
-        paths.extend(home.map(|home| home.join("Library/Audio/Plug-Ins/VST3")));
-        paths.push(PathBuf::from("/Library/Audio/Plug-Ins/VST3"));
-        paths.push(PathBuf::from("/Network/Library/Audio/Plug-Ins/VST3"));
-    } else {
-        paths.extend(home.map(|home| home.join(".vst3")));
-        paths.push(PathBuf::from("/usr/lib/vst3"));
-        paths.push(PathBuf::from("/usr/local/lib/vst3"));
-    }
-    if let Some(extra) = std::env::var_os("VST3_PATH") {
-        paths.extend(std::env::split_paths(&extra));
-    }
-    paths
-}
-
 /// Lists one bundle. This runs in a child process: loading a bundle runs the plugin's own code.
 pub fn scan_bundle(bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
     let module = module::Module::load(bundle)?;
