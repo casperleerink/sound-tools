@@ -126,6 +126,8 @@ pub struct Sidebar {
     writes: Option<smol::channel::Sender<Write>>,
     /// Reads the last thread of the project. No message goes until it is in.
     loading: Option<Task<()>>,
+    /// **+** was clicked while the last thread was read: the new thread wins over it.
+    new_thread_while_loading: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -298,6 +300,7 @@ impl Sidebar {
             saved: None,
             writes: None,
             loading,
+            new_thread_while_loading: false,
             _subscriptions: subscriptions,
         };
         sidebar.update_menu(cx);
@@ -329,6 +332,14 @@ impl Sidebar {
     ) {
         self.loading = None;
         self.writes = Some(write_in_order(store, cx));
+        // **+** while it loaded: the saved thread stays in the store, and the new one is current.
+        let current = match std::mem::take(&mut self.new_thread_while_loading) {
+            true => {
+                self.keep([Write::Current(None)]);
+                Ok(None)
+            }
+            false => current,
+        };
         match current {
             Ok(Some((saved, conversation))) => {
                 self.saved = Some(saved);
@@ -970,6 +981,8 @@ impl Sidebar {
         // The old one stays in the store, and no thread is current until the next message.
         self.saved = None;
         self.keep([Write::Current(None)]);
+        // With no writer yet, the thread that loads must not come back.
+        self.new_thread_while_loading = self.loading.is_some();
         self.conversation = Conversation::default();
         self.forget_entries();
         self.list.reset(0);
