@@ -468,14 +468,9 @@ impl Clip {
     }
 
     /// Whether `name` may name a raw take: it becomes a file name, so it follows the rule of
-    /// an instance name. Without this a record could point outside the project folder.
+    /// an asset name. Without this a record could point outside the project folder.
     pub fn is_valid_take_name(name: &str) -> bool {
-        !name.is_empty()
-            && name.chars().all(|character| {
-                character.is_ascii_lowercase()
-                    || character.is_ascii_digit()
-                    || "-_".contains(character)
-            })
+        take_asset(name).is_ok()
     }
 
     /// The first tick after the clip.
