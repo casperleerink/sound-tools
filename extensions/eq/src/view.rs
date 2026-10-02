@@ -12,7 +12,9 @@
 //! automation lane of the track moves shows the value that plays, on its knob and on the
 //! display, and does not drag ([`Lanes`]).
 
-use gpui::{Context, Entity, KeyDownEvent, Point, SharedString, Window, div, point, prelude::*};
+use gpui::{
+    App, Context, Entity, KeyDownEvent, Point, SharedString, Window, div, point, prelude::*,
+};
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
@@ -150,6 +152,11 @@ fn readout(unit: Unit, value: f32) -> String {
     }
 }
 
+/// The value of `shape` in the select.
+fn shape_value(shape: Shape) -> &'static str {
+    SHAPES[shape.index()].1
+}
+
 /// Where a gain in dB is on the display, from 0 at the bottom to 1 at the top.
 fn height_of(db: f32) -> f32 {
     GAIN_TRAVEL.position(db).clamp(0., 1.)
@@ -209,7 +216,10 @@ impl EqView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.eq.id() => cx.notify(),
+            ProjectEvent::Changed(id) if id == view.eq.id() => {
+                view.show_shape(cx);
+                cx.notify();
+            }
             // Deleted under a drag, from outside. The delete was the last write, so the
             // gesture finishes and does not cancel: a cancel would bring the record back.
             ProjectEvent::Deleted(id) if id == view.eq.id() => {
@@ -225,7 +235,11 @@ impl EqView {
         let items = SHAPES.map(|(_, value, label, icon)| MenuItem::new(value, label).icon(icon));
         let shapes = cx.new(|cx| {
             let entries = vec![MenuEntry::Group(MenuGroup::new().items(items))];
+            // Band 1, the one selected at first.
+            let shown = session.read(cx).project().state(&eq);
+            let shown = shown.map_or(Band::default_at(0).shape, |state| state.bands[0].shape);
             DropdownMenu::new("Shape", entries, cx)
+                .selected(shape_value(shown))
                 .trigger(Trigger::Select)
                 .width(160.)
                 .debug_name("shape")
@@ -262,12 +276,32 @@ impl EqView {
     pub fn select(&mut self, band: usize, cx: &mut Context<Self>) {
         if band < BANDS && band != self.selected {
             self.selected = band;
+            self.show_shape(cx);
             cx.notify();
         }
     }
 
     pub fn selected(&self) -> usize {
         self.selected
+    }
+
+    /// The value the shape select shows: `bell`, `low_cut`.
+    pub fn shown_shape<'a>(&self, cx: &'a App) -> Option<&'a str> {
+        self.shapes.read(cx).value().map(SharedString::as_ref)
+    }
+
+    /// Puts the shape of the selected band in its select, after any change of the record or of
+    /// the selected band: a pick, an undo, an outside edit or a click on a handle.
+    fn show_shape(&mut self, cx: &mut Context<Self>) {
+        let state = self.session.read(cx).project().state(&self.eq);
+        let Some(shown) = state.map(|state| shape_value(state.bands[self.selected].shape)) else {
+            return;
+        };
+        self.shapes.update(cx, |select, cx| {
+            if select.value().map(AsRef::as_ref) != Some(shown) {
+                select.set_selected(shown, cx);
+            }
+        });
     }
 
     /// Whether a lane of the track moves the number `field` of band `band`, which it names by
@@ -398,12 +432,7 @@ impl Render for EqView {
             return div().into_any_element();
         };
         let band = state.bands[self.selected];
-        // The select shows the shape of the selected band, also after an outside edit.
-        let (_, shape, shape_name, _) = SHAPES[band.shape.index()];
-        if self.shapes.read(cx).value().map(SharedString::as_ref) != Some(shape) {
-            self.shapes
-                .update(cx, |menu, cx| menu.set_selected(shape, cx));
-        }
+        let (_, _, shape_name, _) = SHAPES[band.shape.index()];
         let frequency = self.band_knob(frequency_knob(self.selected), &state, cx);
         let gain = self
             .band_knob(GAIN_KNOB, &state, cx)
