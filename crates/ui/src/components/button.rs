@@ -1,6 +1,6 @@
-//! Button: `primary`, `subtle`, `outline`, `ghost` plus colour variants (solid, subtle, outline,
-//! ghost) taking any accent. Heights 24/28/32/40 px, optional icon, icon-only squares, pill
-//! `rounded`, disabled at 40% opacity.
+//! Button: `primary`, `subtle`, `ghost` plus colour variants (solid, subtle, ghost) taking any
+//! accent. Heights 24/28/32 px, optional icon, icon-only squares, pill `rounded`, disabled at 40%
+//! opacity.
 
 use std::rc::Rc;
 
@@ -17,14 +17,11 @@ pub enum ButtonVariant {
     #[default]
     Primary,
     Subtle,
-    Outline,
     Ghost,
     /// Solid accent fill with dark text.
     Solid(Hsla),
     /// Accent at 10% with accent text.
     SubtleColor(Hsla),
-    /// Accent border with accent text.
-    OutlineColor(Hsla),
     /// Transparent with accent text.
     GhostColor(Hsla),
 }
@@ -35,7 +32,6 @@ pub enum ButtonSize {
     Sm,
     #[default]
     Md,
-    Lg,
 }
 
 impl ButtonSize {
@@ -44,7 +40,6 @@ impl ButtonSize {
             Self::Xs => 24.,
             Self::Sm => 28.,
             Self::Md => 32.,
-            Self::Lg => 40.,
         }
     }
 
@@ -52,7 +47,6 @@ impl ButtonSize {
         match self {
             Self::Xs => 6.,
             Self::Sm | Self::Md => 8.,
-            Self::Lg => 10.,
         }
     }
 
@@ -62,14 +56,13 @@ impl ButtonSize {
             Self::Xs => 2.,
             Self::Sm => 6.,
             Self::Md => 8.,
-            Self::Lg => 12.,
         }
     }
 
     fn label_pad_x(self) -> f32 {
         match self {
             Self::Xs | Self::Sm => 2.,
-            Self::Md | Self::Lg => 4.,
+            Self::Md => 4.,
         }
     }
 
@@ -77,14 +70,6 @@ impl ButtonSize {
         match self {
             Self::Xs | Self::Sm => 2.,
             Self::Md => 4.,
-            Self::Lg => 8.,
-        }
-    }
-
-    fn text_size(self) -> f32 {
-        match self {
-            Self::Lg => 16.,
-            _ => 14.,
         }
     }
 
@@ -93,13 +78,6 @@ impl ButtonSize {
         match (self, icon_only) {
             (Self::Xs | Self::Sm, true) => 14.,
             _ => 16.,
-        }
-    }
-
-    fn weight(self) -> FontWeight {
-        match self {
-            Self::Lg => FontWeight::SEMIBOLD,
-            _ => FontWeight::MEDIUM,
         }
     }
 }
@@ -222,13 +200,6 @@ fn look(variant: ButtonVariant, cx: &App) -> Look {
             theme.alpha_at(0.10),
             theme.gray_950,
         ),
-        ButtonVariant::Outline => (
-            clear,
-            theme.gray_950,
-            theme.alpha_at(0.10),
-            theme.alpha_at(0.05),
-            theme.gray_950,
-        ),
         ButtonVariant::Ghost => (
             clear,
             theme.gray_950,
@@ -250,7 +221,6 @@ fn look(variant: ButtonVariant, cx: &App) -> Look {
             accent.opacity(0.20),
             accent,
         ),
-        ButtonVariant::OutlineColor(accent) => (clear, accent, accent, accent, theme.gray_50),
         ButtonVariant::GhostColor(accent) => (clear, accent, clear, accent, theme.gray_50),
     };
     Look {
@@ -303,8 +273,8 @@ impl RenderOnce for Button {
             .border_color(border)
             .bg(bg)
             .text_color(fg)
-            .text_size(px(size.text_size()))
-            .font_weight(size.weight())
+            .text_size(px(14.))
+            .font_weight(FontWeight::MEDIUM)
             .when(disabled, |b| b.opacity(0.4).cursor_not_allowed())
             .when(!disabled, |b| {
                 b.cursor_pointer()
