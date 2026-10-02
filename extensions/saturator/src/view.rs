@@ -1,6 +1,7 @@
 //! The card of the saturator: the curve from the level that goes in to the level that comes
-//! out, in dBFS, with a handle at its bend and the curves at its top, then Drive, Tone, Output and Mix. The rack gives the view
-//! a [`CardFrame`]: the picker of the slot as the title, and the power and close icons.
+//! out, in dBFS, with a handle at its bend and the curves at its top, then Drive, Tone, Output
+//! and Mix. The rack gives the view a [`CardFrame`]: the picker of the slot as the title, and
+//! the power and close icons.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change goes
 //! through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one gesture and
@@ -11,7 +12,7 @@
 //! and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
-use sound_core::{Instance, ProjectEvent, State};
+use sound_core::{Instance, ProjectEvent, State, amplitude};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
@@ -88,7 +89,7 @@ fn place(db: f32) -> f32 {
 /// The level in dBFS that comes out of a sine that goes in at `input_db`: the middle of its two
 /// peaks, so a curve that leans shows the level it gives and not one side of it.
 fn level_out(state: &SaturatorState, input_db: f32) -> f32 {
-    let peak = 10_f32.powf(input_db / 20.);
+    let peak = amplitude(input_db);
     let out = (transfer(state, peak) - transfer(state, -peak)) / 2.;
     20. * out.max(1e-9).log10()
 }
