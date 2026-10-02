@@ -36,7 +36,7 @@ pub use delay_line::DelayLine;
 pub use device::{
     DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming, monotonic_nanos,
 };
-pub use dsp::{OnePole, Taps, held};
+pub use dsp::{HIGHEST_PHASE_STEP, OnePole, Taps, held, poly_blep};
 pub use engine::{Engine, EngineStatus};
 pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeCurves, EnvelopeStage, EnvelopeState};
 pub use gain::{amplitude, pan_gains};

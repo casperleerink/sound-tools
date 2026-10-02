@@ -1,6 +1,6 @@
-//! Small building blocks of the built-in effects that more than one of them needs: a read of a
-//! [`DelayLine`] that fades from one length to another, a one-pole filter and the hold on what
-//! goes into a loop. Next to [`Smoothed`](crate::Smoothed) and [`DelayLine`]. The core itself
+//! Small building blocks of the built-in effects and instruments that more than one of them
+//! needs: a read of a [`DelayLine`] that fades from one length to another, a one-pole filter,
+//! the hold on what goes into a loop and the rounding of a step of a waveform. Next to [`Smoothed`](crate::Smoothed) and [`DelayLine`]. The core itself
 //! uses none of them.
 
 use std::f32::consts::PI;
@@ -14,6 +14,10 @@ const HIGHEST_PART: f32 = 0.45;
 /// anything audible. So a filter after a sound that ended comes to rest and does no work.
 pub(crate) const REST: f32 = 1e-9;
 
+/// The largest step of a phase per frame, in cycles. Above it a cycle is about two frames and
+/// the rounding of [`poly_blep`] on both sides of a step overlaps.
+pub const HIGHEST_PHASE_STEP: f32 = 0.45;
+
 /// Input louder than this, or not a number, is held to it, so no sample of anyone else's can
 /// make a loop infinite. +36 dBFS: nothing real comes near it.
 const INPUT_LIMIT: f32 = 64.0;
@@ -26,6 +30,23 @@ pub fn held(sample: f32) -> f32 {
         return 0.0;
     }
     sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
+}
+
+/// What rounds off a step at the start of a cycle, times half the step, for a phase that moves
+/// by `step` per frame (PolyBLEP): from 0 far from the step to 1 just before it and -1 just
+/// after it, so both samples next to the step meet in the middle. It takes away most of the
+/// aliasing of the step.
+#[inline]
+pub fn poly_blep(phase: f32, step: f32) -> f32 {
+    if phase < step {
+        let t = phase / step;
+        t + t - t * t - 1.0
+    } else if phase > 1.0 - step {
+        let t = (phase - 1.0) / step;
+        t * t + t + t + 1.0
+    } else {
+        0.0
+    }
 }
 
 /// Where a group of delay lines is read. A new length does not move a read position: the read
