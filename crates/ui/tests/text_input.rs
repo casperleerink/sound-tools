@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use gpui::{
     AppContext, ClipboardItem, Context, Entity, EntityInputHandler, Focusable, IntoElement,
-    Modifiers, ParentElement, Render, Styled, TestAppContext, VisualTestContext, Window, div,
-    point, px,
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement, Render, Styled,
+    TestAppContext, VisualTestContext, Window, div, point, px,
 };
 use sound_ui::components::text_input::{Arrow, TextInput};
 
@@ -229,4 +229,105 @@ fn a_one_line_field_turns_newlines_into_spaces(cx: &mut TestAppContext) {
     cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("b\r\nc\nd".into())));
     cx.simulate_keystrokes("cmd-v");
     assert_eq!(text(&input, cx), "a b c d");
+}
+
+#[gpui::test]
+fn shift_backspace_still_deletes(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
+    cx.simulate_keystrokes("a shift-enter shift-backspace shift-backspace b");
+    assert_eq!(text(&input, cx), "b");
+    cx.simulate_keystrokes("left shift-delete");
+    assert_eq!(text(&input, cx), "");
+}
+
+#[gpui::test]
+fn option_moves_selects_and_deletes_by_words(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
+    set_text(&input, "one two three", cx);
+    cx.simulate_keystrokes("alt-left alt-left x");
+    assert_eq!(text(&input, cx), "one xtwo three");
+    cx.simulate_keystrokes("alt-right alt-right y");
+    assert_eq!(text(&input, cx), "one xtwo threey");
+
+    set_text(&input, "one two three", cx);
+    cx.simulate_keystrokes("alt-backspace");
+    assert_eq!(text(&input, cx), "one two ");
+    cx.simulate_keystrokes("alt-backspace");
+    assert_eq!(text(&input, cx), "one ");
+    // A deleted word is one undo step.
+    cx.simulate_keystrokes("cmd-z");
+    assert_eq!(text(&input, cx), "one two ");
+
+    set_text(&input, "one two three", cx);
+    cx.simulate_keystrokes("cmd-up alt-delete");
+    assert_eq!(text(&input, cx), " two three");
+    cx.simulate_keystrokes("shift-alt-right shift-alt-right backspace");
+    assert_eq!(text(&input, cx), "");
+}
+
+#[gpui::test]
+fn cmd_arrows_go_to_the_ends_of_the_row_and_the_text(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
+    // Two rows, "aaaa bbbb " and "cccc dd".
+    set_text(&input, "aaaa bbbb cccc dd", cx);
+    cx.simulate_keystrokes("cmd-left 1");
+    assert_eq!(text(&input, cx), "aaaa bbbb 1cccc dd");
+    cx.simulate_keystrokes("cmd-right 2");
+    assert_eq!(text(&input, cx), "aaaa bbbb 1cccc dd2");
+    cx.simulate_keystrokes("cmd-up 3");
+    assert_eq!(text(&input, cx), "3aaaa bbbb 1cccc dd2");
+    cx.simulate_keystrokes("cmd-down 4");
+    assert_eq!(text(&input, cx), "3aaaa bbbb 1cccc dd24");
+
+    set_text(&input, "ab\ncd", cx);
+    cx.simulate_keystrokes("shift-cmd-left backspace");
+    assert_eq!(text(&input, cx), "ab\n");
+    set_text(&input, "ab\ncd", cx);
+    cx.simulate_keystrokes("shift-cmd-up backspace");
+    assert_eq!(text(&input, cx), "");
+
+    // Cmd-backspace deletes to the start of the row, and at the start it joins the rows.
+    set_text(&input, "ab\ncd", cx);
+    cx.simulate_keystrokes("cmd-backspace");
+    assert_eq!(text(&input, cx), "ab\n");
+    cx.simulate_keystrokes("cmd-backspace");
+    assert_eq!(text(&input, cx), "ab");
+}
+
+#[gpui::test]
+fn a_one_line_field_takes_the_word_and_row_keys_too(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, TextInput::new);
+    cx.simulate_keystrokes("a b space c d alt-backspace e cmd-left f shift-cmd-right backspace");
+    assert_eq!(text(&input, cx), "f");
+}
+
+fn click(cx: &mut VisualTestContext, x: f32, click_count: usize) {
+    let position = point(px(x), px(5.));
+    cx.simulate_event(MouseDownEvent {
+        position,
+        button: MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count,
+        first_mouse: false,
+    });
+    cx.simulate_event(MouseUpEvent {
+        position,
+        button: MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count,
+    });
+}
+
+#[gpui::test]
+fn a_double_click_selects_the_word_and_a_triple_click_the_line(cx: &mut TestAppContext) {
+    let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
+    set_text(&input, "ab cd\nef", cx);
+    // Characters are 8.4 px wide: inside "cd".
+    click(cx, 30., 1);
+    click(cx, 30., 2);
+    cx.simulate_keystrokes("x");
+    assert_eq!(text(&input, cx), "ab x\nef");
+    click(cx, 10., 3);
+    cx.simulate_keystrokes("y");
+    assert_eq!(text(&input, cx), "y\nef");
 }
