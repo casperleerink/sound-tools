@@ -79,10 +79,6 @@ impl TrackSnapshot {
         }
     }
 
-    pub fn notes(&self) -> &[PlacedNote] {
-        &self.notes
-    }
-
     pub fn pedal(&self) -> &[PlacedPedal] {
         &self.pedal
     }
@@ -114,7 +110,7 @@ impl TrackSnapshot {
     }
 
     /// Where the lanes stand at `tick`.
-    pub fn expression_at(&self, tick: Ticks) -> Expression {
+    fn expression_at(&self, tick: Ticks) -> Expression {
         Expression {
             bend: self.bend.at(tick),
             mod_wheel: self.mod_wheel.at(tick),
