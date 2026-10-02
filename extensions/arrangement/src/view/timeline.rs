@@ -2746,7 +2746,7 @@ impl Timeline {
     /// A move of an edge of an audio clip: the part of its file that plays. The left edge keeps
     /// the sound where it is in time.
     fn drag_trim(&mut self, x: f32, grid: Grid, cx: &mut Context<Self>) {
-        let Some(drag) = self.drag.take() else {
+        let Some(mut drag) = self.drag.take() else {
             return;
         };
         let ClipDragKind::Trim {
@@ -2754,7 +2754,7 @@ impl Timeline {
             edge,
             origin,
             file,
-        } = &drag.kind
+        } = &mut drag.kind
         else {
             self.drag = Some(drag);
             return;
@@ -2764,6 +2764,10 @@ impl Timeline {
             self.drag = Some(drag);
             return self.end_drag(cx);
         };
+        // An undo between mouse down and the first change may have changed the clip.
+        if !drag.begun {
+            *origin = live.clone();
+        }
         let clock = project.clock();
         let anchor = match edge {
             Edge::Left => origin.start,
@@ -2797,7 +2801,7 @@ impl Timeline {
     /// A move of a fade handle: the fade grows by the time the pointer went, in the time of the
     /// clip. No snap: a fade is a time and not a place on the grid.
     fn drag_fade(&mut self, x: f32, cx: &mut Context<Self>) {
-        let Some(drag) = self.drag.take() else {
+        let Some(mut drag) = self.drag.take() else {
             return;
         };
         let ClipDragKind::Fade {
@@ -2805,7 +2809,7 @@ impl Timeline {
             edge,
             origin,
             file,
-        } = &drag.kind
+        } = &mut drag.kind
         else {
             self.drag = Some(drag);
             return;
@@ -2815,6 +2819,10 @@ impl Timeline {
             self.drag = Some(drag);
             return self.end_drag(cx);
         };
+        // An undo between mouse down and the first change may have changed the fades.
+        if !drag.begun {
+            *origin = live.clone();
+        }
         let clock = project.clock();
         let went = clock.seconds_of(self.painted.get().tick_at(x)) - clock.seconds_of(drag.grab);
         let went = (went * 1000.) as f32;
@@ -2855,6 +2863,10 @@ impl Timeline {
         };
         if fine != *was_fine {
             (*from_db, *from_y, *was_fine) = (live.gain_db, y, fine);
+        }
+        // An undo between mouse down and the first change may have changed the gain.
+        if !drag.begun {
+            *from_db = live.gain_db;
         }
         let (bottom, top) = GAIN_DB;
         let speed = if fine { 0.1 } else { 1. };

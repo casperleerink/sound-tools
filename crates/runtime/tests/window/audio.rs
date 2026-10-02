@@ -244,6 +244,52 @@ fn the_handles_drag_the_fades_and_the_gain(cx: &mut TestAppContext) {
     one_undo_step(&mut opened, "Change gain", &before);
 }
 
+/// An undo between the press on an edge or a handle and the first move: the drag goes on from
+/// the clip the undo gave back, and does not write the one from before the undo.
+#[gpui::test]
+fn an_undo_before_the_first_move_of_a_trim_a_fade_or_the_gain_goes_on_from_the_undo(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open(cx);
+    // The left edge in by a second, then half a second from where the undo put it.
+    let left = right(opened.at(BAR, 1), 2.);
+    opened.drag(left, right(left, BAR_WIDTH / 2.));
+    let left = right(opened.at(BAR + SECOND, 1), 2.);
+    opened.press(left);
+    opened.keys("cmd-z");
+    let to = right(left, BAR_WIDTH / 4.);
+    opened.drag_to(to);
+    opened.release(to);
+    let long = audio_clip(&mut opened, LONG).unwrap();
+    assert_eq!(
+        (long.start, long.file_start_seconds),
+        (Ticks(BAR + SECOND / 2), 0.5)
+    );
+    opened.keys("cmd-z");
+
+    // The fade in a second long, then a quarter of a second from no fade.
+    let handle = right(in_clip(&mut opened, BAR, 1, 7.), 5.);
+    opened.drag(handle, right(handle, BAR_WIDTH / 2.));
+    let handle = right(handle, BAR_WIDTH / 2.);
+    opened.press(handle);
+    opened.keys("cmd-z");
+    let to = right(handle, BAR_WIDTH / 8.);
+    opened.drag_to(to);
+    opened.release(to);
+    assert_eq!(audio_clip(&mut opened, LONG).unwrap().fade_in_ms, 250.);
+    opened.keys("cmd-z");
+
+    // The gain down by six decibels, then by three from 0 dB.
+    let handle = in_clip(&mut opened, BAR + 2 * SECOND, 1, 7.);
+    opened.drag(handle, handle + point(px(0.), px(200. / 72. * 6.)));
+    opened.press(handle);
+    opened.keys("cmd-z");
+    let to = handle + point(px(0.), px(200. / 72. * 3.));
+    opened.drag_to(to);
+    opened.release(to);
+    assert_eq!(audio_clip(&mut opened, LONG).unwrap().gain_db, -3.);
+}
+
 #[gpui::test]
 fn alt_up_and_alt_down_change_the_gain_of_the_selected_clips(cx: &mut TestAppContext) {
     let mut opened = open(cx);
