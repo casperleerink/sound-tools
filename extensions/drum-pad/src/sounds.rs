@@ -378,6 +378,6 @@ fn sampled(
 }
 
 /// Semitones as a ratio of frequencies: 12 is twice as high.
-pub fn semitones_to_ratio(semitones: f32) -> f64 {
+pub(crate) fn semitones_to_ratio(semitones: f32) -> f64 {
     (f64::from(semitones) / 12.0).exp2()
 }

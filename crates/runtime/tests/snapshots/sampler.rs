@@ -144,7 +144,7 @@ fn handles_hide_under_the_drag(opened: &Opened, cx: &mut HeadlessAppContext) -> 
     Ok(())
 }
 
-pub fn snapshots(
+pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
 ) -> Result<()> {

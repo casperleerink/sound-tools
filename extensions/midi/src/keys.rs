@@ -104,14 +104,14 @@ impl Played {
 /// A message with the moment it reached this process, on the clock of
 /// [`sound_core::monotonic_nanos`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Arrived {
+pub(crate) struct Arrived {
     pub at_nanos: u64,
     pub played: Played,
 }
 
 /// What the audio thread sent to the instrument, and where the project was when it did.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Sounded {
+pub(crate) struct Sounded {
     pub arrived: Arrived,
     /// The engine frame this block began on. The sound of the message starts there.
     pub frame: u64,
@@ -228,7 +228,7 @@ impl Input {
 ///
 /// It has no state to save and nothing to say to the control side but the reports, so its
 /// update type is `()`.
-pub struct Keys {
+pub(crate) struct Keys {
     input: rtrb::Consumer<Arrived>,
     reports: rtrb::Producer<Report>,
     lost_reports: Arc<AtomicU64>,
@@ -247,7 +247,7 @@ pub struct Keys {
 }
 
 impl Keys {
-    pub const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
+    pub(crate) const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
 
     /// The processor, the handle a device layer writes into, the reports and the counter of
     /// reports that did not fit.

@@ -21,7 +21,7 @@ use super::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT};
 use super::timeline::{ARM_LEFT, ARMED_METER_HEIGHT, ARMED_METER_LEFT, Timeline, paint_takes};
 use crate::TrackState;
 
-pub struct RecordingOverlay {
+pub(crate) struct RecordingOverlay {
     session: Entity<Session>,
     timeline: Entity<Timeline>,
     recording: Entity<Recording>,

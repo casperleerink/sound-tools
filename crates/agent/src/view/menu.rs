@@ -15,14 +15,14 @@ const APPROVAL_MODES: [ApprovalMode; 3] = [
 ];
 
 /// Room for the descriptions of the approval modes on two lines.
-pub const WIDTH: f32 = 300.;
+pub(super) const WIDTH: f32 = 300.;
 
 /// The groups scroll past this, for a provider with many models.
-pub const MAX_HEIGHT: f32 = 480.;
+pub(super) const MAX_HEIGHT: f32 = 480.;
 
 /// What a row of the menu does.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Choice {
+pub(super) enum Choice {
     ApprovalMode(ApprovalMode),
     /// One of the provider's models, or `None` for its default.
     Model(Option<String>),
@@ -41,7 +41,7 @@ impl Choice {
         }
     }
 
-    pub fn of(value: &str) -> Option<Choice> {
+    pub(super) fn of(value: &str) -> Option<Choice> {
         match value {
             "sign-out" => return Some(Choice::SignOut),
             "model" => return Some(Choice::Model(None)),
@@ -82,7 +82,7 @@ fn approval_text(mode: ApprovalMode) -> (&'static str, &'static str, &'static st
 
 /// What the trigger says: the model the agent runs. Until the provider lists its models, the
 /// id that is picked, or "Default".
-pub fn label(settings: &Settings, models: &[Model]) -> String {
+pub(super) fn label(settings: &Settings, models: &[Model]) -> String {
     let picked = match &settings.model {
         Some(id) => models.iter().find(|model| model.id == *id),
         None => models.first(),
@@ -96,7 +96,7 @@ pub fn label(settings: &Settings, models: &[Model]) -> String {
 
 /// The approvals, the models, then the account and **Sign out**. `models` are the provider's,
 /// its default first, or none while no agent has started yet.
-pub fn entries(account: &Account, settings: &Settings, models: &[Model]) -> Vec<MenuEntry> {
+pub(super) fn entries(account: &Account, settings: &Settings, models: &[Model]) -> Vec<MenuEntry> {
     // The menu keeps no pick of its own: the settings say what is checked.
     let row = |choice: Choice, label: &str, checked: bool| {
         MenuItem::new(choice.value(), label.to_string())

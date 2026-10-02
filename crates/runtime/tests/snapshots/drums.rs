@@ -112,7 +112,7 @@ fn card(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<Entity<DrumPadVi
     })
 }
 
-pub fn snapshots(
+pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
 ) -> Result<()> {

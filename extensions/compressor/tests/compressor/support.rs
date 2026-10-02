@@ -8,21 +8,21 @@ use sound_core::{
     ProcessContext, Processor,
 };
 
-pub const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
 /// Makes the next frame of a signal, left and right. Called on the audio thread.
-pub type Signal = Box<dyn FnMut() -> [f32; 2] + Send>;
+pub(crate) type Signal = Box<dyn FnMut() -> [f32; 2] + Send>;
 
 /// A processor that plays a signal. The closure is made on the control thread; calling it
 /// allocates nothing.
-pub struct Source {
+pub(crate) struct Source {
     signal: Signal,
 }
 
 impl Source {
-    pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
 
-    pub fn new(signal: Signal) -> Self {
+    pub(crate) fn new(signal: Signal) -> Self {
         Self { signal }
     }
 }
@@ -47,7 +47,7 @@ impl Processor for Source {
 }
 
 /// A sine of this frequency and amplitude in both channels, from phase 0.
-pub fn sine(hz: f64, amplitude: f32) -> Signal {
+pub(crate) fn sine(hz: f64, amplitude: f32) -> Signal {
     let mut phase = 0.0_f64;
     let step = hz / f64::from(SAMPLE_RATE);
     Box::new(move || {
@@ -59,7 +59,7 @@ pub fn sine(hz: f64, amplitude: f32) -> Signal {
 
 /// A steady value in both channels that changes to another at a frame: the cleanest level
 /// step, because the level of a constant is the constant and the gain is the output over it.
-pub fn step(before: f32, at: usize, after: f32) -> Signal {
+pub(crate) fn step(before: f32, at: usize, after: f32) -> Signal {
     let mut frame = 0_usize;
     Box::new(move || {
         let value = if frame < at { before } else { after };
@@ -69,7 +69,7 @@ pub fn step(before: f32, at: usize, after: f32) -> Signal {
 }
 
 /// Silence for `frames`, then another signal from its start.
-pub fn after_silence(frames: usize, mut then: Signal) -> Signal {
+pub(crate) fn after_silence(frames: usize, mut then: Signal) -> Signal {
     let mut frame = 0_usize;
     Box::new(move || {
         frame += 1;
@@ -81,7 +81,7 @@ pub fn after_silence(frames: usize, mut then: Signal) -> Signal {
 }
 
 /// White noise from -amplitude to amplitude, the same every run, other in each channel.
-pub fn noise(amplitude: f32) -> Signal {
+pub(crate) fn noise(amplitude: f32) -> Signal {
     let mut state = 0x2545_f491_4f6c_dd1d_u64;
     let mut next = move || {
         state ^= state << 13;
@@ -93,7 +93,7 @@ pub fn noise(amplitude: f32) -> Signal {
 }
 
 /// A source, a compressor and the device, rendering offline.
-pub struct Rig {
+pub(crate) struct Rig {
     pub control: EngineControl,
     pub engine: Engine,
     pub compressor: Node<Compressor>,
@@ -102,7 +102,7 @@ pub struct Rig {
 }
 
 impl Rig {
-    pub fn new(state: CompressorState, signal: Signal) -> Self {
+    pub(crate) fn new(state: CompressorState, signal: Signal) -> Self {
         let (mut control, engine) =
             Engine::new(EngineConfig::new(SAMPLE_RATE, 2).rendering_offline());
         let mut edit = control.edit();
@@ -135,7 +135,7 @@ impl Rig {
 
     /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
     /// Left and right.
-    pub fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
+    pub(crate) fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
         let mut output = vec![0.0; frames * 2];
         for buffer in output.chunks_mut(480 * 2) {
             self.engine.process_block(buffer);
@@ -145,7 +145,7 @@ impl Rig {
     }
 
     /// The same in device buffers of `block` frames.
-    pub fn render_in_blocks(&mut self, frames: usize, block: usize) -> [Vec<f32>; 2] {
+    pub(crate) fn render_in_blocks(&mut self, frames: usize, block: usize) -> [Vec<f32>; 2] {
         let mut output = vec![0.0; frames * 2];
         for buffer in output.chunks_mut(block * 2) {
             self.engine.process_block(buffer);
@@ -154,14 +154,14 @@ impl Rig {
         [channel(0), channel(1)]
     }
 
-    pub fn update(&mut self, state: CompressorState) {
+    pub(crate) fn update(&mut self, state: CompressorState) {
         self.control.update(self.compressor, state).unwrap();
     }
 }
 
 /// The amplitude of the part of `samples` at `hz`, by correlation with a sine and a cosine of
 /// that frequency. `samples` start at frame `start` of a signal whose phase was 0 at frame 0.
-pub fn amplitude_at(samples: &[f32], start: usize, hz: f64) -> f64 {
+pub(crate) fn amplitude_at(samples: &[f32], start: usize, hz: f64) -> f64 {
     let (mut sine, mut cosine) = (0.0, 0.0);
     for (offset, sample) in samples.iter().enumerate() {
         let angle = TAU * hz * (start + offset) as f64 / f64::from(SAMPLE_RATE);
@@ -174,7 +174,7 @@ pub fn amplitude_at(samples: &[f32], start: usize, hz: f64) -> f64 {
 /// The gain of a compressor with this record on a steady sine of this peak level, measured once
 /// it has settled, in dB. The settling is two seconds: every release of these tests is
 /// shorter than a tenth of that.
-pub fn measured_gain_db(state: CompressorState, hz: f64, level_db: f32) -> f64 {
+pub(crate) fn measured_gain_db(state: CompressorState, hz: f64, level_db: f32) -> f64 {
     let amplitude = 10_f32.powf(level_db / 20.0);
     let mut rig = Rig::new(state, sine(hz, amplitude));
     let settle = 2 * SAMPLE_RATE as usize;
@@ -188,14 +188,14 @@ pub fn measured_gain_db(state: CompressorState, hz: f64, level_db: f32) -> f64 {
     20.0 * (measured / f64::from(amplitude)).log10()
 }
 
-pub fn peak(samples: &[f32]) -> f32 {
+pub(crate) fn peak(samples: &[f32]) -> f32 {
     samples
         .iter()
         .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
 /// The largest step from one sample to the next.
-pub fn largest_step(samples: &[f32]) -> f32 {
+pub(crate) fn largest_step(samples: &[f32]) -> f32 {
     samples
         .windows(2)
         .map(|pair| (pair[1] - pair[0]).abs())

@@ -20,11 +20,11 @@ use sound_core::{
     ProcessContext, Processor, Project, ProjectError, Registry, State, Was,
 };
 
-pub const EXTENSION: &str = "test";
+pub(crate) const EXTENSION: &str = "test";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Dc {
+pub(crate) struct Dc {
     pub value: f32,
 }
 
@@ -41,14 +41,14 @@ impl State for Dc {
 }
 
 /// Puts out the value it was last sent.
-pub struct Constant(f32);
+pub(crate) struct Constant(f32);
 
 impl Constant {
-    pub fn new(value: f32) -> Self {
+    pub(crate) fn new(value: f32) -> Self {
         Self(value)
     }
 
-    pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
 }
 
 impl Processor for Constant {
@@ -81,7 +81,7 @@ fn apply_dc(state: &Dc, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
 /// Data only: it has no behaviour. Its owner reads it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Level {
+pub(crate) struct Level {
     pub value: f32,
 }
 
@@ -91,7 +91,7 @@ impl State for Level {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Amplifier {
+pub(crate) struct Amplifier {
     pub gain: f32,
 }
 
@@ -99,15 +99,15 @@ impl State for Amplifier {
     const TOOL: &'static str = "test.amplifier";
 }
 
-pub struct Gain(f32);
+pub(crate) struct Gain(f32);
 
 impl Gain {
-    pub fn new(gain: f32) -> Self {
+    pub(crate) fn new(gain: f32) -> Self {
         Self(gain)
     }
 
-    pub const INPUT: AudioInput = AudioInput::new(0);
-    pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub(crate) const INPUT: AudioInput = AudioInput::new(0);
+    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
 }
 
 impl Processor for Gain {
@@ -149,13 +149,13 @@ fn apply_amplifier(
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Chain {}
+pub(crate) struct Chain {}
 
 impl State for Chain {
     const TOOL: &'static str = "test.chain";
 }
 
-pub const CHAIN_RECORD: &str = r#"{"tool": "test.chain", "state": {}}"#;
+pub(crate) const CHAIN_RECORD: &str = r#"{"tool": "test.chain", "state": {}}"#;
 
 /// The last gain is made first, so the connection between the two goes to the lower id.
 fn apply_chain(_: &Chain, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
@@ -172,7 +172,7 @@ fn apply_chain(_: &Chain, context: &mut BehaviourContext<'_>) -> Result<(), Beha
 /// record, so the whole group fails.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Reporter {
+pub(crate) struct Reporter {
     pub message: String,
 }
 
@@ -197,7 +197,7 @@ fn derive_reporter(
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Bank {
+pub(crate) struct Bank {
     pub gain: f32,
 }
 
@@ -207,20 +207,20 @@ impl State for Bank {
 }
 
 /// The name of the child a bank plays through.
-pub const BANK_OUTPUT: &str = "output";
+pub(crate) const BANK_OUTPUT: &str = "output";
 
 #[derive(Default)]
-pub struct BankUpdate {
+pub(crate) struct BankUpdate {
     gain: f32,
     levels: Arc<Vec<f32>>,
 }
 
 /// Puts out the sum of one immutable snapshot of levels, times a gain.
 #[derive(Default)]
-pub struct Summer(BankUpdate);
+pub(crate) struct Summer(BankUpdate);
 
 impl Summer {
-    pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
 }
 
 impl Processor for Summer {
@@ -270,7 +270,7 @@ fn apply_bank(state: &Bank, context: &mut BehaviourContext<'_>) -> Result<(), Be
     Ok(())
 }
 
-pub fn registry() -> Registry {
+pub(crate) fn registry() -> Registry {
     let mut registry = Registry::new();
     registry.tool::<Dc>(EXTENSION).unwrap().behaviour(apply_dc);
     registry.tool::<Level>(EXTENSION).unwrap();
@@ -300,7 +300,7 @@ pub fn registry() -> Registry {
 /// Two tools with a fixed place, data only: a shelf lives at the top, a book on a shelf.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Shelf {}
+pub(crate) struct Shelf {}
 
 impl State for Shelf {
     const TOOL: &'static str = "test.shelf";
@@ -310,17 +310,17 @@ impl State for Shelf {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Book {}
+pub(crate) struct Book {}
 
 impl State for Book {
     const TOOL: &'static str = "test.book";
     const PLACE: Place = Place::In(Shelf::TOOL);
 }
 
-pub const SHELF_RECORD: &str = r#"{"tool": "test.shelf", "state": {}}"#;
-pub const BOOK_RECORD: &str = r#"{"tool": "test.book", "state": {}}"#;
+pub(crate) const SHELF_RECORD: &str = r#"{"tool": "test.shelf", "state": {}}"#;
+pub(crate) const BOOK_RECORD: &str = r#"{"tool": "test.book", "state": {}}"#;
 
-pub const TEST_AGENT_DOC: AgentDoc = AgentDoc {
+pub(crate) const TEST_AGENT_DOC: AgentDoc = AgentDoc {
     name: "test-tools",
     when: "You work on a test record",
     markdown: "# Test tools\n\nA record of a test tool.\n",
@@ -332,10 +332,10 @@ fn summarize_bank(project: &Project, bank: &sound_core::Instance<Bank>) -> Strin
     format!("bank {} with {levels} levels", bank.id())
 }
 
-pub const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
 /// An open project on a temporary folder with an offline mono engine.
-pub struct Harness {
+pub(crate) struct Harness {
     pub project: Project,
     pub engine: Engine,
     /// The time of the last outside change. See [`Harness::apply_outside_changes`].
@@ -345,12 +345,12 @@ pub struct Harness {
 }
 
 impl Harness {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::open(tempfile::tempdir().unwrap())
     }
 
     /// A project with two device channels, so a test can tell the channels apart.
-    pub fn stereo() -> Self {
+    pub(crate) fn stereo() -> Self {
         let folder = tempfile::tempdir().unwrap();
         let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let project = Project::open(folder.path(), registry(), control).unwrap();
@@ -364,13 +364,13 @@ impl Harness {
 
     /// Renders one device buffer and gives the last frame: the two channels of a stereo
     /// harness. Every test processor puts out a constant, so one frame shows the state.
-    pub fn frame(&mut self) -> [f32; 2] {
+    pub(crate) fn frame(&mut self) -> [f32; 2] {
         let mut buffer = [0.0; 480];
         self.engine.process_block(&mut buffer);
         [buffer[478], buffer[479]]
     }
 
-    pub fn open(folder: tempfile::TempDir) -> Self {
+    pub(crate) fn open(folder: tempfile::TempDir) -> Self {
         let (project, engine) = open(folder.path());
         Self {
             project,
@@ -383,13 +383,16 @@ impl Harness {
     /// Applies outside changes a minute after the last ones. Tests run in milliseconds, and
     /// outside groups that close together are one undo step (`OUTSIDE_UNDO_WINDOW`). With
     /// the minute, each call is a step of its own, as for changes a person makes by hand.
-    pub fn apply_outside_changes(&mut self, paths: &[PathBuf]) -> Result<usize, ProjectError> {
+    pub(crate) fn apply_outside_changes(
+        &mut self,
+        paths: &[PathBuf],
+    ) -> Result<usize, ProjectError> {
         self.now += Duration::from_secs(60);
         self.project.apply_outside_changes_at(paths, self.now)
     }
 
     /// Closes the project and opens the same folder again.
-    pub fn reopen(self) -> Self {
+    pub(crate) fn reopen(self) -> Self {
         let Self {
             project,
             engine,
@@ -400,69 +403,69 @@ impl Harness {
         Self::open(folder)
     }
 
-    pub fn path(&self, relative: &str) -> PathBuf {
+    pub(crate) fn path(&self, relative: &str) -> PathBuf {
         self.project.root().join(relative)
     }
 
     /// Writes a file the way an agent would, without telling the project.
-    pub fn write(&self, relative: &str, contents: &str) -> PathBuf {
+    pub(crate) fn write(&self, relative: &str, contents: &str) -> PathBuf {
         let path = self.path(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, contents).unwrap();
         path
     }
 
-    pub fn read(&self, relative: &str) -> String {
+    pub(crate) fn read(&self, relative: &str) -> String {
         std::fs::read_to_string(self.path(relative)).unwrap()
     }
 
     /// Writes a file and applies it, as the watcher would.
-    pub fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
+    pub(crate) fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
         let path = self.write(relative, contents);
         self.apply_outside_changes(&[path]).unwrap()
     }
 
     /// Renders one device buffer and gives its last sample. Every test processor puts out a
     /// constant, so one sample shows the state.
-    pub fn level(&mut self) -> f32 {
+    pub(crate) fn level(&mut self) -> f32 {
         let mut buffer = [0.0; 480];
         self.engine.process_block(&mut buffer);
         buffer[479]
     }
 
-    pub fn batches(&mut self) -> u64 {
+    pub(crate) fn batches(&mut self) -> u64 {
         self.level();
         self.project.engine().poll().unwrap().batches_applied
     }
 
-    pub fn problem_at(&self, path: &str) -> Option<String> {
+    pub(crate) fn problem_at(&self, path: &str) -> Option<String> {
         let problems = self.project.problems();
         let problem = problems.iter().find(|problem| problem.path == path)?;
         Some(problem.message.clone())
     }
 }
 
-pub fn open(folder: &Path) -> (Project, Engine) {
+pub(crate) fn open(folder: &Path) -> (Project, Engine) {
     let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
     let project = Project::open(folder, registry(), control).unwrap();
     (project, engine)
 }
 
-pub fn id(id: &str) -> InstanceId {
+pub(crate) fn id(id: &str) -> InstanceId {
     InstanceId::new(id).unwrap()
 }
 
-pub fn dc_record(value: f32) -> String {
+pub(crate) fn dc_record(value: f32) -> String {
     format!(r#"{{"tool": "test.dc", "state": {{"value": {value}}}}}"#)
 }
 
-pub fn level_record(value: f32) -> String {
+pub(crate) fn level_record(value: f32) -> String {
     format!(r#"{{"tool": "test.level", "state": {{"value": {value}}}}}"#)
 }
 
-pub const BANK_RECORD: &str = r#"{"tool": "test.bank", "state": {"gain": 1.0}}"#;
+pub(crate) const BANK_RECORD: &str = r#"{"tool": "test.bank", "state": {"gain": 1.0}}"#;
 
-pub fn project_file(connections: &str) -> String {
+pub(crate) fn project_file(connections: &str) -> String {
     format!(
         r#"{{
   "format": 1,
@@ -473,18 +476,18 @@ pub fn project_file(connections: &str) -> String {
     )
 }
 
-pub fn dc_to_device(instance: &str) -> String {
+pub(crate) fn dc_to_device(instance: &str) -> String {
     dc_to_device_channel(instance, 0)
 }
 
-pub fn dc_to_device_channel(instance: &str, channel: usize) -> String {
+pub(crate) fn dc_to_device_channel(instance: &str, channel: usize) -> String {
     format!(
         r#"{{"from": {{"instance": "{instance}", "port": "out"}}, "to": {{"device_output": {channel}}}}}"#
     )
 }
 
 /// Writes a file into a project folder, as an agent would, before the project is open.
-pub fn write(root: &Path, relative: &str, contents: &str) {
+pub(crate) fn write(root: &Path, relative: &str, contents: &str) {
     let path = root.join(relative);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, contents).unwrap();
@@ -492,7 +495,7 @@ pub fn write(root: &Path, relative: &str, contents: &str) {
 
 /// Every record file and `project.json` of a project folder, with its bytes. The generated
 /// files of the runtime are left out: they are its own, not the composer's.
-pub fn records(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+pub(crate) fn records(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     fn walk(folder: &Path, root: &Path, found: &mut Vec<(PathBuf, Vec<u8>)>) {
         let Ok(entries) = std::fs::read_dir(folder) else {
             return;

@@ -46,7 +46,7 @@ fn listen_to_every_sound_and_a_beat() {
 /// Four bars at 120 bpm and the crash that follows them: a groove on the hats, the same with a
 /// ghost note and a clap, a bar on the ride with the pedal hat and the rim, and a fill down the
 /// toms.
-pub fn beat() -> Vec<sound_notes::Note> {
+pub(crate) fn beat() -> Vec<sound_notes::Note> {
     const KICK: u8 = 36;
     const RIM: u8 = 37;
     const SNARE: u8 = 38;

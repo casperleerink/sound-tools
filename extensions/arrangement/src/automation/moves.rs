@@ -146,7 +146,7 @@ impl Carried {
 /// clip took and the track it goes to. Each lane a clip takes along becomes a straight line
 /// between the edges of where it was. Clips that touch or overlap are one place, so no edge
 /// sits inside another clip that left. What a move and a cut leave behind.
-pub fn clear(
+pub(crate) fn clear(
     track: &InstanceId,
     state: &mut TrackState,
     taken: &[(&Carried, &InstanceId)],
@@ -327,7 +327,7 @@ impl AutomationLane {
 
 /// Points of a lane as places on the travel of `range`, where its line is straight: what
 /// plays, and what the timeline draws.
-pub fn positions(points: &[Point<AutomationValue>], range: ValueRange) -> Vec<Point<f32>> {
+pub(crate) fn positions(points: &[Point<AutomationValue>], range: ValueRange) -> Vec<Point<f32>> {
     let points = points.iter().map(|point| Point {
         tick: point.tick,
         value: range.position(point.value.0),

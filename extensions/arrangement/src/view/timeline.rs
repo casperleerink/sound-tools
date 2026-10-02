@@ -438,9 +438,9 @@ impl ClipDrag {
 }
 
 /// The undo steps of the handles of an audio clip, and of their knobs in the Clip card.
-pub const FADE_IN_LABEL: &str = "Change fade in";
-pub const FADE_OUT_LABEL: &str = "Change fade out";
-pub const GAIN_LABEL: &str = "Change gain";
+pub(crate) const FADE_IN_LABEL: &str = "Change fade in";
+pub(crate) const FADE_OUT_LABEL: &str = "Change fade out";
+pub(crate) const GAIN_LABEL: &str = "Change gain";
 
 /// A drag on empty space: the clips it touches are selected. Its corners are a tick and a
 /// height from the top of the first track, so a scroll during it keeps its start in place.

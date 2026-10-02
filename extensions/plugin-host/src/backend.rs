@@ -16,7 +16,7 @@ use crate::processor::Started;
 use crate::window::WindowSize;
 
 /// One plugin that is loaded, seen from the thread the project lives on.
-pub trait LoadedPlugin {
+pub(crate) trait LoadedPlugin {
     /// Main-thread work the plugin asked for since the last call, and what it wants of its
     /// window. Whoever polls acts on it.
     fn poll(&mut self) -> Requests;
@@ -47,7 +47,7 @@ pub trait LoadedPlugin {
 /// What a plugin asked for since the last poll. All of it may be asked for from another
 /// thread, so a backend only notes it and the poll on the main thread acts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Requests {
+pub(crate) struct Requests {
     /// The plugin asked to be deactivated and activated again, which this host does, and then
     /// reads its latency and its buses again: CLAP's `request_restart`, and VST 3's
     /// `kLatencyChanged` and `kIoChanged`.
@@ -70,7 +70,7 @@ pub struct Requests {
 
 /// What a plugin's own window needs from the plugin. One window of the application holds one
 /// plugin's view, see `window.rs`.
-pub trait PluginGui {
+pub(crate) trait PluginGui {
     /// Whether this plugin can put its view in a window of ours on this platform.
     fn is_offered(&mut self) -> bool;
 
@@ -115,13 +115,13 @@ pub trait PluginGui {
 
 /// Whether a key went down or came up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeyDirection {
+pub(crate) enum KeyDirection {
     Down,
     Up,
 }
 
 /// A plugin that loaded: the two ends of it, and what to report about it while it plays.
-pub struct Opening {
+pub(crate) struct Opening {
     /// The control side, for the table.
     pub plugin: Box<dyn LoadedPlugin>,
     /// The audio side, for the engine.

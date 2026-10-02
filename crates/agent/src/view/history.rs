@@ -5,7 +5,7 @@ use sound_ui::components::text_input::Arrow;
 /// Where the composer is among the earlier messages. Only an empty composer, or one that still
 /// shows a recalled message as it was, moves through them, so a draft is never lost.
 #[derive(Debug, Default)]
-pub struct History {
+pub(super) struct History {
     /// How far back from the newest message, which is 0. `None` while none shows.
     position: Option<usize>,
 }
@@ -14,7 +14,7 @@ impl History {
     /// The text the composer shows next, or `None` to leave it as it is. `messages` are the
     /// thread's, oldest first; `text` is what the composer shows now. Up goes back from the
     /// newest, down goes forward again and past the newest to an empty composer.
-    pub fn recall(&mut self, messages: &[&str], text: &str, arrow: Arrow) -> Option<String> {
+    pub(super) fn recall(&mut self, messages: &[&str], text: &str, arrow: Arrow) -> Option<String> {
         let newest_first = |position: usize| {
             messages
                 .len()
@@ -43,7 +43,7 @@ impl History {
     }
 
     /// After a send, or in a new thread: up starts again from the newest.
-    pub fn reset(&mut self) {
+    pub(super) fn reset(&mut self) {
         self.position = None;
     }
 }

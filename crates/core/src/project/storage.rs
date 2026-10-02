@@ -34,7 +34,7 @@ pub(crate) enum Form {
 }
 
 impl Form {
-    pub fn of(record: &Record) -> Self {
+    pub(super) fn of(record: &Record) -> Self {
         if record.owns_children {
             Self::Folder
         } else {
@@ -97,7 +97,7 @@ pub(crate) enum Unloadable {
 }
 
 impl Unloadable {
-    pub fn message(&self) -> String {
+    pub(super) fn message(&self) -> String {
         match self {
             Self::UnknownTool(tool) => format!(
                 "unknown tool {tool:?}: no enabled extension offers it, so the record is left untouched"
@@ -184,7 +184,7 @@ pub(crate) enum Locked {
 
 impl Storage {
     /// Creates the folder when it is missing, and takes the project lock.
-    pub fn open_exclusive(folder: &Path) -> io::Result<Locked> {
+    pub(super) fn open_exclusive(folder: &Path) -> io::Result<Locked> {
         fs::create_dir_all(folder.join(STATE_FOLDER))?;
         let root = folder.canonicalize()?;
         let lock = fs::OpenOptions::new()
@@ -200,7 +200,7 @@ impl Storage {
     }
 
     /// Takes no lock and must never write, so it is safe next to a running runtime.
-    pub fn open_read_only(folder: &Path) -> io::Result<Self> {
+    pub(super) fn open_read_only(folder: &Path) -> io::Result<Self> {
         Ok(Self::new(folder.canonicalize()?, None))
     }
 
@@ -213,11 +213,11 @@ impl Storage {
         }
     }
 
-    pub fn root(&self) -> &Path {
+    pub(super) fn root(&self) -> &Path {
         &self.root
     }
 
-    pub fn state_folder(&self) -> PathBuf {
+    pub(super) fn state_folder(&self) -> PathBuf {
         self.root.join(STATE_FOLDER)
     }
 
@@ -225,7 +225,7 @@ impl Storage {
         self.state_folder().join(id.as_str())
     }
 
-    pub fn record_path(&self, id: &InstanceId, form: Form) -> PathBuf {
+    pub(super) fn record_path(&self, id: &InstanceId, form: Form) -> PathBuf {
         match form {
             Form::File => self.state_folder().join(format!("{id}.{RECORD_EXTENSION}")),
             Form::Folder => self
@@ -235,7 +235,7 @@ impl Storage {
     }
 
     /// The path as problems and messages show it: relative to the project folder, with `/`.
-    pub fn display_path(&self, path: &Path) -> String {
+    pub(super) fn display_path(&self, path: &Path) -> String {
         let relative = path.strip_prefix(&self.root).unwrap_or(path);
         let names: Vec<_> = relative
             .components()
@@ -244,29 +244,29 @@ impl Storage {
         names.join("/")
     }
 
-    pub fn observed(&self, id: &InstanceId) -> Option<OnDisk> {
+    pub(super) fn observed(&self, id: &InstanceId) -> Option<OnDisk> {
         self.records.get(id).copied()
     }
 
-    pub fn observe(&mut self, id: InstanceId, on_disk: OnDisk) {
+    pub(super) fn observe(&mut self, id: InstanceId, on_disk: OnDisk) {
         self.records.insert(id, on_disk);
     }
 
-    pub fn forget(&mut self, id: &InstanceId) {
+    pub(super) fn forget(&mut self, id: &InstanceId) {
         self.records.remove(id);
     }
 
-    pub fn project_file_fingerprint(&self) -> Option<u64> {
+    pub(super) fn project_file_fingerprint(&self) -> Option<u64> {
         self.project_file
     }
 
-    pub fn observe_project_file(&mut self, fingerprint: Option<u64>) {
+    pub(super) fn observe_project_file(&mut self, fingerprint: Option<u64>) {
         self.project_file = fingerprint;
     }
 
     /// Maps a path the watcher reported, or a test named, to what it means. The path may no
     /// longer exist, so a missing path counts as a record when it ends in `.json`.
-    pub fn target_of(&self, path: &Path) -> PathTarget {
+    pub(super) fn target_of(&self, path: &Path) -> PathTarget {
         let Ok(relative) = path.strip_prefix(&self.root) else {
             return PathTarget::Ignored;
         };
@@ -313,7 +313,7 @@ impl Storage {
     /// Reads the record of `id` in whichever form it is on disk. `seen` is the one form a
     /// folder scan just saw, which saves looking for the other: at 10,000 records that is a
     /// quarter of the time to open.
-    pub fn read_record(
+    pub(super) fn read_record(
         &self,
         id: &InstanceId,
         seen: Option<Form>,
@@ -341,15 +341,15 @@ impl Storage {
     }
 
     /// Whether the folder of `id` exists. Without a record in it, it holds orphaned files.
-    pub fn has_folder(&self, id: &InstanceId) -> bool {
+    pub(super) fn has_folder(&self, id: &InstanceId) -> bool {
         self.instance_folder(id).is_dir()
     }
 
-    pub fn folder_display_path(&self, id: &InstanceId) -> String {
+    pub(super) fn folder_display_path(&self, id: &InstanceId) -> String {
         self.display_path(&self.instance_folder(id))
     }
 
-    pub fn read_project_file(&self) -> Result<Option<Vec<u8>>, StorageError> {
+    pub(super) fn read_project_file(&self) -> Result<Option<Vec<u8>>, StorageError> {
         let path = self.root.join(PROJECT_FILE);
         match fs::read(&path) {
             Ok(bytes) => Ok(Some(bytes)),
@@ -360,7 +360,7 @@ impl Storage {
 
     /// Every instance id that has a record on disk inside `parent`, parents before children.
     /// `None` scans all of `state/`. Reports what it skips as (path, message).
-    pub fn scan(
+    pub(super) fn scan(
         &self,
         parent: Option<&InstanceId>,
         found: &mut Vec<(InstanceId, Option<Form>)>,
@@ -441,7 +441,11 @@ impl Storage {
     }
 
     /// Writes the record, in the form of its tool, unless the file already holds these bytes.
-    pub fn write_record(&mut self, id: &InstanceId, record: &Record) -> Result<(), StorageError> {
+    pub(super) fn write_record(
+        &mut self,
+        id: &InstanceId,
+        record: &Record,
+    ) -> Result<(), StorageError> {
         let observed = self.observed(id);
         let form = Form::of(record);
         let path = self.record_path(id, form);
@@ -469,7 +473,7 @@ impl Storage {
 
     /// Removes the record file, and the folder when nothing else is in it. Files the runtime
     /// does not know, such as records of unknown tools, are never removed.
-    pub fn delete_record(&mut self, id: &InstanceId) -> Result<(), StorageError> {
+    pub(super) fn delete_record(&mut self, id: &InstanceId) -> Result<(), StorageError> {
         let Some(on_disk) = self.records.remove(id) else {
             return Ok(());
         };
@@ -488,7 +492,10 @@ impl Storage {
         Ok(())
     }
 
-    pub fn write_project_file(&mut self, project_file: &ProjectFile) -> Result<(), StorageError> {
+    pub(super) fn write_project_file(
+        &mut self,
+        project_file: &ProjectFile,
+    ) -> Result<(), StorageError> {
         let path = self.root.join(PROJECT_FILE);
         let compact =
             serde_json::to_string(project_file).map_err(|source| StorageError::Encode {
@@ -508,7 +515,11 @@ impl Storage {
     /// Makes a generated file in the project folder hold `contents`, or removes it for `None`.
     /// A file that already holds the same bytes is left alone, so its modification time only
     /// moves when the text does.
-    pub fn write_generated(&self, name: &str, contents: Option<&str>) -> Result<(), StorageError> {
+    pub(super) fn write_generated(
+        &self,
+        name: &str,
+        contents: Option<&str>,
+    ) -> Result<(), StorageError> {
         let path = self.root.join(name);
         let Some(contents) = contents else {
             return self.remove_file(&path);
@@ -523,7 +534,7 @@ impl Storage {
     /// it that `files` does not name is removed, so a doc of an extension that is no longer
     /// enabled cannot mislead an agent. Everything else in the folder is left alone: only the
     /// markdown is the runtime's, and what a composer or an agent puts next to it is theirs.
-    pub fn write_generated_folder(
+    pub(super) fn write_generated_folder(
         &self,
         folder: &str,
         files: BTreeMap<String, String>,

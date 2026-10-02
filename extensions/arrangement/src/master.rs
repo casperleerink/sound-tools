@@ -142,11 +142,11 @@ pub(crate) struct Master {
 }
 
 impl Master {
-    pub const INPUT: AudioInput = AudioInput::new(0);
-    pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub(crate) const INPUT: AudioInput = AudioInput::new(0);
+    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
 
     /// Starts at these settings, so a project that opens is not faded in.
-    pub fn new(settings: MasterSettings, peaks: Peaks, reduction: Peaks) -> Self {
+    pub(crate) fn new(settings: MasterSettings, peaks: Peaks, reduction: Peaks) -> Self {
         Self {
             settings,
             volume: Smoothed::new(settings.volume),

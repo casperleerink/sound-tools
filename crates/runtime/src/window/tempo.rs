@@ -9,21 +9,21 @@
 use sound_core::{Tempo, TempoMap, Ticks};
 
 /// Bpm per point of a plain drag. With shift it is a tenth, as for every drag.
-pub const DRAG_PER_POINT: f64 = 0.5;
+pub(super) const DRAG_PER_POINT: f64 = 0.5;
 /// The step a plain drag moves by, from the tempo it began on. It does not snap the result,
 /// so a tempo written by hand keeps its fraction. With shift it is a tenth.
-pub const DRAG_STEP: f64 = 1.0;
+pub(super) const DRAG_STEP: f64 = 1.0;
 /// What one arrow key adds, plain and with shift.
-pub const KEY_STEP: f64 = 1.0;
-pub const FINE_KEY_STEP: f64 = 0.1;
+pub(super) const KEY_STEP: f64 = 1.0;
+pub(super) const FINE_KEY_STEP: f64 = 0.1;
 
 /// The name of the undo step of every tempo edit.
-pub const LABEL: &str = "Change tempo";
+pub(super) const LABEL: &str = "Change tempo";
 
 /// The same tempo map with the tempo change that starts exactly at `at` set to `bpm`, kept
 /// inside the bounds of the clock so a drag past an end stops there. `None` when the map has
 /// no change at that tick any more.
-pub fn with_bpm(tempo_map: &TempoMap, at: Ticks, bpm: f64) -> Option<TempoMap> {
+pub(super) fn with_bpm(tempo_map: &TempoMap, at: Ticks, bpm: f64) -> Option<TempoMap> {
     tempo_map.with_tempo_at(at, bounded(bpm))
 }
 

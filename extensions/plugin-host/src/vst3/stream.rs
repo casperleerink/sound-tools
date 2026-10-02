@@ -29,7 +29,7 @@ use vst3::{Class, ComPtr, ComWrapper};
 use super::MAX_STATE;
 
 /// A stream of bytes a plugin reads from or writes into.
-pub struct MemoryStream {
+pub(super) struct MemoryStream {
     inner: RefCell<Inner>,
 }
 
@@ -44,7 +44,7 @@ impl Class for MemoryStream {
 
 impl MemoryStream {
     /// A stream a plugin reads its saved state from.
-    pub fn reading(bytes: &[u8]) -> ComWrapper<Self> {
+    pub(super) fn reading(bytes: &[u8]) -> ComWrapper<Self> {
         ComWrapper::new(Self {
             inner: RefCell::new(Inner {
                 bytes: bytes.to_vec(),
@@ -54,24 +54,24 @@ impl MemoryStream {
     }
 
     /// An empty stream a plugin writes its state into.
-    pub fn writing() -> ComWrapper<Self> {
+    pub(super) fn writing() -> ComWrapper<Self> {
         Self::reading(&[])
     }
 
     /// What the plugin wrote.
-    pub fn written(&self) -> Vec<u8> {
+    pub(super) fn written(&self) -> Vec<u8> {
         self.inner.borrow().bytes.clone()
     }
 
     /// Back to the first byte, for a second reader. The component's state also goes to the
     /// controller, which reads the same bytes from the start.
-    pub fn rewind(&self) {
+    pub(super) fn rewind(&self) {
         self.inner.borrow_mut().position = 0;
     }
 }
 
 /// The interface pointer of a stream, for a call into a plugin.
-pub fn as_stream(stream: &ComWrapper<MemoryStream>) -> Option<ComPtr<IBStream>> {
+pub(super) fn as_stream(stream: &ComWrapper<MemoryStream>) -> Option<ComPtr<IBStream>> {
     stream.to_com_ptr()
 }
 

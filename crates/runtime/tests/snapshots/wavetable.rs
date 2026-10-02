@@ -140,7 +140,7 @@ fn scroll_rack(opened: &Opened, by: f32, cx: &mut HeadlessAppContext) -> Result<
     Ok(())
 }
 
-pub fn snapshots(
+pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
 ) -> Result<()> {

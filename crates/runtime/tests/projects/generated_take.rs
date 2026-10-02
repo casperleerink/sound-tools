@@ -8,11 +8,11 @@ use sound_notes::{RawEvent, RawTake};
 
 /// Where the take begins on the project timeline: two seconds in, so the fit has to keep it
 /// there and the grid has a bar of lead in front of it.
-pub const STARTS_AT_US: u64 = 2_000_000;
+pub(crate) const STARTS_AT_US: u64 = 2_000_000;
 
 /// A take of `bars` bars of 4/4, one chord a beat, with a tempo that gives and takes around 96
 /// bpm and the jitter of a hand. Deterministic: the same bytes on every run.
-pub fn generated_take(bars: usize) -> RawTake {
+pub(crate) fn generated_take(bars: usize) -> RawTake {
     let beats = bars * 4;
     let mut random = 0x9E37_79B9_7F4A_7C15_u64;
     let mut jitter = || {

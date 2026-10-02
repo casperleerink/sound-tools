@@ -40,7 +40,7 @@ fn kind_of(value: &str) -> Option<TrackKind> {
     }
 }
 
-pub struct AddTrackButton {
+pub(crate) struct AddTrackButton {
     timeline: Entity<Timeline>,
     button: Entity<SplitButton>,
 }

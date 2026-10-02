@@ -14,14 +14,14 @@ use sound_core::{
 use sound_media::AudioAsset;
 use sound_notes::{AUDIO_OUTPUT, Bend, Length, NOTES_INPUT, Note, NoteEvent, Pitch, Velocity};
 
-pub const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 /// At 120 bpm, 960 ticks a beat: 25 frames a tick.
-pub const FRAMES_PER_TICK: u64 = 25;
+pub(crate) const FRAMES_PER_TICK: u64 = 25;
 
 /// The smallest owner of an instrument: its notes are in its own record.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Track {
+pub(crate) struct Track {
     pub notes: Vec<Note>,
     /// Bend wheel moves: tick and value, -8192 to 8191.
     #[serde(default)]
@@ -33,15 +33,15 @@ impl State for Track {
     const OWNS_CHILDREN: bool = true;
 }
 
-pub const INSTRUMENT: &str = "instrument";
+pub(crate) const INSTRUMENT: &str = "instrument";
 
 /// Sends the notes and the bend of one snapshot from the transport tick range, and one `AllOff`
 /// when the transport stops or jumps.
 #[derive(Default)]
-pub struct Sequencer(Arc<Track>);
+pub(crate) struct Sequencer(Arc<Track>);
 
 impl Sequencer {
-    pub const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
+    pub(crate) const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
 }
 
 impl Processor for Sequencer {
@@ -97,7 +97,7 @@ fn apply_track(state: &Track, context: &mut BehaviourContext<'_>) -> Result<(), 
     Ok(())
 }
 
-pub fn registry() -> Registry {
+pub(crate) fn registry() -> Registry {
     let mut registry = Registry::new();
     sampler::register(&mut registry).unwrap();
     registry
@@ -107,12 +107,12 @@ pub fn registry() -> Registry {
     registry
 }
 
-pub fn id(id: &str) -> InstanceId {
+pub(crate) fn id(id: &str) -> InstanceId {
     InstanceId::new(id).unwrap()
 }
 
 /// A note, with its start and length in frames at 120 bpm.
-pub fn note(start_frame: u64, length_frames: u64, pitch: u8, velocity: u8) -> Note {
+pub(crate) fn note(start_frame: u64, length_frames: u64, pitch: u8, velocity: u8) -> Note {
     Note {
         start: Ticks(start_frame / FRAMES_PER_TICK),
         length: Length::new(Ticks(length_frames / FRAMES_PER_TICK)).unwrap(),
@@ -122,7 +122,7 @@ pub fn note(start_frame: u64, length_frames: u64, pitch: u8, velocity: u8) -> No
 }
 
 /// A float WAV of these mono samples at `rate`, as `assets/audio/<name>`.
-pub fn write_sample(folder: &std::path::Path, name: &str, rate: u32, samples: &[f32]) {
+pub(crate) fn write_sample(folder: &std::path::Path, name: &str, rate: u32, samples: &[f32]) {
     let path = folder.join("assets/audio").join(name);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let spec = hound::WavSpec {
@@ -139,7 +139,7 @@ pub fn write_sample(folder: &std::path::Path, name: &str, rate: u32, samples: &[
 }
 
 /// `seconds` of a sine of `hz` at `amplitude`, from `phase` in cycles.
-pub fn sine(rate: u32, hz: f64, amplitude: f32, seconds: f64, phase: f64) -> Vec<f32> {
+pub(crate) fn sine(rate: u32, hz: f64, amplitude: f32, seconds: f64, phase: f64) -> Vec<f32> {
     let frames = (seconds * f64::from(rate)) as usize;
     (0..frames)
         .map(|frame| {
@@ -150,7 +150,7 @@ pub fn sine(rate: u32, hz: f64, amplitude: f32, seconds: f64, phase: f64) -> Vec
 }
 
 /// A sampler that plays `name`, with every other field as given.
-pub fn playing(name: &str, state: SamplerState) -> SamplerState {
+pub(crate) fn playing(name: &str, state: SamplerState) -> SamplerState {
     SamplerState {
         sample: Some(AudioAsset::new(name).unwrap()),
         ..state
@@ -158,7 +158,7 @@ pub fn playing(name: &str, state: SamplerState) -> SamplerState {
 }
 
 /// An open project on a temporary folder with an offline stereo engine.
-pub struct Harness {
+pub(crate) struct Harness {
     pub project: Project,
     pub engine: Engine,
     /// Last, so the folder outlives the project that holds its lock.
@@ -167,7 +167,7 @@ pub struct Harness {
 
 impl Harness {
     /// A project whose folder has these samples, each `(name, rate, samples)`.
-    pub fn with_samples(samples: &[(&str, u32, Vec<f32>)]) -> Self {
+    pub(crate) fn with_samples(samples: &[(&str, u32, Vec<f32>)]) -> Self {
         let folder = tempfile::tempdir().unwrap();
         for (name, rate, samples) in samples {
             write_sample(folder.path(), name, *rate, samples);
@@ -183,7 +183,7 @@ impl Harness {
     }
 
     /// One track named `track` with these notes and a sampler as its instrument.
-    pub fn add_track(&mut self, notes: Vec<Note>, sampler: SamplerState) {
+    pub(crate) fn add_track(&mut self, notes: Vec<Note>, sampler: SamplerState) {
         let mut changes = Changes::new();
         let track = changes.create(
             id("track"),
@@ -197,7 +197,11 @@ impl Harness {
     }
 
     /// A harness with one sample and one track that plays it.
-    pub fn playing(sample: (&str, u32, Vec<f32>), notes: Vec<Note>, sampler: SamplerState) -> Self {
+    pub(crate) fn playing(
+        sample: (&str, u32, Vec<f32>),
+        notes: Vec<Note>,
+        sampler: SamplerState,
+    ) -> Self {
         let name = sample.0;
         let mut harness = Self::with_samples(&[sample]);
         harness.add_track(notes, playing(name, sampler));
@@ -205,12 +209,12 @@ impl Harness {
         harness
     }
 
-    pub fn path(&self, relative: &str) -> PathBuf {
+    pub(crate) fn path(&self, relative: &str) -> PathBuf {
         self.project.root().join(relative)
     }
 
     /// Writes a file and applies it, as the watcher would.
-    pub fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
+    pub(crate) fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
         let path = self.path(relative);
         std::fs::write(&path, contents).unwrap();
         self.project.apply_outside_changes(&[path]).unwrap()
@@ -218,7 +222,7 @@ impl Harness {
 
     /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
     /// Left and right.
-    pub fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
+    pub(crate) fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
         let mut output = vec![0.0; frames * 2];
         for buffer in output.chunks_mut(480 * 2) {
             self.engine.process_block(buffer);
@@ -231,20 +235,20 @@ impl Harness {
     }
 
     /// Plays from the start and renders the left channel.
-    pub fn play(&mut self, frames: usize) -> Vec<f32> {
+    pub(crate) fn play(&mut self, frames: usize) -> Vec<f32> {
         self.project.engine().play();
         let [left, _] = self.render(frames);
         left
     }
 }
 
-pub fn peak(samples: &[f32]) -> f32 {
+pub(crate) fn peak(samples: &[f32]) -> f32 {
     samples
         .iter()
         .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
-pub fn largest_step(samples: &[f32]) -> f32 {
+pub(crate) fn largest_step(samples: &[f32]) -> f32 {
     samples
         .windows(2)
         .fold(0.0, |step, pair| step.max((pair[1] - pair[0]).abs()))
@@ -252,7 +256,7 @@ pub fn largest_step(samples: &[f32]) -> f32 {
 
 /// The frequency of a steady sine, from its first and last rising zero crossing, each placed
 /// between two frames on a straight line.
-pub fn frequency(samples: &[f32]) -> f64 {
+pub(crate) fn frequency(samples: &[f32]) -> f64 {
     let crossings: Vec<f64> = samples
         .windows(2)
         .enumerate()
@@ -267,6 +271,6 @@ pub fn frequency(samples: &[f32]) -> f64 {
 }
 
 /// Decibels of a ratio of levels.
-pub fn decibels(ratio: f64) -> f64 {
+pub(crate) fn decibels(ratio: f64) -> f64 {
     20.0 * ratio.log10()
 }

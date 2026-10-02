@@ -28,7 +28,7 @@ use smol::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 
 use self::mapper::Mapper;
 use self::protocol::{CliRequest, ControlResponse, Incoming, Outgoing, PermissionMode, Request};
-pub use self::setup::{SIGN_IN_CHOICES, account, download, sign_in, sign_out};
+pub(super) use self::setup::{SIGN_IN_CHOICES, account, download, sign_in, sign_out};
 use super::{AgentEvent, ApprovalMode, Command, ThreadOptions};
 
 /// The tools a composer needs. No web, no subagents, no questions: the agent asks in plain
@@ -112,7 +112,7 @@ fn command(program: &Path, environment: &HashMap<OsString, OsString>) -> std::pr
 /// The process of one thread and what it said so far. Polling it also writes what the
 /// [`super::Thread`] sends, so the process needs no task of its own.
 #[derive(Debug)]
-pub struct Events {
+pub(super) struct Events {
     child: Child,
     /// `None` once every [`super::Thread`] is gone or the pipe broke.
     stdin: Option<ChildStdin>,
@@ -144,7 +144,7 @@ struct Writing {
 
 impl Events {
     /// `session_id` is the one `options.resume` names, or the new one to give the session.
-    pub fn start(
+    pub(super) fn start(
         options: ThreadOptions,
         session_id: &str,
         commands: Receiver<Command>,
@@ -195,7 +195,7 @@ impl Events {
 
     /// Cancel-safe: dropping the future before it is ready loses no event and no part of a
     /// message on its way to the CLI, so it can race a timer.
-    pub async fn next(&mut self) -> Option<AgentEvent> {
+    pub(super) async fn next(&mut self) -> Option<AgentEvent> {
         loop {
             if let Some(event) = self.events.pop_front() {
                 return Some(event);

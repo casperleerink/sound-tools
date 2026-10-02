@@ -35,7 +35,7 @@ const MARK: &str = "sound-tools-plugin ";
 
 /// How long one bundle may take. A working bundle costs milliseconds; this is what a plugin
 /// that never answers costs, once.
-pub const SCAN_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the child is looked at while the deadline runs. Short enough that a normal scan
 /// pays nothing, long enough that waiting costs no thread.
@@ -139,7 +139,7 @@ impl Scan {
 
 /// One bundle to look at: where it is and what format it is.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Bundle {
+pub(crate) struct Bundle {
     pub path: PathBuf,
     pub format: PluginFormat,
 }
@@ -386,7 +386,7 @@ fn search_paths(in_home: &str, system: &[&str], variable: &str) -> Vec<PathBuf> 
 }
 
 /// Every plugin bundle under `folders`, in a fixed order so a scan is repeatable.
-pub fn bundles(folders: &[PathBuf]) -> Vec<Bundle> {
+pub(crate) fn bundles(folders: &[PathBuf]) -> Vec<Bundle> {
     let mut found = Vec::new();
     for folder in folders {
         collect(folder, 0, &mut found);
@@ -723,7 +723,7 @@ pub(crate) fn binary_folder(bundle: &Path) -> PathBuf {
 /// tells `progress` after each one so a caller can show what is known while the rest runs.
 ///
 /// `stop` ends the scan between bundles, for a host that goes while its scan runs.
-pub fn scan_folders(
+pub(crate) fn scan_folders(
     folders: &[PathBuf],
     command: &ScanCommand,
     cache: &ScanCache,

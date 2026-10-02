@@ -26,7 +26,7 @@ const DEFAULT_MODEL: &str = "default";
 const TITLE_DETAIL_CHARACTERS: usize = 60;
 
 #[derive(Debug)]
-pub struct Mapper {
+pub(super) struct Mapper {
     /// Paths in titles are relative to it.
     folder: PathBuf,
     turn_open: bool,
@@ -53,7 +53,7 @@ struct Approval {
 }
 
 impl Mapper {
-    pub fn new(folder: PathBuf) -> Self {
+    pub(super) fn new(folder: PathBuf) -> Self {
         Mapper {
             folder,
             turn_open: false,
@@ -68,7 +68,7 @@ impl Mapper {
     }
 
     /// A line we wrote.
-    pub fn sent(&mut self, message: &Outgoing) -> Vec<AgentEvent> {
+    pub(super) fn sent(&mut self, message: &Outgoing) -> Vec<AgentEvent> {
         match message {
             // The CLI announces no turn of its own. It queues a message sent while a turn runs
             // as a turn of its own, which this does not follow: send only between turns.
@@ -105,7 +105,7 @@ impl Mapper {
     }
 
     /// A line the CLI wrote.
-    pub fn received(&mut self, message: Incoming) -> Vec<AgentEvent> {
+    pub(super) fn received(&mut self, message: Incoming) -> Vec<AgentEvent> {
         match message {
             Incoming::System(System::Init { cwd }) => {
                 // The folder as the CLI sees it, with symlinks resolved, as in its paths.
@@ -165,7 +165,7 @@ impl Mapper {
 
     /// The process ended: it closed its output and exited with `code`, or `None` when a
     /// signal stopped it. `said` is the first line it wrote on stderr.
-    pub fn exited(&mut self, code: Option<i32>, said: Option<&str>) -> Vec<AgentEvent> {
+    pub(super) fn exited(&mut self, code: Option<i32>, said: Option<&str>) -> Vec<AgentEvent> {
         let mut events = self.close_blocks();
         if self.turn_open {
             self.turn_open = false;
@@ -194,7 +194,7 @@ impl Mapper {
 
     /// A line the types cannot read. `ends_turn` when it is a `result`: the turn will get no
     /// other end.
-    pub fn unreadable(&mut self, ends_turn: bool, error: &str) -> Vec<AgentEvent> {
+    pub(super) fn unreadable(&mut self, ends_turn: bool, error: &str) -> Vec<AgentEvent> {
         let mut events = vec![AgentEvent::Error {
             message: format!("Claude Code sent a message this app cannot read: {error}"),
         }];
@@ -212,7 +212,7 @@ impl Mapper {
     }
 
     /// The answer to send for an open approval, or `None` when it is void.
-    pub fn answer(&self, id: &ApprovalId, answer: ApprovalAnswer) -> Option<Outgoing> {
+    pub(super) fn answer(&self, id: &ApprovalId, answer: ApprovalAnswer) -> Option<Outgoing> {
         let approval = self.approvals.get(&id.0)?;
         let result = match answer {
             ApprovalAnswer::Allow => PermissionResult::Allow {

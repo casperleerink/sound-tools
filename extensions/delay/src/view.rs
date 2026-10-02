@@ -112,24 +112,24 @@ mod layout {
     use sound_ui::components::knob::KnobRange;
 
     /// Where the sound comes in, and the air after the last repeat drawn.
-    pub const LEFT: f32 = 0.04;
+    pub(super) const LEFT: f32 = 0.04;
     /// The gap to the first repeat at the shortest time, so it stays apart from the sound.
-    pub const SHORTEST_GAP: f32 = 0.03;
+    pub(super) const SHORTEST_GAP: f32 = 0.03;
     /// How much further the first repeat is at the longest time.
-    pub const GAP_ZONE: f32 = 0.4;
+    pub(super) const GAP_ZONE: f32 = 0.4;
     /// Full level: under the feel at the top of the display.
-    pub const TOP: f32 = 0.7;
+    pub(super) const TOP: f32 = 0.7;
     /// Half the width of a repeat at its foot.
-    pub const HALF_WIDTH: f32 = 0.006;
+    pub(super) const HALF_WIDTH: f32 = 0.006;
     /// A repeat lower than this part of full level is not drawn.
-    pub const LOWEST: f32 = 0.01;
+    pub(super) const LOWEST: f32 = 0.01;
     /// The most repeats drawn, however short the time.
-    pub const MOST: usize = 64;
+    pub(super) const MOST: usize = 64;
 
     /// A range whose place is `start + zone × range.position(value)`: the range stretched over
     /// the zone and moved to its start. A logarithmic range stays one, with other ends. No range
     /// here is on a fader scale, so it is taken as linear.
-    pub fn stretched(range: KnobRange, start: f32, zone: f32) -> KnobRange {
+    pub(super) fn stretched(range: KnobRange, start: f32, zone: f32) -> KnobRange {
         match range.scale {
             Scale::Linear | Scale::Fader => {
                 let width = range.max - range.min;

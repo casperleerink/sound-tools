@@ -62,7 +62,7 @@ const BUILDS: [Build; 4] = [
 
 /// The pinned `claude` for this computer, unmodified, as Anthropic's own installer fetches
 /// it. `None` where Anthropic has no build.
-pub fn download() -> Option<Download> {
+pub(crate) fn download() -> Option<Download> {
     let build = BUILDS
         .iter()
         .find(|build| build.os == std::env::consts::OS && build.arch == std::env::consts::ARCH)?;
@@ -80,7 +80,7 @@ pub fn download() -> Option<Download> {
 
 /// The two ways in that Claude Code offers, and the arguments of each. Both run in the
 /// browser: a Claude subscription, or an Anthropic Console account billed per use.
-pub const SIGN_IN_CHOICES: [(&str, &[&str]); 2] = [
+pub(crate) const SIGN_IN_CHOICES: [(&str, &[&str]); 2] = [
     (
         "Sign in with your Claude plan",
         &["auth", "login", "--claudeai"],
@@ -119,7 +119,7 @@ impl Status {
 }
 
 /// The account `claude` is signed in to, or `None` when it is signed out.
-pub async fn account(installed: &Installed) -> io::Result<Option<Account>> {
+pub(crate) async fn account(installed: &Installed) -> io::Result<Option<Account>> {
     let output = run(installed, &["auth", "status", "--json"]).await?;
     // Signed out is `loggedIn: false` and exit code 1. Anything unreadable is the CLI failing.
     match serde_json::from_slice::<Status>(&output.stdout) {
@@ -137,11 +137,11 @@ pub async fn account(installed: &Installed) -> io::Result<Option<Account>> {
 /// the sign-in.
 ///
 /// Dropping the future cancels it: the CLI is killed.
-pub async fn sign_in(installed: &Installed, arguments: &[&str]) -> io::Result<()> {
+pub(crate) async fn sign_in(installed: &Installed, arguments: &[&str]) -> io::Result<()> {
     run_to_success(installed, arguments).await
 }
 
-pub async fn sign_out(installed: &Installed) -> io::Result<()> {
+pub(crate) async fn sign_out(installed: &Installed) -> io::Result<()> {
     run_to_success(installed, &["auth", "logout"]).await
 }
 

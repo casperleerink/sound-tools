@@ -15,16 +15,16 @@ use sound_notes::{
     Pitch, Point, Velocity,
 };
 
-pub const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 /// Frames per tick at 120 bpm and 48 kHz.
-pub const TICK: usize = 25;
+pub(crate) const TICK: usize = 25;
 
 /// An instrument that makes no sound but a level: `scale` times the sum of the pitches it
 /// holds. So one sample tells which notes are held, and two tracks with scales 1 and 1000 can
 /// be told apart in one device channel. It can show where a lane stands instead.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Probe {
+pub(crate) struct Probe {
     pub scale: f32,
     #[serde(default)]
     pub shows: Shows,
@@ -32,7 +32,7 @@ pub struct Probe {
 
 /// What the level of a [`Probe`] is.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Shows {
+pub(crate) enum Shows {
     /// `scale` times the sum of the held pitches.
     #[default]
     Notes,
@@ -49,7 +49,7 @@ impl State for Probe {
     const TOOL: &'static str = "test.probe";
 }
 
-pub struct ProbeProcessor {
+pub(crate) struct ProbeProcessor {
     probe: Probe,
     /// Held notes per pitch. An `On` adds one. An `Off` releases every note of its pitch, as
     /// the note contract says.
@@ -66,7 +66,7 @@ impl ProbeProcessor {
     const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     const OUTPUT: AudioOutput = AudioOutput::new(0);
 
-    pub fn new(probe: Probe) -> Self {
+    pub(crate) fn new(probe: Probe) -> Self {
         Self {
             probe,
             held: [0; 128],
@@ -177,7 +177,7 @@ fn apply_probe(state: &Probe, context: &mut BehaviourContext<'_>) -> Result<(), 
 /// what a delay or a reverb has, and it is 0 unless a test asks for one.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Trim {
+pub(crate) struct Trim {
     pub gain: f32,
     #[serde(default)]
     pub offset: f32,
@@ -186,7 +186,7 @@ pub struct Trim {
 }
 
 impl Trim {
-    pub fn new(gain: f32, offset: f32) -> Self {
+    pub(crate) fn new(gain: f32, offset: f32) -> Self {
         Self {
             gain,
             offset,
@@ -199,7 +199,7 @@ impl State for Trim {
     const TOOL: &'static str = "test.trim";
 }
 
-pub struct TrimProcessor {
+pub(crate) struct TrimProcessor {
     settings: Trim,
     /// What each channel played a frame ago, which is the whole of its tail.
     held: [f32; 2],
@@ -255,7 +255,7 @@ fn apply_trim(state: &Trim, context: &mut BehaviourContext<'_>) -> Result<(), Be
     Ok(())
 }
 
-pub fn registry() -> Registry {
+pub(crate) fn registry() -> Registry {
     let mut registry = Registry::new();
     arrangement::register(&mut registry).unwrap();
     registry
@@ -266,11 +266,11 @@ pub fn registry() -> Registry {
     registry
 }
 
-pub fn id(id: &str) -> InstanceId {
+pub(crate) fn id(id: &str) -> InstanceId {
     InstanceId::new(id).unwrap()
 }
 
-pub fn note(start: u64, length: u64, pitch: u8) -> Note {
+pub(crate) fn note(start: u64, length: u64, pitch: u8) -> Note {
     Note {
         start: Ticks(start),
         length: Length::new(Ticks(length)).unwrap(),
@@ -279,12 +279,17 @@ pub fn note(start: u64, length: u64, pitch: u8) -> Note {
     }
 }
 
-pub fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {
+pub(crate) fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {
     Clip::new(Ticks(start), Length::new(Ticks(length)).unwrap(), notes)
 }
 
 /// A clip with pedal moves, each `(start, value)` counted from the clip start.
-pub fn clip_with_pedal(start: u64, length: u64, notes: Vec<Note>, pedal: &[(u64, u8)]) -> Clip {
+pub(crate) fn clip_with_pedal(
+    start: u64,
+    length: u64,
+    notes: Vec<Note>,
+    pedal: &[(u64, u8)],
+) -> Clip {
     let mut clip = clip(start, length, notes);
     clip.pedal = pedal
         .iter()
@@ -297,7 +302,7 @@ pub fn clip_with_pedal(start: u64, length: u64, notes: Vec<Note>, pedal: &[(u64,
 }
 
 /// A point of a bend lane, counted from the clip start.
-pub fn bend(tick: u64, value: i16) -> Point<Bend> {
+pub(crate) fn bend(tick: u64, value: i16) -> Point<Bend> {
     Point {
         tick: Ticks(tick),
         value: Bend::new(value).unwrap(),
@@ -305,7 +310,7 @@ pub fn bend(tick: u64, value: i16) -> Point<Bend> {
 }
 
 /// A point of a mod wheel or pressure lane.
-pub fn amount(tick: u64, value: u8) -> Point<Amount> {
+pub(crate) fn amount(tick: u64, value: u8) -> Point<Amount> {
     Point {
         tick: Ticks(tick),
         value: Amount::new(value).unwrap(),
@@ -313,21 +318,21 @@ pub fn amount(tick: u64, value: u8) -> Point<Amount> {
 }
 
 /// The record of a clip as an agent would write it.
-pub fn clip_json(clip: &Clip) -> String {
+pub(crate) fn clip_json(clip: &Clip) -> String {
     format!(
         r#"{{"tool": "arrangement.clip", "state": {}}}"#,
         serde_json::to_string(clip).unwrap()
     )
 }
 
-pub fn tempo(bpm: f64) -> TempoMap {
+pub(crate) fn tempo(bpm: f64) -> TempoMap {
     TempoMap::constant(TimeSignature::default(), Tempo::from_bpm(bpm).unwrap())
 }
 
 /// An arrangement whose limiter is off. The probe makes levels such as 60 that are numbers and
 /// not sound, and the limiter would take them down to its ceiling. The tests of the limiter
 /// turn it on.
-pub fn probe_arrangement() -> ArrangementState {
+pub(crate) fn probe_arrangement() -> ArrangementState {
     let mut arrangement = ArrangementState::default();
     arrangement.master.limiter.bypass = true;
     arrangement
@@ -335,7 +340,7 @@ pub fn probe_arrangement() -> ArrangementState {
 
 /// An open project on a temporary folder with an offline mono engine and the arrangement
 /// `arrangement`.
-pub struct Harness {
+pub(crate) struct Harness {
     pub project: Project,
     pub engine: Engine,
     /// The time of the last outside change. Each one comes a minute after the one before, so
@@ -347,11 +352,11 @@ pub struct Harness {
 }
 
 impl Harness {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_config(EngineConfig::new(SAMPLE_RATE, 1))
     }
 
-    pub fn with_config(config: EngineConfig) -> Self {
+    pub(crate) fn with_config(config: EngineConfig) -> Self {
         let folder = tempfile::tempdir().unwrap();
         let (control, engine) = Engine::new(config);
         let mut project = Project::open(folder.path(), registry(), control).unwrap();
@@ -367,12 +372,12 @@ impl Harness {
     }
 
     /// One track `arrangement/<name>` with a probe of this scale.
-    pub fn add_track(&mut self, name: &str, scale: f32) {
+    pub(crate) fn add_track(&mut self, name: &str, scale: f32) {
         let shows = Shows::Notes;
         self.add_probe_track(name, Probe { scale, shows });
     }
 
-    pub fn add_probe_track(&mut self, name: &str, probe: Probe) {
+    pub(crate) fn add_probe_track(&mut self, name: &str, probe: Probe) {
         let mut changes = Changes::new();
         let track = arrangement::add_track(
             &self.project,
@@ -387,16 +392,16 @@ impl Harness {
     }
 
     /// A track `arrangement/piano` with scale 1 and these clips, named `clip-0`, `clip-1`, ...
-    pub fn with_clips(clips: Vec<Clip>) -> Self {
+    pub(crate) fn with_clips(clips: Vec<Clip>) -> Self {
         Self::new().and_clips(clips)
     }
 
-    pub fn and_clips(self, clips: Vec<Clip>) -> Self {
+    pub(crate) fn and_clips(self, clips: Vec<Clip>) -> Self {
         self.and_clips_showing(Shows::Notes, clips)
     }
 
     /// The same, with a probe that shows `shows`.
-    pub fn and_clips_showing(self, shows: Shows, clips: Vec<Clip>) -> Self {
+    pub(crate) fn and_clips_showing(self, shows: Shows, clips: Vec<Clip>) -> Self {
         let mut harness = self;
         harness.add_probe_track("piano", Probe { scale: 1.0, shows });
         let mut changes = Changes::new();
@@ -407,19 +412,19 @@ impl Harness {
         harness
     }
 
-    pub fn path(&self, relative: &str) -> PathBuf {
+    pub(crate) fn path(&self, relative: &str) -> PathBuf {
         self.project.root().join(relative)
     }
 
     /// Writes a file and applies it, as the watcher would. Returns how many records changed.
-    pub fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
+    pub(crate) fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
         let path = self.path(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, contents).unwrap();
         self.apply_paths(&[path])
     }
 
-    pub fn apply(&mut self, relative: &[&str]) -> usize {
+    pub(crate) fn apply(&mut self, relative: &[&str]) -> usize {
         let paths: Vec<PathBuf> = relative.iter().map(|path| self.path(path)).collect();
         self.apply_paths(&paths)
     }
@@ -430,7 +435,7 @@ impl Harness {
         changed.unwrap()
     }
 
-    pub fn problems(&self) -> Vec<String> {
+    pub(crate) fn problems(&self) -> Vec<String> {
         let problems = self.project.problems().into_iter();
         problems
             .map(|problem| format!("{}: {}", problem.path, problem.message))
@@ -438,13 +443,13 @@ impl Harness {
     }
 
     /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
-    pub fn render(&mut self, frames: usize) -> Vec<f32> {
+    pub(crate) fn render(&mut self, frames: usize) -> Vec<f32> {
         let (output, status) = self.render_with_status(frames);
         assert_eq!(status.event_overflows, 0);
         output
     }
 
-    pub fn render_with_status(&mut self, frames: usize) -> (Vec<f32>, EngineStatus) {
+    pub(crate) fn render_with_status(&mut self, frames: usize) -> (Vec<f32>, EngineStatus) {
         let mut output = vec![0.0; frames];
         for buffer in output.chunks_mut(480) {
             self.engine.process_block(buffer);
@@ -454,14 +459,14 @@ impl Harness {
         (output, status)
     }
 
-    pub fn play(&mut self, frames: usize) -> Vec<f32> {
+    pub(crate) fn play(&mut self, frames: usize) -> Vec<f32> {
         self.project.engine().play();
         self.render(frames)
     }
 }
 
 /// Every frame at which the level changes, with the new level. The level before frame 0 is 0.
-pub fn level_changes(samples: &[f32]) -> Vec<(usize, f32)> {
+pub(crate) fn level_changes(samples: &[f32]) -> Vec<(usize, f32)> {
     let mut changes = Vec::new();
     let mut level = 0.0;
     for (frame, sample) in samples.iter().enumerate() {
@@ -475,7 +480,7 @@ pub fn level_changes(samples: &[f32]) -> Vec<(usize, f32)> {
 
 /// A 32-bit float WAV file of these frames at `rate`, under `assets/audio/` of the project,
 /// written with `hound`, which is not the code under test. Gives the name a record uses.
-pub fn write_wav(harness: &Harness, name: &str, rate: u32, frames: &[[f32; 2]]) -> String {
+pub(crate) fn write_wav(harness: &Harness, name: &str, rate: u32, frames: &[[f32; 2]]) -> String {
     let path = harness.path(&format!("assets/audio/{name}"));
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let spec = hound::WavSpec {
@@ -494,7 +499,7 @@ pub fn write_wav(harness: &Harness, name: &str, rate: u32, frames: &[[f32; 2]]) 
 }
 
 /// The frames of a stereo render, left and right.
-pub fn stereo(samples: &[f32]) -> Vec<[f32; 2]> {
+pub(crate) fn stereo(samples: &[f32]) -> Vec<[f32; 2]> {
     samples
         .chunks_exact(2)
         .map(|frame| [frame[0], frame[1]])

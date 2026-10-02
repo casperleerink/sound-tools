@@ -12,7 +12,7 @@ const BOUND_MS: f64 = 30.0;
 
 /// How far a fitted beat is from the true beat nearest to it, in milliseconds, for every true
 /// beat of the take.
-pub fn errors_ms(case: &Case) -> Vec<f64> {
+pub(crate) fn errors_ms(case: &Case) -> Vec<f64> {
     let (take, truth) = case.take();
     let fitted = fit(&take, case.signature(), 0, BeatRate::Normal).expect("a fit");
     let grid = &fitted.targets_us[fitted.first_downbeat..];
@@ -34,7 +34,7 @@ pub fn errors_ms(case: &Case) -> Vec<f64> {
 
 /// Sixteen bars of every kind of playing this build is meant to follow, with the timing jitter
 /// of a hand. `off` is how many beats may be further than [`BOUND_MS`] from the truth.
-pub fn cases() -> Vec<(Case, usize)> {
+pub(crate) fn cases() -> Vec<(Case, usize)> {
     let base = Case {
         name: "",
         time_signature: "4/4",

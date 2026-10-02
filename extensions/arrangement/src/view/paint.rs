@@ -190,7 +190,7 @@ pub(super) struct PlayheadLine {
 
 impl PlayheadLine {
     /// `painted` is the viewport that `view` painted last.
-    pub fn new<V: 'static>(
+    pub(crate) fn new<V: 'static>(
         playhead: Entity<Playhead>,
         view: &Entity<V>,
         painted: Rc<Cell<Viewport>>,

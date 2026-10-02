@@ -17,15 +17,15 @@ use sound_notes::{
 };
 use wavetable::WavetableState;
 
-pub const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
 /// Ticks per second at the default tempo of 120 bpm.
-pub const TICKS_PER_SECOND: u64 = 1_920;
+pub(crate) const TICKS_PER_SECOND: u64 = 1_920;
 
 /// The smallest owner of an instrument: its notes and wheel moves are in its own record.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct Track {
+pub(crate) struct Track {
     pub notes: Vec<Note>,
     /// Sustain pedal moves at their ticks, as a clip holds them.
     pub pedal: Vec<PedalChange>,
@@ -43,11 +43,11 @@ impl State for Track {
 }
 
 /// The name of the child a track plays.
-pub const INSTRUMENT: &str = "instrument";
+pub(crate) const INSTRUMENT: &str = "instrument";
 
 /// What the track sends: its notes, its pedal moves and its wheel moves.
 #[derive(Default, PartialEq, Eq)]
-pub struct Part {
+pub(crate) struct Part {
     pub notes: Vec<Note>,
     pub pedal: Vec<PedalChange>,
     pub wheels: Vec<(Ticks, NoteEvent)>,
@@ -56,10 +56,10 @@ pub struct Part {
 /// Sends the notes of one immutable snapshot from the transport tick range, and one `AllOff`
 /// when the transport stops or jumps.
 #[derive(Default)]
-pub struct Sequencer(Arc<Part>);
+pub(crate) struct Sequencer(Arc<Part>);
 
 impl Sequencer {
-    pub const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
+    pub(crate) const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
 }
 
 impl Processor for Sequencer {
@@ -139,7 +139,7 @@ fn apply_track(state: &Track, context: &mut BehaviourContext<'_>) -> Result<(), 
     Ok(())
 }
 
-pub fn registry() -> Registry {
+pub(crate) fn registry() -> Registry {
     let mut registry = Registry::new();
     wavetable::register(&mut registry).unwrap();
     registry
@@ -149,12 +149,12 @@ pub fn registry() -> Registry {
     registry
 }
 
-pub fn id(id: &str) -> InstanceId {
+pub(crate) fn id(id: &str) -> InstanceId {
     InstanceId::new(id).unwrap()
 }
 
 /// A note at `start` ticks, `length` ticks long.
-pub fn note(start: u64, length: u64, pitch: u8, velocity: u8) -> Note {
+pub(crate) fn note(start: u64, length: u64, pitch: u8, velocity: u8) -> Note {
     Note {
         start: Ticks(start),
         length: Length::new(Ticks(length)).unwrap(),
@@ -164,7 +164,7 @@ pub fn note(start: u64, length: u64, pitch: u8, velocity: u8) -> Note {
 }
 
 /// A pedal move at a tick.
-pub fn pedal(start: u64, value: u8) -> PedalChange {
+pub(crate) fn pedal(start: u64, value: u8) -> PedalChange {
     PedalChange {
         start: Ticks(start),
         value: Pedal::new(value).unwrap(),
@@ -172,7 +172,7 @@ pub fn pedal(start: u64, value: u8) -> PedalChange {
 }
 
 /// An open project on a temporary folder with an offline stereo engine.
-pub struct Harness {
+pub(crate) struct Harness {
     pub project: Project,
     pub engine: Engine,
     /// Last, so the folder outlives the project that holds its lock.
@@ -180,7 +180,7 @@ pub struct Harness {
 }
 
 impl Harness {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let folder = tempfile::tempdir().unwrap();
         let (control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let project = Project::open(folder.path(), registry(), control).unwrap();
@@ -192,14 +192,14 @@ impl Harness {
     }
 
     /// One track named `track` that plays `track` on a synth with `synth`.
-    pub fn with(track: Track, synth: WavetableState) -> Self {
+    pub(crate) fn with(track: Track, synth: WavetableState) -> Self {
         let mut harness = Self::new();
         harness.add("track", track, synth);
         harness
     }
 
     /// One track with these notes.
-    pub fn with_notes(notes: Vec<Note>, synth: WavetableState) -> Self {
+    pub(crate) fn with_notes(notes: Vec<Note>, synth: WavetableState) -> Self {
         Self::with(
             Track {
                 notes,
@@ -209,7 +209,7 @@ impl Harness {
         )
     }
 
-    pub fn add(&mut self, name: &str, track: Track, synth: WavetableState) {
+    pub(crate) fn add(&mut self, name: &str, track: Track, synth: WavetableState) {
         let mut changes = Changes::new();
         let track = changes.create(id(name), track);
         changes.create(track.id().child(INSTRUMENT).unwrap(), synth);
@@ -217,7 +217,7 @@ impl Harness {
     }
 
     /// Changes the synth of the track `track`, as a view or an agent would.
-    pub fn edit(&mut self, synth: WavetableState) {
+    pub(crate) fn edit(&mut self, synth: WavetableState) {
         let instrument = id("track").child(INSTRUMENT).unwrap();
         let instance = self.project.resolve(&instrument).unwrap();
         let mut changes = Changes::new();
@@ -225,7 +225,7 @@ impl Harness {
         self.project.commit("Edit", changes).unwrap();
     }
 
-    pub fn set_tempo(&mut self, bpm: f64) {
+    pub(crate) fn set_tempo(&mut self, bpm: f64) {
         let mut changes = Changes::new();
         let tempo = Tempo::from_bpm(bpm).unwrap();
         changes.set_tempo_map(TempoMap::constant(TimeSignature::default(), tempo));
@@ -233,7 +233,7 @@ impl Harness {
     }
 
     /// Writes a file and applies it, as the watcher would.
-    pub fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
+    pub(crate) fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {
         let path: PathBuf = self.project.root().join(relative);
         std::fs::write(&path, contents).unwrap();
         self.project.apply_outside_changes(&[path]).unwrap()
@@ -241,7 +241,7 @@ impl Harness {
 
     /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
     /// Left and right.
-    pub fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
+    pub(crate) fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
         let mut output = vec![0.0; 2 * frames];
         for buffer in output.chunks_mut(2 * 480) {
             self.engine.process_block(buffer);
@@ -254,35 +254,35 @@ impl Harness {
     }
 
     /// Plays from the start and renders. Left and right.
-    pub fn play(&mut self, frames: usize) -> [Vec<f32>; 2] {
+    pub(crate) fn play(&mut self, frames: usize) -> [Vec<f32>; 2] {
         self.project.engine().play();
         self.render(frames)
     }
 
     /// Plays from the start and renders the left channel.
-    pub fn play_left(&mut self, frames: usize) -> Vec<f32> {
+    pub(crate) fn play_left(&mut self, frames: usize) -> Vec<f32> {
         let [left, _] = self.play(frames);
         left
     }
 }
 
 /// The frames of `seconds`.
-pub fn frames(seconds: f32) -> usize {
+pub(crate) fn frames(seconds: f32) -> usize {
     (seconds * SAMPLE_RATE as f32) as usize
 }
 
 /// Ticks of `seconds` at 120 bpm.
-pub fn ticks(seconds: f32) -> u64 {
+pub(crate) fn ticks(seconds: f32) -> u64 {
     (seconds * TICKS_PER_SECOND as f32) as u64
 }
 
-pub fn peak(samples: &[f32]) -> f32 {
+pub(crate) fn peak(samples: &[f32]) -> f32 {
     samples
         .iter()
         .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
-pub fn rms(samples: &[f32]) -> f32 {
+pub(crate) fn rms(samples: &[f32]) -> f32 {
     let sum: f64 = samples
         .iter()
         .map(|sample| f64::from(*sample).powi(2))
@@ -291,7 +291,7 @@ pub fn rms(samples: &[f32]) -> f32 {
 }
 
 /// The largest step from one sample to the next.
-pub fn largest_step(samples: &[f32]) -> f32 {
+pub(crate) fn largest_step(samples: &[f32]) -> f32 {
     samples
         .windows(2)
         .fold(0.0, |step, pair| step.max((pair[1] - pair[0]).abs()))
@@ -306,7 +306,7 @@ fn window(index: usize, length: usize) -> f64 {
 
 /// The amplitude of the part of the signal at one frequency: one bin of a Fourier transform
 /// through a window, so the other partials do not leak into it.
-pub fn level_at(samples: &[f32], frequency_hz: f32) -> f32 {
+pub(crate) fn level_at(samples: &[f32], frequency_hz: f32) -> f32 {
     let step = std::f64::consts::TAU * f64::from(frequency_hz) / f64::from(SAMPLE_RATE);
     let (mut real, mut imaginary, mut weight) = (0.0, 0.0, 0.0);
     for (frame, sample) in samples.iter().enumerate() {
@@ -321,7 +321,7 @@ pub fn level_at(samples: &[f32], frequency_hz: f32) -> f32 {
 
 /// The power spectrum of `samples` through the window, one value per bin of
 /// `SAMPLE_RATE / samples.len()` Hz, from 0 Hz to half the sample rate.
-pub fn power_spectrum(samples: &[f32]) -> Vec<f64> {
+pub(crate) fn power_spectrum(samples: &[f32]) -> Vec<f64> {
     let length = samples.len();
     let transform = RealFftPlanner::<f64>::new().plan_fft_forward(length);
     let mut input = transform.make_input_vec();
@@ -338,12 +338,12 @@ pub fn power_spectrum(samples: &[f32]) -> Vec<f64> {
 
 /// Up to where the tests look for what folds back. Above it nobody hears it, and the
 /// oversampler of the SDK lets some through between 0.45 and 0.55 of the sample rate.
-pub const AUDIBLE_HZ: f32 = 18_000.0;
+pub(crate) const AUDIBLE_HZ: f32 = 18_000.0;
 
 /// The power of `samples` up to [`AUDIBLE_HZ`] that is not within `width_hz` of a multiple of
 /// `fundamental_hz`, against the power that is, in dB: how far under the harmonics everything
 /// else is, such as what folds back from above half the sample rate.
-pub fn inharmonic_db(samples: &[f32], fundamental_hz: f32, width_hz: f32) -> f64 {
+pub(crate) fn inharmonic_db(samples: &[f32], fundamental_hz: f32, width_hz: f32) -> f64 {
     let spectrum = power_spectrum(samples);
     let bin_hz = SAMPLE_RATE as f32 / samples.len() as f32;
     let (mut harmonic, mut other) = (0.0, 0.0);
@@ -364,7 +364,7 @@ pub fn inharmonic_db(samples: &[f32], fundamental_hz: f32, width_hz: f32) -> f64
 }
 
 /// The power above `hz` against all of it, in dB: how bright a sound is.
-pub fn brightness_db(samples: &[f32], hz: f32) -> f64 {
+pub(crate) fn brightness_db(samples: &[f32], hz: f32) -> f64 {
     let spectrum = power_spectrum(samples);
     let bin_hz = SAMPLE_RATE as f32 / samples.len() as f32;
     let total: f64 = spectrum.iter().sum();
@@ -379,7 +379,7 @@ pub fn brightness_db(samples: &[f32], hz: f32) -> f64 {
 
 /// The frequency of the loudest bin between `low_hz` and `high_hz`, sharpened between the
 /// bins around it.
-pub fn loudest_hz(samples: &[f32], low_hz: f32, high_hz: f32) -> f32 {
+pub(crate) fn loudest_hz(samples: &[f32], low_hz: f32, high_hz: f32) -> f32 {
     let spectrum = power_spectrum(samples);
     let bin_hz = SAMPLE_RATE as f32 / samples.len() as f32;
     let low = (low_hz / bin_hz) as usize;

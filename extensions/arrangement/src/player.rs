@@ -25,7 +25,7 @@ pub const DECLICK_SECONDS: f64 = 0.002;
 
 /// One clip as the audio thread plays it: its file, where it starts, and its level, all in
 /// engine frames except the start.
-pub struct PlacedAudio {
+pub(crate) struct PlacedAudio {
     pub(crate) start: Ticks,
     pub(crate) audio: Arc<Audio>,
     pub(crate) resampler: Arc<Resampler>,

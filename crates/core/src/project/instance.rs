@@ -302,7 +302,7 @@ pub(crate) struct Record {
 }
 
 impl Record {
-    pub fn new<S: State>(state: S) -> Self {
+    pub(crate) fn new<S: State>(state: S) -> Self {
         Self {
             tool: S::TOOL,
             owns_children: S::OWNS_CHILDREN,
@@ -311,11 +311,11 @@ impl Record {
         }
     }
 
-    pub fn state<S: State>(&self) -> Option<&S> {
+    pub(crate) fn state<S: State>(&self) -> Option<&S> {
         self.state.as_any().downcast_ref()
     }
 
-    pub fn equals(&self, other: &Record) -> bool {
+    pub(crate) fn equals(&self, other: &Record) -> bool {
         self.tool == other.tool
             && (Arc::ptr_eq(&self.state, &other.state) || self.state.equals(other.state.as_ref()))
     }

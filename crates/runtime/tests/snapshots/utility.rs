@@ -13,7 +13,7 @@ use utility::view::UtilityView;
 
 use super::{Opened, piece};
 
-pub fn snapshots(
+pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
 ) -> Result<()> {

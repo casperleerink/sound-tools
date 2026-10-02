@@ -13,7 +13,7 @@ use serde_json::Value;
 /// A line the CLI writes.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Incoming {
+pub(super) enum Incoming {
     System(System),
     /// A piece of the answer while it streams (`--include-partial-messages`).
     StreamEvent {
@@ -44,7 +44,7 @@ pub enum Incoming {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
-pub enum System {
+pub(super) enum System {
     /// Sent at the start of each turn.
     Init { cwd: PathBuf },
     #[serde(other)]
@@ -53,7 +53,7 @@ pub enum System {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum StreamEvent {
+pub(super) enum StreamEvent {
     ContentBlockDelta {
         delta: Delta,
     },
@@ -63,7 +63,7 @@ pub enum StreamEvent {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Delta {
+pub(super) enum Delta {
     TextDelta {
         text: String,
     },
@@ -72,13 +72,13 @@ pub enum Delta {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Message {
+pub(super) struct Message {
     pub content: Content,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub enum Content {
+pub(super) enum Content {
     Blocks(Vec<Block>),
     /// Plain text, which only the composer's own messages use.
     Text(IgnoredAny),
@@ -86,7 +86,7 @@ pub enum Content {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Block {
+pub(super) enum Block {
     Text {
         text: String,
     },
@@ -105,7 +105,7 @@ pub enum Block {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct TurnResult {
+pub(super) struct TurnResult {
     pub subtype: ResultKind,
     #[serde(default)]
     pub is_error: bool,
@@ -119,7 +119,7 @@ pub struct TurnResult {
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ResultKind {
+pub(super) enum ResultKind {
     Success,
     #[serde(other)]
     Error,
@@ -127,7 +127,7 @@ pub enum ResultKind {
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TerminalReason {
+pub(super) enum TerminalReason {
     /// Interrupted while the answer streamed.
     AbortedStreaming,
     /// Interrupted while a tool ran.
@@ -138,7 +138,7 @@ pub enum TerminalReason {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
-pub enum CliRequest {
+pub(super) enum CliRequest {
     /// Under `--permission-prompt-tool stdio`, every tool the permission mode does not allow.
     CanUseTool {
         tool_name: String,
@@ -155,7 +155,7 @@ pub enum CliRequest {
 /// Both directions: the CLI answers our requests, and we answer its requests.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
-pub enum ControlResponse<Payload> {
+pub(super) enum ControlResponse<Payload> {
     Success {
         request_id: String,
         response: Option<Payload>,
@@ -168,7 +168,7 @@ pub enum ControlResponse<Payload> {
 
 /// The part of the `initialize` response the driver reads.
 #[derive(Debug, Deserialize)]
-pub struct Initialized {
+pub(super) struct Initialized {
     pub account: Option<InitializedAccount>,
     #[serde(default)]
     pub models: Vec<InitializedModel>,
@@ -176,14 +176,14 @@ pub struct Initialized {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InitializedAccount {
+pub(super) struct InitializedAccount {
     pub email: Option<String>,
     pub subscription_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InitializedModel {
+pub(super) struct InitializedModel {
     pub value: String,
     pub display_name: String,
     #[serde(default)]
@@ -195,7 +195,7 @@ pub struct InitializedModel {
 /// A line we write. `Deserialize` too, so the tests replay recorded runs.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Outgoing {
+pub(super) enum Outgoing {
     User {
         message: UserMessage,
         parent_tool_use_id: Option<String>,
@@ -212,7 +212,7 @@ pub enum Outgoing {
 }
 
 impl Outgoing {
-    pub fn user(text: String) -> Self {
+    pub(super) fn user(text: String) -> Self {
         Outgoing::User {
             message: UserMessage {
                 role: Role::User,
@@ -227,27 +227,27 @@ impl Outgoing {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct UserMessage {
+pub(super) struct UserMessage {
     pub role: Role,
     pub content: Vec<UserBlock>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Role {
+pub(super) enum Role {
     User,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum UserBlock {
+pub(super) enum UserBlock {
     Text { text: String },
 }
 
 /// Our requests to the CLI.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
-pub enum Request {
+pub(super) enum Request {
     /// Answers with the account and the models.
     Initialize,
     Interrupt,
@@ -262,7 +262,7 @@ pub enum Request {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum PermissionMode {
+pub(super) enum PermissionMode {
     Default,
     AcceptEdits,
     BypassPermissions,
@@ -270,7 +270,7 @@ pub enum PermissionMode {
 
 impl PermissionMode {
     /// The value of `--permission-mode`, the same as the JSON.
-    pub fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             PermissionMode::Default => "default",
             PermissionMode::AcceptEdits => "acceptEdits",
@@ -282,7 +282,7 @@ impl PermissionMode {
 /// Our answer to [`CliRequest::CanUseTool`].
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "behavior", rename_all = "snake_case")]
-pub enum PermissionResult {
+pub(super) enum PermissionResult {
     Allow {
         /// The tool's input as it was asked for; the CLI requires it.
         #[serde(rename = "updatedInput")]

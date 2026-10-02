@@ -46,7 +46,7 @@ use super::{
 use compressor::CompressorState;
 
 /// A 16-bit mono WAV file at 48 kHz, `seconds` long, of what `sound` gives at each time.
-pub fn write_wav(path: &Path, seconds: f64, sound: impl Fn(f64) -> f64) -> Result<()> {
+pub(crate) fn write_wav(path: &Path, seconds: f64, sound: impl Fn(f64) -> f64) -> Result<()> {
     std::fs::create_dir_all(path.parent().context("a folder")?)?;
     let spec = hound::WavSpec {
         channels: 1,
@@ -171,7 +171,7 @@ fn audio_piece(project: &mut Project) -> Result<()> {
 }
 
 /// Lets the background threads make every waveform the window asked for, and draws again.
-pub fn wait_for_waveforms(cx: &mut HeadlessAppContext, opened: &Opened) -> Result<()> {
+pub(crate) fn wait_for_waveforms(cx: &mut HeadlessAppContext, opened: &Opened) -> Result<()> {
     for _ in 0..200 {
         cx.run_until_parked();
         let asking = cx.update(|cx| {
@@ -303,7 +303,7 @@ fn frame_times(cx: &mut HeadlessAppContext) -> Result<()> {
     Ok(())
 }
 
-pub fn snapshots(
+pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
 ) -> Result<()> {

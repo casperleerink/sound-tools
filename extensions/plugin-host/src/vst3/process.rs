@@ -38,17 +38,17 @@ const POINT_CAPACITY: usize = 32;
 /// How many parameter changes wait for the control thread. A plugin that moves its own
 /// parameters faster than the host polls loses the oldest, and the state is saved anyway when
 /// the plugin goes.
-pub const REPORT_CAPACITY: usize = 512;
+pub(super) const REPORT_CAPACITY: usize = 512;
 
 /// How many edits of the composer's wait for the audio thread. What does not fit stays on the
 /// host's thread, by parameter, and goes at the next poll, so no parameter ever ends on a value
 /// the composer did not leave it on. See [`crate::vst3::context::Handler`].
-pub const EDIT_CAPACITY: usize = 512;
+pub(super) const EDIT_CAPACITY: usize = 512;
 
 /// One parameter a plugin changed by itself while it played. The control thread gives it to
 /// the plugin's controller, which is how the two halves stay in step, and saves the state.
 #[derive(Copy, Clone, Debug)]
-pub struct ParameterChange {
+pub(super) struct ParameterChange {
     pub id: ParamID,
     pub value: ParamValue,
 }
@@ -57,7 +57,7 @@ pub struct ParameterChange {
 /// by the two sides of a plugin. The control side looks them up again when the plugin moves
 /// them (`kMidiCCAssignmentChanged`), and the audio side reads one for every move. Atomics, so
 /// neither side ever waits for the other.
-pub struct ControlTargets([AtomicU64; 4]);
+pub(super) struct ControlTargets([AtomicU64; 4]);
 
 /// What a target holds while the plugin maps its control to nothing. A parameter id is 32 bits,
 /// so no id is this.
@@ -65,18 +65,18 @@ const NOWHERE: u64 = u64::MAX;
 
 impl ControlTargets {
     /// `parameter` says where the plugin maps each control now.
-    pub fn new(parameter: impl Fn(Control) -> Option<ParamID>) -> Self {
+    pub(super) fn new(parameter: impl Fn(Control) -> Option<ParamID>) -> Self {
         Self(
             Control::REST
                 .map(|control| AtomicU64::new(parameter(control).map_or(NOWHERE, u64::from))),
         )
     }
 
-    pub fn get(&self, control: Control) -> Option<ParamID> {
+    pub(super) fn get(&self, control: Control) -> Option<ParamID> {
         ParamID::try_from(self.0[control.index()].load(Ordering::Acquire)).ok()
     }
 
-    pub fn set(&self, control: Control, id: Option<ParamID>) {
+    pub(super) fn set(&self, control: Control, id: Option<ParamID>) {
         self.0[control.index()].store(id.map_or(NOWHERE, u64::from), Ordering::Release);
     }
 }
@@ -93,14 +93,14 @@ fn normalized(control: Control) -> ParamValue {
 
 /// The control side's ends of the two rings of an audio side: what the plugin changed by
 /// itself, coming back, and what the composer changed in its window, going there.
-pub struct ControlEnds {
+pub(super) struct ControlEnds {
     pub changed: rtrb::Consumer<ParameterChange>,
     pub edited: rtrb::Producer<ParameterChange>,
 }
 
 /// What a block says it is: a run on a device, or a render. It is the mode of the
 /// `setupProcessing` the block belongs to, which is what VST 3 asks of a host.
-pub fn process_mode(offline: bool) -> int32 {
+pub(super) fn process_mode(offline: bool) -> int32 {
     match offline {
         true => ProcessModes_::kOffline as int32,
         false => ProcessModes_::kRealtime as int32,
@@ -108,7 +108,7 @@ pub fn process_mode(offline: bool) -> int32 {
 }
 
 /// A VST 3 plugin that is started, with everything one block needs.
-pub struct Vst3Processor {
+pub(super) struct Vst3Processor {
     processor: ComPtr<IAudioProcessor>,
     /// Keeps the plugin's control side from being terminated while this side is alive. The
     /// control side lets go when it is the last holder.
@@ -152,7 +152,7 @@ unsafe impl Send for Vst3Processor {}
 impl Vst3Processor {
     /// A new audio side, and the control side's ends of its rings. Everything a block needs is
     /// made here, so nothing allocates once a block runs.
-    pub fn new(
+    pub(super) fn new(
         processor: ComPtr<IAudioProcessor>,
         live: Arc<()>,
         input_channels: &[usize],
@@ -440,7 +440,7 @@ impl Buses {
 }
 
 /// The events of one block, as VST 3 takes them.
-pub struct HostEventList {
+pub(super) struct HostEventList {
     events: RefCell<Vec<Event>>,
 }
 
@@ -504,7 +504,7 @@ impl IEventListTrait for HostEventList {
 
 /// The parameter changes of one block, in either direction. Every queue is made once, so a
 /// plugin that adds a parameter while it plays grows nothing.
-pub struct HostParameterChanges {
+pub(super) struct HostParameterChanges {
     queues: Vec<ComWrapper<HostParameterQueue>>,
     used: Cell<usize>,
 }
@@ -613,7 +613,7 @@ impl IParameterChangesTrait for HostParameterChanges {
 }
 
 /// The points of one parameter in one block.
-pub struct HostParameterQueue {
+pub(super) struct HostParameterQueue {
     id: Cell<ParamID>,
     points: RefCell<Vec<(int32, ParamValue)>>,
 }

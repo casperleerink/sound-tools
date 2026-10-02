@@ -58,22 +58,22 @@ pub(crate) struct Ramp {
 }
 
 impl Ramp {
-    pub fn new(from: f32, to: f32) -> Self {
+    pub(crate) fn new(from: f32, to: f32) -> Self {
         Self { from, to }
     }
 
     /// The value at the end of frame `frame` of `frames`.
     #[inline]
-    pub fn at(&self, frame: usize, frames: usize) -> f32 {
+    pub(crate) fn at(&self, frame: usize, frames: usize) -> f32 {
         // A product with the reciprocal, which a loop works out once, and not a division.
         self.from + (self.to - self.from) * ((frame + 1) as f32 * (1.0 / frames as f32))
     }
 
-    pub fn map(self, change: impl Fn(f32) -> f32) -> Self {
+    pub(crate) fn map(self, change: impl Fn(f32) -> f32) -> Self {
         Self::new(change(self.from), change(self.to))
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub(crate) fn is_zero(&self) -> bool {
         self.from == 0.0 && self.to == 0.0
     }
 
@@ -166,7 +166,7 @@ pub(crate) struct Update {
 }
 
 impl Update {
-    pub fn new(state: WavetableState, tables: [Arc<Wavetable>; 2]) -> Self {
+    pub(crate) fn new(state: WavetableState, tables: [Arc<Wavetable>; 2]) -> Self {
         Self {
             state,
             tables: tables.map(Some),
@@ -465,14 +465,14 @@ pub(crate) struct WavetableSynth {
 }
 
 impl WavetableSynth {
-    pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
-    pub const OUTPUT: AudioOutput = AudioOutput::new(0);
-    pub const AUTOMATION: AutomationInput<WavetableState, { AUTOMATED.len() }> =
+    pub(crate) const NOTES: EventInput<NoteEvent> = EventInput::new(0);
+    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub(crate) const AUTOMATION: AutomationInput<WavetableState, { AUTOMATED.len() }> =
         AutomationInput::new(1, AUTOMATED);
 
     /// Starts at the settings of `state`, with `tables` for its oscillators, so a synth that
     /// is added or opened does not glide in.
-    pub fn new(state: WavetableState, [one, two]: [Arc<Wavetable>; 2]) -> Self {
+    pub(crate) fn new(state: WavetableState, [one, two]: [Arc<Wavetable>; 2]) -> Self {
         let effects = state.oscillators().map(|oscillator| oscillator.effect);
         let mut synth = Self {
             envelopes: [Envelope::default(); 3],

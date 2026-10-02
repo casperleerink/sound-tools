@@ -26,7 +26,7 @@ use super::process::ParameterChange;
 use crate::host::HOST_NAME;
 
 /// The application the plugin runs in. A plugin gets it as the context of `initialize`.
-pub struct HostContext;
+pub(super) struct HostContext;
 
 impl Class for HostContext {
     type Interfaces = (IHostApplication,);
@@ -80,7 +80,7 @@ impl IHostApplicationTrait for HostContext {
 }
 
 /// The interface pointer of the host context, for `initialize`.
-pub fn as_unknown(context: &ComWrapper<HostContext>) -> Option<ComPtr<FUnknown>> {
+pub(super) fn as_unknown(context: &ComWrapper<HostContext>) -> Option<ComPtr<FUnknown>> {
     context.to_com_ptr()
 }
 
@@ -99,7 +99,7 @@ enum Attribute {
 /// the half that sent it was on, and a message may be kept and read on another. Hence a lock
 /// and not a cell: nothing of this is on the audio thread, and a cell that was borrowed twice
 /// would end the process from inside a call of the plugin's.
-pub struct HostMessage {
+pub(super) struct HostMessage {
     identifier: Mutex<Option<CString>>,
     attributes: ComWrapper<HostAttributes>,
 }
@@ -119,7 +119,7 @@ impl Default for HostMessage {
 
 /// The values of one message, by name. Locked, for the reason [`HostMessage`] gives.
 #[derive(Default)]
-pub struct HostAttributes {
+pub(super) struct HostAttributes {
     values: Mutex<BTreeMap<CString, Attribute>>,
 }
 
@@ -307,7 +307,7 @@ impl IAttributeListTrait for HostAttributes {
 /// lock is for a plugin that does not keep to that: nothing of this is on the audio thread, and
 /// a cell borrowed twice would end the process from inside a call of the plugin's.
 #[derive(Default)]
-pub struct Handler {
+pub(super) struct Handler {
     state_is_dirty: AtomicBool,
     /// The plugin asked to be deactivated and activated again: its latency or its buses changed.
     restart_wanted: AtomicBool,
@@ -333,38 +333,38 @@ impl Class for Handler {
 
 impl Handler {
     /// Whether a parameter changed since the last call.
-    pub fn take_state_is_dirty(&self) -> bool {
+    pub(super) fn take_state_is_dirty(&self) -> bool {
         self.state_is_dirty.swap(false, Ordering::AcqRel)
     }
 
     /// The state changed for another reason than an edit of the plugin's own window, such as a
     /// parameter the plugin itself moved while it played.
-    pub fn mark_dirty(&self) {
+    pub(super) fn mark_dirty(&self) {
         self.state_is_dirty.store(true, Ordering::Release);
     }
 
     /// Whether the plugin asked to be deactivated and activated again since the last call.
-    pub fn take_restart_wanted(&self) -> bool {
+    pub(super) fn take_restart_wanted(&self) -> bool {
         self.restart_wanted.swap(false, Ordering::AcqRel)
     }
 
     /// Whether the plugin asked to be unloaded and loaded again since the last call.
-    pub fn take_reload_wanted(&self) -> bool {
+    pub(super) fn take_reload_wanted(&self) -> bool {
         self.reload_wanted.swap(false, Ordering::AcqRel)
     }
 
     /// Whether the plugin said its parameter values changed as a whole since the last call.
-    pub fn take_values_changed(&self) -> bool {
+    pub(super) fn take_values_changed(&self) -> bool {
         self.values_changed.swap(false, Ordering::AcqRel)
     }
 
     /// Whether the plugin has moved its MIDI controller mapping since the last call.
-    pub fn take_midi_mapping_changed(&self) -> bool {
+    pub(super) fn take_midi_mapping_changed(&self) -> bool {
         self.midi_mapping_changed.swap(false, Ordering::AcqRel)
     }
 
     /// Whether the plugin has changed which parameters it has since the last call.
-    pub fn take_ids_changed(&self) -> bool {
+    pub(super) fn take_ids_changed(&self) -> bool {
         self.ids_changed.swap(false, Ordering::AcqRel)
     }
 
@@ -372,14 +372,14 @@ impl Handler {
     /// just loaded or started the plugin: whatever the plugin asked while that went on, its
     /// latency and buses are read after it, and a plugin that asks every time it is set up
     /// would otherwise be started again for ever.
-    pub fn forget_restarts(&self) {
+    pub(super) fn forget_restarts(&self) {
         self.restart_wanted.store(false, Ordering::Release);
         self.reload_wanted.store(false, Ordering::Release);
     }
 
     /// Every parameter edit that is waiting for the processor, newest value each, and nothing
     /// left behind. The caller is on the host's thread and gives back what would not fit.
-    pub fn take_edits(&self) -> Vec<ParameterChange> {
+    pub(super) fn take_edits(&self) -> Vec<ParameterChange> {
         let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
         std::mem::take(&mut *held)
             .into_iter()
@@ -390,7 +390,7 @@ impl Handler {
     /// Puts an edit back because the processor had no room for it, or never played it. A
     /// newer edit of the same parameter, which the plugin may have made in between, is left as
     /// it is: it is the one the composer means.
-    pub fn keep_edit(&self, change: ParameterChange) {
+    pub(super) fn keep_edit(&self, change: ParameterChange) {
         let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
         held.entry(change.id).or_insert(change.value);
     }
@@ -470,7 +470,7 @@ impl IComponentHandlerTrait for Handler {
 }
 
 /// The interface pointer of the handler, for `setComponentHandler`.
-pub fn as_handler(handler: &ComWrapper<Handler>) -> Option<ComPtr<IComponentHandler>> {
+pub(super) fn as_handler(handler: &ComWrapper<Handler>) -> Option<ComPtr<IComponentHandler>> {
     handler.to_com_ptr()
 }
 

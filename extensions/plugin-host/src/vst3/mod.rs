@@ -33,13 +33,13 @@ use std::path::{Path, PathBuf};
 
 use vst3::Steinberg::TUID;
 
-pub use plugin::load;
+pub(crate) use plugin::load;
 
 use crate::scan::ScannedPlugin;
 use crate::{PluginFormat, PluginProblem};
 
 /// Lists one bundle. This runs in a child process: loading a bundle runs the plugin's own code.
-pub fn scan_bundle(bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
+pub(crate) fn scan_bundle(bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
     let module = module::Module::load(bundle)?;
     Ok(module
         .classes()
@@ -62,7 +62,7 @@ pub fn scan_bundle(bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
 /// This is what Steinberg's own `FUID::toString` gives on macOS and Linux, and what a
 /// `.vstpreset` file holds, so the id in a record is the one a plugin's maker publishes. A
 /// class id never changes, which is what makes it the name of a plugin for good.
-pub fn class_id_text(id: &TUID) -> String {
+pub(crate) fn class_id_text(id: &TUID) -> String {
     id.iter()
         .map(|byte| format!("{:02X}", byte.to_ne_bytes()[0]))
         .collect()
@@ -70,7 +70,7 @@ pub fn class_id_text(id: &TUID) -> String {
 
 /// The sixteen bytes of a class id, from what a record holds. `None` when the text is not
 /// thirty-two hex digits.
-pub fn class_id_of(text: &str) -> Option<TUID> {
+pub(crate) fn class_id_of(text: &str) -> Option<TUID> {
     if text.len() != 32 {
         return None;
     }
@@ -90,7 +90,7 @@ pub fn class_id_of(text: &str) -> Option<TUID> {
 /// Real plugin states are kilobytes to a few megabytes; a sampler that keeps its samples in its
 /// state is the only thing that comes near, and half a gigabyte is past any of them. It is also
 /// what keeps the lengths in a state asset inside the four bytes they are written in.
-pub const MAX_STATE: usize = 512 * 1024 * 1024;
+pub(crate) const MAX_STATE: usize = 512 * 1024 * 1024;
 
 /// A call into a plugin that answered with a failure code.
 fn refused(plugin_id: &str, call: &str, result: i32) -> PluginProblem {

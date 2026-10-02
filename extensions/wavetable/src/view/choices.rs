@@ -13,7 +13,7 @@ use crate::state::{Effect, Routing, SubOctave};
 use crate::{Category, Destination, Source, Table};
 
 /// A value a segmented control or a select picks.
-pub trait Choice: Copy + PartialEq + Debug + 'static {
+pub(super) trait Choice: Copy + PartialEq + Debug + 'static {
     /// Every option, in the order the control shows them.
     const ALL: &'static [Self];
 
