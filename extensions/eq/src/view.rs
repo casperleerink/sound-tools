@@ -23,7 +23,9 @@ use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, KnobRange, short};
+use sound_ui::components::knob::{
+    Knob, KnobRange, ParameterKnob, decibels_readout, hertz_readout, short,
+};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::lanes::object_of;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
@@ -68,63 +70,22 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Unit {
-    Hertz,
-    Decibels,
-    /// A Q: a number with no unit.
-    Plain,
+fn frequency_knob(band: usize) -> ParameterKnob<Band> {
+    ParameterKnob::new(
+        &FREQUENCIES[band],
+        "Freq",
+        "Change frequency",
+        hertz_readout,
+    )
 }
 
-/// A knob of the card, on a number of `S`: a band, or the whole EQ.
-struct Control<S: 'static> {
-    parameter: &'static sound_core::Parameter<S>,
-    label: &'static str,
-    undo_label: &'static str,
-    unit: Unit,
-}
-
-impl<S> Control<S> {
-    fn knob(&self, value: f32) -> Knob {
-        let parameter = self.parameter;
-        Knob::new(parameter.field)
-            .range(KnobRange::of(parameter))
-            .value(value)
-            .default_value(parameter.default)
-            // A gain goes both ways from 0 dB, so its arc starts at the top.
-            .bipolar(matches!(self.unit, Unit::Decibels))
-            .label(self.label)
-            .readout(readout(self.unit, value))
-    }
-}
-
-fn frequency_knob(band: usize) -> Control<Band> {
-    Control {
-        parameter: &FREQUENCIES[band],
-        label: "Freq",
-        undo_label: "Change frequency",
-        unit: Unit::Hertz,
-    }
-}
-
-const GAIN_KNOB: Control<Band> = Control {
-    parameter: &GAIN,
-    label: "Gain",
-    undo_label: "Change gain",
-    unit: Unit::Decibels,
-};
-const Q_KNOB: Control<Band> = Control {
-    parameter: &Q,
-    label: "Q",
-    undo_label: "Change Q",
-    unit: Unit::Plain,
-};
-const OUTPUT_KNOB: Control<EqState> = Control {
-    parameter: &OUTPUT_GAIN,
-    label: "Output",
-    undo_label: "Change output",
-    unit: Unit::Decibels,
-};
+/// A gain goes both ways from 0 dB, so its arc starts at the top.
+const GAIN_KNOB: ParameterKnob<Band> =
+    ParameterKnob::new(&GAIN, "Gain", "Change gain", decibels_readout).bipolar();
+/// A Q is a number with no unit.
+const Q_KNOB: ParameterKnob<Band> = ParameterKnob::new(&Q, "Q", "Change Q", short);
+const OUTPUT_KNOB: ParameterKnob<EqState> =
+    ParameterKnob::new(&OUTPUT_GAIN, "Output", "Change output", decibels_readout).bipolar();
 
 /// The value of each shape in the select, its label and its icon. The select shows the icon,
 /// because no name of a shape but `Bell` fits in a cell, and the cell says the name under it.
@@ -141,16 +102,6 @@ const SHAPES: [(Shape, &str, &str, &str); 6] = [
     ),
     (Shape::HighCut, "high_cut", "High cut", "eq-high-cut"),
 ];
-
-/// A value with its unit, as a knob shows it: `632 Hz`, `1.2 kHz`, `-4.5 dB`, `0.71`.
-fn readout(unit: Unit, value: f32) -> String {
-    match unit {
-        Unit::Hertz if value < 1_000.0 => format!("{} Hz", short(value)),
-        Unit::Hertz => format!("{} kHz", short(value / 1_000.0)),
-        Unit::Decibels => format!("{} dB", short(value)),
-        Unit::Plain => short(value),
-    }
-}
 
 /// The value of `shape` in the select.
 fn shape_value(shape: Shape) -> &'static str {
@@ -323,13 +274,17 @@ impl EqView {
     }
 
     /// A knob on a number of the selected band.
-    fn band_knob(&self, control: Control<Band>, state: &EqState, cx: &mut Context<Self>) -> Knob {
+    fn band_knob(
+        &self,
+        control: ParameterKnob<Band>,
+        state: &EqState,
+        cx: &mut Context<Self>,
+    ) -> Knob {
         let band = self.selected;
-        let value = (control.parameter.get)(&state.bands[band]);
         let (set, undo_label) = (control.parameter.set, control.undo_label);
         let automated = self.is_automated(band, control.parameter.field, cx);
         control
-            .knob(value)
+            .knob(&state.bands[band])
             .automated(automated)
             .on_change(weak_callback(cx, move |view, change, cx| {
                 let set = move |state: &mut EqState, value| set(&mut state.bands[band], value);
@@ -338,10 +293,9 @@ impl EqView {
     }
 
     fn output_knob(&self, state: &EqState, cx: &mut Context<Self>) -> Knob {
-        let value = (OUTPUT_KNOB.parameter.get)(state);
         let automated = self.lanes.read(cx).is_automated(OUTPUT_GAIN.field);
         OUTPUT_KNOB
-            .knob(value)
+            .knob(state)
             .automated(automated)
             .on_change(weak_callback(cx, move |view, change, cx| {
                 let set = OUTPUT_KNOB.parameter.set;
@@ -483,16 +437,6 @@ impl Render for EqView {
 mod tests {
     use super::*;
     use crate::band_parameters;
-
-    #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
-        assert_eq!(readout(Unit::Hertz, 20.0), "20 Hz");
-        assert_eq!(readout(Unit::Hertz, 1_200.0), "1.2 kHz");
-        assert_eq!(readout(Unit::Decibels, -4.5), "-4.5 dB");
-        assert_eq!(readout(Unit::Decibels, 0.0), "0 dB");
-        assert_eq!(readout(Unit::Plain, 0.71), "0.71");
-        assert_eq!(readout(Unit::Plain, 18.0), "18");
-    }
 
     /// The defaults and both ends of every range, through the travel of its knob and back.
     #[test]
