@@ -599,8 +599,11 @@ impl TransportPill {
         let work = cx.background_spawn(async move { opener() });
         cx.spawn(async move |pill, cx| {
             let opened = work.await;
-            // A window that went away takes the input with it.
-            let _gone = pill.update(cx, |pill, cx| pill.input_opened(generation, opened, cx));
+            match pill.update(cx, |pill, cx| pill.input_opened(generation, opened, cx)) {
+                Ok(()) => {}
+                // A window that went away takes the input with it.
+                Err(_) => {}
+            }
         })
         .detach();
     }
@@ -750,11 +753,15 @@ impl TransportPill {
         let work = cx.background_spawn(async move { run.run() });
         cx.spawn(async move |pill, cx| {
             let (recorder, reports, generation) = work.await;
-            // A window that went away takes the recorder with it, and its files close.
-            let _gone = pill.update(cx, |pill, cx| {
+            let ended = pill.update(cx, |pill, cx| {
                 pill.audio.end_run(recorder, generation);
                 pill.on_reports(reports, cx);
             });
+            match ended {
+                Ok(()) => {}
+                // A window that went away takes the recorder with it, and its files close.
+                Err(_) => {}
+            }
         })
         .detach();
     }
