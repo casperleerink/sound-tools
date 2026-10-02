@@ -20,8 +20,8 @@
 //! straight line between, so a sweep has no steps. A change of mode fades from the old mode to
 //! the new one over 20 ms, both running meanwhile, as the filter glides between its types.
 //!
-//! The delay line is allocated when the processor is made and again when the sample rate is
-//! set, for the longest delay, and never in `process`.
+//! The delay line is allocated in `prepare`, for the sample rate and the longest delay, and
+//! never in `process`.
 
 use std::f32::consts::PI;
 use std::f64::consts::TAU;
@@ -281,10 +281,9 @@ impl Modulation {
     pub const AUTOMATION: AutomationInput<ModulationState, { PARAMETERS.len() }> =
         AutomationInput::new(0, PARAMETERS);
 
-    /// Allocates its delay line for 48 kHz, and again in `prepare` for another rate. Starts at
-    /// these values, so a modulation that is added or opened does not glide in.
+    /// Its delay line is allocated in `prepare`, which also takes the record at once.
     pub fn new(state: ModulationState) -> Self {
-        let mut modulation = Self {
+        Self {
             state: Automated::new(Self::AUTOMATION, state),
             sample_rate: 0.0,
             ramp_frames: 1.0,
@@ -300,14 +299,11 @@ impl Modulation {
             modes: [0.0; 3].map(Smoothed::new),
             stale: true,
             quiet_frames: 0,
-        };
-        modulation.allocate(48_000.0);
-        modulation.aim(&modulation.state.targets(modulation.sweep_ramp_frames));
-        modulation.snap();
-        modulation
+        }
     }
 
-    /// Makes the delay line for a sample rate, empty.
+    /// Makes the delay line for a sample rate, empty, and takes the record at once, so a
+    /// modulation that is added or opened does not glide in.
     fn allocate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
         self.ramp_frames = (RAMP_SECONDS * sample_rate).max(1.0);
@@ -317,7 +313,8 @@ impl Modulation {
         self.channels = [(); CHANNELS].map(|_| Channel::new(frames));
         self.position = 0;
         self.quiet_frames = 0;
-        self.stale = true;
+        self.aim(&self.state.targets(self.sweep_ramp_frames));
+        self.snap();
     }
 
     /// Sets every target from the record and its lanes, each reached in its own ramp. The edit
@@ -398,11 +395,7 @@ impl Processor for Modulation {
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
-        let sample_rate = config.sample_rate as f32;
-        if sample_rate != self.sample_rate {
-            self.allocate(sample_rate);
-            self.snap();
-        }
+        self.allocate(config.sample_rate as f32);
     }
 
     fn update(&mut self, update: &mut ModulationState) {
