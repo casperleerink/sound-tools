@@ -30,10 +30,11 @@ use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 use super::clipboard::{Copied, CopiedNotes, SharedClipboard};
 use super::gesture::Zone;
 use super::lanes::{Lane, LaneEdit, Shown, Stroke};
-use super::layout::{HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rect, RulerBar, Viewport};
+use super::layout::{HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rect, RulerBar, Viewport, ordered};
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
 };
+use super::plural;
 use super::roll::{
     DRAWN_VELOCITY, KEY_HEIGHT, KEYS_WIDTH, ROLL_HEIGHT, VELOCITY_HEIGHT, clamped, drawn_note,
     is_black_key, key_label, moved_notes, moved_velocity, nearest_pitch, note_at, note_rect,
@@ -1412,18 +1413,6 @@ fn drawn_velocities(
             (next != note).then_some((index, note, next))
         })
         .collect()
-}
-
-/// The undo label for one note or several.
-fn plural(count: usize, one: &'static str, several: &'static str) -> &'static str {
-    match count {
-        1 => one,
-        _ => several,
-    }
-}
-
-fn ordered<T: PartialOrd>(a: T, b: T) -> (T, T) {
-    if a <= b { (a, b) } else { (b, a) }
 }
 
 /// What one paint of the editor shows, in the coordinates of [`super::roll`].

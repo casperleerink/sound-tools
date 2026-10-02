@@ -49,11 +49,12 @@ use super::lanes::{DRAG_THRESHOLD, LaneEdit, Stroke};
 use super::layout::{
     ADD_LANE_HEIGHT, ADD_ROW_HEIGHT, DOT_LEFT, Extent, HEADER_INSET, HEADER_WIDTH, LANE_HEIGHT,
     LANES_MIDDLE, NAME_LEFT, NAME_MIDDLE, Part, RULER_HEIGHT, Rect, Rows, RulerBar, TRACK_HEIGHT,
-    Viewport, shifted,
+    Viewport, ordered, shifted,
 };
 use super::paint::{
     Fit, accent, paint_focus_ring, paint_ruler, paint_text, paint_track_label, placed,
 };
+use super::plural;
 use super::selection::Selection;
 use super::snap::{Grid, SharedSnap, Snap};
 use super::track_lanes::{self, LANE_BOX};
@@ -759,14 +760,6 @@ fn wrong_track(track: &InstanceId, name: &str, kind: TrackKind) -> ProjectError 
     ProjectError::WrongPlace {
         id,
         message: message.to_string(),
-    }
-}
-
-/// The undo label for one thing or several.
-fn plural(count: usize, one: &'static str, several: &'static str) -> &'static str {
-    match count {
-        1 => one,
-        _ => several,
     }
 }
 
@@ -4261,14 +4254,6 @@ fn live_shape(
         label: None,
         missing: None,
         handles: false,
-    }
-}
-
-/// Two values, the smaller first.
-fn ordered<T: PartialOrd>(a: T, b: T) -> (T, T) {
-    match a <= b {
-        true => (a, b),
-        false => (b, a),
     }
 }
 
