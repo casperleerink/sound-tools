@@ -536,8 +536,9 @@ pub fn summary(project: &Project) -> String {
 
     let mut summarised: Vec<&InstanceId> = Vec::new();
     for (id, tool) in project.instances() {
-        // Ids come parents first, so what a summary covers follows it directly.
-        if summarised.last().is_some_and(|owner| id.is_inside(owner)) {
+        // Ids sort as text, so `arrangement-2` comes between `arrangement` and what is inside
+        // it: every summarised owner is checked, not only the last.
+        if summarised.iter().any(|owner| id.is_inside(owner)) {
             continue;
         }
         if let Some(summary) = project.summary(id) {
