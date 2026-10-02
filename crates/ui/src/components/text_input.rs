@@ -7,10 +7,15 @@
 //! then scrolls, for the agent composer: enter submits, shift-enter adds a newline, up and down
 //! move by rows, and cmd-z undoes.
 //!
+//! The editing keys follow macOS text fields: option moves and deletes by words, cmd by rows
+//! (and cmd-up and down to the ends of a multi-line text), shift with any of them selects,
+//! and a double or triple click selects a word or a line.
+//!
 //! Known limit: where a word too long for a row is broken inside, end stops one character
 //! before the break, because the offset at the break belongs to the next row.
 
 mod rows;
+mod words;
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -39,13 +44,27 @@ actions!(
     [
         Backspace,
         Delete,
+        DeleteWordLeft,
+        DeleteWordRight,
+        DeleteToHome,
+        DeleteToEnd,
         Left,
         Right,
         SelectLeft,
         SelectRight,
+        WordLeft,
+        WordRight,
+        SelectWordLeft,
+        SelectWordRight,
         SelectAll,
         Home,
         End,
+        SelectToHome,
+        SelectToEnd,
+        TextStart,
+        TextEnd,
+        SelectToTextStart,
+        SelectToTextEnd,
         Paste,
         Cut,
         Copy,
@@ -73,17 +92,34 @@ fn install_bindings(cx: &mut App) {
     let ctx = Some("TextInput");
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, ctx),
+        // Shift is still held after a shift-enter or a capital, and must not eat the key.
+        KeyBinding::new("shift-backspace", Backspace, ctx),
         KeyBinding::new("delete", Delete, ctx),
+        KeyBinding::new("shift-delete", Delete, ctx),
+        KeyBinding::new("alt-backspace", DeleteWordLeft, ctx),
+        KeyBinding::new("alt-delete", DeleteWordRight, ctx),
+        KeyBinding::new("cmd-backspace", DeleteToHome, ctx),
+        KeyBinding::new("cmd-delete", DeleteToEnd, ctx),
         KeyBinding::new("left", Left, ctx),
         KeyBinding::new("right", Right, ctx),
         KeyBinding::new("shift-left", SelectLeft, ctx),
         KeyBinding::new("shift-right", SelectRight, ctx),
+        KeyBinding::new("alt-left", WordLeft, ctx),
+        KeyBinding::new("alt-right", WordRight, ctx),
+        KeyBinding::new("shift-alt-left", SelectWordLeft, ctx),
+        KeyBinding::new("shift-alt-right", SelectWordRight, ctx),
         KeyBinding::new("cmd-a", SelectAll, ctx),
         KeyBinding::new("cmd-c", Copy, ctx),
         KeyBinding::new("cmd-x", Cut, ctx),
         KeyBinding::new("cmd-v", Paste, ctx),
         KeyBinding::new("home", Home, ctx),
         KeyBinding::new("end", End, ctx),
+        KeyBinding::new("cmd-left", Home, ctx),
+        KeyBinding::new("cmd-right", End, ctx),
+        KeyBinding::new("shift-home", SelectToHome, ctx),
+        KeyBinding::new("shift-end", SelectToEnd, ctx),
+        KeyBinding::new("shift-cmd-left", SelectToHome, ctx),
+        KeyBinding::new("shift-cmd-right", SelectToEnd, ctx),
         KeyBinding::new("enter", Submit, ctx),
         KeyBinding::new("escape", Cancel, ctx),
     ]);
@@ -95,6 +131,10 @@ fn install_bindings(cx: &mut App) {
         KeyBinding::new("down", Down, multi_line),
         KeyBinding::new("shift-up", SelectUp, multi_line),
         KeyBinding::new("shift-down", SelectDown, multi_line),
+        KeyBinding::new("cmd-up", TextStart, multi_line),
+        KeyBinding::new("cmd-down", TextEnd, multi_line),
+        KeyBinding::new("shift-cmd-up", SelectToTextStart, multi_line),
+        KeyBinding::new("shift-cmd-down", SelectToTextEnd, multi_line),
         KeyBinding::new("shift-enter", Newline, multi_line),
         KeyBinding::new("cmd-z", Undo, multi_line),
         KeyBinding::new("shift-cmd-z", Redo, multi_line),
@@ -268,7 +308,11 @@ impl TextInput {
     }
 
     pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
-        self.selected_range = 0..self.content.len();
+        self.select_range(0..self.content.len(), cx);
+    }
+
+    fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        self.selected_range = self.clamp_offset(range.start)..self.clamp_offset(range.end);
         self.selection_reversed = false;
         self.caret_moved();
         cx.notify();
@@ -320,21 +364,80 @@ impl TextInput {
         self.select_to(self.next_boundary(self.cursor_offset()), cx);
     }
 
+    /// From the start of a selection, like left.
+    fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        let start = words::previous_word_start(&self.content, self.selected_range.start);
+        self.move_to(start, cx);
+    }
+
+    fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
+        let end = words::next_word_end(&self.content, self.selected_range.end);
+        self.move_to(end, cx);
+    }
+
+    fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(
+            words::previous_word_start(&self.content, self.cursor_offset()),
+            cx,
+        );
+    }
+
+    fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(
+            words::next_word_end(&self.content, self.cursor_offset()),
+            cx,
+        );
+    }
+
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
         self.select_all_text(cx);
     }
 
-    /// To the start of the row, which is the start of the text in a one-line field.
+    /// The start of the caret's row, which is the start of the text in a one-line field.
+    fn row_start(&self) -> usize {
+        self.caret_row().map_or(0, |row| row.range.start)
+    }
+
+    fn row_end(&self) -> usize {
+        self.caret_row()
+            .map_or(self.content.len(), |row| row.caret_end)
+    }
+
     fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
-        let start = self.caret_row().map_or(0, |row| row.range.start);
-        self.move_to(start, cx);
+        self.move_to(self.row_start(), cx);
     }
 
     fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
-        let end = self
-            .caret_row()
-            .map_or(self.content.len(), |row| row.caret_end);
-        self.move_to(end, cx);
+        self.move_to(self.row_end(), cx);
+    }
+
+    fn select_to_home(&mut self, _: &SelectToHome, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.row_start(), cx);
+    }
+
+    fn select_to_end(&mut self, _: &SelectToEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.row_end(), cx);
+    }
+
+    fn text_start(&mut self, _: &TextStart, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(0, cx);
+    }
+
+    fn text_end(&mut self, _: &TextEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(self.content.len(), cx);
+    }
+
+    fn select_to_text_start(
+        &mut self,
+        _: &SelectToTextStart,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_to(0, cx);
+    }
+
+    fn select_to_text_end(&mut self, _: &SelectToTextEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.content.len(), cx);
     }
 
     fn up(&mut self, _: &Up, window: &mut Window, cx: &mut Context<Self>) {
@@ -508,18 +611,59 @@ impl TextInput {
         self.follow_caret = true;
     }
 
-    fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+    /// Delete the selection, or without one the text from the caret to `offset`.
+    fn delete_to(&mut self, offset: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            self.select_to(self.previous_boundary(self.cursor_offset()), cx);
+            self.select_to(offset, cx);
         }
         self.replace_text_in_range(None, "", window, cx);
     }
 
+    fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        self.delete_to(self.previous_boundary(self.cursor_offset()), window, cx);
+    }
+
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
-            self.select_to(self.next_boundary(self.cursor_offset()), cx);
-        }
-        self.replace_text_in_range(None, "", window, cx);
+        self.delete_to(self.next_boundary(self.cursor_offset()), window, cx);
+    }
+
+    fn delete_word_left(
+        &mut self,
+        _: &DeleteWordLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let start = words::previous_word_start(&self.content, self.cursor_offset());
+        self.delete_to(start, window, cx);
+    }
+
+    fn delete_word_right(
+        &mut self,
+        _: &DeleteWordRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let end = words::next_word_end(&self.content, self.cursor_offset());
+        self.delete_to(end, window, cx);
+    }
+
+    /// At the start of a row it takes the newline before, as macOS does.
+    fn delete_to_home(&mut self, _: &DeleteToHome, window: &mut Window, cx: &mut Context<Self>) {
+        let caret = self.cursor_offset();
+        let start = match self.row_start() {
+            start if start < caret => start,
+            _ => self.previous_boundary(caret),
+        };
+        self.delete_to(start, window, cx);
+    }
+
+    fn delete_to_end(&mut self, _: &DeleteToEnd, window: &mut Window, cx: &mut Context<Self>) {
+        let caret = self.cursor_offset();
+        let end = match self.row_end() {
+            end if end > caret => end,
+            _ => self.next_boundary(caret),
+        };
+        self.delete_to(end, window, cx);
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -570,12 +714,15 @@ impl TextInput {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus_handle, cx);
-        self.is_selecting = true;
         let offset = self.offset_at(event.position).unwrap_or(0);
-        if event.modifiers.shift {
-            self.select_to(offset, cx);
-        } else {
-            self.move_to(offset, cx);
+        // A double click selects the word and a triple click the line. Those don't drag, so a
+        // twitch of the mouse keeps them.
+        self.is_selecting = event.click_count < 2;
+        match event.click_count {
+            2 => self.select_range(words::word_at(&self.content, offset), cx),
+            3.. => self.select_range(words::line_at(&self.content, offset), cx),
+            _ if event.modifiers.shift => self.select_to(offset, cx),
+            _ => self.move_to(offset, cx),
         }
     }
 
@@ -1222,13 +1369,27 @@ impl Render for TextInput {
                     .when(focused && !bare, |d| d.border_color(border_active))
                     .on_action(cx.listener(Self::backspace))
                     .on_action(cx.listener(Self::delete))
+                    .on_action(cx.listener(Self::delete_word_left))
+                    .on_action(cx.listener(Self::delete_word_right))
+                    .on_action(cx.listener(Self::delete_to_home))
+                    .on_action(cx.listener(Self::delete_to_end))
                     .on_action(cx.listener(Self::left))
                     .on_action(cx.listener(Self::right))
                     .on_action(cx.listener(Self::select_left))
                     .on_action(cx.listener(Self::select_right))
+                    .on_action(cx.listener(Self::word_left))
+                    .on_action(cx.listener(Self::word_right))
+                    .on_action(cx.listener(Self::select_word_left))
+                    .on_action(cx.listener(Self::select_word_right))
                     .on_action(cx.listener(Self::select_all))
                     .on_action(cx.listener(Self::home))
                     .on_action(cx.listener(Self::end))
+                    .on_action(cx.listener(Self::select_to_home))
+                    .on_action(cx.listener(Self::select_to_end))
+                    .on_action(cx.listener(Self::text_start))
+                    .on_action(cx.listener(Self::text_end))
+                    .on_action(cx.listener(Self::select_to_text_start))
+                    .on_action(cx.listener(Self::select_to_text_end))
                     .on_action(cx.listener(Self::up))
                     .on_action(cx.listener(Self::down))
                     .on_action(cx.listener(Self::select_up))
