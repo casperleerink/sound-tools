@@ -398,16 +398,21 @@ pub fn main_arrangement(project: &Project) -> Option<Instance<ArrangementState>>
     project.resolve(id)
 }
 
-/// Adds `Track <n>` with the default synth, as one undo step. The next colour of the palette,
-/// so that tracks are easy to tell apart. This and [`open_or_create`] are the two places that
-/// know the default instrument.
+/// The name and colour of the next track: `Track <n>`, in the next colour of the palette, so
+/// that tracks are easy to tell apart.
+fn next_track(project: &Project, arrangement: &Instance<ArrangementState>) -> (String, Colour) {
+    let count = arrangement::tracks(project, arrangement.id()).len();
+    let colour = Colour::ALL[count % Colour::ALL.len()];
+    (format!("Track {}", count + 1), colour)
+}
+
+/// Adds `Track <n>` with the default synth, as one undo step, in the next colour of the
+/// palette. This and [`open_or_create`] are the two places that know the default instrument.
 pub fn add_track(
     project: &mut Project,
     arrangement: &Instance<ArrangementState>,
 ) -> Result<(), ProjectError> {
-    let count = arrangement::tracks(project, arrangement.id()).len();
-    let colour = Colour::ALL[count % Colour::ALL.len()];
-    let name = format!("Track {}", count + 1);
+    let (name, colour) = next_track(project, arrangement);
     let mut changes = Changes::new();
     let instrument = SynthState::default();
     arrangement::add_track(
@@ -421,15 +426,12 @@ pub fn add_track(
     project.commit("Add track", changes)
 }
 
-/// Adds an audio track `Track <n>`, empty, as one undo step, in the next colour of the palette
-/// as [`add_track`] does.
+/// Adds an audio track `Track <n>`, empty, as one undo step, in the next colour of the palette.
 pub fn add_audio_track(
     project: &mut Project,
     arrangement: &Instance<ArrangementState>,
 ) -> Result<(), ProjectError> {
-    let count = arrangement::tracks(project, arrangement.id()).len();
-    let colour = Colour::ALL[count % Colour::ALL.len()];
-    let name = format!("Track {}", count + 1);
+    let (name, colour) = next_track(project, arrangement);
     let mut changes = Changes::new();
     arrangement::add_audio_track(project, &mut changes, arrangement.id(), &name, colour)?;
     project.commit("Add audio track", changes)

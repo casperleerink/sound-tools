@@ -1,5 +1,5 @@
 //! Tooltip view for GPUI's `.tooltip(..)`: label text plus optional keyboard
-//! shortcut chips. Ported from the source design system's `tooltip.tsx` (primary + outline).
+//! shortcut chips. Ported from the source design system's `tooltip.tsx`.
 
 use gpui::{
     AnyView, App, Context, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px,
@@ -7,19 +7,9 @@ use gpui::{
 
 use crate::theme::ActiveTheme;
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub enum TooltipVariant {
-    /// Inverted surface: light background, dark text.
-    #[default]
-    Default,
-    /// Dark background with a bright hairline border.
-    Outline,
-}
-
 pub struct Tooltip {
     text: SharedString,
     keys: Vec<SharedString>,
-    variant: TooltipVariant,
 }
 
 impl Tooltip {
@@ -27,18 +17,12 @@ impl Tooltip {
         Self {
             text: text.into(),
             keys: Vec::new(),
-            variant: TooltipVariant::default(),
         }
     }
 
     /// One keyboard key, drawn as a kbd chip. Call once per key.
     pub fn key(mut self, key: impl Into<SharedString>) -> Self {
         self.keys.push(key.into());
-        self
-    }
-
-    pub fn variant(mut self, variant: TooltipVariant) -> Self {
-        self.variant = variant;
         self
     }
 
@@ -68,11 +52,9 @@ fn kbd(key: SharedString, fg: Hsla, chip: Hsla) -> impl IntoElement {
 impl Render for Tooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (bg, fg, border) = match self.variant {
-            TooltipVariant::Default => (theme.gray_950, theme.gray_50, None),
-            TooltipVariant::Outline => (theme.gray_50, theme.gray_950, Some(theme.alpha_at(0.70))),
-        };
-        // Chips read as a tint of the foreground so both variants stay legible.
+        // An inverted surface: dark background, light text.
+        let (bg, fg) = (theme.gray_950, theme.gray_50);
+        // Chips read as a tint of the foreground.
         let mut chip = fg;
         chip.a = 0.12;
 
@@ -86,7 +68,6 @@ impl Render for Tooltip {
                 .px(px(10.))
                 .rounded(px(8.))
                 .bg(bg)
-                .when_some(border, |d, color| d.border_1().border_color(color))
                 .text_size(px(12.))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(fg)

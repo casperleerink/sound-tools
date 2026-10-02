@@ -1,12 +1,8 @@
-//! Popover: a trigger plus floating content. Stateful view, because it owns
-//! `open`. Also holds the anchoring and surface helpers the other overlays use
-//! (the dropdown menu, which is also the select). Ported from the source design system's `popover.tsx`.
-
-use std::rc::Rc;
+//! The anchoring, surface and trigger helpers of the overlays: the dropdown menu, which is also
+//! the select. Ported from the source design system's `popover.tsx`.
 
 use gpui::{
-    Anchor, AnyElement, App, BoxShadow, Context, Div, FocusHandle, FontWeight, KeyDownEvent,
-    MouseDownEvent, Render, SharedString, Stateful, Window, anchored, deferred, div, hsla, point,
+    Anchor, App, BoxShadow, Div, FontWeight, Stateful, anchored, deferred, div, hsla, point,
     prelude::*, px,
 };
 
@@ -106,103 +102,4 @@ pub(crate) fn trigger(id: &'static str, cx: &App) -> Stateful<Div> {
         .text_color(theme.gray_950)
         .cursor_pointer()
         .hover(|s| s.bg(theme.alpha_at(0.10)))
-}
-
-type ContentFn = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
-
-pub struct Popover {
-    focus_handle: FocusHandle,
-    label: SharedString,
-    content: ContentFn,
-    open: bool,
-    side: Side,
-    align: Align,
-    width: f32,
-}
-
-impl Popover {
-    pub fn new(
-        label: impl Into<SharedString>,
-        content: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self {
-            focus_handle: cx.focus_handle(),
-            label: label.into(),
-            content: Rc::new(content),
-            open: false,
-            side: Side::default(),
-            align: Align::default(),
-            width: 224.,
-        }
-    }
-
-    pub fn side(mut self, side: Side) -> Self {
-        self.side = side;
-        self
-    }
-
-    pub fn align(mut self, align: Align) -> Self {
-        self.align = align;
-        self
-    }
-
-    pub fn width(mut self, width: f32) -> Self {
-        self.width = width;
-        self
-    }
-
-    pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.open = true;
-        window.focus(&self.focus_handle, cx);
-        cx.notify();
-    }
-
-    pub fn close(&mut self, cx: &mut Context<Self>) {
-        self.open = false;
-        cx.notify();
-    }
-}
-
-impl Render for Popover {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = self.content.clone();
-        let width = self.width;
-        let (side, align) = (self.side, self.align);
-
-        div()
-            .relative()
-            .flex()
-            .flex_none()
-            .child(
-                trigger("popover-trigger", cx)
-                    .child(self.label.clone())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if this.open {
-                            this.close(cx);
-                        } else {
-                            this.open(window, cx);
-                        }
-                    })),
-            )
-            .when(self.open, |d| {
-                d.child(anchor(
-                    side,
-                    align,
-                    surface(cx)
-                        .track_focus(&self.focus_handle)
-                        .w(px(width))
-                        .p(px(12.))
-                        .on_mouse_down_out(
-                            cx.listener(|this, _: &MouseDownEvent, _, cx| this.close(cx)),
-                        )
-                        .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
-                            if ev.keystroke.key == "escape" {
-                                this.close(cx);
-                            }
-                        }))
-                        .child(content(_window, cx)),
-                ))
-            })
-    }
 }

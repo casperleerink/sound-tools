@@ -72,12 +72,12 @@ impl Shown {
 
 /// The selected clip and its state, when it names a raw take. Fitting the tempo needs a
 /// performance to follow, so a clip that was drawn by hand offers nothing.
-fn recorded_clip(session: &Session) -> Option<(InstanceId, Clip)> {
+fn recorded_clip(session: &Session) -> Option<(InstanceId, &Clip)> {
     let project = session.project();
     let clip = project.resolve::<Clip>(session.selected_clip()?)?;
     let state = project.state(&clip)?;
     state.take.as_ref()?;
-    Some((clip.id().clone(), state.clone()))
+    Some((clip.id().clone(), state))
 }
 
 impl ProjectMenu {
@@ -100,8 +100,8 @@ impl ProjectMenu {
                 .width(280.)
         });
         // Undo and redo say what they would do. A finished edit changes the label and sends no
-        // project event, so this follows every notify, and it is cheap: three values to compare,
-        // and new items only when one differs. A drag changes none of them until it ends.
+        // project event, so this follows every notify, and it is cheap: a few small values to
+        // compare, and new items only when one differs. A drag changes none of them until it ends.
         cx.observe(&session, |this, session, cx| {
             let shown = Shown::of(session.read(cx));
             if shown != this.shown {
@@ -155,7 +155,7 @@ impl ProjectMenu {
 /// Fits the project tempo to the take of the selected clip, as one undo step. The tempo map
 /// and the clip follow in the same group, through the derive of the fit record.
 fn fit_tempo_to_take(session: &mut Session, cx: &mut Context<Session>) {
-    let Some((_, clip)) = recorded_clip(session) else {
+    let Some(clip) = recorded_clip(session).map(|(_, clip)| clip.clone()) else {
         return;
     };
     // The item is at 40 % in that case and says what to add, so a click cannot get here.

@@ -146,7 +146,6 @@ pub enum InputSize {
     Sm,
     #[default]
     Md,
-    Lg,
 }
 
 impl InputSize {
@@ -154,7 +153,6 @@ impl InputSize {
         match self {
             Self::Sm => 28.,
             Self::Md => 32.,
-            Self::Lg => 40.,
         }
     }
 
@@ -162,7 +160,6 @@ impl InputSize {
         match self {
             Self::Sm => 6.,
             Self::Md => 8.,
-            Self::Lg => 10.,
         }
     }
 
@@ -170,14 +167,6 @@ impl InputSize {
         match self {
             Self::Sm => 8.,
             Self::Md => 10.,
-            Self::Lg => 12.,
-        }
-    }
-
-    fn text_size(self) -> f32 {
-        match self {
-            Self::Lg => 15.,
-            _ => 14.,
         }
     }
 }
@@ -1358,7 +1347,7 @@ impl Render for TextInput {
             .flex()
             .flex_col()
             .text_color(text)
-            .text_size(px(size.text_size()))
+            .text_size(px(14.))
             .line_height(px(ROW_HEIGHT))
             .when(disabled, |d| d.opacity(0.4))
             .when(!disabled, |d| {
