@@ -56,6 +56,13 @@ fn selected(opened: &mut Opened<'_>) -> usize {
     opened.cx.read(|cx| view.read(cx).selected())
 }
 
+fn shown_shape(opened: &mut Opened<'_>) -> Option<String> {
+    let view = view(opened);
+    opened
+        .cx
+        .read(|cx| view.read(cx).shown_shape(cx).map(str::to_owned))
+}
+
 #[gpui::test]
 fn add_effect_puts_an_eq_with_its_card_on_the_track(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
@@ -225,11 +232,20 @@ fn the_number_keys_select_a_band(cx: &mut TestAppContext) {
     assert_eq!(selected(&mut opened), 0);
 }
 
-/// An agent edits the file while the card is open: the card shows it at once. Band 1 is now a
-/// notch, which has no gain, so its handle moves only sideways.
+/// The shape select shows the shape of the selected band. An agent edits the file while the
+/// card is open: the card shows it at once. Band 1 is now a notch, which has no gain, so its
+/// handle moves only sideways.
 #[gpui::test]
 fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
+    assert_eq!(shown_shape(&mut opened).as_deref(), Some("low_shelf"));
+    let handle = opened.control("handle-band-3");
+    opened.click(handle);
+    assert_eq!(shown_shape(&mut opened).as_deref(), Some("bell"));
+    let handle = opened.control("handle-band-1");
+    opened.click(handle);
+    assert_eq!(shown_shape(&mut opened).as_deref(), Some("low_shelf"));
+
     let path = opened.path(EQ_FILE);
     std::fs::write(
         &path,
@@ -238,6 +254,8 @@ fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
     .unwrap();
     opened.edit(|project| project.apply_outside_changes(&[path]).map(|_| ()));
     assert_eq!(state(&mut opened).bands[0].shape, Shape::Notch);
+    // The select shows the new shape too.
+    assert_eq!(shown_shape(&mut opened).as_deref(), Some("notch"));
     let handle = opened.control("handle-band-1");
     opened.drag(handle, point(handle.x, handle.y - px(40.)));
     assert_eq!(state(&mut opened).bands[0].gain_db, 0.0);
