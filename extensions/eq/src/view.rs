@@ -17,6 +17,7 @@ use gpui::{
 };
 use sound_core::{Instance, ProjectEvent, State};
 use sound_ui::components::cell::Cell;
+use sound_ui::components::curves::{DRAWN_AT, RESPONSE_ACROSS, RESPONSE_CAPTION, response_decades};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dropdown_menu::{
@@ -45,17 +46,9 @@ const DISPLAY_WIDTH: f32 = 312.;
 /// handle.
 const DISPLAY_DB: (f32, f32) = (-18., 18.);
 
-/// The sample rate the curve is drawn for. The curve of another rate differs only near the top
-/// of the scale.
-const DRAWN_AT: f32 = 48_000.;
-
 /// Points of the curve across the display: two points per point of width or so, for the
 /// narrow dip of a notch.
 const CURVE_POINTS: usize = 156;
-
-/// Frequencies are heard in ratios, so the display goes across them in ratios, from 20 Hz to
-/// 20 kHz, as the frequency knob does.
-const ACROSS: KnobRange = KnobRange::logarithmic(20., 20_000.);
 
 /// Up and down on the display is the gain of a band, placed so that the handle is at its gain
 /// on the scale of the display.
@@ -118,17 +111,10 @@ fn curve(state: &EqState) -> Vec<Point<f32>> {
     (0..=CURVE_POINTS)
         .map(|step| {
             let x = step as f32 / CURVE_POINTS as f32;
-            let gain = response(state, ACROSS.value(x), DRAWN_AT);
+            let gain = response(state, RESPONSE_ACROSS.value(x), DRAWN_AT);
             point(x, height_of(20. * gain.max(1e-6).log10()))
         })
         .collect()
-}
-
-/// The places across of 100 Hz, 1 kHz and 10 kHz, the scale under the display.
-fn decades() -> Vec<f32> {
-    [100., 1_000., 10_000.]
-        .map(|hz| ACROSS.position(hz))
-        .to_vec()
 }
 
 /// The band a key selects: `1` to `4`, with no modifier.
@@ -309,7 +295,11 @@ impl EqView {
     fn handle(&self, band: usize, state: &EqState, cx: &mut Context<Self>) -> Handle {
         let settings = state.bands[band];
         let with_gain = settings.shape.has_gain();
-        let x = Axis::new(ACROSS, settings.frequency_hz, FREQUENCIES[band].default);
+        let x = Axis::new(
+            RESPONSE_ACROSS,
+            settings.frequency_hz,
+            FREQUENCIES[band].default,
+        );
         let y = match with_gain {
             true => Axis::new(GAIN_TRAVEL, settings.gain_db, GAIN.default),
             false => Axis::fixed(height_of(0.)),
@@ -348,9 +338,9 @@ impl EqView {
     fn display(&self, state: &EqState, cx: &mut Context<Self>) -> Display {
         let display = Display::new("display", DISPLAY_WIDTH)
             .curve(curve(state))
-            .grid(decades(), Vec::new())
+            .grid(response_decades(), Vec::new())
             .zero_line(height_of(0.))
-            .caption("100 · 1k · 10k");
+            .caption(RESPONSE_CAPTION);
         // The selected handle last, so that it is on top of any other at its place.
         let order = (0..BANDS)
             .filter(|band| *band != self.selected)
