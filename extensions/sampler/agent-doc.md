@@ -57,6 +57,42 @@ An edit applies while notes sound. `gain_db` glides there over 20 ms; the envelo
 
 To play notes, write a clip into the track folder as `agent-docs/arrangement.md` says. The Sampler has the ports `notes` (in) and `audio` (out, stereo).
 
+## The library
+
+For a real instrument (piano, strings, brass, woodwinds, guitar, bass, drums), use the library first: free sampled instruments the app downloads when a record names one. A record names it by its id with `library`, instead of `sample` or `sfz`:
+
+```json state/arrangement/violins/instance.json
+{
+  "tool": "arrangement.track",
+  "state": {"name": "Violins", "colour": "rosewater", "order": 9, "gain_db": 0.0, "pan": 0.0, "mute": false}
+}
+```
+
+```json state/arrangement/violins/instrument.json
+{
+  "tool": "sampler",
+  "state": {
+    "library": "vsco/violin-section-sustain",
+    "root": 60,
+    "start_seconds": 0.0,
+    "attack_seconds": 0.002,
+    "decay_seconds": 0.4,
+    "sustain": 1.0,
+    "release_seconds": 0.3,
+    "velocity_to_volume": 0.5,
+    "gain_db": 0.0
+  }
+}
+```
+
+`{"library": "vsco/violin-section-sustain"}` is enough. As with `sfz`, only `gain_db` of the record applies. The first time a record names an instrument this machine lacks, the app downloads it, once for every project; `problems.txt` says it downloads, and the line goes away when it plays. Tell the composer it is downloading. A failed download is listed in `problems.txt`, and **Try again** on the Sampler card retries it.
+
+Keep each instrument in its range: a note far outside it plays a sample pitched far from its own and sounds wrong.
+
+| Id | Instrument | Range | Download |
+| --- | --- | --- | --- |
+LIBRARY_TABLE
+
 ## SFZ instruments
 
 An SFZ instrument is a folder of samples and a text file, `.sfz`, that says which sample plays for which key and how hard it is played. Free instruments come in this format, and you can write one. The folder goes under `assets/instruments/`, and the record names the SFZ file by its path there, with `sfz` instead of `sample`. A new track that plays one:

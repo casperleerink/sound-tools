@@ -153,14 +153,14 @@ fn the_picker_puts_an_empty_sampler_with_its_card_on_the_track(cx: &mut TestAppC
     ] {
         assert!(opened.find(hidden).is_some(), "{hidden}");
     }
-    // The card is 464 pt, and 649 expanded: its header is as wide, inside a border of 1 pt.
+    // The card is 520 pt, and 705 expanded: its header is as wide, inside a border of 1 pt.
     let width =
         |opened: &mut Opened<'_>| opened.bounds("card-instrument-header").unwrap().size.width;
-    assert_eq!(width(&mut opened), px(649. - 2.));
+    assert_eq!(width(&mut opened), px(705. - 2.));
     // The icon moved with the right edge.
     let expand = opened.control("card-instrument-expand");
     opened.click(expand);
-    assert_eq!(width(&mut opened), px(464. - 2.));
+    assert_eq!(width(&mut opened), px(520. - 2.));
 }
 
 #[gpui::test]

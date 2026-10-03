@@ -1,11 +1,15 @@
 //! The card of the sampler in a rack: the whole file in the waveform display, with the start and
 //! end lines, the envelope drawn over it in the time of the file and a green line where the last
-//! note is; Root, Velocity, Release and Gain next to it, and Start, End, Attack, Decay and
-//! Sustain behind expand. The rack gives the frame of the card, whose title says "Sampler" and
-//! is where another instrument is picked.
+//! note is; the Instrument select, Root, Velocity, Release and Gain next to it, and Start, End,
+//! Attack, Decay and Sustain behind expand. The rack gives the frame of the card, whose title
+//! says "Sampler" and is where another instrument is picked.
 //!
-//! With an SFZ instrument the display names it and the card has only Gain: the instrument has
-//! its own pitch, envelope and velocity. A file dropped or chosen replaces it.
+//! The Instrument select lists the library by category, with the size of each download, and
+//! `Audio file…`. Picking a library instrument is one undo step; its download starts at once,
+//! and the display shows how far it is, or why it failed with `Try again`.
+//!
+//! With an SFZ or library instrument the display names it and the card has only Gain: the
+//! instrument has its own pitch, envelope and velocity. A file dropped or chosen replaces it.
 //!
 //! With no file, the display says `Drop an audio file here` over a `Choose file` button, which
 //! opens the file panel of macOS and is the way from the keys. A file dropped on the display, or
@@ -25,8 +29,12 @@ use gpui::{AnyElement, Context, Entity, FocusHandle, Point, Task, Window, div, p
 use sound_core::{Changes, Instance, ProjectEvent, State};
 use sound_media::{Cached, Imported, Info};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
+use sound_ui::components::cell::{CELL_WIDTH, Cell};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Handle};
+use sound_ui::components::dropdown_menu::{
+    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
+};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     Knob, KnobRange, ParameterKnob, decibels_readout, percent_readout, seconds_readout,
@@ -39,13 +47,14 @@ use sound_ui::{
     ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, Waveforms, every_poll, weak_callback,
 };
 
+use crate::library::{self, CATALOG, Category, Entry, LibraryId, Status, size_text};
 use crate::{
     ATTACK, DECAY, GAIN, POSITION, RELEASE, ROOT, SUSTAIN, Sampler, SamplerState, SfzPath, VELOCITY,
 };
 
 /// The name the rack puts on the card of a sampler.
 pub const NAME: &str = "Sampler";
-/// The display, so the card is 32 + 312 + 8 + 2 x 56 = 464 pt, and 649 expanded.
+/// The display, so the card is 32 + 312 + 8 + 3 x 56 = 520 pt with a sample, and 705 expanded.
 pub const DISPLAY_WIDTH: f32 = 312.;
 /// What the display says with no file, and while one is dragged over it.
 pub const EMPTY: &str = "Drop an audio file here";
@@ -53,6 +62,16 @@ pub const DROP_TO_LOAD: &str = "Drop to load the file";
 pub const DROP_TO_REPLACE: &str = "Drop to replace the file";
 /// The undo step of a file dropped or chosen.
 pub const LOAD_LABEL: &str = "Load sample";
+/// The undo step of a library instrument picked in the Instrument select.
+pub const INSTRUMENT_LABEL: &str = "Load instrument";
+
+/// The values of the Instrument select: a file, the sample, the SFZ file of the project, and
+/// each library instrument by its id after the prefix.
+const FILE_VALUE: &str = "file";
+const SAMPLE_VALUE: &str = "sample";
+const SFZ_VALUE: &str = "sfz";
+const LIBRARY_PREFIX: &str = "library:";
+const INSTRUMENT_SELECT_WIDTH: f32 = 2. * CELL_WIDTH - 8.;
 
 /// Registers the card of the `sampler` tool and what a rack calls one.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -78,6 +97,16 @@ const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain"
 /// A note number by its name: `C4`, `C#4`.
 fn note_readout(note: f32) -> String {
     sound_notes::Pitch::nearest(note.round() as i64).name()
+}
+
+/// The second line of a library instrument in the select: its library and size, and whether
+/// it is downloaded.
+fn described(entry: &'static Entry) -> String {
+    let size = size_text(entry.download_bytes);
+    match library::status(entry) {
+        Status::Here => format!("{} · {size} · downloaded", entry.library.name),
+        _ => format!("{} · {size}", entry.library.name),
+    }
 }
 
 /// The name of an SFZ instrument for the display: its file name without `.sfz`.
@@ -117,6 +146,10 @@ pub struct SamplerView {
     playing_at: Option<f32>,
     /// The focus of `Choose file`, a tab stop.
     choose_focus: FocusHandle,
+    /// The Instrument select.
+    instruments: Entity<DropdownMenu>,
+    /// Where the library instrument of the record is on this machine, as last shown.
+    download: Option<Status>,
     _position: Task<()>,
 }
 
@@ -129,7 +162,10 @@ impl SamplerView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.sampler.id() => cx.notify(),
+            ProjectEvent::Changed(id) if id == view.sampler.id() => {
+                view.show_instruments(cx);
+                cx.notify();
+            }
             // Deleted under a drag, from outside: the delete was the last write, so the gesture
             // finishes and does not cancel.
             ProjectEvent::Deleted(id) if id == view.sampler.id() => {
@@ -149,7 +185,19 @@ impl SamplerView {
             peaks.take();
         }
         let lanes = Lanes::follow(&session, sampler.id(), Sampler::AUTOMATION, cx);
-        Self {
+        let instruments = cx.new(|cx| {
+            DropdownMenu::new("Instrument", Vec::new(), cx)
+                .trigger(Trigger::Select)
+                .trigger_width(INSTRUMENT_SELECT_WIDTH)
+                .width(280.)
+                .max_height(420.)
+                .debug_name("instrument")
+        });
+        cx.subscribe(&instruments, |view, _, MenuPicked(value), cx| {
+            view.pick_instrument(value.as_ref(), cx)
+        })
+        .detach();
+        let mut view = Self {
             session,
             sampler,
             frame,
@@ -158,14 +206,121 @@ impl SamplerView {
             expanded: false,
             playing_at: None,
             choose_focus: cx.focus_handle().tab_stop(true),
-            _position: every_poll(cx, Self::read_position),
+            instruments,
+            download: None,
+            _position: every_poll(cx, |view, cx| {
+                view.read_position(cx);
+                view.follow_download(cx);
+            }),
+        };
+        view.show_instruments(cx);
+        view
+    }
+
+    /// The Instrument select, after any change of the record or of what is downloaded: the
+    /// file of the record, its SFZ file, and the library by category.
+    fn show_instruments(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self
+            .session
+            .read(cx)
+            .project()
+            .state(&self.sampler)
+            .cloned()
+        else {
+            return;
+        };
+        let mut first = MenuGroup::new();
+        if let Some(asset) = &state.sample {
+            first = first.item(MenuItem::new(SAMPLE_VALUE, asset.to_string()));
         }
+        if let Some(sfz) = &state.sfz {
+            first = first.item(MenuItem::new(SFZ_VALUE, sfz_name(sfz)));
+        }
+        let file = MenuItem::new(FILE_VALUE, "Audio file…").selectable(false);
+        let mut entries = vec![MenuEntry::Group(first.item(file))];
+        for category in Category::ALL {
+            let items: Vec<MenuItem> = CATALOG
+                .iter()
+                .filter(|entry| entry.category == category)
+                .map(|entry| {
+                    let value = format!("{LIBRARY_PREFIX}{}", entry.id);
+                    MenuItem::new(value, entry.name).description(described(entry))
+                })
+                .collect();
+            if !items.is_empty() {
+                let group = MenuGroup::new().label(category.name()).items(items);
+                entries.push(MenuEntry::Group(group));
+            }
+        }
+        let selected = match (&state.library, &state.sfz, &state.sample) {
+            (Some(id), ..) => format!("{LIBRARY_PREFIX}{id}"),
+            (None, Some(_), _) => SFZ_VALUE.to_string(),
+            (None, None, Some(_)) => SAMPLE_VALUE.to_string(),
+            (None, None, None) => FILE_VALUE.to_string(),
+        };
+        self.instruments.update(cx, |select, cx| {
+            select.set_entries(entries, cx);
+            select.set_selected(selected, cx);
+        });
+    }
+
+    fn pick_instrument(&mut self, value: &str, cx: &mut Context<Self>) {
+        if value == FILE_VALUE {
+            self.choose_file(cx);
+            return;
+        }
+        let Some(id) = value.strip_prefix(LIBRARY_PREFIX) else {
+            return;
+        };
+        let Ok(id) = LibraryId::try_from(id.to_string()) else {
+            return;
+        };
+        let set = |state: &mut SamplerState, id| {
+            state.library = Some(id);
+            state.sample = None;
+            state.sfz = None;
+        };
+        self.change(INSTRUMENT_LABEL, ValueChange::Set(id), set, cx);
+    }
+
+    /// Follows the download of the library instrument of the record, once per poll of the
+    /// session, and draws again when it moved on.
+    fn follow_download(&mut self, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project();
+        let entry = project
+            .state(&self.sampler)
+            .and_then(|state| state.library.as_ref())
+            .map(LibraryId::entry);
+        let status = entry.map(library::status);
+        if status != self.download {
+            // Done, so the select marks it as downloaded.
+            let done = status == Some(Status::Here);
+            self.download = status;
+            if done {
+                self.show_instruments(cx);
+            }
+            cx.notify();
+        }
+    }
+
+    /// Starts the download of `entry` again, and the Sampler waits for it.
+    fn download_again(&mut self, entry: &'static Entry, cx: &mut Context<Self>) {
+        library::download(entry);
+        let sampler = self.sampler.id().clone();
+        self.session
+            .update(cx, |session, cx| session.rebind(&[sampler], cx));
+        self.follow_download(cx);
     }
 
     /// Shows or hides the hidden knobs, as the expand icon does.
     pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
         cx.notify();
+    }
+
+    /// The Instrument select, for a test that opens it.
+    pub fn instrument_list(&self) -> &Entity<DropdownMenu> {
+        &self.instruments
     }
 
     /// Where the green line is now, in seconds of the file.
@@ -227,6 +382,7 @@ impl SamplerView {
             // Where the old file started and ended means nothing in the new one.
             state.sample = Some(imported.asset.clone());
             state.sfz = None;
+            state.library = None;
             state.start_seconds = 0.0;
             state.end_seconds = None;
             session.edit(cx, |project| {
@@ -403,7 +559,50 @@ impl SamplerView {
         (curve, [attack_handle, corner])
     }
 
+    /// The display of a library instrument: what it is and whose, or how far its download is.
+    fn library_display(&self, entry: &'static Entry, cx: &mut Context<Self>) -> AnyElement {
+        let library = entry.library;
+        let license = match library.attribution {
+            Some(attribution) => format!("{} · {attribution}", library.license),
+            None => library.license.to_string(),
+        };
+        let (says, retry) = match library::status(entry) {
+            Status::Here => (
+                format!("{} · {} · {license}", entry.name, library.name),
+                false,
+            ),
+            Status::Downloading { bytes } => (
+                format!(
+                    "Downloading {} · {} of {}",
+                    entry.name,
+                    size_text(bytes),
+                    size_text(entry.download_bytes)
+                ),
+                false,
+            ),
+            Status::Failed(_) => (format!("The download of {} failed", entry.name), true),
+            Status::Missing | Status::NoLibrary => {
+                (format!("{} is not downloaded", entry.name), false)
+            }
+        };
+        let display = NoFile::new("sampler-display", DISPLAY_WIDTH, says)
+            .drop_file(self.file_drop(DROP_TO_REPLACE, cx));
+        let display = match retry {
+            true => display.button(
+                Button::new("download-again", "Try again")
+                    .variant(ButtonVariant::Subtle)
+                    .size(ButtonSize::Sm)
+                    .on_click(cx.listener(move |view, _, _, cx| view.download_again(entry, cx))),
+            ),
+            false => display,
+        };
+        display.into_any_element()
+    }
+
     fn display(&self, state: &SamplerState, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(id) = &state.library {
+            return self.library_display(id.entry(), cx);
+        }
         if let Some(sfz) = &state.sfz {
             let says = format!("{} · SFZ instrument", sfz_name(sfz));
             return self.no_file(says, true, cx).into_any_element();
@@ -476,18 +675,28 @@ impl Render for SamplerView {
             return div().into_any_element();
         };
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
-        if state.sfz.is_some() {
-            let gain = Column::new().top(knob(GAIN_KNOB, cx));
+        let instrument = Cell::new(self.instruments.clone())
+            .span(2)
+            .label("Instrument");
+        if state.sfz.is_some() || state.library.is_some() {
+            let columns = [
+                Column::new().top(instrument).bottom(knob(GAIN_KNOB, cx)),
+                Column::new(),
+            ];
             let card = self.frame.card().display(self.display(&state, cx));
-            return card.column(gain).into_any_element();
+            let card = columns
+                .into_iter()
+                .fold(card, |card, column| card.column(column));
+            return card.into_any_element();
         }
         let columns = [
+            // A root between two notes is no root.
             Column::new()
-                // A root between two notes is no root.
-                .top(knob(ROOT_KNOB, cx).step(1.))
-                .bottom(knob(RELEASE_KNOB, cx)),
+                .top(instrument)
+                .bottom(knob(ROOT_KNOB, cx).step(1.)),
+            Column::new().bottom(knob(VELOCITY_KNOB, cx)),
             Column::new()
-                .top(knob(VELOCITY_KNOB, cx))
+                .top(knob(RELEASE_KNOB, cx))
                 .bottom(knob(GAIN_KNOB, cx)),
         ];
         // Behind expand: the values the handles of the display move, so the keys reach every
