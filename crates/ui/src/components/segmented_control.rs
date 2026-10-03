@@ -1,7 +1,9 @@
 //! Segmented control: one choice of a few, 24 pt tall, on an `alpha/5` track with 6 pt corners.
 //! The chosen segment is white at 10 %, the others have muted text that lights on hover. It sits
-//! on the knob line of its cell or at the top of a display. Controlled: the caller owns the
-//! selected value and gets an `on_change(value)`.
+//! on the knob line of its cell, at the top of a display, or in the header of a card as its
+//! pages. A marked option has a 4 pt dot after its label, in the grey of its text: a page with
+//! something on it worth a look. Controlled: the caller owns the selected value and gets an
+//! `on_change(value)`.
 //!
 //! Tab reaches the group as one stop, and left and right select the option before or after.
 //! The ring shows only when the focus came from the keyboard. The focus handle is kept in
@@ -33,6 +35,7 @@ pub struct SegmentedControl {
     id: ElementId,
     options: Vec<(SharedString, SharedString)>,
     value: SharedString,
+    marked: Vec<SharedString>,
     disabled: bool,
     on_change: Option<ChangeHandler>,
 }
@@ -44,6 +47,7 @@ impl SegmentedControl {
             id: id.into(),
             options: Vec::new(),
             value: value.into(),
+            marked: Vec::new(),
             disabled: false,
             on_change: None,
         }
@@ -58,6 +62,12 @@ impl SegmentedControl {
             .into_iter()
             .map(|(value, label)| (value.into(), label.into()))
             .collect();
+        self
+    }
+
+    /// The values whose option carries a dot.
+    pub fn marked(mut self, values: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
+        self.marked = values.into_iter().map(Into::into).collect();
         self
     }
 
@@ -138,6 +148,7 @@ impl RenderOnce for SegmentedControl {
             .enumerate()
             .map(|(ix, (val, label))| {
                 let selected = val == value;
+                let marked = self.marked.contains(&val);
                 let on_change = on_change.clone();
                 // For tests, which find an option by its value. Nothing in a normal build.
                 let selector = val.clone();
@@ -162,6 +173,11 @@ impl RenderOnce for SegmentedControl {
                         d.on_click(move |_: &ClickEvent, window, cx| f(val.clone(), window, cx))
                     })
                     .child(label)
+                    .when(marked, |d| {
+                        let dot = if selected { text } else { muted };
+                        d.gap(px(4.))
+                            .child(div().size(px(4.)).rounded_full().bg(dot))
+                    })
             });
 
         self.base

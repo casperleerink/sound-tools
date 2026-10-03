@@ -2,25 +2,24 @@
 //!
 //! - `wavetable.png`: the card: the wavetable of the first oscillator, its position, the
 //!   cutoff and the resonance of the first filter, and the gain.
-//! - `wavetable-oscillators.png`: the card expanded, at the start of the rack: the rest of the
-//!   first oscillator and the second, with its own wavetable.
-//! - `wavetable-filters.png`: the same scrolled on to the sub, the unison and both filters, the
-//!   second a high pass.
-//! - `wavetable-envelopes.png`: the same scrolled on to the envelopes, showing Env 2, and the
-//!   LFOs, showing a synced LFO 1.
-//! - `wavetable-matrix.png`: the same scrolled to the end: the voicing and a matrix of three
-//!   routes.
+//! - `wavetable-oscillators.png`: the card expanded on its Osc page: the rest of the first
+//!   oscillator and the second, with its own wavetable. Dots mark every page but Voice.
+//! - `wavetable-voice.png`: the Voice page: the sub, the unison and the voicing.
+//! - `wavetable-filters.png`: the Filter page: both filters, the second a high pass.
+//! - `wavetable-envelopes.png`: the Env page, showing Env 2.
+//! - `wavetable-lfos.png`: the LFO page, showing a synced LFO 1.
+//! - `wavetable-matrix.png`: the Matrix page, with three routes.
 
 use anyhow::{Context as _, Result};
 use arrangement::{Colour, TrackState};
-use gpui::{Entity, HeadlessAppContext, PlatformInput, ScrollDelta, ScrollWheelEvent, point, px};
+use gpui::{Entity, HeadlessAppContext};
 use sound_core::{Changes, FilterType, Instance, LfoShape, Project, Ticks};
 use sound_notes::{Division, Feel};
 use wavetable::state::{Effect, Oscillator};
-use wavetable::view::{EnvelopeShown, WavetableView};
+use wavetable::view::{EnvelopeShown, Page, WavetableView};
 use wavetable::{Destination, Route, Source, Table, WavetableState};
 
-use super::{BAR, HEADER_WIDTH, Opened, WINDOW_HEIGHT, clip, note, piece};
+use super::{BAR, Opened, clip, note, piece};
 
 /// A slow pad: vowels that an LFO morphs, a folded second oscillator an octave up, a filter
 /// the second envelope opens, and three routes.
@@ -129,17 +128,6 @@ fn open_panel(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<Entity<Wav
     })
 }
 
-/// Two fingers sideways over the rack, by `by` points: a positive `by` moves it on.
-fn scroll_rack(opened: &Opened, by: f32, cx: &mut HeadlessAppContext) -> Result<()> {
-    let wheel = PlatformInput::ScrollWheel(ScrollWheelEvent {
-        position: point(px(HEADER_WIDTH + 300.), px(WINDOW_HEIGHT - 40.)),
-        delta: ScrollDelta::Pixels(point(px(-by), px(0.))),
-        ..Default::default()
-    });
-    opened.mouse(wheel, cx)?;
-    Ok(())
-}
-
 pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &Opened, &str) -> Result<()>,
@@ -158,13 +146,17 @@ pub(crate) fn snapshots(
             card.show_envelope(EnvelopeShown::Env2, cx);
         })
     });
-    cx.run_until_parked();
-    save(cx, &opened, "wavetable-oscillators")?;
-    scroll_rack(&opened, 1_100., cx)?;
-    save(cx, &opened, "wavetable-filters")?;
-    scroll_rack(&opened, 635., cx)?;
-    save(cx, &opened, "wavetable-envelopes")?;
-    scroll_rack(&opened, 10_000., cx)?;
-    save(cx, &opened, "wavetable-matrix")?;
+    for (page, name) in [
+        (Page::Osc, "wavetable-oscillators"),
+        (Page::Voice, "wavetable-voice"),
+        (Page::Filter, "wavetable-filters"),
+        (Page::Env, "wavetable-envelopes"),
+        (Page::Lfo, "wavetable-lfos"),
+        (Page::Matrix, "wavetable-matrix"),
+    ] {
+        cx.update(|cx| card.update(cx, |card, cx| card.show_page(page, cx)));
+        cx.run_until_parked();
+        save(cx, &opened, name)?;
+    }
     Ok(())
 }

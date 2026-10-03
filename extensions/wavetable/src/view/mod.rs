@@ -1,18 +1,20 @@
 //! The card of the Wavetable in a rack. Collapsed it is the wavetable of the first oscillator,
 //! whose position a drag on it moves, with the position, the cutoff and the resonance of the
-//! first filter, and the gain. Behind expand, in sections to the right, each after a hairline:
-//! the rest of the first oscillator, the second oscillator with its own wavetable, the sub and
-//! the unison, both filters on one display, the envelopes and the LFOs, each on a display with
-//! a switch, the voicing, and the matrix. Every value has one control: the ones the collapsed
-//! card shows are not shown again.
+//! first filter, and the gain. Behind expand, one page at a time, as the tabs in the header
+//! pick, in sections to the right, each after a hairline: Osc, the rest of the first oscillator
+//! and the second with its own wavetable; Voice, the sub, the unison and the voicing; Filter,
+//! both filters on one display; Env and LFO, each on a display with a switch; and Matrix. A dot
+//! on a tab says its page differs from the default patch, so nothing that shapes the sound
+//! hides behind a tab. Every value has one control: the ones the collapsed card shows are not
+//! shown again, and do not mark a page.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob, a slider or on a display is
 //! one gesture and one undo step, a key step, a reset, a pick or a click is one commit. The
 //! ranges, the defaults and the travel of each knob come from the
 //! [`Parameter`](sound_core::Parameter)s of the crate. What is only about the interface is
-//! here: labels, units, the names of the undo steps, whether the card is expanded and which
-//! envelope and LFO it shows. A number that an automation lane of the track moves shows the
+//! here: labels, units, the names of the undo steps, whether the card is expanded, its page and
+//! which envelope and LFO it shows. A number that an automation lane of the track moves shows the
 //! value that plays, on its knob and on the display, and does not drag ([`Lanes`]).
 
 mod choices;
@@ -39,7 +41,7 @@ use sound_ui::components::toggle::Toggle;
 use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
 
 use choices::Choice;
-pub use choices::{EnvelopeShown, LfoShown};
+pub use choices::{EnvelopeShown, LfoShown, Page};
 use drawing::POSITION_TRAVEL;
 
 use crate::state::{
@@ -347,9 +349,10 @@ pub struct WavetableView {
     /// The gesture of a drag of a knob, a slider or on a display.
     edit: ControlEdit,
     lanes: Entity<Lanes<WavetableState>>,
-    /// Interface state, not saved: whether the card shows its sections, and which envelope and
-    /// which LFO they show.
+    /// Interface state, not saved: whether the card shows its sections, which page of them,
+    /// and which envelope and which LFO they show.
     expanded: bool,
+    page: Page,
     envelope: EnvelopeShown,
     lfo: LfoShown,
     /// The remove buttons of the routes and the add button, which the keys reach.
@@ -410,6 +413,7 @@ impl WavetableView {
             edit: ControlEdit::default(),
             lanes,
             expanded: false,
+            page: Page::default(),
             envelope: EnvelopeShown::default(),
             lfo: LfoShown::default(),
             remove_focus,
@@ -427,6 +431,12 @@ impl WavetableView {
     /// Shows or hides the sections, as the expand icon does.
     pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
+        cx.notify();
+    }
+
+    /// Which page the expanded card shows, as its tabs pick.
+    pub fn show_page(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.page = page;
         cx.notify();
     }
 
@@ -983,15 +993,64 @@ impl Render for WavetableView {
         if !self.expanded {
             return card.into_any_element();
         }
-        card.section(self.oscillator_1(&state, cx))
-            .section(self.oscillator_2(&state, cx))
-            .section(self.sub_and_unison(&state, cx))
-            .section(self.filters(&state, cx))
-            .section(self.envelopes(&state, cx))
-            .section(self.lfos(&state, cx))
-            .section(self.voicing(&state, cx))
-            .section(self.matrix(&state, cx))
-            .into_any_element()
+        let default = WavetableState::default();
+        let changed = Page::ALL
+            .iter()
+            .filter(|page| differs(**page, &state, &default))
+            .map(|page| page.key());
+        let tabs = Self::segments("page", self.page, cx, Self::show_page).marked(changed);
+        let card = card.tabs(tabs);
+        match self.page {
+            Page::Osc => card
+                .section(self.oscillator_1(&state, cx))
+                .section(self.oscillator_2(&state, cx)),
+            Page::Voice => card
+                .section(self.sub_and_unison(&state, cx))
+                .section(self.voicing(&state, cx)),
+            Page::Filter => card.section(self.filters(&state, cx)),
+            Page::Env => card.section(self.envelopes(&state, cx)),
+            Page::Lfo => card.section(self.lfos(&state, cx)),
+            Page::Matrix => card.section(self.matrix(&state, cx)),
+        }
+        .into_any_element()
+    }
+}
+
+/// Whether a value `page` shows differs from `default`. The values the collapsed card shows,
+/// the table and position of the first oscillator and the cutoff and resonance of the first
+/// filter, are on no page, so they count as default.
+fn differs(page: Page, state: &WavetableState, default: &WavetableState) -> bool {
+    match page {
+        Page::Osc => {
+            let osc_1 = Oscillator {
+                table: default.osc_1.table,
+                position: default.osc_1.position,
+                ..state.osc_1
+            };
+            osc_1 != default.osc_1 || state.osc_2 != default.osc_2
+        }
+        Page::Voice => {
+            state.sub != default.sub
+                || state.unison != default.unison
+                || state.voicing != default.voicing
+        }
+        Page::Filter => {
+            let filter_1 = Filter {
+                cutoff_hz: default.filter_1.cutoff_hz,
+                resonance: default.filter_1.resonance,
+                ..state.filter_1
+            };
+            filter_1 != default.filter_1
+                || state.filter_2 != default.filter_2
+                || state.routing != default.routing
+        }
+        Page::Env => {
+            state.amp_env != default.amp_env
+                || state.env_2 != default.env_2
+                || state.env_3 != default.env_3
+        }
+        Page::Lfo => state.lfo_1 != default.lfo_1 || state.lfo_2 != default.lfo_2,
+        Page::Matrix => state.matrix != default.matrix,
     }
 }
 
@@ -1089,5 +1148,26 @@ mod tests {
         assert_eq!(OUTPUT.undo("Change", "gain"), "Change gain");
         assert_eq!(OSC_2.id("position"), "osc-2-position");
         assert_eq!(OUTPUT.id("gain"), "gain");
+    }
+
+    #[test]
+    fn a_page_is_marked_by_what_it_shows_and_not_by_the_collapsed_card() {
+        let default = WavetableState::default();
+        let marked = |state: &WavetableState| {
+            let pages = Page::ALL.iter().copied();
+            pages
+                .filter(|page| differs(*page, state, &default))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(marked(&default), []);
+        let mut state = default.clone();
+        state.osc_1.position = 0.9;
+        state.filter_1.cutoff_hz = 300.;
+        state.gain = 0.5;
+        assert_eq!(marked(&state), []);
+        state.osc_1.detune_cents = 5.;
+        state.filter_2.on = true;
+        state.matrix.clear();
+        assert_eq!(marked(&state), [Page::Osc, Page::Filter, Page::Matrix]);
     }
 }
