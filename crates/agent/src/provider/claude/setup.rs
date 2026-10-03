@@ -69,11 +69,11 @@ pub(crate) fn download() -> Option<Download> {
     let platform = build.platform;
     Some(Download {
         name: "claude",
-        version: VERSION,
+        version: VERSION.to_string(),
         url: format!(
             "https://downloads.claude.ai/claude-code-releases/{VERSION}/{platform}/claude"
         ),
-        sha256: build.sha256,
+        sha256: build.sha256.to_string(),
         size: build.size,
     })
 }

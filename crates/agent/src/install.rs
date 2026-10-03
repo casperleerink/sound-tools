@@ -1,4 +1,5 @@
-//! The download of a provider's pinned program into the machine's support folder.
+//! The download of a provider's pinned program into the machine's support folder. The app's
+//! own updates come the same way.
 //!
 //! `/usr/bin/curl` fetches it unmodified, so the app needs no HTTP or TLS code of its own, and
 //! the file is checked against the pinned sha256 before it is used. It is written under a
@@ -18,7 +19,7 @@ use smol::future;
 use smol::io::AsyncReadExt;
 
 /// On macOS and on every Linux desktop. Its TLS is the system's.
-const CURL: &str = "/usr/bin/curl";
+pub const CURL: &str = "/usr/bin/curl";
 
 /// How often the progress looks at the bytes on disk.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
@@ -45,10 +46,10 @@ const MESSAGE_LENGTH: usize = 300;
 pub struct Download {
     /// The program's file name, and the folder its versions are kept in, such as `claude`.
     pub name: &'static str,
-    pub version: &'static str,
+    pub version: String,
     pub url: String,
     /// Lowercase hex.
-    pub sha256: &'static str,
+    pub sha256: String,
     /// In bytes.
     pub size: u64,
 }
@@ -60,7 +61,7 @@ impl Download {
     }
 
     fn folder(&self, agents: &Path) -> PathBuf {
-        agents.join(self.name).join(self.version)
+        agents.join(self.name).join(&self.version)
     }
 
     /// Where the bytes go until they check out.
@@ -292,7 +293,7 @@ fn sha256(path: &Path) -> io::Result<String> {
 fn remove_other_versions(download: &Download, agents: &Path) -> io::Result<()> {
     for entry in fs::read_dir(agents.join(download.name))? {
         let entry = entry?;
-        if entry.file_name() == download.version {
+        if entry.file_name() == download.version.as_str() {
             continue;
         }
         if entry.file_type()?.is_dir() {

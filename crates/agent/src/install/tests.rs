@@ -17,19 +17,18 @@ fn content() -> Vec<u8> {
     (0..300_000u32).map(|index| (index % 251) as u8).collect()
 }
 
-fn sha256_hex(bytes: &[u8]) -> &'static str {
-    let digest: String = Sha256::digest(bytes)
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect();
-    digest.leak()
+        .collect()
 }
 
 /// The download of `content`, served from `source` as a `file://` URL.
 fn download(source: &Path, content: &[u8]) -> Download {
     Download {
         name: "tool",
-        version: "2.0.0",
+        version: "2.0.0".to_string(),
         url: format!("file://{}", source.display()),
         sha256: sha256_hex(content),
         size: content.len() as u64,

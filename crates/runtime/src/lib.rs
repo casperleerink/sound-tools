@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod recorder;
+pub mod update;
 pub mod window;
 
 use std::path::{Path, PathBuf};

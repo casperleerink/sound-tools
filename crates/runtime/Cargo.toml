@@ -28,6 +28,8 @@ plugin-host.workspace = true
 reverb.workspace = true
 sampler.workspace = true
 saturator.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 smol.workspace = true
 sound-agent.workspace = true
 sound-core.workspace = true
@@ -42,7 +44,7 @@ wavetable.workspace = true
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support"] }
-serde_json.workspace = true
+sha2.workspace = true
 tempfile.workspace = true
 test-clap-plugin.workspace = true
 test-plugin-support.workspace = true

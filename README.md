@@ -61,7 +61,9 @@ The app and `cargo run -p runtime` are the same program. Opening a folder on the
 Each [release](https://github.com/casperleerink/sound-tools/releases) has the app for macOS (Apple silicon) and Linux (x86_64 and aarch64). The page of a release says how to install it:
 
 - macOS: unzip and drag `Sound Tools.app` to Applications. It is not signed by a known developer, so macOS blocks the first open. Run `xattr -dr com.apple.quarantine "/Applications/Sound Tools.app"` once, or click **Open Anyway** in System Settings, Privacy & Security.
-- Linux: extract the tarball and run `./install.sh`. Run it again to update.
+- Linux: extract the tarball and run `./install.sh`.
+
+After that the app updates itself: once a day it looks for a new release, downloads it in the background and shows **Restart** in the corner. Restart installs it and opens the same project again; a quit installs it at the next launch. On macOS the app must be in a folder it can write, such as Applications, or the notice offers **Download** instead. Every release has a `SHA256SUMS` file the app checks the download against. `cargo run` and the command line forms never update.
 
 To make a release, run `/release` in Claude Code, with `patch` (the default), `minor`, `major` or a version. It bumps the version, merges that through a pull request, tags main with `v<version>` and watches `.github/workflows/release.yml` build the files and make the release. The version is `version` in `[workspace.package]` of `Cargo.toml`, the only place it is written. `gh workflow run release.yml --ref <branch>` is a dry run: it builds the files and makes no release. The steps are in `.agents/skills/release/SKILL.md`.
 

@@ -445,8 +445,9 @@ fn open_another_project(cx: &mut Context<Session>) {
 }
 
 /// Quits, and starts this program again once the project is closed. The project goes with the
-/// window, before the last step of a quit, which is where the new process starts.
-fn start_again(cx: &mut App) {
+/// window, before the last step of a quit, which is where the new process starts. It installs
+/// an update that is ready before it opens the project.
+pub(super) fn start_again(cx: &mut App) {
     cx.on_app_quit(|_| async {
         if let Err(error) = app::start_again() {
             eprintln!("error: {error:#}");
