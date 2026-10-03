@@ -310,17 +310,17 @@ fn from_library(
         library::wait_for(entry, context.assets(), context.id());
     }
     let name = entry.name;
-    let size = library::size_text(entry.download_bytes);
+    let size = library::size_text(entry.disk_bytes);
     match library::status(entry) {
         Status::Here => instrument::load_library(entry, context.assets(), context.id()),
         Status::Downloading { .. } => Err(format!(
-            "the Sampler is silent while {name} ({size}) downloads into the library of this machine; it plays when it is done"
+            "the Sampler is silent while {name} downloads into the library of this machine; it plays when it is done"
         )),
         Status::Failed(error) => Err(format!(
             "the download of {name} failed, so the Sampler is silent: {error}. Download on the Sampler card tries again"
         )),
         Status::Missing => Err(format!(
-            "{name} is not downloaded on this machine, so the Sampler is silent. Ask the composer to click Download on the Sampler card ({size})"
+            "{name} is not downloaded on this machine, so the Sampler is silent. Ask the composer to click Download on the Sampler card ({size} on disk)"
         )),
         Status::NoLibrary => Err(format!(
             "{name} cannot play: this machine has no library folder"
@@ -397,7 +397,7 @@ mod tests {
         }
     }
 
-    /// The library doc lists every instrument of the catalog with the size of its download,
+    /// The library doc lists every instrument of the catalog with the disk it takes,
     /// so it cannot drift from the catalog.
     #[test]
     fn the_library_doc_lists_every_instrument() {
@@ -406,7 +406,7 @@ mod tests {
             let row = format!("| `{}` | {} |", entry.id, entry.name);
             let row = doc.lines().find(|line| line.starts_with(&row));
             let row = row.unwrap_or_else(|| panic!("no row for {}", entry.id));
-            let size = library::size_text(entry.download_bytes);
+            let size = library::size_text(entry.disk_bytes);
             assert!(row.ends_with(&format!("| {size} |")), "{row}");
         }
         let rows = doc.lines().filter(|line| line.starts_with("| `")).count();

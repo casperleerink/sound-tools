@@ -25,8 +25,9 @@ use std::time::Duration;
 use crate::file::{Audio, Encoding, FormatError, is_flac};
 
 /// How much of a streamed file is held in memory. Far longer than the thread that reads ahead
-/// takes to have the next part read, a few milliseconds from an SSD.
-pub const HEAD_SECONDS: f64 = 0.25;
+/// takes to have the next part read, a few milliseconds from an SSD, and short, because a drum
+/// kit has thousands of samples: at a quarter second its starts took 200 MB.
+pub const HEAD_SECONDS: f64 = 0.1;
 
 /// What went wrong opening a file to stream it.
 pub(crate) enum StreamError {

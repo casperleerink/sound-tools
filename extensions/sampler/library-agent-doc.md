@@ -30,16 +30,17 @@ Free sampled instruments for the Sampler: piano, keys, strings, brass, woodwinds
 
 An instrument plays once it is downloaded on this machine, once for every project. Nothing downloads by itself: until the composer clicks **Download** on the Sampler card, or picks the instrument there, `problems.txt` says it is not downloaded. Tell the composer which instruments to download and how big they are. A failed download is listed in `problems.txt` too, and **Try again** on the card retries it.
 
-Range is where the instrument has samples. Write the parts in the range of the real instrument, which is often narrower.
+Range is where the instrument has samples. Write the parts in the range of the real instrument, which is often narrower. Disk is what the instrument takes on this machine once it is downloaded: tell the composer when you propose one.
 
-| Id | Instrument | Range | Download |
+| Id | Instrument | Range | Disk |
 | --- | --- | --- | --- |
-| `piano/grand` | Grand piano (Headroom) | A0 to C8 | 157 MB |
-| `piano/kawai-upright` | Upright piano (Kawai) | A0 to C8 | 33 MB |
-| `piano/old-upright` | Old upright piano | G0 to C8 | 34 MB |
-| `keys/wurlitzer` | Wurlitzer electric piano | A1 to C7 | 2 MB |
-| `keys/cp80` | Yamaha CP80 electric grand | A0 to C8 | 11 MB |
-| `keys/fm-piano` | FM electric piano | D#1 to D7 | 25 MB |
+| `piano/grand` | Grand piano (Headroom) | A0 to C8 | 1.0 GB |
+| `piano/salamander` | Grand piano (Salamander) | A0 to C8 | 2.7 GB |
+| `piano/kawai-upright` | Upright piano (Kawai) | A0 to C8 | 119 MB |
+| `piano/old-upright` | Old upright piano | G0 to C8 | 141 MB |
+| `keys/wurlitzer` | Wurlitzer electric piano | A1 to C7 | 11 MB |
+| `keys/cp80` | Yamaha CP80 electric grand | A0 to C8 | 56 MB |
+| `keys/fm-piano` | FM electric piano | D#1 to D7 | 91 MB |
 | `keys/pipe-organ` | Pipe organ | C2 to C7 | 46 MB |
 | `strings/violin-section` | Violin section, sustain | G3 to D6 | 46 MB |
 | `strings/viola-section` | Viola section, sustain | C3 to D6 | 72 MB |
@@ -56,27 +57,33 @@ Range is where the instrument has samples. Write the parts in the range of the r
 | `woodwinds/oboe` | Oboe, sustain | A#3 to F6 | 24 MB |
 | `woodwinds/clarinet` | Clarinet, sustain | D3 to F#6 | 59 MB |
 | `woodwinds/bassoon` | Bassoon, sustain | A#1 to D#5 | 35 MB |
-| `woodwinds/alto-sax` | Alto sax | G#2 to A5 | 29 MB |
-| `woodwinds/tenor-sax` | Tenor sax | D#2 to E5 | 28 MB |
-| `guitar/classical` | Classical guitar (nylon) | F1 to E6 | 5 MB |
+| `woodwinds/alto-sax` | Alto sax | G#2 to A5 | 79 MB |
+| `woodwinds/tenor-sax` | Tenor sax | D#2 to E5 | 79 MB |
+| `guitar/classical` | Classical guitar (nylon) | F1 to E6 | 25 MB |
 | `guitar/electric` | Electric guitar, clean | A1 to C7 | 123 MB |
-| `guitar/electric-light` | Electric guitar, clean (light) | B1 to D6 | 3 MB |
-| `bass/electric-finger` | Electric bass, finger | D1 to A2 | 3 MB |
+| `guitar/electric-light` | Electric guitar, clean (light) | B1 to D6 | 14 MB |
+| `bass/electric-finger` | Electric bass, finger | D1 to A2 | 10 MB |
 | `bass/electric` | Electric bass | A-1 to C6 | 110 MB |
 | `bass/double-bass-pizzicato` | Double bass, pizzicato | C0 to C9 | 137 MB |
-| `drums/acoustic-kit` | Acoustic drum kit | drum map below | 139 MB |
+| `drums/acoustic-kit` | Acoustic drum kit | drum map below | 468 MB |
+| `drums/studio-kit` | Studio drum kit (Virtuosity) | drum map below | 934 MB |
+| `drums/rock-kit` | Rock drum kit (Big Rusty) | drum map below | 990 MB |
 | `drums/orchestral-percussion` | Orchestral percussion kit (GM layout) | drum map below | 155 MB |
-| `drums/synth-kit` | Vintage synth drum kit | drum map below | 2 MB |
+| `drums/synth-kit` | Vintage synth drum kit | drum map below | 4 MB |
 | `percussion/timpani` | Timpani | C2 to C4 | 36 MB |
 | `percussion/glockenspiel` | Glockenspiel | G4 to C7 | 6 MB |
 | `percussion/marimba` | Marimba | F2 to C7 | 12 MB |
-| `percussion/world` | World percussion | C3 to B4 | 8 MB |
-| `synth/bass` | Synth bass | C1 to E6 | 1 MB |
-| `synth/sweep-pad` | Sweep pad | A1 to C7 | 3 MB |
+| `percussion/world` | World percussion | C3 to B4 | 18 MB |
+| `synth/bass` | Synth bass | C1 to E6 | 5 MB |
+| `synth/sweep-pad` | Sweep pad | A1 to C7 | 12 MB |
 
 ## Drum maps
 
-The kits play one sound per key.
+The kits play one sound per key. The studio and rock kits follow the General MIDI drum map, as most drum parts do.
+
+`drums/studio-kit`: 35 kick with the snares off, 36 kick, 37 cross-stick, 38 snare, 39 snare off center, 40 rimshot, 41 low tom, 42 closed hi-hat, 43 low tom off center, 44 pedal hi-hat, 45 low tom rimshot, 46 open hi-hat, 47 low tom cross-stick, 48 high tom, 49 crash, 50 high tom off center, 51 ride, 53 ride bell, 54 tambourine, 55 flat ride crashed, 56 cowbell, 57 sizzle crash, 58 vibraslap, 59 flat ride, 60 and 61 bongos, 62 and 63 congas, 64 tumba, 65 and 66 timbales, 67 and 68 agogo, 69 cabasa, 70 and 82 shaker, 71 and 72 whistle, 73 and 74 guiro, 75 claves, 76 and 77 wood blocks, 80 muted triangle, 81 triangle, 83 sleigh bells, 84 bell tree. Every hit plays its close, snare and overhead microphones together.
+
+`drums/rock-kit`: 36 kick, 37 side stick, 38 snare, 39 snare edge, 40 rimshot, 42 closed hi-hat, 43 floor tom, 44 pedal hi-hat, 45 low tom, 46 and 58 open hi-hat, 47 high tom, 49 crash, 50 crash choked, 51 ride, 52 ride edge, 53 ride bell, 54 closed hi-hat tip, 55 ride edge choked, 56 hi-hat foot splash.
 
 `drums/acoustic-kit`: 48 kick, 49 kick (other beater), 50 snare, 51 snare (second), 52 closed hi-hat, 53 open hi-hat, 54 ride, 55 ride bell, 56 ride (second), 57 ride bell (second), 58 crash, 59 crash (second), 60 china, 61 to 64 toms from high to low, 65 and 66 snare with the snares off.
 

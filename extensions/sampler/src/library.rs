@@ -104,8 +104,11 @@ pub struct Entry {
     pub library: &'static Library,
     /// Its SFZ file in the repository.
     pub sfz: &'static str,
-    /// How big its download is, in bytes.
+    /// How big its download is, in bytes, and what it takes on disk once it is here: the
+    /// download and the WAV files decoded from its FLAC files. The disk is what the composer is
+    /// told; the download is how far one is.
     pub download_bytes: u64,
+    pub disk_bytes: u64,
 }
 
 impl Entry {

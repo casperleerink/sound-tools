@@ -101,13 +101,13 @@ fn note_readout(note: f32) -> String {
     sound_notes::Pitch::nearest(note.round() as i64).name()
 }
 
-/// The second line of a library instrument in the select: its library and size, and whether
-/// it is downloaded.
+/// The second line of a library instrument in the select: its library, the disk it takes,
+/// and whether it is downloaded.
 fn described(entry: &'static Entry) -> String {
-    let size = size_text(entry.download_bytes);
+    let size = size_text(entry.disk_bytes);
     match library::status(entry) {
         Status::Here => format!("{} · {size} · downloaded", entry.library.name),
-        _ => format!("{} · {size}", entry.library.name),
+        _ => format!("{} · {size} on disk", entry.library.name),
     }
 }
 
@@ -583,7 +583,7 @@ impl SamplerView {
             Some(attribution) => format!("{} · {attribution}", library.license),
             None => library.license.to_string(),
         };
-        let size = size_text(entry.download_bytes);
+        let download = size_text(entry.download_bytes);
         let (says, button) = match library::status(entry) {
             Status::Here if self.loading => (format!("Loading {}…", entry.name), None),
             Status::Here => (
@@ -592,7 +592,7 @@ impl SamplerView {
             ),
             Status::Downloading { bytes } => (
                 format!(
-                    "Downloading {} · {} of {size}",
+                    "Downloading {} · {} of {download}",
                     entry.name,
                     size_text(bytes)
                 ),
@@ -612,11 +612,14 @@ impl SamplerView {
             .drop_file(self.file_drop(DROP_TO_REPLACE, cx));
         let display = match button {
             Some(label) => display.button(
-                Button::new("download", format!("{label} · {size}"))
-                    .debug_selector(|| "download".to_string())
-                    .variant(ButtonVariant::Subtle)
-                    .size(ButtonSize::Sm)
-                    .on_click(cx.listener(move |view, _, _, cx| view.download(entry, cx))),
+                Button::new(
+                    "download",
+                    format!("{label} · {} on disk", size_text(entry.disk_bytes)),
+                )
+                .debug_selector(|| "download".to_string())
+                .variant(ButtonVariant::Subtle)
+                .size(ButtonSize::Sm)
+                .on_click(cx.listener(move |view, _, _, cx| view.download(entry, cx))),
             ),
             None => display,
         };

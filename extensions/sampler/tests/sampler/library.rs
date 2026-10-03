@@ -12,7 +12,7 @@ use crate::support::{Harness, SAMPLE_RATE, id, note, write_wav};
 const CELLO: &str = "strings/cello-section";
 
 #[test]
-fn a_library_instrument_downloads_where_allowed_and_then_plays() {
+fn a_library_instrument_downloads_when_asked_and_then_plays() {
     let entry = library::entry(CELLO).unwrap();
     let machine = tempfile::tempdir().unwrap();
     // The repository at its commit, with the instrument's SFZ file and one sample in a folder
@@ -45,7 +45,7 @@ fn a_library_instrument_downloads_where_allowed_and_then_plays() {
     let problems = harness.project.problems();
     assert_eq!(
         problems[0].message,
-        "Cello section, sustain is not downloaded on this machine, so the Sampler is silent. Ask the composer to click Download on the Sampler card (73 MB)"
+        "Cello section, sustain is not downloaded on this machine, so the Sampler is silent. Ask the composer to click Download on the Sampler card (73 MB on disk)"
     );
     assert_eq!(library::status(entry), Status::Missing);
 
@@ -85,7 +85,7 @@ fn a_library_instrument_downloads_where_allowed_and_then_plays() {
     );
     harness.project.rebind(&instrument).unwrap();
     assert_eq!(harness.project.problems(), []);
-    // A library sample streams: its start from memory, and past a quarter second the rest
+    // A library sample streams: its start from memory, and past a tenth of a second the rest
     // from the file.
     let left = harness.play(36_000);
     assert_eq!([left[2_400], left[30_000]], [0.25, 0.25]);

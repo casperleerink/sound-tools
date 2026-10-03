@@ -967,7 +967,7 @@ fn a_streamed_file_holds_its_start_and_reads_the_same_frames_as_a_whole_one() {
     assert!(streamed.is_streamed());
     assert!(!whole.is_streamed());
     assert_eq!(streamed.info(), whole.info());
-    // A quarter of a second of 24-bit stereo, and the header before it.
+    // The start of 24-bit stereo, and the header before it.
     let head = (sound_media::HEAD_SECONDS * 48_000.0) as usize * 6;
     assert!(streamed.memory() > head && streamed.memory() < head + 100);
     assert_eq!(read_in_blocks(&streamed), read_in_blocks(&whole));
