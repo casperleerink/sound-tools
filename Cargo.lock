@@ -6068,6 +6068,8 @@ version = "0.1.2"
 dependencies = [
  "claxon",
  "hound",
+ "memmap2",
+ "rtrb",
  "serde",
  "serde_json",
  "sound-core",

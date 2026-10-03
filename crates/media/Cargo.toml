@@ -10,6 +10,8 @@ workspace = true
 [dependencies]
 claxon.workspace = true
 hound.workspace = true
+memmap2.workspace = true
+rtrb.workspace = true
 serde.workspace = true
 sound-core.workspace = true
 thiserror.workspace = true

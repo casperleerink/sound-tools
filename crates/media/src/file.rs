@@ -141,10 +141,17 @@ pub struct SampleLoop {
 /// One audio file in memory: its bytes as they are on disk, and where its samples are. For a
 /// FLAC file, its decoded samples.
 ///
+/// A streamed file ([`crate::load_streamed`]) holds only its start in `bytes`, and maps the
+/// whole file for the rest, which the system reads from disk as it plays.
+///
 /// Immutable. The control side shares it with the audio thread through an `Arc`, inside a
 /// snapshot, so it is never dropped there.
 pub struct Audio {
     bytes: Vec<u8>,
+    /// The whole file, mapped, when `bytes` holds only its start, and the number the thread
+    /// that reads ahead knows it by.
+    mapped: Option<memmap2::Mmap>,
+    stream_number: Option<u64>,
     /// Where the first sample starts in `bytes`.
     data: usize,
     frames: u64,
@@ -184,6 +191,8 @@ impl Audio {
         };
         Ok(Self {
             bytes,
+            mapped: None,
+            stream_number: None,
             data: layout.data,
             frames,
             channels: layout.channels,
@@ -230,6 +239,8 @@ impl Audio {
         Ok(Self {
             frames: (samples.len() / frame_size) as u64,
             bytes: samples,
+            mapped: None,
+            stream_number: None,
             data: 0,
             channels,
             sample_rate: stream.sample_rate,
@@ -279,10 +290,81 @@ impl Audio {
         self.sample_loop
     }
 
-    /// The bytes this file takes in memory: its size on disk, or for a FLAC file the size of
-    /// its decoded samples.
+    /// The bytes this file holds in memory: its size on disk, or for a FLAC file the size of
+    /// its decoded samples, or for a streamed one the size of its start.
     pub fn memory(&self) -> usize {
         self.bytes.len()
+    }
+
+    /// The start of a mapped WAV or AIFF file in memory, `head_seconds` of it, and the rest
+    /// read from the map as it plays. A file no longer than that is read whole.
+    ///
+    /// The map must be of a file nothing writes over in place while it is mapped: a file cut
+    /// short under a map ends the process when it is read.
+    pub(crate) fn mapped(map: memmap2::Mmap, head_seconds: f64) -> Result<Self, FormatError> {
+        let layout = checked_layout(&map, map.len())?;
+        let frames = frames_of(&layout, map.len());
+        let frame_size = layout.encoding.size() * usize::from(layout.channels);
+        let head_frames = (head_seconds * f64::from(layout.sample_rate)).ceil() as u64;
+        if frames <= head_frames {
+            return Self::parse(map.to_vec());
+        }
+        let head = layout.data + head_frames as usize * frame_size;
+        let sample_loop = match (layout.container, layout.length) {
+            (Container::Wav, Some(_)) => wav_loop(&map, frames),
+            _ => None,
+        };
+        Ok(Self {
+            bytes: map.get(..head).unwrap_or_default().to_vec(),
+            mapped: Some(map),
+            stream_number: None,
+            data: layout.data,
+            frames,
+            channels: layout.channels,
+            sample_rate: layout.sample_rate,
+            encoding: layout.encoding,
+            container: layout.container,
+            sample_loop,
+        })
+    }
+
+    /// Whether it reads past its start from a map.
+    pub fn is_streamed(&self) -> bool {
+        self.mapped.is_some()
+    }
+
+    pub(crate) fn stream_number(&self) -> Option<u64> {
+        self.stream_number
+    }
+
+    pub(crate) fn with_stream_number(self, number: u64) -> Self {
+        Self {
+            stream_number: Some(number),
+            ..self
+        }
+    }
+
+    /// Has the system read the mapped bytes from frame `from` to the end, so a note that plays
+    /// them finds them in memory. For the thread that reads ahead, never the audio thread.
+    pub(crate) fn read_ahead(&self, from: u64) {
+        let Some(map) = &self.mapped else {
+            return;
+        };
+        let frame_size = (self.encoding.size() * usize::from(self.channels)) as u64;
+        let start = (self.data as u64).saturating_add(from.saturating_mul(frame_size));
+        let start = usize::try_from(start).unwrap_or(usize::MAX).min(map.len());
+        match map.advise_range(memmap2::Advice::WillNeed, start, map.len() - start) {
+            Ok(()) => {}
+            // Only a hint: the reads below are what brings the pages in.
+            Err(_) => {}
+        }
+        // One byte per page brings the page in.
+        const PAGE: usize = 4096;
+        let mut at = start;
+        while let Some(byte) = map.get(at) {
+            std::hint::black_box(*byte);
+            at += PAGE;
+        }
     }
 
     /// The whole file as it is on disk, for a WAV or AIFF file. A FLAC file holds its decoded
@@ -311,7 +393,22 @@ impl Audio {
         }
         let frame_size = self.encoding.size() * usize::from(self.channels);
         let from = self.data + (start + first) as usize * frame_size;
-        let Some(bytes) = self.bytes.get(from..from + inside.len() * frame_size) else {
+        // A streamed file: what lies in its start from memory, the rest from the map.
+        let held = self.bytes.len().saturating_sub(from) / frame_size;
+        let (in_memory, in_map) = inside.split_at_mut(held.min(inside.len()));
+        let to = from + in_memory.len() * frame_size;
+        self.decode_at(self.bytes.get(from..to), in_memory);
+        if !in_map.is_empty() {
+            let map = self.mapped.as_deref().unwrap_or_default();
+            self.decode_at(map.get(to..to + in_map.len() * frame_size), in_map);
+        }
+    }
+
+    /// Decodes whole frames of `bytes` into `out`, or silence when there are none.
+    fn decode_at(&self, bytes: Option<&[u8]>, out: &mut [[f32; 2]]) {
+        let inside = out;
+        let frame_size = self.encoding.size() * usize::from(self.channels);
+        let Some(bytes) = bytes else {
             inside.fill([0.0; 2]);
             return;
         };
