@@ -389,7 +389,9 @@ fn main() -> Result<()> {
     match arguments {
         // What a double click in the Finder starts.
         [] => {
-            runtime::window::run_app();
+            if !runtime::update::start_pending_update() {
+                runtime::window::run_app();
+            }
             Ok(())
         }
         ["--plugins"] => list_plugins(),
@@ -397,6 +399,7 @@ fn main() -> Result<()> {
             println!("sound-tools {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        [folder] if runtime::update::start_pending_update() => Ok(()),
         [folder] => runtime::window::run(Path::new(folder)),
         [folder, "--headless"] => run(Path::new(folder)),
         [folder, "--inspect"] => inspect(Path::new(folder)),

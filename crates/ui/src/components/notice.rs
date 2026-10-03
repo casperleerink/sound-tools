@@ -1,6 +1,6 @@
 //! Notice: a quiet line for something the composer should know and need not act on, such as
-//! a failed edit or files that did not load. A dot, the message, and an optional dismiss
-//! button. A long message wraps to at most three lines. It never blocks: float it in a corner.
+//! a failed edit or files that did not load. A dot, the message, an optional action, such as
+//! "Restart" for an update, and an optional dismiss button. A long message wraps to at most three lines. It never blocks: float it in a corner.
 //! Work that takes a while, such as an export, shows its progress as a bar under the message.
 
 use std::rc::Rc;
@@ -35,6 +35,7 @@ pub struct Notice {
     tone: NoticeTone,
     /// From 0 to 1.
     progress: Option<f32>,
+    action: Option<Button>,
     on_dismiss: Option<Handler>,
     dismiss_focus: Option<FocusHandle>,
 }
@@ -47,6 +48,7 @@ impl Notice {
             message: message.into(),
             tone: NoticeTone::default(),
             progress: None,
+            action: None,
             on_dismiss: None,
             dismiss_focus: None,
         }
@@ -60,6 +62,12 @@ impl Notice {
     /// Adds a bar under the message, filled from 0 to 1.
     pub fn progress(mut self, progress: f32) -> Self {
         self.progress = Some(progress.clamp(0., 1.));
+        self
+    }
+
+    /// A button right of the message. The notice gives it its size and look.
+    pub fn action(mut self, button: Button) -> Self {
+        self.action = Some(button);
         self
     }
 
@@ -110,7 +118,11 @@ impl RenderOnce for Notice {
             .min_w_0()
             .py(px(5.))
             .pl(px(12.))
-            .pr(px(if self.on_dismiss.is_some() { 4. } else { 12. }))
+            .pr(px(if self.on_dismiss.is_some() || self.action.is_some() {
+                4.
+            } else {
+                12.
+            }))
             .rounded(px(10.))
             .bg(fill)
             .border_1()
@@ -144,6 +156,14 @@ impl RenderOnce for Notice {
                         )
                     }),
             )
+            .when_some(self.action, |d, action| {
+                d.child(
+                    action
+                        .variant(ButtonVariant::Subtle)
+                        .size(ButtonSize::Xs)
+                        .mt(px(-2.)),
+                )
+            })
             .when_some(self.on_dismiss, |d, on_dismiss| {
                 let button = Button::icon_only("notice-dismiss", "x")
                     .variant(ButtonVariant::Ghost)

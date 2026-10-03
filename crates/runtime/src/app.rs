@@ -5,7 +5,7 @@
 //! Only the window uses these. `--inspect`, `--render`, `--headless` and the tests never
 //! write the last project, so a test cannot change what the app opens next.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -147,9 +147,15 @@ pub fn check_project_folder(folder: &Path) -> Result<()> {
 /// free by then, and the plugins have saved their state.
 pub fn start_again() -> Result<()> {
     let program = std::env::current_exe().context("could not find this program")?;
+    start(&program, std::iter::empty::<OsString>())
+}
+
+/// Starts `program`, which lives on after this process ends.
+pub fn start(program: &Path, arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
     // The new process lives on after this one ends, so there is nothing to wait for.
     #[allow(clippy::disallowed_methods)]
-    let child = Command::new(&program)
+    let child = Command::new(program)
+        .args(arguments)
         .stdin(Stdio::null())
         .spawn()
         .with_context(|| format!("could not start {}", program.display()))?;

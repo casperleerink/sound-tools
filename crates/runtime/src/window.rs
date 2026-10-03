@@ -39,10 +39,10 @@ use sound_ui::components::text_input;
 use sound_ui::{ActiveTheme, Assets, Devices, Session, Views, typography};
 
 use audio_input::OpenInput;
-use project_menu::ProjectMenu;
+use project_menu::{ProjectMenu, start_again};
 pub use transport::TransportPill;
 
-use crate::{open_or_create_with, views};
+use crate::{open_or_create_with, update, views};
 
 actions!(
     sound_tools,
@@ -224,8 +224,10 @@ impl Shell {
             .as_deref()
             .is_none_or(crate::app::left_panel_was_open);
         let project_menu = cx.new(|cx| ProjectMenu::new(session.clone(), device_name, window, cx));
-        // For the notice of an export.
+        // For the notice of an export, and of an update.
         cx.observe(&project_menu, |_, _, cx| cx.notify()).detach();
+        cx.observe_global::<update::Ready>(|_, cx| cx.notify())
+            .detach();
         let mut shell = Self {
             project_menu,
             transport: cx
@@ -423,6 +425,7 @@ impl Shell {
                     .progress(progress)
                     .max_w_full()
             });
+        let update = cx.try_global::<update::Ready>().map(update_notice);
         let session = self.session.read(cx);
         let problems = session.project().problems().len();
         let files = match problems {
@@ -446,6 +449,7 @@ impl Shell {
             .items_end()
             .gap(px(8.))
             .children(exporting)
+            .children(update)
             .children(files.map(|files| {
                 Notice::new("problems", files)
                     .tone(NoticeTone::Warning)
@@ -474,6 +478,26 @@ impl Shell {
                     window.start_window_move();
                 }
             })
+    }
+}
+
+/// A newer release: Restart installs it, or Download opens its page when this app's folder
+/// cannot take it.
+fn update_notice(ready: &update::Ready) -> Notice {
+    let version = ready.version;
+    let notice = Notice::new("update", format!("Sound Tools {version} is ready"))
+        .tone(NoticeTone::Info)
+        .max_w_full();
+    match &ready.action {
+        update::Action::Restart => notice
+            .action(Button::new("update-restart", "Restart").on_click(|_, _, cx| start_again(cx))),
+        update::Action::Download { page } => {
+            let page = page.clone();
+            notice.action(
+                Button::new("update-download", "Download")
+                    .on_click(move |_, _, cx| cx.open_url(&page)),
+            )
+        }
     }
 }
 
@@ -666,6 +690,9 @@ fn init(cx: &mut App) {
             None
         }
     };
+    if let Some(support) = &support {
+        crate::update::check_in_background(support, cx);
+    }
     crate::agent_panel(support, cx).install(cx);
 }
 

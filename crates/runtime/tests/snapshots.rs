@@ -8,7 +8,8 @@
 //! - `transport-click-off.png`: the same with the transport in focus, the click off.
 //! - `transport-click-on.png`: the same with the click on.
 //! - `transport-recording.png`: the same while it records.
-//! - `notices.png`: an error from an edit and a file that is not live, top-right.
+//! - `notices.png`: an error from an edit, a file that is not live and an update that is ready,
+//!   top-right.
 //! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
 //! - `menu.png`: the project menu, open, after one edit.
 //! - `fit-action.png`: the project menu over a recorded take, with `Fit tempo to take`.
@@ -1107,9 +1108,19 @@ fn main() -> Result<()> {
         cx.update(|cx| notices.session.read(cx).notice().is_some()),
         "the edit did not fail"
     );
+    // And an update that is ready, which the window learns of from the check at its start.
+    // Set in an update of the window, which draws a frame after it.
+    let version = runtime::update::Version::parse("0.2.0").context("no version")?;
+    cx.update_window(notices.window.into(), |_, _, cx| {
+        cx.set_global(runtime::update::Ready {
+            version,
+            action: runtime::update::Action::Restart,
+        })
+    })?;
     cx.run_until_parked();
     save(&mut cx, &notices, "notices")?;
     drop(notices);
+    cx.update(|cx| cx.remove_global::<runtime::update::Ready>());
 
     // The menu after an edit, so that undo has something to name.
     cx.update(|cx| {

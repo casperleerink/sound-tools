@@ -96,6 +96,9 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # The app checks its update against this file. See crates/runtime/src/update.rs.
+      - name: Write the checksums
+        run: cd dist && sha256sum -- *.zip *.tar.gz > SHA256SUMS
       # The fixed install notes come first, then the notes GitHub writes from the pull requests.
       - name: Create the release
         env:
@@ -112,6 +115,8 @@ jobs:
           ```
 
           Or try to open it once, then click **Open Anyway** in System Settings, Privacy & Security.
+
+          **Updates**: the app checks for a new release once a day, downloads it in the background and offers **Restart** to install it. On macOS the new build is signed ad hoc too, so macOS may ask for microphone access again after an update.
 
           **Linux** (x86_64 or aarch64): extract the tarball for your machine and run its `install.sh`. It puts the app in `~/.local`, with a menu entry and the `sound-tools` command.
 

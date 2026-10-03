@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # Release
 
-A release is a tag `v<version>` on main. Pushing it starts `.github/workflows/release.yml`, which builds the macOS zip and the two Linux tarballs and makes the GitHub release. The version lives in one place, `version` in `[workspace.package]` of `Cargo.toml`. The workflow fails when the tag does not match it.
+A release is a tag `v<version>` on main. Pushing it starts `.github/workflows/release.yml`, which builds the macOS zip and the two Linux tarballs and makes the GitHub release with them and their `SHA256SUMS`, which the app's updater checks. The version lives in one place, `version` in `[workspace.package]` of `Cargo.toml`. The workflow fails when the tag does not match it.
 
 Stop and report at the first step that fails. Never move or delete a tag that was pushed.
 
@@ -75,7 +75,7 @@ gh run watch <id> --exit-status
 gh release view "v$VERSION" --json url --jq .url
 ```
 
-`headBranch` is the tag. Report the release URL and its three files. When a build job fails for a reason outside the code, such as a runner problem, run `gh run rerun <id> --failed`. When the code is at fault, fix it in a pull request and release the next patch.
+`headBranch` is the tag. Report the release URL and its four files. When a build job fails for a reason outside the code, such as a runner problem, run `gh run rerun <id> --failed`. When the code is at fault, fix it in a pull request and release the next patch.
 
 ## A dry run
 

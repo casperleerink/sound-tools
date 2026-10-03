@@ -372,6 +372,10 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                         .progress(0.4)
                         .w(px(240.))
                         .into_any_element(),
+                    Notice::new("n-action", "Sound Tools 0.2.0 is ready")
+                        .tone(NoticeTone::Info)
+                        .action(Button::new("n-restart", "Restart"))
+                        .into_any_element(),
                     Notice::new(
                         "n-long",
                         "instance arrangement/warm-pad/verse-b: notes[3].start must be less than \
