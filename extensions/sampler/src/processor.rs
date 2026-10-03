@@ -19,7 +19,7 @@ use sound_core::{
     MAX_BLOCK, Peaks, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
     amplitude, pan_gains,
 };
-use sound_media::{SCRATCH_FRAMES, Varispeed, varispeed};
+use sound_media::{ReadAhead, SCRATCH_FRAMES, Varispeed, varispeed};
 use sound_notes::{NoteEvent, Pitch, Velocity, Voice as _, Voices, Wheels};
 
 use crate::instrument::{Instrument, Looping, Zone};
@@ -582,6 +582,8 @@ pub struct Sampler {
     scratch: Box<[[f32; 2]]>,
     /// Where the last note started is in its file, for the card.
     position: Peaks,
+    /// Has the samples of a note that streams from disk read ahead of it.
+    read_ahead: ReadAhead,
 }
 
 impl Sampler {
@@ -613,6 +615,7 @@ impl Sampler {
             frames: vec![[0.0; 2]; MAX_BLOCK].into_boxed_slice(),
             scratch: vec![[0.0; 2]; SCRATCH_FRAMES].into_boxed_slice(),
             position,
+            read_ahead: ReadAhead::new(),
         }
     }
 
@@ -680,6 +683,7 @@ impl Sampler {
                 break;
             }
             start.layers[count] = Layer::new((index, zone), velocity, record, self.sample_rate);
+            self.read_ahead.ask(&zone.audio, region.offset);
             if region.trigger == Trigger::Attack {
                 chokes[count] = region.group;
             }

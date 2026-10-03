@@ -1,6 +1,6 @@
 //! The instruments of the library: free libraries on GitHub under CC0 or CC BY, each at a
-//! pinned commit, checked against the licence file of each repository. Sizes are of the files
-//! an instrument's SFZ file needs, and of its samples decoded in memory.
+//! pinned commit, checked against the licence file of each repository. A size is of the files
+//! an instrument's SFZ file needs.
 
 use crate::library::{Category, Entry, Library};
 
@@ -157,7 +157,24 @@ const SWEEP_PAD: Library = Library {
     attribution: None,
 };
 
+const HEADROOM: Library = Library {
+    id: "headroom-piano",
+    name: "Headroom Piano",
+    repository: "sfzinstruments/BengtNilsson.HeadroomPiano",
+    commit: "2a7df3f7252227a3484202c1d61bc1bfe352a971",
+    license: "CC BY 4.0",
+    attribution: Some("Bengt Nilsson, SFZ by kinwie"),
+};
+
 pub const CATALOG: &[Entry] = &[
+    Entry {
+        id: "piano/grand",
+        name: "Grand piano (Headroom)",
+        category: Category::Piano,
+        library: &HEADROOM,
+        sfz: "Headroom Piano.sfz",
+        download_bytes: 156_800_000,
+    },
     Entry {
         id: "piano/kawai-upright",
         name: "Upright piano (Kawai)",
@@ -165,7 +182,6 @@ pub const CATALOG: &[Entry] = &[
         library: &KAWAI_UPRIGHT,
         sfz: "UprightPianoKW-20220221.sfz",
         download_bytes: 32_800_000,
-        memory_bytes: 86_000_000,
     },
     Entry {
         id: "piano/old-upright",
@@ -174,7 +190,6 @@ pub const CATALOG: &[Entry] = &[
         library: &OLD_UPRIGHT,
         sfz: "PianoFB 20200401.sfz",
         download_bytes: 34_500_000,
-        memory_bytes: 106_300_000,
     },
     Entry {
         id: "keys/wurlitzer",
@@ -183,7 +198,6 @@ pub const CATALOG: &[Entry] = &[
         library: &E_PIANOS,
         sfz: "Wurlitzer EP200/Wurlitzer EP200.sfz",
         download_bytes: 2_400_000,
-        memory_bytes: 8_900_000,
     },
     Entry {
         id: "keys/cp80",
@@ -192,7 +206,6 @@ pub const CATALOG: &[Entry] = &[
         library: &E_PIANOS,
         sfz: "CP80/CP80.sfz",
         download_bytes: 11_000_000,
-        memory_bytes: 45_100_000,
     },
     Entry {
         id: "keys/fm-piano",
@@ -201,7 +214,6 @@ pub const CATALOG: &[Entry] = &[
         library: &FM_PIANO,
         sfz: "FM-Piano1 20190916.sfz",
         download_bytes: 25_300_000,
-        memory_bytes: 65_700_000,
     },
     Entry {
         id: "keys/pipe-organ",
@@ -210,7 +222,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "OrganLoud.sfz",
         download_bytes: 45_500_000,
-        memory_bytes: 45_500_000,
     },
     Entry {
         id: "strings/violin-section",
@@ -219,7 +230,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "ViolinEnsSusVib.sfz",
         download_bytes: 46_000_000,
-        memory_bytes: 46_000_000,
     },
     Entry {
         id: "strings/viola-section",
@@ -228,7 +238,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "ViolaEnsSusVib.sfz",
         download_bytes: 71_700_000,
-        memory_bytes: 71_700_000,
     },
     Entry {
         id: "strings/cello-section",
@@ -237,7 +246,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "CelloEnsSusVib.sfz",
         download_bytes: 72_600_000,
-        memory_bytes: 72_600_000,
     },
     Entry {
         id: "strings/double-bass-section",
@@ -246,7 +254,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "ContrabassSusVB.sfz",
         download_bytes: 48_000_000,
-        memory_bytes: 48_000_000,
     },
     Entry {
         id: "strings/violin-section-pizzicato",
@@ -255,7 +262,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "ViolinEnsPizz.sfz",
         download_bytes: 9_000_000,
-        memory_bytes: 9_000_000,
     },
     Entry {
         id: "strings/solo-violin",
@@ -264,7 +270,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "SViolinVib.sfz",
         download_bytes: 74_400_000,
-        memory_bytes: 74_400_000,
     },
     Entry {
         id: "strings/harp",
@@ -273,7 +278,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "Harp.sfz",
         download_bytes: 35_300_000,
-        memory_bytes: 35_300_000,
     },
     Entry {
         id: "brass/trumpet",
@@ -282,7 +286,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "TrumpetSus.sfz",
         download_bytes: 40_500_000,
-        memory_bytes: 40_500_000,
     },
     Entry {
         id: "brass/french-horn",
@@ -291,7 +294,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "FHornSus.sfz",
         download_bytes: 50_600_000,
-        memory_bytes: 50_600_000,
     },
     Entry {
         id: "brass/trombone",
@@ -300,7 +302,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "TromboneSus.sfz",
         download_bytes: 60_100_000,
-        memory_bytes: 60_100_000,
     },
     Entry {
         id: "brass/tuba",
@@ -309,7 +310,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "TubaSus.sfz",
         download_bytes: 31_200_000,
-        memory_bytes: 31_200_000,
     },
     Entry {
         id: "woodwinds/flute",
@@ -318,7 +318,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "FluteSusVib.sfz",
         download_bytes: 25_200_000,
-        memory_bytes: 25_200_000,
     },
     Entry {
         id: "woodwinds/oboe",
@@ -327,7 +326,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "OboeSusVib.sfz",
         download_bytes: 24_000_000,
-        memory_bytes: 24_000_000,
     },
     Entry {
         id: "woodwinds/clarinet",
@@ -336,7 +334,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "ClarinetSus.sfz",
         download_bytes: 59_400_000,
-        memory_bytes: 59_300_000,
     },
     Entry {
         id: "woodwinds/bassoon",
@@ -345,7 +342,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "BassoonSus.sfz",
         download_bytes: 35_200_000,
-        memory_bytes: 35_200_000,
     },
     Entry {
         id: "woodwinds/alto-sax",
@@ -354,7 +350,6 @@ pub const CATALOG: &[Entry] = &[
         library: &MTG_SAX,
         sfz: "MTG Solo Saxophones/MTG Alto Sax (NL).sfz",
         download_bytes: 29_000_000,
-        memory_bytes: 49_800_000,
     },
     Entry {
         id: "woodwinds/tenor-sax",
@@ -363,7 +358,6 @@ pub const CATALOG: &[Entry] = &[
         library: &MTG_SAX,
         sfz: "MTG Solo Saxophones/MTG Tenor Sax (NL).sfz",
         download_bytes: 28_400_000,
-        memory_bytes: 50_700_000,
     },
     Entry {
         id: "guitar/classical",
@@ -372,7 +366,6 @@ pub const CATALOG: &[Entry] = &[
         library: &CLASSICAL_GUITAR,
         sfz: "SpanishClassicalGuitar-20190618.sfz",
         download_bytes: 5_300_000,
-        memory_bytes: 19_800_000,
     },
     Entry {
         id: "guitar/electric",
@@ -381,7 +374,6 @@ pub const CATALOG: &[Entry] = &[
         library: &EMILY_GUITAR,
         sfz: "emily_clean.sfz",
         download_bytes: 123_400_000,
-        memory_bytes: 122_700_000,
     },
     Entry {
         id: "guitar/electric-light",
@@ -390,7 +382,6 @@ pub const CATALOG: &[Entry] = &[
         library: &FSBS_GUITAR,
         sfz: "EGuitarFSBS-clean bridge small 20260807.sfz",
         download_bytes: 3_100_000,
-        memory_bytes: 10_900_000,
     },
     Entry {
         id: "bass/electric-finger",
@@ -399,7 +390,6 @@ pub const CATALOG: &[Entry] = &[
         library: &YR_BASS,
         sfz: "FingerBassYR 20190930.sfz",
         download_bytes: 3_300_000,
-        memory_bytes: 6_300_000,
     },
     Entry {
         id: "bass/electric",
@@ -408,7 +398,6 @@ pub const CATALOG: &[Entry] = &[
         library: &SWAGBASS,
         sfz: "swagbass_shiny.sfz",
         download_bytes: 109_700_000,
-        memory_bytes: 109_100_000,
     },
     Entry {
         id: "bass/double-bass-pizzicato",
@@ -417,7 +406,6 @@ pub const CATALOG: &[Entry] = &[
         library: &DOUBLE_BASS,
         sfz: "d_smolken_rubner_bass_pizz.sfz",
         download_bytes: 136_800_000,
-        memory_bytes: 136_200_000,
     },
     Entry {
         id: "drums/acoustic-kit",
@@ -426,7 +414,6 @@ pub const CATALOG: &[Entry] = &[
         library: &MULDJORD_KIT,
         sfz: "MuldjordKit 20201018.sfz",
         download_bytes: 138_900_000,
-        memory_bytes: 328_800_000,
     },
     Entry {
         id: "drums/orchestral-percussion",
@@ -435,7 +422,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "GM-StylePerc.sfz",
         download_bytes: 154_700_000,
-        memory_bytes: 154_700_000,
     },
     Entry {
         id: "drums/synth-kit",
@@ -444,7 +430,6 @@ pub const CATALOG: &[Entry] = &[
         library: &SYNTH_PERCUSSION,
         sfz: "SynthesizerPercussion-20220718.sfz",
         download_bytes: 1_500_000,
-        memory_bytes: 2_400_000,
     },
     Entry {
         id: "percussion/timpani",
@@ -453,7 +438,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "Timpani.sfz",
         download_bytes: 36_000_000,
-        memory_bytes: 36_000_000,
     },
     Entry {
         id: "percussion/glockenspiel",
@@ -462,7 +446,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "Glockenspiel.sfz",
         download_bytes: 6_400_000,
-        memory_bytes: 6_400_000,
     },
     Entry {
         id: "percussion/marimba",
@@ -471,7 +454,6 @@ pub const CATALOG: &[Entry] = &[
         library: &VSCO,
         sfz: "Marimba.sfz",
         download_bytes: 11_800_000,
-        memory_bytes: 11_800_000,
     },
     Entry {
         id: "percussion/world",
@@ -480,7 +462,6 @@ pub const CATALOG: &[Entry] = &[
         library: &WORLD_PERCUSSION,
         sfz: "WorldPercussion 20200905.sfz",
         download_bytes: 8_200_000,
-        memory_bytes: 12_500_000,
     },
     Entry {
         id: "synth/bass",
@@ -489,7 +470,6 @@ pub const CATALOG: &[Entry] = &[
         library: &SYNTH_BASS,
         sfz: "SynthBass1 20190723.sfz",
         download_bytes: 1_000_000,
-        memory_bytes: 4_400_000,
     },
     Entry {
         id: "synth/sweep-pad",
@@ -498,6 +478,5 @@ pub const CATALOG: &[Entry] = &[
         library: &SWEEP_PAD,
         sfz: "SweepPad 20190813.sfz",
         download_bytes: 3_100_000,
-        memory_bytes: 8_400_000,
     },
 ];

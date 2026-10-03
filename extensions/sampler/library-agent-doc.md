@@ -34,6 +34,7 @@ Range is where the instrument has samples. Write the parts in the range of the r
 
 | Id | Instrument | Range | Download |
 | --- | --- | --- | --- |
+| `piano/grand` | Grand piano (Headroom) | A0 to C8 | 157 MB |
 | `piano/kawai-upright` | Upright piano (Kawai) | A0 to C8 | 33 MB |
 | `piano/old-upright` | Old upright piano | G0 to C8 | 34 MB |
 | `keys/wurlitzer` | Wurlitzer electric piano | A1 to C7 | 2 MB |
