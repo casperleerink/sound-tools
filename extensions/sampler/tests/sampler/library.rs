@@ -56,7 +56,7 @@ fn a_library_instrument_downloads_where_allowed_and_then_plays() {
     library::wait_for_downloads();
     assert!(matches!(library::status(entry), Status::Failed(_)));
     assert_eq!(
-        library::take_finished(harness.project.assets()),
+        sampler::take_ready(harness.project.assets()),
         std::slice::from_ref(&instrument)
     );
     harness.project.rebind(&instrument).unwrap();
@@ -80,7 +80,7 @@ fn a_library_instrument_downloads_where_allowed_and_then_plays() {
     library::wait_for_downloads();
     assert_eq!(library::status(entry), Status::Here);
     assert_eq!(
-        library::take_finished(harness.project.assets()),
+        sampler::take_ready(harness.project.assets()),
         std::slice::from_ref(&instrument)
     );
     harness.project.rebind(&instrument).unwrap();
@@ -95,5 +95,5 @@ fn a_library_instrument_downloads_where_allowed_and_then_plays() {
         .join(entry.library.commit);
     assert!(here.join("Strings/Cello Section/a.wav").exists());
     assert!(here.join(".cello-section-sustain.done").exists());
-    assert!(library::take_finished(harness.project.assets()).is_empty());
+    assert!(sampler::take_ready(harness.project.assets()).is_empty());
 }

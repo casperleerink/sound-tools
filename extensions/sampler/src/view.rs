@@ -48,6 +48,7 @@ use sound_ui::{
     ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, Waveforms, every_poll, weak_callback,
 };
 
+use crate::instrument;
 use crate::library::{self, CATALOG, Category, Entry, LibraryId, Status, size_text};
 use crate::{
     ATTACK, DECAY, GAIN, POSITION, RELEASE, ROOT, SUSTAIN, Sampler, SamplerState, SfzPath, VELOCITY,
@@ -149,8 +150,10 @@ pub struct SamplerView {
     choose_focus: FocusHandle,
     /// The Instrument select.
     instruments: Entity<DropdownMenu>,
-    /// Where the library instrument of the record is on this machine, as last shown.
+    /// Where the library instrument of the record is on this machine, and whether the
+    /// instrument loads, as last shown.
     download: Option<Status>,
+    loading: bool,
     _position: Task<()>,
 }
 
@@ -209,6 +212,7 @@ impl SamplerView {
             choose_focus: cx.focus_handle().tab_stop(true),
             instruments,
             download: None,
+            loading: false,
             _position: every_poll(cx, |view, cx| {
                 view.read_position(cx);
                 view.follow_download(cx);
@@ -288,15 +292,23 @@ impl SamplerView {
         self.follow_download(cx);
     }
 
-    /// Follows the download of the library instrument of the record, once per poll of the
-    /// session, and draws again when it moved on.
+    /// Follows the download of the library instrument of the record, and its loading, once
+    /// per poll of the session, and draws again when either moved on.
     fn follow_download(&mut self, cx: &mut Context<Self>) {
         let project = self.session.read(cx).project();
-        let entry = project
-            .state(&self.sampler)
-            .and_then(|state| state.library.as_ref())
-            .map(LibraryId::entry);
-        let status = entry.map(library::status);
+        let Some(state) = project.state(&self.sampler) else {
+            return;
+        };
+        let loading = instrument::is_loading(state, project.assets());
+        let status = state
+            .library
+            .as_ref()
+            .map(LibraryId::entry)
+            .map(library::status);
+        if loading != self.loading {
+            self.loading = loading;
+            cx.notify();
+        }
         if status != self.download {
             // Done, so the select marks it as downloaded.
             let done = status == Some(Status::Here);
@@ -573,6 +585,7 @@ impl SamplerView {
         };
         let size = size_text(entry.download_bytes);
         let (says, button) = match library::status(entry) {
+            Status::Here if self.loading => (format!("Loading {}…", entry.name), None),
             Status::Here => (
                 format!("{} · {} · {license}", entry.name, library.name),
                 None,
@@ -615,7 +628,10 @@ impl SamplerView {
             return self.library_display(id.entry(), cx);
         }
         if let Some(sfz) = &state.sfz {
-            let says = format!("{} · SFZ instrument", sfz_name(sfz));
+            let says = match self.loading {
+                true => format!("Loading {}…", sfz_name(sfz)),
+                false => format!("{} · SFZ instrument", sfz_name(sfz)),
+            };
             return self.no_file(says, true, cx).into_any_element();
         }
         let Some(asset) = state.sample.clone() else {

@@ -179,7 +179,7 @@ fn run(folder: &Path) -> Result<()> {
         if let Err(error) = runtime::take_drum_sounds(&mut project) {
             println!("error: {error}");
         }
-        for instance in sampler::library::take_finished(project.assets()) {
+        for instance in sampler::take_ready(project.assets()) {
             if let Err(error) = project.rebind(&instance) {
                 println!("error: {error}");
             }

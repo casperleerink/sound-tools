@@ -296,7 +296,7 @@ pub fn download(entry: &'static Entry) {
 
 /// The Samplers of the project of `assets` whose download finished since the last call, to
 /// run their behaviour again.
-pub fn take_finished(assets: &Assets) -> Vec<InstanceId> {
+pub(crate) fn take_finished(assets: &Assets) -> Vec<InstanceId> {
     let project = project_of(assets);
     let mut downloads = downloads();
     let (ours, others): (Vec<_>, Vec<_>) = std::mem::take(&mut downloads.finished)

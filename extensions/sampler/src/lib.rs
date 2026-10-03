@@ -243,6 +243,15 @@ pub const SFZ_AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../sfz-agent-doc.md"),
 };
 
+/// The Samplers of the project of `assets` whose library instrument finished downloading, or
+/// whose instrument finished loading in the background, since the last call. Run their
+/// behaviour again (`Project::rebind`), once per poll of the session.
+pub fn take_ready(assets: &sound_core::Assets) -> Vec<sound_core::InstanceId> {
+    let mut ready = library::take_finished(assets);
+    ready.extend(instrument::take_loaded(assets));
+    ready
+}
+
 /// Registers the sampler tool. Call it before the project opens.
 ///
 /// A sampler whose file is missing runs its behaviour again when a file under `assets/audio/`
@@ -261,21 +270,26 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 
 /// What the state plays, read on this thread the first time something names it, or a line for
 /// `problems.txt` that says why it plays nothing. An empty line is an empty Sampler.
+/// `None` while it loads in the background, see [`instrument::load_in_background`].
 fn instrument(
     state: &SamplerState,
     context: &mut BehaviourContext<'_>,
-) -> Result<Arc<Instrument>, String> {
-    if let Some(id) = &state.library {
-        return from_library(id.entry(), context);
-    }
-    if let Some(path) = &state.sfz {
-        let instrument = instrument::load_sfz(context.assets(), path)?;
-        if let Some(problem) = instrument.problem() {
-            context.problem(problem.to_string());
+) -> Result<Option<Arc<Instrument>>, String> {
+    let instrument = match (&state.library, &state.sfz) {
+        (Some(id), _) => from_library(id.entry(), context)?,
+        (None, Some(path)) => instrument::load_sfz(context.assets(), path, context.id())?,
+        (None, None) => {
+            return sample(state, context)
+                .map(|audio| Some(Arc::new(Instrument::of_sample(audio))));
         }
-        return Ok(instrument);
+    };
+    if let Some(problem) = instrument
+        .as_ref()
+        .and_then(|instrument| instrument.problem())
+    {
+        context.problem(problem.to_string());
     }
-    sample(state, context).map(|audio| Arc::new(Instrument::of_sample(audio)))
+    Ok(instrument)
 }
 
 /// A library instrument when it is on this machine. Else the Sampler waits for a download of
@@ -283,20 +297,14 @@ fn instrument(
 fn from_library(
     entry: &'static library::Entry,
     context: &mut BehaviourContext<'_>,
-) -> Result<Arc<Instrument>, String> {
+) -> Result<Option<Arc<Instrument>>, String> {
     if library::status(entry) != Status::Here {
         library::wait_for(entry, context.assets(), context.id());
     }
     let name = entry.name;
     let size = library::size_text(entry.download_bytes);
     match library::status(entry) {
-        Status::Here => {
-            let instrument = instrument::load_library(entry)?;
-            if let Some(problem) = instrument.problem() {
-                context.problem(problem.to_string());
-            }
-            Ok(instrument)
-        }
+        Status::Here => instrument::load_library(entry, context.assets(), context.id()),
         Status::Downloading { .. } => Err(format!(
             "the Sampler is silent while {name} ({size}) downloads into the library of this machine; it plays when it is done"
         )),
@@ -336,18 +344,20 @@ fn sample(state: &SamplerState, context: &BehaviourContext<'_>) -> Result<Arc<Au
 /// Runs for every valid state, from every source. The processor is kept between runs, so held
 /// notes go on through parameter edits.
 fn apply(state: &SamplerState, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
-    let instrument = match instrument(state, context) {
-        Ok(instrument) => Some(instrument),
+    let update = match instrument(state, context) {
+        Ok(Some(instrument)) => SamplerUpdate::new(state, Some(instrument)),
+        // It plays what it played until the new one is there.
+        Ok(None) => SamplerUpdate::keeping(state),
         Err(problem) => {
             if !problem.is_empty() {
                 context.problem(problem);
             }
-            None
+            SamplerUpdate::new(state, None)
         }
     };
     let position = context.peaks(POSITION);
     let sampler = context.processor("sampler", || Sampler::new(position))?;
-    context.update(sampler, SamplerUpdate::new(state, instrument))?;
+    context.update(sampler, update)?;
     context.input(NOTES_INPUT, InputEndpoint::new(sampler, Sampler::NOTES));
     context.automation(sampler, Sampler::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(sampler, Sampler::OUTPUT));
