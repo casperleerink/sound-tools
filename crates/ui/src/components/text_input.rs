@@ -19,13 +19,14 @@ mod words;
 
 use std::ops::Range;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use gpui::{
     App, AvailableSpace, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, Global,
     GlobalElementId, Hsla, KeyBinding, KeyContext, LayoutId, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollWheelEvent, SharedString, Style,
-    TextAlign, TextRun, TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions,
+    Task, TextAlign, TextRun, TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions,
     div, fill, point, prelude::*, px, relative, size,
 };
 
@@ -220,7 +221,14 @@ pub struct TextInput {
     on_submit: Option<SubmitHandler>,
     on_cancel: Option<SubmitHandler>,
     on_arrow_past_edge: Option<ArrowHandler>,
+    /// The caret blinks from here, so it shows solid right after a move or an edit.
+    blink_start: Instant,
+    /// Repaints the caret at its next blink, while focused.
+    blink: Option<Task<()>>,
 }
+
+/// How long the caret stays on, and then off.
+const BLINK: Duration = Duration::from_millis(530);
 
 impl TextInput {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -248,6 +256,8 @@ impl TextInput {
             on_submit: None,
             on_cancel: None,
             on_arrow_past_edge: None,
+            blink_start: Instant::now(),
+            blink: None,
         }
     }
 
@@ -598,6 +608,7 @@ impl TextInput {
     fn caret_moved(&mut self) {
         self.goal_x = None;
         self.follow_caret = true;
+        self.blink_start = Instant::now();
     }
 
     /// Delete the selection, or without one the text from the caret to `offset`.
@@ -1255,6 +1266,10 @@ impl Element for TextElement {
         let input = self.input.read(cx);
         let focus_handle = input.focus_handle.clone();
         let multi_line = input.max_rows.is_some();
+        let focused = focus_handle.is_focused(window);
+        let blinked = input.blink_start.elapsed().as_nanos();
+        let caret_on = (blinked / BLINK.as_nanos()).is_multiple_of(2);
+        let next_blink = BLINK - Duration::from_nanos((blinked % BLINK.as_nanos()) as u64);
         window.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.input.clone()),
@@ -1289,13 +1304,20 @@ impl Element for TextElement {
                 .ok();
                 origin.y += line.size(layout.line_height).height;
             }
-            if focus_handle.is_focused(window)
+            if focused
+                && caret_on
                 && let Some(cursor) = prepaint.cursor.take()
             {
                 window.paint_quad(cursor);
             }
         });
-        self.input.update(cx, |input, _| {
+        self.input.update(cx, |input, cx| {
+            input.blink = focused.then(|| {
+                cx.spawn(async move |input, cx| {
+                    cx.background_executor().timer(next_blink).await;
+                    input.update(cx, |_, cx| cx.notify()).ok();
+                })
+            });
             input.last_layout = Some(layout);
             input.last_bounds = Some(bounds);
             input.scroll_top = scroll_top;
