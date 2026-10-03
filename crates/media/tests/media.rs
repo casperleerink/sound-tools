@@ -935,3 +935,60 @@ fn a_wav_file_gives_the_first_forward_loop_of_its_smpl_chunk_after_its_data() {
         assert_eq!(sound_media::probe(&path).unwrap().frames, 300, "{loops:?}");
     }
 }
+
+/// Reads all of `audio` in blocks of an odd length, so a block straddles the end of the start
+/// held in memory.
+fn read_in_blocks(audio: &Audio) -> Vec<[f32; 2]> {
+    let mut read = vec![[0.0; 2]; audio.frames() as usize];
+    for (index, block) in read.chunks_mut(997).enumerate() {
+        audio.read((index * 997) as i64, block);
+    }
+    read
+}
+
+#[test]
+fn a_streamed_file_holds_its_start_and_reads_the_same_frames_as_a_whole_one() {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("long.wav");
+    let frames: Vec<[f64; 2]> = (0..48_000)
+        .map(|frame| {
+            let time = frame as f64 / 48_000.0;
+            [
+                (TAU * 440.0 * time).sin() * 0.5,
+                (TAU * 660.0 * time).cos() * 0.25,
+            ]
+        })
+        .collect();
+    wav(&path, 48_000, 2, (24, hound::SampleFormat::Int), &frames);
+    let whole = sound_media::load_path(&path, "whole").unwrap();
+    let streamed_path = folder.path().join("streamed.wav");
+    std::fs::copy(&path, &streamed_path).unwrap();
+    let streamed = sound_media::load_streamed(&streamed_path, "streamed").unwrap();
+    assert!(streamed.is_streamed());
+    assert!(!whole.is_streamed());
+    assert_eq!(streamed.info(), whole.info());
+    // The start of 24-bit stereo, and the header before it.
+    let head = (sound_media::HEAD_SECONDS * 48_000.0) as usize * 6;
+    assert!(streamed.memory() > head && streamed.memory() < head + 100);
+    assert_eq!(read_in_blocks(&streamed), read_in_blocks(&whole));
+    // Asking for it to be read ahead, as a note does, changes nothing of what it reads.
+    sound_media::ReadAhead::new().ask(&streamed, 0);
+    assert_eq!(read_in_blocks(&streamed), read_in_blocks(&whole));
+}
+
+#[test]
+fn a_streamed_flac_file_plays_from_a_wav_decoded_next_to_it_once() {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("mono-24.flac");
+    std::fs::copy(fixture("mono-24"), &path).unwrap();
+    let streamed = sound_media::load_streamed(&path, "streamed").unwrap();
+    let decoded = folder.path().join("mono-24.flac.wav");
+    let written = std::fs::metadata(&decoded).unwrap().modified().unwrap();
+    let (_, expected) = read_all(&fixture("mono-24"));
+    assert_eq!(read_in_blocks(&streamed), expected);
+    // The next load maps the same decoded file, and writes nothing.
+    drop(streamed);
+    sound_media::load_streamed(&path, "streamed").unwrap();
+    let again = std::fs::metadata(&decoded).unwrap().modified().unwrap();
+    assert_eq!(again, written);
+}

@@ -104,9 +104,11 @@ pub struct Entry {
     pub library: &'static Library,
     /// Its SFZ file in the repository.
     pub sfz: &'static str,
-    /// What its download is, and what it takes in memory once it plays, in bytes.
+    /// How big its download is, in bytes, and what it takes on disk once it is here: the
+    /// download and the WAV files decoded from its FLAC files. The disk is what the composer is
+    /// told; the download is how far one is.
     pub download_bytes: u64,
-    pub memory_bytes: u64,
+    pub disk_bytes: u64,
 }
 
 impl Entry {
@@ -410,12 +412,24 @@ fn fetch_text(url: &str, path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|error| error.to_string())
 }
 
+/// A file on its way, next to where it goes.
+fn part(path: &Path) -> PathBuf {
+    let mut part = path.as_os_str().to_owned();
+    part.push(".part");
+    PathBuf::from(part)
+}
+
 /// Downloads `files`, each `(url, path)`, several at once, and keeps the bytes that are here
 /// in the running download of `entry` while it waits.
+///
+/// Each file comes in under another name and is renamed into place when all are there, so a
+/// file is never written over in place: a Sampler may play it from a map (see
+/// `sound_media::load_streamed`), and a mapped file cut short ends the process.
 fn fetch_files(entry: &'static Entry, files: &[(String, PathBuf)]) -> Result<(), String> {
     let quote = |text: &str| text.replace('\\', "\\\\").replace('"', "\\\"");
     let mut config = String::new();
     for (url, path) in files {
+        let path = part(path);
         let path = path.to_string_lossy();
         config.push_str(&format!(
             "url = \"{}\"\noutput = \"{}\"\n",
@@ -463,7 +477,7 @@ fn fetch_files(entry: &'static Entry, files: &[(String, PathBuf)]) -> Result<(),
         }
         let bytes = files
             .iter()
-            .filter_map(|(_, path)| fs::metadata(path).ok())
+            .filter_map(|(_, path)| fs::metadata(part(path)).ok())
             .map(|metadata| metadata.len())
             .sum();
         downloads().running.insert(entry.id, bytes);
@@ -472,6 +486,9 @@ fn fetch_files(entry: &'static Entry, files: &[(String, PathBuf)]) -> Result<(),
     remove_quietly(&list);
     let status = status?;
     if status.success() {
+        for (_, path) in files {
+            fs::rename(part(path), path).map_err(|error| error.to_string())?;
+        }
         return Ok(());
     }
     let mut error = String::new();

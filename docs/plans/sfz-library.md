@@ -38,4 +38,4 @@ A composer or the agent can say "add a cello section" or "a nylon guitar" and ge
 
 1. SFZ playback for project packs, FLAC, agent doc for making packs.
 2. The library catalog, per-instrument download, the instrument picker on the card.
-3. Later, if needed: stream large samples from disk. A 16-bit concert piano is 875 MB decoded, too much to hold whole, so phase 2 offers only instruments of a sane size.
+3. Stream large samples from disk, see `docs/plans/sfz-streaming.md`.

@@ -23,6 +23,7 @@
 mod file;
 mod overview;
 mod resample;
+mod stream;
 mod take;
 mod varispeed;
 
@@ -41,6 +42,7 @@ use sound_core::{ASSETS_FOLDER, AssetName, Assets, InvalidAssetName};
 pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES, SampleLoop};
 pub use overview::{FINEST_FRAMES, Overview};
 pub use resample::{Resampler, SCRATCH_FRAMES};
+pub use stream::{HEAD_SECONDS, ReadAhead};
 pub use take::{TakeFile, TakeOverview};
 pub use varispeed::{MAX_STEP, Varispeed, varispeed};
 
@@ -175,20 +177,31 @@ fn format_error(shown: &str, source: FormatError) -> MediaError {
     }
 }
 
-/// Reads and parses a whole file, with no lock held, and keeps what came of it.
+/// Reads and parses a whole file, or opens it to stream, with no lock held, and keeps what
+/// came of it.
 fn read(
     path: &Path,
     shown: &str,
     (length, modified): (u64, Option<SystemTime>),
+    streamed: bool,
 ) -> Result<Arc<Audio>, MediaError> {
-    // A file that cannot be read is not kept: that may pass, as a file that is still copied.
-    let bytes = fs::read(path).map_err(|source| MediaError::Io {
+    let io_error = |source| MediaError::Io {
         path: shown.to_string(),
         source,
-    })?;
-    let (outcome, result) = match Audio::parse(bytes) {
+    };
+    // A file that cannot be read is not kept: that may pass, as a file that is still copied.
+    let parsed = match streamed {
+        true => match stream::open(path) {
+            Ok(audio) => Ok(audio),
+            Err(stream::StreamError::Format(error)) => Err(error),
+            Err(stream::StreamError::Io(error)) => return Err(io_error(error)),
+        },
+        false => Audio::parse(fs::read(path).map_err(io_error)?),
+    };
+    let (outcome, result) = match parsed {
         Ok(audio) => {
             let audio = Arc::new(audio);
+            stream::share(&audio);
             let outcome = Outcome::Plays {
                 info: audio.info(),
                 audio: Arc::downgrade(&audio),
@@ -220,6 +233,17 @@ pub fn load(assets: &Assets, asset: &AudioAsset) -> Result<Arc<Audio>, MediaErro
 /// [`load`] for a file at any path, such as a sample of an instrument library in nested
 /// folders. `shown` is how messages name the file.
 pub fn load_path(path: &Path, shown: &str) -> Result<Arc<Audio>, MediaError> {
+    load_known(path, shown, false)
+}
+
+/// [`load_path`] for a large sample that plays from disk: only its start is held in memory,
+/// see [`ReadAhead`]. Only for a file nothing writes over in place while it plays, such as one
+/// of the instrument library: a mapped file that is cut short ends the process.
+pub fn load_streamed(path: &Path, shown: &str) -> Result<Arc<Audio>, MediaError> {
+    load_known(path, shown, true)
+}
+
+fn load_known(path: &Path, shown: &str, streamed: bool) -> Result<Arc<Audio>, MediaError> {
     let stamp = stat(path, shown)?;
     if let Some(entry) = known().get(path)
         && (entry.length, entry.modified) == stamp
@@ -234,7 +258,7 @@ pub fn load_path(path: &Path, shown: &str) -> Result<Arc<Audio>, MediaError> {
             Outcome::Missing => {}
         }
     }
-    read(path, shown, stamp)
+    read(path, shown, stamp, streamed)
 }
 
 /// What the file a record names is: how many frames at what rate. It reads the header of the

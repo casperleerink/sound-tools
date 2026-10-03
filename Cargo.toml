@@ -52,6 +52,7 @@ cpal = "0.18"
 # The chat example of the agent crate: ctrl-c stops the turn instead of the program.
 ctrlc = "3.5"
 hound = "3.5"
+memmap2 = "0.9.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # Snapshots of what the agent driver makes of recorded runs.
 insta = "1.48"

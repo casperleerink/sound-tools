@@ -237,7 +237,7 @@ pub fn load_sfz(
             "the instrument {shown} is not there, so the Sampler is silent. Put the SFZ file and its samples under assets/instruments/, or correct `sfz`"
         )
     };
-    load(&file, root, &shown, missing, (assets, instance))
+    load((&file, root, false), &shown, missing, (assets, instance))
 }
 
 /// The library instrument `entry`, downloaded whole on this machine.
@@ -254,7 +254,13 @@ pub(crate) fn load_library(
             entry.name
         )
     };
-    load(&file, &root, entry.name, missing, (assets, instance))
+    // The library's files are the app's own, never written over in place, so they may stream.
+    load(
+        (&file, &root, true),
+        entry.name,
+        missing,
+        (assets, instance),
+    )
 }
 
 fn sfz_file(assets: &Assets, path: &SfzPath) -> PathBuf {
@@ -333,8 +339,7 @@ pub fn wait_for_loading() {
 /// before and nothing changed. `None` while it loads in the background for the Sampler
 /// `waiter`. `missing` says why when the file is not there.
 fn load(
-    file: &Path,
-    root: &Path,
+    (file, root, streamed): (&Path, &Path, bool),
     shown: &str,
     missing: impl Fn() -> String,
     (assets, instance): (&Assets, &InstanceId),
@@ -346,7 +351,7 @@ fn load(
         return Err(missing());
     }
     if !IN_BACKGROUND.load(Ordering::Relaxed) {
-        return read(file, root, shown).map(Some);
+        return read(file, root, shown, streamed).map(Some);
     }
     let mut loading = background();
     if let Some((stamped, error)) = loading.failed.get(file)
@@ -367,7 +372,7 @@ fn load(
                 let (file, root, shown) =
                     (file.to_path_buf(), root.to_path_buf(), shown.to_string());
                 move || {
-                    let read = read(&file, &root, &shown);
+                    let read = read(&file, &root, &shown, streamed);
                     let mut loading = background();
                     loading.running.remove(&file);
                     match read {
@@ -407,10 +412,10 @@ fn known(file: &Path) -> Option<Arc<Instrument>> {
 }
 
 /// Reads the instrument at `file` and keeps it in memory for the next ask.
-fn read(file: &Path, root: &Path, shown: &str) -> Result<Arc<Instrument>, String> {
+fn read(file: &Path, root: &Path, shown: &str, streamed: bool) -> Result<Arc<Instrument>, String> {
     let text = fs::read_to_string(file)
         .map_err(|error| format!("the Sampler is silent: {shown} cannot be read: {error}"))?;
-    let (instrument, files) = read_sfz(root, file, &text, shown)?;
+    let (instrument, files) = read_sfz(root, file, &text, (shown, streamed))?;
     let instrument = Arc::new(instrument);
     let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
     known.retain(|_, entry| entry.instrument.strong_count() > 0);
@@ -430,7 +435,7 @@ fn read_sfz(
     root: &Path,
     file: &Path,
     text: &str,
-    shown: &str,
+    (shown, streamed): (&str, bool),
 ) -> Result<(Instrument, Vec<Stamp>), String> {
     let folder = file.parent().unwrap_or(root).to_path_buf();
     let read = Mutex::new(vec![stamp(file)].into_iter().flatten().collect::<Vec<_>>());
@@ -453,7 +458,7 @@ fn read_sfz(
         .iter()
         .map(|region| inside(root, &folder, &region.sample))
         .collect();
-    let mut loaded = load_all(&paths, &sfz.regions);
+    let mut loaded = load_all(&paths, &sfz.regions, streamed);
     let mut zones = Vec::with_capacity(sfz.regions.len());
     let mut missing = Vec::new();
     let mut unreadable = Vec::new();
@@ -519,11 +524,13 @@ fn read_sfz(
 }
 
 /// The file of each region, `None` for one with no path. Read on every core at once: a piano
-/// is hundreds of FLAC files to decode. A file several regions name is read once, since
+/// is hundreds of FLAC files to decode. `streamed` holds only the start of each, see
+/// [`sound_media::load_streamed`]. A file several regions name is read once, since
 /// [`sound_media::load_path`] shares what it read.
 fn load_all(
     paths: &[Option<PathBuf>],
     regions: &[Region],
+    streamed: bool,
 ) -> Vec<Option<Result<Arc<Audio>, MediaError>>> {
     let next = AtomicUsize::new(0);
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
@@ -534,9 +541,10 @@ fn load_all(
             let (Some(path), Some(region)) = (paths.get(index), regions.get(index)) else {
                 return read;
             };
-            let audio = path
-                .as_ref()
-                .map(|path| sound_media::load_path(path, &region.sample));
+            let audio = path.as_ref().map(|path| match streamed {
+                true => sound_media::load_streamed(path, &region.sample),
+                false => sound_media::load_path(path, &region.sample),
+            });
             read.push((index, audio));
         }
     };
