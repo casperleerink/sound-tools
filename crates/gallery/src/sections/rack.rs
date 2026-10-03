@@ -530,6 +530,14 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
                     .on_change(update(state, |s, value| s.segment = value)),
             ),
             sample(
+                "marked",
+                cx,
+                SegmentedControl::new("type-marked", segment.clone())
+                    .options(segments)
+                    .marked(["band", "high"])
+                    .on_change(update(state, |s, value| s.segment = value)),
+            ),
+            sample(
                 "disabled",
                 cx,
                 SegmentedControl::new("type-off", segment)
