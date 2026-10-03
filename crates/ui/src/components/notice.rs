@@ -1,12 +1,13 @@
 //! Notice: a quiet line for something the composer should know and need not act on, such as
 //! a failed edit or files that did not load. A dot, the message, and an optional dismiss
 //! button. A long message wraps to at most three lines. It never blocks: float it in a corner.
+//! Work that takes a while, such as an export, shows its progress as a bar under the message.
 
 use std::rc::Rc;
 
 use gpui::{
     App, ClickEvent, Div, ElementId, FocusHandle, SharedString, StyleRefinement, Window, div,
-    prelude::*, px,
+    prelude::*, px, relative,
 };
 
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
@@ -20,6 +21,8 @@ pub enum NoticeTone {
     Error,
     /// Peach dot.
     Warning,
+    /// Grey dot: nothing is wrong, such as an export that runs.
+    Info,
 }
 
 type Handler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -30,6 +33,8 @@ pub struct Notice {
     id: ElementId,
     message: SharedString,
     tone: NoticeTone,
+    /// From 0 to 1.
+    progress: Option<f32>,
     on_dismiss: Option<Handler>,
     dismiss_focus: Option<FocusHandle>,
 }
@@ -41,6 +46,7 @@ impl Notice {
             id: id.into(),
             message: message.into(),
             tone: NoticeTone::default(),
+            progress: None,
             on_dismiss: None,
             dismiss_focus: None,
         }
@@ -48,6 +54,12 @@ impl Notice {
 
     pub fn tone(mut self, tone: NoticeTone) -> Self {
         self.tone = tone;
+        self
+    }
+
+    /// Adds a bar under the message, filled from 0 to 1.
+    pub fn progress(mut self, progress: f32) -> Self {
+        self.progress = Some(progress.clamp(0., 1.));
         self
     }
 
@@ -78,7 +90,9 @@ impl RenderOnce for Notice {
         let dot = match self.tone {
             NoticeTone::Error => theme.red,
             NoticeTone::Warning => theme.peach,
+            NoticeTone::Info => theme.gray_500,
         };
+        let (track, bar) = (theme.alpha_at(0.10), theme.gray_900);
         let (fill, border, text) = (
             theme.gray_200.blend(theme.alpha_at(0.06)),
             theme.alpha_at(0.10),
@@ -116,9 +130,19 @@ impl RenderOnce for Notice {
                 div()
                     .min_w_0()
                     .flex_1()
-                    .line_clamp(3)
-                    .text_ellipsis()
-                    .child(self.message),
+                    .child(div().line_clamp(3).text_ellipsis().child(self.message))
+                    // A value is a bright line on dark, as on a meter.
+                    .when_some(self.progress, |d, progress| {
+                        d.child(
+                            div()
+                                .mt(px(4.))
+                                .mb(px(5.))
+                                .h(px(2.))
+                                .rounded_full()
+                                .bg(track)
+                                .child(div().h_full().w(relative(progress)).rounded_full().bg(bar)),
+                        )
+                    }),
             )
             .when_some(self.on_dismiss, |d, on_dismiss| {
                 let button = Button::icon_only("notice-dismiss", "x")
