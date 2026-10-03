@@ -1,7 +1,7 @@
 //! The card of the Wavetable in the track panel, with a simulated mouse and keys: it is picked
 //! as the instrument of a track, a drag on its wavetable moves the position as one undo step,
-//! routes of its matrix are added, changed and removed one undo step each, and the switches of
-//! its sections change nothing that is saved.
+//! routes of its matrix are added, changed and removed one undo step each, and its tabs and the
+//! switches of its sections change nothing that is saved.
 
 use gpui::{TestAppContext, point, px};
 use sound_core::Changes;
@@ -39,17 +39,11 @@ fn expand(opened: &mut Opened<'_>) {
     opened.click(expand);
 }
 
-/// Scrolls the rack to its end, where the matrix is.
-fn scroll_to_the_matrix(opened: &mut Opened<'_>) {
-    let rack = opened.control("knob-osc-1-position");
-    opened.scroll(rack, -10_000., 0.);
-}
-
-/// Scrolls the rack sideways until a control is 600 pt from the left of the window.
-fn reveal(opened: &mut Opened<'_>, selector: &str) {
-    let control = opened.control(selector);
-    let rack = opened.control("knob-osc-1-position");
-    opened.scroll(rack, 600. - f32::from(control.x), 0.);
+/// Clicks the tab of a page of the expanded card: `Osc`, `Voice`, `Filter`, `Env`, `Lfo` or
+/// `Matrix`.
+fn show(opened: &mut Opened<'_>, page: &str) {
+    let tab = opened.control(&format!("segment-{page}"));
+    opened.click(tab);
 }
 
 #[gpui::test]
@@ -76,17 +70,21 @@ fn the_picker_puts_a_wavetable_with_its_card_on_the_track(cx: &mut TestAppContex
         assert!(opened.find(shown).is_some(), "{shown}");
     }
     assert_eq!(opened.find("knob-osc-2-position"), None);
+    // Expanded, one page at a time, the oscillators first.
     expand(&mut opened);
-    for hidden in [
-        "knob-osc-2-position",
-        "knob-osc-1-detune_cents",
-        "knob-filter-2-cutoff_hz",
-        "knob-amp-env-attack_seconds",
-        "knob-lfo-1-rate_hz",
-        "knob-voicing-glide_seconds",
+    for (page, shown) in [
+        ("Osc", "knob-osc-2-position"),
+        ("Osc", "knob-osc-1-detune_cents"),
+        ("Voice", "knob-voicing-glide_seconds"),
+        ("Filter", "knob-filter-2-cutoff_hz"),
+        ("Env", "knob-amp-env-attack_seconds"),
+        ("Lfo", "knob-lfo-1-rate_hz"),
+        ("Matrix", "route-add"),
     ] {
-        assert!(opened.find(hidden).is_some(), "{hidden}");
+        show(&mut opened, page);
+        assert!(opened.find(shown).is_some(), "{shown}");
     }
+    assert_eq!(opened.find("knob-osc-2-position"), None);
     // Picked from the menu, not defaulted: undo gives the synth back.
     opened.keys("cmd-z");
     assert!(
@@ -148,7 +146,7 @@ fn a_drag_on_the_wavetable_moves_the_position_as_one_undo_step(cx: &mut TestAppC
 fn routes_are_added_changed_and_removed_one_undo_step_each(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     expand(&mut opened);
-    scroll_to_the_matrix(&mut opened);
+    show(&mut opened, "Matrix");
     let before = state(&mut opened).matrix;
     let routes = before.len();
 
@@ -192,19 +190,21 @@ fn routes_are_added_changed_and_removed_one_undo_step_each(cx: &mut TestAppConte
     assert_eq!(opened.undo_label(), None);
 }
 
-/// Which envelope and which LFO the sections show is interface state: a switch writes nothing
-/// and is no undo step, and the knobs follow it.
+/// Which page, envelope and LFO the card shows is interface state: a tab or a switch writes
+/// nothing and is no undo step, and the knobs follow it.
 #[gpui::test]
-fn the_switches_of_the_sections_change_no_record(cx: &mut TestAppContext) {
+fn the_tabs_and_the_switches_of_the_sections_change_no_record(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     expand(&mut opened);
     let before = support::mark(&mut opened);
+    show(&mut opened, "Env");
+    assert_eq!(opened.find("knob-osc-2-position"), None);
     assert!(opened.find("knob-amp-env-attack_seconds").is_some());
-    reveal(&mut opened, "segment-Env2");
     let env_2 = opened.control("segment-Env2");
     opened.click(env_2);
     assert_eq!(opened.find("knob-amp-env-attack_seconds"), None);
     assert!(opened.find("knob-env-2-attack_seconds").is_some());
+    show(&mut opened, "Lfo");
     let lfo_2 = opened.control("segment-Lfo2");
     opened.click(lfo_2);
     assert!(opened.find("knob-lfo-2-rate_hz").is_some());

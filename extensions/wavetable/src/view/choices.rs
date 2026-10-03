@@ -212,6 +212,43 @@ impl Choice for Destination {
     }
 }
 
+/// Which sections the expanded card shows, as the tabs in its header pick. Interface state:
+/// not saved.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Page {
+    /// The rest of the first oscillator and the second.
+    #[default]
+    Osc,
+    /// The sub, the unison and the voicing.
+    Voice,
+    Filter,
+    Env,
+    Lfo,
+    Matrix,
+}
+
+impl Choice for Page {
+    const ALL: &'static [Self] = &[
+        Self::Osc,
+        Self::Voice,
+        Self::Filter,
+        Self::Env,
+        Self::Lfo,
+        Self::Matrix,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Osc => "Osc",
+            Self::Voice => "Voice",
+            Self::Filter => "Filter",
+            Self::Env => "Env",
+            Self::Lfo => "LFO",
+            Self::Matrix => "Matrix",
+        }
+    }
+}
+
 /// Which envelope the envelope section shows. Interface state: not saved.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EnvelopeShown {
@@ -275,6 +312,7 @@ mod tests {
         every_option_comes_back_from_its_key::<Feel>();
         every_option_comes_back_from_its_key::<Source>();
         every_option_comes_back_from_its_key::<Destination>();
+        every_option_comes_back_from_its_key::<Page>();
         every_option_comes_back_from_its_key::<EnvelopeShown>();
         every_option_comes_back_from_its_key::<LfoShown>();
     }

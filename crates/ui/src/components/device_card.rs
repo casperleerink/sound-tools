@@ -3,11 +3,13 @@
 //! 16 pt from each side of the card. So a card is 32 pt plus its display plus 8 plus 56 per
 //! column wide. Expanding it shows the columns it hides to the right of a hairline: the card
 //! gets wider and never taller. A card with much behind expand, such as the Wavetable, hides
-//! [`Section`]s: each a display and its columns, or a list, after a hairline of its own.
+//! [`Section`]s: each a display and its columns, or a list, after a hairline of its own, and
+//! picks which of them show with tabs in its header.
 //!
 //! The header: the title at 16 pt from the left, which is the picker of the slot in a rack, and
 //! at the right, 8 pt from the edge, icons in 24 pt targets 4 pt apart: expand, power and close,
-//! each only when the owner gives it. Power off draws the glyph and the title muted and the body
+//! each only when the owner gives it. Left of them, while the card is expanded, its tabs: a card
+//! with many sections, such as the Wavetable, shows one page of them at a time. Power off draws the glyph and the title muted and the body
 //! at 40 %.
 //!
 //! The card knows no device. It shows what it is given and reports clicks; whether it is
@@ -235,6 +237,7 @@ pub struct DeviceCard {
     id: ElementId,
     title: AnyElement,
     expand: Option<(bool, ClickHandler)>,
+    tabs: Option<AnyElement>,
     power: Option<(IsOn, ClickHandler)>,
     close: Option<ClickHandler>,
     grip: Option<Grip>,
@@ -254,6 +257,7 @@ impl DeviceCard {
             id: id.into(),
             title: title.into_any_element(),
             expand: None,
+            tabs: None,
             power: None,
             close: None,
             grip: None,
@@ -272,6 +276,13 @@ impl DeviceCard {
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.expand = Some((expanded, Box::new(on_click)));
+        self
+    }
+
+    /// What picks the page of sections the expanded card shows, such as a segmented control.
+    /// It shows in the header, left of the icons, only while the card is expanded.
+    pub fn tabs(mut self, tabs: impl IntoElement) -> Self {
+        self.tabs = Some(tabs.into_any_element());
         self
     }
 
@@ -393,6 +404,7 @@ impl RenderOnce for DeviceCard {
         let on = self.power.as_ref().is_none_or(|(is_on, _)| is_on(cx));
         let expanded = self.expand.as_ref().is_some_and(|(expanded, _)| *expanded);
 
+        let tabs = self.tabs.filter(|_| expanded);
         let mut icons = Vec::new();
         if let Some((expanded, on_click)) = self.expand {
             let chevron = if expanded {
@@ -438,6 +450,7 @@ impl RenderOnce for DeviceCard {
                     .when(!on, |title| title.opacity(0.6))
                     .child(self.title),
             )
+            .children(tabs.map(|tabs| div().flex_none().mr(px(ICON_GAP)).child(tabs)))
             .children(icons);
         let header = match self.grip {
             Some(grip) => grip(header),
