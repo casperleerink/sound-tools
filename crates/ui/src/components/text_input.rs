@@ -1214,13 +1214,17 @@ impl Element for TextElement {
                 .map_or(px(0.), |row| layout.x_for(row, caret));
             (
                 Vec::new(),
-                Some(fill(
-                    Bounds::new(
-                        point(left + x, row_top(caret_row)),
-                        size(px(1.5), line_height),
-                    ),
-                    cursor_color,
-                )),
+                // As drawn by macOS: 2 px wide, rounded, in the accent color.
+                Some(
+                    fill(
+                        Bounds::new(
+                            point(left + x, row_top(caret_row)),
+                            size(px(2.), line_height),
+                        ),
+                        cursor_color,
+                    )
+                    .corner_radii(px(1.)),
+                ),
             )
         } else {
             let selections = rows::selection_spans(&layout.rows, &selected_range)
