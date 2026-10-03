@@ -8,7 +8,8 @@
 //!   file` in the lavender ring.
 //! - `sampler-instruments.png`: its Instrument select open: the file, then the library by
 //!   category with the size of each download.
-//! - `sampler-library.png`: a Sampler of a library instrument this machine does not have.
+//! - `sampler-library.png`: a Sampler of a library instrument this machine does not have:
+//!   its name, library and licence over `Download · 73 MB`.
 //! - `sampler-empty.png`: a new Sampler: `Drop an audio file here` over `Choose file`.
 //! - `sampler-drop.png`: a file over the empty display: `Drop to load the file`.
 //! - `sampler-missing.png`: a Sampler whose file is not in the project.
@@ -193,7 +194,9 @@ pub(crate) fn snapshots(
     })?;
     drop(opened);
 
-    // A library instrument this machine does not have: the test has no library.
+    // A library instrument this machine does not have, in an empty library: `Download`.
+    let library = tempfile::tempdir()?;
+    sampler::library::set_folder(library.path().to_path_buf());
     let opened = Opened::new(cx, |project| {
         piece(project)?;
         let cello = SamplerState {
