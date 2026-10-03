@@ -89,6 +89,7 @@ fn the_sampler_comes_back_after_close_and_reopen_and_renders_the_same() {
     let sampler = harness.project.resolve::<SamplerState>(&id).unwrap();
     let sound = SamplerState {
         sample: Some(AudioAsset::new("kalimba.wav").unwrap()),
+        sfz: None,
         root: Pitch::new(72).unwrap(),
         start_seconds: 0.012,
         end_seconds: Some(1.18),

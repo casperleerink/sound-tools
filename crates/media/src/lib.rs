@@ -16,8 +16,9 @@
 //! - [`TakeFile`] is a recording on its way in: a WAV file that grows while it records.
 //!
 //! The WAV and AIFF parser is our own. These files are a few chunks around plain samples, and
-//! a decoding library would only add a copy of what the file already holds. Compressed formats
-//! are not read.
+//! a decoding library would only add a copy of what the file already holds. FLAC, which free
+//! sample libraries use, is decoded whole into memory with `claxon` when it is read, so the
+//! audio thread reads it as plainly as a WAV file. Other compressed formats are not read.
 
 mod file;
 mod overview;
@@ -37,7 +38,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 use sound_core::{ASSETS_FOLDER, AssetName, Assets, InvalidAssetName};
 
-pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES};
+pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES, SampleLoop};
 pub use overview::{FINEST_FRAMES, Overview};
 pub use resample::{Resampler, SCRATCH_FRAMES};
 pub use take::{TakeFile, TakeOverview};
@@ -213,10 +214,14 @@ fn read(
 /// For the control side only: it may read a file. What it gives is safe to hand to the audio
 /// thread inside a snapshot.
 pub fn load(assets: &Assets, asset: &AudioAsset) -> Result<Arc<Audio>, MediaError> {
-    let path = assets.path(asset.asset_name());
-    let shown = asset.project_path();
-    let stamp = stat(&path, &shown)?;
-    if let Some(entry) = known().get(&path)
+    load_path(&assets.path(asset.asset_name()), &asset.project_path())
+}
+
+/// [`load`] for a file at any path, such as a sample of an instrument library in nested
+/// folders. `shown` is how messages name the file.
+pub fn load_path(path: &Path, shown: &str) -> Result<Arc<Audio>, MediaError> {
+    let stamp = stat(path, shown)?;
+    if let Some(entry) = known().get(path)
         && (entry.length, entry.modified) == stamp
     {
         match &entry.outcome {
@@ -225,11 +230,11 @@ pub fn load(assets: &Assets, asset: &AudioAsset) -> Result<Arc<Audio>, MediaErro
                     return Ok(audio);
                 }
             }
-            Outcome::DoesNotPlay(error) => return Err(format_error(&shown, error.clone())),
+            Outcome::DoesNotPlay(error) => return Err(format_error(shown, error.clone())),
             Outcome::Missing => {}
         }
     }
-    read(&path, &shown, stamp)
+    read(path, shown, stamp)
 }
 
 /// What the file a record names is: how many frames at what rate. It reads the header of the
@@ -357,7 +362,12 @@ pub fn import(assets: &Assets, source: &Path) -> Result<Imported, MediaError> {
             source,
         },
     })?;
-    let audio = Audio::parse(bytes).map_err(|source| MediaError::Format {
+    let parsed = match file::is_flac(&bytes) {
+        // A FLAC file is held decoded, so the copy is written from the bytes read here.
+        true => Audio::decode_flac(&bytes).map(|audio| (audio, Some(bytes))),
+        false => Audio::parse(bytes).map(|audio| (audio, None)),
+    };
+    let (audio, flac) = parsed.map_err(|source| MediaError::Format {
         path: shown.clone(),
         source,
     })?;
@@ -383,7 +393,7 @@ pub fn import(assets: &Assets, source: &Path) -> Result<Imported, MediaError> {
     static IMPORTS: AtomicU64 = AtomicU64::new(0);
     let count = IMPORTS.fetch_add(1, Ordering::Relaxed);
     let temporary = folder.join(format!(".import-{}-{count}.tmp", std::process::id()));
-    let written = fs::write(&temporary, audio.file_bytes());
+    let written = fs::write(&temporary, flac.as_deref().unwrap_or(audio.file_bytes()));
     let reserved = written
         .map_err(|source| io_error(&shown, source))
         .and_then(|()| {

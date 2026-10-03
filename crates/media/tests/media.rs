@@ -1,12 +1,15 @@
 #![allow(clippy::unwrap_used)]
-//! Reading WAV and AIFF, playing at another rate, and importing into a project.
+//! Reading WAV, AIFF and FLAC, playing at another rate, and importing into a project.
 
 use std::f64::consts::TAU;
 use std::path::Path;
 use std::sync::Arc;
 
 use sound_core::Assets;
-use sound_media::{Audio, AudioAsset, Encoding, MediaError, Resampler, SCRATCH_FRAMES, varispeed};
+use sound_media::{
+    Audio, AudioAsset, Container, Encoding, Info, MediaError, Resampler, SCRATCH_FRAMES,
+    SampleLoop, varispeed,
+};
 
 /// A WAV file of these frames, through `hound`, which is not the code under test.
 fn wav(
@@ -775,4 +778,160 @@ fn a_data_chunk_of_no_length_followed_by_a_long_chunk_probes_as_it_loads() {
     std::fs::write(&path, &bytes).unwrap();
     assert_eq!(sound_media::probe(&path).unwrap().frames, 0);
     assert_eq!(Audio::parse(bytes).unwrap().frames(), 0);
+}
+
+/// The FLAC files in `tests/fixtures/`, made with `flac -8 --no-padding --no-seektable` from
+/// 300 frames of WAV of these samples: (name, bits, channels, rate).
+const FLAC_FIXTURES: [(&str, u16, u16, u32); 2] =
+    [("stereo-16", 16, 2, 44_100), ("mono-24", 24, 1, 48_000)];
+
+/// The sample of a FLAC fixture: a hash of its place, wrapped into the range of `bits`, so
+/// the encoder can predict little of it.
+fn fixture_sample(frame: u64, channel: u64, bits: u16) -> i32 {
+    let full = 1_u64 << bits;
+    let value = (frame * 2_654_435_761 + channel * 104_729) % full;
+    (value as i64 - (full / 2) as i64) as i32
+}
+
+fn fixture(name: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/{name}.flac"))
+}
+
+#[test]
+fn a_flac_file_reads_as_the_samples_of_the_wav_it_was_made_from() {
+    let folder = tempfile::tempdir().unwrap();
+    for (name, bits, channels, rate) in FLAC_FIXTURES {
+        let path = folder.path().join(format!("{name}.wav"));
+        let spec = hound::WavSpec {
+            channels,
+            sample_rate: rate,
+            bits_per_sample: bits,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+        for frame in 0..300 {
+            for channel in 0..u64::from(channels) {
+                writer
+                    .write_sample(fixture_sample(frame, channel, bits))
+                    .unwrap();
+            }
+        }
+        writer.finalize().unwrap();
+        let (wav, expected) = read_all(&path);
+        let (flac, read) = read_all(&fixture(name));
+        assert_eq!(flac.container(), Container::Flac);
+        assert_eq!(flac.encoding(), wav.encoding(), "{name}");
+        assert_eq!(flac.info().frames, 300, "{name}");
+        assert_eq!(read, expected, "{name}");
+        // It holds its decoded samples.
+        assert_eq!(flac.memory(), 300 * usize::from(bits / 8 * channels));
+    }
+}
+
+#[test]
+fn the_header_of_a_flac_file_says_what_it_is() {
+    for (name, _, channels, rate) in FLAC_FIXTURES {
+        let path = fixture(name);
+        let probed = sound_media::probe(&path).unwrap();
+        let expected = Info {
+            frames: 300,
+            channels,
+            sample_rate: rate,
+            container: Container::Flac,
+        };
+        assert_eq!(probed, expected, "{name}");
+        let (audio, _) = read_all(&path);
+        assert_eq!(audio.info(), expected, "{name}");
+    }
+}
+
+#[test]
+fn an_imported_flac_file_is_copied_as_it_is() {
+    let project = tempfile::tempdir().unwrap();
+    let assets = Assets::new(project.path());
+    let source = fixture("stereo-16");
+    let imported = sound_media::import(&assets, &source).unwrap();
+    assert_eq!(imported.asset.to_string(), "stereo-16.flac");
+    let copied = project.path().join("assets/audio/stereo-16.flac");
+    assert_eq!(
+        std::fs::read(&copied).unwrap(),
+        std::fs::read(&source).unwrap()
+    );
+    assert_eq!(
+        sound_media::load(&assets, &imported.asset)
+            .unwrap()
+            .frames(),
+        300
+    );
+}
+
+/// The body of a `smpl` chunk with these loops: (type, start, end).
+fn smpl(loops: &[(u32, u32, u32)]) -> Vec<u8> {
+    let mut body = vec![0; 28];
+    body.extend((loops.len() as u32).to_le_bytes());
+    body.extend(0_u32.to_le_bytes());
+    for (index, (kind, start, end)) in loops.iter().enumerate() {
+        for field in [index as u32, *kind, *start, *end, 0, 0] {
+            body.extend(field.to_le_bytes());
+        }
+    }
+    body
+}
+
+/// A WAV file of 300 frames, with `smpl` after its data chunk when it has `loops`.
+fn wav_with_loops(path: &Path, loops: Option<&[(u32, u32, u32)]>) -> Vec<u8> {
+    let silence = vec![[0.0; 2]; 300];
+    wav(path, 44_100, 2, (16, hound::SampleFormat::Int), &silence);
+    let mut bytes = std::fs::read(path).unwrap();
+    if let Some(loops) = loops {
+        let body = smpl(loops);
+        bytes.extend(b"smpl");
+        bytes.extend((body.len() as u32).to_le_bytes());
+        bytes.extend(body);
+        let riff = (bytes.len() - 8) as u32;
+        bytes[4..8].copy_from_slice(&riff.to_le_bytes());
+        std::fs::write(path, &bytes).unwrap();
+    }
+    bytes
+}
+
+#[test]
+fn a_wav_file_gives_the_first_forward_loop_of_its_smpl_chunk_after_its_data() {
+    const FORWARD: u32 = 0;
+    const BACKWARD: u32 = 2;
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("loop.wav");
+    let cases: [(Option<&[(u32, u32, u32)]>, Option<SampleLoop>); 6] = [
+        (None, None),
+        (
+            Some(&[(FORWARD, 10, 299)]),
+            Some(SampleLoop {
+                start: 10,
+                end: 299,
+            }),
+        ),
+        (
+            Some(&[(BACKWARD, 0, 5), (FORWARD, 20, 100), (FORWARD, 30, 40)]),
+            Some(SampleLoop {
+                start: 20,
+                end: 100,
+            }),
+        ),
+        // A one-frame loop is a loop.
+        (
+            Some(&[(FORWARD, 7, 7)]),
+            Some(SampleLoop { start: 7, end: 7 }),
+        ),
+        // An end past the last frame, or before the start, is no loop.
+        (Some(&[(FORWARD, 10, 300)]), None),
+        (Some(&[(FORWARD, 50, 40)]), None),
+    ];
+    for (loops, expected) in cases {
+        let bytes = wav_with_loops(&path, loops);
+        let audio = Audio::parse(bytes).unwrap();
+        assert_eq!(audio.frames(), 300, "{loops:?}");
+        assert_eq!(audio.sample_loop(), expected, "{loops:?}");
+        // The chunk after the samples changes nothing of what the header says.
+        assert_eq!(sound_media::probe(&path).unwrap().frames, 300, "{loops:?}");
+    }
 }

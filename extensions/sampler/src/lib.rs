@@ -1,5 +1,5 @@
-//! Sampler: one sample played across the keyboard. It plays the note events of the
-//! `sound-notes` contract, and reads its file through `sound-media`.
+//! Sampler: one sample played across the keyboard, or an SFZ instrument of many. It plays the
+//! note events of the `sound-notes` contract, and reads its files through `sound-media`.
 //!
 //! A record on disk, `instrument.json` inside a track folder:
 //!
@@ -20,9 +20,14 @@
 //! }
 //! ```
 //!
+//! With `"sfz": "cello/cello.sfz"` instead of `sample` it plays the SFZ file
+//! `assets/instruments/cello/cello.sfz` and the samples it names ([`sfz`], [`instrument`]).
+//!
 //! [`view`] is the card of the sampler, and the only module here that uses GPUI.
 
+pub mod instrument;
 mod processor;
+pub mod sfz;
 pub mod view;
 
 use std::sync::Arc;
@@ -35,7 +40,8 @@ use sound_core::{
 use sound_media::{Audio, AudioAsset, MediaError};
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
 
-pub use processor::{Sampler, SamplerUpdate, VOICES};
+pub use instrument::{INSTRUMENTS_FOLDER, Instrument, SfzPath};
+pub use processor::{LAYERS, Sampler, SamplerUpdate, VOICES};
 
 /// The name to enable in `project.json`, and the tool.
 pub const EXTENSION: &str = "sampler";
@@ -51,9 +57,14 @@ pub const POSITION: &str = "position";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct SamplerState {
-    /// The file it plays, under `assets/audio/`. None is an empty sampler.
+    /// The file it plays, under `assets/audio/`. None is an empty sampler, unless it has `sfz`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sample: Option<AudioAsset>,
+    /// The SFZ instrument it plays instead of `sample`, under `assets/instruments/`. Its zones
+    /// have their own pitch, part of the file and envelope, so only the gain of the record
+    /// applies to it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sfz: Option<SfzPath>,
     /// The key that plays the sample at its own pitch.
     pub root: Pitch,
     /// Where in the file a note starts, in seconds of the file.
@@ -163,6 +174,7 @@ impl Default for SamplerState {
     fn default() -> Self {
         Self {
             sample: None,
+            sfz: None,
             root: Pitch::nearest(ROOT.default as i64),
             start_seconds: 0.0,
             end_seconds: None,
@@ -180,6 +192,9 @@ impl State for SamplerState {
     const TOOL: &'static str = EXTENSION;
 
     fn validate(&self) -> Result<(), String> {
+        if self.sample.is_some() && self.sfz.is_some() {
+            return Err("a Sampler plays `sample` or `sfz`, not both: leave one out".to_string());
+        }
         PARAMETERS
             .iter()
             .try_for_each(|parameter| parameter.check(self))?;
@@ -201,25 +216,50 @@ impl State for SamplerState {
 /// The doc of the sampler record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "sampler",
-    when: "A track plays an audio file across the keyboard",
+    when: "A track plays an audio file across the keyboard, or a sampled instrument (SFZ)",
     markdown: include_str!("../agent-doc.md"),
+};
+
+/// How to write an SFZ instrument, apart, so an agent reads it only to make one.
+pub const SFZ_AGENT_DOC: AgentDoc = AgentDoc {
+    name: "sfz",
+    when: "Making an SFZ instrument from samples",
+    markdown: include_str!("../sfz-agent-doc.md"),
 };
 
 /// Registers the sampler tool. Call it before the project opens.
 ///
 /// A sampler whose file is missing runs its behaviour again when a file under `assets/audio/`
-/// arrives, so an agent may write the record first and copy the file in after it.
+/// or `assets/instruments/` arrives, so an agent may write the record first and copy the files
+/// in after it.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<SamplerState>(EXTENSION)?
         .behaviour(apply)
-        .rebinds_on_assets(sound_media::AUDIO_FOLDER);
+        .rebinds_on_assets(sound_media::AUDIO_FOLDER)
+        .rebinds_on_assets(INSTRUMENTS_FOLDER);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
+    registry.agent_doc(EXTENSION, SFZ_AGENT_DOC)?;
     Ok(())
 }
 
-/// The file of the state, read on this thread the first time something names it, see
-/// [`sound_media::load`], or a line for `problems.txt` that says why it plays nothing.
+/// What the state plays, read on this thread the first time something names it, or a line for
+/// `problems.txt` that says why it plays nothing. An empty line is an empty Sampler.
+fn instrument(
+    state: &SamplerState,
+    context: &mut BehaviourContext<'_>,
+) -> Result<Arc<Instrument>, String> {
+    if let Some(path) = &state.sfz {
+        let instrument = instrument::load_sfz(context.assets(), path)?;
+        if let Some(problem) = instrument.problem() {
+            context.problem(problem.to_string());
+        }
+        return Ok(instrument);
+    }
+    sample(state, context).map(|audio| Arc::new(Instrument::of_sample(audio)))
+}
+
+/// The file of the state, see [`sound_media::load`].
 fn sample(state: &SamplerState, context: &BehaviourContext<'_>) -> Result<Arc<Audio>, String> {
     let Some(asset) = &state.sample else {
         return Err(String::new());
@@ -243,8 +283,8 @@ fn sample(state: &SamplerState, context: &BehaviourContext<'_>) -> Result<Arc<Au
 /// Runs for every valid state, from every source. The processor is kept between runs, so held
 /// notes go on through parameter edits.
 fn apply(state: &SamplerState, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
-    let sample = match sample(state, context) {
-        Ok(sample) => Some(sample),
+    let instrument = match instrument(state, context) {
+        Ok(instrument) => Some(instrument),
         Err(problem) => {
             if !problem.is_empty() {
                 context.problem(problem);
@@ -254,7 +294,7 @@ fn apply(state: &SamplerState, context: &mut BehaviourContext<'_>) -> Result<(),
     };
     let position = context.peaks(POSITION);
     let sampler = context.processor("sampler", || Sampler::new(position))?;
-    context.update(sampler, SamplerUpdate::new(state, sample))?;
+    context.update(sampler, SamplerUpdate::new(state, instrument))?;
     context.input(NOTES_INPUT, InputEndpoint::new(sampler, Sampler::NOTES));
     context.automation(sampler, Sampler::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(sampler, Sampler::OUTPUT));

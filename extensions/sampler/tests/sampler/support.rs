@@ -123,7 +123,11 @@ pub(crate) fn note(start_frame: u64, length_frames: u64, pitch: u8, velocity: u8
 
 /// A float WAV of these mono samples at `rate`, as `assets/audio/<name>`.
 pub(crate) fn write_sample(folder: &std::path::Path, name: &str, rate: u32, samples: &[f32]) {
-    let path = folder.join("assets/audio").join(name);
+    write_wav(&folder.join("assets/audio").join(name), rate, samples);
+}
+
+/// A float WAV of these mono samples at `rate`, at `path`.
+pub(crate) fn write_wav(path: &std::path::Path, rate: u32, samples: &[f32]) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let spec = hound::WavSpec {
         channels: 1,
@@ -131,7 +135,7 @@ pub(crate) fn write_sample(folder: &std::path::Path, name: &str, rate: u32, samp
         bits_per_sample: 32,
         sample_format: hound::SampleFormat::Float,
     };
-    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+    let mut writer = hound::WavWriter::create(path, spec).unwrap();
     for sample in samples {
         writer.write_sample(*sample).unwrap();
     }

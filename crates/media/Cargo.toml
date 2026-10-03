@@ -8,6 +8,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+claxon.workspace = true
 hound.workspace = true
 serde.workspace = true
 sound-core.workspace = true

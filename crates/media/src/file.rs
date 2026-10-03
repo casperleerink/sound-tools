@@ -1,9 +1,14 @@
-//! WAV and AIFF files, read whole into memory and kept as their own bytes.
+//! WAV and AIFF files, read whole into memory and kept as their own bytes, and FLAC files,
+//! decoded whole.
 //!
 //! A file is parsed once, on the control side: where its samples start, how they are encoded,
 //! how many channels and frames it has and at what rate. The samples themselves are not
 //! converted. They stay as the bytes of the file, so a file costs its size on disk and no
 //! more, and [`Audio::read`] turns the frames a block needs into `f32` on the audio thread.
+//!
+//! A FLAC file is the exception: its samples are compressed, so it is decoded once into the
+//! plain samples a WAV file would hold. Reading it on the audio thread is then the same plain
+//! read, and it costs the size of those samples.
 
 use std::fmt;
 
@@ -14,9 +19,9 @@ pub const SAMPLE_RATES: (u32, u32) = (8_000, 384_000);
 /// Why the bytes of a file are no audio this reads.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum FormatError {
-    #[error("it is not a WAV or AIFF file")]
+    #[error("it is not a WAV, AIFF or FLAC file")]
     NotAudio,
-    #[error("it is a {0} file, and only WAV and AIFF with plain samples are read")]
+    #[error("it is a {0} file, and only WAV and AIFF with plain samples, and FLAC, are read")]
     Unsupported(String),
     #[error("it is damaged: {0}")]
     Damaged(&'static str),
@@ -85,6 +90,7 @@ impl Encoding {
 pub enum Container {
     Wav,
     Aiff,
+    Flac,
 }
 
 impl Container {
@@ -93,6 +99,7 @@ impl Container {
         match self {
             Self::Wav => "wav",
             Self::Aiff => "aiff",
+            Self::Flac => "flac",
         }
     }
 }
@@ -102,6 +109,7 @@ impl fmt::Display for Container {
         formatter.write_str(match self {
             Self::Wav => "WAV",
             Self::Aiff => "AIFF",
+            Self::Flac => "FLAC",
         })
     }
 }
@@ -122,7 +130,16 @@ impl Info {
     }
 }
 
-/// One audio file in memory: its bytes as they are on disk, and where its samples are.
+/// A loop of a sample, in frames of the file. `end` is the last frame that plays, inclusive,
+/// as a WAV `smpl` chunk and the SFZ `loop_end` count it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SampleLoop {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// One audio file in memory: its bytes as they are on disk, and where its samples are. For a
+/// FLAC file, its decoded samples.
 ///
 /// Immutable. The control side shares it with the audio thread through an `Arc`, inside a
 /// snapshot, so it is never dropped there.
@@ -135,6 +152,7 @@ pub struct Audio {
     sample_rate: u32,
     encoding: Encoding,
     container: Container,
+    sample_loop: Option<SampleLoop>,
 }
 
 impl fmt::Debug for Audio {
@@ -151,10 +169,19 @@ impl fmt::Debug for Audio {
 }
 
 impl Audio {
-    /// Reads the layout of a WAV or AIFF file from its bytes and keeps them.
+    /// Reads the layout of a WAV or AIFF file from its bytes and keeps them. A FLAC file is
+    /// decoded, and its samples kept instead.
     pub fn parse(bytes: Vec<u8>) -> Result<Self, FormatError> {
+        if is_flac(&bytes) {
+            return Self::decode_flac(&bytes);
+        }
         let layout = checked_layout(&bytes, bytes.len())?;
         let frames = frames_of(&layout, bytes.len());
+        // A file written as a stream has no chunks after its samples to look in.
+        let sample_loop = match (layout.container, layout.length) {
+            (Container::Wav, Some(_)) => wav_loop(&bytes, frames),
+            _ => None,
+        };
         Ok(Self {
             bytes,
             data: layout.data,
@@ -163,6 +190,52 @@ impl Audio {
             sample_rate: layout.sample_rate,
             encoding: layout.encoding,
             container: layout.container,
+            sample_loop,
+        })
+    }
+
+    /// Decodes a whole FLAC file into plain little-endian samples, each in the fewest whole
+    /// bytes that hold it and at their top, as a WAV file holds them, so the value is exact.
+    pub(crate) fn decode_flac(bytes: &[u8]) -> Result<Self, FormatError> {
+        let mut reader = claxon::FlacReader::new(bytes).map_err(flac_error)?;
+        let stream = reader.streaminfo();
+        let (channels, encoding) = checked_flac(&stream)?;
+        let size = encoding.size();
+        let shift = (size as u32 * 8).saturating_sub(stream.bits_per_sample);
+        let frame_size = size * usize::from(channels);
+        // The header says how long it is, but a damaged one may say anything: never reserve
+        // much more than the compressed bytes could hold.
+        let said = stream.samples.unwrap_or_default();
+        let said = usize::try_from(said).unwrap_or(usize::MAX);
+        let capacity = said
+            .saturating_mul(frame_size)
+            .min(bytes.len().saturating_mul(8));
+        let mut samples = Vec::with_capacity(capacity);
+        let mut blocks = reader.blocks();
+        let mut buffer = Vec::new();
+        while let Some(block) = blocks.read_next_or_eof(buffer).map_err(flac_error)? {
+            if block.channels() != u32::from(channels) {
+                return Err(FormatError::Damaged(
+                    "its frames have another number of channels than its header",
+                ));
+            }
+            for frame in 0..block.duration() {
+                for channel in 0..block.channels() {
+                    let sample = block.sample(channel, frame) << shift;
+                    samples.extend_from_slice(sample.to_le_bytes().get(..size).unwrap_or_default());
+                }
+            }
+            buffer = block.into_buffer();
+        }
+        Ok(Self {
+            frames: (samples.len() / frame_size) as u64,
+            bytes: samples,
+            data: 0,
+            channels,
+            sample_rate: stream.sample_rate,
+            encoding,
+            container: Container::Flac,
+            sample_loop: None,
         })
     }
 
@@ -200,12 +273,20 @@ impl Audio {
         self.info().seconds()
     }
 
-    /// The bytes this file takes in memory, which is its size on disk.
+    /// The loop the file gives its sample, from the `smpl` chunk of a WAV file: its first
+    /// forward loop, when that lies inside the file. AIFF and FLAC files give none.
+    pub fn sample_loop(&self) -> Option<SampleLoop> {
+        self.sample_loop
+    }
+
+    /// The bytes this file takes in memory: its size on disk, or for a FLAC file the size of
+    /// its decoded samples.
     pub fn memory(&self) -> usize {
         self.bytes.len()
     }
 
-    /// The whole file as it is on disk.
+    /// The whole file as it is on disk, for a WAV or AIFF file. A FLAC file holds its decoded
+    /// samples here instead.
     pub(crate) fn file_bytes(&self) -> &[u8] {
         &self.bytes
     }
@@ -305,14 +386,73 @@ fn checked_layout(bytes: &[u8], size: usize) -> Result<Layout, FormatError> {
         Some(b"RF64") => return Err(FormatError::Unsupported("RF64".to_string())),
         _ => return Err(FormatError::NotAudio),
     };
+    check(layout.sample_rate, layout.channels)?;
+    Ok(layout)
+}
+
+/// What every file must be to play, whatever its container.
+fn check(sample_rate: u32, channels: u16) -> Result<(), FormatError> {
     let (min, max) = SAMPLE_RATES;
-    if !(min..=max).contains(&layout.sample_rate) {
-        return Err(FormatError::SampleRate(layout.sample_rate));
+    if !(min..=max).contains(&sample_rate) {
+        return Err(FormatError::SampleRate(sample_rate));
     }
-    if layout.channels == 0 {
+    if channels == 0 {
         return Err(FormatError::Damaged("it says it has no channels"));
     }
-    Ok(layout)
+    Ok(())
+}
+
+pub(crate) fn is_flac(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"fLaC")
+}
+
+/// The channels of a FLAC stream and how its decoded samples are held, with what this reads
+/// checked: the one place that decides whether a FLAC file plays, for [`Audio::parse`] and
+/// [`probe`] alike.
+fn checked_flac(stream: &claxon::metadata::StreamInfo) -> Result<(u16, Encoding), FormatError> {
+    let channels = u16::try_from(stream.channels).unwrap_or(0);
+    check(stream.sample_rate, channels)?;
+    let bits = stream.bits_per_sample;
+    let size = usize::try_from(bits.div_ceil(8)).unwrap_or(usize::MAX);
+    let encoding = Encoding::signed(size, true)
+        .ok_or_else(|| FormatError::Unsupported(format!("FLAC of {bits}-bit samples")))?;
+    Ok((channels, encoding))
+}
+
+/// What a FLAC file is, from its first bytes: the stream header, never the samples. `size` is
+/// the length of the whole file, of which `bytes` may be only the start.
+fn flac_info(bytes: &[u8], size: usize) -> Result<Info, FormatError> {
+    let options = claxon::FlacReaderOptions {
+        metadata_only: true,
+        read_vorbis_comment: false,
+    };
+    let stream = claxon::FlacReader::new_ext(bytes, options)
+        .map_err(flac_error)?
+        .streaminfo();
+    let (channels, _) = checked_flac(&stream)?;
+    let frames = match stream.samples {
+        Some(frames) => frames,
+        // A file written as a stream may not say how long it is: only decoding all of it tells.
+        None if bytes.len() >= size => Audio::decode_flac(bytes)?.frames,
+        None => return Err(FormatError::Damaged("its length is not read yet")),
+    };
+    Ok(Info {
+        frames,
+        channels,
+        sample_rate: stream.sample_rate,
+        container: Container::Flac,
+    })
+}
+
+fn flac_error(error: claxon::Error) -> FormatError {
+    match error {
+        claxon::Error::FormatError(reason) => FormatError::Damaged(reason),
+        claxon::Error::Unsupported(feature) => {
+            FormatError::Unsupported(format!("FLAC ({feature})"))
+        }
+        // The reader reads from memory, so it fails only where the bytes end.
+        claxon::Error::IoError(_) => FormatError::Damaged("it is cut short"),
+    }
 }
 
 /// How many whole frames a file of `size` bytes holds.
@@ -348,16 +488,17 @@ pub(crate) fn probe(path: &std::path::Path) -> Result<Info, ProbeError> {
             .take(wanted)
             .read_to_end(&mut bytes)
             .map_err(ProbeError::Io)?;
-        match checked_layout(&bytes, whole) {
-            Ok(layout) => {
-                let frames = frames_of(&layout, whole);
-                return Ok(Info {
-                    frames,
-                    channels: layout.channels,
-                    sample_rate: layout.sample_rate,
-                    container: layout.container,
-                });
-            }
+        let info = match is_flac(&bytes) {
+            true => flac_info(&bytes, whole),
+            false => checked_layout(&bytes, whole).map(|layout| Info {
+                frames: frames_of(&layout, whole),
+                channels: layout.channels,
+                sample_rate: layout.sample_rate,
+                container: layout.container,
+            }),
+        };
+        match info {
+            Ok(info) => return Ok(info),
             // A chunk it needs may lie further on, after a long one it does not.
             Err(FormatError::Damaged(_)) if (bytes.len() as u64) < size => wanted *= 8,
             Err(error) => return Err(ProbeError::Format(error)),
@@ -499,6 +640,25 @@ fn wav(bytes: &[u8], file_size: usize) -> Result<Layout, FormatError> {
         encoding,
         container: Container::Wav,
     })
+}
+
+/// The loop type of a `smpl` loop that plays forward.
+const LOOP_FORWARD: u32 = 0;
+
+/// The first forward loop of the `smpl` chunk of a WAV file, wherever the chunk lies, when it
+/// lies inside the file's `frames`.
+fn wav_loop(bytes: &[u8], frames: u64) -> Option<SampleLoop> {
+    let (_, body, size) = chunks(bytes, true).find(|(id, ..)| id == b"smpl")?;
+    let count = u32_at(bytes, body + 28, true)?;
+    // 36 bytes of header, then loops of 24: cue id, type, start, end, fraction, play count.
+    let end_of_chunk = body.saturating_add(size);
+    let at = (0..count as usize)
+        .map(|index| body + 36 + index * 24)
+        .take_while(|at| at + 24 <= end_of_chunk)
+        .find(|at| u32_at(bytes, at + 4, true) == Some(LOOP_FORWARD))?;
+    let start = u64::from(u32_at(bytes, at + 8, true)?);
+    let end = u64::from(u32_at(bytes, at + 12, true)?);
+    (start <= end && end < frames).then_some(SampleLoop { start, end })
 }
 
 fn aiff(bytes: &[u8]) -> Result<Layout, FormatError> {
