@@ -367,6 +367,11 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     Notice::new("n-warning", "2 files are not live, see problems.txt")
                         .tone(NoticeTone::Warning)
                         .into_any_element(),
+                    Notice::new("n-progress", "Exporting song.wav")
+                        .tone(NoticeTone::Info)
+                        .progress(0.4)
+                        .w(px(240.))
+                        .into_any_element(),
                     Notice::new(
                         "n-long",
                         "instance arrangement/warm-pad/verse-b: notes[3].start must be less than \

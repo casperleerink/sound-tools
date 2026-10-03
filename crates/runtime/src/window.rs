@@ -223,8 +223,11 @@ impl Shell {
         let left_panel_open = left_panel_file
             .as_deref()
             .is_none_or(crate::app::left_panel_was_open);
+        let project_menu = cx.new(|cx| ProjectMenu::new(session.clone(), device_name, window, cx));
+        // For the notice of an export.
+        cx.observe(&project_menu, |_, _, cx| cx.notify()).detach();
         let mut shell = Self {
-            project_menu: cx.new(|cx| ProjectMenu::new(session.clone(), device_name, window, cx)),
+            project_menu,
             transport: cx
                 .new(|cx| TransportPill::with_device(session.clone(), timing, open_input, cx)),
             session,
@@ -407,8 +410,19 @@ impl Shell {
         cx.notify();
     }
 
-    /// What is wrong, in one line each: the last error, and files that are not live.
+    /// What is wrong, in one line each: the last error, and files that are not live. And an
+    /// export while it runs.
     fn notices(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let exporting = self
+            .project_menu
+            .read(cx)
+            .exporting()
+            .map(|(file, progress)| {
+                Notice::new("export", format!("Exporting {file}"))
+                    .tone(NoticeTone::Info)
+                    .progress(progress)
+                    .max_w_full()
+            });
         let session = self.session.read(cx);
         let problems = session.project().problems().len();
         let files = match problems {
@@ -431,6 +445,7 @@ impl Shell {
             .flex_col()
             .items_end()
             .gap(px(8.))
+            .children(exporting)
             .children(files.map(|files| {
                 Notice::new("problems", files)
                     .tone(NoticeTone::Warning)

@@ -13,6 +13,9 @@
 //! runtime --plugins                                        list the plugins of this machine
 //! ```
 //!
+//! A render with `--progress` at the end also prints `progress: <percent>` lines, for the
+//! progress bar of the window's export.
+//!
 //! Only the first two forms start GPUI. Tests, CI and agents use the others. In
 //! `Sound Tools.app` and as the command line tool this program is called `sound-tools`.
 //!
@@ -236,8 +239,8 @@ enum Span {
 }
 
 /// Renders `span`, or with none the project from the start to the end of the last clip, and
-/// the tail.
-fn render(folder: &Path, wav: &Path, span: Option<Span>) -> Result<()> {
+/// the tail. With `progress` it prints each whole percent of the span it reaches.
+fn render(folder: &Path, wav: &Path, span: Option<Span>, progress: bool) -> Result<()> {
     let (mut project, mut engine, plugins) = open_read_only(folder)?;
     print_problems(&project);
     // Before the file is made, so a render that cannot happen leaves no empty file behind.
@@ -247,6 +250,14 @@ fn render(folder: &Path, wav: &Path, span: Option<Span>) -> Result<()> {
             let end = runtime::project_end(&project)
                 .context("the project has no clips, so there is nothing to render")?;
             Span::Range(Ticks(0), end)
+        }
+    };
+    let rate = f64::from(OFFLINE.sample_rate);
+    let length = match span {
+        Span::Seconds(seconds) => (seconds * rate) as u64,
+        Span::Range(from, to) => {
+            let clock = project.clock();
+            clock.frame_of(to).0.saturating_sub(clock.frame_of(from).0)
         }
     };
     let mut writer = hound::WavWriter::create(
@@ -259,10 +270,18 @@ fn render(folder: &Path, wav: &Path, span: Option<Span>) -> Result<()> {
         },
     )?;
     let mut peak = 0.0_f32;
+    let (mut written, mut shown) = (0_u64, None);
     let write = |samples: &[f32]| {
         for sample in samples {
             peak = peak.max(sample.abs());
             writer.write_sample(*sample)?;
+        }
+        written += (samples.len() / OFFLINE.channels) as u64;
+        // The tail has no known length, so it stays at 100.
+        let percent = (written * 100 / length.max(1)).min(100);
+        if progress && shown != Some(percent) {
+            println!("progress: {percent}");
+            shown = Some(percent);
         }
         Ok(())
     };
@@ -270,10 +289,9 @@ fn render(folder: &Path, wav: &Path, span: Option<Span>) -> Result<()> {
     // plugin's main-thread requests or it renders what a plugin that is waiting for one sounds
     // like, which can be nothing at all.
     let problems = match span {
-        Span::Seconds(seconds) => {
+        Span::Seconds(_) => {
             project.engine().play();
-            let frames = (seconds * f64::from(OFFLINE.sample_rate)) as usize;
-            runtime::render_into(&mut project, &mut engine, &plugins, frames, write)?
+            runtime::render_into(&mut project, &mut engine, &plugins, length as usize, write)?
         }
         Span::Range(from, to) => {
             runtime::render_range(&mut project, &mut engine, &plugins, from, to, write)?
@@ -364,7 +382,11 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
 fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
-    match arguments.as_slice() {
+    let (arguments, progress) = match arguments.as_slice() {
+        [arguments @ .., "--progress"] => (arguments, true),
+        arguments => (arguments, false),
+    };
+    match arguments {
         // What a double click in the Finder starts.
         [] => {
             runtime::window::run_app();
@@ -381,13 +403,14 @@ fn main() -> Result<()> {
         // The child of a plugin scan. It loads one bundle, which is why it is a process of
         // its own: a plugin that crashes while it is looked at costs this child and no more.
         [plugin_host::SCAN_ARGUMENT, format, bundle] => scan_one_bundle(format, Path::new(bundle)),
-        [folder, "--render", wav] => render(Path::new(folder), Path::new(wav), None),
+        [folder, "--render", wav] => render(Path::new(folder), Path::new(wav), None, progress),
         [folder, "--render", wav, "--seconds", seconds] => {
             let seconds = seconds.parse().context("--seconds takes a number")?;
             render(
                 Path::new(folder),
                 Path::new(wav),
                 Some(Span::Seconds(seconds)),
+                progress,
             )
         }
         [folder, "--render", wav, "--from", from, "--to", to] => {
@@ -397,10 +420,10 @@ fn main() -> Result<()> {
                 bail!("--to must come after --from");
             }
             let span = Span::Range(Ticks(from), Ticks(to));
-            render(Path::new(folder), Path::new(wav), Some(span))
+            render(Path::new(folder), Path::new(wav), Some(span), progress)
         }
         _ => bail!(
-            "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [--seconds <n> | --from <ticks> --to <ticks>]]]\n       sound-tools --plugins | --version"
+            "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [--seconds <n> | --from <ticks> --to <ticks>] [--progress]]]\n       sound-tools --plugins | --version"
         ),
     }
 }

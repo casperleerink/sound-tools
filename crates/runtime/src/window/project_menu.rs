@@ -6,11 +6,13 @@
 //! that agent runs to read the whole piece.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use gpui::{
     App, Context, Entity, IntoElement, PromptLevel, Render, SharedString, Window, prelude::*,
 };
+use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use smol::stream::StreamExt;
 use sound_core::{Changes, InstanceId};
 use sound_notes::Clip;
 use sound_ui::components::dropdown_menu::{
@@ -38,6 +40,9 @@ pub struct ProjectMenu {
     menu: Entity<DropdownMenu>,
     /// What the items were made from. They are made again only when this changes.
     shown: Shown,
+    /// The file an export writes and how far it is, in percent. One at a time: the export
+    /// items are off while it runs.
+    exporting: Option<(SharedString, u8)>,
 }
 
 /// All that the items depend on in the project.
@@ -51,12 +56,13 @@ struct Shown {
     /// in the agent docs.
     fit_needs: Option<&'static str>,
     has_selection: bool,
+    exporting: bool,
     undo: Option<String>,
     redo: Option<String>,
 }
 
 impl Shown {
-    fn of(session: &Session) -> Self {
+    fn of(session: &Session, exporting: bool) -> Self {
         let project = session.project();
         Self {
             has_arrangement: main_arrangement(project).is_some(),
@@ -64,6 +70,7 @@ impl Shown {
             fit_needs: (!extension_is_enabled(project, fit_tempo::EXTENSION))
                 .then_some("This project does not include the tempo fit."),
             has_selection: !session.selected_clips().is_empty(),
+            exporting,
             undo: project.undo_label().map(str::to_string),
             redo: project.redo_label().map(str::to_string),
         }
@@ -90,7 +97,7 @@ impl ProjectMenu {
         let project = session.read(cx).project();
         let name = project.root().file_name().unwrap_or_default();
         let name = name.to_string_lossy().into_owned();
-        let shown = Shown::of(session.read(cx));
+        let shown = Shown::of(session.read(cx), false);
         let items = entries(&shown, &device_name);
         let menu = cx.new(|cx| {
             DropdownMenu::new(name, items, cx)
@@ -102,26 +109,43 @@ impl ProjectMenu {
         // Undo and redo say what they would do. A finished edit changes the label and sends no
         // project event, so this follows every notify, and it is cheap: a few small values to
         // compare, and new items only when one differs. A drag changes none of them until it ends.
-        cx.observe(&session, |this, session, cx| {
-            let shown = Shown::of(session.read(cx));
-            if shown != this.shown {
-                let items = entries(&shown, &this.device_name);
-                this.menu.update(cx, |menu, cx| menu.set_entries(items, cx));
-                this.shown = shown;
-            }
-        })
-        .detach();
+        cx.observe(&session, |this, _, cx| this.refresh(cx))
+            .detach();
         cx.subscribe_in(&menu, window, Self::on_picked).detach();
         Self {
             session,
             device_name,
             menu,
             shown,
+            exporting: None,
         }
     }
 
     pub fn menu(&self) -> &Entity<DropdownMenu> {
         &self.menu
+    }
+
+    /// The file an export writes and how far it is, from 0 to 1, while one runs.
+    pub fn exporting(&self) -> Option<(&SharedString, f32)> {
+        let (file, percent) = self.exporting.as_ref()?;
+        Some((file, f32::from(*percent) / 100.))
+    }
+
+    fn set_exporting(&mut self, exporting: Option<(SharedString, u8)>, cx: &mut Context<Self>) {
+        if self.exporting != exporting {
+            self.exporting = exporting;
+            self.refresh(cx);
+            cx.notify();
+        }
+    }
+
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        let shown = Shown::of(self.session.read(cx), self.exporting.is_some());
+        if shown != self.shown {
+            let items = entries(&shown, &self.device_name);
+            self.menu.update(cx, |menu, cx| menu.set_entries(items, cx));
+            self.shown = shown;
+        }
     }
 
     fn on_picked(
@@ -188,7 +212,8 @@ fn export_span(session: &Session, selection: bool) -> Option<Vec<String>> {
 
 /// Asks where the WAV goes and renders it in a process of its own: this program with
 /// `--render`, which reads the project from its folder as an agent's render does. The window
-/// keeps playing meanwhile, and a plugin that crashes in the render costs the render only.
+/// keeps playing meanwhile and shows how far it is, and a plugin that crashes in the render
+/// costs the render only.
 fn export_audio(
     session: Entity<Session>,
     selection: bool,
@@ -209,7 +234,7 @@ fn export_audio(
     let directory = folder.parent().unwrap_or(&folder).to_path_buf();
     let name = folder.file_name().unwrap_or_default().to_string_lossy();
     let picked = cx.prompt_for_new_path(&directory, Some(&format!("{name}.wav")));
-    cx.spawn_in(window, async move |_, cx| {
+    cx.spawn_in(window, async move |this, cx| {
         let wav = match picked.await {
             Ok(Ok(Some(wav))) => wav,
             Ok(Ok(None)) | Err(_) => return,
@@ -219,12 +244,38 @@ fn export_audio(
                 return;
             }
         };
-        let rendered = cx
-            .background_spawn({
-                let wav = wav.clone();
-                async move { render_in_child(&folder, &wav, &span) }
+        let file = SharedString::from(
+            wav.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+        );
+        // Fails only when the window is gone.
+        this.update(cx, |menu, cx| {
+            menu.set_exporting(Some((file.clone(), 0)), cx)
+        })
+        .ok();
+        let (sender, percents) = smol::channel::unbounded();
+        let rendered = cx.background_spawn({
+            let wav = wav.clone();
+            async move {
+                render_in_child(&folder, &wav, &span, |percent| {
+                    // Fails only once the window stopped listening.
+                    sender.try_send(percent).ok();
+                })
+                .await
+            }
+        });
+        // Ends when the render does, which drops the sender.
+        while let Ok(percent) = percents.recv().await {
+            this.update(cx, |menu, cx| {
+                menu.set_exporting(Some((file.clone(), percent)), cx)
             })
-            .await;
+            .ok();
+        }
+        let rendered = rendered.await;
+        this.update(cx, |menu, cx| menu.set_exporting(None, cx))
+            .ok();
         let errors = match rendered {
             Ok(errors) => errors,
             Err(error) => {
@@ -233,7 +284,6 @@ fn export_audio(
                 return;
             }
         };
-        let file = wav.file_name().unwrap_or_default().to_string_lossy();
         let answer = cx.update(|window, cx| {
             let message = format!("Exported {file}");
             // A plugin that did not load or answer in the render is missing from the file.
@@ -260,24 +310,58 @@ fn export_audio(
     .detach();
 }
 
-/// Runs `--render` and waits for it. Gives the errors it printed on the way, such as a plugin
-/// that did not load. When it failed, what it printed last on stderr is the error.
-fn render_in_child(folder: &Path, wav: &Path, span: &[String]) -> anyhow::Result<Vec<String>> {
+/// Runs `--render` and waits for it, telling `progress` each percent it reaches. Gives the
+/// errors it printed on the way, such as a plugin that did not load. When it failed, what it
+/// printed last on stderr is the error.
+async fn render_in_child(
+    folder: &Path,
+    wav: &Path,
+    span: &[String],
+    mut progress: impl FnMut(u8),
+) -> anyhow::Result<Vec<String>> {
     let program = std::env::current_exe()?;
-    let output = Command::new(program)
+    let mut child = smol::process::Command::new(program)
         .arg(folder)
         .arg("--render")
         .arg(wav)
         .args(span)
-        .output()?;
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let errors = stdout
-            .lines()
-            .filter_map(|line| line.strip_prefix("error: "));
-        return Ok(errors.map(str::to_string).collect());
+        .arg("--progress")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        // Quitting the app stops the render.
+        .kill_on_drop(true)
+        .spawn()?;
+    let (Some(stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        anyhow::bail!("the render has no output");
+    };
+    // Both at once: a pipe that nobody reads fills up and stops the render.
+    let read_stdout = async {
+        let mut errors = Vec::new();
+        // Lossy and never stopping on a line it does not know: a plugin may print to stdout,
+        // and a pipe that stops being read stops the render.
+        let mut lines = BufReader::new(stdout).split(b'\n');
+        while let Some(line) = lines.next().await {
+            let line = String::from_utf8_lossy(&line?).into_owned();
+            let percent = line.strip_prefix("progress: ").map(str::parse);
+            if let Some(Ok(percent)) = percent {
+                progress(percent);
+            } else if let Some(error) = line.strip_prefix("error: ") {
+                errors.push(error.to_string());
+            }
+        }
+        anyhow::Ok(errors)
+    };
+    let read_stderr = async {
+        let mut said = String::new();
+        stderr.read_to_string(&mut said).await?;
+        anyhow::Ok(said)
+    };
+    let (errors, stderr) = smol::future::zip(read_stdout, read_stderr).await;
+    if child.status().await?.success() {
+        return errors;
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr?;
     let last = stderr.lines().rfind(|line| !line.trim().is_empty());
     anyhow::bail!(
         "{}",
@@ -463,9 +547,10 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
         MenuEntry::Separator,
         MenuEntry::Group(
             MenuGroup::new().items([
-                command(EXPORT, "Export audio…".to_string()).disabled(!shown.has_arrangement),
+                command(EXPORT, "Export audio…".to_string())
+                    .disabled(!shown.has_arrangement || shown.exporting),
                 command(EXPORT_SELECTION, "Export selection…".to_string())
-                    .disabled(!shown.has_selection),
+                    .disabled(!shown.has_selection || shown.exporting),
             ]),
         ),
         MenuEntry::Separator,
