@@ -9,6 +9,10 @@ use std::ops::{Range, RangeInclusive};
 
 use sound_core::{Ticks, ValueRange};
 use sound_notes::{Point, value_at};
+use sound_ui::components::knob::{
+    decibels_readout, hertz_readout, milliseconds_readout, pan_readout, seconds_readout, short,
+};
+use sound_ui::components::volume;
 
 use super::lanes::{LaneBox, without};
 use super::layout::{LANE_HEIGHT, Viewport};
@@ -161,6 +165,24 @@ pub fn lane_name(device: Option<&str>, field: &str) -> String {
         (None, "gain_db") => "Volume".to_string(),
         (None, field) => number_name(field),
         (Some(device), field) => format!("{device} · {}", number_name(field)),
+    }
+}
+
+/// A value of a lane as its knob reads it, by the unit at the end of its field: `1.2 kHz` for
+/// `cutoff_hz`. The volume and the pan read as the controls of the track do.
+pub fn readout(device: Option<&str>, field: &str, value: f32) -> String {
+    let unit = UNITS.iter().find(|unit| field.ends_with(*unit)).copied();
+    match (device, unit) {
+        (None, Some("_db")) => volume::readout(value),
+        _ if field.ends_with("pan") => pan_readout(value),
+        (_, Some("_hz")) => hertz_readout(value),
+        (_, Some("_db")) => decibels_readout(value),
+        (_, Some("_ms")) => milliseconds_readout(value),
+        (_, Some("_seconds")) => seconds_readout(value),
+        (_, Some("_cents")) => format!("{} cents", short(value)),
+        (_, Some("_octaves")) => format!("{} oct", short(value)),
+        (_, Some("_semitones")) => format!("{} st", short(value)),
+        _ => short(value),
     }
 }
 
@@ -349,6 +371,15 @@ mod tests {
             lane_name(Some("Wavetable"), "filter.cutoff_hz"),
             "Wavetable · Filter cutoff"
         );
+    }
+
+    #[test]
+    fn a_value_reads_in_its_unit() {
+        assert_eq!(readout(None, "gain_db", -4.5), "-4.5 dB");
+        assert_eq!(readout(None, "pan", -0.25), "25L");
+        assert_eq!(readout(Some("Filter"), "cutoff_hz", 1200.), "1.2 kHz");
+        assert_eq!(readout(Some("Delay"), "time_ms", 250.), "250 ms");
+        assert_eq!(readout(Some("Synth"), "mix", 0.5), "0.5");
     }
 
     #[test]

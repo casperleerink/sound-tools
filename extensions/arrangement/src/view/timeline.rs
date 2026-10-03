@@ -111,6 +111,8 @@ struct LanePoint {
     /// Under the pointer or selected: the dot is bigger, and a selected one has a ring.
     hovered: bool,
     selected: bool,
+    /// Its value with its unit, beside the dot, while it is under the pointer or dragged.
+    readout: Option<SharedString>,
 }
 
 /// A point of an automation lane: the track, the number of the lane and the tick of the point.
@@ -1775,16 +1777,25 @@ impl Timeline {
                 .points
                 .partition_point(|point| point.tick < visible.end);
             let shown = lane.points.get(from..to).unwrap_or_default().iter();
+            let dragging = matches!(
+                self.lane_drag.as_ref().map(|drag| &drag.kind),
+                Some(LaneDragKind::Point { moving: true, .. })
+            );
             let points = range.map(|range| {
                 let points = shown.map(|point| {
                     let (x, y) = track_lanes::place(viewport, range, point);
                     let hovered = is(&self.hovered_point, point.tick);
                     let selected = is(&self.selected_point, point.tick);
+                    let readout = (hovered || selected && dragging).then(|| {
+                        let device = lane.device.as_deref();
+                        track_lanes::readout(device, &lane.parameter, point.value.0).into()
+                    });
                     LanePoint {
                         x,
                         y,
                         hovered,
                         selected,
+                        readout,
                     }
                 });
                 points.collect()
@@ -4713,6 +4724,15 @@ fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, c
             let origin = timeline.origin + point(px(x.max(4.).round()), px(y.round()));
             paint_hint(AUTOMATION_HINT, origin, window, cx);
         }
+        // Over the clips and the lanes under it, the value of the point under the pointer.
+        let readouts = scene.lanes.iter().flat_map(|lane| {
+            let dots = lane.points.iter();
+            dots.filter_map(move |dot| Some((lane.y, dot, dot.readout.clone()?)))
+        });
+        for (top, dot, readout) in readouts {
+            let at = point(px((dot.x + 10.).round()), px((top + dot.y - 12.).round()));
+            paint_hint(readout, timeline.origin + at, window, cx);
+        }
     });
 }
 
@@ -4834,9 +4854,15 @@ fn paint_automation_mark(body: Bounds<Pixels>, color: Hsla, window: &mut Window)
 }
 
 /// A short line of text in a box of the window colour, as a tempo label is, at `origin`.
-fn paint_hint(text: &'static str, origin: Point<Pixels>, window: &mut Window, cx: &mut App) {
+fn paint_hint(
+    text: impl Into<SharedString>,
+    origin: Point<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let theme = cx.theme();
     let (background, border, color) = (theme.gray_100, theme.alpha_at(0.10), theme.gray_900);
+    let text = text.into();
     let run = TextRun {
         len: text.len(),
         font: typography::tabular(),
@@ -4845,7 +4871,6 @@ fn paint_hint(text: &'static str, origin: Point<Pixels>, window: &mut Window, cx
         underline: None,
         strikethrough: None,
     };
-    let text = SharedString::from(text);
     let shaped = window.text_system().shape_line(text, px(12.), &[run], None);
     let area = Bounds::new(origin, size(shaped.width + px(16.), px(24.)));
     let solid = BorderStyle::Solid;
