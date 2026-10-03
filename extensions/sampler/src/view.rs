@@ -4,6 +4,9 @@
 //! Sustain behind expand. The rack gives the frame of the card, whose title says "Sampler" and
 //! is where another instrument is picked.
 //!
+//! With an SFZ instrument the display names it and the card has only Gain: the instrument has
+//! its own pitch, envelope and velocity. A file dropped or chosen replaces it.
+//!
 //! With no file, the display says `Drop an audio file here` over a `Choose file` button, which
 //! opens the file panel of macOS and is the way from the keys. A file dropped on the display, or
 //! chosen, is copied into `assets/audio/` on a background thread and becomes the sample, as one
@@ -37,7 +40,7 @@ use sound_ui::{
 };
 
 use crate::{
-    ATTACK, DECAY, GAIN, POSITION, RELEASE, ROOT, SUSTAIN, Sampler, SamplerState, VELOCITY,
+    ATTACK, DECAY, GAIN, POSITION, RELEASE, ROOT, SUSTAIN, Sampler, SamplerState, SfzPath, VELOCITY,
 };
 
 /// The name the rack puts on the card of a sampler.
@@ -75,6 +78,14 @@ const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain"
 /// A note number by its name: `C4`, `C#4`.
 fn note_readout(note: f32) -> String {
     sound_notes::Pitch::nearest(note.round() as i64).name()
+}
+
+/// The name of an SFZ instrument for the display: its file name without `.sfz`.
+fn sfz_name(sfz: &SfzPath) -> String {
+    let path = sfz.to_string();
+    let file = path.rsplit('/').next().unwrap_or(&path);
+    let stem = file.len().saturating_sub(".sfz".len());
+    file.get(..stem).unwrap_or(file).to_string()
 }
 
 /// Where the envelope sits in the display, `y` up: full level near the top, so its handles can
@@ -215,6 +226,7 @@ impl SamplerView {
             }
             // Where the old file started and ended means nothing in the new one.
             state.sample = Some(imported.asset.clone());
+            state.sfz = None;
             state.start_seconds = 0.0;
             state.end_seconds = None;
             session.edit(cx, |project| {
@@ -392,6 +404,10 @@ impl SamplerView {
     }
 
     fn display(&self, state: &SamplerState, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(sfz) = &state.sfz {
+            let says = format!("{} · SFZ instrument", sfz_name(sfz));
+            return self.no_file(says, true, cx).into_any_element();
+        }
         let Some(asset) = state.sample.clone() else {
             return self.no_file(EMPTY.into(), false, cx).into_any_element();
         };
@@ -460,6 +476,11 @@ impl Render for SamplerView {
             return div().into_any_element();
         };
         let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
+        if state.sfz.is_some() {
+            let gain = Column::new().top(knob(GAIN_KNOB, cx));
+            let card = self.frame.card().display(self.display(&state, cx));
+            return card.column(gain).into_any_element();
+        }
         let columns = [
             Column::new()
                 // A root between two notes is no root.
