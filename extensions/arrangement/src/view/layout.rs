@@ -17,7 +17,7 @@ pub const RULER_HEIGHT: f32 = 32.0;
 /// The height of a track, without the lanes under it.
 pub const TRACK_HEIGHT: f32 = 64.0;
 /// The height of an automation lane under a track.
-pub const LANE_HEIGHT: f32 = 48.0;
+pub const LANE_HEIGHT: f32 = 64.0;
 /// The row under the lanes of a track that holds the select that adds one.
 pub const ADD_LANE_HEIGHT: f32 = 40.0;
 /// The row under the last track that holds the add track button, as tall as a track. The
@@ -641,8 +641,9 @@ mod tests {
         assert_eq!(at(10.0), Some((0, Part::Track)));
         assert_eq!(at(track + 10.0), Some((1, Part::Track)));
         assert_eq!(at(2.0 * track + 1.0), Some((1, Part::Lane(0))));
-        assert_eq!(at(2.0 * track + 50.0), Some((1, Part::Lane(1))));
-        assert_eq!(at(2.0 * track + 100.0), Some((1, Part::AddLane)));
+        let lane = f64::from(LANE_HEIGHT);
+        assert_eq!(at(2.0 * track + lane + 1.0), Some((1, Part::Lane(1))));
+        assert_eq!(at(2.0 * track + 2.0 * lane + 1.0), Some((1, Part::AddLane)));
         assert_eq!(at(track + opened + 1.0), Some((2, Part::Track)));
         // A track that shows its lanes and has none has only the row that adds one.
         assert_eq!(at(rows.top(3) + track + 1.0), Some((3, Part::AddLane)));
