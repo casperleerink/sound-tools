@@ -772,8 +772,9 @@ impl Opened {
         })
         .detach();
         // The sounds of the Drum pads, made on a thread of their own: each Drum pad whose
-        // sounds are ready runs its behaviour again, which puts them in its kit. It is not an
-        // edit. One look per session poll.
+        // sounds are ready runs its behaviour again, which puts them in its kit. The same for
+        // a Sampler whose library instrument came. It is not an edit. One look per session
+        // poll.
         cx.spawn({
             let session = session.downgrade();
             async move |cx| {
@@ -784,7 +785,10 @@ impl Opened {
                     let Some(session) = session.upgrade() else {
                         break;
                     };
-                    cx.update(|cx| take_drum_sounds(&session, cx));
+                    cx.update(|cx| {
+                        take_drum_sounds(&session, cx);
+                        take_library_downloads(&session, cx);
+                    });
                 }
             }
         })
@@ -953,6 +957,15 @@ impl Opened {
             })
             .detach();
         }
+    }
+}
+
+/// Runs the behaviour of every Sampler whose library instrument finished downloading, so it
+/// plays it, or says why not. One look per session poll.
+pub fn take_library_downloads(session: &Entity<Session>, cx: &mut App) {
+    let finished = sampler::library::take_finished(session.read(cx).project().assets());
+    if !finished.is_empty() {
+        session.update(cx, |session, cx| session.rebind(&finished, cx));
     }
 }
 

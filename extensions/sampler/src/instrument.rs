@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use sound_core::{AssetName, Assets};
 use sound_media::{Audio, MediaError};
 
+use crate::library::{self, Entry};
 use crate::sfz::{self, LoopMode, Region};
 
 /// The folder of SFZ instruments, under `assets/`.
@@ -229,6 +230,18 @@ pub fn load_sfz(assets: &Assets, path: &SfzPath) -> Result<Arc<Instrument>, Stri
     load(&instruments.join(&path.0), root, &shown, || {
         format!(
             "the instrument {shown} is not there, so the Sampler is silent. Put the SFZ file and its samples under assets/instruments/, or correct `sfz`"
+        )
+    })
+}
+
+/// The library instrument `entry`, downloaded whole on this machine.
+pub(crate) fn load_library(entry: &'static Entry) -> Result<Arc<Instrument>, String> {
+    let (file, root) = library::sfz_file(entry)
+        .ok_or_else(|| format!("{} cannot play: this machine has no library", entry.name))?;
+    load(&file, &root, entry.name, || {
+        format!(
+            "the files of {} are gone from the library of this machine",
+            entry.name
         )
     })
 }

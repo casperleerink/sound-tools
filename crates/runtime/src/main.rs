@@ -179,6 +179,11 @@ fn run(folder: &Path) -> Result<()> {
         if let Err(error) = runtime::take_drum_sounds(&mut project) {
             println!("error: {error}");
         }
+        for instance in sampler::library::take_finished(project.assets()) {
+            if let Err(error) = project.rebind(&instance) {
+                println!("error: {error}");
+            }
+        }
         print_events(&mut project);
         match lines.try_recv() {
             Ok(line) => match run_command(&line, &mut project, &status) {
@@ -386,6 +391,10 @@ fn main() -> Result<()> {
         [arguments @ .., "--progress"] => (arguments, true),
         arguments => (arguments, false),
     };
+    // A Sampler downloads the library instruments it names only where a composer works: the
+    // window and `--headless`. A render or an inspect plays what is there.
+    let reads_only = matches!(arguments, [_, "--inspect"] | [_, "--render", ..]);
+    runtime::use_library(!reads_only);
     match arguments {
         // What a double click in the Finder starts.
         [] => {

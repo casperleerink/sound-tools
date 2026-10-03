@@ -66,6 +66,7 @@ fn kalimba_sampler() -> Result<SamplerState> {
     Ok(SamplerState {
         sample: Some(AudioAsset::new("kalimba.wav")?),
         sfz: None,
+        library: None,
         root: Pitch::new(72)?,
         start_seconds: 0.012,
         end_seconds: Some(1.18),

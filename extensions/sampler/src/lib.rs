@@ -25,7 +25,9 @@
 //!
 //! [`view`] is the card of the sampler, and the only module here that uses GPUI.
 
+mod catalog;
 pub mod instrument;
+pub mod library;
 mod processor;
 pub mod sfz;
 pub mod view;
@@ -41,6 +43,7 @@ use sound_media::{Audio, AudioAsset, MediaError};
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
 
 pub use instrument::{INSTRUMENTS_FOLDER, Instrument, SfzPath};
+pub use library::{LibraryId, Status};
 pub use processor::{LAYERS, Sampler, SamplerUpdate, VOICES};
 
 /// The name to enable in `project.json`, and the tool.
@@ -65,6 +68,10 @@ pub struct SamplerState {
     /// applies to it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sfz: Option<SfzPath>,
+    /// An instrument of the library instead, by its id. It is downloaded on first use, and
+    /// plays like an SFZ instrument.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub library: Option<LibraryId>,
     /// The key that plays the sample at its own pitch.
     pub root: Pitch,
     /// Where in the file a note starts, in seconds of the file.
@@ -175,6 +182,7 @@ impl Default for SamplerState {
         Self {
             sample: None,
             sfz: None,
+            library: None,
             root: Pitch::nearest(ROOT.default as i64),
             start_seconds: 0.0,
             end_seconds: None,
@@ -192,8 +200,16 @@ impl State for SamplerState {
     const TOOL: &'static str = EXTENSION;
 
     fn validate(&self) -> Result<(), String> {
-        if self.sample.is_some() && self.sfz.is_some() {
-            return Err("a Sampler plays `sample` or `sfz`, not both: leave one out".to_string());
+        let sources = [
+            self.sample.is_some(),
+            self.sfz.is_some(),
+            self.library.is_some(),
+        ];
+        if sources.into_iter().filter(|source| *source).count() > 1 {
+            return Err(
+                "a Sampler plays one of `sample`, `sfz` and `library`: leave the others out"
+                    .to_string(),
+            );
         }
         PARAMETERS
             .iter()
@@ -249,6 +265,9 @@ fn instrument(
     state: &SamplerState,
     context: &mut BehaviourContext<'_>,
 ) -> Result<Arc<Instrument>, String> {
+    if let Some(id) = &state.library {
+        return from_library(id.entry(), context);
+    }
     if let Some(path) = &state.sfz {
         let instrument = instrument::load_sfz(context.assets(), path)?;
         if let Some(problem) = instrument.problem() {
@@ -257,6 +276,40 @@ fn instrument(
         return Ok(instrument);
     }
     sample(state, context).map(|audio| Arc::new(Instrument::of_sample(audio)))
+}
+
+/// A library instrument when it is on this machine. Else the Sampler waits for its download,
+/// and the line says how that goes.
+fn from_library(
+    entry: &'static library::Entry,
+    context: &mut BehaviourContext<'_>,
+) -> Result<Arc<Instrument>, String> {
+    if library::status(entry) != Status::Here {
+        library::wait_for(entry, context.assets(), context.id());
+    }
+    let name = entry.name;
+    let size = library::size_text(entry.download_bytes);
+    match library::status(entry) {
+        Status::Here => {
+            let instrument = instrument::load_library(entry)?;
+            if let Some(problem) = instrument.problem() {
+                context.problem(problem.to_string());
+            }
+            Ok(instrument)
+        }
+        Status::Downloading { .. } => Err(format!(
+            "the Sampler is silent while {name} ({size}) downloads into the library of this machine; it plays when it is done"
+        )),
+        Status::Failed(error) => Err(format!(
+            "the download of {name} failed, so the Sampler is silent: {error}. Download on the Sampler card tries again"
+        )),
+        Status::Missing => Err(format!(
+            "{name} is not in the library of this machine, so the Sampler is silent. Open the project in the app to download it ({size})"
+        )),
+        Status::NoLibrary => Err(format!(
+            "{name} cannot play: this machine has no library folder"
+        )),
+    }
 }
 
 /// The file of the state, see [`sound_media::load`].

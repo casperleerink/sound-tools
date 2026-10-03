@@ -604,6 +604,19 @@ pub fn render_block(
     Ok(problems)
 }
 
+/// Puts the library of sampled instruments in the support folder of this machine, which every
+/// project shares. With `downloads`, a Sampler that names an instrument that is not there
+/// downloads it.
+pub fn use_library(downloads: bool) {
+    let Ok(support) = app::support_folder() else {
+        return;
+    };
+    sampler::library::set_folder(support.join("library"));
+    if downloads {
+        sampler::library::allow_downloads();
+    }
+}
+
 /// Runs the behaviour of every Drum pad whose sounds were made since the last call, which puts
 /// them in its kit. What every loop of a session calls, as it polls the plugin host.
 pub fn take_drum_sounds(project: &mut Project) -> Result<(), ProjectError> {
