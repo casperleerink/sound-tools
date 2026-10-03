@@ -9,7 +9,7 @@ use sampler::{LibraryId, SamplerState};
 
 use crate::support::{Harness, SAMPLE_RATE, id, note, write_wav};
 
-const CELLO: &str = "vsco/cello-section-sustain";
+const CELLO: &str = "strings/cello-section";
 
 #[test]
 fn a_library_instrument_downloads_where_allowed_and_then_plays() {
@@ -45,7 +45,7 @@ fn a_library_instrument_downloads_where_allowed_and_then_plays() {
     let problems = harness.project.problems();
     assert_eq!(
         problems[0].message,
-        "Cello section, sustain is not downloaded on this machine, so the Sampler is silent. Ask the composer to click Download on the Sampler card (69 MB)"
+        "Cello section, sustain is not downloaded on this machine, so the Sampler is silent. Ask the composer to click Download on the Sampler card (73 MB)"
     );
     assert_eq!(library::status(entry), Status::Missing);
 
@@ -94,6 +94,6 @@ fn a_library_instrument_downloads_where_allowed_and_then_plays() {
         .join(entry.library.id)
         .join(entry.library.commit);
     assert!(here.join("Strings/Cello Section/a.wav").exists());
-    assert!(here.join(".cello-section-sustain.done").exists());
+    assert!(here.join(".strings-cello-section.done").exists());
     assert!(sampler::take_ready(harness.project.assets()).is_empty());
 }

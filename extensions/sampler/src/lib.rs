@@ -252,6 +252,13 @@ pub fn take_ready(assets: &sound_core::Assets) -> Vec<sound_core::InstanceId> {
     ready
 }
 
+/// The instruments of the library, apart, so an agent reads them only to pick one.
+pub const LIBRARY_AGENT_DOC: AgentDoc = AgentDoc {
+    name: "library",
+    when: "Picking a sampled piano, strings, brass, guitar, drums and more",
+    markdown: include_str!("../library-agent-doc.md"),
+};
+
 /// Registers the sampler tool. Call it before the project opens.
 ///
 /// A sampler whose file is missing runs its behaviour again when a file under `assets/audio/`
@@ -265,6 +272,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .rebinds_on_assets(INSTRUMENTS_FOLDER);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     registry.agent_doc(EXTENSION, SFZ_AGENT_DOC)?;
+    registry.agent_doc(EXTENSION, LIBRARY_AGENT_DOC)?;
     Ok(())
 }
 
@@ -387,6 +395,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The library doc lists every instrument of the catalog with the size of its download,
+    /// so it cannot drift from the catalog.
+    #[test]
+    fn the_library_doc_lists_every_instrument() {
+        let doc = include_str!("../library-agent-doc.md");
+        for entry in library::CATALOG {
+            let row = format!("| `{}` | {} |", entry.id, entry.name);
+            let row = doc.lines().find(|line| line.starts_with(&row));
+            let row = row.unwrap_or_else(|| panic!("no row for {}", entry.id));
+            let size = library::size_text(entry.download_bytes);
+            assert!(row.ends_with(&format!("| {size} |")), "{row}");
+        }
+        let rows = doc.lines().filter(|line| line.starts_with("| `")).count();
+        assert_eq!(rows, library::CATALOG.len());
     }
 
     #[test]

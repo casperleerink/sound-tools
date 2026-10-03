@@ -74,6 +74,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "agent-docs/reverb.md",
             "agent-docs/sampler.md",
             "agent-docs/sfz.md",
+            "agent-docs/library.md",
             "agent-docs/saturator.md",
             "agent-docs/tone.md",
             "agent-docs/utility.md",
@@ -168,7 +169,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         .iter()
         .flat_map(|(_, text)| json_examples(text))
         .collect();
-    assert_eq!(all.len(), 48);
+    assert_eq!(all.len(), 50);
 
     // The raw take of a recording is not a record: it is an asset the runtime writes once
     // and never reads back. Its example is checked as the file it is.
@@ -232,13 +233,15 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         .map(|problem| format!("{}: {}", problem.path, problem.message))
         .collect();
     // Every plugin the docs name is one no machine is expected to have: two instruments,
-    // one per format, and the effect of the arrangement doc.
+    // one per format, and the effect of the arrangement doc. The library instrument of the
+    // library doc is not on this machine either: the test has no library.
     let expected = [
         "state/arrangement/piano/warmth.json: this machine has no CLAP plugin with the id \"com.example.warmth\"",
         "state/arrangement/rhodes/instrument.json: this machine has no CLAP plugin with the id \"com.example.piano\"",
         "state/arrangement/strings/instrument.json: this machine has no VST 3 plugin",
+        "state/arrangement/violins/instrument.json: Violin section, sustain cannot play",
     ];
-    assert_eq!(problems.len(), 3, "{problems:?}");
+    assert_eq!(problems.len(), 4, "{problems:?}");
     for (problem, expected) in problems.iter().zip(expected) {
         assert!(problem.starts_with(expected), "{problems:?}");
     }
@@ -299,6 +302,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "arrangement/strings/instrument",
             "arrangement/synth",
             "arrangement/synth/instrument",
+            "arrangement/violins",
+            "arrangement/violins/instrument",
             "arrangement/vocal",
             "arrangement/vocal/clear",
             "arrangement/voice",
@@ -342,11 +347,12 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 /// Compressor it is about 1130, with the doc of audio about 1150, with the Sampler about 1170,
 /// with the Drum pad about 1200, with the Saturator about 1230, with the Limiter about 1255,
 /// with the Utility about 1280, with the Modulation about 1300, with the Delay about 1320,
-/// with the Wavetable about 1340, and with the doc of SFZ files about 1350.
+/// with the Wavetable about 1340, with the doc of SFZ files about 1350, and with the library
+/// about 1365.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1360, "the map has {words} words");
+    assert!(words < 1375, "the map has {words} words");
 }

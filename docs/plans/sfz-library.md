@@ -5,7 +5,8 @@
 - **The Sampler plays SFZ.** A record names an `.sfz` file instead of one `sample`. The Sampler then plays many samples: per key range, velocity layer, round robin, keyswitch and release sample, with loops.
 - **Own packs live in the project.** `assets/instruments/<pack>/<file>.sfz` plus its samples. An agent can make one from a few recorded notes; it is a text file.
 - **Free library, downloaded per instrument.** A small catalog of CC0 and CC-BY instruments is compiled in (VSCO 2 orchestra, Karoryfer guitars and basses, a piano, drums). Only the instruments a project uses are downloaded, into the support folder, shared by every project. The record names it by library and file.
-- **No button needed.** A record that names a library instrument that is not on this machine starts its download. The card shows the progress; `problems.txt` says it is downloading. Picking one in the card works the same.
+- **Download on request.** Nothing downloads by itself. Picking an instrument on the card, or Download there, starts it; an agent that names one is told in `problems.txt` to ask the composer.
+- **Loads in the background** in the window: the card says Loading, the old sound plays until the new one is there.
 - **Ignored, not reported:** SFZ opcodes we do not play. Reported: a file that does not read, missing samples, a failed download.
 
 ---
@@ -31,7 +32,7 @@ A composer or the agent can say "add a cello section" or "a nylon guitar" and ge
 - Parser tests on real files from the catalog libraries: defines, includes, keyswitches, release triggers, note names.
 - Render tests: a project pack plays the right sample per key, velocity and round robin; a keyswitch changes the articulation; a loop sustains past the end of its file.
 - The realtime sanitizer job passes with an SFZ instrument playing.
-- In the app: a record naming a library cello downloads it, the card shows progress, then it plays (screenshot).
+- In the app: picking the library cello downloads it, the card shows progress, then it plays (screenshot).
 
 ## Phases
 

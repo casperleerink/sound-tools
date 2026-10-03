@@ -198,7 +198,7 @@ pub(crate) fn snapshots(
         piece(project)?;
         let cello = SamplerState {
             library: Some(
-                LibraryId::try_from("vsco/cello-section-sustain".to_string())
+                LibraryId::try_from("strings/cello-section".to_string())
                     .map_err(anyhow::Error::msg)?,
             ),
             ..SamplerState::default()

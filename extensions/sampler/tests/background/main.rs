@@ -55,7 +55,10 @@ fn a_new_instrument_plays_once_it_is_loaded_and_the_old_one_until_then() {
     assert_eq!(level(&mut harness), 0.1);
 
     let instrument = id("track/instrument");
-    let sampler = harness.project.resolve::<SamplerState>(&instrument).unwrap();
+    let sampler = harness
+        .project
+        .resolve::<SamplerState>(&instrument)
+        .unwrap();
     let mut changes = Changes::new();
     changes.set(&sampler, second);
     harness.project.commit("Load instrument", changes).unwrap();

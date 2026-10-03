@@ -1,5 +1,5 @@
 //! The library: free sampled instruments a record names by id, such as
-//! `"vsco/cello-section-sustain"`, downloaded when the composer asks and shared by every project
+//! `"strings/cello-section"`, downloaded when the composer asks and shared by every project
 //! of the machine.
 //!
 //! The catalog is in the code ([`CATALOG`]): each instrument is one SFZ file of a library on
@@ -61,10 +61,11 @@ pub enum Category {
     Bass,
     Drums,
     Percussion,
+    Synth,
 }
 
 impl Category {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Piano,
         Self::Keys,
         Self::Strings,
@@ -74,6 +75,7 @@ impl Category {
         Self::Bass,
         Self::Drums,
         Self::Percussion,
+        Self::Synth,
     ];
 
     pub fn name(self) -> &'static str {
@@ -87,6 +89,7 @@ impl Category {
             Self::Bass => "Bass",
             Self::Drums => "Drums",
             Self::Percussion => "Percussion",
+            Self::Synth => "Synth",
         }
     }
 }
@@ -107,9 +110,9 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// The part of the id after the library, which names its marker file.
-    fn short_name(&self) -> &'static str {
-        self.id.split_once('/').map_or(self.id, |(_, name)| name)
+    /// Its id as a file name, for its files in the folder of its library.
+    fn file_name(&self) -> String {
+        self.id.replace('/', "-")
     }
 }
 
@@ -199,7 +202,7 @@ pub(crate) fn sfz_file(entry: &Entry) -> Option<(PathBuf, PathBuf)> {
 
 fn marker(entry: &Entry) -> Option<PathBuf> {
     let root = library_folder(entry.library)?;
-    Some(root.join(format!(".{}.done", entry.short_name())))
+    Some(root.join(format!(".{}.done", entry.file_name())))
 }
 
 /// Where an instrument is on this machine.
@@ -426,7 +429,7 @@ fn fetch_files(entry: &'static Entry, files: &[(String, PathBuf)]) -> Result<(),
     // The list goes next to the files, where this download may write.
     let list = first
         .1
-        .with_file_name(format!(".{}.download", entry.short_name()));
+        .with_file_name(format!(".{}.download", entry.file_name()));
     if let Some(parent) = list.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -517,11 +520,16 @@ mod tests {
     }
 
     #[test]
-    fn every_id_of_the_catalog_is_its_library_and_a_name_and_is_unique() {
+    fn every_id_of_the_catalog_is_its_category_and_a_name_and_is_unique() {
         let mut ids = BTreeSet::new();
         for entry in CATALOG {
-            let (library, name) = entry.id.split_once('/').unwrap();
-            assert_eq!(library, entry.library.id, "{}", entry.id);
+            let (category, name) = entry.id.split_once('/').unwrap();
+            assert_eq!(
+                category,
+                entry.category.name().to_lowercase(),
+                "{}",
+                entry.id
+            );
             assert!(
                 name.chars()
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
