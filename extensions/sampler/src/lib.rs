@@ -25,7 +25,9 @@
 //!
 //! [`view`] is the card of the sampler, and the only module here that uses GPUI.
 
+mod catalog;
 pub mod instrument;
+pub mod library;
 mod processor;
 pub mod sfz;
 pub mod view;
@@ -41,6 +43,7 @@ use sound_media::{Audio, AudioAsset, MediaError};
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
 
 pub use instrument::{INSTRUMENTS_FOLDER, Instrument, SfzPath};
+pub use library::{LibraryId, Status};
 pub use processor::{LAYERS, Sampler, SamplerUpdate, VOICES};
 
 /// The name to enable in `project.json`, and the tool.
@@ -65,6 +68,10 @@ pub struct SamplerState {
     /// applies to it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sfz: Option<SfzPath>,
+    /// An instrument of the library instead, by its id. It is downloaded on first use, and
+    /// plays like an SFZ instrument.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub library: Option<LibraryId>,
     /// The key that plays the sample at its own pitch.
     pub root: Pitch,
     /// Where in the file a note starts, in seconds of the file.
@@ -175,6 +182,7 @@ impl Default for SamplerState {
         Self {
             sample: None,
             sfz: None,
+            library: None,
             root: Pitch::nearest(ROOT.default as i64),
             start_seconds: 0.0,
             end_seconds: None,
@@ -192,8 +200,16 @@ impl State for SamplerState {
     const TOOL: &'static str = EXTENSION;
 
     fn validate(&self) -> Result<(), String> {
-        if self.sample.is_some() && self.sfz.is_some() {
-            return Err("a Sampler plays `sample` or `sfz`, not both: leave one out".to_string());
+        let sources = [
+            self.sample.is_some(),
+            self.sfz.is_some(),
+            self.library.is_some(),
+        ];
+        if sources.into_iter().filter(|source| *source).count() > 1 {
+            return Err(
+                "a Sampler plays one of `sample`, `sfz` and `library`: leave the others out"
+                    .to_string(),
+            );
         }
         PARAMETERS
             .iter()
@@ -227,6 +243,22 @@ pub const SFZ_AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../sfz-agent-doc.md"),
 };
 
+/// The Samplers of the project of `assets` whose library instrument finished downloading, or
+/// whose instrument finished loading in the background, since the last call. Run their
+/// behaviour again (`Project::rebind`), once per poll of the session.
+pub fn take_ready(assets: &sound_core::Assets) -> Vec<sound_core::InstanceId> {
+    let mut ready = library::take_finished(assets);
+    ready.extend(instrument::take_loaded(assets));
+    ready
+}
+
+/// The instruments of the library, apart, so an agent reads them only to pick one.
+pub const LIBRARY_AGENT_DOC: AgentDoc = AgentDoc {
+    name: "library",
+    when: "Picking a sampled piano, strings, brass, guitar, drums and more",
+    markdown: include_str!("../library-agent-doc.md"),
+};
+
 /// Registers the sampler tool. Call it before the project opens.
 ///
 /// A sampler whose file is missing runs its behaviour again when a file under `assets/audio/`
@@ -240,23 +272,60 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .rebinds_on_assets(INSTRUMENTS_FOLDER);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     registry.agent_doc(EXTENSION, SFZ_AGENT_DOC)?;
+    registry.agent_doc(EXTENSION, LIBRARY_AGENT_DOC)?;
     Ok(())
 }
 
 /// What the state plays, read on this thread the first time something names it, or a line for
 /// `problems.txt` that says why it plays nothing. An empty line is an empty Sampler.
+/// `None` while it loads in the background, see [`instrument::load_in_background`].
 fn instrument(
     state: &SamplerState,
     context: &mut BehaviourContext<'_>,
-) -> Result<Arc<Instrument>, String> {
-    if let Some(path) = &state.sfz {
-        let instrument = instrument::load_sfz(context.assets(), path)?;
-        if let Some(problem) = instrument.problem() {
-            context.problem(problem.to_string());
+) -> Result<Option<Arc<Instrument>>, String> {
+    let instrument = match (&state.library, &state.sfz) {
+        (Some(id), _) => from_library(id.entry(), context)?,
+        (None, Some(path)) => instrument::load_sfz(context.assets(), path, context.id())?,
+        (None, None) => {
+            return sample(state, context)
+                .map(|audio| Some(Arc::new(Instrument::of_sample(audio))));
         }
-        return Ok(instrument);
+    };
+    if let Some(problem) = instrument
+        .as_ref()
+        .and_then(|instrument| instrument.problem())
+    {
+        context.problem(problem.to_string());
     }
-    sample(state, context).map(|audio| Arc::new(Instrument::of_sample(audio)))
+    Ok(instrument)
+}
+
+/// A library instrument when it is on this machine. Else the Sampler waits for a download of
+/// it, which only the composer starts, and the line says how that goes.
+fn from_library(
+    entry: &'static library::Entry,
+    context: &mut BehaviourContext<'_>,
+) -> Result<Option<Arc<Instrument>>, String> {
+    if library::status(entry) != Status::Here {
+        library::wait_for(entry, context.assets(), context.id());
+    }
+    let name = entry.name;
+    let size = library::size_text(entry.download_bytes);
+    match library::status(entry) {
+        Status::Here => instrument::load_library(entry, context.assets(), context.id()),
+        Status::Downloading { .. } => Err(format!(
+            "the Sampler is silent while {name} ({size}) downloads into the library of this machine; it plays when it is done"
+        )),
+        Status::Failed(error) => Err(format!(
+            "the download of {name} failed, so the Sampler is silent: {error}. Download on the Sampler card tries again"
+        )),
+        Status::Missing => Err(format!(
+            "{name} is not downloaded on this machine, so the Sampler is silent. Ask the composer to click Download on the Sampler card ({size})"
+        )),
+        Status::NoLibrary => Err(format!(
+            "{name} cannot play: this machine has no library folder"
+        )),
+    }
 }
 
 /// The file of the state, see [`sound_media::load`].
@@ -283,18 +352,20 @@ fn sample(state: &SamplerState, context: &BehaviourContext<'_>) -> Result<Arc<Au
 /// Runs for every valid state, from every source. The processor is kept between runs, so held
 /// notes go on through parameter edits.
 fn apply(state: &SamplerState, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
-    let instrument = match instrument(state, context) {
-        Ok(instrument) => Some(instrument),
+    let update = match instrument(state, context) {
+        Ok(Some(instrument)) => SamplerUpdate::new(state, Some(instrument)),
+        // It plays what it played until the new one is there.
+        Ok(None) => SamplerUpdate::keeping(state),
         Err(problem) => {
             if !problem.is_empty() {
                 context.problem(problem);
             }
-            None
+            SamplerUpdate::new(state, None)
         }
     };
     let position = context.peaks(POSITION);
     let sampler = context.processor("sampler", || Sampler::new(position))?;
-    context.update(sampler, SamplerUpdate::new(state, instrument))?;
+    context.update(sampler, update)?;
     context.input(NOTES_INPUT, InputEndpoint::new(sampler, Sampler::NOTES));
     context.automation(sampler, Sampler::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(sampler, Sampler::OUTPUT));
@@ -324,6 +395,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The library doc lists every instrument of the catalog with the size of its download,
+    /// so it cannot drift from the catalog.
+    #[test]
+    fn the_library_doc_lists_every_instrument() {
+        let doc = include_str!("../library-agent-doc.md");
+        for entry in library::CATALOG {
+            let row = format!("| `{}` | {} |", entry.id, entry.name);
+            let row = doc.lines().find(|line| line.starts_with(&row));
+            let row = row.unwrap_or_else(|| panic!("no row for {}", entry.id));
+            let size = library::size_text(entry.download_bytes);
+            assert!(row.ends_with(&format!("| {size} |")), "{row}");
+        }
+        let rows = doc.lines().filter(|line| line.starts_with("| `")).count();
+        assert_eq!(rows, library::CATALOG.len());
     }
 
     #[test]

@@ -57,6 +57,10 @@ An edit applies while notes sound. `gain_db` glides there over 20 ms; the envelo
 
 To play notes, write a clip into the track folder as `agent-docs/arrangement.md` says. The Sampler has the ports `notes` (in) and `audio` (out, stereo).
 
+## The library
+
+For a real instrument (piano, strings, brass, woodwinds, guitar, bass, drums), the Sampler plays instruments of a free library, by an id: `{"library": "strings/violin-section"}`. Open `agent-docs/library.md` for the instruments, their ranges and how they are downloaded.
+
 ## SFZ instruments
 
 An SFZ instrument is a folder of samples and a text file, `.sfz`, that says which sample plays for which key and how hard it is played. Free instruments come in this format, and you can write one. The folder goes under `assets/instruments/`, and the record names the SFZ file by its path there, with `sfz` instead of `sample`. A new track that plays one:

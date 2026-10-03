@@ -179,6 +179,11 @@ fn run(folder: &Path) -> Result<()> {
         if let Err(error) = runtime::take_drum_sounds(&mut project) {
             println!("error: {error}");
         }
+        for instance in sampler::take_ready(project.assets()) {
+            if let Err(error) = project.rebind(&instance) {
+                println!("error: {error}");
+            }
+        }
         print_events(&mut project);
         match lines.try_recv() {
             Ok(line) => match run_command(&line, &mut project, &status) {
@@ -386,6 +391,7 @@ fn main() -> Result<()> {
         [arguments @ .., "--progress"] => (arguments, true),
         arguments => (arguments, false),
     };
+    runtime::use_library();
     match arguments {
         // What a double click in the Finder starts.
         [] => {

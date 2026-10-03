@@ -655,6 +655,8 @@ fn print_midi_report(latency: Latency, lost: Lost) {
 /// Opens the project, starts the device and runs the window until it closes. An error comes
 /// back before any window, for the terminal that started it.
 pub fn run(folder: &Path) -> Result<()> {
+    // A window must not wait while a Sampler reads hundreds of samples, also not to open.
+    sampler::instrument::load_in_background();
     let opened = Opened::open(folder)?;
     gpui_platform::application()
         .with_assets(Assets)
@@ -668,6 +670,7 @@ pub fn run(folder: &Path) -> Result<()> {
 /// The app with no folder, as the Finder starts it: the last project, or the folder panel
 /// when there is none. See [`start`].
 pub fn run_app() {
+    sampler::instrument::load_in_background();
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut App| {
@@ -772,8 +775,9 @@ impl Opened {
         })
         .detach();
         // The sounds of the Drum pads, made on a thread of their own: each Drum pad whose
-        // sounds are ready runs its behaviour again, which puts them in its kit. It is not an
-        // edit. One look per session poll.
+        // sounds are ready runs its behaviour again, which puts them in its kit. The same for
+        // a Sampler whose instrument was downloaded or loaded. It is not an edit. One look per session
+        // poll.
         cx.spawn({
             let session = session.downgrade();
             async move |cx| {
@@ -784,7 +788,10 @@ impl Opened {
                     let Some(session) = session.upgrade() else {
                         break;
                     };
-                    cx.update(|cx| take_drum_sounds(&session, cx));
+                    cx.update(|cx| {
+                        take_drum_sounds(&session, cx);
+                        take_sampler_instruments(&session, cx);
+                    });
                 }
             }
         })
@@ -953,6 +960,15 @@ impl Opened {
             })
             .detach();
         }
+    }
+}
+
+/// Runs the behaviour of every Sampler whose library instrument finished downloading, or whose
+/// instrument finished loading, so it plays it, or says why not. One look per session poll.
+pub fn take_sampler_instruments(session: &Entity<Session>, cx: &mut App) {
+    let ready = sampler::take_ready(session.read(cx).project().assets());
+    if !ready.is_empty() {
+        session.update(cx, |session, cx| session.rebind(&ready, cx));
     }
 }
 

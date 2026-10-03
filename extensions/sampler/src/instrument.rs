@@ -7,18 +7,19 @@
 //! reads nothing. It is read again when the SFZ file or a file it includes changed, or when it
 //! missed samples, which may have arrived since.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError, Weak};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
-use sound_core::{AssetName, Assets};
+use sound_core::{AssetName, Assets, InstanceId};
 use sound_media::{Audio, MediaError};
 
+use crate::library::{self, Entry};
 use crate::sfz::{self, LoopMode, Region};
 
 /// The folder of SFZ instruments, under `assets/`.
@@ -221,45 +222,197 @@ static KNOWN: LazyLock<Mutex<HashMap<PathBuf, Known>>> = LazyLock::new(Mutex::de
 
 /// The SFZ instrument a record names, from memory when it was read before and nothing changed.
 /// An error says why it plays nothing; an instrument that plays may still have a problem.
-pub fn load_sfz(assets: &Assets, path: &SfzPath) -> Result<Arc<Instrument>, String> {
+pub fn load_sfz(
+    assets: &Assets,
+    path: &SfzPath,
+    instance: &InstanceId,
+) -> Result<Option<Arc<Instrument>>, String> {
+    let file = sfz_file(assets, path);
     let instruments = instruments_folder(assets);
     // Samples may be anywhere in `assets/`, such as recordings in `assets/audio/`.
     let root = instruments.parent().unwrap_or(&instruments);
     let shown = path.project_path();
-    load(&instruments.join(&path.0), root, &shown, || {
+    let missing = || {
         format!(
             "the instrument {shown} is not there, so the Sampler is silent. Put the SFZ file and its samples under assets/instruments/, or correct `sfz`"
         )
-    })
+    };
+    load(&file, root, &shown, missing, (assets, instance))
+}
+
+/// The library instrument `entry`, downloaded whole on this machine.
+pub(crate) fn load_library(
+    entry: &'static Entry,
+    assets: &Assets,
+    instance: &InstanceId,
+) -> Result<Option<Arc<Instrument>>, String> {
+    let (file, root) = library::sfz_file(entry)
+        .ok_or_else(|| format!("{} cannot play: this machine has no library", entry.name))?;
+    let missing = || {
+        format!(
+            "the files of {} are gone from the library of this machine",
+            entry.name
+        )
+    };
+    load(&file, &root, entry.name, missing, (assets, instance))
+}
+
+fn sfz_file(assets: &Assets, path: &SfzPath) -> PathBuf {
+    instruments_folder(assets).join(&path.0)
+}
+
+/// Whether the instrument of `state` is loading in the background, for the card.
+pub fn is_loading(state: &crate::SamplerState, assets: &Assets) -> bool {
+    let file = match (&state.sfz, &state.library) {
+        (Some(path), _) => sfz_file(assets, path),
+        (None, Some(id)) => match library::sfz_file(id.entry()) {
+            Some((file, _)) => file,
+            None => return false,
+        },
+        (None, None) => return false,
+    };
+    background().running.contains(&file)
+}
+
+static IN_BACKGROUND: AtomicBool = AtomicBool::new(false);
+
+/// Loads an instrument that is not in memory on a thread of its own, so the window does not
+/// wait for hundreds of samples: until it is there, the Sampler plays what it played, and its
+/// card says it loads. Without this, as in a render, an inspect or a test, it loads at once.
+pub fn load_in_background() {
+    IN_BACKGROUND.store(true, Ordering::Relaxed);
+}
+
+/// The instruments that load in the background and the Samplers that wait for them.
+#[derive(Default)]
+struct Loading {
+    running: BTreeSet<PathBuf>,
+    /// Why one did not load, with the size and time of its file then.
+    failed: HashMap<PathBuf, (Option<Stamp>, String)>,
+    waiting: BTreeMap<PathBuf, BTreeSet<(PathBuf, InstanceId)>>,
+    /// Samplers whose instrument is done, for [`take_loaded`].
+    done: Vec<(PathBuf, InstanceId)>,
+    /// What was loaded, held until the Samplers that wait for it took it: from when it is
+    /// loaded to the call of [`take_loaded`] after the one that named them.
+    held: Vec<Arc<Instrument>>,
+    taken: Vec<Arc<Instrument>>,
+}
+
+static LOADING: LazyLock<(Mutex<Loading>, Condvar)> = LazyLock::new(Default::default);
+
+fn background() -> MutexGuard<'static, Loading> {
+    LOADING.0.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The Samplers of the project of `assets` whose instrument loaded since the last call, to run
+/// their behaviour again. What they load is held until the next call, so it is still there
+/// when they take it.
+pub(crate) fn take_loaded(assets: &Assets) -> Vec<InstanceId> {
+    let project = instruments_folder(assets);
+    let mut loading = background();
+    // Their Samplers took what was held at the last call, so it is let go of here.
+    let held = std::mem::take(&mut loading.held);
+    loading.taken = held;
+    let (ours, others): (Vec<_>, Vec<_>) = std::mem::take(&mut loading.done)
+        .into_iter()
+        .partition(|(folder, _)| *folder == project);
+    loading.done = others;
+    ours.into_iter().map(|(_, instance)| instance).collect()
+}
+
+/// Waits until no instrument loads. For tests.
+pub fn wait_for_loading() {
+    let (lock, done) = &*LOADING;
+    let mut loading = lock.lock().unwrap_or_else(PoisonError::into_inner);
+    while !loading.running.is_empty() {
+        loading = done.wait(loading).unwrap_or_else(PoisonError::into_inner);
+    }
 }
 
 /// The SFZ instrument at `file`, whose files stay under `root`, from memory when it was read
-/// before and nothing changed. `missing` says why when the file is not there.
+/// before and nothing changed. `None` while it loads in the background for the Sampler
+/// `waiter`. `missing` says why when the file is not there.
 fn load(
     file: &Path,
     root: &Path,
     shown: &str,
     missing: impl Fn() -> String,
-) -> Result<Arc<Instrument>, String> {
-    let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(entry) = known.get(file)
-        && let Some(instrument) = entry.instrument.upgrade()
-        && instrument.problem.is_none()
-        && entry
-            .files
-            .iter()
-            .all(|saved| stamp(&saved.0).as_ref() == Some(saved))
-    {
-        return Ok(instrument);
+    (assets, instance): (&Assets, &InstanceId),
+) -> Result<Option<Arc<Instrument>>, String> {
+    if let Some(instrument) = known(file) {
+        return Ok(Some(instrument));
     }
-    drop(known);
-    let text = fs::read_to_string(file).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => missing(),
-        _ => format!("the Sampler is silent: {shown} cannot be read: {error}"),
-    })?;
+    if !file.exists() {
+        return Err(missing());
+    }
+    if !IN_BACKGROUND.load(Ordering::Relaxed) {
+        return read(file, root, shown).map(Some);
+    }
+    let mut loading = background();
+    if let Some((stamped, error)) = loading.failed.get(file)
+        && *stamped == stamp(file)
+    {
+        return Err(error.clone());
+    }
+    let waiter = (instruments_folder(assets), instance.clone());
+    loading
+        .waiting
+        .entry(file.to_path_buf())
+        .or_default()
+        .insert(waiter);
+    if loading.running.insert(file.to_path_buf()) {
+        let spawned = std::thread::Builder::new()
+            .name("sampler instrument".into())
+            .spawn({
+                let (file, root, shown) =
+                    (file.to_path_buf(), root.to_path_buf(), shown.to_string());
+                move || {
+                    let read = read(&file, &root, &shown);
+                    let mut loading = background();
+                    loading.running.remove(&file);
+                    match read {
+                        Ok(instrument) => {
+                            loading.failed.remove(&file);
+                            loading.held.push(instrument);
+                        }
+                        Err(error) => {
+                            loading.failed.insert(file.clone(), (stamp(&file), error));
+                        }
+                    }
+                    let waiting = loading.waiting.remove(&file).unwrap_or_default();
+                    loading.done.extend(waiting);
+                    LOADING.1.notify_all();
+                }
+            });
+        if let Err(error) = spawned {
+            loading.running.remove(file);
+            return Err(format!(
+                "the Sampler is silent: {shown} did not start to load: {error}"
+            ));
+        }
+    }
+    Ok(None)
+}
+
+/// The instrument at `file` when it is in memory and its files did not change.
+fn known(file: &Path) -> Option<Arc<Instrument>> {
+    let known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
+    let entry = known.get(file)?;
+    let instrument = entry.instrument.upgrade()?;
+    let same = entry
+        .files
+        .iter()
+        .all(|saved| stamp(&saved.0).as_ref() == Some(saved));
+    (instrument.problem.is_none() && same).then_some(instrument)
+}
+
+/// Reads the instrument at `file` and keeps it in memory for the next ask.
+fn read(file: &Path, root: &Path, shown: &str) -> Result<Arc<Instrument>, String> {
+    let text = fs::read_to_string(file)
+        .map_err(|error| format!("the Sampler is silent: {shown} cannot be read: {error}"))?;
     let (instrument, files) = read_sfz(root, file, &text, shown)?;
     let instrument = Arc::new(instrument);
-    known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
     known.retain(|_, entry| entry.instrument.strong_count() > 0);
     known.insert(
         file.to_path_buf(),

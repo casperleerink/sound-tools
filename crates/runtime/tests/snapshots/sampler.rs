@@ -6,6 +6,10 @@
 //! - `sampler-expanded.png`: the same card expanded: Start, End, Attack, Decay and Sustain.
 //! - `sampler-drop-replace.png`: a file from the Finder over its display: `Drop to replace the
 //!   file` in the lavender ring.
+//! - `sampler-instruments.png`: its Instrument select open: the file, then the library by
+//!   category with the size of each download.
+//! - `sampler-library.png`: a Sampler of a library instrument this machine does not have:
+//!   its name, library and licence over `Download · 73 MB`.
 //! - `sampler-empty.png`: a new Sampler: `Drop an audio file here` over `Choose file`.
 //! - `sampler-drop.png`: a file over the empty display: `Drop to load the file`.
 //! - `sampler-missing.png`: a Sampler whose file is not in the project.
@@ -15,8 +19,8 @@ use arrangement::{Colour, TrackState};
 use gpui::{
     Entity, ExternalPaths, FileDropEvent, HeadlessAppContext, PlatformInput, Point, point, px,
 };
-use sampler::SamplerState;
 use sampler::view::SamplerView;
+use sampler::{LibraryId, SamplerState};
 use sound_core::{Changes, Instance, Project, Ticks};
 use sound_media::AudioAsset;
 use sound_notes::Pitch;
@@ -66,6 +70,7 @@ fn kalimba_sampler() -> Result<SamplerState> {
     Ok(SamplerState {
         sample: Some(AudioAsset::new("kalimba.wav")?),
         sfz: None,
+        library: None,
         root: Pitch::new(72)?,
         start_seconds: 0.012,
         end_seconds: Some(1.18),
@@ -178,6 +183,34 @@ pub(crate) fn snapshots(
     save(cx, &opened, "sampler-drop-replace")?;
     handles_hide_under_the_drag(&opened, cx)?;
     opened.mouse(PlatformInput::FileDrop(FileDropEvent::Exited), cx)?;
+    let list = cx.update(|cx| card.read(cx).instrument_list().clone());
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        list.update(cx, |list, cx| list.open(window, cx));
+    })?;
+    cx.run_until_parked();
+    save(cx, &opened, "sampler-instruments")?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        list.update(cx, |list, cx| list.close(window, cx));
+    })?;
+    drop(opened);
+
+    // A library instrument this machine does not have, in an empty library: `Download`.
+    let library = tempfile::tempdir()?;
+    sampler::library::set_folder(library.path().to_path_buf());
+    let opened = Opened::new(cx, |project| {
+        piece(project)?;
+        let cello = SamplerState {
+            library: Some(
+                LibraryId::try_from("strings/cello-section".to_string())
+                    .map_err(anyhow::Error::msg)?,
+            ),
+            ..SamplerState::default()
+        };
+        add_kalimba(project, cello)?;
+        Ok(())
+    })?;
+    open_panel(&opened, cx)?;
+    save(cx, &opened, "sampler-library")?;
     drop(opened);
 
     let opened = Opened::new(cx, |project| {

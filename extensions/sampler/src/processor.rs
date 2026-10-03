@@ -70,6 +70,8 @@ pub struct SamplerUpdate {
     state: SamplerState,
     instrument: Option<Arc<Instrument>>,
     counters: Box<[u32]>,
+    /// Keeps the instrument that plays, while another one loads.
+    keep: bool,
 }
 
 impl SamplerUpdate {
@@ -82,6 +84,15 @@ impl SamplerUpdate {
             state: state.clone(),
             instrument,
             counters: vec![0; zones].into_boxed_slice(),
+            keep: false,
+        }
+    }
+
+    /// The update for a record that keeps playing what it plays.
+    pub fn keeping(state: &SamplerState) -> Self {
+        Self {
+            keep: true,
+            ..Self::new(state, None)
         }
     }
 }
@@ -753,6 +764,9 @@ impl Sampler {
     /// Takes the instrument of an update, unless it plays the same as the one that plays. The
     /// voices of the one before fade out.
     fn take(&mut self, update: &mut SamplerUpdate) {
+        if update.keep {
+            return;
+        }
         let same = match (&self.current, &update.instrument) {
             (Some(current), Some(new)) => current.same_as(new),
             (None, None) => true,
