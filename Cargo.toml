@@ -42,6 +42,8 @@ utility = { path = "extensions/utility" }
 wavetable = { path = "extensions/wavetable" }
 anyhow = "1"
 cargo_metadata = "0.23"
+# FLAC samples of instrument libraries, decoded whole on the control side. Apache-2.0.
+claxon = "0.4.3"
 # CLAP hosting, and the test plugin the repository builds for CI. MIT OR Apache-2.0.
 clack-extensions = "0.2"
 clack-host = "0.2"
@@ -130,6 +132,8 @@ resvg = { opt-level = 3 }
 lyon_tessellation = { opt-level = 3 }
 lyon_path = { opt-level = 3 }
 lyon_geom = { opt-level = 3 }
+# Decodes FLAC samples of SFZ instruments when they load.
+claxon = { opt-level = 3 }
 arrangement = { opt-level = 3 }
 compressor = { opt-level = 3 }
 delay = { opt-level = 3 }
