@@ -1,5 +1,5 @@
-//! Library instruments: a record that names one this machine lacks waits for its download,
-//! which only starts where downloads are allowed, and plays once it is done.
+//! Library instruments: a record that names one this machine lacks waits until the composer
+//! downloads it, and plays once it is done. Nothing downloads by itself.
 //!
 //! The files come from a folder laid out as GitHub serves them, through curl's `file://`.
 //! The library is global to the process, so one test walks the whole way.
@@ -34,7 +34,7 @@ fn a_library_instrument_downloads_where_allowed_and_then_plays() {
     ));
     library::set_folder(machine.path().join("library"));
 
-    // As in `--render`: the instrument is not here, and nothing downloads it.
+    // The instrument is not here, and the record alone does not download it.
     let mut harness = Harness::with_samples(&[]);
     let cello = SamplerState {
         library: Some(LibraryId::try_from(CELLO.to_string()).unwrap()),
@@ -45,14 +45,14 @@ fn a_library_instrument_downloads_where_allowed_and_then_plays() {
     let problems = harness.project.problems();
     assert_eq!(
         problems[0].message,
-        "Cello section, sustain is not in the library of this machine, so the Sampler is silent. Open the project in the app to download it (69 MB)"
+        "Cello section, sustain is not downloaded on this machine, so the Sampler is silent. Ask the composer to click Download on the Sampler card (69 MB)"
     );
+    assert_eq!(library::status(entry), Status::Missing);
 
-    // As in the window: the Sampler starts the download and waits for it. Its sample is not
-    // on the server yet, so it fails, says so, and is not tried again by itself.
-    library::allow_downloads();
+    // Download on the card. The sample is not on the server yet, so it fails, says so, and
+    // is not tried again by itself.
+    library::download(entry);
     let instrument = id("track/instrument");
-    harness.project.rebind(&instrument).unwrap();
     library::wait_for_downloads();
     assert!(matches!(library::status(entry), Status::Failed(_)));
     assert_eq!(

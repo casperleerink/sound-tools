@@ -5,8 +5,9 @@
 //! says "Sampler" and is where another instrument is picked.
 //!
 //! The Instrument select lists the library by category, with the size of each download, and
-//! `Audio file…`. Picking a library instrument is one undo step; its download starts at once,
-//! and the display shows how far it is, or why it failed with `Try again`.
+//! `Audio file…`. Picking a library instrument is one undo step and starts its download, as
+//! `Download` on the display does for one an agent named. The display shows how far it is, or
+//! that it failed, with `Try again`.
 //!
 //! With an SFZ or library instrument the display names it and the card has only Gain: the
 //! instrument has its own pitch, envelope and velocity. A file dropped or chosen replaces it.
@@ -280,7 +281,11 @@ impl SamplerView {
             state.sample = None;
             state.sfz = None;
         };
+        let entry = id.entry();
         self.change(INSTRUMENT_LABEL, ValueChange::Set(id), set, cx);
+        // Picking it from a list that shows its size is asking for it.
+        library::download(entry);
+        self.follow_download(cx);
     }
 
     /// Follows the download of the library instrument of the record, once per poll of the
@@ -303,8 +308,8 @@ impl SamplerView {
         }
     }
 
-    /// Starts the download of `entry` again, and the Sampler waits for it.
-    fn download_again(&mut self, entry: &'static Entry, cx: &mut Context<Self>) {
+    /// Starts the download of `entry`, and the Sampler waits for it.
+    fn download(&mut self, entry: &'static Entry, cx: &mut Context<Self>) {
         library::download(entry);
         let sampler = self.sampler.id().clone();
         self.session
@@ -566,35 +571,41 @@ impl SamplerView {
             Some(attribution) => format!("{} · {attribution}", library.license),
             None => library.license.to_string(),
         };
-        let (says, retry) = match library::status(entry) {
+        let size = size_text(entry.download_bytes);
+        let (says, button) = match library::status(entry) {
             Status::Here => (
                 format!("{} · {} · {license}", entry.name, library.name),
-                false,
+                None,
             ),
             Status::Downloading { bytes } => (
                 format!(
-                    "Downloading {} · {} of {}",
+                    "Downloading {} · {} of {size}",
                     entry.name,
-                    size_text(bytes),
-                    size_text(entry.download_bytes)
+                    size_text(bytes)
                 ),
-                false,
+                None,
             ),
-            Status::Failed(_) => (format!("The download of {} failed", entry.name), true),
-            Status::Missing | Status::NoLibrary => {
-                (format!("{} is not downloaded", entry.name), false)
-            }
+            Status::Failed(_) => (
+                format!("The download of {} failed", entry.name),
+                Some("Try again"),
+            ),
+            Status::Missing => (
+                format!("{} · {} · {license}", entry.name, library.name),
+                Some("Download"),
+            ),
+            Status::NoLibrary => (format!("{} is not downloaded", entry.name), None),
         };
         let display = NoFile::new("sampler-display", DISPLAY_WIDTH, says)
             .drop_file(self.file_drop(DROP_TO_REPLACE, cx));
-        let display = match retry {
-            true => display.button(
-                Button::new("download-again", "Try again")
+        let display = match button {
+            Some(label) => display.button(
+                Button::new("download", format!("{label} · {size}"))
+                    .debug_selector(|| "download".to_string())
                     .variant(ButtonVariant::Subtle)
                     .size(ButtonSize::Sm)
-                    .on_click(cx.listener(move |view, _, _, cx| view.download_again(entry, cx))),
+                    .on_click(cx.listener(move |view, _, _, cx| view.download(entry, cx))),
             ),
-            false => display,
+            None => display,
         };
         display.into_any_element()
     }

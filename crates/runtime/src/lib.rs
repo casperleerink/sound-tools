@@ -605,15 +605,10 @@ pub fn render_block(
 }
 
 /// Puts the library of sampled instruments in the support folder of this machine, which every
-/// project shares. With `downloads`, a Sampler that names an instrument that is not there
-/// downloads it.
-pub fn use_library(downloads: bool) {
-    let Ok(support) = app::support_folder() else {
-        return;
-    };
-    sampler::library::set_folder(support.join("library"));
-    if downloads {
-        sampler::library::allow_downloads();
+/// project shares.
+pub fn use_library() {
+    if let Ok(support) = app::support_folder() {
+        sampler::library::set_folder(support.join("library"));
     }
 }
 

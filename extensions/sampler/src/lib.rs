@@ -278,8 +278,8 @@ fn instrument(
     sample(state, context).map(|audio| Arc::new(Instrument::of_sample(audio)))
 }
 
-/// A library instrument when it is on this machine. Else the Sampler waits for its download,
-/// and the line says how that goes.
+/// A library instrument when it is on this machine. Else the Sampler waits for a download of
+/// it, which only the composer starts, and the line says how that goes.
 fn from_library(
     entry: &'static library::Entry,
     context: &mut BehaviourContext<'_>,
@@ -304,7 +304,7 @@ fn from_library(
             "the download of {name} failed, so the Sampler is silent: {error}. Download on the Sampler card tries again"
         )),
         Status::Missing => Err(format!(
-            "{name} is not in the library of this machine, so the Sampler is silent. Open the project in the app to download it ({size})"
+            "{name} is not downloaded on this machine, so the Sampler is silent. Ask the composer to click Download on the Sampler card ({size})"
         )),
         Status::NoLibrary => Err(format!(
             "{name} cannot play: this machine has no library folder"

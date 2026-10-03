@@ -1,6 +1,6 @@
 //! The library: free sampled instruments a record names by id, such as
-//! `"vsco/cello-section-sustain"`, downloaded on first use and shared by every project of the
-//! machine.
+//! `"vsco/cello-section-sustain"`, downloaded when the composer asks and shared by every project
+//! of the machine.
 //!
 //! The catalog is in the code ([`CATALOG`]): each instrument is one SFZ file of a library on
 //! GitHub, at a pinned commit, so what an id plays never changes. Only the files that SFZ file
@@ -11,8 +11,9 @@
 //!
 //! What is on this machine is never part of a project, as plugins: a project that names an
 //! instrument this machine lacks loads, says so in `problems.txt`, and plays it once it is
-//! downloaded. The runtime downloads only where a composer works, the window and
-//! `--headless` ([`allow_downloads`]); `--inspect` and `--render` play what is there.
+//! downloaded. Nothing downloads by itself, also not when an agent writes a record: only
+//! [`download`], which the Sampler card calls when the composer picks an instrument or clicks
+//! Download.
 //!
 //! Downloads run on threads of their own with `/usr/bin/curl`, as the app's own update, so
 //! there is no HTTP code here. A finished one names the Samplers that waited for it
@@ -23,7 +24,6 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, LazyLock, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
@@ -166,16 +166,9 @@ static MACHINE: LazyLock<RwLock<Machine>> = LazyLock::new(|| {
     })
 });
 
-static DOWNLOADS_ALLOWED: AtomicBool = AtomicBool::new(false);
-
 /// Sets the library folder of this machine. Without one, no library instrument plays.
 pub fn set_folder(folder: PathBuf) {
     machine_mut().folder = Some(folder);
-}
-
-/// Lets a Sampler that names an instrument this machine lacks start its download.
-pub fn allow_downloads() {
-    DOWNLOADS_ALLOWED.store(true, Ordering::Relaxed);
 }
 
 /// Where files come from instead of GitHub, for tests: `file:///…` with
@@ -258,34 +251,22 @@ pub fn status(entry: &'static Entry) -> Status {
     }
 }
 
-/// The Sampler `instance` of the project of `assets` plays `entry`, which is not here: starts
-/// its download when downloads are allowed and none runs, and remembers the Sampler, so its
-/// behaviour runs again when it is done. A download that failed is tried again only by
-/// [`download`].
+/// The Sampler `instance` of the project of `assets` plays `entry`, which is not here: its
+/// behaviour runs again when a download of it ends.
 pub(crate) fn wait_for(entry: &'static Entry, assets: &Assets, instance: &InstanceId) {
     let project = project_of(assets);
-    let mut downloads = downloads();
-    downloads
+    downloads()
         .waiting
         .entry(entry.id)
         .or_default()
         .insert((project, instance.clone()));
-    let failed = downloads.failed.contains_key(entry.id);
-    drop(downloads);
-    if !failed {
-        start(entry);
-    }
 }
 
-/// Starts the download of `entry`, also after one failed. Does nothing while one runs, when
-/// it is here, or when downloads are not allowed.
+/// Starts the download of `entry`, also after one failed. Does nothing while one runs or when
+/// it is here.
 pub fn download(entry: &'static Entry) {
     downloads().failed.remove(entry.id);
-    start(entry);
-}
-
-fn start(entry: &'static Entry) {
-    if !DOWNLOADS_ALLOWED.load(Ordering::Relaxed) || status(entry) != Status::Missing {
+    if status(entry) != Status::Missing {
         return;
     }
     let Some(root) = library_folder(entry.library) else {

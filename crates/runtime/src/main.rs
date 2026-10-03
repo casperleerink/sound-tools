@@ -391,10 +391,7 @@ fn main() -> Result<()> {
         [arguments @ .., "--progress"] => (arguments, true),
         arguments => (arguments, false),
     };
-    // A Sampler downloads the library instruments it names only where a composer works: the
-    // window and `--headless`. A render or an inspect plays what is there.
-    let reads_only = matches!(arguments, [_, "--inspect"] | [_, "--render", ..]);
-    runtime::use_library(!reads_only);
+    runtime::use_library();
     match arguments {
         // What a double click in the Finder starts.
         [] => {
