@@ -220,6 +220,13 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../agent-doc.md"),
 };
 
+/// How to write an SFZ instrument, apart, so an agent reads it only to make one.
+pub const SFZ_AGENT_DOC: AgentDoc = AgentDoc {
+    name: "sfz",
+    when: "Making an SFZ instrument from samples",
+    markdown: include_str!("../sfz-agent-doc.md"),
+};
+
 /// Registers the sampler tool. Call it before the project opens.
 ///
 /// A sampler whose file is missing runs its behaviour again when a file under `assets/audio/`
@@ -232,6 +239,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .rebinds_on_assets(sound_media::AUDIO_FOLDER)
         .rebinds_on_assets(INSTRUMENTS_FOLDER);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
+    registry.agent_doc(EXTENSION, SFZ_AGENT_DOC)?;
     Ok(())
 }
 
