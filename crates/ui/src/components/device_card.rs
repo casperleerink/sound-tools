@@ -57,13 +57,6 @@ const INSIDE: f32 = CARD_PADDING - BORDER;
 /// Air on each side of the hairline before the hidden columns.
 const HIDDEN_GAP: f32 = 8.;
 
-/// How wide a card is with a display `display` wide and cells `columns` columns wide in all,
-/// for a card that sets its width because its title must not widen it, such as one named by a
-/// plugin.
-pub fn card_width(display: f32, columns: usize) -> f32 {
-    CARD_PADDING * 2. + display + DISPLAY_GAP + CELL_WIDTH * columns as f32
-}
-
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 /// Whether a device is on, read when the card draws.
 type IsOn = Rc<dyn Fn(&App) -> bool>;
@@ -466,6 +459,10 @@ impl RenderOnce for DeviceCard {
             ))
             .debug_selector(move || format!("{card}-header"))
             .flex_none()
+            // The body makes the card as wide as it is, and the title gives way: a plugin may
+            // have a name longer than its card.
+            .w_0()
+            .min_w_full()
             .h(px(HEADER_HEIGHT))
             .flex()
             .items_center()

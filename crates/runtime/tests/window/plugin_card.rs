@@ -11,7 +11,7 @@ use plugin_host::{Pin, PluginFormat, PluginRecord};
 
 use sound_core::Changes;
 
-use crate::support::{self, Opened, id, mark, one_undo_step, write_outside};
+use crate::support::{self, Opened, id, mark, one_undo_step, test_plugin_record, write_outside};
 
 const SLOT: &str = "arrangement/track-1/instrument";
 const SLOT_FILE: &str = "state/arrangement/track-1/instrument.json";
@@ -139,4 +139,26 @@ fn a_pin_the_plugin_does_not_have_says_so_and_comes_off_from_the_list(cx: &mut T
     pick(&mut opened, "gone", 77);
     assert_eq!(pins(&mut opened), BTreeMap::new());
     assert_eq!(opened.find("missing-77"), None);
+}
+
+/// A pin taken off while its knob is dragged, by an agent that writes the record, takes the
+/// knob with it. The drag ends there, so undo works again at once.
+#[gpui::test]
+fn a_pin_taken_off_under_a_drag_ends_the_drag(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
+    let knob = opened.control("knob-pin-0");
+    opened.press(knob);
+    opened.drag_to(point(knob.x, knob.y - px(20.)));
+    assert!(opened.gesture_open());
+
+    write_outside(
+        &mut opened,
+        SLOT_FILE,
+        &test_plugin_record(PluginFormat::Clap, "tone"),
+    );
+    assert_eq!(opened.find("knob-pin-0"), None);
+    assert!(!opened.gesture_open());
+    opened.release(knob);
+    assert_eq!(pins(&mut opened), BTreeMap::new());
 }

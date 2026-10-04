@@ -8,12 +8,11 @@
 //! taller. A dropdown spans two cells, so the names of its steps fit. The rack gives the
 //! frame of the card, whose title is the name of the plugin and where another one is picked.
 //! Nothing is hidden, so there is no expand. The power and close icons of an effect come from
-//! the rack, in the frame, because the rack keeps whether a slot is on.
+//! the rack, in the frame, because the rack keeps whether a slot is on. DESIGN.md says what
+//! each control of a pin is and does.
 //!
-//! The control of a pin follows what the plugin says the parameter is: two steps are a toggle,
-//! named steps a dropdown, anything else a knob, which snaps to the steps of a stepped one. What
-//! it says is the plugin's own text for the value. A pin the plugin has no parameter for, or
-//! whose value is outside the range, says so in its cell; the rest of the card works.
+//! A stepped parameter is driven by the number of its step, never by its value, so what a
+//! control writes is always the plugin's own value of a step.
 //!
 //! The list of parameters and the plugin's text both call into the plugin, which a frame may
 //! not do. So the view asks when the session tells it something changed, and draws from what it
@@ -33,7 +32,7 @@ use sound_core::{Instance, MAX_AUTOMATED, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CELL_WIDTH, Cell, ROW_HEIGHT};
 use sound_ui::components::device_card::{
-    BODY_VALUE_LINE, CARD_PADDING, CardFrame, Column, PLAIN_CARD_WIDTH, card_width,
+    BODY_VALUE_LINE, CARD_PADDING, CardFrame, Column, PLAIN_CARD_WIDTH,
 };
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -46,12 +45,10 @@ use sound_ui::components::toggle::Toggle;
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::{ActiveTheme, ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
 
-use crate::{Parameter, Pin, PluginRecord, WeakPlugins};
+use crate::{Parameter, Pin, PluginRecord, Steps, WeakPlugins};
 
 /// The room at the left of the body, where the plain card has all of it.
 const LEFT_WIDTH: f32 = PLAIN_CARD_WIDTH - 2. * CARD_PADDING;
-/// The trigger of the list of parameters, as tall as the button above it.
-const TRIGGER_HEIGHT: f32 = 28.;
 /// A dropdown spans two cells, so the names of its steps fit, and leaves air on either side.
 const DROPDOWN_SPAN: usize = 2;
 const DROPDOWN_WIDTH: f32 = DROPDOWN_SPAN as f32 * CELL_WIDTH - 8.;
@@ -79,40 +76,28 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
 }
 
 /// The control a parameter gets on the card.
-enum Control {
-    Toggle,
-    Dropdown,
-    /// A knob, in steps of this much for a stepped parameter.
-    Knob(Option<f64>),
+enum Control<'a> {
+    /// Two steps.
+    Toggle(&'a Steps),
+    /// Steps that all have a name.
+    Dropdown(&'a Steps),
+    /// A knob over the steps.
+    Stepped(&'a Steps),
+    Knob,
 }
 
-impl Control {
-    fn of(parameter: &Parameter) -> Self {
-        let Some(steps) = &parameter.steps else {
-            return Self::Knob(None);
-        };
-        match steps.count {
-            2 => Self::Toggle,
-            _ if !steps.names.is_empty() => Self::Dropdown,
-            count if count > 2 => {
-                let step = (parameter.maximum - parameter.minimum) / f64::from(count - 1);
-                Self::Knob(Some(step))
-            }
-            _ => Self::Knob(None),
+impl<'a> Control<'a> {
+    fn of(parameter: &'a Parameter) -> Self {
+        match &parameter.steps {
+            Some(steps) if steps.count == 2 => Self::Toggle(steps),
+            Some(steps) if steps.count > 2 && steps.all_named() => Self::Dropdown(steps),
+            Some(steps) if steps.count > 2 => Self::Stepped(steps),
+            _ => Self::Knob,
         }
     }
-}
 
-/// What the list of parameters was last filled from: the plugin's list and the name of each
-/// pin. A turn of a knob changes neither, so it does not fill the list again.
-struct Listed {
-    parameters: Rc<BTreeMap<u32, Parameter>>,
-    pins: BTreeMap<u32, String>,
-}
-
-impl Listed {
-    fn is(&self, parameters: &Rc<BTreeMap<u32, Parameter>>, pins: &BTreeMap<u32, String>) -> bool {
-        Rc::ptr_eq(&self.parameters, parameters) && &self.pins == pins
+    fn is_knob(&self) -> bool {
+        matches!(self, Self::Stepped(_) | Self::Knob)
     }
 }
 
@@ -134,7 +119,9 @@ pub struct PluginView {
     readouts: BTreeMap<u32, (f64, Option<SharedString>)>,
     /// The list that puts a parameter on the card and takes one off.
     menu: Entity<DropdownMenu>,
-    listed: Option<Listed>,
+    /// The pin whose knob is being dragged. A drag whose knob goes away, because the pin was
+    /// taken off or became another control, sends no end, so the card ends it.
+    dragged: Option<u32>,
 }
 
 impl PluginView {
@@ -150,13 +137,14 @@ impl PluginView {
         // also close by itself, and a plugin can load after the card was made. The poll that
         // saw either notifies.
         cx.observe(&session, |view, _, cx| {
-            view.ask_the_plugin(cx);
+            view.ask_the_plugin(false, cx);
             cx.notify();
         })
         .detach();
         cx.subscribe(&session, |view, _, event: &ProjectEvent, cx| match event {
             ProjectEvent::Changed(id) if id == view.plugin.id() => {
-                view.ask_the_plugin(cx);
+                view.ask_the_plugin(true, cx);
+                view.end_a_drag_that_lost_its_knob(cx);
                 cx.notify();
             }
             // Deleted under a drag, from outside. The delete was the last write, so the
@@ -179,7 +167,7 @@ impl PluginView {
                 .width(260.)
                 .max_height(320.)
                 .debug_name("plugin-parameters");
-            menu.set_trigger_height(TRIGGER_HEIGHT, cx);
+            menu.set_trigger_height(ButtonSize::Sm.height(), cx);
             menu
         });
         cx.subscribe(&menu, |view, _, MenuPicked(value), cx| {
@@ -196,9 +184,9 @@ impl PluginView {
             parameters: None,
             readouts: BTreeMap::new(),
             menu,
-            listed: None,
+            dragged: None,
         };
-        view.ask_the_plugin(cx);
+        view.ask_the_plugin(true, cx);
         view
     }
 
@@ -208,8 +196,9 @@ impl PluginView {
     }
 
     /// Asks the plugin what the card draws from: its parameters, and its text for the value of
-    /// every pin that changed. Only what is new costs a call into the plugin.
-    fn ask_the_plugin(&mut self, cx: &mut Context<Self>) {
+    /// every pin that changed. Only what is new costs a call into the plugin. The list of
+    /// parameters is filled again when the record changed or the plugin's list did.
+    fn ask_the_plugin(&mut self, record_changed: bool, cx: &mut Context<Self>) {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
@@ -224,7 +213,8 @@ impl PluginView {
             (now, before) => now.is_none() && before.is_none(),
         };
         if !same_list {
-            // Another list may have other text for the same values.
+            // Another list may have other text for the same values: the host makes a new one
+            // also when only the plugin's text changed.
             self.readouts.clear();
             self.parameters = parameters;
         }
@@ -245,27 +235,28 @@ impl PluginView {
                 .insert(*pin, (*value, text.map(SharedString::from)));
         }
 
-        let Some(parameters) = self.parameters.clone() else {
+        let Some(parameters) = &self.parameters else {
             return;
         };
-        let names: BTreeMap<u32, String> = pins
-            .iter()
-            .map(|(pin, Pin { name, .. })| (*pin, name.clone()))
-            .collect();
-        if self
-            .listed
-            .as_ref()
-            .is_some_and(|listed| listed.is(&parameters, &names))
-        {
-            return;
+        if record_changed || !same_list {
+            let entries = menu_entries(parameters, &pins);
+            self.menu
+                .update(cx, |menu, cx| menu.set_entries(entries, cx));
         }
-        let entries = menu_entries(&parameters, &names);
-        self.menu
-            .update(cx, |menu, cx| menu.set_entries(entries, cx));
-        self.listed = Some(Listed {
-            parameters,
-            pins: names,
-        });
+    }
+
+    /// Ends the drag of a knob that is no longer on the card. See [`Self::dragged`].
+    fn end_a_drag_that_lost_its_knob(&mut self, cx: &mut Context<Self>) {
+        let Some(dragged) = self.dragged else {
+            return;
+        };
+        let record = self.session.read(cx).project().state(&self.plugin);
+        let pinned = record.is_some_and(|record| record.parameters.contains_key(&dragged));
+        let parameter = self.parameters.as_ref().and_then(|list| list.get(&dragged));
+        if !pinned || !parameter.is_some_and(|parameter| Control::of(parameter).is_knob()) {
+            self.dragged = None;
+            self.edit.finish(&self.session, cx);
+        }
     }
 
     /// A row of the list was picked: a pinned parameter comes off the card, another goes on it
@@ -298,9 +289,14 @@ impl PluginView {
             let now = plugins.parameter_value(self.plugin.id(), parameter_id)?;
             Some(now.value)
         });
+        let now = now.unwrap_or(parameter.default);
+        let value = match &parameter.steps {
+            Some(steps) => parameter.step_value(steps, steps.index(now)),
+            None => inside(now, parameter.minimum, parameter.maximum),
+        };
         let pin = Pin {
             name: parameter.name.clone(),
-            value: inside(now.unwrap_or(parameter.default), parameter),
+            value,
         };
         let label = format!("Add {}", parameter.name);
         let add = move |record: &mut PluginRecord, pin| {
@@ -309,6 +305,14 @@ impl PluginView {
         let (session, plugin) = (&self.session, &self.plugin);
         self.edit
             .apply(session, plugin, &label, ValueChange::Set(pin), add, cx);
+    }
+
+    /// Notes which knob a drag is on, see [`Self::dragged`].
+    fn dragged_to(&mut self, id: u32, change: &ValueChange) {
+        self.dragged = match change {
+            ValueChange::Drag(_) => Some(id),
+            ValueChange::DragEnd | ValueChange::DragCancel | ValueChange::Set(_) => None,
+        };
     }
 
     /// A change of the control of the pin `id`, as one gesture or one step.
@@ -364,34 +368,39 @@ impl PluginView {
             .filter(|(read, _)| read.to_bits() == pin.value.to_bits())
             .and_then(|(_, text)| text.clone());
         let (minimum, maximum) = (parameter.minimum, parameter.maximum);
+        // Every step the control can write, by its number, as the plugin's own value.
+        let step_values = |steps: &Steps| -> Vec<f64> {
+            (0..steps.count)
+                .map(|index| parameter.step_value(steps, index))
+                .collect()
+        };
         let element_id = ("pin", u64::from(id));
         let (cell, span) = match Control::of(parameter) {
-            Control::Toggle => {
-                let on = pin.value >= (minimum + maximum) / 2.;
+            Control::Toggle(steps) => {
+                let on = steps.index(pin.value) == 1;
                 let word = if on { "On" } else { "Off" };
                 let face = readout.unwrap_or_else(|| word.into());
+                let values = step_values(steps);
                 let toggle = Toggle::new(element_id, face, on).on_change(weak_callback(
                     cx,
                     move |view, on: bool, cx| {
-                        let value = if on { maximum } else { minimum };
+                        let value = values[usize::from(on)];
                         view.change(id, &label, ValueChange::Set(value), |value| value, cx);
                     },
                 ));
                 (Cell::new(toggle), 1)
             }
-            Control::Dropdown => {
-                let steps = parameter.steps.iter().flat_map(|steps| &steps.names);
-                let values: Vec<f64> = steps.clone().map(|step| step.value).collect();
+            Control::Dropdown(steps) => {
                 let items = steps
+                    .names
+                    .iter()
                     .enumerate()
                     .map(|(index, step)| MenuItem::new(index.to_string(), step.name.clone()));
                 let picked = match out_of_range {
-                    true => None,
-                    false => nearest(&values, pin.value),
+                    true => SharedString::default(),
+                    false => steps.index(pin.value).to_string().into(),
                 };
-                let picked = picked.map_or_else(SharedString::default, |index| {
-                    SharedString::from(index.to_string())
-                });
+                let values = step_values(steps);
                 let select = Select::new(element_id, picked)
                     .entries(vec![MenuEntry::Group(MenuGroup::new().items(items))])
                     .placeholder("None")
@@ -405,25 +414,45 @@ impl PluginView {
                     }));
                 (Cell::new(select).span(DROPDOWN_SPAN), DROPDOWN_SPAN)
             }
-            Control::Knob(step) => {
-                let range = KnobRange::linear(minimum as f32, maximum as f32);
+            control @ (Control::Stepped(_) | Control::Knob) => {
                 let readout = match out_of_range {
                     true => "Out of range".into(),
                     false => readout.unwrap_or_else(|| short(pin.value as f32).into()),
                 };
-                let bounds = parameter.clone();
-                let knob = Knob::new(element_id)
-                    .range(range)
-                    .value(pin.value as f32)
-                    .default_value(parameter.default as f32)
-                    .label(name)
-                    .readout(readout)
-                    .when_some(step, |knob, step| knob.step(step as f32))
-                    .on_change(weak_callback(cx, move |view, change: ValueChange, cx| {
-                        let bounds = &bounds;
-                        let value = |value: f32| inside(f64::from(value), bounds);
-                        view.change(id, &label, change, value, cx);
-                    }));
+                let knob = Knob::new(element_id).label(name).readout(readout);
+                let knob = match control {
+                    // The knob goes over the numbers of the steps, one at a time.
+                    // A parameter may have millions of steps, so they are worked out one at a
+                    // time and not listed.
+                    Control::Stepped(steps) => {
+                        let last = steps.count - 1;
+                        let (value, default) =
+                            (steps.index(pin.value), steps.index(parameter.default));
+                        let steps = steps.clone();
+                        knob.range(KnobRange::linear(0., last as f32))
+                            .step(1.)
+                            .value(value as f32)
+                            .default_value(default as f32)
+                            .on_change(weak_callback(cx, move |view, change: ValueChange, cx| {
+                                view.dragged_to(id, &change);
+                                let steps = &steps;
+                                let value = |value: f32| {
+                                    let index = (value.round().max(0.) as u32).min(last);
+                                    inside(steps.value(index), minimum, maximum)
+                                };
+                                view.change(id, &label, change, value, cx);
+                            }))
+                    }
+                    _ => knob
+                        .range(KnobRange::linear(minimum as f32, maximum as f32))
+                        .value(pin.value as f32)
+                        .default_value(parameter.default as f32)
+                        .on_change(weak_callback(cx, move |view, change: ValueChange, cx| {
+                            view.dragged_to(id, &change);
+                            let value = |value: f32| inside(f64::from(value), minimum, maximum);
+                            view.change(id, &label, change, value, cx);
+                        })),
+                };
                 // The knob is a cell of its own, with its label and readout.
                 return (knob.into_any_element(), 1);
             }
@@ -440,7 +469,7 @@ impl PluginView {
 /// too. At the most pins, the others cannot be picked and a line says why.
 fn menu_entries(
     parameters: &BTreeMap<u32, Parameter>,
-    pins: &BTreeMap<u32, String>,
+    pins: &BTreeMap<u32, Pin>,
 ) -> Vec<MenuEntry> {
     let full = pins.len() >= MAX_AUTOMATED;
     let listed = parameters.values().map(|parameter| {
@@ -453,8 +482,8 @@ fn menu_entries(
     let unknown = pins
         .iter()
         .filter(|(id, _)| !parameters.contains_key(id))
-        .map(|(id, name)| {
-            MenuItem::new(id.to_string(), name.clone())
+        .map(|(id, pin)| {
+            MenuItem::new(id.to_string(), pin.name.clone())
                 .description("Not in this plugin")
                 .checked(true)
                 .selectable(false)
@@ -471,16 +500,10 @@ fn menu_entries(
     entries
 }
 
-/// A value inside the range of `parameter`. The knob works in single precision, whose ends can
-/// fall just outside the range the plugin gave.
-fn inside(value: f64, parameter: &Parameter) -> f64 {
-    value.max(parameter.minimum).min(parameter.maximum)
-}
-
-/// The index of the step value nearest `value`.
-fn nearest(values: &[f64], value: f64) -> Option<usize> {
-    let distance = |index: &usize| (values[*index] - value).abs();
-    (0..values.len()).min_by(|one, other| distance(one).total_cmp(&distance(other)))
+/// A value inside a range. The knob works in single precision, whose ends can fall just
+/// outside the range the plugin gave.
+fn inside(value: f64, minimum: f64, maximum: f64) -> f64 {
+    value.max(minimum).min(maximum)
 }
 
 /// The cell of a pin whose id the plugin does not have: its name from the record, and what is
@@ -587,7 +610,7 @@ impl Render for PluginView {
             .children(self.parameters.is_some().then(|| self.menu.clone()));
 
         // Two pins to a column, in the order of their ids. A column is as wide as its wider
-        // cell.
+        // cell, and the columns make the card as wide as it is.
         let pins: Vec<(AnyElement, usize)> = record
             .parameters
             .iter()
@@ -595,25 +618,18 @@ impl Render for PluginView {
             .collect();
         let mut pins = pins.into_iter();
         let mut columns = Vec::new();
-        let mut spanned = 0;
         while let Some((top, top_span)) = pins.next() {
             let column = Column::new().top(top);
-            let (column, span) = match pins.next() {
-                Some((bottom, span)) => (column.bottom(bottom), span.max(top_span)),
-                None => (column, top_span),
-            };
-            spanned += span;
-            columns.push(column.span(span));
+            columns.push(match pins.next() {
+                Some((bottom, span)) => column.bottom(bottom).span(span.max(top_span)),
+                None => column.span(top_span),
+            });
         }
-        let width = match spanned {
-            0 => PLAIN_CARD_WIDTH,
-            spanned => card_width(LEFT_WIDTH, spanned),
+        let card = match columns.is_empty() {
+            true => plain,
+            false => self.frame.card(),
         };
-        let mut card = self
-            .frame
-            .card()
-            .w(px(width))
-            .display(left(top, Some(detail)));
+        let mut card = card.display(left(top, Some(detail)));
         for column in columns {
             card = card.column(column);
         }
