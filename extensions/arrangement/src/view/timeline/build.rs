@@ -19,11 +19,11 @@ use super::scene::{
 use super::state::{
     ClipDragKind, DropTarget, Edge, EdgeDrag, Held, LaneDragKind, LaneGhost, MoveDrag,
 };
-use crate::view::clips::{gain_label, shown_end, time_label};
+use crate::view::clips::{gain_label, time_label};
 use crate::view::layout::{LANE_HEIGHT, Rect, Rows, Viewport, ordered};
 use crate::view::paint::accent;
 use crate::view::track_lanes;
-use crate::{AudioClip, AutomationLane, TrackKind, TrackState, travel_in};
+use crate::{AudioClip, AutomationLane, TrackKind, TrackState, shown_end, travel_in};
 
 impl Timeline {
     /// Everything to paint into a timeline area of this size, read from the project now.

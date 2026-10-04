@@ -149,6 +149,23 @@ pub fn automatable(
     own.chain(of_devices).collect()
 }
 
+/// The numbers of `track`, whose record is `state`, that a lane can be added for, each as a
+/// lane with no points: those with no lane yet and a value in their record to start from.
+pub(crate) fn free_lanes(
+    project: &Project,
+    track: &InstanceId,
+    state: &TrackState,
+) -> Vec<AutomationLane> {
+    let travel = travel_in(project);
+    let lanes = automatable(project, track, state).into_iter();
+    let lanes = lanes.filter(|lane| {
+        let taken = state.automation.iter().any(|had| had.same_number(lane));
+        let number = lane.number(track, state, &travel);
+        !taken && number.is_some_and(|number| number.record.is_some())
+    });
+    lanes.collect()
+}
+
 /// One automation lane as it plays: the index and the field of its number, its range, and its
 /// points as places on the travel, so a straight line between them is straight on the knob.
 #[derive(Clone, Debug, PartialEq)]

@@ -12,7 +12,6 @@
 //! - `scene`: what one paint shows, the hit tests on it and its painting.
 //! - `build`: the scene of a paint, from the project.
 //! - `state`: the types of what the mouse drags, a rename and files dragged in.
-//! - `edits`: moves of clips and their automation, as pure functions.
 //! - `mouse`: the press, the ruler, the marquee, the end of a drag, hover and the cursor.
 //! - `drag`: the mouse moves of a drag of clips or of a track.
 //! - `keys`: the keys, and deleting and renaming a track.
@@ -23,7 +22,6 @@
 mod build;
 mod clipboard;
 mod drag;
-mod edits;
 mod file_drop;
 mod keys;
 mod lanes;
@@ -47,7 +45,7 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels,
     ScrollWheelEvent, Subscription, Window, canvas, div, prelude::*, px,
 };
-use sound_core::{Instance, InstanceId, ProjectEvent, State, Ticks, TimeSignatures};
+use sound_core::{Instance, InstanceId, Project, ProjectEvent, State, Ticks, TimeSignatures};
 use sound_notes::Clip;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -56,15 +54,15 @@ use sound_ui::components::text_input::TextInput;
 use sound_ui::{ActiveTheme, KeyboardFocus, Playhead, Recording, Session, Waveforms};
 
 use super::clipboard::SharedClipboard;
-use super::clips::{AnyClip, shown_end};
 use super::layout::{
     ADD_ROW_HEIGHT, Extent, HEADER_INSET, HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rows, Viewport,
 };
 use super::paint::paint_focus_ring;
 use super::selection::Selection;
 use super::snap::{Grid, SharedSnap, Snap};
-use crate::{ArrangementState, AudioClip, TrackKind, TrackState, tracks, unnumbered};
-use edits::is_clip_tool;
+use crate::{
+    AnyClip, ArrangementState, AudioClip, TrackKind, TrackState, shown_end, tracks, unnumbered,
+};
 use lanes::LaneMenu;
 use scene::{PointKey, paint_scene};
 use state::{Held, Incoming, Rename};
@@ -970,4 +968,11 @@ fn listen(
             timeline.update(cx, |timeline, cx| timeline.on_pinch(event, x, cx));
         }
     });
+}
+
+/// Whether an id is a clip of either kind.
+pub(super) fn is_clip_tool(project: &Project, id: &InstanceId) -> bool {
+    project
+        .tool_of(id)
+        .is_some_and(|tool| tool == Clip::TOOL || tool == AudioClip::TOOL)
 }

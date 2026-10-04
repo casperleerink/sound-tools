@@ -1,16 +1,17 @@
 //! Copy, paste, duplicate, delete and nudge of the selected clips.
 
 use gpui::Context;
-use sound_core::{Changes, InstanceId, Ticks};
+use sound_core::{Changes, InstanceId, ProjectError, Ticks};
 
 use super::Timeline;
-use super::edits::{ClipMove, change_lanes, move_clips, move_lanes, range_of, wrong_track};
-use super::state::MovedClip;
+use crate::clip_moves::{change_lanes, range_of};
 use crate::view::clipboard::{Copied, CopiedClips};
-use crate::view::clips::AnyClip;
 use crate::view::layout::shifted;
 use crate::view::plural;
-use crate::{Carried, TrackState, add_audio_clips, add_clips, automation, travel_in, unnumbered};
+use crate::{
+    AnyClip, Carried, ClipMove, TrackKind, TrackState, add_audio_clips, add_clips, automation,
+    move_clips, travel_in, unnumbered,
+};
 
 impl Timeline {
     /// What the selected clips are for the clipboard: each with its row, its name and the
@@ -203,8 +204,7 @@ impl Timeline {
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
-                move_lanes(project, &mut changes, &arrangement, &moves);
-                move_clips(project, &mut changes, moves)?;
+                move_clips(project, &mut changes, &arrangement, moves)?;
                 project.commit(label, changes)
             })
         });
@@ -221,33 +221,26 @@ impl Timeline {
             let Some(row) = clip.parent().and_then(|track| self.row_of(&track)) else {
                 return;
             };
-            let moved = MovedClip {
-                home: clip.clone(),
-                clip: clip.clone(),
-                kind: next.kind(),
-                row,
-                range: range_of(project, &next),
-            };
-            clips.push((moved, next));
+            clips.push((row, clip, next));
         }
-        let moved: Vec<MovedClip> = clips.iter().map(|(moved, _)| moved.clone()).collect();
         let tracks = self.order.len() as i64;
-        let rows = (1..tracks)
-            .map(|times| step * times)
-            .find(|rows| self.fits(&moved, *rows, project));
+        let rows = (1..tracks).map(|times| step * times).find(|rows| {
+            let clips = clips.iter().map(|(row, _, next)| (*row, next.kind()));
+            self.fits(clips, *rows, project)
+        });
         let Some(rows) = rows else {
             return;
         };
         let mut moves = Vec::new();
-        for (moved, next) in clips {
-            let row = moved.row.saturating_add_signed(rows as isize);
+        for (row, clip, next) in clips {
+            let row = row.saturating_add_signed(rows as isize);
             let Some(to) = self.order.get(row).cloned() else {
                 return;
             };
             moves.push(ClipMove {
-                clip: moved.clip,
-                home: moved.home,
-                was: moved.range,
+                home: clip.clone(),
+                clip,
+                was: range_of(project, &next),
                 to,
                 next,
             });
@@ -264,8 +257,7 @@ impl Timeline {
         let moved = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
-                move_lanes(project, &mut changes, &arrangement, &moves);
-                let moved = move_clips(project, &mut changes, moves)?;
+                let moved = move_clips(project, &mut changes, &arrangement, moves)?;
                 project.commit(label, changes)?;
                 Ok(moved)
             })
@@ -274,5 +266,20 @@ impl Timeline {
             let primary = index.and_then(|index| ids.get(index).cloned());
             self.set_clips(ids, primary, cx);
         }
+    }
+}
+
+/// Why a clip cannot go where a paste would put it.
+fn wrong_track(track: &InstanceId, name: &str, kind: TrackKind) -> ProjectError {
+    let message = match kind {
+        TrackKind::Instrument => {
+            "a note clip goes on an instrument track, and this is an audio track"
+        }
+        TrackKind::Audio => "an audio clip goes on an audio track, and this is an instrument track",
+    };
+    let id = track.child(name).unwrap_or_else(|_| track.clone());
+    ProjectError::WrongPlace {
+        id,
+        message: message.to_string(),
     }
 }

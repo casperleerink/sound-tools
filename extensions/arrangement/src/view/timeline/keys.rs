@@ -7,9 +7,8 @@ use sound_core::{Changes, Instance};
 use sound_notes::Clip;
 use sound_ui::components::text_input::{InputSize, TextInput};
 
-use super::edits::is_clip_tool;
 use super::state::{GAIN_LABEL, Rename};
-use super::{Timeline, TimelineEvent};
+use super::{Timeline, TimelineEvent, is_clip_tool};
 use crate::view::clips::{GAIN_KEY_STEP_DB, gain_moved};
 use crate::view::gesture::nudged_track;
 use crate::view::layout::{HEADER_WIDTH, NAME_LEFT, NAME_MIDDLE, RULER_HEIGHT};

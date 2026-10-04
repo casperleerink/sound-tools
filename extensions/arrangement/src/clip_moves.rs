@@ -1,31 +1,129 @@
-//! Edits of the project that need no view: moving clips between tracks, with the automation
-//! they take along.
+//! Moving clips, in time and between tracks, with the automation they take along. No view:
+//! the timeline says which clips go where, and these functions write what the project becomes.
+//!
+//! A note clip and an audio clip move the same way, so a move holds an [`AnyClip`]. What differs
+//! is here too: an audio clip has no length of its own, because it plays at the speed of its
+//! file, so where it ends comes from its file and the tempo; and each kind goes on its own kind
+//! of track only.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use sound_core::{Changes, Instance, InstanceId, Project, ProjectError, State, Ticks};
-use sound_media::{AudioAsset, Cached, Info};
+use sound_core::{Changes, Instance, InstanceId, Project, ProjectError, Ticks};
+use sound_media::Cached;
 use sound_notes::Clip;
 
-use crate::view::clips::AnyClip;
 use crate::{
-    AudioClip, AutomationLane, FreeIds, LaneMove, TrackKind, TrackState, Travel, automatable,
-    automation, moved, top_layer, travel_in, unnumbered,
+    AudioClip, FreeIds, LaneMove, TrackKind, TrackState, Travel, automation, moved, top_layer,
+    travel_in, unnumbered,
 };
+
+/// A clip of either kind, by value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AnyClip {
+    Notes(Clip),
+    Audio(AudioClip),
+}
+
+impl AnyClip {
+    /// The clip the project has at `id`, of either kind.
+    pub fn read(project: &Project, id: &InstanceId) -> Option<Self> {
+        if let Some(clip) = project.resolve::<Clip>(id) {
+            return project.state(&clip).cloned().map(Self::Notes);
+        }
+        let clip = project.resolve::<AudioClip>(id)?;
+        project.state(&clip).cloned().map(Self::Audio)
+    }
+
+    pub fn start(&self) -> Ticks {
+        match self {
+            Self::Notes(clip) => clip.start,
+            Self::Audio(clip) => clip.start,
+        }
+    }
+
+    pub fn with_start(self, start: Ticks) -> Self {
+        match self {
+            Self::Notes(clip) => Self::Notes(Clip { start, ..clip }),
+            Self::Audio(clip) => Self::Audio(AudioClip { start, ..clip }),
+        }
+    }
+
+    /// The kind of track that plays it.
+    pub fn kind(&self) -> TrackKind {
+        match self {
+            Self::Notes(_) => TrackKind::Instrument,
+            Self::Audio(_) => TrackKind::Audio,
+        }
+    }
+
+    /// Where it ends on the timeline, see [`shown_end`] for an audio clip.
+    pub fn end(&self, project: &Project) -> Ticks {
+        match self {
+            Self::Notes(clip) => clip.end(),
+            Self::Audio(clip) => shown_end(project, clip),
+        }
+    }
+
+    /// Puts it at `id`, a new clip or over the one that is there.
+    pub fn write(self, changes: &mut Changes, id: InstanceId) {
+        match self {
+            Self::Notes(clip) => {
+                changes.create(id, clip);
+            }
+            Self::Audio(clip) => {
+                changes.create(id, clip);
+            }
+        }
+    }
+}
+
+/// Where an audio clip ends on the timeline. It plays at the speed of its file, so this depends
+/// on the file and the tempo. When the file is not there the clip still needs a place to be seen,
+/// selected and deleted: as long as its trim says, or one bar when it plays to the end of a file
+/// nobody can measure. The same while nothing knows yet what the file is: this never looks at
+/// the disk, because the thread that draws calls it, see [`sound_media::cached`].
+pub fn shown_end(project: &Project, clip: &AudioClip) -> Ticks {
+    let clock = project.clock();
+    if let Cached::Plays(file) = sound_media::cached(project.assets(), &clip.asset) {
+        return clip.end(Some(&file), clock).max(clip.start + Ticks(1));
+    }
+    match clip.file_end_seconds {
+        Some(end) => {
+            let seconds = clock.seconds_of(clip.start) + (end - clip.file_start_seconds);
+            clock.tick_at_seconds(seconds).max(clip.start + Ticks(1))
+        }
+        None => {
+            let time_signatures = project.project_file().tempo_map.time_signatures();
+            clip.start + time_signatures.bar_at(clip.start).length()
+        }
+    }
+}
 
 /// One clip of a move to another place: the clip now, the id it had when the move began and
 /// where it was on the track of that id, the track it goes to and what it becomes there.
-pub(super) struct ClipMove {
-    pub(super) clip: InstanceId,
-    pub(super) home: InstanceId,
-    pub(super) was: Range<Ticks>,
-    pub(super) to: Instance<TrackState>,
-    pub(super) next: AnyClip,
+pub struct ClipMove {
+    pub clip: InstanceId,
+    pub home: InstanceId,
+    pub was: Range<Ticks>,
+    pub to: Instance<TrackState>,
+    pub next: AnyClip,
+}
+
+/// Moves clips of `arrangement` with the automation under them, in one group of changes: what
+/// a nudge writes. See [`move_records`] for the ids the clips get, which this gives back.
+pub fn move_clips(
+    project: &Project,
+    changes: &mut Changes,
+    arrangement: &InstanceId,
+    moves: Vec<ClipMove>,
+) -> Result<Vec<InstanceId>, ProjectError> {
+    move_lanes(project, changes, arrangement, &moves);
+    move_records(project, changes, moves)
 }
 
 /// What `moves` are for the automation they take along, see [`moved`].
-fn lane_moves(moves: &[ClipMove]) -> Vec<LaneMove> {
+pub(crate) fn lane_moves(moves: &[ClipMove]) -> Vec<LaneMove> {
     let moves = moves.iter().filter_map(|step| {
         Some(LaneMove {
             from: step.home.parent()?,
@@ -39,7 +137,7 @@ fn lane_moves(moves: &[ClipMove]) -> Vec<LaneMove> {
 
 /// Writes what `change` makes of the lanes of the tracks of `arrangement` to a group of
 /// changes. It gets the records of the tracks by id, and the numbers of their devices.
-pub(super) fn change_lanes(
+pub(crate) fn change_lanes(
     project: &Project,
     changes: &mut Changes,
     arrangement: &InstanceId,
@@ -52,7 +150,7 @@ pub(super) fn change_lanes(
 }
 
 /// The automation that `moves` take along, to a group of changes, before the clips move.
-pub(super) fn move_lanes(
+fn move_lanes(
     project: &Project,
     changes: &mut Changes,
     arrangement: &InstanceId,
@@ -68,25 +166,8 @@ pub(super) fn move_lanes(
     });
 }
 
-/// The numbers of `track`, whose record is `state`, that a lane can be added for, each as a
-/// lane with no points: those with no lane yet and a value in their record to start from.
-pub(super) fn free_lanes(
-    project: &Project,
-    track: &InstanceId,
-    state: &TrackState,
-) -> Vec<AutomationLane> {
-    let travel = travel_in(project);
-    let lanes = automatable(project, track, state).into_iter();
-    let lanes = lanes.filter(|lane| {
-        let taken = state.automation.iter().any(|had| had.same_number(lane));
-        let number = lane.number(track, state, &travel);
-        !taken && number.is_some_and(|number| number.record.is_some())
-    });
-    lanes.collect()
-}
-
 /// The records of the tracks of an arrangement, by id.
-pub(super) fn track_states(
+pub(crate) fn track_states(
     project: &Project,
     arrangement: &InstanceId,
 ) -> BTreeMap<InstanceId, TrackState> {
@@ -96,11 +177,12 @@ pub(super) fn track_states(
 }
 
 /// Where a clip is on the timeline now.
-pub(super) fn range_of(project: &Project, clip: &AnyClip) -> Range<Ticks> {
+pub(crate) fn range_of(project: &Project, clip: &AnyClip) -> Range<Ticks> {
     clip.start()..clip.end(project)
 }
 
-/// Moves clips in one group of changes. A clip that stays on its track gets its new record. One
+/// The clips of a move alone, to a group of changes: a drag writes the lanes itself, from the
+/// tracks as they were when it began. A clip that stays on its track gets its new record. One
 /// that goes to another track is a delete and a create, like moving a file: back on the track of
 /// its `home` it takes that id again, elsewhere its name without a number at its end, or the
 /// next free one. So `clip` moved down onto a track that has a `clip` is `clip-2` there, and
@@ -109,7 +191,7 @@ pub(super) fn range_of(project: &Project, clip: &AnyClip) -> Range<Ticks> {
 ///
 /// A moved audio clip goes on top of the clips of its track, as a new one does, so where it
 /// overlaps them it is heard. Moved together, they keep their order among themselves.
-pub(super) fn move_clips(
+pub(crate) fn move_records(
     project: &Project,
     changes: &mut Changes,
     mut moves: Vec<ClipMove>,
@@ -167,36 +249,5 @@ fn put_on_top(project: &Project, moves: &mut [ClipMove]) {
         });
         clip.layer = *layer;
         *layer = layer.saturating_add(1);
-    }
-}
-
-/// What the file of an audio clip is, from memory only: a press on the thread that draws does
-/// not read the disk. `None` for a file that is missing, does not play, or is not known yet.
-pub(super) fn known_file(project: &Project, asset: &AudioAsset) -> Option<Info> {
-    match sound_media::cached(project.assets(), asset) {
-        Cached::Plays(file) => Some(file),
-        Cached::DoesNotPlay(_) | Cached::Missing | Cached::Unknown => None,
-    }
-}
-
-/// Whether an id is a clip of either kind.
-pub(super) fn is_clip_tool(project: &Project, id: &InstanceId) -> bool {
-    project
-        .tool_of(id)
-        .is_some_and(|tool| tool == Clip::TOOL || tool == AudioClip::TOOL)
-}
-
-/// Why a clip cannot go where a paste would put it.
-pub(super) fn wrong_track(track: &InstanceId, name: &str, kind: TrackKind) -> ProjectError {
-    let message = match kind {
-        TrackKind::Instrument => {
-            "a note clip goes on an instrument track, and this is an audio track"
-        }
-        TrackKind::Audio => "an audio clip goes on an audio track, and this is an instrument track",
-    };
-    let id = track.child(name).unwrap_or_else(|_| track.clone());
-    ProjectError::WrongPlace {
-        id,
-        message: message.to_string(),
     }
 }

@@ -23,8 +23,7 @@ use std::rc::Rc;
 use sound_core::Ticks;
 use sound_notes::{Length, Note};
 
-use super::clips::AnyClip;
-use crate::Carried;
+use crate::{AnyClip, Carried};
 
 /// One copied clip: its row from the top copied row, its name, the clip with its start from the
 /// earliest one, and the automation under it, which says how long it was on the timeline. An

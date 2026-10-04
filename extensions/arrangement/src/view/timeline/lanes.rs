@@ -12,9 +12,9 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::{Devices, DragEdit};
 
 use super::Timeline;
-use super::edits::free_lanes;
 use super::scene::{PointKey, Scene};
 use super::state::{After, Held, LaneDrag, LaneDragKind};
+use crate::automation::free_lanes;
 use crate::view::lanes::{DRAG_THRESHOLD, erase_range};
 use crate::view::layout::{
     ADD_LANE_HEIGHT, HEADER_INSET, HEADER_WIDTH, Part, RULER_HEIGHT, shifted,

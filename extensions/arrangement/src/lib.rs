@@ -32,6 +32,7 @@
 
 mod audio;
 mod automation;
+mod clip_moves;
 pub mod decibels;
 mod input;
 mod master;
@@ -57,6 +58,7 @@ pub use automation::{
     AutomationLane, AutomationValue, Carried, LaneMove, Moved, Travel, automatable, moved,
     travel_in,
 };
+pub use clip_moves::{AnyClip, ClipMove, move_clips, shown_end};
 pub use input::InputChannels;
 use master::Master;
 pub use master::{LimiterState, MasterState};

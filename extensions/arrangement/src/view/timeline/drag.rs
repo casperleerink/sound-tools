@@ -6,23 +6,22 @@ use sound_core::{Changes, Instance, InstanceId, Project, Ticks};
 use sound_ui::DragEdit;
 
 use super::Timeline;
-use super::edits::{ClipMove, move_clips, range_of, track_states};
 use super::state::{
     After, ClipDrag, ClipDragKind, Edge, EdgeDrag, FADE_IN_LABEL, FADE_OUT_LABEL, GAIN_LABEL,
-    GainDrag, Held, LaneDragKind, LaneGhost, MOVE_TRACK_LABEL, MoveDrag, MovedClip, ResizeDrag,
+    GainDrag, Held, LaneDragKind, LaneGhost, MOVE_TRACK_LABEL, MoveDrag, ResizeDrag,
     TRACK_DRAG_THRESHOLD, TrackDrag,
 };
+use crate::clip_moves::{lane_moves, move_records, range_of, track_states};
 use crate::view::clips::{
-    AnyClip, GAIN_DB, GAIN_TRAVEL, fade_in, fade_out, fitted, gain_moved, trimmed_left,
-    trimmed_right,
+    GAIN_DB, GAIN_TRAVEL, fade_in, fade_out, fitted, gain_moved, trimmed_left, trimmed_right,
 };
 use crate::view::gesture::{nudged_track, resized_left, resized_right};
 use crate::view::layout::{Rows, shifted};
 use crate::view::plural;
 use crate::view::snap::Grid;
 use crate::{
-    AudioClip, LaneMove, Moved, TrackKind, TrackState, automation, move_track, moved, track_orders,
-    travel_in,
+    AnyClip, AudioClip, ClipMove, Moved, TrackKind, TrackState, automation, move_track, moved,
+    track_orders, travel_in,
 };
 
 impl Timeline {
@@ -209,11 +208,17 @@ impl Timeline {
         project.state(track).map(|state| state.kind)
     }
 
-    /// Whether every clip lands on a track of its own kind when moved by `rows`.
-    pub(super) fn fits(&self, clips: &[MovedClip], rows: i64, project: &Project) -> bool {
-        clips.iter().all(|moved| {
-            let row = moved.row.checked_add_signed(rows as isize);
-            row.and_then(|row| self.kind_of_row(row, project)) == Some(moved.kind)
+    /// Whether every clip, by its row and its kind, lands on a track of its own kind when
+    /// moved by `rows`.
+    pub(super) fn fits(
+        &self,
+        clips: impl IntoIterator<Item = (usize, TrackKind)>,
+        rows: i64,
+        project: &Project,
+    ) -> bool {
+        clips.into_iter().all(|(row, kind)| {
+            let row = row.checked_add_signed(rows as isize);
+            row.and_then(|row| self.kind_of_row(row, project)) == Some(kind)
         })
     }
 
@@ -291,24 +296,19 @@ impl Timeline {
         let under_pointer = viewport.nearest_track(&layout, y).unwrap_or(*grab_row);
         let row_delta = (under_pointer as i64 - *grab_row as i64)
             .clamp(-(top as i64), rows.saturating_sub(1 + bottom) as i64);
-        if self.fits(clips, row_delta, project) {
+        let placed = clips.iter().map(|moved| (moved.row, moved.kind));
+        if self.fits(placed, row_delta, project) {
             *last_rows = row_delta;
         }
         let row_delta = *last_rows;
         // Each clip with the automation it would take along, one for one.
-        let (mut moves, mut steps) = (Vec::new(), Vec::new());
+        let mut moves = Vec::new();
         for (moved, live) in clips.iter().zip(lives) {
             let row = moved.row.saturating_add_signed(row_delta as isize);
-            let (Some(to), Some(from)) = (self.order.get(row).cloned(), moved.home.parent()) else {
+            let Some(to) = self.order.get(row).cloned() else {
                 return After::Keep;
             };
             let next = live.with_start(shifted(moved.range.start, delta));
-            steps.push(LaneMove {
-                from,
-                range: moved.range.clone(),
-                to: to.id().clone(),
-                start: next.start(),
-            });
             moves.push(ClipMove {
                 clip: moved.clip.clone(),
                 home: moved.home.clone(),
@@ -316,6 +316,11 @@ impl Timeline {
                 to,
                 next,
             });
+        }
+        let steps = lane_moves(&moves);
+        // A clip without a track has no step, and the ghosts below need one for each.
+        if steps.len() != moves.len() {
+            return After::Keep;
         }
         let taken = match alone {
             true => Moved::default(),
@@ -348,7 +353,7 @@ impl Timeline {
             .edit
             .publish(&self.session, label, cx, |project, edit| {
                 let mut changes = Changes::new();
-                let moved = move_clips(project, &mut changes, moves)?;
+                let moved = move_records(project, &mut changes, moves)?;
                 automation::write(project, &mut changes, lanes);
                 project.publish(edit, changes)?;
                 Ok(moved)
