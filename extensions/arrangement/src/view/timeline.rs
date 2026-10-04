@@ -35,8 +35,8 @@ use sound_ui::components::dropdown_menu::{
 };
 use sound_ui::components::text_input::{InputSize, TextInput};
 use sound_ui::{
-    ActiveTheme, Devices, KeyboardFocus, LiveBody, LiveSound, Playhead, Recording, Session,
-    Waveforms, typography,
+    ActiveTheme, Devices, DragEdit, KeyboardFocus, LiveBody, LiveSound, Playhead, Recording,
+    Session, Waveforms, typography,
 };
 
 use super::clipboard::{Copied, CopiedClips, SharedClipboard};
@@ -378,9 +378,8 @@ enum Edge {
 struct ClipDrag {
     /// The tick under the pointer at mouse down.
     grab: Ticks,
-    /// Whether the gesture of the session is open. It opens with the first move that changes
-    /// something, so a plain click is no undo step.
-    begun: bool,
+    /// It opens with the first move that changes something, so a plain click is no undo step.
+    edit: DragEdit,
     /// What a press that comes up without a move does to the selection, as in the Finder.
     on_release: Option<OnRelease>,
 }
@@ -456,7 +455,7 @@ struct LaneDrag {
     kind: LaneDragKind,
     /// The undo step it makes.
     label: &'static str,
-    begun: bool,
+    edit: DragEdit,
 }
 
 enum LaneDragKind {
@@ -532,9 +531,8 @@ struct TrackDrag {
     /// Past [`TRACK_DRAG_THRESHOLD`], so a click, or the first press of a double click, that
     /// shakes a little is still a click.
     moving: bool,
-    /// Whether the gesture of the session is open. It opens with the first move to another
-    /// row, so a click on a header is no undo step.
-    begun: bool,
+    /// It opens with the first move to another row, so a click on a header is no undo step.
+    edit: DragEdit,
 }
 
 /// The undo step of a track drag and of alt-up and alt-down on a track.
@@ -556,13 +554,13 @@ enum Held {
 }
 
 impl Held {
-    /// Whether it opened the gesture of the session, which then ends with it.
-    fn begun(&self) -> bool {
+    /// The gesture of the session it may have opened, which then ends with it.
+    fn edit(&mut self) -> Option<&mut DragEdit> {
         match self {
-            Held::Nothing | Held::Marquee(_) => false,
-            Held::Clips(drag, _) => drag.begun,
-            Held::Track(drag) => drag.begun,
-            Held::Lane(drag) => drag.begun,
+            Held::Nothing | Held::Marquee(_) => None,
+            Held::Clips(drag, _) => Some(&mut drag.edit),
+            Held::Track(drag) => Some(&mut drag.edit),
+            Held::Lane(drag) => Some(&mut drag.edit),
         }
     }
 
@@ -1006,9 +1004,8 @@ impl Timeline {
         // A drag that is still open when the timeline goes away must not leave the gesture
         // of the session open: undo and redo wait for it.
         cx.on_release(|timeline, cx| {
-            if std::mem::take(&mut timeline.held).begun() {
-                let session = timeline.session.clone();
-                session.update(cx, |session, cx| session.finish_gesture(cx));
+            if let Some(edit) = std::mem::take(&mut timeline.held).edit() {
+                edit.finish(&timeline.session, cx);
             }
         })
         .detach();
@@ -2134,7 +2131,7 @@ impl Timeline {
         };
         let drag = ClipDrag {
             grab,
-            begun: false,
+            edit: DragEdit::default(),
             on_release,
         };
         self.held = Held::Clips(drag, kind);
@@ -2505,7 +2502,7 @@ impl Timeline {
             at: 0,
             press: f64::from(y) + self.painted.get().scroll_y,
             moving: false,
-            begun: false,
+            edit: DragEdit::default(),
         });
     }
 
@@ -2523,7 +2520,7 @@ impl Timeline {
         }
         let project = self.session.read(cx).project();
         let tracks = drag.origin.len();
-        match drag.begun {
+        match drag.edit.is_open() {
             // Until the gesture opens, undo is free and an agent may write: the drag starts
             // from the tracks as they are now. Once it opens, it owns the orders.
             false => drag.origin = track_orders(project, self.arrangement.id()),
@@ -2539,7 +2536,7 @@ impl Timeline {
         else {
             return After::End;
         };
-        if !drag.begun {
+        if !drag.edit.is_open() {
             (drag.from, drag.at) = (from, from);
         } else if drag.origin.len() != tracks {
             // The rows moved under the drag: publish again, wherever the pointer is.
@@ -2552,17 +2549,12 @@ impl Timeline {
         if to == drag.at {
             return After::Keep;
         }
-        let begun = std::mem::replace(&mut drag.begun, true);
-        self.session.update(cx, |session, cx| {
-            if !begun {
-                session.begin_gesture(MOVE_TRACK_LABEL, cx);
-            }
-            session.gesture(cx, |project, edit| {
+        drag.edit
+            .publish(&self.session, MOVE_TRACK_LABEL, cx, |project, edit| {
                 let mut changes = Changes::new();
                 move_track(project, &mut changes, &drag.origin, drag.from, to);
                 project.publish(edit, changes)
-            })
-        });
+            });
         drag.at = to;
         After::Keep
     }
@@ -2650,7 +2642,7 @@ impl Timeline {
             .collect();
         // Once it moves, the drag owns the starts. Before that, an undo under the press may
         // have moved a clip.
-        if !drag.begun {
+        if !drag.edit.is_open() {
             for (moved, live) in clips.iter_mut().zip(&lives) {
                 moved.range = range_of(project, live);
             }
@@ -2730,19 +2722,15 @@ impl Timeline {
         if unchanged {
             return After::Keep;
         }
-        let begun = std::mem::replace(&mut drag.begun, true);
-        let moved = self.session.update(cx, |session, cx| {
-            if !begun {
-                session.begin_gesture(label, cx);
-            }
-            session.gesture(cx, |project, edit| {
+        let moved = drag
+            .edit
+            .publish(&self.session, label, cx, |project, edit| {
                 let mut changes = Changes::new();
                 let moved = move_clips(project, &mut changes, moves)?;
                 automation::write(project, &mut changes, lanes);
                 project.publish(edit, changes)?;
                 Ok(moved)
-            })
-        });
+            });
         if let Some(moved) = moved {
             for (clip, now) in clips.iter_mut().zip(moved) {
                 clip.clip = now;
@@ -2779,17 +2767,12 @@ impl Timeline {
         if project.state(&clip) == Some(&next) {
             return After::Keep;
         }
-        let begun = std::mem::replace(&mut drag.begun, true);
-        self.session.update(cx, |session, cx| {
-            if !begun {
-                session.begin_gesture(label, cx);
-            }
-            session.gesture(cx, |project, edit| {
+        drag.edit
+            .publish(&self.session, label, cx, |project, edit| {
                 let mut changes = Changes::new();
                 changes.set(&clip, next);
                 project.publish(edit, changes)
-            })
-        });
+            });
         cx.notify();
         After::Keep
     }
@@ -2815,7 +2798,7 @@ impl Timeline {
             return After::End;
         };
         // An undo between mouse down and the first change may have changed the clip.
-        if !drag.begun {
+        if !drag.edit.is_open() {
             *origin = live.clone();
         }
         let clock = project.clock();
@@ -2868,7 +2851,7 @@ impl Timeline {
             return After::End;
         };
         // An undo between mouse down and the first change may have changed the fades.
-        if !drag.begun {
+        if !drag.edit.is_open() {
             *origin = live.clone();
         }
         let clock = project.clock();
@@ -2916,7 +2899,7 @@ impl Timeline {
             (*from_db, *from_y, *was_fine) = (live.gain_db, y, fine);
         }
         // An undo between mouse down and the first change may have changed the gain.
-        if !drag.begun {
+        if !drag.edit.is_open() {
             *from_db = live.gain_db;
         }
         let (bottom, top) = GAIN_DB;
@@ -2983,24 +2966,21 @@ impl Timeline {
         if next == *written {
             return After::Keep;
         }
-        let begun = std::mem::replace(&mut drag.begun, true);
+        let first = !drag.edit.is_open();
         let (instance, wrote) = (clip.clone(), next.clone());
         let instance_id = clip.id().clone();
-        let published = self.session.update(cx, |session, cx| {
-            if !begun {
-                session.begin_gesture(label, cx);
-            }
-            session.gesture(cx, |project, edit| {
+        let published = drag
+            .edit
+            .publish(&self.session, label, cx, |project, edit| {
                 let mut changes = Changes::new();
                 changes.set(&instance, next);
                 project.publish(edit, changes)
-            })
-        });
+            });
         if published.is_some() {
             *written = wrote;
         }
         // A cmd press left the selection alone until now: what is resized is selected.
-        if !begun {
+        if first {
             self.select_clip(Some(instance_id), cx);
         }
         After::Keep
@@ -3009,11 +2989,11 @@ impl Timeline {
     /// Mouse up, or a clip went away under the drag: the gesture becomes one undo step. A press
     /// that did not move changes the selection as the click it was, see [`OnRelease`].
     fn end_drag(&mut self, cx: &mut Context<Self>) {
-        let held = std::mem::take(&mut self.held);
-        if held.begun() {
-            self.session
-                .update(cx, |session, cx| session.finish_gesture(cx));
-        } else if let Held::Clips(drag, _) = held {
+        let mut held = std::mem::take(&mut self.held);
+        let finished = held
+            .edit()
+            .is_some_and(|edit| edit.finish(&self.session, cx));
+        if !finished && let Held::Clips(drag, _) = held {
             match drag.on_release {
                 Some(OnRelease::SelectAlone(pressed)) => self.select_clip(Some(pressed), cx),
                 Some(OnRelease::Toggle(pressed)) => self.toggle_clip(pressed, cx),
@@ -3026,12 +3006,10 @@ impl Timeline {
     /// Escape: the clips or the track go back to where they were at mouse down. Whether there
     /// was a drag.
     fn cancel_drag(&mut self, cx: &mut Context<Self>) -> bool {
-        let held = std::mem::take(&mut self.held);
-        let begun = held.begun();
-        if begun {
-            self.session
-                .update(cx, |session, cx| session.cancel_gesture(cx));
-        }
+        let mut held = std::mem::take(&mut self.held);
+        let begun = held
+            .edit()
+            .is_some_and(|edit| edit.cancel(&self.session, cx));
         match held {
             Held::Nothing => return false,
             Held::Marquee(marquee) => {
@@ -4020,7 +3998,7 @@ impl Timeline {
             top,
             kind,
             label,
-            begun: false,
+            edit: DragEdit::default(),
         };
         let range = match (event.modifiers.alt, range) {
             (false, Some(range)) => range,
@@ -4082,7 +4060,7 @@ impl Timeline {
         let in_lane = (viewport.content_y(y) - drag.top) as f32;
         // An undo between mouse down and the first change took the lane the drag started from:
         // the drag ends, so it does not write that lane back.
-        if !drag.begun {
+        if !drag.edit.is_open() {
             let project = self.session.read(cx).project();
             let state = project.state(&drag.track);
             let mut lanes = state.into_iter().flat_map(|state| state.automation.iter());
@@ -4175,18 +4153,13 @@ impl Timeline {
             automation,
             ..state.clone()
         };
-        let begun = std::mem::replace(&mut drag.begun, true);
-        let (track, label) = (drag.track.clone(), drag.label);
-        self.session.update(cx, |session, cx| {
-            if !begun {
-                session.begin_gesture(label, cx);
-            }
-            session.gesture(cx, |project, edit| {
+        let track = drag.track.clone();
+        drag.edit
+            .publish(&self.session, drag.label, cx, |project, edit| {
                 let mut changes = Changes::new();
                 changes.set(&track, next);
                 project.publish(edit, changes)
-            })
-        });
+            });
         After::Keep
     }
 
