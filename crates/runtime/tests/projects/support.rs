@@ -5,7 +5,7 @@ use plugin_host::{PluginFormat, Plugins, ScanCache};
 use runtime::OFFLINE;
 use sound_core::{Engine, Project};
 
-use crate::plugin_hosts::{open_or_create, scanner, test_plugin_folders};
+use crate::plugin_hosts::{open_or_create, scanner, test_plugin_folders, test_plugin_host};
 
 /// Frames per bar at 120 bpm in 4/4 and 48 kHz.
 pub(crate) const BAR: usize = 96_000;
@@ -70,7 +70,7 @@ impl Harness {
     /// tests run the same in CI.
     pub(crate) fn with_test_plugin(folder: tempfile::TempDir) -> (Self, Plugins) {
         let (control, engine) = Engine::new(OFFLINE);
-        let plugins = test_plugin_host(folder.path(), true);
+        let plugins = test_plugin_host(folder.path());
         let project =
             runtime::open_or_create_with(folder.path(), control, plugins.clone()).unwrap();
         let harness = Self {
@@ -204,15 +204,10 @@ impl Harness {
     }
 }
 
-/// A plugin host that scans one folder, with the test plugin of every format in it. No plugin
-/// of this machine is ever listed, and the cache of this machine is never read or written.
-pub(crate) fn test_plugin_host(root: &Path, writes_state: bool) -> Plugins {
-    let folders = test_plugin_folders(root);
-    if writes_state {
-        Plugins::new(folders, scanner(), ScanCache::none())
-    } else {
-        Plugins::read_only(folders, scanner(), ScanCache::none())
-    }
+/// The folder of test plugins with the host `--render` opens: it loads a plugin and never
+/// writes its state.
+pub(crate) fn read_only_test_plugin_host(root: &Path) -> Plugins {
+    Plugins::read_only(test_plugin_folders(root), scanner(), ScanCache::none())
 }
 
 /// The same folder of test plugins, with the host `--inspect` opens: it says which plugins are

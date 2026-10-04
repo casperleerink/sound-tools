@@ -9,7 +9,7 @@
 use plugin_host::PluginFormat;
 
 use crate::support::{
-    Harness, TRACK, clip, difference, test_plugin, test_plugin_host, test_plugin_of,
+    Harness, TRACK, clip, difference, read_only_test_plugin_host, test_plugin, test_plugin_of,
 };
 
 /// Frames per tick at 120 bpm and 48 kHz.
@@ -207,7 +207,7 @@ fn an_offline_render_of_a_read_only_project_plays_the_plugin() {
     let live = harness.play(16_000);
 
     let root = harness.project.root().to_path_buf();
-    let plugins = test_plugin_host(&root, false);
+    let plugins = read_only_test_plugin_host(&root);
     let (mut project, mut engine) = runtime::open_read_only_with(&root, plugins.clone()).unwrap();
     assert_eq!(project.problems(), []);
     project.engine().play();
@@ -229,7 +229,7 @@ fn a_render_answers_a_plugin_that_is_waiting_for_its_host() {
         assert_eq!(harness.project.problems(), []);
 
         let root = harness.project.root().to_path_buf();
-        let plugins = test_plugin_host(&root, false);
+        let plugins = read_only_test_plugin_host(&root);
         let (mut project, mut engine) =
             runtime::open_read_only_with(&root, plugins.clone()).unwrap();
         project.engine().play();

@@ -123,7 +123,7 @@ use instrument::SynthState;
 use limiter::LimiterState;
 use limiter::view::LimiterView;
 use midi::Played;
-use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache};
+use plugin_host::{PluginFormat, PluginRecord};
 use reverb::ReverbState;
 use reverb::view::ReverbView;
 use runtime::window::Shell;
@@ -137,7 +137,7 @@ use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{Assets, Session};
 use tempfile::TempDir;
 
-use plugin_hosts::{scanner, test_plugin_folders};
+use plugin_hosts::test_plugin_host;
 
 #[path = "snapshots/agent.rs"]
 mod agent;
@@ -545,12 +545,6 @@ impl Opened {
         )?;
         Ok(times)
     }
-}
-
-/// A plugin host that scans one folder inside the project, with the repository's own test
-/// plugin in it. No plugin of this machine is ever listed, so the picker looks the same in CI.
-fn test_plugin_host(root: &std::path::Path) -> Plugins {
-    Plugins::new(test_plugin_folders(root), scanner(), ScanCache::none())
 }
 
 /// Puts a plugin record in the `instrument` slot of a track, as picking one does.

@@ -26,6 +26,11 @@ pub(crate) fn test_plugin_folders(root: &Path) -> Vec<PathBuf> {
     vec![folder]
 }
 
+/// A plugin host that scans only that folder, so the test plugin is all it finds.
+pub(crate) fn test_plugin_host(root: &Path) -> Plugins {
+    Plugins::new(test_plugin_folders(root), scanner(), ScanCache::none())
+}
+
 /// Opens the project as the application does, with a host that has no folder to look in: it
 /// finds no plugin and starts no child process. For every test that needs no plugin.
 pub(crate) fn open_or_create(folder: &Path, control: EngineControl) -> (Project, Plugins) {

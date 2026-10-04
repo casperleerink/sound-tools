@@ -22,7 +22,7 @@ use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{POLL_INTERVAL, Playhead, Session};
 use tempfile::TempDir;
 
-use crate::plugin_hosts::{open_or_create, scanner, test_plugin_folders};
+use crate::plugin_hosts::{open_or_create, scanner, test_plugin_folders, test_plugin_host};
 
 pub(crate) const BAR: u64 = 3840;
 /// A sixteenth, the snap step.
@@ -190,23 +190,14 @@ pub(crate) fn open_without_plugin_host(cx: &mut TestAppContext) -> Opened<'_> {
     open_project(cx, folder, project, engine, plugins.downgrade())
 }
 
-/// A plugin host that scans one folder with the test plugin in it. The scanner is the real
-/// `runtime` executable, so a scan starts the child process the application starts.
-pub(crate) fn test_plugin_host(root: &Path) -> plugin_host::Plugins {
-    slow_test_plugin_host(root, 0)
-}
-
-/// The same with every bundle taking `milliseconds` to be listed, as the real bundles of a
-/// machine do. A window opened while that runs sees what a picker holds before the scan has
-/// found anything.
+/// The host of the test plugin with every bundle taking `milliseconds` to be listed, as the
+/// real bundles of a machine do. A window opened while that runs sees what a picker holds
+/// before the scan has found anything.
 pub(crate) fn slow_test_plugin_host(root: &Path, milliseconds: u64) -> plugin_host::Plugins {
-    let mut scanner = scanner();
-    if milliseconds > 0 {
-        scanner = scanner.with_environment(
-            test_plugin_support::SLOW_VARIABLE,
-            &milliseconds.to_string(),
-        );
-    }
+    let scanner = scanner().with_environment(
+        test_plugin_support::SLOW_VARIABLE,
+        &milliseconds.to_string(),
+    );
     plugin_host::Plugins::new(
         test_plugin_folders(root),
         scanner,
