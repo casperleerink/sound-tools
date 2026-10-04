@@ -2,10 +2,10 @@
 //! the clips, painted on one canvas. Clips of notes and of audio are added, selected, moved,
 //! resized, copied, pasted and deleted here with the mouse and the keys, an audio clip is
 //! trimmed, faded and turned up or down from its handles, audio files are dropped in from the
-//! Finder, a track is renamed in its header and deleted with backspace, tempo changes are added and removed in the ruler,
-//! and the snap setting sits in the corner. Under a track its automation lanes show at the
-//! toggle in its header, where lanes are added and their points added, moved, deleted and
-//! erased ([`super::track_lanes`]).
+//! Finder, a track is renamed in its header and deleted with backspace, tempo changes are added
+//! and removed in the ruler, and the snap setting sits in the corner. Under a track its
+//! automation lanes show at the toggle in its header, where lanes are added and their points
+//! added, moved, deleted and erased ([`super::track_lanes`]).
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
