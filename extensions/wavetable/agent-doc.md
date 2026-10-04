@@ -2,7 +2,7 @@
 
 `wavetable` is a synth that plays wavetables: tables of single-cycle waves, called frames, that it morphs between. As the `instrument.json` of a track it plays the notes of that track. Each note has two wavetable oscillators, a sine sub, two filters, an amp envelope, two more envelopes, two LFOs, and a modulation matrix that ties them together.
 
-A new track with the Wavetable: write the track, then its instrument, then clips of notes as `agent-docs/arrangement.md` says. Give the track an `order` above the highest one in use and a `colour` no other track has.
+Here a pad on a new track:
 
 ```json state/arrangement/synth/instance.json
 {
@@ -15,105 +15,20 @@ A new track with the Wavetable: write the track, then its instrument, then clips
 {
   "tool": "wavetable",
   "state": {
-    "osc_1": {
-      "on": true,
-      "table": "basic_shapes",
-      "position": 0.5,
-      "effect": "none",
-      "effect_amount": 0.4,
-      "octave": 0,
-      "semitone": 0,
-      "detune_cents": 0.0,
-      "gain": 0.7,
-      "pan": 0.0
-    },
-    "osc_2": {
-      "on": true,
-      "table": "basic_shapes",
-      "position": 0.5,
-      "effect": "none",
-      "effect_amount": 0.4,
-      "octave": 0,
-      "semitone": 0,
-      "detune_cents": 7.0,
-      "gain": 0.7,
-      "pan": 0.0
-    },
-    "sub": {"octave": -1, "gain": 0.0},
-    "unison": {"voices": 1, "amount": 0.3},
-    "filter_1": {
-      "on": true,
-      "type": "low_pass",
-      "slope": 24,
-      "cutoff_hz": 1000.0,
-      "resonance": 0.2,
-      "drive_db": 0.0
-    },
-    "filter_2": {
-      "on": false,
-      "type": "low_pass",
-      "slope": 24,
-      "cutoff_hz": 1000.0,
-      "resonance": 0.2,
-      "drive_db": 0.0
-    },
-    "routing": "serial",
-    "amp_env": {
-      "attack_seconds": 0.005,
-      "decay_seconds": 0.4,
-      "sustain": 0.6,
-      "release_seconds": 0.3,
-      "attack_curve": 0.5,
-      "decay_curve": 0.8,
-      "release_curve": 0.8
-    },
-    "env_2": {
-      "attack_seconds": 0.005,
-      "decay_seconds": 0.4,
-      "sustain": 0.6,
-      "release_seconds": 0.3,
-      "attack_curve": 0.5,
-      "decay_curve": 0.8,
-      "release_curve": 0.8
-    },
-    "env_3": {
-      "attack_seconds": 0.005,
-      "decay_seconds": 0.4,
-      "sustain": 0.6,
-      "release_seconds": 0.3,
-      "attack_curve": 0.5,
-      "decay_curve": 0.8,
-      "release_curve": 0.8
-    },
-    "lfo_1": {
-      "shape": "sine",
-      "rate_hz": 1.0,
-      "sync": false,
-      "division": "1/4",
-      "feel": "straight",
-      "retrigger": true
-    },
-    "lfo_2": {
-      "shape": "sine",
-      "rate_hz": 1.0,
-      "sync": false,
-      "division": "1/4",
-      "feel": "straight",
-      "retrigger": true
-    },
-    "voicing": {"mode": "poly", "polyphony": 8, "glide_seconds": 0.0},
+    "amp_env": {"attack_seconds": 0.8, "release_seconds": 1.5},
+    "lfo_1": {"rate_hz": 0.2},
     "matrix": [
       {"source": "env_2", "destination": "filter_1_cutoff", "amount": 0.4},
       {"source": "key", "destination": "filter_1_cutoff", "amount": 0.5},
       {"source": "velocity", "destination": "amp_level", "amount": 0.5},
-      {"source": "mod_wheel", "destination": "osc_1_position", "amount": 0.5}
-    ],
-    "gain": 0.15
+      {"source": "mod_wheel", "destination": "osc_1_position", "amount": 0.5},
+      {"source": "lfo_1", "destination": "osc_1_position", "amount": 0.3}
+    ]
   }
 }
 ```
 
-This is the default patch: two saws, the second 7 cents up, through a low pass that the second envelope opens at the start of each note. Higher keys open it more, softer notes are quieter, and the mod wheel morphs the first saw into a square. `"state": {}` is this patch, so write only what you change. Inside an object, a field you leave out takes the default of the tables below, which differs from the patch above only in `osc_2.detune_cents`, 0, and `filter_2.on`, true. A `matrix` you write replaces the whole matrix.
+`"state": {}` is the default patch: two saws, the second 7 cents up, through a low pass that `env_2` opens at the start of each note, with `filter_2` off. Its `matrix` is the first four routes above: higher keys open the filter more, softer notes are quieter, and the mod wheel morphs the first saw into a square. Write only what you change. Inside an object you write, a field you leave out takes the default of the tables below. A `matrix` you write replaces the whole matrix, so this pad keeps the four routes and adds an LFO that slowly morphs the first saw.
 
 Every number here but `octave`, `semitone`, `voices`, `polyphony` and the matrix can move over time with an automation lane of the track, named by its path: `filter_1.cutoff_hz`. See `agent-docs/arrangement.md`.
 

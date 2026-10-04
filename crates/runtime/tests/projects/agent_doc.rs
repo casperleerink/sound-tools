@@ -303,7 +303,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 
     // The runtime writes every file again: delete all, undo, and a tempo edit with its
     // undo. The bytes are those of the examples, so an agent that copies their layout
-    // makes no whitespace diff.
+    // makes no whitespace diff. An example that writes only what it changes, as the pad of
+    // the Wavetable doc, is written back whole, with every value it gave.
     let mut changes = Changes::new();
     changes.delete(&InstanceId::new("arrangement").unwrap());
     changes.delete(&InstanceId::new("drone").unwrap());
@@ -325,7 +326,26 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         examples.iter().map(|(path, body)| (path, body)).collect();
     for (path, body) in last {
         let written = std::fs::read_to_string(copy.path(path)).unwrap();
-        assert_eq!(&written, body, "{path}");
+        let whole: serde_json::Value = serde_json::from_str(&written).unwrap();
+        let part: serde_json::Value = serde_json::from_str(body).unwrap();
+        if part == whole {
+            assert_eq!(&written, body, "{path}");
+        } else {
+            assert!(is_within(&part, &whole), "{path}: {written}");
+        }
+    }
+}
+
+/// Whether every field of `part` is in `whole` with the same value. A list is one value.
+fn is_within(part: &serde_json::Value, whole: &serde_json::Value) -> bool {
+    match (part, whole) {
+        (serde_json::Value::Object(part), serde_json::Value::Object(whole)) => {
+            part.iter().all(|(key, value)| {
+                let other = whole.get(key);
+                other.is_some_and(|other| is_within(value, other))
+            })
+        }
+        _ => part == whole,
     }
 }
 

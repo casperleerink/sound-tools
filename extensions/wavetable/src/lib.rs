@@ -166,15 +166,16 @@ mod tests {
         assert!(DOC.contains("`amp_level`"));
     }
 
-    /// The record in the doc is the default patch.
+    /// The doc says the pad of its example keeps the routes of the default patch first.
     #[test]
-    fn the_example_of_the_doc_is_the_default_patch() {
+    fn the_example_of_the_doc_keeps_the_matrix_of_the_default_patch() {
         let start = DOC.find("\"tool\": \"wavetable\"").unwrap();
         let start = DOC[..start].rfind('{').unwrap();
         let end = start + DOC[start..].find("\n```").unwrap();
         let record: serde_json::Value = serde_json::from_str(&DOC[start..end]).unwrap();
         let state: WavetableState = serde_json::from_value(record["state"].clone()).unwrap();
-        assert_eq!(state, WavetableState::default());
+        let default = WavetableState::default().matrix;
+        assert_eq!(state.matrix[..default.len()], default[..]);
     }
 
     #[test]
