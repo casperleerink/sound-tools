@@ -906,6 +906,11 @@ impl Timeline {
         // A waveform whose overview was being made is drawn when it is ready.
         let waveforms = Waveforms::entity(cx);
         cx.observe(&waveforms, |_, _, cx| cx.notify()).detach();
+        // The add track button and the recording overlay read the order as they render, and
+        // the timeline is cached, so it renders after them in the frame. Read it again here,
+        // once the events of a group are all in, or they show the tracks of the last frame.
+        cx.observe_self(|timeline, cx| timeline.refresh_order(cx))
+            .detach();
         let project_events = cx.subscribe(&session, |timeline, _, event, cx| {
             let shown = |id: &InstanceId| timeline.shows(id, cx);
             let changed = match event {
@@ -970,7 +975,7 @@ impl Timeline {
                 ProjectEvent::ProblemsChanged => false,
             };
             if changed {
-                // Read again at the next render, once for all events of a group.
+                // Read again once for all events of a group, see `observe_self` above.
                 match event {
                     ProjectEvent::Created(id)
                     | ProjectEvent::Changed(id)
