@@ -9,7 +9,6 @@ workspace = true
 
 [dependencies]
 gpui.workspace = true
-pulldown-cmark.workspace = true
 sound-core.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true

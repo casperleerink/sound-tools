@@ -3,6 +3,8 @@
 //! Extensions live in `extensions/`. They depend on the core, the UI SDK and small shared
 //! contract crates, never on each other. This keeps the build wide and parallel, which
 //! protects the extension edit loop.
+//!
+//! The core depends on no other crate of the workspace, so it knows no music.
 
 #[cfg(test)]
 mod tests {
@@ -58,6 +60,32 @@ mod tests {
         assert!(
             violations.is_empty(),
             "extensions must not depend on each other: {violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn core_depends_on_no_workspace_crate() -> anyhow::Result<()> {
+        let metadata = MetadataCommand::new().exec()?;
+        let workspace: HashSet<&str> = metadata
+            .workspace_packages()
+            .into_iter()
+            .map(|package| package.name.as_str())
+            .collect();
+        let core = metadata
+            .workspace_packages()
+            .into_iter()
+            .find(|package| package.name.as_str() == "sound-core")
+            .ok_or_else(|| anyhow::anyhow!("the workspace has no sound-core"))?;
+        let violations: Vec<&str> = core
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.name.as_str())
+            .filter(|name| workspace.contains(name))
+            .collect();
+        assert!(
+            violations.is_empty(),
+            "the core must not depend on a workspace crate: {violations:?}"
         );
         Ok(())
     }

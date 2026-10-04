@@ -196,10 +196,6 @@ impl Instrument {
         }
     }
 
-    pub fn zone_count(&self) -> usize {
-        self.zones.len()
-    }
-
     pub fn problem(&self) -> Option<&str> {
         self.problem.as_deref()
     }

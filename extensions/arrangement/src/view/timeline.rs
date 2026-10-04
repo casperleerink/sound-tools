@@ -281,8 +281,7 @@ impl Scene {
 
 #[derive(Clone)]
 /// One selected clip during a move: where it is now, the id it had at mouse down, the row of
-/// its track then, and where it was. When the live clip is not what the drag wrote, something else
-/// changed it: an undo between mouse down and the first move, or an agent.
+/// its track then, and where it was.
 struct MovedClip {
     /// The clip now. Its id changes when the drag takes it to another track.
     clip: InstanceId,
@@ -295,7 +294,6 @@ struct MovedClip {
     /// From its start to its end before the move. The length of an audio clip in ticks depends
     /// on the tempo where it is, so it is measured there and not where the drag has it now.
     range: Range<Ticks>,
-    written: Ticks,
 }
 
 /// What a drag of clips does.
@@ -2255,7 +2253,6 @@ impl Timeline {
                 kind: clip.kind(),
                 row,
                 range: range_of(project, &clip),
-                written: clip.start(),
             });
         }
         let grabbed = clips.iter().position(|moved| moved.clip == *pressed)?;
@@ -2621,7 +2618,7 @@ impl Timeline {
         // have moved a clip.
         if !drag.begun {
             for (moved, live) in clips.iter_mut().zip(&lives) {
-                (moved.range, moved.written) = (range_of(project, live), live.start());
+                moved.range = range_of(project, live);
             }
             *tracks = track_states(project, self.arrangement.id());
         }
@@ -2701,7 +2698,6 @@ impl Timeline {
             self.drag = Some(drag);
             return;
         }
-        let starts: Vec<Ticks> = moves.iter().map(|step| step.next.start()).collect();
         let begun = std::mem::replace(&mut drag.begun, true);
         let moved = self.session.update(cx, |session, cx| {
             if !begun {
@@ -2716,8 +2712,8 @@ impl Timeline {
             })
         });
         if let Some(moved) = moved {
-            for ((clip, now), start) in clips.iter_mut().zip(moved).zip(starts) {
-                (clip.clip, clip.written) = (now, start);
+            for (clip, now) in clips.iter_mut().zip(moved) {
+                clip.clip = now;
             }
         }
         // What each clip takes along, for the ghosts and the hint.
@@ -3676,7 +3672,6 @@ impl Timeline {
                 kind: next.kind(),
                 row,
                 range: range_of(project, &next),
-                written: next.start(),
             };
             clips.push((moved, next));
         }

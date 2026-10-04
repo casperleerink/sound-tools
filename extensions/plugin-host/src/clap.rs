@@ -164,7 +164,6 @@ pub(crate) fn scan_bundle(bundle: &std::path::Path) -> Result<Vec<ScannedPlugin>
             id: text(Some(id)),
             name: text(descriptor.name()),
             vendor: text(descriptor.vendor()),
-            version: text(descriptor.version()),
             features: descriptor
                 .features()
                 .map(|feature| feature.to_string_lossy().into_owned())

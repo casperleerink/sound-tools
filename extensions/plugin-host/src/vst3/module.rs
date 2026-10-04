@@ -123,7 +123,6 @@ pub(super) struct ClassInfo {
     pub category: String,
     pub name: String,
     pub vendor: String,
-    pub version: String,
     /// What the class says it is, such as `Instrument|Synth`. VST 3 calls these subcategories.
     pub subcategories: Vec<String>,
 }
@@ -135,7 +134,6 @@ impl ClassInfo {
             category: text(&info.category),
             name: text(&info.name),
             vendor: String::new(),
-            version: String::new(),
             subcategories: Vec::new(),
         }
     }
@@ -146,7 +144,6 @@ impl ClassInfo {
             category: text(&info.category),
             name: text(&info.name),
             vendor: text(&info.vendor),
-            version: text(&info.version),
             subcategories: text(&info.subCategories)
                 .split('|')
                 .filter(|part| !part.is_empty())

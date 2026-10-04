@@ -36,4 +36,4 @@ pub use provider::{
     ThreadOptions, TurnOutcome,
 };
 pub use settings::AgentSettings;
-pub use view::{Onboarding, Setup, SetupAction, Sidebar};
+pub use view::{Markdown, MarkdownText, Onboarding, Setup, SetupAction, Sidebar};

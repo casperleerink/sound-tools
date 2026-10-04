@@ -21,12 +21,12 @@ use sound_core::{GROUPING_WINDOW, Problem, ProjectEvent};
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
-use sound_ui::components::markdown::Markdown;
 use sound_ui::components::popover::{Align, Side};
 use sound_ui::components::text_input::{Arrow, TextInput};
 
 use super::entry;
 use super::history::History;
+use super::markdown::Markdown;
 use super::menu::{self, Choice};
 use super::onboarding::{Onboarding, Setup, SetupAction};
 use crate::conversation::{Conversation, Entry, request_label};

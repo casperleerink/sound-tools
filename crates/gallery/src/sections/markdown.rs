@@ -2,8 +2,8 @@
 //! while it streams, in a column as wide as the text of the sidebar.
 
 use gpui::{App, FontWeight, IntoElement, ParentElement, Styled, Window, div, px};
+use sound_agent::{Markdown, MarkdownText};
 use sound_ui::ActiveTheme;
-use sound_ui::components::markdown::{Markdown, MarkdownText};
 
 const ANSWER: &str = r#"## Bass filter
 

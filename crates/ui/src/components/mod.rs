@@ -7,7 +7,6 @@ pub mod empty_state;
 pub mod icon;
 pub mod indicator;
 pub mod kbd;
-pub mod markdown;
 pub mod notice;
 pub(crate) mod paint;
 
