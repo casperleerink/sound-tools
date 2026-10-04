@@ -71,8 +71,8 @@ fn updater(root: &Path, os: &'static str, arch: &'static str, place: Place) -> U
     }
 }
 
-fn check(updater: &Updater, now: SystemTime) -> Result<Option<Ready>> {
-    smol::block_on(updater.check(now))
+fn check(updater: &Updater) -> Result<Option<Ready>> {
+    smol::block_on(updater.check())
 }
 
 /// The Linux tarball of 0.2.0 in `root/served`, whose `install.sh` writes `installed`.
@@ -149,22 +149,6 @@ fn the_checksum_is_found_by_file_name() {
 }
 
 #[test]
-fn a_check_comes_at_most_once_a_day() {
-    let folder = tempfile::tempdir().unwrap();
-    let file = folder.path().join("updates/last-check");
-    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
-    assert!(due(&file, now));
-    remember_check(&file, now).unwrap();
-    assert!(!due(&file, now + Duration::from_secs(60 * 60)));
-    assert!(!due(&file, now + CHECK_EVERY - Duration::from_secs(1)));
-    assert!(due(&file, now + CHECK_EVERY));
-    // A clock set back does not stop the checks.
-    assert!(due(&file, now - Duration::from_secs(60)));
-    fs::write(&file, "not a time").unwrap();
-    assert!(due(&file, now));
-}
-
-#[test]
 fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
@@ -180,9 +164,7 @@ fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
             program: program.clone(),
         },
     );
-    let now = SystemTime::now();
-
-    let ready = check(&updater, now).unwrap();
+    let ready = check(&updater).unwrap();
     assert_eq!(
         ready,
         Some(Ready {
@@ -197,11 +179,6 @@ fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
             .join("sound-tools-0.2.0-linux-x86_64/install.sh")
             .is_file()
     );
-    // Not again the same day.
-    assert_eq!(
-        check(&updater, now + Duration::from_secs(60)).unwrap(),
-        None
-    );
 
     // The next start installs it, and is told what to start.
     assert_eq!(updater.install_pending().unwrap(), Some(program));
@@ -212,7 +189,7 @@ fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
 }
 
 #[test]
-fn a_damaged_download_is_never_ready_and_is_tried_again() {
+fn a_damaged_download_is_never_ready() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     let archive = linux_release(root, &root.join("installed"));
@@ -230,11 +207,9 @@ fn a_damaged_download_is_never_ready_and_is_tried_again() {
         },
     );
 
-    let failed = check(&updater, SystemTime::now()).unwrap_err();
+    let failed = check(&updater).unwrap_err();
     assert!(failed.to_string().contains("damaged"), "{failed:#}");
     assert!(updater.pending().is_none());
-    // Not remembered as a check, so the next launch tries again.
-    assert!(due(&updater.last_check(), SystemTime::now()));
 }
 
 #[test]
@@ -253,13 +228,9 @@ fn an_older_release_or_a_prerelease_is_not_offered() {
     );
 
     write_release(&served, "v0.1.1", false, &[]);
-    assert_eq!(check(&updater, SystemTime::now()).unwrap(), None);
-    // That was a check: the next is tomorrow.
-    assert!(!due(&updater.last_check(), SystemTime::now()));
-
-    fs::remove_file(updater.last_check()).unwrap();
+    assert_eq!(check(&updater).unwrap(), None);
     write_release(&served, "v0.3.0-beta.1", true, &[]);
-    assert_eq!(check(&updater, SystemTime::now()).unwrap(), None);
+    assert_eq!(check(&updater).unwrap(), None);
 }
 
 #[test]
@@ -280,7 +251,7 @@ fn an_app_whose_folder_cannot_be_written_offers_the_release_page() {
         Place::Bundle(locked.join("Sound Tools.app")),
     );
 
-    let ready = check(&updater, SystemTime::now()).unwrap();
+    let ready = check(&updater).unwrap();
     let page = "https://github.com/casperleerink/sound-tools/releases/tag/v0.2.0".to_string();
     assert_eq!(
         ready,
@@ -319,7 +290,7 @@ fn the_app_is_replaced_where_it_runs_from() {
     let installed = app(&applications, "0.1.1");
     let updater = updater(root, "macos", "aarch64", Place::Bundle(installed.clone()));
 
-    let ready = check(&updater, SystemTime::now()).unwrap().unwrap();
+    let ready = check(&updater).unwrap().unwrap();
     assert_eq!(ready.action, Action::Restart);
     // Downloading changes nothing of the app.
     let program = installed.join("Contents/MacOS/sound-tools");
