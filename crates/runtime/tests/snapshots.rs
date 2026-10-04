@@ -7,7 +7,7 @@
 //! - `piece.png`: three tracks with several clips, playing, one clip selected.
 //! - `transport-click-off.png`: the same with the transport in focus, the click off.
 //! - `transport-click-on.png`: the same with the click on.
-//! - `transport-recording.png`: the same while it records.
+//! - `transport-recording.png`: the same while it records, a few keys played so far.
 //! - `notices.png`: an error from an edit, a file that is not live and an update that is ready,
 //!   top-right.
 //! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
@@ -122,6 +122,7 @@ use gpui::{
 use instrument::SynthState;
 use limiter::LimiterState;
 use limiter::view::LimiterView;
+use midi::Played;
 use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand};
 use reverb::ReverbState;
 use reverb::view::ReverbView;
@@ -1084,16 +1085,37 @@ fn main() -> Result<()> {
     );
     save(&mut cx, &opened, "transport-click-on")?;
 
-    // Recording: the record control in red, next to play and stop. Nothing is played into it,
-    // so the take is empty and it makes no clip and no file.
+    // Recording: the record control in red, next to play and stop, and the take on the
+    // selected track growing to the playhead with what was played so far, the last key held.
     cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
     cx.run_until_parked();
     anyhow::ensure!(
         cx.update(|cx| transport.read(cx).is_recording()),
         "the recording did not start"
     );
+    let input = cx.update(|cx| transport.read(cx).midi_input());
+    let input = input.context("no MIDI input")?;
+    let key = |pitch: u8| Pitch::new(pitch).context("no pitch");
+    let velocity = Velocity::new(96).context("no velocity")?;
+    for pitch in [40, 47, 43, 50, 45] {
+        let pitch = key(pitch)?;
+        input.send(Played::On { pitch, velocity });
+        opened.listen(0.25, &mut cx)?;
+        if pitch.number() != 45 {
+            input.send(Played::Off {
+                pitch,
+                velocity: 64,
+            });
+        }
+        cx.update(|cx| transport.update(cx, |pill, cx| pill.poll_input(cx)));
+    }
     save(&mut cx, &opened, "transport-recording")?;
+    input.send(Played::Off {
+        pitch: key(45)?,
+        velocity: 64,
+    });
     cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
+    cx.update(|cx| opened.session.update(cx, |session, cx| session.undo(cx)));
     cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_click(cx)));
     cx.run_until_parked();
 

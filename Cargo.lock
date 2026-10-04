@@ -6097,6 +6097,7 @@ dependencies = [
  "serde",
  "sound-core",
  "sound-media",
+ "sound-notes",
  "tempfile",
 ]
 
