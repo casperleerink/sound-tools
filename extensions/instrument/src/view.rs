@@ -14,7 +14,7 @@
 //! and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, prelude::*};
-use sound_core::{Instance, ProjectEvent, State};
+use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::curves::{Adsr, EnvelopeHandle, envelope_display};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::Display;
@@ -23,7 +23,7 @@ use sound_ui::components::knob::{
     Knob, ParameterKnob, hertz_readout, percent_readout, seconds_readout,
 };
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, weak_callback};
 
 use crate::{
     ATTACK, CUTOFF, DECAY, GAIN, RELEASE, RESONANCE, SUSTAIN, Synth, SynthState, Waveform,
@@ -32,13 +32,17 @@ use crate::{
 /// The name the rack puts on the card of a synth.
 pub const NAME: &str = "Synth";
 
-/// Registers the card of the `instrument.synth` tool and what a rack calls one.
+/// Registers the card of the `instrument.synth` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(SynthView::new);
-    devices.describe::<SynthState>(|_| DeviceLabel {
-        key: SynthState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<SynthState>(
+        Slot::Instrument,
+        NAME,
+        OfferGroup::BuiltIn,
+        "device-synth",
+        crate::EXTENSION,
+        "This project does not load the synth.",
+    );
 }
 
 /// A knob of the view.

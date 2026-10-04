@@ -12,7 +12,7 @@
 //! and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
-use sound_core::{Instance, ProjectEvent, State, amplitude};
+use sound_core::{Instance, ProjectEvent, amplitude};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
@@ -20,7 +20,7 @@ use sound_ui::components::knob::{
     Knob, KnobRange, ParameterKnob, decibels_readout, percent_readout, short,
 };
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, weak_callback};
 
 use crate::{Curve, DRIVE, MIX, OUTPUT, Saturator, SaturatorState, TONE, auto_gain, transfer};
 
@@ -42,13 +42,17 @@ const LEVELS_DB: (f32, f32) = (-48., 6.);
 /// The level a sine keeps at every drive, which the automatic gain holds to: a peak of 0.25.
 const REFERENCE_DB: f32 = -12.;
 
-/// Registers the view of the `saturator` tool and what a rack calls one.
+/// Registers the view of the `saturator` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(SaturatorView::new);
-    devices.describe::<SaturatorState>(|_| DeviceLabel {
-        key: SaturatorState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<SaturatorState>(
+        Slot::Effect,
+        NAME,
+        OfferGroup::Tone,
+        "device-saturator",
+        crate::EXTENSION,
+        "This project does not load the saturator.",
+    );
 }
 
 /// A knob of the card. A range that goes both ways from 0 has its arc start at the top.

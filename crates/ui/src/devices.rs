@@ -213,6 +213,36 @@ impl Devices {
         );
     }
 
+    /// Registers a built-in device with state `S`: what a rack calls it, and its offer for
+    /// `slot`, which is the device at its defaults. A project that does not enable `extension`
+    /// shows the offer and does not take it, and `reason` says why. A picker lists the offers
+    /// of a group in the order they were registered.
+    pub fn built_in<S: State + Default>(
+        &mut self,
+        slot: Slot,
+        name: &'static str,
+        group: OfferGroup,
+        icon: &'static str,
+        extension: &'static str,
+        reason: &'static str,
+    ) {
+        self.describe::<S>(move |_| DeviceLabel {
+            key: S::TOOL.into(),
+            name: name.into(),
+        });
+        let offer = DeviceOffer::new(S::TOOL, name, group, |_, slot, changes| {
+            changes.create(slot.clone(), S::default());
+            Ok(())
+        })
+        .icon(icon)
+        .needs(extension, reason);
+        let offers = match slot {
+            Slot::Instrument => &mut self.instruments,
+            Slot::Effect => &mut self.effects,
+        };
+        offers.push(Rc::new(move || vec![offer.clone()]));
+    }
+
     /// Everything on offer for one kind of slot, from the installed registry.
     pub fn offered(slot: Slot, cx: &App) -> Vec<DeviceOffer> {
         let Some(devices) = cx.try_global::<Self>() else {

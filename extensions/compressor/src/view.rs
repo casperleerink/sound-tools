@@ -12,7 +12,7 @@
 //! plays, on its knob and on the display, and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*, px};
-use sound_core::{Instance, ProjectEvent, State};
+use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle, INSET_HEIGHT};
@@ -25,7 +25,7 @@ use sound_ui::components::knob::{
 };
 use sound_ui::components::meter::GainReduction;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, every_poll,
+    ActiveTheme, ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, every_poll,
     weak_callback,
 };
 
@@ -56,13 +56,17 @@ const CURVE_POINTS: usize = 60;
 const LEVEL_DOT: f32 = 8.;
 const BAR_INSET: f32 = 6.;
 
-/// Registers the view of the `compressor` tool and what a rack calls one.
+/// Registers the view of the `compressor` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(CompressorView::new);
-    devices.describe::<CompressorState>(|_| DeviceLabel {
-        key: CompressorState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<CompressorState>(
+        Slot::Effect,
+        NAME,
+        OfferGroup::Dynamics,
+        "device-compressor",
+        crate::EXTENSION,
+        "This project does not load the compressor.",
+    );
 }
 
 /// A knob of the card.

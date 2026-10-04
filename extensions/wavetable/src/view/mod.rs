@@ -22,7 +22,7 @@ mod drawing;
 mod matrix;
 
 use gpui::{Context, ElementId, Entity, Point, SharedString, Window, div, prelude::*};
-use sound_core::{Instance, ProjectEvent, State};
+use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::curves::{
     Adsr as Times, EnvelopeHandle, RESPONSE_CAPTION, envelope_display, lfo_line, resonance_travel,
@@ -38,7 +38,7 @@ use sound_ui::components::knob::{
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::select::Select;
 use sound_ui::components::toggle::Toggle;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, weak_callback};
 
 use choices::Choice;
 pub use choices::{EnvelopeShown, LfoShown, Page};
@@ -61,13 +61,17 @@ pub const NAME: &str = "Wavetable";
 /// The width of every display of the card.
 const DISPLAY_WIDTH: f32 = 200.;
 
-/// Registers the card of the `wavetable` tool and what a rack calls one.
+/// Registers the card of the `wavetable` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(WavetableView::new);
-    devices.describe::<WavetableState>(|_| DeviceLabel {
-        key: WavetableState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<WavetableState>(
+        Slot::Instrument,
+        NAME,
+        OfferGroup::BuiltIn,
+        "device-wavetable",
+        crate::EXTENSION,
+        "This project does not load the Wavetable.",
+    );
 }
 
 #[derive(Clone, Copy)]

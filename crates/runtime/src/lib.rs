@@ -12,30 +12,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use arrangement::{ArrangementState, Colour, TrackKind};
-use compressor::CompressorState;
-use delay::DelayState;
-use drum_pad::DrumPadState;
-use eq::EqState;
-use filter::FilterState;
 use gpui::{App, AppContext as _};
 use instrument::SynthState;
-use limiter::LimiterState;
-use modulation::ModulationState;
 use plugin_host::{
     PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK, WeakPlugins,
     default_search_paths,
 };
-use reverb::ReverbState;
-use sampler::SamplerState;
-use saturator::SaturatorState;
 use sound_agent::{AgentSettings, Sidebar};
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
     ProjectError, Registry, SavedDestination, State, Ticks,
 };
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
-use utility::UtilityState;
-use wavetable::WavetableState;
 use window::{LeftPanel, LeftPanelSlot};
 
 const PROJECT_FILE: &str = "project.json";
@@ -152,121 +140,22 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut views = Views::new();
     let mut devices = Devices::new();
     arrangement::view::register(&mut views, add_track_of_kind);
+    // The order here is the order of a picker: the instruments, then the effects group by
+    // group, and the plugins of this Mac after the built-in devices.
     instrument::view::register(&mut views, &mut devices);
+    wavetable::view::register(&mut views, &mut devices);
+    sampler::view::register(&mut views, &mut devices);
     drum_pad::view::register(&mut views, &mut devices);
+    eq::view::register(&mut views, &mut devices);
     filter::view::register(&mut views, &mut devices);
+    saturator::view::register(&mut views, &mut devices);
     compressor::view::register(&mut views, &mut devices);
     limiter::view::register(&mut views, &mut devices);
-    eq::view::register(&mut views, &mut devices);
+    modulation::view::register(&mut views, &mut devices);
     delay::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
-    saturator::view::register(&mut views, &mut devices);
     utility::view::register(&mut views, &mut devices);
-    modulation::view::register(&mut views, &mut devices);
-    sampler::view::register(&mut views, &mut devices);
-    wavetable::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
-    devices.instruments(|| {
-        vec![
-            built_in::<SynthState>(
-                instrument::view::NAME,
-                OfferGroup::BuiltIn,
-                "device-synth",
-                instrument::EXTENSION,
-                "This project does not load the synth.",
-            ),
-            built_in::<WavetableState>(
-                wavetable::view::NAME,
-                OfferGroup::BuiltIn,
-                "device-wavetable",
-                wavetable::EXTENSION,
-                "This project does not load the Wavetable.",
-            ),
-            built_in::<SamplerState>(
-                sampler::view::NAME,
-                OfferGroup::BuiltIn,
-                "device-sampler",
-                sampler::EXTENSION,
-                "This project does not load the sampler.",
-            ),
-            built_in::<DrumPadState>(
-                drum_pad::view::NAME,
-                OfferGroup::BuiltIn,
-                "device-drum-pad",
-                drum_pad::EXTENSION,
-                "This project does not load the Drum pad.",
-            ),
-        ]
-    });
-    // The built-in effects come before the plugins of this Mac in the list, in the order a
-    // picker shows them.
-    devices.effects(|| {
-        vec![
-            built_in::<EqState>(
-                eq::view::NAME,
-                OfferGroup::Tone,
-                "device-eq",
-                eq::EXTENSION,
-                "This project does not load the EQ.",
-            ),
-            built_in::<FilterState>(
-                filter::view::NAME,
-                OfferGroup::Tone,
-                "device-filter",
-                filter::EXTENSION,
-                "This project does not load the filter.",
-            ),
-            built_in::<SaturatorState>(
-                saturator::view::NAME,
-                OfferGroup::Tone,
-                "device-saturator",
-                saturator::EXTENSION,
-                "This project does not load the saturator.",
-            ),
-            built_in::<CompressorState>(
-                compressor::view::NAME,
-                OfferGroup::Dynamics,
-                "device-compressor",
-                compressor::EXTENSION,
-                "This project does not load the compressor.",
-            ),
-            built_in::<LimiterState>(
-                limiter::view::NAME,
-                OfferGroup::Dynamics,
-                "device-limiter",
-                limiter::EXTENSION,
-                "This project does not load the limiter.",
-            ),
-            built_in::<ModulationState>(
-                modulation::view::NAME,
-                OfferGroup::Space,
-                "device-modulation",
-                modulation::EXTENSION,
-                "This project does not load the modulation.",
-            ),
-            built_in::<DelayState>(
-                delay::view::NAME,
-                OfferGroup::Space,
-                "device-delay",
-                delay::EXTENSION,
-                "This project does not load the delay.",
-            ),
-            built_in::<ReverbState>(
-                reverb::view::NAME,
-                OfferGroup::Space,
-                "device-reverb",
-                reverb::EXTENSION,
-                "This project does not load the reverb.",
-            ),
-            built_in::<UtilityState>(
-                utility::view::NAME,
-                OfferGroup::Mix,
-                "device-utility",
-                utility::EXTENSION,
-                "This project does not load the utility.",
-            ),
-        ]
-    });
     // What the picker says under its offers: that the scan of this machine is still running,
     // and what Steinberg asks of anyone who writes "VST". Their guidelines want the VST
     // Compatible Logo next to the term and the attribution where the logo does not fit; a menu
@@ -327,23 +216,6 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
         let sidebar = cx.new(|cx| Sidebar::new(session, agents, threads, settings, cx));
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
     })
-}
-
-/// A built-in device at its defaults, which a project that does not enable `extension` shows
-/// and does not take.
-fn built_in<S: State + Default>(
-    name: &'static str,
-    group: OfferGroup,
-    icon: &'static str,
-    extension: &'static str,
-    reason: &'static str,
-) -> DeviceOffer {
-    DeviceOffer::new(S::TOOL, name, group, |_, slot, changes| {
-        changes.create(slot.clone(), S::default());
-        Ok(())
-    })
-    .icon(icon)
-    .needs(extension, reason)
 }
 
 /// The plugins `list` gives, as offers for a picker. Each writes the record of that plugin

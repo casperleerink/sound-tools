@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use gpui::{
     Context, Entity, FocusHandle, KeyDownEvent, MouseButton, Task, Window, div, prelude::*, px,
 };
-use sound_core::{Instance, ProjectEvent, State};
+use sound_core::{Instance, ProjectEvent};
 use sound_media::{Cached, Imported};
 use sound_notes::Velocity;
 use sound_ui::components::cell::{CELL_WIDTH, Cell};
@@ -39,7 +39,7 @@ use sound_ui::components::toggle::Toggle;
 use sound_ui::import;
 use sound_ui::lanes::object_of;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, Devices, KeyboardFocus, Lanes, Session, Views,
+    ActiveTheme, ControlEdit, Devices, KeyboardFocus, Lanes, OfferGroup, Session, Slot, Views,
     every_poll, weak_callback,
 };
 
@@ -73,13 +73,17 @@ const SAMPLE_VALUE: &str = "sample";
 /// The value of `Choose file…` in the Sound list.
 const CHOOSE_VALUE: &str = "choose";
 
-/// Registers the card of the `drum-pad` tool and what a rack calls one.
+/// Registers the card of the `drum-pad` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(DrumPadView::new);
-    devices.describe::<DrumPadState>(|_| DeviceLabel {
-        key: DrumPadState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<DrumPadState>(
+        Slot::Instrument,
+        NAME,
+        OfferGroup::BuiltIn,
+        "device-drum-pad",
+        crate::EXTENSION,
+        "This project does not load the Drum pad.",
+    );
 }
 
 /// The knobs of pad `pad`, from 0: Volume, Pitch, Decay and Pan.

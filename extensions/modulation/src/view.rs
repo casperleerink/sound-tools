@@ -14,13 +14,13 @@
 use std::f32::consts::TAU;
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
-use sound_core::{Instance, ProjectEvent, State};
+use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, ParameterKnob, hertz_readout, percent_readout, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, weak_callback};
 
 use crate::{DEPTH, FEEDBACK, MIX, Mode, Modulation, ModulationState, RATE, SPREAD, sweep};
 
@@ -34,13 +34,17 @@ const DISPLAY_WIDTH: f32 = 200.;
 /// Points of each line across the display.
 const CURVE_POINTS: usize = 96;
 
-/// Registers the view of the `modulation` tool and what a rack calls one.
+/// Registers the view of the `modulation` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(ModulationView::new);
-    devices.describe::<ModulationState>(|_| DeviceLabel {
-        key: ModulationState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<ModulationState>(
+        Slot::Effect,
+        NAME,
+        OfferGroup::Space,
+        "device-modulation",
+        crate::EXTENSION,
+        "This project does not load the modulation.",
+    );
 }
 
 /// A knob of the card.

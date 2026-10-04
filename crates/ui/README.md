@@ -56,8 +56,10 @@ registries (`crates/runtime/src/lib.rs`, `views`) and installs them as GPUI glob
   (`instruments`, `effects`). A picker reads the offers when it is made, not per frame, because
   a source may have to look at the machine. It fills itself again when
   `Devices::offers_generation` changes. Every offer names its `OfferGroup`, and the picker
-  lists the groups in that order. A built-in device names its icon, `device-<name>` in
-  `assets/icons`; a plugin shows the plug.
+  lists the groups in that order. A built-in device registers its name and its offer with one
+  `built_in` call in its own `view::register`, with its group and its icon, `device-<name>` in
+  `assets/icons`; the order of those calls in `views` is the order inside a group. A plugin
+  shows the plug.
 
 ## Rules that are easy to miss
 
