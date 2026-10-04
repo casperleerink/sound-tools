@@ -461,6 +461,15 @@ impl Project {
         self.write_step(&step, &applied)
     }
 
+    /// Ends the edit with no undo step and without going back: what it published stays. For an
+    /// edit whose records another edit has since deleted or replaced, as its last write: that
+    /// edit's step already starts from the state before this one, so finishing this one too
+    /// would be a second step for the same change, and cancelling would undo the newer write.
+    pub fn abandon(&mut self, edit: Edit) {
+        let mut step = edit.step;
+        self.history.close(&mut step);
+    }
+
     /// One finished edit: begin, publish, finish.
     pub fn commit(&mut self, label: &str, changes: Changes) -> Result<(), ProjectError> {
         let mut edit = self.begin(label);
