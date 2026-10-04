@@ -237,12 +237,12 @@ impl Timeline {
                 let replaced = was.map(|was| line(was, ghost.range.clone()));
                 (across, replaced.unwrap_or_default())
             });
-            let name = match &lane.device {
-                Some(device) => {
-                    let number = self.number_name(track, device, &lane.parameter, cx);
-                    format!("{} · {number}", self.device_name(track, device, cx))
-                }
-                None => track_lanes::lane_name(&lane.parameter),
+            let (device, number) = match &lane.device {
+                Some(device) => (
+                    Some(self.device_name(track, device, cx)),
+                    self.number_name(track, device, &lane.parameter, cx),
+                ),
+                None => (None, track_lanes::lane_name(&lane.parameter)),
             };
             let is = |key: &Option<PointKey>, tick| {
                 key.as_ref()
@@ -281,7 +281,8 @@ impl Timeline {
             });
             LaneShape {
                 y,
-                name: name.into(),
+                device,
+                number: number.into(),
                 accent,
                 muted: state.mute,
                 line: line(lane, visible.clone()),

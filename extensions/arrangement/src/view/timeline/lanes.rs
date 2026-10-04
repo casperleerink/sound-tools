@@ -170,7 +170,7 @@ impl Timeline {
     /// What a number of a device of a track is called: as the device names it, such as the
     /// name a plugin record gives a pin, or else its field in plain words, the unit left out,
     /// as `Cutoff` for `cutoff_hz`. The unit is what the knob shows. A lane header puts the
-    /// name of the device before it: `Filter · Cutoff`.
+    /// name of the device before it: `Filter · Cutoff`, the device cut short when it is long.
     pub(super) fn number_name(
         &self,
         track: &InstanceId,

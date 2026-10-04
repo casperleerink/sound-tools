@@ -56,6 +56,7 @@ pub(super) enum Fit {
     AlignRight,
 }
 
+/// Paints one line of text and gives how wide it is as painted, so another can follow it.
 pub(super) fn paint_text(
     text: SharedString,
     origin: Point<Pixels>,
@@ -65,7 +66,7 @@ pub(super) fn paint_text(
     fit: Fit,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> f32 {
     let mut font = typography::tabular();
     font.weight = weight;
     let run = TextRun {
@@ -90,7 +91,7 @@ pub(super) fn paint_text(
         .text_system()
         .shape_line(text, px(font_size), &runs, None);
     if matches!(fit, Fit::SkipPast(right) if origin.x + line.width > right) {
-        return;
+        return 0.;
     }
     let origin = match fit {
         Fit::AlignRight => origin - point(line.width, px(0.)),
@@ -101,6 +102,26 @@ pub(super) fn paint_text(
     if let Err(error) = line.paint(origin, line_height, TextAlign::Left, None, window, cx) {
         eprintln!("arrangement view: {error}");
     }
+    f32::from(line.width)
+}
+
+/// How wide one line of text is, as [`paint_text`] would paint it whole.
+pub(super) fn text_width(text: &str, font_size: f32, weight: FontWeight, window: &Window) -> f32 {
+    let mut font = typography::tabular();
+    font.weight = weight;
+    let run = TextRun {
+        len: text.len(),
+        font,
+        color: Hsla::default(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let text = SharedString::from(text.to_string());
+    let line = window
+        .text_system()
+        .shape_line(text, px(font_size), &[run], None);
+    f32::from(line.width)
 }
 
 /// The bar ruler: a short mark and a label per bar of [`Viewport::ruler_bars`].
