@@ -145,20 +145,24 @@ fn the_views_are_shown_the_value_each_lane_plays() {
         lanes.map(|lanes| {
             let mut values = Vec::new();
             lanes.values_at(Ticks(tick), &mut values);
-            values
+            let values = values.into_iter();
+            let values = values.map(|(field, value)| (field.to_string(), value));
+            values.collect::<Vec<_>>()
         })
     };
     let middle = BAR_TICKS + BAR_TICKS / 2;
     let tone = values(&harness, "arrangement/piano/tone", middle).unwrap();
-    let [("cutoff_hz", cutoff)] = tone[..] else {
+    let [(ref field, cutoff)] = tone[..] else {
         panic!("{tone:?}");
     };
+    assert_eq!(field, "cutoff_hz");
     assert!((cutoff - (300_f32 * 8000.).sqrt()).abs() < 0.1, "{cutoff}");
     // On the travel of the fader and back, as the mixer hears it.
     let track = values(&harness, "arrangement/piano", 0).unwrap();
-    let [("gain_db", gain)] = track[..] else {
+    let [(ref field, gain)] = track[..] else {
         panic!("{track:?}");
     };
+    assert_eq!(field, "gain_db");
     assert!((gain + 6.).abs() < 1e-4, "{gain}");
 
     let plain = r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "effects": ["tone"]}}"#;

@@ -12,7 +12,7 @@ use super::assets::Assets;
 use super::file::{PortReference, SavedConnection, SavedDestination};
 use super::instance::{InstanceId, Record, State};
 use super::registry::Registry;
-use crate::automation::{AutomationInput, PlayedLanes};
+use crate::automation::{AutomationInput, MAX_AUTOMATED, PlayedLanes};
 use crate::clock::TempoMap;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
@@ -303,6 +303,48 @@ impl BehaviourContext<'_> {
         });
     }
 
+    /// Lets the owner of this instance automate numbers known only as the behaviour runs, such
+    /// as the parameters of a plugin, each with its value in the record: lanes reach `input` as
+    /// [`Automation`](crate::Automation) events, whose index is the place of the number in
+    /// `numbers`. The owner finds a number by its name, as for
+    /// [`automation`](Self::automation), so give the same name to the same number every run.
+    ///
+    /// The device moves the numbers itself: it plays the value of an event, and the record
+    /// value of a number that hears nothing in a block. At most [`MAX_AUTOMATED`] numbers, each
+    /// with a name of its own, or the behaviour fails.
+    pub fn runtime_automation(
+        &mut self,
+        input: InputEndpoint,
+        numbers: Vec<(ParameterInfo, f32)>,
+    ) -> Result<(), BehaviourError> {
+        if numbers.len() > MAX_AUTOMATED {
+            return Err(BehaviourError::Other(format!(
+                "a device takes automation for at most {MAX_AUTOMATED} numbers, not {}",
+                numbers.len()
+            )));
+        }
+        // A lane finds its number by the name, so two numbers of one name would hide one.
+        for (index, (number, _)) in numbers.iter().enumerate() {
+            let earlier = numbers.iter().take(index);
+            if earlier
+                .clone()
+                .any(|(other, _)| other.field == number.field)
+            {
+                return Err(BehaviourError::Other(format!(
+                    "two automated numbers are named {:?}",
+                    number.field
+                )));
+            }
+        }
+        let (parameters, records) = numbers.into_iter().unzip();
+        self.next.automation = Some(Automatable {
+            endpoint: input,
+            parameters,
+            records,
+        });
+        Ok(())
+    }
+
     /// Shows the views the lanes this instance plays into the numbers of its owned child
     /// `child`, or of itself with `None`, so a knob of an automated number shows the value that
     /// plays, see [`Project::lanes`](super::Project::lanes). Declare them each run, as the rest.
@@ -509,23 +551,23 @@ impl Bindings {
         let parameters = automatable.parameters.iter();
         let index = parameters
             .clone()
-            .position(|number| number.field == field)?;
+            .position(|number| &*number.field == field)?;
         Some(AutomatedNumber {
             range: automatable.parameters.get(index)?.range,
             record: automatable.records.get(index).copied(),
         })
     }
 
-    /// The fields of every number the behaviour of `instance` takes automation for, in the
+    /// The names of every number the behaviour of `instance` takes automation for, in the
     /// order it named them.
-    pub(super) fn automatable(
-        &self,
-        instance: &InstanceId,
-    ) -> impl Iterator<Item = &'static str> + '_ {
+    pub(super) fn automatable(&self, instance: &InstanceId) -> impl Iterator<Item = &str> + '_ {
         let automatable = self.by_instance.get(instance);
         let automatable = automatable.and_then(|binding| binding.automation.as_ref());
         let parameters = automatable.map(|automatable| automatable.parameters.iter());
-        parameters.into_iter().flatten().map(|number| number.field)
+        parameters
+            .into_iter()
+            .flatten()
+            .map(|number| &*number.field)
     }
 
     /// The lanes that play into the numbers of `instance`, from its own behaviour or from the

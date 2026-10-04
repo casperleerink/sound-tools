@@ -10,6 +10,8 @@
 //!
 //! [`Project::lanes`]: sound_core::Project::lanes
 
+use std::sync::Arc;
+
 use gpui::{App, Context, Entity, prelude::*};
 use sound_core::{AutomationInput, InstanceId, Parameter, State};
 
@@ -19,11 +21,12 @@ pub struct Lanes<S: 'static> {
     session: Entity<Session>,
     instance: InstanceId,
     /// The numbers the device takes automation for, in the order of its `AutomationInput`.
+    /// None for a device that names its numbers as its behaviour runs.
     parameters: Vec<&'static Parameter<S>>,
-    /// The value of each lane at the playhead, by the field of its number.
-    values: Vec<(&'static str, f32)>,
+    /// The value of each lane at the playhead, by the name of its number.
+    values: Vec<(Arc<str>, f32)>,
     /// Where the next look puts the values, so that it allocates nothing.
-    next: Vec<(&'static str, f32)>,
+    next: Vec<(Arc<str>, f32)>,
 }
 
 impl<S: 'static> Lanes<S> {
@@ -33,6 +36,26 @@ impl<S: 'static> Lanes<S> {
         session: &Entity<Session>,
         instance: &InstanceId,
         input: AutomationInput<S, N>,
+        cx: &mut Context<V>,
+    ) -> Entity<Self> {
+        Self::follow_parameters(session, instance, input.parameters().to_vec(), cx)
+    }
+
+    /// The lanes of `instance`, whose device names the numbers it takes automation for as its
+    /// behaviour runs, such as the pins of a plugin. [`Self::value`] gives what each plays;
+    /// [`Lanes::state`] has no number to lay over the record.
+    pub fn follow_named<V: 'static>(
+        session: &Entity<Session>,
+        instance: &InstanceId,
+        cx: &mut Context<V>,
+    ) -> Entity<Self> {
+        Self::follow_parameters(session, instance, Vec::new(), cx)
+    }
+
+    fn follow_parameters<V: 'static>(
+        session: &Entity<Session>,
+        instance: &InstanceId,
+        parameters: Vec<&'static Parameter<S>>,
         cx: &mut Context<V>,
     ) -> Entity<Self> {
         let lanes = cx.new(|cx: &mut Context<Self>| {
@@ -45,7 +68,7 @@ impl<S: 'static> Lanes<S> {
             let mut lanes = Self {
                 session: session.clone(),
                 instance: instance.clone(),
-                parameters: input.parameters().to_vec(),
+                parameters,
                 values: Vec::new(),
                 next: Vec::new(),
             };
@@ -68,7 +91,7 @@ impl<S: 'static> Lanes<S> {
     /// The value the lane of the number `field` plays now, `None` when no lane moves it.
     pub fn value(&self, field: &str) -> Option<f32> {
         let mut values = self.values.iter();
-        let found = values.find(|(automated, _)| *automated == field);
+        let found = values.find(|(automated, _)| **automated == *field);
         found.map(|(_, value)| *value)
     }
 
