@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
-version = "0.1.3"
+version = "0.2.0"
 publish = false
 
 # Every dependency, internal or external, is declared here once. Members write `foo.workspace = true`.
