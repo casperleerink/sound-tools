@@ -4,6 +4,10 @@
 //! all in `tooling/test-plugin-support`, which the VST 3 test plugin shares, so a test reads
 //! either render the same way. What is here is the format.
 //!
+//! Two parameters a host can list, `Cutoff` and `Wave`, with the plugin's own text for their
+//! values, and a read-only `Meter` a host must leave out. `Wave` is a list of names that may not
+//! be automated. Nothing moves them and nothing plays them.
+//!
 //! Its window is a window in name only. It draws nothing, because CI has no display: it
 //! answers the calls of the GUI extension and writes them down, so a test can say which call
 //! arrived, in what order and on which thread. Like the real plugins this was written against,
@@ -25,6 +29,10 @@ use clack_extensions::latency::{HostLatency, PluginLatency, PluginLatencyImpl};
 use clack_extensions::note_ports::{
     NoteDialect, NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePorts,
     PluginNotePortsImpl,
+};
+use clack_extensions::params::{
+    ParamDisplayWriter, ParamInfo, ParamInfoFlags, ParamInfoWriter, PluginAudioProcessorParams,
+    PluginMainThreadParams, PluginParams,
 };
 use clack_extensions::render::{PluginRender, PluginRenderImpl, RenderMode};
 use clack_extensions::state::{HostState, PluginState, PluginStateImpl};
@@ -50,6 +58,7 @@ impl Plugin for TestTone {
         builder
             .register::<PluginAudioPorts>()
             .register::<PluginNotePorts>()
+            .register::<PluginParams>()
             .register::<PluginGui>()
             .register::<PluginRender>()
             .register::<PluginState>()
@@ -282,6 +291,92 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
         log("gui_hide", 0, 0);
         Ok(())
     }
+}
+
+/// The ids of the parameters.
+pub const CUTOFF: u32 = 0;
+pub const WAVE: u32 = 1;
+const METER: u32 = 2;
+
+/// The parameters, in the order `get_info` lists them: the id, the name, the range, the default
+/// and the flags.
+const PARAMETERS: [(u32, &str, f64, f64, f64, ParamInfoFlags); 3] = [
+    (
+        CUTOFF,
+        "Cutoff",
+        20.0,
+        20_000.0,
+        1000.0,
+        ParamInfoFlags::IS_AUTOMATABLE,
+    ),
+    (
+        WAVE,
+        "Wave",
+        0.0,
+        2.0,
+        0.0,
+        ParamInfoFlags::IS_STEPPED.union(ParamInfoFlags::IS_ENUM),
+    ),
+    (METER, "Meter", 0.0, 1.0, 0.0, ParamInfoFlags::IS_READONLY),
+];
+
+/// Every parameter stays at its default: nothing here moves one.
+impl PluginMainThreadParams for TestToneMainThread<'_> {
+    fn count(&self) -> u32 {
+        PARAMETERS.len() as u32
+    }
+
+    fn get_info(&self, param_index: u32, info: &mut ParamInfoWriter) {
+        let Some(&(id, name, minimum, maximum, default, flags)) =
+            PARAMETERS.get(param_index as usize)
+        else {
+            return;
+        };
+        info.set(&ParamInfo {
+            id: ClapId::new(id),
+            flags,
+            cookie: Default::default(),
+            name: name.as_bytes(),
+            module: b"",
+            min_value: minimum,
+            max_value: maximum,
+            default_value: default,
+        });
+    }
+
+    fn get_value(&self, param_id: ClapId) -> Option<f64> {
+        PARAMETERS
+            .iter()
+            .find(|parameter| parameter.0 == param_id.get())
+            .map(|parameter| parameter.4)
+    }
+
+    fn value_to_text(
+        &self,
+        param_id: ClapId,
+        value: f64,
+        writer: &mut ParamDisplayWriter,
+    ) -> std::fmt::Result {
+        use std::fmt::Write as _;
+        match param_id.get() {
+            CUTOFF => write!(writer, "{value:.0} Hz"),
+            WAVE => {
+                let wave = support::WAVES.get(value.round() as usize);
+                writer.write_str(wave.ok_or(std::fmt::Error)?)
+            }
+            _ => Err(std::fmt::Error),
+        }
+    }
+
+    fn text_to_value(&self, _param_id: ClapId, _text: &std::ffi::CStr) -> Option<f64> {
+        None
+    }
+
+    fn flush(&self, _input: &InputEvents, _output: &mut OutputEvents) {}
+}
+
+impl PluginAudioProcessorParams for TestToneAudio<'_> {
+    fn flush(&mut self, _input: &InputEvents, _output: &mut OutputEvents) {}
 }
 
 /// What kind of run this is. A plugin that streams from disk uses it to wait for its samples

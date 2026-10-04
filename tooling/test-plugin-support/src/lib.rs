@@ -351,6 +351,10 @@ pub const EDIT_AT_RESTART_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_EDIT_AT_REST
 /// The first four bytes of the saved state, so a wrong file is refused instead of read.
 const STATE_MAGIC: [u8; 4] = *b"STT1";
 
+/// The names of the steps of `Wave`, the parameter of each test plugin that is a list. Nothing
+/// plays them: the parameter is there for a host to list and show.
+pub const WAVES: [&str; 3] = ["Sine", "Saw", "Square"];
+
 /// Whether an environment variable is set, which is how a test tells the plugin to misbehave.
 pub fn told_to(variable: &str) -> bool {
     std::env::var_os(variable).is_some()
