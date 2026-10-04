@@ -19,7 +19,8 @@
 //!
 //! The list of parameters and the plugin's text both call into the plugin, which a frame may
 //! not do. So the view asks when the session tells it something changed, and draws from what it
-//! was told.
+//! was told. A lane that sweeps changes its value every frame, so the text of a value a lane
+//! plays is asked for at most 15 times a second, and the knob shows the last text it got.
 //!
 //! A plugin this machine does not have shows what is wrong and the id the record names, so a
 //! composer can see which plugin to install and an agent can be asked to correct the record.
@@ -27,9 +28,10 @@
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, Context, Div, Entity, FocusHandle, SharedString, Window, div, prelude::*, px,
+    AnyElement, Context, Div, Entity, FocusHandle, SharedString, Task, Window, div, prelude::*, px,
 };
 use sound_core::{Instance, MAX_AUTOMATED, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -58,6 +60,8 @@ const LEFT_WIDTH: f32 = PLAIN_CARD_WIDTH - 2. * CARD_PADDING;
 /// A dropdown spans two cells, so the names of its steps fit, and leaves air on either side.
 const DROPDOWN_SPAN: usize = 2;
 const DROPDOWN_WIDTH: f32 = DROPDOWN_SPAN as f32 * CELL_WIDTH - 8.;
+/// How often at most the card asks the plugin for its text of a value a lane plays.
+const LANE_READ_OUT: Duration = Duration::from_millis(66);
 
 /// Registers the card of the `plugin` tool and what a rack calls one.
 ///
@@ -130,6 +134,10 @@ pub struct PluginView {
     readouts: BTreeMap<u32, (f64, Option<SharedString>)>,
     /// What the automation lanes of the track play into the pins.
     lanes: Entity<Lanes<PluginRecord>>,
+    /// When the card last asked for the text of what the pins play, and the ask that waits
+    /// for [`LANE_READ_OUT`] to pass.
+    read_out_at: Option<Instant>,
+    read_out_later: Option<Task<()>>,
     /// The list that puts a parameter on the card and takes one off.
     menu: Entity<DropdownMenu>,
     /// The pin whose knob is being dragged, and what its values meant when the drag began. A
@@ -210,7 +218,8 @@ impl PluginView {
         })
         .detach();
         let lanes = Lanes::follow_named(&session, plugin.id(), cx);
-        cx.observe(&lanes, |view, _, cx| view.read_out(cx)).detach();
+        cx.observe(&lanes, |view, _, cx| view.lanes_moved(cx))
+            .detach();
         let mut view = Self {
             session,
             plugin,
@@ -221,6 +230,8 @@ impl PluginView {
             parameters: None,
             readouts: BTreeMap::new(),
             lanes,
+            read_out_at: None,
+            read_out_later: None,
             menu,
             dragged: None,
         };
@@ -269,9 +280,36 @@ impl PluginView {
         }
     }
 
+    /// A lane plays another value: its text is asked for now, or once [`LANE_READ_OUT`] has
+    /// passed since the last ask.
+    fn lanes_moved(&mut self, cx: &mut Context<Self>) {
+        if self.read_out_later.is_some() {
+            return;
+        }
+        let since = self.read_out_at.map_or(LANE_READ_OUT, |at| at.elapsed());
+        let Some(wait) = LANE_READ_OUT
+            .checked_sub(since)
+            .filter(|wait| !wait.is_zero())
+        else {
+            self.read_out(cx);
+            return;
+        };
+        self.read_out_later = Some(cx.spawn(async move |view, cx| {
+            cx.background_executor().timer(wait).await;
+            // A card that is gone has nothing to read out.
+            view.update(cx, |view, cx| {
+                view.read_out_later = None;
+                view.read_out(cx);
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
     /// Asks the plugin for its text for the value each pin plays now, the record's or a lane's,
     /// where that is not the value of the text the card has.
     fn read_out(&mut self, cx: &mut Context<Self>) {
+        self.read_out_at = Some(Instant::now());
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
@@ -427,10 +465,11 @@ impl PluginView {
         // Only a knob over any value takes a lane, so only a knob shows one.
         let lane = self.lanes.read(cx).value(&lane_of_pin(id)).map(f64::from);
         let value = lane.unwrap_or(pin.value);
+        // The text of what a lane plays may be a few frames old, see `LANE_READ_OUT`.
         let readout = self
             .readouts
             .get(&id)
-            .filter(|(read, _)| read.to_bits() == value.to_bits())
+            .filter(|(read, _)| lane.is_some() || read.to_bits() == value.to_bits())
             .and_then(|(_, text)| text.clone());
         let (minimum, maximum) = (parameter.minimum, parameter.maximum);
         // Every step the control can write, by its number, as the plugin's own value.
