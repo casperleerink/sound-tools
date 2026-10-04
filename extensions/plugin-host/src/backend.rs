@@ -12,7 +12,6 @@ use gpui::Keystroke;
 use sound_core::PrepareConfig;
 
 use crate::PluginProblem;
-use crate::parameters::Parameter;
 use crate::processor::Started;
 use crate::window::WindowSize;
 
@@ -27,9 +26,6 @@ pub(crate) trait LoadedPlugin {
 
     /// The plugin's own window, when it offers one.
     fn gui(&mut self) -> Option<&mut dyn PluginGui>;
-
-    /// Every parameter a host may set, in the plugin's own order.
-    fn parameters(&mut self) -> Vec<Parameter>;
 
     /// The value the parameter `id` has now. `None` when the plugin cannot say, which a CLAP
     /// plugin does for an id it does not have.

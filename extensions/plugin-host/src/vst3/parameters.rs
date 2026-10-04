@@ -13,13 +13,13 @@ use vst3::Steinberg::{int32, kResultOk};
 
 use crate::parameters::{Parameter, Steps};
 
-/// Every parameter a host may set, in the controller's order. A read-only one, such as a meter,
-/// is left out.
+/// Every parameter a host may set, in the controller's order. Read-only and hidden ones are
+/// left out.
 ///
 /// # Safety
 ///
 /// The controller must be alive.
-pub(super) unsafe fn parameters(controller: &ComPtr<IEditController>) -> Vec<Parameter> {
+pub(super) unsafe fn of_controller(controller: &ComPtr<IEditController>) -> Vec<Parameter> {
     let has = |info: &ParameterInfo, flag: i32| info.flags & flag != 0;
     let mut parameters = Vec::new();
     // SAFETY: the caller keeps the contract. `info` is written by the plugin before it is
@@ -30,7 +30,9 @@ pub(super) unsafe fn parameters(controller: &ComPtr<IEditController>) -> Vec<Par
             if controller.getParameterInfo(index, &mut info) != kResultOk {
                 continue;
             }
-            if has(&info, ParameterFlags_::kIsReadOnly as int32) {
+            // A read-only parameter is the plugin's to set, and a hidden one is not for a person.
+            let left_out = ParameterFlags_::kIsReadOnly | ParameterFlags_::kIsHidden;
+            if has(&info, left_out as int32) {
                 continue;
             }
             let steps = (info.stepCount > 0).then(|| {

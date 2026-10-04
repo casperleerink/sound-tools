@@ -5,8 +5,8 @@
 //! either render the same way. What is here is the format.
 //!
 //! Two parameters a host can list, `Cutoff` and `Wave`, with the plugin's own text for their
-//! values, and a read-only `Meter` a host must leave out. `Wave` is a list of names that may not
-//! be automated. Nothing moves them and nothing plays them.
+//! values, and a read-only `Meter` and a `Hidden` one a host must leave out. `Wave` is a list of
+//! names that may not be automated. Nothing moves them and nothing plays them.
 //!
 //! Its window is a window in name only. It draws nothing, because CI has no display: it
 //! answers the calls of the GUI extension and writes them down, so a test can say which call
@@ -297,10 +297,11 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
 pub const CUTOFF: u32 = 0;
 pub const WAVE: u32 = 1;
 const METER: u32 = 2;
+const HIDDEN: u32 = 3;
 
 /// The parameters, in the order `get_info` lists them: the id, the name, the range, the default
 /// and the flags.
-const PARAMETERS: [(u32, &str, f64, f64, f64, ParamInfoFlags); 3] = [
+const PARAMETERS: [(u32, &str, f64, f64, f64, ParamInfoFlags); 4] = [
     (
         CUTOFF,
         "Cutoff",
@@ -318,6 +319,14 @@ const PARAMETERS: [(u32, &str, f64, f64, f64, ParamInfoFlags); 3] = [
         ParamInfoFlags::IS_STEPPED.union(ParamInfoFlags::IS_ENUM),
     ),
     (METER, "Meter", 0.0, 1.0, 0.0, ParamInfoFlags::IS_READONLY),
+    (
+        HIDDEN,
+        "Hidden",
+        0.0,
+        1.0,
+        0.0,
+        ParamInfoFlags::IS_AUTOMATABLE.union(ParamInfoFlags::IS_HIDDEN),
+    ),
 ];
 
 /// Every parameter stays at its default: nothing here moves one.

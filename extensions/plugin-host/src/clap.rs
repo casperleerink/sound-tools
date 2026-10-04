@@ -176,6 +176,99 @@ pub(crate) fn scan_bundle(bundle: &std::path::Path) -> Result<Vec<ScannedPlugin>
     Ok(plugins)
 }
 
+/// Makes an instance of the plugin `found` names, which runs its code. It is not activated.
+fn instantiate(found: &ScannedPlugin) -> Result<PluginInstance<SoundToolsHost>, PluginProblem> {
+    let fail = |message: String| PluginProblem::DidNotLoad {
+        plugin_id: found.id.clone(),
+        message,
+    };
+    // SAFETY: loading a plugin runs its code, which no host can check in advance. The scan ran
+    // this same bundle in a child process first, so a bundle that crashes on load is already
+    // known and never reaches here.
+    let entry = unsafe { clack_host::entry::PluginEntry::load(&found.path) }
+        .map_err(|error| fail(error.to_string()))?;
+    let host_info = HostInfo::new(HOST_NAME, HOST_VENDOR, HOST_URL, HOST_VERSION)
+        .map_err(|error| fail(error.to_string()))?;
+    let identifier =
+        std::ffi::CString::new(found.id.as_str()).map_err(|error| fail(error.to_string()))?;
+    PluginInstance::<SoundToolsHost>::new(
+        |_| SharedCallbacks::default(),
+        |shared| MainThreadCallbacks {
+            _shared: shared,
+            state_is_dirty: Cell::new(false),
+        },
+        &entry,
+        &identifier,
+        &host_info,
+    )
+    .map_err(|error| fail(error.to_string()))
+}
+
+/// Every parameter a host may set of the plugin `found` names, read without activating it:
+/// CLAP gives a plugin's parameters from the moment it is made, so nothing is prepared for audio
+/// that is never played.
+pub(crate) fn read_parameters(found: &ScannedPlugin) -> Result<Vec<Parameter>, PluginProblem> {
+    let mut instance = instantiate(found)?;
+    let Some(params) = params_extension(&instance) else {
+        return Ok(Vec::new());
+    };
+    let plugin = instance.plugin_handle();
+    let mut buffer = ParamInfoBuffer::new();
+    let mut parameters = Vec::new();
+    for index in 0..params.count(&plugin) {
+        let Some(info) = params.get_info(&plugin, index, &mut buffer) else {
+            continue;
+        };
+        // A read-only parameter is the plugin's to set, and a hidden one is not for a person.
+        if info
+            .flags
+            .intersects(ParamInfoFlags::IS_READONLY | ParamInfoFlags::IS_HIDDEN)
+        {
+            continue;
+        }
+        let id = info.id;
+        // CLAP says an enum is stepped as well.
+        let stepped = info
+            .flags
+            .intersects(ParamInfoFlags::IS_STEPPED | ParamInfoFlags::IS_ENUM);
+        let is_list = info.flags.contains(ParamInfoFlags::IS_ENUM);
+        let (minimum, maximum) = (info.min_value, info.max_value);
+        let mut parameter = Parameter {
+            id: id.get(),
+            name: String::from_utf8_lossy(info.name).into_owned(),
+            minimum,
+            maximum,
+            default: info.default_value,
+            steps: None,
+            automatable: info.flags.contains(ParamInfoFlags::IS_AUTOMATABLE),
+        };
+        if stepped {
+            let (first, count) = whole_steps(minimum, maximum);
+            parameter.steps = Some(Steps::new(
+                count,
+                is_list,
+                |index| first + f64::from(index),
+                |value| text_of(&params, &plugin, id, value),
+            ));
+        }
+        parameters.push(parameter);
+    }
+    Ok(parameters)
+}
+
+/// The first value of a stepped parameter and how many it takes. The values of a stepped CLAP
+/// parameter are whole numbers, which the specification makes of a plain value by cutting off
+/// what follows the point. A range wider than a `u32` counts saturates: it is a knob anyway.
+fn whole_steps(minimum: f64, maximum: f64) -> (f64, u32) {
+    let (first, last) = (minimum.trunc(), maximum.trunc());
+    (first, (last - first + 1.0).max(1.0) as u32)
+}
+
+/// The parameters extension. A plugin without one has no parameters a host can see.
+fn params_extension(instance: &PluginInstance<SoundToolsHost>) -> Option<PluginParams> {
+    instance.plugin_shared_handle().get_extension()
+}
+
 /// Loads the plugin `found` names, with `saved` as its own state, and starts it.
 pub(crate) fn load(
     found: &ScannedPlugin,
@@ -187,26 +280,7 @@ pub(crate) fn load(
         plugin_id: plugin_id.clone(),
         message,
     };
-    // SAFETY: loading a plugin runs its code, which no host can check in advance. The scan ran
-    // this same bundle in a child process first, so a bundle that crashes on load is already
-    // known and never reaches here.
-    let entry = unsafe { clack_host::entry::PluginEntry::load(&found.path) }
-        .map_err(|error| fail(error.to_string()))?;
-    let host_info = HostInfo::new(HOST_NAME, HOST_VENDOR, HOST_URL, HOST_VERSION)
-        .map_err(|error| fail(error.to_string()))?;
-    let identifier =
-        std::ffi::CString::new(plugin_id.as_str()).map_err(|error| fail(error.to_string()))?;
-    let mut instance = PluginInstance::<SoundToolsHost>::new(
-        |_| SharedCallbacks::default(),
-        |shared| MainThreadCallbacks {
-            _shared: shared,
-            state_is_dirty: Cell::new(false),
-        },
-        &entry,
-        &identifier,
-        &host_info,
-    )
-    .map_err(|error| fail(error.to_string()))?;
+    let mut instance = instantiate(found)?;
 
     // What kind of run this is, before the plugin is activated and on the main thread, which
     // is where CLAP puts this call. A plugin that streams from disk may wait for its samples
@@ -360,60 +434,13 @@ impl LoadedPlugin for ClapPlugin {
         Some(self)
     }
 
-    fn parameters(&mut self) -> Vec<Parameter> {
-        let Some(params) = self.params_extension() else {
-            return Vec::new();
-        };
-        let plugin = self.instance.plugin_handle();
-        let mut buffer = ParamInfoBuffer::new();
-        let mut parameters = Vec::new();
-        for index in 0..params.count(&plugin) {
-            let Some(info) = params.get_info(&plugin, index, &mut buffer) else {
-                continue;
-            };
-            if info.flags.contains(ParamInfoFlags::IS_READONLY) {
-                continue;
-            }
-            let id = info.id;
-            // CLAP says an enum is stepped as well. A stepped parameter takes the whole
-            // numbers of its range.
-            let stepped = info
-                .flags
-                .intersects(ParamInfoFlags::IS_STEPPED | ParamInfoFlags::IS_ENUM);
-            let is_list = info.flags.contains(ParamInfoFlags::IS_ENUM);
-            let (minimum, maximum) = (info.min_value, info.max_value);
-            let mut parameter = Parameter {
-                id: id.get(),
-                name: String::from_utf8_lossy(info.name).into_owned(),
-                minimum,
-                maximum,
-                default: info.default_value,
-                steps: None,
-                automatable: info.flags.contains(ParamInfoFlags::IS_AUTOMATABLE),
-            };
-            if stepped {
-                // Saturates: a range wider than the steps a `u32` counts is a knob anyway.
-                let count = ((maximum.round() - minimum.round()) + 1.0).max(1.0) as u32;
-                let first = minimum.round();
-                parameter.steps = Some(Steps::new(
-                    count,
-                    is_list,
-                    |index| first + f64::from(index),
-                    |value| text_of(&params, &plugin, id, value),
-                ));
-            }
-            parameters.push(parameter);
-        }
-        parameters
-    }
-
     fn value(&mut self, id: u32) -> Option<f64> {
-        let params = self.params_extension()?;
+        let params = params_extension(&self.instance)?;
         params.get_value(&self.instance.plugin_handle(), ClapId::from_raw(id)?)
     }
 
     fn text(&mut self, id: u32, value: f64) -> Option<String> {
-        let params = self.params_extension()?;
+        let params = params_extension(&self.instance)?;
         text_of(
             &params,
             &self.instance.plugin_handle(),
@@ -467,11 +494,6 @@ fn configuration() -> Option<GuiConfiguration<'static>> {
 
 impl ClapPlugin {
     fn gui_extension(&mut self) -> Option<ClapGui> {
-        self.instance.plugin_shared_handle().get_extension()
-    }
-
-    /// The parameters extension. A plugin without one has no parameters a host can see.
-    fn params_extension(&self) -> Option<PluginParams> {
         self.instance.plugin_shared_handle().get_extension()
     }
 
@@ -829,4 +851,17 @@ fn read_ports(instance: &mut PluginInstance<SoundToolsHost>) -> PortLayout {
         layout.output_channels = channels(false);
     }
     layout
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// CLAP makes a whole number of a plain value by cutting off what follows the point, also
+    /// below zero, so a range of -1.5 to 2.7 takes -1, 0, 1 and 2.
+    #[test]
+    fn the_steps_of_a_stepped_parameter_cut_its_bounds_toward_zero() {
+        assert_eq!(whole_steps(-1.5, 2.7), (-1.0, 4));
+        assert_eq!(whole_steps(0.0, 2.0), (0.0, 3));
+    }
 }

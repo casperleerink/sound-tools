@@ -17,7 +17,7 @@
 //!   pressure.
 //!
 //! - `Wave`, a list of three named steps with the plugin's own text for each, for a host to
-//!   list. Nothing plays it.
+//!   list. Nothing plays it. `Hidden` is one a host may set and must not list.
 //!
 //! And more, for what a test needs to make it do: see the constants below. A few keys are not
 //! played but ask the host for something through `restartComponent`, one flag each
@@ -101,6 +101,9 @@ const PRESSURE: ParamID = 9;
 
 /// A list of named steps, one per name in `test_plugin_support::WAVES`.
 pub const WAVE: ParamID = 10;
+
+/// A parameter a host may set and must not show, which a list of parameters leaves out.
+const HIDDEN: ParamID = 11;
 
 /// Where the plugin hears the sustain pedal: on [`SUSTAIN`], on [`MOVED_SUSTAIN`], or nowhere.
 const PEDAL_ON_SUSTAIN: u8 = 0;
@@ -330,7 +333,7 @@ impl TestTone {
 
 /// Every parameter, in the order `getParameterInfo` lists them, and whether it is only ever set
 /// by the plugin, which a host must never send.
-const PARAMETERS: [(ParamID, &str, &str, ParamValue, bool); 11] = [
+const PARAMETERS: [(ParamID, &str, &str, ParamValue, bool); 12] = [
     (TRANSPOSE, "Transpose", "st", 0.0, false),
     (SUSTAIN, "Sustain", "", 0.0, false),
     (LEVEL, "Level", "", 1.0, false),
@@ -342,6 +345,7 @@ const PARAMETERS: [(ParamID, &str, &str, ParamValue, bool); 11] = [
     (MOD_WHEEL, "Mod wheel", "", 0.0, false),
     (PRESSURE, "Pressure", "", 0.0, false),
     (WAVE, "Wave", "", 0.0, false),
+    (HIDDEN, "Hidden", "", 0.0, false),
 ];
 
 impl IPluginBaseTrait for TestTone {
@@ -978,6 +982,9 @@ impl IEditControllerTrait for TestTone {
             if id == WAVE {
                 info.stepCount = support::WAVES.len() as int32 - 1;
                 info.flags |= ParameterFlags_::kIsList as int32;
+            }
+            if id == HIDDEN {
+                info.flags |= ParameterFlags_::kIsHidden as int32;
             }
         }
         kResultOk

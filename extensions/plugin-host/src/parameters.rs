@@ -6,8 +6,6 @@
 //!
 //! All of it is read on the main thread, where both formats put these calls.
 
-use sound_core::PrepareConfig;
-
 use crate::PluginProblem;
 use crate::scan::ScannedPlugin;
 
@@ -82,33 +80,17 @@ impl Steps {
     }
 }
 
-/// Every parameter of `plugin`, read from the plugin itself.
+/// Every parameter of `plugin` a host may set, read from the plugin itself. Read-only and
+/// hidden parameters are left out.
 ///
-/// It loads the plugin in this process and lets it go again, which runs the plugin's own code
-/// here. That is for a command that runs once and ends, `sound-tools --plugin-params`; a
-/// project reads the parameters of the plugins it already holds.
+/// It makes the plugin in this process and lets it go again, which runs the plugin's own code
+/// here. That is for a command that runs once and ends, `sound-tools --plugin-params`. The
+/// plugin is initialized and never activated: nothing is prepared for audio.
 pub fn read_parameters(plugin: &ScannedPlugin) -> Result<Vec<Parameter>, PluginProblem> {
-    // Offline, so a plugin that streams from disk starts nothing for a render that never comes.
-    let config = PrepareConfig {
-        sample_rate: 48_000,
-        offline: true,
-    };
-    let opening = match plugin.format {
-        crate::PluginFormat::Clap => crate::clap::load(plugin, None, config),
-        crate::PluginFormat::Vst3 => crate::vst3::load(plugin, None, config),
-    }?;
-    let crate::backend::Opening {
-        mut plugin,
-        started,
-        ..
-    } = opening;
-    let parameters = plugin.parameters();
-    // The audio side goes first, and then the plugin lets go of itself, in the order the
-    // engine gives a plugin back.
-    // Nothing else holds the audio side, so the plugin always lets go here.
-    drop(started);
-    let _released = plugin.released();
-    Ok(parameters)
+    match plugin.format {
+        crate::PluginFormat::Clap => crate::clap::read_parameters(plugin),
+        crate::PluginFormat::Vst3 => crate::vst3::read_parameters(plugin),
+    }
 }
 
 #[cfg(test)]
