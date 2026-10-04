@@ -318,6 +318,23 @@ impl Keyboard {
         self.recording.is_some()
     }
 
+    /// The keys of the recording so far, as a take that ends at `until`: what a view shows
+    /// while it grows. Only the keys, because the pedal and the wheels move no note and a wheel
+    /// sends a message every few milliseconds. `None` when nothing records.
+    pub fn keys_so_far(&self, until: Ticks) -> Option<Take> {
+        let recording = self.recording.as_ref()?;
+        let keys = recording
+            .events
+            .iter()
+            .filter(|event| matches!(event.played, Played::On { .. } | Played::Off { .. }));
+        Some(Take {
+            start: recording.start,
+            end: until.max(recording.start),
+            pedal_at_start: Pedal::UP,
+            events: keys.copied().collect(),
+        })
+    }
+
     /// Ends the recording at the playhead and gives the take. `None` when nothing was
     /// recording. Poll once before this, so the last block is in the take.
     pub fn finish_recording(&mut self, until: Ticks) -> Option<Take> {

@@ -15,7 +15,7 @@ use gpui::{
 use sound_core::InstanceId;
 use sound_ui::components::meter::Meter;
 use sound_ui::components::toggle::{self, Toggle};
-use sound_ui::{ActiveTheme, InputLevels, Metering, Recording, Session};
+use sound_ui::{ActiveTheme, InputLevels, LiveNotes, Metering, Recording, Session};
 
 use super::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT};
 use super::timeline::{ARM_LEFT, ARMED_METER_HEIGHT, ARMED_METER_LEFT, Timeline, paint_takes};
@@ -51,6 +51,8 @@ impl RecordingOverlay {
             }
         })
         .detach();
+        cx.subscribe(&recording, |_, _, _: &LiveNotes, cx| cx.notify())
+            .detach();
         // A take ends at the playhead, so it grows with every move of it.
         cx.observe(&playhead, |overlay, _, cx| {
             if !overlay.recording.read(cx).takes().is_empty() {

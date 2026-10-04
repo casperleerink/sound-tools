@@ -4,6 +4,7 @@
 use midi::Played;
 use sound_core::{Changes, InstanceId, Ticks};
 use sound_notes::{Clip, Pedal, Pitch, Velocity};
+use sound_ui::LiveBody;
 
 use crate::support::{Opened, id, open_with};
 
@@ -68,6 +69,45 @@ fn the_record_button_records_what_is_played_into_a_clip_as_one_undo_step(
     assert_eq!(opened.undo_label(), None);
 
     opened.keys("shift-cmd-z");
+    assert!(take_clip(&mut opened).is_some());
+}
+
+/// What the timeline shows of the MIDI take of the first track while it records: `None` when
+/// it shows no take there, else the notes so far.
+fn live_notes(opened: &mut Opened<'_>) -> Option<Option<Clip>> {
+    let session = opened.session.clone();
+    opened.cx.read(|cx| {
+        let recording = session.read(cx).recording().read(cx);
+        match &recording.take_of(&id("arrangement/track-1"))?.body {
+            LiveBody::Notes(notes) => Some(notes.clone()),
+            LiveBody::Audio(_) => None,
+        }
+    })
+}
+
+#[gpui::test]
+fn a_take_shows_its_notes_while_it_records(cx: &mut gpui::TestAppContext) {
+    let mut opened = opened(cx);
+    opened.keys("r");
+    opened.settle();
+    assert_eq!(live_notes(&mut opened), Some(None), "an empty take shows");
+
+    opened.play_midi(on(60, 88));
+    opened.render(12_000);
+    opened.settle();
+    let held = live_notes(&mut opened).flatten().expect("the key shows");
+    assert_eq!(held.notes.len(), 1);
+    assert_eq!(held.notes[0].pitch.number(), 60);
+
+    // A held key grows with the playhead.
+    opened.render(12_000);
+    opened.settle();
+    let longer = live_notes(&mut opened).flatten().unwrap();
+    assert!(longer.notes[0].length > held.notes[0].length);
+
+    opened.keys("r");
+    opened.settle();
+    assert_eq!(live_notes(&mut opened), None, "the take became a clip");
     assert!(take_clip(&mut opened).is_some());
 }
 

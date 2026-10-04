@@ -34,7 +34,7 @@ use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::meter::Meter;
 use sound_ui::{
-    ActiveTheme, LiveSound, LiveTake, Metering, Playhead, Recording, Session, every_poll,
+    ActiveTheme, LiveBody, LiveSound, LiveTake, Metering, Playhead, Recording, Session, every_poll,
     typography, weak_action, weak_callback,
 };
 
@@ -318,6 +318,24 @@ impl TransportPill {
         if let Err(error) = polled.and(wired) {
             session.update(cx, |session, cx| session.report(error, cx));
         }
+        self.show_notes(cx);
+    }
+
+    /// The notes of the MIDI take so far, a held key up to the playhead, for the timeline.
+    fn show_notes(&mut self, cx: &mut Context<Self>) {
+        let Some(take) = self.take.as_ref().filter(|take| take.ended.is_none()) else {
+            return;
+        };
+        let (Some(track), Some(keyboard)) = (&take.midi_track, &self.keyboard) else {
+            return;
+        };
+        let until = self.playhead.read(cx).tick;
+        let notes = keyboard
+            .keys_so_far(until)
+            .and_then(|keys| keys.clip(&take.clock));
+        self.recording.update(cx, |recording, cx| {
+            recording.show_notes(track.id(), notes, cx)
+        });
     }
 
     /// One poll of the master meter: what the device played since the last one. The timer
@@ -377,6 +395,15 @@ impl TransportPill {
         let selected = session.read(cx).selected().cloned();
         let midi_track = recording::target_track(session.read(cx).project(), selected.as_ref());
         let clock = Arc::new(session.read(cx).project().clock().clone());
+        let live = midi_track.iter().filter(|_| self.keyboard.is_some());
+        let live = live.map(|track| LiveTake {
+            track: track.id().clone(),
+            start: tick,
+            body: LiveBody::Notes(None),
+        });
+        let live = live.collect();
+        self.recording
+            .update(cx, |recording, cx| recording.set_takes(live, cx));
         let audio_tracks = self.tracks_to_record(selected.as_ref(), cx);
         let audio = match audio_tracks.is_empty() {
             true => None,
@@ -461,11 +488,11 @@ impl TransportPill {
         let live = requests.iter().map(|request| LiveTake {
             track: request.track.clone(),
             start,
-            sound: None,
+            body: LiveBody::Audio(None),
         });
         let live = live.collect();
         self.recording
-            .update(cx, |recording, cx| recording.set_takes(live, cx));
+            .update(cx, |recording, cx| recording.set_audio_takes(live, cx));
         self.audio.send(RecorderCommand::Start(requests));
         Some(AudioTake {
             placement: Placement::new(start, clock),
@@ -627,7 +654,7 @@ impl TransportPill {
                 // Armed with no input would show a level that never moves.
                 self.recording.update(cx, |recording, cx| {
                     recording.retain_armed(|_| false, cx);
-                    recording.set_takes(Vec::new(), cx);
+                    recording.set_audio_takes(Vec::new(), cx);
                 });
                 let ended = self.take.as_mut().is_some_and(|take| {
                     take.audio = None;
@@ -734,14 +761,14 @@ impl TransportPill {
         let live = audio.started.iter().map(|started| LiveTake {
             track: started.track.clone(),
             start: take.start,
-            sound: Some(LiveSound {
+            body: LiveBody::Audio(Some(LiveSound {
                 overview: started.overview.clone(),
                 start_seconds,
-            }),
+            })),
         });
         let live = live.collect();
         self.recording
-            .update(cx, |recording, cx| recording.set_takes(live, cx));
+            .update(cx, |recording, cx| recording.set_audio_takes(live, cx));
     }
 
     /// Runs the recorder once on the background executor, when it is here: it takes what the

@@ -35,8 +35,8 @@ use sound_ui::components::dropdown_menu::{
 };
 use sound_ui::components::text_input::{InputSize, TextInput};
 use sound_ui::{
-    ActiveTheme, Devices, KeyboardFocus, LiveTake, Playhead, Recording, Session, Waveforms,
-    typography,
+    ActiveTheme, Devices, KeyboardFocus, LiveBody, LiveSound, Playhead, Recording, Session,
+    Waveforms, typography,
 };
 
 use super::clipboard::{Copied, CopiedClips, SharedClipboard};
@@ -1833,11 +1833,18 @@ impl Timeline {
             };
             let end = playhead.max(take.start + Ticks(1));
             let rect = viewport.clip_rect(&rows, index, take.start, end);
-            let body = live_shape(take, rect, &viewport, width, project);
+            let body = match &take.body {
+                LiveBody::Audio(sound) => {
+                    let sound = sound.as_ref();
+                    let shape = live_shape(take.start, sound, rect, &viewport, width, project);
+                    Body::Audio(Box::new(shape))
+                }
+                LiveBody::Notes(notes) => Body::Notes(live_notes(notes.as_ref(), rect, &viewport)),
+            };
             shapes.push(ClipShape {
                 id: take.track.clone(),
                 rect,
-                body: Body::Audio(Box::new(body)),
+                body,
                 accent: accent(state.colour, theme),
                 selected: false,
                 muted: state.mute,
@@ -4239,18 +4246,19 @@ const RENAME_HEIGHT: f32 = 28.;
 /// Its left edge, so that its text starts where the painted name does.
 const RENAME_LEFT: f32 = NAME_LEFT - 8.;
 
-/// What a take shows while it records: the times of its file under each column on screen,
-/// lined up where the composer heard them, and no handles.
+/// What an audio take shows while it records: the times of its file under each column on
+/// screen, lined up where the composer heard them, and no handles.
 fn live_shape(
-    take: &LiveTake,
+    start: Ticks,
+    sound: Option<&LiveSound>,
     rect: Rect,
     viewport: &Viewport,
     width: f32,
     project: &Project,
 ) -> AudioShape {
     let clock = project.clock();
-    let start = clock.seconds_of(take.start);
-    let start_seconds = take.sound.as_ref().map_or(0., |sound| sound.start_seconds);
+    let start_seconds = sound.map_or(0., |sound| sound.start_seconds);
+    let start = clock.seconds_of(start);
     let (from, to) = (
         rect.x.max(0.).floor(),
         (rect.x + rect.width).min(width).ceil(),
@@ -4260,7 +4268,7 @@ fn live_shape(
         clock.seconds_of(viewport.tick_at(from + column as f32)) - start + start_seconds
     });
     AudioShape {
-        sound: Sound::Take(take.sound.as_ref().map(|sound| sound.overview.clone())),
+        sound: Sound::Take(sound.map(|sound| sound.overview.clone())),
         first: from,
         edges: edges.collect(),
         gain: 1.,
@@ -4271,6 +4279,24 @@ fn live_shape(
         missing: None,
         handles: false,
     }
+}
+
+/// The notes a MIDI take shows while it records, cut at the playhead: a held key ends at the
+/// last poll, which may be a little past it.
+fn live_notes(notes: Option<&Clip>, rect: Rect, viewport: &Viewport) -> Vec<Rect> {
+    let Some(notes) = notes else {
+        return Vec::new();
+    };
+    let right = rect.x + rect.width;
+    let notes = viewport
+        .miniature(notes, rect)
+        .filter(|note| note.x < right);
+    notes
+        .map(|note| Rect {
+            width: note.width.min(right - note.x),
+            ..note
+        })
+        .collect()
 }
 
 /// Scroll pans. With cmd it zooms in time about the pointer.
@@ -4494,13 +4520,44 @@ pub(super) fn paint_takes(
     );
     window.with_content_mask(Some(ContentMask { bounds: timeline }), |window| {
         for shape in shapes {
-            if let Body::Audio(audio) = &shape.body {
-                let body = placed(shape.rect, timeline.origin);
-                let look = audio_look(shape, audio, body, timeline.origin, assets, cx);
-                paint_audio_clip(&look, window, cx);
+            let body = placed(shape.rect, timeline.origin);
+            match &shape.body {
+                Body::Audio(audio) => {
+                    let look = audio_look(shape, audio, body, timeline.origin, assets, cx);
+                    paint_audio_clip(&look, window, cx);
+                }
+                Body::Notes(notes) => {
+                    paint_live_notes(shape, notes, body, timeline.origin, window, cx);
+                }
             }
         }
     });
+}
+
+/// A MIDI take while it records: opaque and with a red border, as an audio take is, and the
+/// notes played so far.
+fn paint_live_notes(
+    shape: &ClipShape,
+    notes: &[Rect],
+    body: Bounds<Pixels>,
+    origin: Point<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let theme = cx.theme();
+    let dim = if shape.muted { 0.4 } else { 1. };
+    let radius = px(6.).min(body.size.width / 2.);
+    let (solid, clear) = (BorderStyle::Solid, Hsla::transparent_black());
+    let (window_fill, clip_fill, border) = (
+        theme.gray_100,
+        theme.alpha_at(0.05).opacity(dim),
+        theme.red.opacity(dim),
+    );
+    window.paint_quad(quad(body, radius, window_fill, px(0.), clear, solid));
+    window.paint_quad(quad(body, radius, clip_fill, px(1.), border, solid));
+    for note in notes {
+        window.paint_quad(fill(placed(*note, origin), shape.accent.opacity(dim)));
+    }
 }
 
 fn paint_scene(scene: &mut Scene, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {

@@ -1,5 +1,5 @@
-//! Recording audio as the views see it: which audio tracks are armed, the level of the input,
-//! and each take while it grows.
+//! Recording as the views see it: which audio tracks are armed, the level of the input, and
+//! each take while it grows, of audio and of MIDI.
 //!
 //! Interface state, like the selection: nothing is saved, and arming is no undo step, like the
 //! click. The window owns the input device and records; views arm tracks, show the level and
@@ -7,7 +7,8 @@
 //!
 //! The level changes every poll while the input is open, so it is an event, [`InputLevels`],
 //! and not a notification: a view that shows a meter subscribes to it, and one that draws the
-//! arm toggles or the takes observes the entity.
+//! arm toggles or the takes observes the entity. The notes of a MIDI take change as often, and
+//! are an event too, [`LiveNotes`].
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -15,6 +16,7 @@ use std::ops::Range;
 use gpui::{Context, EventEmitter};
 use sound_core::{InstanceId, Ticks};
 use sound_media::TakeOverview;
+use sound_notes::Clip;
 
 /// A take while it records, as the timeline draws it: from where the recording began to the
 /// playhead, with a red border.
@@ -22,9 +24,17 @@ use sound_media::TakeOverview;
 pub struct LiveTake {
     pub track: InstanceId,
     pub start: Ticks,
-    /// What its file holds so far, once the first frames came and the recording is tied to
-    /// the timeline. Until then it draws no waveform.
-    pub sound: Option<LiveSound>,
+    pub body: LiveBody,
+}
+
+#[derive(Clone, Debug)]
+pub enum LiveBody {
+    /// An audio take: what its file holds so far, once the first frames came and the
+    /// recording is tied to the timeline. Until then it draws no waveform.
+    Audio(Option<LiveSound>),
+    /// A MIDI take: the notes played so far, a held key up to the last poll. `None` until the
+    /// first key.
+    Notes(Option<Clip>),
 }
 
 #[derive(Clone, Debug)]
@@ -38,6 +48,10 @@ pub struct LiveSound {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct InputLevels;
 
+/// The notes of a MIDI take changed while it records.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LiveNotes;
+
 #[derive(Default)]
 pub struct Recording {
     armed: BTreeSet<InstanceId>,
@@ -48,6 +62,7 @@ pub struct Recording {
 }
 
 impl EventEmitter<InputLevels> for Recording {}
+impl EventEmitter<LiveNotes> for Recording {}
 
 impl Recording {
     pub fn is_armed(&self, track: &InstanceId) -> bool {
@@ -125,5 +140,27 @@ impl Recording {
     pub fn set_takes(&mut self, takes: Vec<LiveTake>, cx: &mut Context<Self>) {
         self.takes = takes;
         cx.notify();
+    }
+
+    /// Puts these in place of the audio takes, and keeps the MIDI take.
+    pub fn set_audio_takes(&mut self, audio: Vec<LiveTake>, cx: &mut Context<Self>) {
+        self.takes
+            .retain(|take| matches!(take.body, LiveBody::Notes(_)));
+        self.takes.splice(0..0, audio);
+        cx.notify();
+    }
+
+    /// The notes of the MIDI take of `track` so far.
+    pub fn show_notes(&mut self, track: &InstanceId, notes: Option<Clip>, cx: &mut Context<Self>) {
+        let take = self.takes.iter_mut().find(|take| take.track == *track);
+        if let Some(LiveTake {
+            body: LiveBody::Notes(shown),
+            ..
+        }) = take
+            && *shown != notes
+        {
+            *shown = notes;
+            cx.emit(LiveNotes);
+        }
     }
 }

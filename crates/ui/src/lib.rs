@@ -24,7 +24,7 @@ pub use devices::{
 pub use focus::KeyboardFocus;
 pub use lanes::Lanes;
 pub use metering::{Metering, every_poll};
-pub use recording::{InputLevels, LiveSound, LiveTake, Recording};
+pub use recording::{InputLevels, LiveBody, LiveNotes, LiveSound, LiveTake, Recording};
 pub use session::{POLL_INTERVAL, Playhead, Session};
 pub use theme::{ActiveTheme, Theme};
 pub use views::Views;

@@ -38,7 +38,7 @@ use gpui::{
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use sound_core::{CaptureWriter, Changes, Instance, InstanceId, Project, Ticks};
 use sound_media::AudioAsset;
-use sound_ui::Waveforms;
+use sound_ui::{LiveBody, Waveforms};
 
 use super::{
     BAR, HEADER_WIDTH, Opened, RULER_HEIGHT, TRACK_HEIGHT, add_compressor, add_reverb, piece,
@@ -538,7 +538,10 @@ fn wait_for_takes(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<()> {
         let lined_up = cx.update(|cx| {
             let recording = opened.session.read(cx).recording().read(cx);
             let takes = recording.takes();
-            !takes.is_empty() && takes.iter().all(|take| take.sound.is_some())
+            !takes.is_empty()
+                && takes
+                    .iter()
+                    .all(|take| !matches!(take.body, LiveBody::Audio(None)))
         });
         if lined_up {
             std::thread::sleep(Duration::from_millis(50));
