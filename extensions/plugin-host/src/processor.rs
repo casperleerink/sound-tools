@@ -32,6 +32,9 @@
 //! processor back. The backend's own `Drop` is the last resort, for the engine itself being
 //! torn down, when there is no audio thread left to do it on.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering, fence};
+
 use sound_core::{
     AudioInput, AudioOutput, Automation, CHANNELS, EventInput, MAX_AUTOMATED, Ports, PrepareConfig,
     ProcessContext, Processor, Timed,
@@ -181,49 +184,63 @@ pub(crate) fn copy_out(channels: &[Vec<f32>], frames: usize, left: &mut [f32], r
     }
 }
 
-/// A pin an automation lane may move, as the audio side knows it: its range, which a lane value
-/// is held to, and its value in the record, which it goes back to when its lane lets go. In the
-/// format's own units.
+/// A pin of the record as the audio side knows it: whether a lane may move it, its range,
+/// which a lane value is held to, and its value in the record, which it goes back to when its
+/// lane lets go. In the format's own units.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct AutomatedPin {
     pub id: u32,
+    /// Whether a lane may move it: the plugin says a host may automate it and it is not
+    /// stepped.
+    pub takes_lane: bool,
     pub minimum: f64,
     pub maximum: f64,
     pub record: f64,
 }
 
-/// The pins lanes may move, in the order of the index of an [`Automation`] event: the order of
-/// the numbers the behaviour named. A fixed array, so it is copied in an update and nothing is
-/// dropped on the audio thread.
+/// The pins of a record: first those a lane may move, in the order of the index of an
+/// [`Automation`] event, which is the order of the numbers the behaviour named, then the rest.
+/// The rest are here for their record value: a pin that stops taking a lane, because the plugin
+/// changed its parameters, goes back to it all the same. A fixed array, so it is copied in an
+/// update and nothing is dropped on the audio thread.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct AutomatedPins {
     pins: [AutomatedPin; MAX_AUTOMATED],
     count: usize,
+    /// How many of them take a lane, at the front.
+    laned: usize,
 }
 
 impl AutomatedPins {
     pub(crate) const NONE: Self = Self {
         pins: [AutomatedPin {
             id: 0,
+            takes_lane: false,
             minimum: 0.0,
             maximum: 0.0,
             record: 0.0,
         }; MAX_AUTOMATED],
         count: 0,
+        laned: 0,
     };
 
-    /// The first [`MAX_AUTOMATED`] of `pins`, which is as many as a record holds.
+    /// The first [`MAX_AUTOMATED`] of `pins`, which is as many as a record holds, those that
+    /// take a lane first in the order given.
     pub(crate) fn new(pins: &[AutomatedPin]) -> Self {
         let mut automated = Self::NONE;
-        for (place, pin) in automated.pins.iter_mut().zip(pins) {
+        let laned = pins.iter().filter(|pin| pin.takes_lane);
+        let rest = pins.iter().filter(|pin| !pin.takes_lane);
+        for (place, pin) in automated.pins.iter_mut().zip(laned.chain(rest)) {
             *place = *pin;
             automated.count += 1;
+            automated.laned += usize::from(pin.takes_lane);
         }
         automated
     }
 
+    /// The pin a lane of this index moves.
     fn get(&self, index: usize) -> Option<&AutomatedPin> {
-        self.pins[..self.count].get(index)
+        self.pins[..self.laned].get(index)
     }
 
     fn find(&self, id: u32) -> Option<&AutomatedPin> {
@@ -231,39 +248,120 @@ impl AutomatedPins {
     }
 }
 
-/// The ids of some pins, at most one of each, in a fixed array.
+/// Pins and the value of each, at most one of each pin, in a fixed array.
 #[derive(Copy, Clone, Debug)]
-struct PinIds {
-    ids: [u32; MAX_AUTOMATED],
+struct PinValues {
+    pins: [(u32, f64); MAX_AUTOMATED],
     count: usize,
 }
 
-impl PinIds {
+impl PinValues {
     const NONE: Self = Self {
-        ids: [0; MAX_AUTOMATED],
+        pins: [(0, 0.0); MAX_AUTOMATED],
         count: 0,
     };
 
-    fn as_slice(&self) -> &[u32] {
-        &self.ids[..self.count]
+    fn as_slice(&self) -> &[(u32, f64)] {
+        &self.pins[..self.count]
     }
 
-    /// Notes `id`, once. Only the pins of one record are noted, which never fill it.
-    fn insert(&mut self, id: u32) {
-        if self.as_slice().contains(&id) {
+    fn contains(&self, id: u32) -> bool {
+        self.as_slice().iter().any(|(pin, _)| *pin == id)
+    }
+
+    /// Notes the value of `id`, over the one it had. Only the pins of one record are noted,
+    /// which never fill it.
+    fn insert(&mut self, id: u32, value: f64) {
+        if let Some(place) = self.pins[..self.count]
+            .iter_mut()
+            .find(|(pin, _)| *pin == id)
+        {
+            place.1 = value;
             return;
         }
-        if let Some(place) = self.ids.get_mut(self.count) {
-            *place = id;
+        if let Some(place) = self.pins.get_mut(self.count) {
+            *place = (id, value);
             self.count += 1;
         }
     }
 }
 
+/// The pins whose value in the plugin is a lane's, with that value, as the audio side last
+/// played them, for the main thread: it reads no such pin into the record, and shows the lane
+/// value in the plugin's own window where the format needs the host to. A block writes it after
+/// the plugin has run, so a pin that is not in it plays its record value again.
+///
+/// A sequence lock of atomics: the audio side never waits, and the main thread reads again
+/// when a block wrote while it read.
+pub(crate) struct LanedPins {
+    sequence: AtomicU64,
+    count: AtomicUsize,
+    ids: [AtomicU32; MAX_AUTOMATED],
+    values: [AtomicU64; MAX_AUTOMATED],
+}
+
+impl LanedPins {
+    pub(crate) fn new() -> Self {
+        Self {
+            sequence: AtomicU64::new(0),
+            count: AtomicUsize::new(0),
+            ids: std::array::from_fn(|_| AtomicU32::new(0)),
+            values: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+
+    /// The audio side, after a block.
+    fn write(&self, held: &PinValues) {
+        let sequence = self.sequence.load(Ordering::Relaxed);
+        // Odd while it writes, so a read in between knows.
+        self.sequence
+            .store(sequence.wrapping_add(1), Ordering::Relaxed);
+        fence(Ordering::Release);
+        let places = self.ids.iter().zip(&self.values);
+        for ((id, value), (pin, played)) in places.zip(held.as_slice()) {
+            id.store(*pin, Ordering::Relaxed);
+            value.store(played.to_bits(), Ordering::Relaxed);
+        }
+        self.count.store(held.count, Ordering::Relaxed);
+        self.sequence
+            .store(sequence.wrapping_add(2), Ordering::Release);
+    }
+
+    /// The main thread: each pin a lane holds, with the value it plays. `None` when blocks
+    /// kept writing while it read, and then the caller takes every pin as held.
+    pub(crate) fn read(&self) -> Option<Vec<(u32, f64)>> {
+        for _ in 0..8 {
+            let before = self.sequence.load(Ordering::Acquire);
+            if before % 2 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let count = self.count.load(Ordering::Relaxed).min(MAX_AUTOMATED);
+            let places = self.ids.iter().zip(&self.values).take(count);
+            let held = places.map(|(id, value)| {
+                let value = f64::from_bits(value.load(Ordering::Relaxed));
+                (id.load(Ordering::Relaxed), value)
+            });
+            let held: Vec<(u32, f64)> = held.collect();
+            fence(Ordering::Acquire);
+            if self.sequence.load(Ordering::Relaxed) == before {
+                return Some(held);
+            }
+        }
+        None
+    }
+}
+
+/// A started plugin and what its audio side tells the main thread of its lanes.
+pub(crate) struct Playing {
+    pub started: Box<dyn Started>,
+    pub laned: Arc<LanedPins>,
+}
+
 /// The processor an instance of the plugin tool keeps. It is silent until the control side
 /// sends it a plugin, and silent again when it is sent `None`.
 pub(crate) struct HostedPlugin {
-    plugin: Option<Box<dyn Started>>,
+    plugin: Option<Playing>,
     /// Whether the plugin's own `run` failed. It is left silent instead of called again.
     failed: bool,
     /// The keys this processor has sent a note on for and no note off yet, so an `AllOff` ends
@@ -273,19 +371,19 @@ pub(crate) struct HostedPlugin {
     /// `AllOff` puts back only what moved. Kept when the plugin changes: one started again keeps
     /// what it heard, and telling a new one "at rest" once more costs nothing.
     controls: [Control; 4],
-    /// The pins lanes may move.
+    /// The pins of the record.
     pins: AutomatedPins,
-    /// The pins whose value in the plugin is a lane's. Each goes back to its record value in
-    /// the first block in which its lane says nothing.
-    held: PinIds,
+    /// The pins whose value in the plugin is a lane's, with that value. Each goes back to its
+    /// record value in the first block in which its lane says nothing.
+    held: PinValues,
 }
 
 /// What the control side sends.
 pub(crate) enum HostedUpdate {
-    /// The plugin to play, or nothing, and the pins lanes may move of it. The plugin that was
-    /// there rides back to the control thread inside the update and is dropped there.
-    Plugin(Option<Box<dyn Started>>, AutomatedPins),
-    /// The pins lanes may move, for the plugin that plays: its record changed only its pins.
+    /// The plugin to play, or nothing, and the pins of its record. The plugin that was there
+    /// rides back to the control thread inside the update and is dropped there.
+    Plugin(Option<Playing>, AutomatedPins),
+    /// The pins of the record, for the plugin that plays: its record changed only its pins.
     Pins(AutomatedPins),
 }
 
@@ -303,7 +401,7 @@ impl HostedPlugin {
             keys_down: [false; 128],
             controls: Control::REST,
             pins: AutomatedPins::NONE,
-            held: PinIds::NONE,
+            held: PinValues::NONE,
         }
     }
 }
@@ -332,22 +430,26 @@ impl Processor for HostedPlugin {
         // The plugin that was here goes back inside the update and is dropped on the control
         // thread. It stops here, while this is still the audio thread. Nothing heap-allocated
         // is dropped here.
-        if let Some(leaving) = self.plugin.as_deref_mut() {
-            leaving.stop();
+        if let Some(leaving) = &mut self.plugin {
+            leaving.started.stop();
         }
         std::mem::swap(&mut self.plugin, plugin);
         self.keys_down = [false; 128];
         self.failed = false;
         self.pins = *pins;
-        // A new plugin starts at the values of its record, which the host sends it first.
-        self.held = PinIds::NONE;
+        // A new plugin starts at the values of its record, which the host sends it first, and
+        // the main thread hears that no lane holds a pin of it.
+        self.held = PinValues::NONE;
+        if let Some(playing) = &self.plugin {
+            playing.laned.write(&self.held);
+        }
     }
 
     /// The engine is handing this processor back. The plugin stops here, on the audio thread,
     /// so that the control thread only ever deactivates one that is already stopped.
     fn leaving(&mut self) {
-        if let Some(plugin) = self.plugin.as_deref_mut() {
-            plugin.stop();
+        if let Some(plugin) = &mut self.plugin {
+            plugin.started.stop();
         }
     }
 
@@ -355,7 +457,9 @@ impl Processor for HostedPlugin {
     /// A plugin that is started again after its latency changed arrives in an update, which is
     /// when the engine reads this.
     fn latency(&self) -> u32 {
-        self.plugin.as_deref().map_or(0, Started::latency)
+        self.plugin
+            .as_ref()
+            .map_or(0, |plugin| plugin.started.latency())
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
@@ -364,8 +468,8 @@ impl Processor for HostedPlugin {
         let input = context.audio_inputs.get(Self::INPUT);
         let [left, right] = context.audio_outputs.get(Self::AUDIO);
         let frames = context.frames;
-        let plugin = self.plugin.as_deref_mut().filter(|_| !self.failed);
-        let Some(plugin) = plugin else {
+        let playing = self.plugin.as_mut().filter(|_| !self.failed);
+        let Some(Playing { started, laned }) = playing else {
             // No plugin, or one that failed in an earlier block: the slot passes what it is
             // given through. For an instrument that is the silence of an input nothing
             // reaches, and for an effect it is the track playing on through a slot whose
@@ -373,7 +477,9 @@ impl Processor for HostedPlugin {
             pass_through(input, left, right, frames);
             return;
         };
+        let plugin = &mut **started;
         plugin.begin_block();
+        let lanes_before = self.held.count;
         automate(plugin, lanes, &self.pins, &mut self.held);
         // More events in one block than the plugin's buffer holds. Counted, never allocated.
         let dropped = translate(plugin, events, &mut self.keys_down, &mut self.controls);
@@ -388,6 +494,11 @@ impl Processor for HostedPlugin {
             self.failed = true;
             pass_through(input, left, right, frames);
         }
+        // Once the plugin has played them, so a pin that is not held any more plays its
+        // record. A plugin with no lanes writes nothing.
+        if lanes_before + self.held.count > 0 {
+            laned.write(&self.held);
+        }
     }
 }
 
@@ -399,9 +510,9 @@ fn automate(
     plugin: &mut dyn Started,
     lanes: &[Timed<Automation>],
     pins: &AutomatedPins,
-    held: &mut PinIds,
+    held: &mut PinValues,
 ) {
-    let mut heard = PinIds::NONE;
+    let mut heard = PinValues::NONE;
     for timed in lanes {
         let Some(pin) = pins.get(usize::from(timed.event.parameter)) else {
             continue;
@@ -411,10 +522,10 @@ fn automate(
             .max(pin.minimum)
             .min(pin.maximum);
         plugin.automate(pin.id, value);
-        heard.insert(pin.id);
+        heard.insert(pin.id, value);
     }
-    for id in held.as_slice() {
-        if heard.as_slice().contains(id) {
+    for (id, value) in held.as_slice() {
+        if heard.contains(*id) {
             continue;
         }
         // A pin the record no longer holds has no value to go back to: the plugin keeps the
@@ -422,7 +533,7 @@ fn automate(
         if let Some(pin) = pins.find(*id)
             && !plugin.automate(pin.id, pin.record)
         {
-            heard.insert(pin.id);
+            heard.insert(pin.id, *value);
         }
     }
     *held = heard;
@@ -619,6 +730,7 @@ mod tests {
     fn pins() -> AutomatedPins {
         let pin = |id, minimum, maximum, record| AutomatedPin {
             id,
+            takes_lane: true,
             minimum,
             maximum,
             record,
@@ -630,7 +742,7 @@ mod tests {
     fn lanes(
         plugin: &mut Full,
         pins: &AutomatedPins,
-        held: &mut PinIds,
+        held: &mut PinValues,
         values: &[(u16, f32)],
     ) -> Vec<(u32, f64)> {
         let lanes: Vec<_> = values
@@ -656,7 +768,7 @@ mod tests {
 
     #[test]
     fn a_lane_reaches_its_pin_held_to_its_range_and_an_index_no_pin_has_is_left_out() {
-        let (mut plugin, mut held) = (plugin(), PinIds::NONE);
+        let (mut plugin, mut held) = (plugin(), PinValues::NONE);
         let reached = lanes(
             &mut plugin,
             &pins(),
@@ -670,7 +782,7 @@ mod tests {
     /// record no longer holds keeps the value it has.
     #[test]
     fn a_pin_whose_lane_says_nothing_goes_back_to_its_record_once() {
-        let (mut plugin, mut held) = (plugin(), PinIds::NONE);
+        let (mut plugin, mut held) = (plugin(), PinValues::NONE);
         lanes(&mut plugin, &pins(), &mut held, &[(0, 0.25), (1, 50.0)]);
         let reached = lanes(&mut plugin, &pins(), &mut held, &[(1, 60.0)]);
         assert_eq!(reached, [(3, 60.0), (7, 0.5)]);
@@ -683,11 +795,31 @@ mod tests {
         assert_eq!(lanes(&mut plugin, &pins(), &mut held, &[]), []);
     }
 
+    /// The plugin changed its parameters while a lane held a pin, which takes no lane now: it
+    /// goes back to its record all the same.
+    #[test]
+    fn a_pin_that_stops_taking_a_lane_goes_back_to_its_record() {
+        let (mut plugin, mut held) = (plugin(), PinValues::NONE);
+        lanes(&mut plugin, &pins(), &mut held, &[(0, 0.25)]);
+        let stepped = AutomatedPin {
+            id: 7,
+            takes_lane: false,
+            minimum: 0.0,
+            maximum: 1.0,
+            record: 0.5,
+        };
+        let now = AutomatedPins::new(&[stepped]);
+        assert_eq!(
+            lanes(&mut plugin, &now, &mut held, &[(0, 0.75)]),
+            [(7, 0.5)]
+        );
+    }
+
     /// A record value with no room in its block is not forgotten: the pin would stay on the
     /// last value of a lane that is gone.
     #[test]
     fn a_record_value_that_did_not_fit_goes_in_the_next_block() {
-        let (mut plugin, mut held) = (plugin(), PinIds::NONE);
+        let (mut plugin, mut held) = (plugin(), PinValues::NONE);
         lanes(&mut plugin, &pins(), &mut held, &[(0, 0.25)]);
         plugin.lane_room = 0;
         assert_eq!(lanes(&mut plugin, &pins(), &mut held, &[]), []);

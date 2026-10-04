@@ -323,10 +323,12 @@ fn apply(
     match plugins.open(context.id(), state, context.assets(), config, !made) {
         Ok(opened) => {
             let lanes = AutomatedPins::new(&opened.lanes);
-            context.runtime_automation(
-                InputEndpoint::new(node, HostedPlugin::AUTOMATION),
-                opened.lanes.iter().map(number).collect(),
-            )?;
+            let numbers: Vec<_> = opened.lanes.iter().filter_map(number).collect();
+            // With none, the owner says the record takes no automation at all.
+            if !numbers.is_empty() {
+                let input = InputEndpoint::new(node, HostedPlugin::AUTOMATION);
+                context.runtime_automation(input, numbers)?;
+            }
             // A run that loaded a plugin hands it to the engine. Nothing here asks what the
             // engine already has, so an edit the project rejects leaves the engine and this
             // host as they were. A host that only lists opens nothing, and the slot is silent.
@@ -351,14 +353,14 @@ fn apply(
     Ok(())
 }
 
-/// A pin as a number an automation lane names: by its path in the record, on the parameter's
-/// own range, in a straight line.
-fn number(pin: &AutomatedPin) -> (ParameterInfo, f32) {
+/// A pin that takes a lane as a number an automation lane names: by its path in the record, on
+/// the parameter's own range, in a straight line.
+fn number(pin: &AutomatedPin) -> Option<(ParameterInfo, f32)> {
     let info = ParameterInfo {
         field: lane_of_pin(pin.id).into(),
         range: ValueRange::linear(pin.minimum as f32, pin.maximum as f32),
     };
-    (info, pin.record as f32)
+    pin.takes_lane.then_some((info, pin.record as f32))
 }
 
 #[cfg(test)]

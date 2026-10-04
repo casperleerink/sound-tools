@@ -1,6 +1,5 @@
-//! Automation lanes on pins: a pin the plugin says a host may automate, and that is not
-//! stepped, takes a lane by its path in the record. The lane plays into the plugin on the audio
-//! thread and is never written into the record; when it goes, the record value plays again.
+//! Automation lanes on pins, where the host's own timing matters. What a lane sounds like in a
+//! whole project is in the runtime's `plugin_lanes` tests.
 //!
 //! The rack of these tests stands in for a track: it holds a lane at one value for each name
 //! in its record, as a lane player does every block. The heard `Level` of each test plugin
@@ -12,7 +11,7 @@ use plugin_host::PluginFormat;
 use sound_core::Changes;
 
 use crate::pins::{
-    is_near, level, one_note, pin, pinned, pinned_value, plugin_value, set_pin, written_value,
+    is_near, level, one_note, pin, pinned, pinned_value, plugin_value, written_value,
 };
 use crate::support::{FORMATS, Harness, Rack, id, peak, tell_the_plugin};
 
@@ -47,46 +46,73 @@ fn track(format: PluginFormat) -> Harness {
     harness
 }
 
+/// The main-thread work of the host, at a time the test says.
+fn poll(harness: &mut Harness, now: Instant) {
+    harness.plugins.poll_at(&harness.project, now);
+    let errors = harness.plugins.follow_pins_at(&mut harness.project, now);
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// A stepped pin takes no lane. While a lane plays, the poll never writes what it plays into
+/// the record, also once any turn of a knob would have ended, and a VST 3 plugin's own window
+/// shows it, and the record value again once the lane goes.
 #[test]
-fn a_lane_moves_its_pin_never_writes_the_record_and_the_record_plays_again_when_it_goes() {
+fn a_lane_is_never_written_into_the_record_and_the_window_follows_it() {
     for format in FORMATS {
         tell_the_plugin(None, None);
         let mut harness = track(format);
-        // A stepped pin takes no lane.
         let automatable: Vec<String> = harness
             .project
             .automatable(&id("track/instrument"))
             .map(str::to_string)
             .collect();
         assert_eq!(automatable, [level_lane(format)], "{format:?}");
-        let full = peak(&harness.play(1024).left());
+        harness.play(1024);
 
         set_lanes(&mut harness, "Automate", vec![(level_lane(format), 0.25)]);
-        let left = harness.render(4096).left();
-        let laned = peak(&left[2048..]);
-        assert!(is_near(laned, full / 4.0), "{format:?}: {laned} of {full}");
-        // The plugin plays the lane, and the record and the undo history do not know it, also
-        // once any turn of a knob would have ended.
+        harness.render(4096);
         let later = Instant::now() + Duration::from_secs(10);
-        let errors = harness.plugins.follow_pins_at(&mut harness.project, later);
-        assert!(errors.is_empty(), "{errors:?}");
+        poll(&mut harness, later);
         assert_eq!(pinned_value(&harness, level(format)), 1.0, "{format:?}");
         assert_eq!(written_value(&harness, level(format)), 1.0, "{format:?}");
         assert_eq!(harness.project.undo_label(), Some("Automate"), "{format:?}");
+        assert_eq!(plugin_value(&harness, level(format)), 0.25, "{format:?}");
 
-        // A record value under a lane does not sound, and is the one that comes back.
-        set_pin(&mut harness, level(format), 0.5);
-        let left = harness.render(4096).left();
-        assert!(is_near(peak(&left[2048..]), full / 4.0), "{format:?}");
         set_lanes(&mut harness, "Remove the lane", Vec::new());
-        let left = harness.render(4096).left();
-        let back = peak(&left[2048..]);
-        assert!(is_near(back, full / 2.0), "{format:?}: {back} of {full}");
-        if format == PluginFormat::Clap {
-            assert_eq!(plugin_value(&harness, level(format)), 0.5);
+        harness.render(4096);
+        assert_eq!(plugin_value(&harness, level(format)), 1.0, "{format:?}");
+        poll(&mut harness, later + Duration::from_secs(10));
+        assert_eq!(pinned_value(&harness, level(format)), 1.0, "{format:?}");
+        assert_eq!(
+            harness.project.undo_label(),
+            Some("Remove the lane"),
+            "{format:?}"
+        );
+    }
+}
+
+/// A lane that comes and goes between two polls: the poll after it still sees the plugin play
+/// the lane, because the engine has not taken the change yet. It is the lane's, not a change
+/// of the plugin's own, and the record keeps its value.
+#[test]
+fn a_lane_that_comes_and_goes_between_two_polls_is_not_written() {
+    for format in FORMATS {
+        tell_the_plugin(None, None);
+        let mut harness = track(format);
+        let start = Instant::now();
+        harness.project.engine().play();
+        harness.render_without_polling(1024);
+        poll(&mut harness, start);
+
+        set_lanes(&mut harness, "Automate", vec![(level_lane(format), 0.25)]);
+        harness.render_without_polling(1024);
+        set_lanes(&mut harness, "Remove the lane", Vec::new());
+        poll(&mut harness, start + Duration::from_secs(1));
+        harness.render_without_polling(1024);
+        for second in 2..10 {
+            poll(&mut harness, start + Duration::from_secs(second));
         }
-        harness.plugins.follow_pins_at(&mut harness.project, later);
-        assert_eq!(pinned_value(&harness, level(format)), 0.5, "{format:?}");
+        assert_eq!(pinned_value(&harness, level(format)), 1.0, "{format:?}");
         assert_eq!(
             harness.project.undo_label(),
             Some("Remove the lane"),
