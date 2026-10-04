@@ -24,6 +24,7 @@
 
 mod context;
 mod module;
+mod parameters;
 mod plugin;
 mod process;
 mod stream;

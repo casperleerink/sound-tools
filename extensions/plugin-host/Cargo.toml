@@ -21,6 +21,7 @@ clack-extensions = { workspace = true, features = [
   "gui",
   "latency",
   "note-ports",
+  "params",
   "render",
   "state",
 ] }

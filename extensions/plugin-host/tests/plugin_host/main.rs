@@ -15,6 +15,7 @@ mod editing;
 mod effects;
 mod lifecycle;
 mod listing;
+mod parameters;
 mod playing;
 mod records;
 mod remembered;

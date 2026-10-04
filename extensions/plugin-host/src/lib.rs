@@ -39,6 +39,7 @@
 mod backend;
 mod clap;
 mod host;
+mod parameters;
 mod placements;
 mod processor;
 mod scan;
@@ -56,6 +57,9 @@ use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 use crate::processor::HostedPlugin;
 
 pub use host::{PluginProblem, Plugins, WeakPlugins};
+pub use parameters::{
+    MAX_NAMED_STEPS, Parameter, ParameterValue, StepName, Steps, read_parameters,
+};
 pub use scan::{
     SCAN_ARGUMENT, ScanCache, ScanCommand, ScannedPlugin, default_search_paths, scan_one_bundle,
 };

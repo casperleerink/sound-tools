@@ -30,11 +30,13 @@ use vst3::{ComPtr, ComWrapper};
 
 use super::context::{Handler, HostContext, as_handler, as_unknown};
 use super::module::Module;
+use super::parameters;
 use super::process::{ControlTargets, ParameterChange, Vst3Processor, process_mode};
 use super::stream::{MemoryStream, as_stream};
 use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
+use crate::parameters::Parameter;
 use crate::processor::{Control, Started};
 use crate::scan::ScannedPlugin;
 use crate::{PluginProblem, processor::not_ours};
@@ -444,6 +446,29 @@ impl LoadedPlugin for Vst3Plugin {
         // `None` for a plugin with no edit controller: nothing can make a view then.
         let gui = self.gui.as_mut()?;
         Some(gui)
+    }
+
+    fn parameters(&mut self) -> Vec<Parameter> {
+        match &self.joined.controller {
+            // SAFETY: the controller came from the plugin and is alive.
+            Some(controller) => unsafe { parameters::parameters(controller) },
+            // A plugin with no edit controller has no parameters a host can see.
+            None => Vec::new(),
+        }
+    }
+
+    /// VST 3 has no answer for an id the plugin does not have: its controller gives a number
+    /// for any id.
+    fn value(&mut self, id: u32) -> Option<f64> {
+        let controller = self.joined.controller.as_ref()?;
+        // SAFETY: the controller came from the plugin and is alive.
+        Some(unsafe { controller.getParamNormalized(id) })
+    }
+
+    fn text(&mut self, id: u32, value: f64) -> Option<String> {
+        let controller = self.joined.controller.as_ref()?;
+        // SAFETY: the controller came from the plugin and is alive.
+        unsafe { parameters::text(controller, id, value) }
     }
 
     fn released(&mut self) -> bool {

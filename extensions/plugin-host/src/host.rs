@@ -28,6 +28,7 @@ use sound_core::{AssetName, Assets, InstanceId, PrepareConfig, Project};
 use crate::processor::{HostedPlugin, HostedUpdate};
 
 use crate::backend::{KeyDirection, LoadedPlugin};
+use crate::parameters::ParameterValue;
 use crate::placements::{PlacementStore, Placements};
 use crate::scan::{Scan, ScanCache, ScanCommand, ScannedPlugin, scan_folders};
 use crate::window::{
@@ -562,6 +563,21 @@ impl Plugins {
             .scan
             .find(format, plugin_id)
             .cloned()
+    }
+
+    /// What the parameter `parameter` of this record's plugin is now, with the plugin's own
+    /// text for it. `None` when no plugin is loaded for the record, or the plugin cannot say.
+    ///
+    /// It calls into the plugin, so it belongs to the main thread and not to drawing a frame.
+    /// It gives up rather than wait for a table that a plugin's own call has borrowed.
+    pub fn parameter_value(&self, id: &InstanceId, parameter: u32) -> Option<ParameterValue> {
+        let mut table = self.0.table.try_borrow_mut().ok()?;
+        let plugin = &mut table.loaded.get_mut(id)?.plugin;
+        let value = plugin.value(parameter)?;
+        Some(ParameterValue {
+            value,
+            text: plugin.text(parameter, value),
+        })
     }
 
     /// Loads the plugin the record names and gives it to the caller for the engine.

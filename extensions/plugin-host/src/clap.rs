@@ -21,6 +21,7 @@ use clack_extensions::gui::{
 };
 use clack_extensions::latency::{HostLatency, HostLatencyImpl, PluginLatency};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
+use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::render::{PluginRender, RenderMode};
 use clack_extensions::state::{HostState, HostStateImpl, PluginState};
 use clack_host::events::Match;
@@ -30,6 +31,7 @@ use sound_core::{MAX_BLOCK, PrepareConfig};
 
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
 use crate::host::{HOST_NAME, HOST_URL, HOST_VENDOR, HOST_VERSION};
+use crate::parameters::{Parameter, Steps};
 use crate::processor::{
     Control, EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours,
 };
@@ -358,6 +360,68 @@ impl LoadedPlugin for ClapPlugin {
         Some(self)
     }
 
+    fn parameters(&mut self) -> Vec<Parameter> {
+        let Some(params) = self.params_extension() else {
+            return Vec::new();
+        };
+        let plugin = self.instance.plugin_handle();
+        let mut buffer = ParamInfoBuffer::new();
+        let mut parameters = Vec::new();
+        for index in 0..params.count(&plugin) {
+            let Some(info) = params.get_info(&plugin, index, &mut buffer) else {
+                continue;
+            };
+            if info.flags.contains(ParamInfoFlags::IS_READONLY) {
+                continue;
+            }
+            let id = info.id;
+            // CLAP says an enum is stepped as well. A stepped parameter takes the whole
+            // numbers of its range.
+            let stepped = info
+                .flags
+                .intersects(ParamInfoFlags::IS_STEPPED | ParamInfoFlags::IS_ENUM);
+            let is_list = info.flags.contains(ParamInfoFlags::IS_ENUM);
+            let (minimum, maximum) = (info.min_value, info.max_value);
+            let mut parameter = Parameter {
+                id: id.get(),
+                name: String::from_utf8_lossy(info.name).into_owned(),
+                minimum,
+                maximum,
+                default: info.default_value,
+                steps: None,
+                automatable: info.flags.contains(ParamInfoFlags::IS_AUTOMATABLE),
+            };
+            if stepped {
+                // Saturates: a range wider than the steps a `u32` counts is a knob anyway.
+                let count = ((maximum.round() - minimum.round()) + 1.0).max(1.0) as u32;
+                let first = minimum.round();
+                parameter.steps = Some(Steps::new(
+                    count,
+                    is_list,
+                    |index| first + f64::from(index),
+                    |value| text_of(&params, &plugin, id, value),
+                ));
+            }
+            parameters.push(parameter);
+        }
+        parameters
+    }
+
+    fn value(&mut self, id: u32) -> Option<f64> {
+        let params = self.params_extension()?;
+        params.get_value(&self.instance.plugin_handle(), ClapId::from_raw(id)?)
+    }
+
+    fn text(&mut self, id: u32, value: f64) -> Option<String> {
+        let params = self.params_extension()?;
+        text_of(
+            &params,
+            &self.instance.plugin_handle(),
+            ClapId::from_raw(id)?,
+            value,
+        )
+    }
+
     fn released(&mut self) -> bool {
         // A plugin whose restart failed is not active, and has nothing left to give back.
         !self.instance.is_active() || self.instance.try_deactivate().is_ok()
@@ -380,6 +444,19 @@ impl LoadedPlugin for ClapPlugin {
     }
 }
 
+/// The plugin's own text for a value of a parameter. CLAP leaves the length of the text to the
+/// host; what does not fit is cut off by the plugin.
+fn text_of(
+    params: &PluginParams,
+    plugin: &PluginMainThreadHandle,
+    id: ClapId,
+    value: f64,
+) -> Option<String> {
+    let mut buffer = [0_u8; 128];
+    let text = params.value_to_text(plugin, id, value, &mut buffer).ok()?;
+    Some(String::from_utf8_lossy(text).into_owned())
+}
+
 /// How to show a plugin on this machine: the platform's windowing API, in a window of ours.
 fn configuration() -> Option<GuiConfiguration<'static>> {
     Some(GuiConfiguration {
@@ -390,6 +467,11 @@ fn configuration() -> Option<GuiConfiguration<'static>> {
 
 impl ClapPlugin {
     fn gui_extension(&mut self) -> Option<ClapGui> {
+        self.instance.plugin_shared_handle().get_extension()
+    }
+
+    /// The parameters extension. A plugin without one has no parameters a host can see.
+    fn params_extension(&self) -> Option<PluginParams> {
         self.instance.plugin_shared_handle().get_extension()
     }
 
