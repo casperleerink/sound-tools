@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use plugin_host::{Pin, PluginFormat, PluginRecord};
 use sound_core::{Changes, Instance};
-use test_plugin_support::{EDIT_LEVEL_KEY, LEVEL_KEY, LIST_LEVEL_KEY, SavedState};
+use test_plugin_support::{EDIT_LEVEL_KEY, LATENCY_KEY, LEVEL_KEY, LIST_LEVEL_KEY, SavedState};
 
 use crate::support::{
     FORMATS, Harness, Played, id, lifecycle, peak, record, state_asset, tell_the_plugin, vst3_state,
@@ -356,4 +356,163 @@ fn a_pin_that_changes_while_the_plugin_plays_allocates_nothing() {
         assert_eq!(allocations, 0, "the audio thread allocated, {format:?}");
         assert!(is_near(peak(&render.left()), full / 2.0), "{format:?}");
     }
+}
+
+/// How many times the plugin's log has `call`.
+fn count(log: &std::path::Path, call: &str) -> usize {
+    lifecycle(log)
+        .iter()
+        .filter(|line| line.call == call)
+        .count()
+}
+
+/// The left channel of device buffers `blocks`, one [`step`] each, a tenth of a second apart.
+fn steps(harness: &mut Harness, blocks: std::ops::Range<u32>, start: Instant) -> Vec<f32> {
+    let mut left = Vec::new();
+    for block in blocks {
+        let now = start + Duration::from_millis(100) * block;
+        left.extend(step(harness, 512, now));
+    }
+    left
+}
+
+/// The plugin moves its own `Level` to a half, and then asks to be started again for a new
+/// latency. Started again, it gets the pins as the record has them now, the half, and not an
+/// older value that was sent before: neither the plugin nor the record goes back.
+#[test]
+fn a_plugin_started_again_gets_the_pins_as_the_record_has_them_now() {
+    for format in FORMATS {
+        tell_the_plugin(None, None);
+        let full = full_level(format);
+        let log = tempfile::NamedTempFile::new().unwrap();
+        tell_the_plugin(Some(log.path()), None);
+        let played = vec![
+            on(0, 60, 100),
+            on(1024, LEVEL_KEY, 64),
+            on(2048, LATENCY_KEY, 10),
+            on(6144, 60, 100),
+        ];
+        let mut harness = Harness::new();
+        harness.add_track(pinned(format, 1.0), played);
+        harness.project.engine().play();
+        let start = Instant::now();
+        let left = steps(&mut harness, 0..16, start);
+        // Started again once, and not loaded again.
+        assert_eq!(count(log.path(), "activate"), 2, "{format:?}");
+        assert_eq!(count(log.path(), "mode[realtime]"), 1, "{format:?}");
+        assert_eq!(plugin_value(&harness, level(format)), 0.5, "{format:?}");
+        assert_eq!(pinned_value(&harness, level(format)), 0.5, "{format:?}");
+        let after = peak(&left[6656..]);
+        assert!(is_near(after, full / 2.0), "{format:?}: {after} of {full}");
+        steps(&mut harness, 16..40, start);
+        assert_eq!(written_value(&harness, level(format)), 0.5, "{format:?}");
+    }
+}
+
+/// A pin that changes while the plugin is being started again keeps the plugin, which gets the
+/// new value once it has started.
+#[test]
+fn a_pin_that_changes_while_the_plugin_starts_again_does_not_load_it_again() {
+    for format in FORMATS {
+        tell_the_plugin(None, None);
+        let full = full_level(format);
+        let log = tempfile::NamedTempFile::new().unwrap();
+        tell_the_plugin(Some(log.path()), None);
+        let played = vec![on(0, 60, 100), on(1024, LATENCY_KEY, 10), on(4096, 60, 100)];
+        let mut harness = Harness::new();
+        harness.add_track(pinned(format, 1.0), played);
+        harness.project.engine().play();
+        let start = Instant::now();
+        // The block with the key: the plugin asked, and the engine is to give it back.
+        steps(&mut harness, 0..3, start);
+        set_pin(&mut harness, level(format), 0.25);
+        let left = steps(&mut harness, 3..12, start);
+        assert_eq!(count(log.path(), "activate"), 2, "{format:?}");
+        assert_eq!(count(log.path(), "mode[realtime]"), 1, "{format:?}");
+        assert_eq!(plugin_value(&harness, level(format)), 0.25, "{format:?}");
+        let after = peak(&left[3072..]);
+        assert!(is_near(after, full / 4.0), "{format:?}: {after} of {full}");
+    }
+}
+
+/// A turn of a knob whose record is deleted in the middle of it ends at once, as one undo
+/// step, and does not bring the record back.
+#[test]
+fn a_turn_whose_record_is_deleted_ends_and_leaves_the_record_deleted() {
+    for format in FORMATS {
+        tell_the_plugin(None, None);
+        let mut harness = Harness::new();
+        let played = vec![on(0, 60, 100), on(1024, LEVEL_KEY, 64)];
+        harness.add_track(pinned(format, 1.0), played);
+        harness.project.engine().play();
+        let start = Instant::now();
+        steps(&mut harness, 0..4, start);
+        assert_eq!(pinned_value(&harness, level(format)), 0.5, "{format:?}");
+        let mut changes = Changes::new();
+        changes.delete(&id("track/instrument"));
+        harness.project.commit("Delete", changes).unwrap();
+        // Well inside the quiet time of a turn: it ends because its record went.
+        steps(&mut harness, 4..5, start);
+        let record = harness
+            .project
+            .resolve::<PluginRecord>(&id("track/instrument"));
+        assert!(record.is_none(), "{format:?}");
+        assert!(!harness.path("state/track/instrument.json").exists());
+        assert_eq!(
+            harness.project.undo_label(),
+            Some("Change Level"),
+            "{format:?}"
+        );
+        harness.project.undo().unwrap();
+        assert!(
+            harness.path("state/track/instrument.json").exists(),
+            "{format:?}"
+        );
+    }
+}
+
+/// More values than the ring of a CLAP plugin holds, sent before it plays a block. The newest
+/// waits on the main thread and arrives a block later: the plugin ends on the last value.
+#[test]
+fn a_clap_value_that_finds_the_ring_full_waits_and_arrives() {
+    tell_the_plugin(None, None);
+    let format = PluginFormat::Clap;
+    let full = full_level(format);
+    let mut harness = Harness::new();
+    harness.add_track(pinned(format, 1.0), one_note());
+    harness.project.engine().play();
+    let start = Instant::now();
+    steps(&mut harness, 0..1, start);
+    for hundredths in 1..=70 {
+        set_pin(&mut harness, level(format), f64::from(hundredths) / 100.0);
+        let errors = harness.plugins.follow_pins(&mut harness.project);
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+    let left = steps(&mut harness, 1..4, start);
+    assert_eq!(plugin_value(&harness, level(format)), 0.7);
+    let last = peak(&left[1024..]);
+    assert!(is_near(last, full * 0.7), "{last} of {full}");
+}
+
+/// The VST 3 processor reports a `Level` of its own in a block the host has not polled yet,
+/// and the record then sends another. The report is older than the send, so the controller is
+/// not put back on it: plugin, controller and record agree on the record's value.
+#[test]
+fn a_vst3_report_older_than_a_value_the_host_sent_is_left_out() {
+    tell_the_plugin(None, None);
+    let format = PluginFormat::Vst3;
+    let mut harness = Harness::new();
+    let played = vec![on(0, 60, 100), on(1024, LEVEL_KEY, 64)];
+    harness.add_track(pinned(format, 1.0), played);
+    harness.project.engine().play();
+    let start = Instant::now();
+    steps(&mut harness, 0..2, start);
+    // The block that reports a half, with no poll after it.
+    harness.render_without_polling(512);
+    set_pin(&mut harness, level(format), 0.25);
+    let errors = harness.plugins.follow_pins_at(&mut harness.project, start);
+    assert!(errors.is_empty(), "{errors:?}");
+    steps(&mut harness, 3..30, start);
+    assert_eq!(plugin_value(&harness, level(format)), 0.25);
+    assert_eq!(written_value(&harness, level(format)), 0.25);
 }

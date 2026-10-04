@@ -374,7 +374,6 @@ pub(crate) fn load(
             created_window: false,
             values,
             waiting: BTreeMap::new(),
-            sent: BTreeMap::new(),
         }),
         notes,
     })
@@ -444,9 +443,6 @@ pub(crate) struct ClapPlugin {
     values: ValuesIn,
     /// The newest value of each parameter that found the ring full. It goes at the next poll.
     waiting: BTreeMap<u32, f64>,
-    /// The last value sent to each parameter, which goes again into the audio side of a plugin
-    /// that is started again: what was still in the ring of the old one is lost with it.
-    sent: BTreeMap<u32, f64>,
 }
 
 impl ClapPlugin {
@@ -547,7 +543,6 @@ impl LoadedPlugin for ClapPlugin {
     }
 
     fn send(&mut self, change: ParameterChange) {
-        self.sent.insert(change.id, change.value);
         // A newer value of a parameter that is still waiting takes its place: only the last
         // is the one the plugin is to end on.
         self.waiting.insert(change.id, change.value);
@@ -585,11 +580,10 @@ impl LoadedPlugin for ClapPlugin {
                 message,
             });
         Some(activated.map(|(started, values, _)| {
-            // What the old ring still held went with the old audio side, so every value goes
-            // again. The plugin kept the ones that arrived, and gets the same once more.
+            // What the old ring still held went with the old audio side. The host sends every
+            // pin again, as its record has it now, so nothing older is kept here.
             self.values = values;
-            self.waiting = self.sent.clone();
-            self.send_waiting();
+            self.waiting.clear();
             Box::new(started) as Box<dyn Started>
         }))
     }

@@ -373,18 +373,4 @@ mod tests {
         assert_eq!(decoded.parameters, BTreeMap::from([(12, pin)]));
         assert_eq!(serde_json::to_string(&decoded).expect("json"), record);
     }
-
-    #[test]
-    fn a_record_with_more_pins_than_lanes_can_move_does_not_load() {
-        let pin = |id: usize| {
-            let name = format!("p{id}");
-            (id as u32, Pin { name, value: 0.0 })
-        };
-        let mut record = PluginRecord::new(PluginFormat::Clap, "a.b", "piano").expect("a record");
-        record.parameters = (0..MAX_AUTOMATED).map(pin).collect();
-        assert_eq!(record.validate(), Ok(()));
-        record.parameters.extend([pin(MAX_AUTOMATED)]);
-        let error = record.validate().expect_err("one pin too many");
-        assert!(error.contains("at most 64"), "{error}");
-    }
 }

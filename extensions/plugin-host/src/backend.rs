@@ -44,7 +44,9 @@ pub(crate) trait LoadedPlugin {
     fn send(&mut self, change: ParameterChange);
 
     /// Whether every value sent has been played by the processor, so that what [`Self::value`]
-    /// says now is the plugin's own and not a value still on its way.
+    /// says now is the plugin's own and not a value still on its way. A plugin whose block
+    /// failed plays nothing again, so this stays false for it, which only means nothing of it
+    /// is read.
     fn sent_values_played(&mut self) -> bool;
 
     /// Where the composer's hand is in the plugin's own window, since the last call.
@@ -104,14 +106,16 @@ pub(crate) struct ParameterChange {
 }
 
 /// Where the composer's hand is in a plugin's own window, as far as the format says.
+///
+/// One for the whole plugin, asked once a poll, though VST 3 says it per parameter: a hand that
+/// lets go and takes a knob again between two polls is one turn, and so one undo step.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Hand {
     /// On a knob: VST 3's `beginEdit` without its `endEdit` yet.
     Held,
     /// It let go since the host last asked: VST 3's `endEdit`.
     LetGo,
-    /// The plugin says nothing about it, which a CLAP plugin never does to this host, and a
-    /// plugin that moves a parameter by itself does not either.
+    /// The plugin does not say: CLAP, and a plugin moving a parameter itself.
     Unknown,
 }
 

@@ -6,6 +6,8 @@
 //!
 //! All of it is read on the main thread, where both formats put these calls.
 
+use std::collections::BTreeMap;
+
 use crate::scan::ScannedPlugin;
 use crate::{Pin, PluginProblem};
 
@@ -28,6 +30,13 @@ pub struct Parameter {
     pub steps: Option<Steps>,
     /// Whether the plugin says a host may move it while it plays.
     pub automatable: bool,
+}
+
+impl Parameter {
+    /// Whether `value` is in its range.
+    pub(crate) fn takes(&self, value: f64) -> bool {
+        (self.minimum..=self.maximum).contains(&value)
+    }
 }
 
 /// A parameter that takes only some values, evenly spaced from its minimum to its maximum.
@@ -85,18 +94,17 @@ impl Steps {
 /// rest of the record plays.
 pub(crate) fn pin_problem(
     plugin_id: &str,
-    parameters: &[Parameter],
+    parameters: &BTreeMap<u32, Parameter>,
     id: u32,
     pin: &Pin,
 ) -> Option<PluginProblem> {
-    let Some(parameter) = parameters.iter().find(|parameter| parameter.id == id) else {
+    let Some(parameter) = parameters.get(&id) else {
         return Some(PluginProblem::NoSuchParameter {
             plugin_id: plugin_id.to_string(),
             id,
         });
     };
-    let inside = (parameter.minimum..=parameter.maximum).contains(&pin.value);
-    (!inside).then(|| PluginProblem::OutOfRange {
+    (!parameter.takes(pin.value)).then(|| PluginProblem::OutOfRange {
         plugin_id: plugin_id.to_string(),
         id,
         name: parameter.name.clone(),
