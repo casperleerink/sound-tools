@@ -325,9 +325,8 @@ impl BehaviourContext<'_> {
         }
         // A lane finds its number by the name, so two numbers of one name would hide one.
         for (index, (number, _)) in numbers.iter().enumerate() {
-            let earlier = numbers.iter().take(index);
-            if earlier
-                .clone()
+            if numbers[..index]
+                .iter()
                 .any(|(other, _)| other.field == number.field)
             {
                 return Err(BehaviourError::Other(format!(

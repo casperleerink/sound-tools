@@ -186,6 +186,7 @@ it again over bar 2:
   for `vst3`. Between two points the value moves in a straight line.
 - While the lane plays, the pin's `value` in the record does not, and the app never writes what
   the lane plays into it. Take the lane out and the pin's value plays again.
+- `--inspect` loads no plugin, so it cannot judge a lane on a pin and reports none.
 
 ## When it does not play
 
