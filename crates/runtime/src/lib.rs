@@ -577,18 +577,68 @@ pub fn render_block(
     output: &mut [f32],
 ) -> Result<Vec<plugin_host::PluginProblem>> {
     // A render plays what the records say from its first block: the sounds of the Drum pads
-    // that were asked for are waited for and put in their kits first.
+    // that were asked for are waited for and put in their kits before it, and not after it
+    // with the rest of the tick.
     drum_pad::wait_for_sounds();
-    take_drum_sounds(project)?;
+    first(take_drum_sounds(project))?;
     engine.process_block(output);
     project.engine().poll()?;
-    let mut problems = plugins.poll(project);
-    problems.extend(plugins.send_restarts(project));
-    // A plugin that asked to be loaded again gets what a record that changed gets.
-    for instance in plugins.take_retries() {
-        project.rebind(&instance)?;
-    }
+    let (problems, errors) = tick(project, plugins);
+    first(errors)?;
     Ok(problems)
+}
+
+/// A render ends at the first behaviour that could not run again.
+fn first(errors: Vec<ProjectError>) -> Result<()> {
+    errors
+        .into_iter()
+        .next()
+        .map_or(Ok(()), |error| Err(error.into()))
+}
+
+/// One round of the background work of the extensions, in the one order that is right. Every
+/// loop of a session calls it as often as it polls the project: the window, headless, a render
+/// and the test harnesses. A new background service is added here and nowhere else.
+///
+/// What a plugin or a behaviour could not do comes back and stops nothing: one bad record must
+/// not end the session.
+pub fn tick(
+    project: &mut Project,
+    plugins: &Plugins,
+) -> (Vec<plugin_host::PluginProblem>, Vec<ProjectError>) {
+    let mut errors = take_drum_sounds(project);
+    // A Sampler whose instrument was downloaded or loaded on a thread of its own. A render, an
+    // inspect and the tests load at once, so there is nothing here for them.
+    let loaded = sampler::take_ready(project.assets());
+    errors.extend(rebind(project, &loaded));
+    // The main-thread callbacks the plugins ask for, and the state they say changed.
+    let mut problems = plugins.poll(project);
+    // A plugin that is started again is handed to the engine. After the poll, which is what
+    // notes that it asked.
+    problems.extend(plugins.send_restarts(project));
+    // Records that were waiting for a plugin the scan had not reached, and plugins that asked
+    // to be loaded again. After the poll too.
+    errors.extend(rebind(project, &plugins.take_retries()));
+    (problems, errors)
+}
+
+/// Runs the behaviour of each instance again, which is what makes it play what a service
+/// outside the project has ready now and takes its problem away. It is not an edit and is
+/// never undone.
+fn rebind(project: &mut Project, instances: &[InstanceId]) -> Vec<ProjectError> {
+    let failed = instances.iter().filter_map(|id| project.rebind(id).err());
+    failed.collect()
+}
+
+/// Runs the behaviour of every Drum pad whose sounds were made since the last call, which puts
+/// them in its kit.
+fn take_drum_sounds(project: &mut Project) -> Vec<ProjectError> {
+    let ready = drum_pad::take_ready(project.assets());
+    let instances: Vec<InstanceId> = ready.iter().map(|(instance, _)| instance.clone()).collect();
+    let errors = rebind(project, &instances);
+    // The sounds are let go of here, now that the kits hold them.
+    drop(ready);
+    errors
 }
 
 /// Puts the library of sampled instruments in the support folder of this machine, which every
@@ -597,16 +647,6 @@ pub fn use_library() {
     if let Ok(support) = app::support_folder() {
         sampler::library::set_folder(support.join("library"));
     }
-}
-
-/// Runs the behaviour of every Drum pad whose sounds were made since the last call, which puts
-/// them in its kit. What every loop of a session calls, as it polls the plugin host.
-pub fn take_drum_sounds(project: &mut Project) -> Result<(), ProjectError> {
-    // Held until the behaviour has put them in the kit, see `drum_pad::take_ready`.
-    for (instance, _sounds) in drum_pad::take_ready(project.assets()) {
-        project.rebind(&instance)?;
-    }
-    Ok(())
 }
 
 /// Renders `frames` frames in device buffers of 512 frames, interleaved by channel. See

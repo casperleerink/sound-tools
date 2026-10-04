@@ -167,24 +167,12 @@ fn run(folder: &Path) -> Result<()> {
         if let Err(error) = project.poll() {
             println!("error: {error}");
         }
-        let mut problems = plugins.poll(&project);
-        problems.extend(plugins.send_restarts(&mut project));
+        let (problems, errors) = runtime::tick(&mut project, &plugins);
         for problem in problems {
             println!("error: {problem}");
         }
-        // A plugin that asked to be loaded again gets what a record that changed gets.
-        for instance in plugins.take_retries() {
-            if let Err(error) = project.rebind(&instance) {
-                println!("error: {error}");
-            }
-        }
-        if let Err(error) = runtime::take_drum_sounds(&mut project) {
+        for error in errors {
             println!("error: {error}");
-        }
-        for instance in sampler::take_ready(project.assets()) {
-            if let Err(error) = project.rebind(&instance) {
-                println!("error: {error}");
-            }
         }
         print_events(&mut project);
         match lines.try_recv() {

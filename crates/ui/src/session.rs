@@ -291,6 +291,21 @@ impl Session {
         }
     }
 
+    /// Runs work on the project that is not an edit, for the services outside the project:
+    /// nothing is written, there is no undo step and the notice of an edit stays. Observers
+    /// hear what it changed.
+    pub fn background<R>(
+        &mut self,
+        cx: &mut Context<Self>,
+        work: impl FnOnce(&mut Project) -> R,
+    ) -> R {
+        let result = work(&mut self.project);
+        if self.emit_events(cx) {
+            cx.notify();
+        }
+        result
+    }
+
     /// The last error, for a quiet status surface. The notice of a failed edit stays until
     /// an edit succeeds. Any other stays until it is dismissed.
     pub fn notice(&self) -> Option<&SharedString> {
