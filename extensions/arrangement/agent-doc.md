@@ -18,7 +18,7 @@ To see what plays where, list a track folder and read `start` and `length` of it
 
 ## A clip: `arrangement.clip`
 
-```json state/arrangement/piano/chords-bars-5-8.json
+```json state/arrangement/piano/intro.json
 {
   "tool": "arrangement.clip",
   "state": {
