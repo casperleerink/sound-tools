@@ -167,14 +167,14 @@ A track can move a number of one of its devices, or its own volume or pan, over 
 In 4/4 the filter of this track opens over bars 9 to 16, and the track fades in over bar 1.
 
 - `device`: the file name of a device in the track folder, without `.json`, such as an effect in `effects`. Leave it out for the volume and the pan of the track itself.
-- `parameter`: the field in the record of the device, as its doc names it, such as `cutoff_hz` of a filter. A number inside an object or a list is named by its path: `filter_1.cutoff_hz` of a wavetable, `bands[0].gain_db` of an EQ, `pads.42.pan` of a Drum pad. For the track itself, `gain_db` or `pan`.
+- `parameter`: the field in the record of the device, as its doc names it, such as `cutoff_hz` of a filter. A number inside an object or a list is named by its path: `filter_1.cutoff_hz` of a wavetable, `bands[0].gain_db` of an EQ, `pads.42.pan` of a Drum pad, `parameters.12.value` of a plugin. For the track itself, `gain_db` or `pan`.
 - `points[].tick`: in project ticks, not from the start of a clip. In tick order, at most one per tick, and at least one per lane.
 - `points[].value`: in the units and the range of the field, as its doc gives them. A volume may go down to `"-inf"`.
 - Between two points the value moves in a straight line on the travel of its knob: a cutoff moves evenly in octaves, a volume as its fader moves. Before the first point and after the last it holds, as in a clip lane.
 - While a lane moves a number, the value in the record does not play. Take the lane out and it plays again.
 - A lane belongs to the track, not to a clip. When you move a clip, by its `start` or to another track, move the points under it yourself if they belong to it.
 - One number has one lane. Leave `automation` out when the track has none.
-- Every built-in instrument and effect takes automation, and so do the volume and pan of every track. A whole number, such as a count of voices, takes none, and a plugin takes none yet.
+- Every built-in instrument and effect takes automation, and so do the volume and pan of every track. A whole number, such as a count of voices, takes none. A plugin takes it for the parameters its record pins, see `agent-docs/plugins.md`.
 
 ## The arrangement and its master: `arrangement`
 

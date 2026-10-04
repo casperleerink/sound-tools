@@ -151,6 +151,42 @@ plays, with no reload. Every parameter that is not pinned stays in the state fil
 - The composer can also pin, turn and unpin parameters on the plugin's card, so `parameters`
   may change under you. Read the record before you write it.
 
+## Automating a pin
+
+A lane in the track record moves a pin over time, as it moves a knob of a built-in device
+(`agent-docs/arrangement.md`). It names the plugin by its file name and the pin by its path in
+the record, `parameters.<id>.value`. This opens the `Cutoff` pinned above over bar 1 and closes
+it again over bar 2:
+
+```json state/arrangement/rhodes/instance.json
+{
+  "tool": "arrangement.track",
+  "state": {
+    "name": "rhodes",
+    "colour": "peach",
+    "order": 1,
+    "gain_db": -3.0,
+    "pan": 0.2,
+    "mute": false,
+    "automation": [
+      {
+        "device": "instrument",
+        "parameter": "parameters.0.value",
+        "points": [{"tick": 0, "value": 400.0}, {"tick": 3840, "value": 4000.0}, {"tick": 7680, "value": 400.0}]
+      }
+    ]
+  }
+}
+```
+
+- Only a pinned parameter takes a lane, and only one the plugin says may be automated and that
+  takes any value in its range: `--plugin-params` prints `not automatable` or steps for the
+  others. Pin it first.
+- Values are in the format's own units, as the pin's: a `clap` plugin's own value, `0` to `1`
+  for `vst3`. Between two points the value moves in a straight line.
+- While the lane plays, the pin's `value` in the record does not, and the app never writes what
+  the lane plays into it. Take the lane out and the pin's value plays again.
+
 ## When it does not play
 
 `problems.txt` names the record and says what is wrong. The usual lines:
@@ -180,6 +216,11 @@ plays, with no reload. Every parameter that is not pinned stays in the state fil
   That pin moves nothing and the rest plays. Correct the id, or take the pin out.
 - `` `parameters.<id>.value` is ..., outside the range ``: write a value inside the range the
   line names. Until then that pin moves nothing and the rest plays.
+- On the track record, `` automation[...].parameter is "parameters.<id>.value", and instrument
+  takes no automation of a number of that name ``: the lane names a parameter that is not
+  pinned, has steps, may not be automated, or whose pinned value is out of range. The line
+  lists the paths that take a lane. That lane moves nothing and the rest plays. While the
+  plugin is missing or did not load, a lane on it says `instrument.json takes no automation`.
 
 ## VST
 
