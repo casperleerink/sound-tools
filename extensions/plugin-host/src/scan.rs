@@ -60,7 +60,6 @@ pub struct ScannedPlugin {
     pub id: String,
     pub name: String,
     pub vendor: String,
-    pub version: String,
     /// What the plugin says it is: CLAP features such as `instrument`, or VST 3 subcategories
     /// such as `Instrument` and `Synth`.
     pub features: Vec<String>,
@@ -869,7 +868,6 @@ mod tests {
                     id: "534F554E44544F4F4C53544553545430".to_string(),
                     name: "Piano".to_string(),
                     vendor: String::new(),
-                    version: String::new(),
                     features: vec!["Instrument".to_string()],
                     path: PathBuf::new(),
                 }],

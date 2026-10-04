@@ -512,7 +512,6 @@ mod tests {
             id: test_vst3_plugin::PLUGIN_ID.to_string(),
             name: test_vst3_plugin::PLUGIN_NAME.to_string(),
             vendor: "Sound Tools".to_string(),
-            version: "0.1.0".to_string(),
             features: vec!["Instrument".to_string()],
             path: bundle,
         };

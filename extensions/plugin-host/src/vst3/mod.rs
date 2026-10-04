@@ -49,7 +49,6 @@ pub(crate) fn scan_bundle(bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
             id: class_id_text(&class.id),
             name: class.name,
             vendor: class.vendor,
-            version: class.version,
             features: class.subcategories,
             path: PathBuf::new(),
         })
