@@ -307,8 +307,8 @@ fn one_project_plays_a_clap_track_and_a_vst3_track_and_a_swap_is_undone_exactly(
 
 /// What `sound-tools --plugin-params` prints for the test plugin of each format: the ranges in
 /// the format's own units, the defaults, the names of the steps of a list, and a parameter that
-/// may not be automated. A read-only parameter is not there: CLAP's `Meter`, VST 3's `Latency`
-/// and `Ask`.
+/// may not be automated, with numbers rounded for reading. Read-only and hidden parameters are
+/// not there: CLAP's `Meter`, VST 3's `Latency` and `Ask`, and `Hidden` in both.
 #[test]
 fn the_parameters_of_a_plugin_are_listed_with_their_ranges_and_the_names_of_their_steps() {
     let folder = tempfile::tempdir().unwrap();
@@ -332,10 +332,10 @@ fn the_parameters_of_a_plugin_are_listed_with_their_ranges_and_the_names_of_thei
         "2   Level          0 to 1  default 1",
         "3   Offset         0 to 1  default 0",
         "6   Moved sustain  0 to 1  default 0",
-        "7   Bend           0 to 1  default 0.5000305194408838",
+        "7   Bend           0 to 1  default 0.500031",
         "8   Mod wheel      0 to 1  default 0",
         "9   Pressure       0 to 1  default 0",
-        "10  Wave           0 to 1  default 0                   3 steps: 0 = Sine, 0.5 = Saw, 1 = Square",
+        "10  Wave           0 to 1  default 0         3 steps: 0 = Sine, 0.5 = Saw, 1 = Square",
     ];
     assert_eq!(vst3, expected.join("\n"));
 }

@@ -453,8 +453,12 @@ pub fn plugin_parameters(
             [
                 parameter.id.to_string(),
                 parameter.name.clone(),
-                format!("{} to {}", parameter.minimum, parameter.maximum),
-                format!("default {}", parameter.default),
+                format!(
+                    "{} to {}",
+                    readable(parameter.minimum),
+                    readable(parameter.maximum)
+                ),
+                format!("default {}", readable(parameter.default)),
                 parameter_details(parameter),
             ]
         })
@@ -487,7 +491,7 @@ fn parameter_details(parameter: &Parameter) -> String {
         let names: Vec<String> = steps
             .names
             .iter()
-            .map(|step| format!("{} = {}", step.value, step.name))
+            .map(|step| format!("{} = {}", readable(step.value), step.name))
             .collect();
         details.push(match names.is_empty() {
             true => format!("{} steps", steps.count),
@@ -498,6 +502,26 @@ fn parameter_details(parameter: &Parameter) -> String {
         details.push("not automatable".to_string());
     }
     details.join("  ")
+}
+
+/// A number of a plugin as `--plugin-params` prints it: six significant digits and no trailing
+/// zeros, so `8192 / 16383` reads `0.500031`. A whole part longer than that keeps every digit.
+/// The value itself keeps its full precision; this is only for reading.
+fn readable(number: f64) -> String {
+    // Zero has no magnitude, and is never `-0`.
+    if number == 0.0 {
+        return "0".to_string();
+    }
+    if !number.is_finite() {
+        return number.to_string();
+    }
+    let magnitude = number.abs().log10().floor() as i32;
+    let decimals = (5 - magnitude).max(0) as usize;
+    let text = format!("{number:.decimals$}");
+    match text.contains('.') {
+        true => text.trim_end_matches('0').trim_end_matches('.').to_string(),
+        false => text,
+    }
 }
 
 pub fn problems(project: &Project) -> String {

@@ -112,9 +112,10 @@ sound-tools --plugin-params clap com.example.synth
 
 It loads that one plugin and prints one line per parameter: its id, its name, its range, its
 default, and, for a parameter that takes only some values, how many and the plugin's name for
-each. A read-only parameter, such as a meter, is not listed. The numbers are the format's own:
-a `clap` plugin's own values, such as `20 to 20000` for a frequency in hertz, and always `0 to
-1` for `vst3`.
+each. A read-only parameter, such as a meter, and one the plugin hides are not listed. The
+numbers are the format's own: a `clap` plugin's own values, such as `20 to 20000` for a
+frequency in hertz, and always `0 to 1` for `vst3`. They are printed to six digits; the plugin
+keeps more.
 
     0  Cutoff  20 to 20000  default 1000
     1  Wave    0 to 2       default 0     3 steps: 0 = Sine, 1 = Saw, 2 = Square  not automatable
