@@ -367,22 +367,10 @@ impl Opened<'_> {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
-        let session = self.session.clone();
-        let scanned = std::mem::replace(&mut self.scanned, plugins.scan_generation());
-        let changed = self.cx.update(|_, cx| {
-            runtime::window::tick(&session, &plugins, cx);
-            plugins.settle_windows(cx);
-            plugins.take_window_change()
-        });
-        // What the window's poll does after its tick: a frame is asked for while a scan
-        // runs and once more when it learns something or ends, because that is when a menu
-        // that was filled while it ran is filled again.
-        let changed = changed || plugins.scan_is_running() || scanned != self.scanned;
-        if changed {
-            self.cx
-                .update(|_, cx| session.update(cx, |_, cx| cx.notify()));
-            self.cx.run_until_parked();
-        }
+        let (session, scanned) = (self.session.clone(), &mut self.scanned);
+        self.cx
+            .update(|_, cx| runtime::window::tick(&session, &plugins, scanned, cx));
+        self.cx.run_until_parked();
     }
 
     /// Runs the engine for `frames` and gives what it played, interleaved.

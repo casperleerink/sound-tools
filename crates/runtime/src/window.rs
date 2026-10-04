@@ -716,7 +716,7 @@ impl Opened {
         // The scan of this machine runs on a thread of its own from here, so no plugin is ever
         // looked at on the thread that draws. A project that names a plugin the scan has not
         // reached yet opens and plays everything else, and the plugin comes in when it turns
-        // up: `take_retries` below runs its behaviour again.
+        // up: the tick below runs its behaviour again.
         let plugins = crate::plugins(false)?;
         plugins.start_scanning();
         let mut project = open_or_create_with(folder, control, plugins.clone())?;
@@ -791,31 +791,7 @@ impl Opened {
                     else {
                         break;
                     };
-                    cx.update(|cx| tick(&session, &plugins, cx));
-                    // A bundle the scan could not read. It arrives while the scan runs, on
-                    // its own thread, so it is taken here and not once before the window.
-                    for notice in plugins.take_notices() {
-                        let notice = format!("plugin scan: {notice}");
-                        println!("{notice}");
-                        session.update(cx, |session, cx| session.report(notice, cx));
-                    }
-                    // The picker shows what is known and says so quietly while a scan
-                    // runs, so a frame is drawn again while one does, and once more on
-                    // the poll that sees the scan learn something or end: that is when a
-                    // menu filled while it ran is filled again.
-                    let generation = plugins.scan_generation();
-                    if plugins.scan_is_running() || generation != scanned {
-                        scanned = generation;
-                        session.update(cx, |_, cx| cx.notify());
-                    }
-                    // The window work that needs the application: the windows of plugins
-                    // that have gone, and a window whose plugin asked for another size.
-                    cx.update(|cx| plugins.settle_windows(cx));
-                    // A plugin's window that opened or closed, which includes one the
-                    // plugin itself closed. The card that offers it is drawn again.
-                    if plugins.take_window_change() {
-                        session.update(cx, |_, cx| cx.notify());
-                    }
+                    cx.update(|cx| tick(&session, &plugins, &mut scanned, cx));
                 }
             }
         })
@@ -924,17 +900,41 @@ impl Opened {
     }
 }
 
-/// One [`crate::tick`] on the project of the session, with what it could not do as the notice.
-/// It is not an edit. The window does it once per session poll; a test calls it when it
-/// settles.
-pub fn tick(session: &Entity<Session>, plugins: &Plugins, cx: &mut App) {
+/// One [`crate::tick`] on the project of the session, with what it could not do as the notice,
+/// and then what the window does for the plugin host. It is not an edit. The window does it
+/// once per session poll; a test calls it when it settles. `scanned` is what the scan had
+/// found the last time a frame was asked for.
+pub fn tick(session: &Entity<Session>, plugins: &Plugins, scanned: &mut u64, cx: &mut App) {
     session.update(cx, |session, cx| {
         let (problems, errors) = session.background(cx, |project| crate::tick(project, plugins));
         for problem in problems {
             session.report(problem, cx);
         }
+        // A bundle the scan could not read. It arrives while the scan runs, on its own
+        // thread, so it is taken here and not once before the window.
+        for notice in plugins.take_notices() {
+            let notice = format!("plugin scan: {notice}");
+            println!("{notice}");
+            session.report(notice, cx);
+        }
         for error in errors {
             session.report(error, cx);
         }
+        // The picker shows what is known and says so quietly while a scan runs, so a frame
+        // is drawn again while one does, and once more on the poll that sees the scan learn
+        // something or end: that is when a menu filled while it ran is filled again.
+        let generation = plugins.scan_generation();
+        if plugins.scan_is_running() || generation != *scanned {
+            *scanned = generation;
+            cx.notify();
+        }
     });
+    // The window work that needs the application: the windows of plugins that have gone, and
+    // a window whose plugin asked for another size.
+    plugins.settle_windows(cx);
+    // A plugin's window that opened or closed, which includes one the plugin itself closed.
+    // The card that offers it is drawn again.
+    if plugins.take_window_change() {
+        session.update(cx, |_, cx| cx.notify());
+    }
 }

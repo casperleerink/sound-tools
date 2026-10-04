@@ -311,7 +311,9 @@ impl Opened {
         // What the poll of the window does for the background work of the extensions.
         drum_pad::wait_for_sounds();
         if let Some(plugins) = self.plugins.upgrade() {
-            cx.update(|cx| runtime::window::tick(&self.session, &plugins, cx));
+            // No frame is asked for because the scan learned something: none runs here.
+            let mut scanned = plugins.scan_generation();
+            cx.update(|cx| runtime::window::tick(&self.session, &plugins, &mut scanned, cx));
         }
         let mut buffer = vec![0.0_f32; frames * OFFLINE.channels];
         self.engine.process_block(&mut buffer);

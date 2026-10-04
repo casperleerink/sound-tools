@@ -1092,16 +1092,8 @@ impl Plugins {
         self.poll_at(project, Instant::now())
     }
 
-    /// Whether a plugin is waiting for [`Self::send_restarts`]. Cheap, so a caller that has to
-    /// ask for the project mutably only does so while this is true.
-    pub fn restarts_pending(&self) -> bool {
-        let table = self.0.table.borrow();
-        let mut loaded = table.loaded.values();
-        loaded.any(|hosted| hosted.restart != Restart::Idle)
-    }
-
     /// Moves every restart a plugin asked for one step on, see [`Self::restarts`]. Call it
-    /// after [`Self::poll`] while [`Self::restarts_pending`] says so. It needs the project
+    /// after [`Self::poll`], which is what notes that one asked. It needs the project
     /// mutably only to hand the engine the plugin's audio side, which is not an edit: nothing
     /// is written and there is no undo step.
     pub fn send_restarts(&self, project: &mut Project) -> Vec<PluginProblem> {
