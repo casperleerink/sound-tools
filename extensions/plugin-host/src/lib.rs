@@ -283,7 +283,7 @@ impl State for PluginRecord {
 /// The doc of the plugin record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "plugins",
-    when: "You put a third-party plugin on a track, or a plugin is reported as a problem",
+    when: "You put a third-party plugin on a track, set its parameters, or a plugin is reported as a problem",
     markdown: include_str!("../agent-doc.md"),
 };
 
