@@ -62,7 +62,7 @@ When you can run commands, the Sound Tools runtime prints where each time signat
 
 ```sh
 sound-tools . --inspect
-sound-tools . --render /tmp/mix.wav
+sound-tools . --render <wav>
 ```
 
 `sound-tools` is the command line tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
