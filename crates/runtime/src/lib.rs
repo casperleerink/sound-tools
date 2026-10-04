@@ -250,6 +250,7 @@ fn plugin_offers(
                             format,
                             plugin_id: id.clone(),
                             state_asset,
+                            parameters: Default::default(),
                         },
                     );
                     Ok(())

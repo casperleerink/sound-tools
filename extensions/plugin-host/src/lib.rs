@@ -47,10 +47,12 @@ pub mod view;
 mod vst3;
 mod window;
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, AssetError, AssetName, Assets, BehaviourContext, BehaviourError, InputEndpoint,
-    InvalidAssetName, OutputEndpoint, Registry, RegistryError, State,
+    InvalidAssetName, MAX_AUTOMATED, OutputEndpoint, Registry, RegistryError, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
@@ -194,7 +196,7 @@ impl From<StateAsset> for String {
 }
 
 /// The saved state of one hosted plugin.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginRecord {
     pub format: PluginFormat,
@@ -202,6 +204,25 @@ pub struct PluginRecord {
     pub plugin_id: String,
     /// Where the plugin's own state is kept. Opaque bytes: nobody edits that file by hand.
     pub state_asset: StateAsset,
+    /// The parameters the record holds, by the plugin's own id of each. For these the record
+    /// wins over the state asset: they are sent to the plugin after its state is loaded, and
+    /// what the plugin changes of them itself is written back here. Every other parameter
+    /// stays in the state asset only. Left out of the file when there are none, so a record
+    /// from before pins is written as it was.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<u32, Pin>,
+}
+
+/// One parameter a record holds, see [`PluginRecord::parameters`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Pin {
+    /// What the plugin calls it, for whoever reads the record. The id is what counts, so a
+    /// plugin that renames it still finds it.
+    pub name: String,
+    /// In the format's own units, as `--plugin-params` prints them: CLAP's plain value, VST
+    /// 3's 0 to 1.
+    pub value: f64,
 }
 
 impl PluginRecord {
@@ -217,6 +238,7 @@ impl PluginRecord {
             format,
             plugin_id: plugin_id.to_string(),
             state_asset: StateAsset::new(state_asset).ok()?,
+            parameters: BTreeMap::new(),
         })
     }
 
@@ -245,6 +267,13 @@ impl State for PluginRecord {
             return Err(format!(
                 "a vst3 plugin_id is the class id as thirty-two hex digits, not {:?}. `sound-tools --plugins` prints them",
                 self.plugin_id
+            ));
+        }
+        // As many as automation lanes can move of one device, which is what pins are for.
+        if self.parameters.len() > MAX_AUTOMATED {
+            return Err(format!(
+                "parameters holds {} pins, and a plugin record holds at most {MAX_AUTOMATED}",
+                self.parameters.len()
             ));
         }
         Ok(())
@@ -321,5 +350,32 @@ mod tests {
         assert_eq!(decoded.state_asset.name(), "piano");
         assert_eq!(decoded.asset().as_str(), "plugin-state/piano.bin");
         assert_eq!(serde_json::to_string(&decoded).expect("json"), record);
+    }
+
+    /// The id of a pin is a number, which JSON holds as the text of a key.
+    #[test]
+    fn a_pin_is_read_by_the_id_of_its_parameter_and_written_back_the_same() {
+        let record = r#"{"format":"clap","plugin_id":"a.b","state_asset":"piano","parameters":{"12":{"name":"Cutoff","value":440.0}}}"#;
+        let decoded: PluginRecord = serde_json::from_str(record).expect("a record");
+        let pin = Pin {
+            name: "Cutoff".to_string(),
+            value: 440.0,
+        };
+        assert_eq!(decoded.parameters, BTreeMap::from([(12, pin)]));
+        assert_eq!(serde_json::to_string(&decoded).expect("json"), record);
+    }
+
+    #[test]
+    fn a_record_with_more_pins_than_lanes_can_move_does_not_load() {
+        let pin = |id: usize| {
+            let name = format!("p{id}");
+            (id as u32, Pin { name, value: 0.0 })
+        };
+        let mut record = PluginRecord::new(PluginFormat::Clap, "a.b", "piano").expect("a record");
+        record.parameters = (0..MAX_AUTOMATED).map(pin).collect();
+        assert_eq!(record.validate(), Ok(()));
+        record.parameters.extend([pin(MAX_AUTOMATED)]);
+        let error = record.validate().expect_err("one pin too many");
+        assert!(error.contains("at most 64"), "{error}");
     }
 }
