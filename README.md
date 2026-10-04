@@ -65,7 +65,7 @@ Each [release](https://github.com/casperleerink/sound-tools/releases) has the ap
 
 After that the app updates itself: once a day it looks for a new release, downloads it in the background and shows **Restart** in the corner. Restart installs it and opens the same project again; a quit installs it at the next launch. On macOS the app must be in a folder it can write, such as Applications, or the notice offers **Download** instead. Every release has a `SHA256SUMS` file the app checks the download against. `cargo run` and the command line forms never update.
 
-To make a release, run `/release` in Claude Code, with `patch` (the default), `minor`, `major` or a version. It bumps the version, merges that through a pull request, tags main with `v<version>` and watches `.github/workflows/release.yml` build the files and make the release. The version is `version` in `[workspace.package]` of `Cargo.toml`, the only place it is written. `gh workflow run release.yml --ref <branch>` is a dry run: it builds the files and makes no release. The steps are in `.agents/skills/release/SKILL.md`.
+To make a release, run `/release` in Claude Code. With no argument it decides from what changed since the last release whether it is a patch, minor or major release; `patch`, `minor`, `major` or a version decides for it. It bumps the version, merges that through a pull request, tags main with `v<version>` and watches `.github/workflows/release.yml` build the files and make the release. The version is `version` in `[workspace.package]` of `Cargo.toml`, the only place it is written. `gh workflow run release.yml --ref <branch>` is a dry run: it builds the files and makes no release. The steps are in `.agents/skills/release/SKILL.md`.
 
 ## Two-minute tour
 
