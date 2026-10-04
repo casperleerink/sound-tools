@@ -374,8 +374,7 @@ enum Edge {
     Right,
 }
 
-/// What every drag of clips keeps, from mouse down to mouse up, whatever its
-/// [`ClipDragKind`].
+/// What every drag of clips keeps, from mouse down to mouse up, whatever its kind.
 struct ClipDrag {
     /// The tick under the pointer at mouse down.
     grab: Ticks,
@@ -2044,8 +2043,7 @@ impl Timeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // A press whose release this window never heard of: what it held ends here, or the
-        // new press would drop it with the gesture of the session still open.
+        // A press whose release never came: end what it held, or its gesture stays open.
         if self.dragging() {
             self.end_drag(cx);
         }
