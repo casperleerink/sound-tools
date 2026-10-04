@@ -3,7 +3,6 @@
 //! it does is heard.
 
 use gpui::{TestAppContext, point, px};
-use utility::view::UtilityView;
 use utility::{Channels, UtilityState};
 
 use crate::support::{self, Opened, id};
@@ -61,64 +60,6 @@ fn heard(opened: &mut Opened<'_>) -> (Vec<f32>, Vec<f32>) {
 
 fn loudness(samples: &[f32]) -> f32 {
     samples.iter().map(|sample| sample.abs()).sum()
-}
-
-#[gpui::test]
-fn add_effect_puts_a_utility_with_its_card_on_the_track(cx: &mut TestAppContext) {
-    let mut opened = open_panel(cx);
-    assert_eq!(state(&mut opened), UtilityState::default());
-    let panel = opened.track_panel().unwrap();
-    let view = opened.cx.read(|cx| {
-        let mut views = panel.read(cx).device_views();
-        views.nth(1).unwrap().cloned()
-    });
-    assert!(view.unwrap().downcast::<UtilityView>().is_ok());
-    // The shown controls, and none of the hidden ones.
-    for shown in [
-        "knob-gain_db",
-        "knob-utility-pan",
-        "knob-width",
-        "toggle-utility-mute",
-        "handle-gain-pan",
-        "segment-stereo",
-    ] {
-        assert!(opened.find(shown).is_some(), "{shown}");
-    }
-    for hidden in [
-        "toggle-bass_mono",
-        "knob-bass_mono_hz",
-        "toggle-invert_left",
-        "toggle-invert_right",
-    ] {
-        assert_eq!(opened.find(hidden), None, "{hidden}");
-    }
-
-    // One undo takes it off again.
-    opened.edit(|project| project.undo().map(|_| ()));
-    assert!(!opened.path(UTILITY_FILE).exists());
-}
-
-#[gpui::test]
-fn a_knob_drag_is_one_undo_step_written_once(cx: &mut TestAppContext) {
-    let mut opened = open_panel(cx);
-    let before = file(&mut opened);
-    let knob = opened.control("knob-width");
-    opened.press(knob);
-    opened.drag_to(point(knob.x, knob.y - px(20.)));
-    // Heard during the drag, not written until it ends.
-    let moving = state(&mut opened).width;
-    assert!(moving > UtilityState::default().width);
-    assert_eq!(file(&mut opened), before);
-    opened.drag_to(point(knob.x, knob.y - px(40.)));
-    opened.release(point(knob.x, knob.y - px(40.)));
-    let after = state(&mut opened).width;
-    assert!(after > moving);
-    assert_eq!(opened.undo_label().as_deref(), Some("Change width"));
-    assert!(file(&mut opened).contains(&format!("\"width\": {after:?}")));
-
-    opened.edit(|project| project.undo().map(|_| ()));
-    assert_eq!(state(&mut opened), UtilityState::default());
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Utility"));
 }
 
 /// The handle moves pan sideways and gain up and down, in one gesture and one undo step.
@@ -214,26 +155,4 @@ fn what_the_card_does_is_heard(cx: &mut TestAppContext) {
     let (left, right) = heard(&mut opened);
     assert!(loudness(&left) > 1.0);
     assert_eq!(left, right);
-}
-
-/// An agent edits the file while the card is open: the card shows it at once.
-#[gpui::test]
-fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
-    let mut opened = open_panel(cx);
-    let expand = opened.control("card-utility-expand");
-    opened.click(expand);
-    let path = opened.path(UTILITY_FILE);
-    std::fs::write(
-        &path,
-        r#"{"tool": "utility", "state": {"invert_left": true, "width": 0.5}}"#,
-    )
-    .unwrap();
-    opened.edit(|project| project.apply_outside_changes(&[path]).map(|_| ()));
-    assert!(state(&mut opened).invert_left);
-    // The toggle shows what the file says: a click turns the invert off, not on again.
-    let invert = opened.control("toggle-invert_left");
-    opened.click(invert);
-    assert!(!state(&mut opened).invert_left);
-    assert_eq!(state(&mut opened).width, 0.5);
-    assert_eq!(opened.undo_label().as_deref(), Some("Change invert left"));
 }

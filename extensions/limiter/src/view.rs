@@ -12,7 +12,7 @@
 //! does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, Task, Window, div, prelude::*};
-use sound_core::{Instance, ProjectEvent, State};
+use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::dropdown_menu::{
@@ -22,7 +22,7 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, ParameterKnob, decibels_readout, milliseconds_readout};
 use sound_ui::components::limiter_display::LimiterHistory;
 use sound_ui::{
-    ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, every_poll, weak_callback,
+    ControlEdit, Devices, Lanes, OfferGroup, Session, Views, every_poll, weak_callback,
 };
 
 use crate::{CEILING, GAIN, Limiter, LimiterState, Lookahead, Meters, RELEASE};
@@ -30,13 +30,16 @@ use crate::{CEILING, GAIN, Limiter, LimiterState, Lookahead, Meters, RELEASE};
 /// The name the rack puts on the card of a limiter.
 pub const NAME: &str = "Limiter";
 
-/// Registers the view of the `limiter` tool and what a rack calls one.
+/// Registers the view of the `limiter` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(LimiterView::new);
-    devices.describe::<LimiterState>(|_| DeviceLabel {
-        key: LimiterState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<LimiterState>(
+        NAME,
+        OfferGroup::Dynamics,
+        "device-limiter",
+        crate::EXTENSION,
+        "This project does not load the limiter.",
+    );
 }
 
 /// A knob of the card.

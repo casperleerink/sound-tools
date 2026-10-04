@@ -15,7 +15,7 @@
 use gpui::{
     App, Context, Entity, KeyDownEvent, Point, SharedString, Window, div, point, prelude::*,
 };
-use sound_core::{Instance, ProjectEvent, State};
+use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::curves::{DRAWN_AT, RESPONSE_ACROSS, RESPONSE_CAPTION, response_decades};
 use sound_ui::components::device_card::{CardFrame, Column};
@@ -29,7 +29,7 @@ use sound_ui::components::knob::{
 };
 use sound_ui::components::toggle::Toggle;
 use sound_ui::lanes::object_of;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
 
 use crate::{
     BAND_LANES, BANDS, Band, Eq, EqState, FREQUENCIES, GAIN, OUTPUT_GAIN, Q, Shape, response,
@@ -54,13 +54,16 @@ const CURVE_POINTS: usize = 156;
 /// on the scale of the display.
 const GAIN_TRAVEL: KnobRange = KnobRange::linear(DISPLAY_DB.0, DISPLAY_DB.1);
 
-/// Registers the view of the `eq` tool and what a rack calls one.
+/// Registers the view of the `eq` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(EqView::new);
-    devices.describe::<EqState>(|_| DeviceLabel {
-        key: EqState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<EqState>(
+        NAME,
+        OfferGroup::Tone,
+        "device-eq",
+        crate::EXTENSION,
+        "This project does not load the EQ.",
+    );
 }
 
 fn frequency_knob(band: usize) -> ParameterKnob<Band> {

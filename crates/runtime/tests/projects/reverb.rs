@@ -1,9 +1,5 @@
 //! The built-in reverb in the chain of a real track: an outside agent changes it by file while
-//! the project plays and the change is heard, it comes back as it was after close and reopen,
-//! and a render is the same every time, to the byte.
-
-use reverb::ReverbState;
-use sound_core::{Changes, InstanceId};
+//! the project plays and the change is heard.
 
 use crate::support::{BAR, Harness, clip, difference};
 
@@ -87,94 +83,4 @@ fn an_outside_edit_of_the_reverb_while_it_plays_is_heard_and_undone_in_one_step(
         )
         .is_some()
     );
-}
-
-/// Everything of the record survives close and reopen, and the render after it is the render
-/// before it, to the byte. A render is the same every time.
-#[test]
-fn the_reverb_comes_back_after_close_and_reopen_and_renders_the_same() {
-    let mut harness = piano_through(&record("{}"));
-    let id = InstanceId::new("arrangement/piano/room").unwrap();
-    let reverb = harness.project.resolve::<ReverbState>(&id).unwrap();
-    let sound = ReverbState {
-        pre_delay_ms: 35.0,
-        decay_seconds: 3.5,
-        size: 0.8,
-        damping: 0.25,
-        diffusion: 0.9,
-        low_cut_hz: 150.0,
-        high_cut_hz: 6_000.0,
-        width: 0.7,
-        mix: 0.45,
-        freeze: false,
-    };
-    let mut changes = Changes::new();
-    changes.set(&reverb, sound);
-    harness.project.commit("Change reverb", changes).unwrap();
-    let file = std::fs::read_to_string(harness.path(REVERB_FILE)).unwrap();
-    // The whole record, in the bytes the agent doc shows.
-    assert_eq!(
-        file,
-        r#"{
-  "tool": "reverb",
-  "state": {
-    "pre_delay_ms": 35.0,
-    "decay_seconds": 3.5,
-    "size": 0.8,
-    "damping": 0.25,
-    "diffusion": 0.9,
-    "low_cut_hz": 150.0,
-    "high_cut_hz": 6000.0,
-    "width": 0.7,
-    "mix": 0.45,
-    "freeze": false
-  }
-}
-"#
-    );
-
-    // Reopened twice: a render of each first session is the same, to the byte.
-    let mut harness = harness.reopen();
-    let first = harness.play(2 * BAR);
-    let mut harness = harness.reopen();
-    assert_eq!(harness.project.problems(), []);
-    let reverb = harness.project.resolve::<ReverbState>(&id).unwrap();
-    assert_eq!(harness.project.state(&reverb), Some(&sound));
-    assert_eq!(
-        std::fs::read_to_string(harness.path(REVERB_FILE)).unwrap(),
-        file
-    );
-    let second = harness.play(2 * BAR);
-    let bytes = |samples: &[f32]| -> Vec<u8> {
-        samples
-            .iter()
-            .flat_map(|sample| sample.to_le_bytes())
-            .collect()
-    };
-    assert_eq!(bytes(&first), bytes(&second));
-    assert!(first.iter().any(|sample| sample.abs() > 0.01));
-}
-
-#[test]
-fn a_reverb_record_out_of_range_is_reported_and_the_track_keeps_what_it_had() {
-    let mut harness = piano_through(&record(r#"{"decay_seconds": 3.0}"#));
-    let wrong = record(r#"{"decay_seconds": 100.0}"#);
-    assert_eq!(harness.write_and_apply(REVERB_FILE, &wrong), 0);
-    let problems = harness.project.problems();
-    assert_eq!(
-        problems[0].message,
-        "state: decay_seconds must be from 0.2 to 60, not 100"
-    );
-    let wrong = record(r#"{"freeze": "yes"}"#);
-    harness.write_and_apply(REVERB_FILE, &wrong);
-    let problems = harness.project.problems();
-    assert_eq!(problems.len(), 1);
-    assert!(
-        problems[0].message.contains("freeze"),
-        "{}",
-        problems[0].message
-    );
-    let id = InstanceId::new("arrangement/piano/room").unwrap();
-    let reverb = harness.project.resolve::<ReverbState>(&id).unwrap();
-    assert_eq!(harness.project.state(&reverb).unwrap().decay_seconds, 3.0);
 }

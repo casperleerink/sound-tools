@@ -291,8 +291,9 @@ fn another_downbeat_and_another_time_signature_rebuild_the_grid() {
 
     // The time signature is the project's. Changing it rebuilds the map in the same group.
     let before = tempo_map(&harness);
-    let file = r#"{"format": 1, "extensions": ["arrangement", "compressor", "delay", "drum-pad", "eq", "filter", "fit-tempo", "instrument", "limiter", "modulation", "plugin-host", "reverb", "sampler", "saturator", "tone", "utility", "wavetable"], "tempo_map": {"time_signature": "3/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}, "connections": []}"#;
-    harness.write_and_apply("project.json", file);
+    let file = harness
+        .project_json(r#"{"time_signature": "3/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}"#);
+    harness.write_and_apply("project.json", &file);
     let after = tempo_map(&harness);
     assert_eq!(after.time_signatures().first().to_string(), "3/4");
     assert!(
@@ -842,7 +843,9 @@ fn write_real_project(folder: &std::path::Path, plugin_id: &str) {
     };
     write(
         "project.json",
-        r#"{"format": 1, "extensions": ["arrangement", "compressor", "delay", "drum-pad", "eq", "filter", "fit-tempo", "instrument", "limiter", "modulation", "plugin-host", "reverb", "sampler", "saturator", "tone", "utility", "wavetable"], "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}, "connections": []}"#.to_string(),
+        Harness::new().project_json(
+            r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}"#,
+        ),
     );
     write(
         "state/arrangement/instance.json",

@@ -12,7 +12,7 @@
 //! its knob and on the display, and does not drag ([`Lanes`]).
 
 use gpui::{Context, Entity, Point, Window, div, point, prelude::*};
-use sound_core::{Instance, ProjectEvent, State};
+use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
@@ -21,7 +21,7 @@ use sound_ui::components::knob::{
     Knob, ParameterKnob, hertz_readout, milliseconds_readout, percent_readout, seconds_readout,
 };
 use sound_ui::components::toggle::Toggle;
-use sound_ui::{ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback};
+use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
 
 use crate::{
     DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PRE_DELAY, Reverb, ReverbState, SIZE, WIDTH,
@@ -35,13 +35,16 @@ pub const NAME: &str = "Reverb";
 /// gives the reverb.
 const DISPLAY_WIDTH: f32 = 200.;
 
-/// Registers the view of the `reverb` tool and what a rack calls one.
+/// Registers the view of the `reverb` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(ReverbView::new);
-    devices.describe::<ReverbState>(|_| DeviceLabel {
-        key: ReverbState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<ReverbState>(
+        NAME,
+        OfferGroup::Space,
+        "device-reverb",
+        crate::EXTENSION,
+        "This project does not load the reverb.",
+    );
 }
 
 /// A knob of the card.

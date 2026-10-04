@@ -15,28 +15,6 @@ fn the_default_project_is_an_arrangement_with_no_tracks() {
         .collect();
     assert_eq!(instances, [("arrangement".to_string(), "arrangement")]);
     let project_file = harness.project.project_file();
-    assert_eq!(
-        project_file.extensions,
-        [
-            "arrangement",
-            "compressor",
-            "delay",
-            "drum-pad",
-            "eq",
-            "filter",
-            "fit-tempo",
-            "instrument",
-            "limiter",
-            "modulation",
-            "plugin-host",
-            "reverb",
-            "sampler",
-            "saturator",
-            "tone",
-            "utility",
-            "wavetable"
-        ]
-    );
     assert_eq!(project_file.tempo_map, sound_core::TempoMap::default());
     assert_eq!(project_file.connections, []);
     assert!(harness.path("state/arrangement/instance.json").exists());

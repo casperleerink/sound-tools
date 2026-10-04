@@ -14,7 +14,7 @@
 use std::f32::consts::FRAC_PI_4;
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
-use sound_core::{Instance, ProjectEvent, State};
+use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
@@ -25,7 +25,7 @@ use sound_ui::components::knob::{
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback,
+    ActiveTheme, ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback,
 };
 
 use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, Utility, UtilityState, WIDTH, matrix};
@@ -37,13 +37,16 @@ pub const NAME: &str = "Utility";
 /// filter and the reverb are.
 const DISPLAY_WIDTH: f32 = 200.;
 
-/// Registers the view of the `utility` tool and what a rack calls one.
+/// Registers the view of the `utility` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(UtilityView::new);
-    devices.describe::<UtilityState>(|_| DeviceLabel {
-        key: UtilityState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<UtilityState>(
+        NAME,
+        OfferGroup::Mix,
+        "device-utility",
+        crate::EXTENSION,
+        "This project does not load the utility.",
+    );
 }
 
 /// A knob of the card. Gain, pan and width have their default in the middle, and their arc

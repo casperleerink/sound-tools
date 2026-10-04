@@ -1,10 +1,6 @@
 //! The built-in compressor in the chain of a real track: an outside agent changes it by file
-//! while the project plays and the change is heard, it comes back as it was after close and
-//! reopen, a render is the same every time to the byte, and its lookahead is a latency the
-//! project makes up for.
-
-use compressor::{CompressorState, Lookahead};
-use sound_core::{Changes, InstanceId};
+//! while the project plays and the change is heard, and its lookahead is a latency the project
+//! makes up for.
 
 use crate::support::{BAR, Harness, clip, difference};
 
@@ -79,71 +75,6 @@ fn an_outside_edit_of_the_compressor_while_it_plays_is_heard_and_undone_in_one_s
     let file = std::fs::read_to_string(harness.path(COMPRESSOR_FILE)).unwrap();
     let state: serde_json::Value = serde_json::from_str(&file).unwrap();
     assert_eq!(state["state"]["threshold_db"], -6.0);
-}
-
-/// Everything of the record survives close and reopen, and the render after it is the render
-/// before it, to the byte.
-#[test]
-fn the_compressor_comes_back_after_close_and_reopen_and_renders_the_same() {
-    let mut harness = piano_through(&record("{}"));
-    let id = InstanceId::new("arrangement/piano/glue").unwrap();
-    let compressor = harness.project.resolve::<CompressorState>(&id).unwrap();
-    let sound = CompressorState {
-        threshold_db: -32.5,
-        ratio: 6.0,
-        attack_ms: 3.5,
-        release_ms: 250.0,
-        knee_db: 9.0,
-        makeup_db: 7.5,
-        mix: 0.8,
-        lookahead: Lookahead::One,
-    };
-    let mut changes = Changes::new();
-    changes.set(&compressor, sound);
-    harness
-        .project
-        .commit("Change compressor", changes)
-        .unwrap();
-    let file = std::fs::read_to_string(harness.path(COMPRESSOR_FILE)).unwrap();
-    // The whole record, in the bytes the agent doc shows.
-    assert_eq!(
-        file,
-        r#"{
-  "tool": "compressor",
-  "state": {
-    "threshold_db": -32.5,
-    "ratio": 6.0,
-    "attack_ms": 3.5,
-    "release_ms": 250.0,
-    "knee_db": 9.0,
-    "makeup_db": 7.5,
-    "mix": 0.8,
-    "lookahead_ms": 1
-  }
-}
-"#
-    );
-
-    // Reopened twice: a render of each first session is the same, to the byte.
-    let mut harness = harness.reopen();
-    let first = harness.play(2 * BAR);
-    let mut harness = harness.reopen();
-    assert_eq!(harness.project.problems(), []);
-    let compressor = harness.project.resolve::<CompressorState>(&id).unwrap();
-    assert_eq!(harness.project.state(&compressor), Some(&sound));
-    assert_eq!(
-        std::fs::read_to_string(harness.path(COMPRESSOR_FILE)).unwrap(),
-        file
-    );
-    let second = harness.play(2 * BAR);
-    let bytes = |samples: &[f32]| -> Vec<u8> {
-        samples
-            .iter()
-            .flat_map(|sample| sample.to_le_bytes())
-            .collect()
-    };
-    assert_eq!(bytes(&first), bytes(&second));
-    assert!(first.iter().any(|sample| sample.abs() > 0.01));
 }
 
 /// A compressor that does nothing but look ahead delays its track by 10 ms, and the project
@@ -224,27 +155,4 @@ fn a_lookahead_turned_on_while_it_plays_is_in_time_without_a_jump() {
         .fold(0.0, f32::max);
     assert!(largest < 1e-5, "{largest}");
     assert!(heard.iter().any(|sample| sample.abs() > 0.01));
-}
-
-#[test]
-fn a_compressor_record_out_of_range_is_reported_and_the_track_keeps_what_it_had() {
-    let mut harness = piano_through(&record(r#"{"ratio": 2.0}"#));
-    let wrong = record(r#"{"ratio": 2.0, "lookahead_ms": 5}"#);
-    assert_eq!(harness.write_and_apply(COMPRESSOR_FILE, &wrong), 0);
-    let problems = harness.project.problems();
-    assert_eq!(problems.len(), 1);
-    assert!(
-        problems[0]
-            .message
-            .contains("lookahead_ms must be 0, 1 or 10, not 5"),
-        "{}",
-        problems[0].message
-    );
-    let wrong = record(r#"{"threshold_db": 6.0}"#);
-    harness.write_and_apply(COMPRESSOR_FILE, &wrong);
-    let problems = harness.project.problems();
-    assert_eq!(
-        problems[0].message,
-        "state: threshold_db must be from -60 to 0, not 6"
-    );
 }

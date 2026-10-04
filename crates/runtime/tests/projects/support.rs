@@ -95,6 +95,15 @@ impl Harness {
         Self::with_test_plugin(folder)
     }
 
+    /// A `project.json` with this tempo map and the extensions this project enables, as an
+    /// agent that changes the tempo map writes the file.
+    pub(crate) fn project_json(&self, tempo_map: &str) -> String {
+        let extensions = serde_json::to_string(&self.project.project_file().extensions).unwrap();
+        format!(
+            r#"{{"format": 1, "extensions": {extensions}, "tempo_map": {tempo_map}, "connections": []}}"#
+        )
+    }
+
     pub(crate) fn reopen(self) -> Self {
         let Self {
             project,

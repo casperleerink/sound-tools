@@ -27,7 +27,7 @@
 use std::path::PathBuf;
 
 use gpui::{AnyElement, Context, Entity, FocusHandle, Point, Task, Window, div, point, prelude::*};
-use sound_core::{Changes, Instance, ProjectEvent, State};
+use sound_core::{Changes, Instance, ProjectEvent};
 use sound_media::{Cached, Imported, Info};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CELL_WIDTH, Cell};
@@ -45,7 +45,7 @@ use sound_ui::components::waveform_display::{
 };
 use sound_ui::import;
 use sound_ui::{
-    ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, Waveforms, every_poll, weak_callback,
+    ControlEdit, Devices, Lanes, OfferGroup, Session, Views, Waveforms, every_poll, weak_callback,
 };
 
 use crate::instrument;
@@ -75,13 +75,16 @@ const SFZ_VALUE: &str = "sfz";
 const LIBRARY_PREFIX: &str = "library:";
 const INSTRUMENT_SELECT_WIDTH: f32 = 2. * CELL_WIDTH - 8.;
 
-/// Registers the card of the `sampler` tool and what a rack calls one.
+/// Registers the card of the `sampler` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(SamplerView::new);
-    devices.describe::<SamplerState>(|_| DeviceLabel {
-        key: SamplerState::TOOL.into(),
-        name: NAME.into(),
-    });
+    devices.built_in::<SamplerState>(
+        NAME,
+        OfferGroup::BuiltIn,
+        "device-sampler",
+        crate::EXTENSION,
+        "This project does not load the sampler.",
+    );
 }
 
 /// A knob of the view on a number with a fixed range.
