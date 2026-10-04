@@ -1361,12 +1361,13 @@ impl Render for TransportPill {
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext, TestAppContext};
+    use plugin_host::{Plugins, ScanCache, ScanCommand};
     use sound_core::{Changes, Engine, InstanceId, Ticks};
     use sound_notes::{Clip, Length};
     use sound_ui::Session;
 
     use super::{KNOB, TransportPill, clock_time, fraction_at, knob_left};
-    use crate::{OFFLINE, add_track, main_arrangement, open_or_create};
+    use crate::{OFFLINE, add_track, main_arrangement, open_or_create_with};
 
     #[test]
     fn the_knob_is_under_the_pointer_for_any_strip_width() {
@@ -1386,7 +1387,13 @@ mod tests {
     fn a_scrub_ends_when_the_project_loses_its_end(cx: &mut TestAppContext) {
         let folder = tempfile::tempdir().unwrap();
         let (control, _engine) = Engine::new(OFFLINE);
-        let (mut project, _plugins) = open_or_create(folder.path(), control).unwrap();
+        // No folder to look in, so no plugin of this machine and the scanner never runs.
+        let plugins = Plugins::new(
+            Vec::new(),
+            ScanCommand::this_program().unwrap(),
+            ScanCache::none(),
+        );
+        let mut project = open_or_create_with(folder.path(), control, plugins).unwrap();
         let arrangement = main_arrangement(&project).unwrap();
         add_track(&mut project, &arrangement).unwrap();
         let mut changes = Changes::new();

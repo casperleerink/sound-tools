@@ -8,13 +8,15 @@
 
 use std::time::{Duration, Instant};
 
-use runtime::{OFFLINE, main_arrangement, open_or_create};
+use runtime::{OFFLINE, main_arrangement};
 use smol::future;
 use sound_agent::{
     AgentEvent, ApprovalAnswer, ApprovalMode, Installed, Provider, Thread, ThreadOptions,
     TurnOutcome, login_shell_environment, program_on_path,
 };
 use sound_core::Engine;
+
+use crate::plugin_hosts::open_or_create;
 
 /// Long enough for the agent to read the docs and write one file.
 const LONGEST_TURN: Duration = Duration::from_secs(300);
@@ -35,7 +37,7 @@ fn clips(project: &sound_core::Project) -> Vec<String> {
 fn the_agent_adds_a_clip_as_one_undo_step() {
     let folder = tempfile::tempdir().unwrap();
     let (control, _engine) = Engine::new(OFFLINE);
-    let (mut project, _plugins) = open_or_create(folder.path(), control).unwrap();
+    let (mut project, _plugins) = open_or_create(folder.path(), control);
     // The track the add track button makes. Its step is not the one the test undoes.
     let arrangement = main_arrangement(&project).unwrap();
     runtime::add_track(&mut project, &arrangement).unwrap();

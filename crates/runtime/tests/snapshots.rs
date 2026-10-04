@@ -123,7 +123,7 @@ use instrument::SynthState;
 use limiter::LimiterState;
 use limiter::view::LimiterView;
 use midi::Played;
-use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand};
+use plugin_host::{PluginFormat, PluginRecord};
 use reverb::ReverbState;
 use reverb::view::ReverbView;
 use runtime::window::Shell;
@@ -136,6 +136,8 @@ use sound_core::{
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{Assets, Session};
 use tempfile::TempDir;
+
+use plugin_hosts::test_plugin_host;
 
 #[path = "snapshots/agent.rs"]
 mod agent;
@@ -153,6 +155,10 @@ mod generated_take;
 mod lanes;
 #[path = "snapshots/modulation.rs"]
 mod modulation;
+// The snapshots always show the test plugin, so they never open a project without one.
+#[path = "shared/plugin_hosts.rs"]
+#[allow(dead_code, clippy::unwrap_used)]
+mod plugin_hosts;
 #[path = "snapshots/sampler.rs"]
 mod sampler;
 #[path = "snapshots/utility.rs"]
@@ -539,19 +545,6 @@ impl Opened {
         )?;
         Ok(times)
     }
-}
-
-/// A plugin host that scans one folder inside the project, with the repository's own test
-/// plugin in it. No plugin of this machine is ever listed, so the picker looks the same in CI.
-fn test_plugin_host(root: &std::path::Path) -> Plugins {
-    let folder = root.join("plugins");
-    test_clap_plugin::install_into(&folder);
-    test_vst3_plugin::install_into(&folder);
-    let scanner = ScanCommand::new(
-        env!("CARGO_BIN_EXE_runtime"),
-        [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
-    );
-    Plugins::new(vec![folder], scanner, ScanCache::none())
 }
 
 /// Puts a plugin record in the `instrument` slot of a track, as picking one does.

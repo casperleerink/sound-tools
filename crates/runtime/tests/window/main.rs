@@ -49,6 +49,8 @@ mod limiter;
 mod modulation;
 mod notes;
 mod piece;
+#[path = "../shared/plugin_hosts.rs"]
+mod plugin_hosts;
 mod rack;
 mod recording;
 mod recording_audio;

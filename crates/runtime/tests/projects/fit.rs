@@ -10,6 +10,7 @@ use sound_core::{Clock, Frames, InstanceId, TempoMap, Ticks};
 use sound_notes::{Clip, RawEvent, RawTake};
 
 use crate::generated_take::{STARTS_AT_US, generated_take};
+use crate::plugin_hosts::open_read_only;
 use crate::support::Harness;
 
 /// The clip a recording of this take would make.
@@ -439,7 +440,7 @@ fn a_read_only_open_writes_nothing() {
     let file = project_json(&harness);
     let clip = clip_json(&harness);
     let folder = harness.project.root().to_path_buf();
-    let (project, _engine, _plugins) = runtime::open_read_only(&folder).unwrap();
+    let (project, _engine, _plugins) = open_read_only(&folder);
     assert!(project.resolve::<FitState>(&fit_id()).is_some());
     drop(project);
     assert_eq!(project_json(&harness), file);
@@ -602,8 +603,7 @@ fn write_an_agent_project() {
 #[ignore = "measures a folder written by a run with an outside agent"]
 fn measure_a_part_against_the_take() {
     let folder = std::env::var("FIT_AGENT_DIR").expect("FIT_AGENT_DIR");
-    let (project, _engine, _plugins) =
-        runtime::open_read_only(std::path::Path::new(&folder)).unwrap();
+    let (project, _engine, _plugins) = open_read_only(std::path::Path::new(&folder));
     let clock = Clock::new(project.project_file().tempo_map.clone(), 48_000);
     let fit = fit_tempo::fit_of(&project).expect("a fit");
     let take_name = project.state(&fit).expect("its state").take.clone();
@@ -873,7 +873,7 @@ fn clip_of_track(
 
 /// A render of the project, read-only, so it works next to a runtime that has it open.
 fn render_of(folder: &std::path::Path) -> Vec<f32> {
-    let (mut project, mut engine, plugins) = runtime::open_read_only(folder).expect("read only");
+    let (mut project, mut engine, plugins) = open_read_only(folder);
     // A render plays the project, as `runtime --render` does: the position only moves then.
     project.engine().play();
     runtime::render(&mut project, &mut engine, &plugins, 48_000 * 70).expect("a render")

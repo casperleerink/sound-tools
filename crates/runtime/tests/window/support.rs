@@ -16,11 +16,13 @@ use gpui::{
 use plugin_host::WeakPlugins;
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use runtime::window::{Shell, TransportPill, bind_keys};
-use runtime::{OFFLINE, open_or_create, views};
+use runtime::{OFFLINE, views};
 use sound_core::{CaptureWriter, Engine, InstanceId, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{POLL_INTERVAL, Playhead, Session};
 use tempfile::TempDir;
+
+use crate::plugin_hosts::{open_or_create, scanner, test_plugin_folders, test_plugin_host};
 
 pub(crate) const BAR: u64 = 3840;
 /// A sixteenth, the snap step.
@@ -93,7 +95,7 @@ pub(crate) fn open_without_extensions<'a>(
         r#"{"tool": "instrument.synth", "state": {}}"#,
     );
     let (control, engine) = Engine::new(OFFLINE);
-    let (mut project, plugins) = open_or_create(folder.path(), control).unwrap();
+    let (mut project, plugins) = open_or_create(folder.path(), control);
     fill(&mut project);
     open_project(cx, folder, project, engine, plugins.downgrade())
 }
@@ -103,7 +105,7 @@ pub(crate) fn open_without_extensions<'a>(
 pub(crate) fn open_new(cx: &mut TestAppContext) -> Opened<'_> {
     let folder = tempfile::tempdir().unwrap();
     let (control, engine) = Engine::new(OFFLINE);
-    let (project, plugins) = open_or_create(folder.path(), control).unwrap();
+    let (project, plugins) = open_or_create(folder.path(), control);
     open_project(cx, folder, project, engine, plugins.downgrade())
 }
 
@@ -120,7 +122,7 @@ pub(crate) fn add_first_track(project: &mut Project) {
 pub(crate) fn open_with(cx: &mut TestAppContext, fill: impl FnOnce(&mut Project)) -> Opened<'_> {
     let folder = tempfile::tempdir().unwrap();
     let (control, engine) = Engine::new(OFFLINE);
-    let (mut project, plugins) = open_or_create(folder.path(), control).unwrap();
+    let (mut project, plugins) = open_or_create(folder.path(), control);
     add_first_track(&mut project);
     fill(&mut project);
     open_project(cx, folder, project, engine, plugins.downgrade())
@@ -188,30 +190,19 @@ pub(crate) fn open_without_plugin_host(cx: &mut TestAppContext) -> Opened<'_> {
     open_project(cx, folder, project, engine, plugins.downgrade())
 }
 
-/// A plugin host that scans one folder with the test plugin in it. The scanner is the real
-/// `runtime` executable, so a scan starts the child process the application starts.
-pub(crate) fn test_plugin_host(root: &Path) -> plugin_host::Plugins {
-    slow_test_plugin_host(root, 0)
-}
-
-/// The same with every bundle taking `milliseconds` to be listed, as the real bundles of a
-/// machine do. A window opened while that runs sees what a picker holds before the scan has
-/// found anything.
+/// The host of the test plugin with every bundle taking `milliseconds` to be listed, as the
+/// real bundles of a machine do. A window opened while that runs sees what a picker holds
+/// before the scan has found anything.
 pub(crate) fn slow_test_plugin_host(root: &Path, milliseconds: u64) -> plugin_host::Plugins {
-    let folder = root.join("plugins");
-    test_clap_plugin::install_into(&folder);
-    test_vst3_plugin::install_into(&folder);
-    let mut scanner = plugin_host::ScanCommand::new(
-        env!("CARGO_BIN_EXE_runtime"),
-        [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
+    let scanner = scanner().with_environment(
+        test_plugin_support::SLOW_VARIABLE,
+        &milliseconds.to_string(),
     );
-    if milliseconds > 0 {
-        scanner = scanner.with_environment(
-            test_plugin_support::SLOW_VARIABLE,
-            &milliseconds.to_string(),
-        );
-    }
-    plugin_host::Plugins::new(vec![folder], scanner, plugin_host::ScanCache::none())
+    plugin_host::Plugins::new(
+        test_plugin_folders(root),
+        scanner,
+        plugin_host::ScanCache::none(),
+    )
 }
 
 /// The id of the repository's test plugin in `format`. The two are the same instrument in the
@@ -310,7 +301,7 @@ pub(crate) fn open_with_input(
 ) -> (Opened<'_>, SimulatedInput) {
     let folder = tempfile::tempdir().unwrap();
     let (control, engine) = Engine::new(OFFLINE);
-    let (mut project, plugins) = open_or_create(folder.path(), control).unwrap();
+    let (mut project, plugins) = open_or_create(folder.path(), control);
     add_first_track(&mut project);
     fill(&mut project);
     let input = SimulatedInput::default();

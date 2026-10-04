@@ -13,12 +13,13 @@ use gpui::{
     prelude::*, px,
 };
 use runtime::window::{Shell, bind_keys};
-use runtime::{OFFLINE, main_arrangement, open_or_create};
+use runtime::{OFFLINE, main_arrangement};
 use sound_core::{Changes, Engine, Instance, InstanceId, Ticks};
 use sound_notes::Clip;
 use sound_ui::components::text_input::TextInput;
 use sound_ui::{Devices, POLL_INTERVAL, Session, Views};
 
+use crate::plugin_hosts::open_or_create;
 use crate::support::{self, BAR, Opened, TOP_ROW};
 
 impl Opened<'_> {
@@ -239,7 +240,7 @@ impl Render for FieldView {
 fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppContext) {
     let folder = tempfile::tempdir().unwrap();
     let (control, mut engine) = Engine::new(OFFLINE);
-    let (mut project, _plugins) = open_or_create(folder.path(), control).unwrap();
+    let (mut project, _plugins) = open_or_create(folder.path(), control);
     let arrangement = main_arrangement(&project).unwrap();
     runtime::add_track(&mut project, &arrangement).unwrap();
     cx.update(sound_ui::init);

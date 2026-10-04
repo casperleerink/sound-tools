@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{AppContext, Entity, Focusable, TestAppContext};
+use runtime::OFFLINE;
 use runtime::window::{LeftPanel, LeftPanelSlot};
-use runtime::{OFFLINE, open_or_create};
 use sound_agent::{
     Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Command, Entry, ExitReason,
     Installed, Model, Sidebar, StepId, StepOutcome, Thread, TurnOutcome,
@@ -16,6 +16,7 @@ use sound_agent::{
 use sound_core::Engine;
 use tempfile::TempDir;
 
+use crate::plugin_hosts::open_or_create;
 use crate::support::{self, Opened, mark, one_undo_step, write_outside};
 
 /// The sidebar with a `claude` that cannot start, so no test ever runs the real one: a test
@@ -58,7 +59,7 @@ fn install_sidebar_with(
 /// The same project folder in a new window, as quitting and starting the app gives.
 fn open_again(cx: &mut TestAppContext, folder: TempDir) -> Opened<'_> {
     let (control, engine) = Engine::new(OFFLINE);
-    let (project, plugins) = open_or_create(folder.path(), control).unwrap();
+    let (project, plugins) = open_or_create(folder.path(), control);
     let opened = support::open_project(cx, folder, project, engine, plugins.downgrade());
     // The sidebar reads the saved thread in the background.
     opened.cx.run_until_parked();
