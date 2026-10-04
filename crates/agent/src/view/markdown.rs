@@ -13,8 +13,8 @@ use gpui::{
 };
 use pulldown_cmark::{Alignment, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
 
-use crate::theme::{ActiveTheme, Theme};
-use crate::typography::MONO;
+use sound_ui::typography::MONO;
+use sound_ui::{ActiveTheme, Theme};
 
 /// A parsed message. Cheap to clone, so a view keeps it and hands it to every frame.
 #[derive(Clone, Debug, Default, PartialEq)]

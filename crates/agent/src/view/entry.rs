@@ -8,8 +8,8 @@ use gpui::{AnyElement, App, ClickEvent, ElementId, SharedString, Window, div, pr
 use sound_core::Problem;
 use sound_ui::ActiveTheme;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
-use sound_ui::components::markdown::{Markdown, MarkdownText};
 
+use super::markdown::{Markdown, MarkdownText};
 use crate::StepOutcome;
 use crate::TurnOutcome;
 use crate::conversation::Turn;
