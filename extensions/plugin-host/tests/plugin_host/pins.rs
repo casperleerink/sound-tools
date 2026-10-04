@@ -435,10 +435,37 @@ fn a_pin_that_changes_while_the_plugin_starts_again_does_not_load_it_again() {
     }
 }
 
-/// A turn of a knob whose record is deleted in the middle of it ends at once, as one undo
-/// step, and does not bring the record back.
+/// A plugin started again gets the pins of its record before its first block, with no poll of
+/// the pins in between: on a device the new audio side may play before the next poll does.
 #[test]
-fn a_turn_whose_record_is_deleted_ends_and_leaves_the_record_deleted() {
+fn a_plugin_started_again_has_its_pins_before_its_first_block() {
+    for format in FORMATS {
+        tell_the_plugin(None, None);
+        let full = full_level(format);
+        let played = vec![on(0, 60, 100), on(1024, LATENCY_KEY, 10), on(4096, 60, 100)];
+        let mut harness = Harness::new();
+        harness.add_track(pinned(format, 1.0), played);
+        harness.project.engine().play();
+        let start = Instant::now();
+        steps(&mut harness, 0..3, start);
+        // Changed while the plugin starts again, and never followed by the poll of the pins.
+        set_pin(&mut harness, level(format), 0.25);
+        let mut left = Vec::new();
+        for _ in 3..12 {
+            left.extend(harness.render_without_polling(512).left());
+            harness.plugins.poll(&harness.project);
+            harness.plugins.send_restarts(&mut harness.project);
+        }
+        let after = peak(&left[3072..]);
+        assert!(is_near(after, full / 4.0), "{format:?}: {after} of {full}");
+    }
+}
+
+/// A turn of a knob whose record is deleted in the middle of it ends at once, with no step of
+/// its own: the delete is the one undo step, and undoing it brings the record back as it was
+/// before the turn.
+#[test]
+fn a_turn_whose_record_is_deleted_ends_and_the_delete_is_the_one_step() {
     for format in FORMATS {
         tell_the_plugin(None, None);
         let mut harness = Harness::new();
@@ -458,14 +485,12 @@ fn a_turn_whose_record_is_deleted_ends_and_leaves_the_record_deleted() {
             .resolve::<PluginRecord>(&id("track/instrument"));
         assert!(record.is_none(), "{format:?}");
         assert!(!harness.path("state/track/instrument.json").exists());
+        assert_eq!(harness.project.undo_label(), Some("Delete"), "{format:?}");
+        harness.project.undo().unwrap();
+        assert_eq!(written_value(&harness, level(format)), 1.0, "{format:?}");
         assert_eq!(
             harness.project.undo_label(),
-            Some("Change Level"),
-            "{format:?}"
-        );
-        harness.project.undo().unwrap();
-        assert!(
-            harness.path("state/track/instrument.json").exists(),
+            Some("Add track"),
             "{format:?}"
         );
     }
@@ -513,6 +538,37 @@ fn a_vst3_report_older_than_a_value_the_host_sent_is_left_out() {
     let errors = harness.plugins.follow_pins_at(&mut harness.project, start);
     assert!(errors.is_empty(), "{errors:?}");
     steps(&mut harness, 3..30, start);
+    assert_eq!(plugin_value(&harness, level(format)), 0.25);
+    assert_eq!(written_value(&harness, level(format)), 0.25);
+}
+
+/// The same with the edit ring of the processor full: the last value the host sends waits for
+/// room, and a report the processor makes meanwhile is older than it, though it comes from a
+/// block that took every edit that had room.
+#[test]
+fn a_vst3_report_made_while_a_sent_value_waits_for_room_is_left_out() {
+    tell_the_plugin(None, None);
+    let format = PluginFormat::Vst3;
+    let mut harness = Harness::new();
+    let played = vec![on(0, 60, 100), on(1024, LEVEL_KEY, 64)];
+    harness.add_track(pinned(format, 1.0), played);
+    harness.project.engine().play();
+    let start = Instant::now();
+    steps(&mut harness, 0..2, start);
+    // More values than the ring holds before a block plays, each another one so each is sent:
+    // the last ones wait, and the last of all is a quarter.
+    for step in 0..520 {
+        let value = match step {
+            519 => 0.25,
+            even if even % 2 == 0 => 0.75,
+            _ => 0.7,
+        };
+        set_pin(&mut harness, level(format), value);
+        let errors = harness.plugins.follow_pins_at(&mut harness.project, start);
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+    // The block that takes the ring and reports a half of its own, then the rest.
+    steps(&mut harness, 2..30, start);
     assert_eq!(plugin_value(&harness, level(format)), 0.25);
     assert_eq!(written_value(&harness, level(format)), 0.25);
 }

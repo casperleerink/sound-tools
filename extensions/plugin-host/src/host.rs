@@ -1377,7 +1377,8 @@ impl Plugins {
     pub fn send_restarts(&self, project: &mut Project) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
         // Outside the borrow of the table: the engine is the project's.
-        for (id, plugin_id, update) in self.restarts(&mut problems) {
+        let updates = self.restarts(project, &mut problems);
+        for (id, plugin_id, update) in updates {
             if let Err(error) = project.send::<HostedPlugin>(&id, crate::PROCESSOR, update) {
                 problems.push(PluginProblem::DidNotRestart {
                     plugin_id,
@@ -1447,18 +1448,23 @@ impl Plugins {
             });
             errors.extend(written.err());
         }
-        // A turn ends with its plugin too: a record that went or names another plugin. It
-        // finishes and does not cancel, because cancelling would bring a deleted record back.
         let hands: BTreeMap<&InstanceId, Hand> =
             moved.iter().map(|(id, moved)| (id, moved.hand)).collect();
-        let (ended, open): (BTreeMap<_, _>, BTreeMap<_, _>) =
-            gestures.into_iter().partition(|(id, gesture)| {
-                hands.get(id).is_none_or(|hand| gesture.is_over(*hand, now))
-            });
-        *self.0.gestures.borrow_mut() = open;
-        for gesture in ended.into_values() {
-            errors.extend(project.finish(gesture.edit).err());
+        let mut open = BTreeMap::new();
+        for (id, gesture) in gestures {
+            match hands.get(&id) {
+                Some(hand) if !gesture.is_over(*hand, now) => {
+                    open.insert(id, gesture);
+                }
+                Some(_) => errors.extend(project.finish(gesture.edit).err()),
+                // Its record went, or names another plugin: that edit is the last write and
+                // its step already starts from before the turn, so the turn makes no step of
+                // its own. Finishing would be a second step for one delete, and cancelling
+                // would bring the record back.
+                None => project.abandon(gesture.edit),
+            }
         }
+        *self.0.gestures.borrow_mut() = open;
         errors
     }
 
@@ -1483,6 +1489,7 @@ impl Plugins {
     /// Gives what to send the engine, for which instance.
     fn restarts(
         &self,
+        project: &Project,
         problems: &mut Vec<PluginProblem>,
     ) -> Vec<(InstanceId, String, HostedUpdate)> {
         let mut table = self.0.table.borrow_mut();
@@ -1501,8 +1508,11 @@ impl Plugins {
                         hosted.restart = Restart::Idle;
                         // What was on its way to the old audio side went with it, and the
                         // record may have changed meanwhile: every pin goes again, as the
-                        // record has it, at the next [`Self::follow_pins`].
+                        // record has it, ahead of the first block of the new audio side.
                         hosted.pins.clear();
+                        if let Some(record) = record_of(project, id) {
+                            hosted.send_pins(record);
+                        }
                         updates.push((id.clone(), hosted.plugin_id.clone(), Some(started)));
                     }
                     Some(Err(problem)) => {
