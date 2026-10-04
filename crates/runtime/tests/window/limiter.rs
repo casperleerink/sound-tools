@@ -59,55 +59,12 @@ fn card(opened: &mut Opened<'_>) -> Entity<LimiterView> {
     view.unwrap().downcast::<LimiterView>().ok().unwrap()
 }
 
-#[gpui::test]
-fn add_effect_puts_a_limiter_with_its_card_on_the_track(cx: &mut TestAppContext) {
-    let mut opened = open_panel(cx);
-    assert_eq!(state(&mut opened), LimiterState::default());
-    card(&mut opened);
-    // Every control is shown, so there is nothing to expand.
-    for shown in [
-        "knob-gain_db",
-        "knob-release_ms",
-        "knob-ceiling_db",
-        "handle-ceiling",
-        "lookahead",
-    ] {
-        assert!(opened.find(shown).is_some(), "{shown}");
-    }
-    assert_eq!(opened.find("card-limiter-expand"), None);
-
-    // One undo takes it off again.
-    opened.edit(|project| project.undo().map(|_| ()));
-    assert!(!opened.path(LIMITER_FILE).exists());
-}
-
-#[gpui::test]
-fn a_knob_drag_is_one_undo_step_written_once(cx: &mut TestAppContext) {
-    let mut opened = open_panel(cx);
-    let before = file(&mut opened);
-    let knob = opened.control("knob-gain_db");
-    opened.press(knob);
-    opened.drag_to(point(knob.x, knob.y - px(20.)));
-    // Heard during the drag, not written until it ends.
-    let moving = state(&mut opened).gain_db;
-    assert!(moving > LimiterState::default().gain_db);
-    assert_eq!(file(&mut opened), before);
-    opened.drag_to(point(knob.x, knob.y - px(40.)));
-    opened.release(point(knob.x, knob.y - px(40.)));
-    let after = state(&mut opened).gain_db;
-    assert!(after > moving);
-    assert_eq!(opened.undo_label().as_deref(), Some("Change gain"));
-    assert!(file(&mut opened).contains(&format!("\"gain_db\": {after:?}")));
-
-    opened.edit(|project| project.undo().map(|_| ()));
-    assert_eq!(state(&mut opened), LimiterState::default());
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Limiter"));
-}
-
 /// The ceiling handle moves up and down only, and stops at the ends of the range.
 #[gpui::test]
 fn a_drag_of_the_ceiling_handle_changes_the_ceiling(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
+    // Every control is shown, so there is nothing to expand.
+    assert_eq!(opened.find("card-limiter-expand"), None);
     let default = LimiterState::default();
     let handle = opened.control("handle-ceiling");
     opened.drag(handle, point(handle.x - px(30.), handle.y + px(20.)));
@@ -192,77 +149,4 @@ fn the_reduction_shows_while_the_track_plays(cx: &mut TestAppContext) {
     }
     let reduction = opened.cx.read(|cx| view.read(cx).reduction_db());
     assert!(reduction > 3.0, "{reduction}");
-}
-
-/// How loud the track plays, from its left channel: the mean level of a stretch of it once it
-/// has started.
-fn loudness(opened: &mut Opened<'_>) -> f32 {
-    opened.settle();
-    opened.cx.update(|_, cx| {
-        let session = opened.session.clone();
-        session.update(cx, |session, _| session.engine().play());
-    });
-    opened.settle();
-    opened.render(12_000);
-    let render = opened.render(12_000);
-    let left: Vec<f32> = render.iter().step_by(2).copied().collect();
-    left.iter().map(|sample| sample.abs()).sum::<f32>() / left.len() as f32
-}
-
-/// The limiter gets the power icon of every effect: it bypasses the slot, the record of the
-/// limiter stays, and the track sounds as it does without it. One undo step each way. It has no
-/// lookahead here: a change of latency is a jump of the transport, which ends the held note.
-#[gpui::test]
-fn the_power_icon_bypasses_the_limiter_as_one_undo_step(cx: &mut TestAppContext) {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        let note = support::note(0, 4 * support::BAR, 64);
-        let part = support::clip(0, 4 * support::BAR, vec![note]);
-        changes.create(id("arrangement/track-1/part"), part);
-        let track = project
-            .resolve::<arrangement::TrackState>(&id("arrangement/track-1"))
-            .unwrap();
-        let slot = arrangement::add_effect(project, &mut changes, &track, "Limiter").unwrap();
-        // A loud synth into the lowest ceiling, so it is held far under where it plays.
-        let synth = project
-            .resolve::<instrument::SynthState>(&id("arrangement/track-1/instrument"))
-            .unwrap();
-        let loud = instrument::SynthState {
-            gain: 1.0,
-            ..*project.state(&synth).unwrap()
-        };
-        changes.set(&synth, loud);
-        let sound = LimiterState {
-            ceiling_db: limiter::CEILING.min,
-            lookahead: Lookahead::Off,
-            ..LimiterState::default()
-        };
-        changes.create(slot, sound);
-        project.commit("Add clip and limiter", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    let limited = loudness(&mut opened);
-    assert!(limited > 0.0);
-
-    let power = opened.control("card-limiter-power");
-    opened.click(power);
-    assert_eq!(opened.undo_label().as_deref(), Some("Turn off Limiter"));
-    let track = std::fs::read_to_string(opened.path("state/arrangement/track-1/instance.json"));
-    assert!(
-        track
-            .unwrap()
-            .contains(r#"{"name": "limiter", "bypass": true}"#)
-    );
-    assert!(opened.path(LIMITER_FILE).exists());
-    let plain = loudness(&mut opened);
-    assert!(limited < plain * 0.3, "{plain} and {limited}");
-
-    opened.keys("cmd-z");
-    let back = loudness(&mut opened);
-    assert!(
-        (back - limited).abs() < limited * 0.05,
-        "{limited} then {back}"
-    );
 }

@@ -2,7 +2,6 @@
 //! from the control at the end of the rack, and every edit of it is one undo step written once.
 
 use gpui::{TestAppContext, point, px};
-use modulation::view::ModulationView;
 use modulation::{Mode, ModulationState};
 
 use crate::support::{self, Opened, id};
@@ -39,57 +38,6 @@ fn state(opened: &mut Opened<'_>) -> ModulationState {
 
 fn file(opened: &mut Opened<'_>) -> String {
     std::fs::read_to_string(opened.path(MODULATION_FILE)).unwrap()
-}
-
-#[gpui::test]
-fn add_effect_puts_a_modulation_with_its_card_on_the_track(cx: &mut TestAppContext) {
-    let mut opened = open_panel(cx);
-    assert_eq!(state(&mut opened), ModulationState::default());
-    let panel = opened.track_panel().unwrap();
-    let view = opened.cx.read(|cx| {
-        let mut views = panel.read(cx).device_views();
-        views.nth(1).unwrap().cloned()
-    });
-    assert!(view.unwrap().downcast::<ModulationView>().is_ok());
-    // The shown controls, and none of the hidden ones.
-    for shown in [
-        "knob-rate_hz",
-        "knob-depth",
-        "knob-feedback",
-        "knob-mix",
-        "handle-depth",
-        "handle-spread",
-    ] {
-        assert!(opened.find(shown).is_some(), "{shown}");
-    }
-    assert_eq!(opened.find("knob-spread"), None);
-
-    // One undo takes it off again.
-    opened.edit(|project| project.undo().map(|_| ()));
-    assert!(!opened.path(MODULATION_FILE).exists());
-}
-
-#[gpui::test]
-fn a_knob_drag_is_one_undo_step_written_once(cx: &mut TestAppContext) {
-    let mut opened = open_panel(cx);
-    let before = file(&mut opened);
-    let knob = opened.control("knob-feedback");
-    opened.press(knob);
-    opened.drag_to(point(knob.x, knob.y - px(20.)));
-    // Heard during the drag, not written until it ends.
-    let moving = state(&mut opened).feedback;
-    assert!(moving > ModulationState::default().feedback);
-    assert_eq!(file(&mut opened), before);
-    opened.drag_to(point(knob.x, knob.y - px(40.)));
-    opened.release(point(knob.x, knob.y - px(40.)));
-    let after = state(&mut opened).feedback;
-    assert!(after > moving);
-    assert_eq!(opened.undo_label().as_deref(), Some("Change feedback"));
-    assert!(file(&mut opened).contains(&format!("\"feedback\": {after:?}")));
-
-    opened.edit(|project| project.undo().map(|_| ()));
-    assert_eq!(state(&mut opened), ModulationState::default());
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Modulation"));
 }
 
 /// The mode is one click and one step, and the file says it.
@@ -153,81 +101,4 @@ fn expand_shows_the_spread(cx: &mut TestAppContext) {
     let expand = opened.control("card-modulation-expand");
     opened.click(expand);
     assert_eq!(opened.find("knob-spread"), None);
-}
-
-/// An agent edits the file while the card is open: the card shows it at once.
-#[gpui::test]
-fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
-    let mut opened = open_panel(cx);
-    let path = opened.path(MODULATION_FILE);
-    std::fs::write(
-        &path,
-        r#"{"tool": "modulation", "state": {"mode": "phaser", "depth": 0.9}}"#,
-    )
-    .unwrap();
-    opened.edit(|project| project.apply_outside_changes(&[path]).map(|_| ()));
-    assert_eq!(state(&mut opened).mode, Mode::Phaser);
-    // The segments show what the file says: a click on chorus is a change again.
-    let chorus = opened.control("segment-chorus");
-    opened.click(chorus);
-    assert_eq!(state(&mut opened).mode, Mode::Chorus);
-    assert_eq!(opened.undo_label().as_deref(), Some("Change mode"));
-}
-
-/// How far apart the two channels of what the track plays are, against its level. The synth
-/// plays the same in both, so a track without the modulation is 0 and a spread one is not.
-fn stereo(opened: &mut Opened<'_>) -> f32 {
-    opened.settle();
-    opened.cx.update(|_, cx| {
-        let session = opened.session.clone();
-        session.update(cx, |session, _| session.engine().play());
-    });
-    opened.settle();
-    opened.render(12_000);
-    let render = opened.render(12_000);
-    let apart: f32 = render
-        .chunks(2)
-        .map(|frame| (frame[0] - frame[1]).abs())
-        .sum();
-    let level: f32 = render.iter().map(|sample| sample.abs()).sum();
-    apart / level
-}
-
-/// The modulation gets the power icon of every effect: it bypasses the slot, the record stays,
-/// and the track sounds as it does without it. One undo step each way.
-#[gpui::test]
-fn the_power_icon_bypasses_the_modulation_as_one_undo_step(cx: &mut TestAppContext) {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        let note = support::note(0, 4 * support::BAR, 64);
-        let part = support::clip(0, 4 * support::BAR, vec![note]);
-        changes.create(id("arrangement/track-1/part"), part);
-        project.commit("Add clip", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    let plain = stereo(&mut opened);
-    assert_eq!(plain, 0.0);
-    let trigger = opened.control("add-effect");
-    opened.click(trigger);
-    let row = opened.control("menu-modulation");
-    opened.click(row);
-    let wide = stereo(&mut opened);
-    assert!(wide > 0.01, "{wide}");
-
-    let power = opened.control("card-modulation-power");
-    opened.click(power);
-    assert_eq!(opened.undo_label().as_deref(), Some("Turn off Modulation"));
-    let track = std::fs::read_to_string(opened.path("state/arrangement/track-1/instance.json"));
-    assert!(
-        track
-            .unwrap()
-            .contains(r#"{"name": "modulation", "bypass": true}"#)
-    );
-    assert!(opened.path(MODULATION_FILE).exists());
-    assert_eq!(stereo(&mut opened), 0.0);
-
-    opened.keys("cmd-z");
-    assert!(stereo(&mut opened) > 0.01);
 }

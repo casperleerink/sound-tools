@@ -63,33 +63,6 @@ fn shown_shape(opened: &mut Opened<'_>) -> Option<String> {
         .read(|cx| view.read(cx).shown_shape(cx).map(str::to_owned))
 }
 
-#[gpui::test]
-fn add_effect_puts_an_eq_with_its_card_on_the_track(cx: &mut TestAppContext) {
-    let mut opened = open_panel(cx);
-    assert_eq!(state(&mut opened), EqState::default());
-    view(&mut opened);
-    // The shown controls, and none of the hidden ones.
-    for shown in [
-        "knob-frequency_hz",
-        "knob-gain_db",
-        "knob-q",
-        "shape",
-        "handle-band-1",
-        "handle-band-2",
-        "handle-band-3",
-        "handle-band-4",
-    ] {
-        assert!(opened.find(shown).is_some(), "{shown}");
-    }
-    assert_eq!(opened.find("knob-output_gain_db"), None);
-    assert_eq!(opened.find("toggle-band-1-on"), None);
-    assert_eq!(selected(&mut opened), 0);
-
-    // One undo takes it off again.
-    opened.edit(|project| project.undo().map(|_| ()));
-    assert!(!opened.path(EQ_FILE).exists());
-}
-
 /// A click on a handle selects its band and is no edit. The knobs then change that band only.
 #[gpui::test]
 fn a_click_on_a_handle_selects_its_band_and_the_knobs_follow(cx: &mut TestAppContext) {
@@ -236,7 +209,7 @@ fn the_number_keys_select_a_band(cx: &mut TestAppContext) {
 /// card is open: the card shows it at once. Band 1 is now a notch, which has no gain, so its
 /// handle moves only sideways.
 #[gpui::test]
-fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
+fn the_shape_select_follows_the_selected_band_and_an_outside_edit(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     assert_eq!(shown_shape(&mut opened).as_deref(), Some("low_shelf"));
     let handle = opened.control("handle-band-3");
@@ -259,75 +232,4 @@ fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
     let handle = opened.control("handle-band-1");
     opened.drag(handle, point(handle.x, handle.y - px(40.)));
     assert_eq!(state(&mut opened).bands[0].gain_db, 0.0);
-}
-
-/// How bright the track sounds: the mean step of the output against its mean level.
-fn brightness(opened: &mut Opened<'_>) -> f32 {
-    opened.settle();
-    opened.cx.update(|_, cx| {
-        let session = opened.session.clone();
-        session.update(cx, |session, _| session.engine().play());
-    });
-    opened.settle();
-    opened.render(12_000);
-    let render = opened.render(12_000);
-    let left: Vec<f32> = render.iter().step_by(2).copied().collect();
-    let steps: f32 = left.windows(2).map(|pair| (pair[1] - pair[0]).abs()).sum();
-    let level: f32 = left.iter().map(|sample| sample.abs()).sum();
-    steps / level
-}
-
-/// The EQ gets the power icon of every effect from the rack: it bypasses the slot, the record
-/// of the EQ stays, and the track sounds as it does without it. One undo step each way.
-#[gpui::test]
-fn the_power_icon_bypasses_the_eq_as_one_undo_step(cx: &mut TestAppContext) {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        let note = support::note(0, 4 * support::BAR, 64);
-        let part = support::clip(0, 4 * support::BAR, vec![note]);
-        changes.create(id("arrangement/track-1/part"), part);
-        project.commit("Add clip", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    let plain = brightness(&mut opened);
-    let trigger = opened.control("add-effect");
-    opened.click(trigger);
-    let row = opened.control("menu-eq");
-    opened.click(row);
-    // Band 4 a high cut low enough to hear: the default synth is bright.
-    let trigger = opened.control("shape");
-    let handle = opened.control("handle-band-4");
-    opened.click(handle);
-    opened.click(trigger);
-    let row = opened.control("menu-high_cut");
-    opened.click(row);
-    let frequency = opened.control("knob-frequency_hz");
-    opened.drag(frequency, frequency + point(px(0.), px(150.)));
-    let filtered = brightness(&mut opened);
-    assert!(filtered < plain * 0.7, "{plain} then {filtered}");
-
-    let power = opened.control("card-eq-power");
-    opened.click(power);
-    assert_eq!(opened.undo_label().as_deref(), Some("Turn off EQ"));
-    let track = std::fs::read_to_string(opened.path("state/arrangement/track-1/instance.json"));
-    assert!(track.unwrap().contains(r#"{"name": "eq", "bypass": true}"#));
-    assert!(opened.path(EQ_FILE).exists());
-    let bypassed = brightness(&mut opened);
-    assert!(
-        (bypassed - plain).abs() < plain * 0.05,
-        "{plain} then {bypassed}"
-    );
-
-    opened.keys("cmd-z");
-    let back = brightness(&mut opened);
-    assert!(
-        (back - filtered).abs() < filtered * 0.05,
-        "{filtered} then {back}"
-    );
-    let power = opened.control("card-eq-power");
-    opened.click(power);
-    opened.click(power);
-    assert_eq!(opened.undo_label().as_deref(), Some("Turn on EQ"));
 }

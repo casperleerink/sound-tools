@@ -15,6 +15,8 @@
 //! - `instruments`: picking the instrument of a track, and the plugin's own window.
 //! - `drum_pad`: the card of the Drum pad: its pads, its keys and samples dropped on it.
 //! - `effects`: adding and removing effects in the rack.
+//! - `built_in_effects`: what every built-in effect does in the rack: added, a knob dragged,
+//!   edited from outside. The file of a device holds what only that device does.
 //! - `wavetable`: the card of the Wavetable: the drag on its wavetable, its matrix and the
 //!   switches of its sections.
 //! - `fit`: fitting the tempo to a take, and the steadiness in the transport.
@@ -33,6 +35,7 @@
 mod agent;
 mod audio;
 mod automation_lanes;
+mod built_in_effects;
 mod clip_automation;
 mod clips;
 mod compressor;
