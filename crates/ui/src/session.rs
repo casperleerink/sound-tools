@@ -276,19 +276,32 @@ impl Session {
 
     /// Runs the behaviours of these instances again, with the records they already have.
     ///
-    /// It is not an edit: nothing is written and there is no undo step. It is for a service
-    /// outside the project that can do more now than it could before, so far only the plugin
-    /// host: its scan has found a plugin a record was waiting for, or a VST 3 plugin asked to be
-    /// unloaded and loaded again (`kReloadComponent`).
+    /// It is not an edit: nothing is written and there is no undo step. It is for a view whose
+    /// service outside the project can do more now than it could before, such as the card of a
+    /// Sampler that started a download or put the missing file in place.
     pub fn rebind(&mut self, instances: &[InstanceId], cx: &mut Context<Self>) {
-        for id in instances {
-            if let Err(error) = self.project.rebind(id) {
-                self.report(error, cx);
-            }
+        let failed: Vec<ProjectError> = self.background(cx, |project| {
+            let failed = instances.iter().filter_map(|id| project.rebind(id).err());
+            failed.collect()
+        });
+        for error in failed {
+            self.report(error, cx);
         }
+    }
+
+    /// Runs work on the project that is not an edit, for the services outside the project:
+    /// nothing is written, there is no undo step and the notice of an edit stays. Observers
+    /// hear what it changed.
+    pub fn background<R>(
+        &mut self,
+        cx: &mut Context<Self>,
+        work: impl FnOnce(&mut Project) -> R,
+    ) -> R {
+        let result = work(&mut self.project);
         if self.emit_events(cx) {
             cx.notify();
         }
+        result
     }
 
     /// The last error, for a quiet status surface. The notice of a failed edit stays until

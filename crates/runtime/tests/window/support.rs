@@ -353,42 +353,24 @@ impl Opened<'_> {
         // The sounds of a Drum pad are made on a thread of their own; the window takes them
         // once per poll.
         drum_pad::wait_for_sounds();
-        let session = self.session.clone();
-        self.cx
-            .update(|_, cx| runtime::window::take_drum_sounds(&session, cx));
+        self.poll_plugins();
         self.render(64);
         self.cx.executor().advance_clock(POLL_INTERVAL);
         self.cx.run_until_parked();
         self.poll_plugins();
     }
 
-    /// One poll of the plugin host, which the runtime does on its own timer every 16 ms. It is
-    /// what lets go of a plugin whose record no longer names it, and what closes its window.
+    /// One poll of the background work, which the runtime does on its own timer every 16 ms.
+    /// It is what lets go of a plugin whose record no longer names it, and what closes its
+    /// window.
     pub(crate) fn poll_plugins(&mut self) {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
-        let session = self.session.clone();
-        let scanned = std::mem::replace(&mut self.scanned, plugins.scan_generation());
-        let changed = self.cx.update(|_, cx| {
-            plugins.poll(session.read(cx).project());
-            if plugins.restarts_pending() {
-                session.update(cx, |session, cx| {
-                    session.edit(cx, |project| Ok(plugins.send_restarts(project)))
-                });
-            }
-            plugins.settle_windows(cx);
-            plugins.take_window_change()
-        });
-        // What the window's poll does, in the same order: a frame is asked for while a scan
-        // runs and once more when it learns something or ends, because that is when a menu
-        // that was filled while it ran is filled again.
-        let changed = changed || plugins.scan_is_running() || scanned != self.scanned;
-        if changed {
-            self.cx
-                .update(|_, cx| session.update(cx, |_, cx| cx.notify()));
-            self.cx.run_until_parked();
-        }
+        let (session, scanned) = (self.session.clone(), &mut self.scanned);
+        self.cx
+            .update(|_, cx| runtime::window::tick(&session, &plugins, scanned, cx));
+        self.cx.run_until_parked();
     }
 
     /// Runs the engine for `frames` and gives what it played, interleaved.
