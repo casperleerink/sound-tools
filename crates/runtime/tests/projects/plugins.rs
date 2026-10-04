@@ -320,6 +320,7 @@ fn the_parameters_of_a_plugin_are_listed_with_their_ranges_and_the_names_of_thei
     let expected = [
         "0  Cutoff  20 to 20000  default 1000",
         "1  Wave    0 to 2       default 0     3 steps: 0 = Sine, 1 = Saw, 2 = Square  not automatable",
+        "4  Level   0 to 1       default 1",
     ];
     assert_eq!(clap, expected.join("\n"));
 

@@ -280,8 +280,8 @@ impl TestTone {
 
     /// What the controller shows `Level` at, from a normalized value.
     fn show_level(&self, value: ParamValue) {
-        let level = (value * f64::from(support::FULL_EDIT_LEVEL)).round() as i32;
-        self.shown_level.store(level, Ordering::Release);
+        self.shown_level
+            .store(support::hundredths(value), Ordering::Release);
     }
 
     /// The host, on its own thread, telling the controller about a key that asks for
@@ -322,6 +322,11 @@ impl TestTone {
                 support::log("level_listed", self.plugin, 0);
                 self.level_listed.store(true, Ordering::Release);
                 RestartFlags_::kParamIDMappingChanged
+            }
+            // A hand on the knob of its own window, which asks the host for nothing else.
+            support::EDIT_LEVEL_KEY => {
+                self.edit_the_level(&handler, 4);
+                return;
             }
             _ => return,
         };
@@ -700,8 +705,8 @@ impl IAudioProcessorTrait for TestTone {
                             }
                         }
                         if let Some(value) = last {
-                            let level = (value * f64::from(support::FULL_EDIT_LEVEL)).round();
-                            self.edit_level.store(level as i32, Ordering::Release);
+                            self.edit_level
+                                .store(support::hundredths(value), Ordering::Release);
                         }
                         continue;
                     }
@@ -753,6 +758,7 @@ impl IAudioProcessorTrait for TestTone {
             let mut transposed = false;
             let mut latency_asked = None;
             let mut asked = None;
+            let mut level_set = None;
             loop {
                 let event_at = (next_event < event_count)
                     .then(|| {
@@ -799,10 +805,14 @@ impl IAudioProcessorTrait for TestTone {
                         support::MOVE_PEDAL_KEY,
                         support::DROP_PEDAL_KEY,
                         support::LIST_LEVEL_KEY,
+                        support::EDIT_LEVEL_KEY,
                     ];
                     match support::asked_latency(key, note.velocity) {
                         Some(latency) => latency_asked = Some(latency.min(support::MAX_LATENCY)),
                         None if asks.contains(&key) => asked = Some(key),
+                        None if key == support::LEVEL_KEY => {
+                            level_set = Some(support::hundredths(f64::from(note.velocity)));
+                        }
                         None => audio.tone.note_on(key, note.velocity),
                     }
                 } else if event.r#type == EventTypes_::kNoteOffEvent as u16 {
@@ -813,6 +823,11 @@ impl IAudioProcessorTrait for TestTone {
             if transposed {
                 self.semitones
                     .store(audio.tone.semitones(), Ordering::Release);
+            }
+            // The plugin moving its own `Level`. Only the processor changes here; the host
+            // gives the controller the value it reports, which is how the halves stay in step.
+            if let Some(level) = level_set {
+                self.edit_level.store(level, Ordering::Release);
             }
             audio
                 .tone
@@ -887,6 +902,12 @@ impl IAudioProcessorTrait for TestTone {
                 }
                 if let Some(key) = asked {
                     report(ASK, f64::from(key) / 127.0);
+                }
+                if let Some(level) = level_set {
+                    report(
+                        LEVEL,
+                        f64::from(level) / f64::from(support::FULL_EDIT_LEVEL),
+                    );
                 }
                 for extra in 0..reports {
                     report(TRANSPOSE + 2 + extra, 0.5);
