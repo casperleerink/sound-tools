@@ -363,10 +363,12 @@ impl Vst3Plugin {
         while let Ok(report) = self.changed.pop() {
             changed = true;
             let change = report.change;
-            // A report from before the processor took the latest edit of the parameter: the
-            // edit is what the processor plays now, and the controller already shows it.
+            // A report from before the processor took the latest edit of the parameter, or one
+            // of a parameter whose edit still waits for room: the edit is what the processor
+            // plays once it has it, and the controller already shows it.
             let edited = self.pushed_at.get(&change.id);
-            if edited.is_some_and(|edited| report.edits_taken < *edited) {
+            let older = edited.is_some_and(|edited| report.edits_taken < *edited);
+            if older || self.joined.handler.waits(change.id) {
                 continue;
             }
             self.values.insert(change.id, change.value);

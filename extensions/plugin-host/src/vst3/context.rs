@@ -412,6 +412,12 @@ impl Handler {
             .collect()
     }
 
+    /// Whether an edit of `id` waits for the processor.
+    pub(super) fn waits(&self, id: ParamID) -> bool {
+        let held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
+        held.contains_key(&id)
+    }
+
     /// A value the host sends to the processor, in place of any edit of the same parameter that
     /// waits: it is newer than all of them.
     pub(super) fn put_edit(&self, change: ParameterChange) {
