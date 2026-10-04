@@ -47,10 +47,10 @@ The time signatures are in `project.json`, under `tempo_map.time_signatures`: ru
 
 ## Rules
 
-- Write a file whole, as valid JSON, in one write. Write it the way the runtime does: two spaces of indent, a space after `:` and `,`, a short list or object on one line, a long list with one item per line. Then a later save by the runtime makes no diff.
+- Write a file whole, as valid JSON, in one write.
 - Touch only the files your task needs. Do not reformat or rewrite the others.
 - Leave no temporary, backup or scratch files under `state/`.
-- Pick ids that say what the thing is, unique in their folder: `bass-bars-5-8`, not `clip-1` and not `Bass Line`.
+- Pick ids that say what the thing is, unique in their folder: `bass-verse`, not `clip-1`, `Bass Line` or `bass-bars-5-8`.
 - To delete, remove the file or the folder. To move, move the file.
 - The composer can undo your change. Keep no copies.
 - `AGENTS.md`, `CLAUDE.md`, `problems.txt` and the markdown in `agent-docs/` are written by the runtime. Editing them changes nothing.
