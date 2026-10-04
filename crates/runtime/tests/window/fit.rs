@@ -173,12 +173,19 @@ fn the_action_follows_the_clip_that_is_selected(cx: &mut TestAppContext) {
             project.commit("Add track", changes)
         });
         session.edit(cx, |project| {
-            let clip = project.resolve::<Clip>(&id(CLIP)).unwrap();
-            let track = project
-                .resolve::<arrangement::TrackState>(&id("arrangement/second"))
-                .unwrap();
+            let arrangement = runtime::main_arrangement(project).unwrap();
+            let next = arrangement::AnyClip::read(project, &id(CLIP)).unwrap();
+            let step = arrangement::ClipMove {
+                clip: id(CLIP),
+                home: id(CLIP),
+                was: next.start()..next.end(project),
+                to: project
+                    .resolve::<arrangement::TrackState>(&id("arrangement/second"))
+                    .unwrap(),
+                next,
+            };
             let mut changes = Changes::new();
-            arrangement::move_clip(project, &mut changes, &clip, &track)?;
+            arrangement::move_clips(project, &mut changes, arrangement.id(), vec![step])?;
             project.commit("Move clip", changes)
         });
     });

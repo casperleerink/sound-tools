@@ -949,21 +949,6 @@ impl FreeIds {
     }
 }
 
-/// Moves a clip to another track: a delete and a create in one group, like moving the file.
-/// It keeps its name when the other track has none like it.
-pub fn move_clip(
-    project: &Project,
-    changes: &mut Changes,
-    clip: &Instance<Clip>,
-    to_track: &Instance<TrackState>,
-) -> Result<Instance<Clip>, ProjectError> {
-    let missing = || ProjectError::MissingInstance(clip.id().clone());
-    let state = project.state(clip).ok_or_else(missing)?.clone();
-    let id = project.free_id(&to_track.id().child(clip.id().name())?)?;
-    changes.delete(clip.id());
-    Ok(changes.create(id, state))
-}
-
 /// Plays one note now through the instrument of a track, for [`PREVIEW_SECONDS`], also while
 /// the project does not play: what a note editor calls when a note is clicked, drawn or moved
 /// to a new pitch. The off comes from the sequencer of the track, so the caller has nothing
