@@ -2,22 +2,7 @@
 
 `reverb` is an effect: it puts the sound of a track in a room. A short decay and a small size is a small room, a long decay and a large size a hall. The pre-delay is the gap before the room answers. Freeze holds the tail as it is, for a pad that never ends.
 
-Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the keys play through a reverb named `room`:
-
-```json state/arrangement/keys/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {
-    "name": "Keys",
-    "colour": "lavender",
-    "order": 1,
-    "gain_db": 0.0,
-    "pan": 0.0,
-    "mute": false,
-    "effects": ["room"]
-  }
-}
-```
+Here the keys play through a reverb named `room`:
 
 ```json state/arrangement/keys/room.json
 {

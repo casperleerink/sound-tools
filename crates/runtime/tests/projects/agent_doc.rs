@@ -169,7 +169,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         .iter()
         .flat_map(|(_, text)| json_examples(text))
         .collect();
-    assert_eq!(all.len(), 48);
+    assert_eq!(all.len(), 39);
 
     // The raw take of a recording is not a record: it is an asset the runtime writes once
     // and never reads back. Its example is checked as the file it is.
@@ -198,6 +198,30 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "an example does not name its file: {body}"
         );
         write(folder.path(), path, body);
+    }
+    // The doc of an effect shows only its record. Its track is written here as
+    // `agent-docs/arrangement.md` says: a track record that names the effect in `effects`.
+    let mut tracks: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for (path, body) in &examples {
+        let child = path.strip_prefix("state/arrangement/");
+        let child = child.and_then(|it| it.strip_suffix(".json"));
+        let Some((track, name)) = child.and_then(|it| it.split_once('/')) else {
+            continue;
+        };
+        let has_record = folder
+            .path()
+            .join(format!("state/arrangement/{track}/instance.json"))
+            .exists();
+        let is_clip = body.contains(r#""tool": "arrangement.clip""#);
+        if !has_record && !is_clip {
+            tracks.entry(track).or_default().push(name);
+        }
+    }
+    for (track, effects) in tracks {
+        let state = serde_json::json!({"name": track, "effects": effects});
+        let record = serde_json::json!({"tool": "arrangement.track", "state": state});
+        let path = format!("state/arrangement/{track}/instance.json");
+        write(folder.path(), &path, &record.to_string());
     }
     // The files the audio clip of its doc, the Sampler of its doc and the sample pad of
     // the drums play, which an agent copies in before it writes the record. Five seconds,
