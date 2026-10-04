@@ -55,13 +55,14 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 /// being opened somewhere else. Hence no path of this executable in it.
 const INSPECT_DOC: AgentDoc = AgentDoc {
     name: "inspect",
-    when: "You can run commands and want the whole piece in one read",
+    when: "You can run commands and want the whole piece in one read or as a WAV",
     markdown: "# Inspect from a command line
 
-When you can run commands, the Sound Tools runtime prints where each time signature starts, the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems. It works while the project is open and changes nothing.
+When you can run commands, the Sound Tools runtime prints where each time signature starts, the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems. `--render` writes the piece as a 48 kHz stereo 32-bit float WAV and prints its peak. `--seconds <n>` or `--from <ticks> --to <ticks>` renders part of it. Both work while the project is open and change nothing.
 
 ```sh
 sound-tools . --inspect
+sound-tools . --render /tmp/mix.wav
 ```
 
 `sound-tools` is the command line tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
