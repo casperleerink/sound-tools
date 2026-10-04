@@ -28,9 +28,9 @@ Free sampled instruments for the Sampler: piano, keys, strings, brass, woodwinds
 
 `{"library": "strings/violin-section"}` is enough. As with `sfz`, only `gain_db` of the record applies: the instrument has its own pitch, envelope and velocity response.
 
-An instrument plays once it is downloaded on this machine, once for every project. Nothing downloads by itself: until the composer clicks **Download** on the Sampler card, or picks the instrument there, `problems.txt` says it is not downloaded. Tell the composer which instruments to download and how big they are. A failed download is listed in `problems.txt` too, and **Try again** on the card retries it.
+When an instrument fits, use it and ask the composer to download it, with its size. It plays once they click **Download** on the Sampler card, once for every project on this machine. Until then `problems.txt` says it is not downloaded. A failed download is listed there too, and **Try again** on the card retries it.
 
-Range is where the instrument has samples. Write the parts in the range of the real instrument, which is often narrower. Disk is what the instrument takes on this machine once it is downloaded: tell the composer when you propose one.
+Range is where the instrument has samples. Write the parts in the range of the real instrument, which is often narrower. Disk is its size once downloaded.
 
 | Id | Instrument | Range | Disk |
 | --- | --- | --- | --- |

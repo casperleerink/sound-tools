@@ -111,7 +111,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
     }
     let inspect = files.iter().find(|(path, _)| path.ends_with("/inspect.md"));
     let inspect = &inspect.unwrap().1;
-    assert!(inspect.contains("```sh\nsound-tools . --inspect\n```"));
+    assert!(inspect.contains("```sh\nsound-tools . --inspect\nsound-tools . --render <wav>\n```"));
     assert_eq!(
         std::fs::read_to_string(harness.path("CLAUDE.md")).unwrap(),
         "@AGENTS.md\n"
