@@ -13,7 +13,20 @@ Stop and report at the first step that fails. Never move or delete a tag that wa
 
 ## 1. The new version
 
-The argument is `patch`, `minor`, `major` or a version such as `0.3.0`. No argument means `patch`. `tooling/version.sh` prints the current version. `0.1.4` becomes `0.1.5` for patch, `0.2.0` for minor, `1.0.0` for major. Below, `$VERSION` is the new version, without the `v`: set `VERSION=0.1.5`.
+The argument is `patch`, `minor`, `major` or a version such as `0.3.0`, and it wins. With no argument, decide from what changed since the last release:
+
+```sh
+git describe --tags --abbrev=0 origin/main     # the last release tag
+gh pr list --state merged --base main --search "merged:>=<date of that tag>" --json number,title
+```
+
+- `major`: a project made with the last release no longer opens or sounds different, or something a composer used is gone.
+- `minor`: something new a composer can do or see: a tool, an instrument, a view, a format field.
+- `patch`: only fixes and changes nobody notices.
+
+The largest that applies wins. Say which one and why in one line, before you bump.
+
+`tooling/version.sh` prints the current version. `0.1.4` becomes `0.1.5` for patch, `0.2.0` for minor, `1.0.0` for major. Below, `$VERSION` is the new version, without the `v`: set `VERSION=0.1.5`.
 
 ## 2. Check
 
