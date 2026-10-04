@@ -8,12 +8,17 @@
 //! Nothing the plugin sends out is read: it is given a void event list, which takes every event
 //! and keeps none. A buffer of ours would have to grow while the plugin pushed into it, on the
 //! audio thread, where the sanitizer cannot see it because the plugin's own call is exempt.
+//! What a plugin changed of its parameters is asked for on the main thread instead.
+//!
+//! A value the host sets goes in as a parameter event at the start of a block, through a ring
+//! of a fixed size: CLAP has no main-thread call that sets a value while the plugin is active.
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::gui::{
@@ -21,15 +26,18 @@ use clack_extensions::gui::{
 };
 use clack_extensions::latency::{HostLatency, HostLatencyImpl, PluginLatency};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
-use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
+use clack_extensions::params::{
+    HostParams, HostParamsImplMainThread, HostParamsImplShared, ParamClearFlags, ParamInfoBuffer,
+    ParamInfoFlags, ParamRescanFlags, PluginParams,
+};
 use clack_extensions::render::{PluginRender, RenderMode};
 use clack_extensions::state::{HostState, HostStateImpl, PluginState};
 use clack_host::events::Match;
-use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent};
+use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent};
 use clack_host::prelude::*;
-use sound_core::{MAX_BLOCK, PrepareConfig};
+use sound_core::{MAX_AUTOMATED, MAX_BLOCK, PrepareConfig};
 
-use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
+use crate::backend::{Hand, LoadedPlugin, Opening, ParameterChange, PluginGui, Requests};
 use crate::host::{HOST_NAME, HOST_URL, HOST_VENDOR, HOST_VERSION};
 use crate::parameters::{Parameter, Steps};
 use crate::processor::{
@@ -51,9 +59,15 @@ impl HostHandlers for SoundToolsHost {
         builder
             .register::<HostState>()
             .register::<HostGui>()
-            .register::<HostLatency>();
+            .register::<HostLatency>()
+            .register::<HostParams>();
     }
 }
+
+/// How many values one block can carry into the plugin, apart from the notes: the pins of a
+/// record, which are at most this many. A value that finds the ring full waits on the main
+/// thread for the next poll.
+const VALUE_CAPACITY: usize = MAX_AUTOMATED;
 
 /// Callbacks a plugin may make from any thread. They only note what was asked for; the work
 /// happens in the poll on the main thread.
@@ -120,6 +134,12 @@ impl HostGuiImpl for SharedCallbacks {
     }
 }
 
+impl HostParamsImplShared for SharedCallbacks {
+    /// The host calls `process` for every block while the plugin's track exists, which is a
+    /// flush, so there is nothing to start.
+    fn request_flush(&self) {}
+}
+
 pub(crate) struct MainThreadCallbacks<'a> {
     /// Only here for its lifetime, which ties this handler to the shared one of the same
     /// instance.
@@ -127,6 +147,8 @@ pub(crate) struct MainThreadCallbacks<'a> {
     /// Set by `mark_dirty`, which the plugin may call while it initializes, before the table
     /// knows it.
     state_is_dirty: Cell<bool>,
+    /// The plugin changed its parameters or their names, and the host reads them again.
+    parameters_changed: Cell<bool>,
 }
 
 impl<'a> MainThreadHandler<'a> for MainThreadCallbacks<'a> {}
@@ -135,6 +157,21 @@ impl HostStateImpl for MainThreadCallbacks<'_> {
     fn mark_dirty(&self) {
         self.state_is_dirty.set(true);
     }
+}
+
+impl HostParamsImplMainThread for MainThreadCallbacks<'_> {
+    /// Only a change of the list or its names is noted. New values need nothing: the host asks
+    /// for the values of the pins at every poll anyway.
+    fn rescan(&self, flags: ParamRescanFlags) {
+        let list = ParamRescanFlags::INFO | ParamRescanFlags::TEXT | ParamRescanFlags::ALL;
+        if flags.intersects(list) {
+            self.parameters_changed.set(true);
+        }
+    }
+
+    /// The host keeps nothing about a parameter but the value in a record, which is the
+    /// composer's and stays.
+    fn clear(&self, _param_id: ClapId, _flags: ParamClearFlags) {}
 }
 
 /// A plugin may only change its latency while it is being activated, and says so here. The
@@ -196,6 +233,7 @@ fn instantiate(found: &ScannedPlugin) -> Result<PluginInstance<SoundToolsHost>, 
         |shared| MainThreadCallbacks {
             _shared: shared,
             state_is_dirty: Cell::new(false),
+            parameters_changed: Cell::new(false),
         },
         &entry,
         &identifier,
@@ -209,8 +247,14 @@ fn instantiate(found: &ScannedPlugin) -> Result<PluginInstance<SoundToolsHost>, 
 /// that is never played.
 pub(crate) fn read_parameters(found: &ScannedPlugin) -> Result<Vec<Parameter>, PluginProblem> {
     let mut instance = instantiate(found)?;
-    let Some(params) = params_extension(&instance) else {
-        return Ok(Vec::new());
+    Ok(parameters_of(&mut instance))
+}
+
+/// Every parameter a host may set of a plugin that is made, active or not: CLAP puts these
+/// calls on the main thread either way.
+fn parameters_of(instance: &mut PluginInstance<SoundToolsHost>) -> Vec<Parameter> {
+    let Some(params) = params_extension(instance) else {
+        return Vec::new();
     };
     let plugin = instance.plugin_handle();
     let mut buffer = ParamInfoBuffer::new();
@@ -253,7 +297,7 @@ pub(crate) fn read_parameters(found: &ScannedPlugin) -> Result<Vec<Parameter>, P
         }
         parameters.push(parameter);
     }
-    Ok(parameters)
+    parameters
 }
 
 /// The first value of a stepped parameter and how many it takes. The values of a stepped CLAP
@@ -311,7 +355,7 @@ pub(crate) fn load(
         }
     }
 
-    let (started, ports) = activate(&mut instance, config).map_err(fail)?;
+    let (started, values, ports) = activate(&mut instance, config).map_err(fail)?;
     // The pedal is only missing from a plugin that has somewhere to take notes. A plugin with
     // no note port at all, which is what an ordinary effect is, has no pedal to miss, and this
     // host cannot ask what a record is for. Audio inputs say nothing either way: Six Sines is
@@ -328,17 +372,20 @@ pub(crate) fn load(
             plugin_id: plugin_id.clone(),
             instance,
             created_window: false,
+            values,
+            waiting: BTreeMap::new(),
         }),
         notes,
     })
 }
 
-/// Activates a plugin that is not active, and gives its audio side with what its ports say.
-/// Its latency is read here, after the activation, which is the one moment CLAP lets it change.
+/// Activates a plugin that is not active, and gives its audio side with what its ports say,
+/// and the main thread's end of the values going into it. Its latency is read here, after the
+/// activation, which is the one moment CLAP lets it change.
 fn activate(
     instance: &mut PluginInstance<SoundToolsHost>,
     config: PrepareConfig,
-) -> Result<(ClapStarted, PortLayout), String> {
+) -> Result<(ClapStarted, ValuesIn, PortLayout), String> {
     let ports = read_ports(instance);
     let configuration = PluginAudioConfiguration {
         sample_rate: f64::from(config.sample_rate),
@@ -356,6 +403,8 @@ fn activate(
         // A plugin with no latency extension has none.
         None => 0,
     };
+    let (ring, values) = rtrb::RingBuffer::new(VALUE_CAPACITY);
+    let played = Arc::new(AtomicU64::new(0));
     let started = ClapStarted::new(
         audio.into(),
         ports.dialect,
@@ -363,8 +412,25 @@ fn activate(
         ports.input_channels,
         ports.output_channels,
         latency,
+        values,
+        played.clone(),
     );
-    Ok((started, ports))
+    let values = ValuesIn {
+        ring,
+        pushed: 0,
+        played,
+    };
+    Ok((started, values, ports))
+}
+
+/// The main thread's end of the values going into a plugin's processor, one per audio side.
+struct ValuesIn {
+    ring: rtrb::Producer<ParameterChange>,
+    /// How many values went into the ring, and how many the processor has played: a block takes
+    /// them at its start and counts them once its `process` is over. Equal once every value
+    /// sent is in what the plugin says.
+    pushed: u64,
+    played: Arc<AtomicU64>,
 }
 
 /// One loaded CLAP plugin, from the control thread.
@@ -374,6 +440,25 @@ pub(crate) struct ClapPlugin {
     /// Whether the plugin holds what it made for a window, so that `create` is never called
     /// twice, which CLAP forbids.
     created_window: bool,
+    values: ValuesIn,
+    /// The newest value of each parameter that found the ring full. It goes at the next poll.
+    waiting: BTreeMap<u32, f64>,
+}
+
+impl ClapPlugin {
+    /// Puts what is waiting into the ring, as far as there is room, and keeps the rest.
+    fn send_waiting(&mut self) {
+        let ValuesIn { ring, pushed, .. } = &mut self.values;
+        self.waiting.retain(
+            |&id, &mut value| match ring.push(ParameterChange { id, value }) {
+                Ok(()) => {
+                    *pushed += 1;
+                    false
+                }
+                Err(_) => true,
+            },
+        );
+    }
 }
 
 impl LoadedPlugin for ClapPlugin {
@@ -393,6 +478,7 @@ impl LoadedPlugin for ClapPlugin {
             )
         };
         let (restart, window_closed, size) = self.instance.access_shared_handler(shared);
+        self.send_waiting();
         Requests {
             restart,
             // CLAP has no call that asks to be unloaded: a restart is all it asks for.
@@ -413,6 +499,9 @@ impl LoadedPlugin for ClapPlugin {
                     height: size.height,
                 }
             }),
+            parameters_changed: self
+                .instance
+                .access_handler(|main| main.parameters_changed.replace(false)),
         }
     }
 
@@ -449,6 +538,29 @@ impl LoadedPlugin for ClapPlugin {
         )
     }
 
+    fn parameters(&mut self) -> Vec<Parameter> {
+        parameters_of(&mut self.instance)
+    }
+
+    fn send(&mut self, change: ParameterChange) {
+        // A newer value of a parameter that is still waiting takes its place: only the last
+        // is the one the plugin is to end on.
+        self.waiting.insert(change.id, change.value);
+        self.send_waiting();
+    }
+
+    fn sent_values_played(&mut self) -> bool {
+        self.send_waiting();
+        let played = self.values.played.load(Ordering::Acquire);
+        self.waiting.is_empty() && played >= self.values.pushed
+    }
+
+    /// CLAP says where a hand is in the gesture events of a block's output, which this host
+    /// does not read.
+    fn hand(&mut self) -> Hand {
+        Hand::Unknown
+    }
+
     fn released(&mut self) -> bool {
         // A plugin whose restart failed is not active, and has nothing left to give back.
         !self.instance.is_active() || self.instance.try_deactivate().is_ok()
@@ -462,12 +574,18 @@ impl LoadedPlugin for ClapPlugin {
         if self.instance.is_active() && self.instance.try_deactivate().is_err() {
             return None;
         }
-        let started =
+        let activated =
             activate(&mut self.instance, config).map_err(|message| PluginProblem::DidNotRestart {
                 plugin_id: self.plugin_id.clone(),
                 message,
             });
-        Some(started.map(|(started, _)| Box::new(started) as Box<dyn Started>))
+        Some(activated.map(|(started, values, _)| {
+            // What the old ring still held went with the old audio side. The host sends every
+            // pin again, as its record has it now, so nothing older is kept here.
+            self.values = values;
+            self.waiting.clear();
+            Box::new(started) as Box<dyn Started>
+        }))
     }
 }
 
@@ -622,10 +740,16 @@ struct ClapStarted {
     /// The first audio output port of the plugin, one buffer per channel.
     output_channels: Vec<Vec<f32>>,
     input_events: EventBuffer,
-    /// How many events are in the buffer, so a block never grows it.
+    /// How many more note and control events the buffer takes in this block, so a block never
+    /// grows it. The values of parameters have room of their own on top.
     room: usize,
     /// What the plugin said its latency was when it was activated.
     latency: u32,
+    /// The values the host sets, from the main thread.
+    values: rtrb::Consumer<ParameterChange>,
+    /// How many of them this block took, counted into `played` once the plugin has run.
+    taken: u64,
+    played: Arc<AtomicU64>,
 }
 
 /// Which events the plugin's note port takes.
@@ -645,6 +769,8 @@ impl ClapStarted {
         input_channel_count: usize,
         output_channel_count: usize,
         latency: u32,
+        values: rtrb::Consumer<ParameterChange>,
+        played: Arc<AtomicU64>,
     ) -> Self {
         let buffers = |count: usize| (0..count).map(|_| vec![0.0; MAX_BLOCK]).collect();
         Self {
@@ -655,9 +781,12 @@ impl ClapStarted {
             output_ports: AudioPorts::with_capacity(output_channel_count.max(1), 1),
             input_channels: buffers(input_channel_count),
             output_channels: buffers(output_channel_count),
-            input_events: EventBuffer::with_capacity(EVENT_CAPACITY),
+            input_events: EventBuffer::with_capacity(EVENT_CAPACITY + VALUE_CAPACITY),
             room: EVENT_CAPACITY,
             latency,
+            values,
+            taken: 0,
+            played,
         }
     }
 }
@@ -682,6 +811,21 @@ impl Started for ClapStarted {
     fn begin_block(&mut self) {
         self.input_events.clear();
         self.room = EVENT_CAPACITY;
+        // The values the host set since the last block, at its first frame, because they were
+        // true before it began. Ahead of the notes, so the events stay in time order. Never more
+        // than the room kept for them: the ring holds no more, and what the host could not put
+        // in waits on its side.
+        while (self.taken as usize) < VALUE_CAPACITY {
+            let Ok(change) = self.values.pop() else {
+                break;
+            };
+            self.taken += 1;
+            // An id CLAP calls invalid names no parameter, and a record cannot hold it.
+            if let Some(id) = ClapId::from_raw(change.id) {
+                let event = ParamValueEvent::new(0, id, Pckn::match_all(), change.value);
+                self.input_events.push(&event);
+            }
+        }
     }
 
     fn push(&mut self, offset: u32, event: PluginEvent) -> bool {
@@ -768,12 +912,20 @@ impl Started for ClapStarted {
         // takes every event and keeps none, so a plugin that sends thousands grows nothing.
         let mut output = OutputEvents::void();
 
-        let Ok(started) = not_ours(|| audio.ensure_processing_started()) else {
-            return false;
+        let processed = match not_ours(|| audio.ensure_processing_started()) {
+            Ok(started) => {
+                not_ours(|| started.process(&inputs, &mut outputs, &input, &mut output, None, None))
+                    .is_ok()
+            }
+            Err(_) => false,
         };
-        if not_ours(|| started.process(&inputs, &mut outputs, &input, &mut output, None, None))
-            .is_err()
-        {
+        // Only now does what the plugin says on the main thread hold the values of this block.
+        // A plugin that failed has played them too, as far as the host can ever know.
+        let taken = std::mem::take(&mut self.taken);
+        if taken > 0 {
+            self.played.fetch_add(taken, Ordering::Release);
+        }
+        if !processed {
             return false;
         }
         copy_out(&self.output_channels, frames, left, right);

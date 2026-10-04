@@ -203,9 +203,10 @@ The synth (`extensions/instrument`), Wavetable, Sampler, Drum pad, Filter, Compr
 
 `extensions/plugin-host`. The core knows no plugins.
 
-- One `plugin` tool for every slot and both formats (CLAP, VST 3): the format, the plugin id and a `state_asset` name. The same record is an instrument or an effect depending on where the track names it. What the plugin says it is only decides which picker offers it, because plugins mislabel themselves.
+- One `plugin` tool for every slot and both formats (CLAP, VST 3): the format, the plugin id, a `state_asset` name and the pins. The same record is an instrument or an effect depending on where the track names it. What the plugin says it is only decides which picker offers it, because plugins mislabel themselves.
 - A plugin's handle lives on the main thread; only its audio processor goes to the audio thread, and it is stopped there before it leaves (`Processor::leaving`). The project therefore lives on one thread and behaviours are not `Send`.
-- Nothing a plugin sends out is read (a void event list), so a plugin cannot make our audio thread allocate.
+- Nothing a plugin sends out is read (a void event list), so a plugin cannot make our audio thread allocate. What it changed of its pins is asked for on the main thread instead.
+- A pin is a parameter the record holds, by the plugin's id; the rest stays in the state asset. The record wins over the state, and a change of pins alone moves the plugin without loading it again. What the plugin changes of a pin itself is written to the record, one undo step per turn of a knob. A pin the plugin has no parameter for, or a value out of range, is a problem.
 - The sustain pedal, the bend and mod wheels and the key pressure reach a plugin the way its format allows: CLAP as MIDI, when its note port takes MIDI; VST 3 as the parameter the plugin maps each one to (`IMidiMapping`), and not at all when it maps none. The wrapper remembers what the plugin last heard, so `AllOff` puts back only what moved.
 - Scanning runs plugin code, so it runs in child processes (the runtime itself), one per bundle, with a deadline. The window scans in the background and never waits; a record whose plugin is not found yet is reported and rebinds when the scan finds it. The cache belongs to the machine.
 - Plugin state is saved when the plugin marks it dirty and when it goes or the project closes. It is not project state: never an undo step, and bytes already there are not written again, so a session that changed nothing leaves no diff.

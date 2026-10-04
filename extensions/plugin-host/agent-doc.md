@@ -67,7 +67,8 @@ panel, so the record may change under you. Read it before you write it.
 `assets/plugin-state/<name>.bin` holds the plugin's own settings, in a format only that plugin
 understands. A VST 3 plugin keeps two states, so its file holds both. Do not open it, do not edit it, do not copy it between plugins. The app writes it
 when the plugin says its settings changed, at most once a second, and when the project closes.
-It is not part of the undo history: undo and redo never change a plugin's settings.
+It is not part of the undo history: undo and redo never change it. Only the parameters a record
+pins, below, are in the record and in undo.
 
 Deleting a plugin's record does not delete its state file. To make the plugin start fresh,
 delete `assets/plugin-state/<name>.bin` while no app has the project open.
@@ -120,7 +121,33 @@ keeps more.
     0  Cutoff  20 to 20000  default 1000
     1  Wave    0 to 2       default 0     3 steps: 0 = Sine, 1 = Saw, 2 = Square  not automatable
 
-A record does not set parameters: the plugin keeps its own settings in its state file.
+## Pinned parameters
+
+A record can hold a few of its plugin's parameters, under `parameters`, by the id
+`--plugin-params` prints. These are pins. For a pin the record wins: its value is sent to the
+plugin after the plugin's own settings load, and a value you write moves the plugin while it
+plays, with no reload. Every parameter that is not pinned stays in the state file. This pins the
+`Cutoff` of the piano of `rhodes`:
+
+```json state/arrangement/rhodes/instrument.json
+{
+  "tool": "plugin",
+  "state": {
+    "format": "clap",
+    "plugin_id": "com.example.piano",
+    "state_asset": "rhodes",
+    "parameters": {"0": {"name": "Cutoff", "value": 1200.0}}
+  }
+}
+```
+
+- `value` is in the format's own units, as `--plugin-params` prints them: a `clap` plugin's own
+  value, `0` to `1` for `vst3`. A parameter with named steps takes the number of a step, never
+  its name.
+- `name` is for whoever reads the file. The id is what counts.
+- At most 64 pins. Leave `parameters` out for none.
+- When the composer turns a pinned knob in the plugin's own window, or the plugin moves it
+  itself, the app writes the new value into the record, one undo step per turn.
 
 ## When it does not play
 
@@ -147,6 +174,10 @@ A record does not set parameters: the plugin keeps its own settings in its state
 - `... asked to be started again, because its latency or its buses changed, and did not
   start`: the app restarts such a plugin, and this one failed to start. Nothing in the file is
   wrong. The slot is silent, or lets the sound through for an effect, until the record changes.
+- `... has no parameter with the id ...`: a pin names an id `--plugin-params` does not list.
+  That pin moves nothing and the rest plays. Correct the id, or take the pin out.
+- `` `parameters.<id>.value` is ..., outside the range ``: write a value inside the range the
+  line names. Until then that pin moves nothing and the rest plays.
 
 ## VST
 

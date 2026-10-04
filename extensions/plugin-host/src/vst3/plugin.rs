@@ -31,11 +31,11 @@ use vst3::{ComPtr, ComWrapper};
 use super::context::{Handler, HostContext, as_handler, as_unknown};
 use super::module::Module;
 use super::parameters;
-use super::process::{ControlTargets, ParameterChange, Vst3Processor, process_mode};
+use super::process::{ControlTargets, Report, Vst3Processor, process_mode};
 use super::stream::{MemoryStream, as_stream};
 use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
-use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
+use crate::backend::{Hand, LoadedPlugin, Opening, ParameterChange, PluginGui, Requests};
 use crate::parameters::Parameter;
 use crate::processor::{Control, Started};
 use crate::scan::ScannedPlugin;
@@ -243,6 +243,8 @@ pub(crate) fn load(
                 _context: initialized.context,
                 changed: ends.changed,
                 edited: ends.edited,
+                edits_pushed: 0,
+                pushed_at: BTreeMap::new(),
                 live,
                 processor,
                 targets,
@@ -328,9 +330,14 @@ pub(super) struct Vst3Plugin {
     /// The plugin holds this for as long as it lives, so it must outlive the plugin.
     _context: ComWrapper<HostContext>,
     /// What the plugin changed by itself while it played.
-    changed: rtrb::Consumer<ParameterChange>,
-    /// What the composer changed in the plugin's own window, on its way to the processor.
+    changed: rtrb::Consumer<Report>,
+    /// What the composer changed in the plugin's own window, and the pins the host sends, on
+    /// their way to the processor.
     edited: rtrb::Producer<ParameterChange>,
+    /// How many edits went into `edited`, and for each parameter how many had by its latest
+    /// one. A report the processor made before it took that many is older than the edit.
+    edits_pushed: u64,
+    pushed_at: BTreeMap<ParamID, u64>,
     /// The audio side holds a second one of these. While it does, this plugin may not be
     /// deactivated: the two ends would be in different hands.
     live: Arc<()>,
@@ -353,8 +360,17 @@ impl Vst3Plugin {
     /// of a plugin stay in step, and says that the state is to be saved.
     fn take_reports(&mut self) {
         let mut changed = false;
-        while let Ok(change) = self.changed.pop() {
+        while let Ok(report) = self.changed.pop() {
             changed = true;
+            let change = report.change;
+            // A report from before the processor took the latest edit of the parameter, or one
+            // of a parameter whose edit still waits for room: the edit is what the processor
+            // plays once it has it, and the controller already shows it.
+            let edited = self.pushed_at.get(&change.id);
+            let older = edited.is_some_and(|edited| report.edits_taken < *edited);
+            if older || self.joined.handler.waits(change.id) {
+                continue;
+            }
             self.values.insert(change.id, change.value);
             if let Some(controller) = &self.joined.controller {
                 // SAFETY: the controller came from the plugin and is alive.
@@ -363,6 +379,25 @@ impl Vst3Plugin {
         }
         if changed {
             self.joined.handler.mark_dirty();
+        }
+    }
+
+    /// Every edit that waits goes to the processor, as far as the ring has room; the rest goes
+    /// back and waits for the next poll. An audio side that has gone takes nothing: the plugin
+    /// is being started again, and the edits wait for the next one.
+    fn push_edits(&mut self) {
+        if self.edited.is_abandoned() {
+            return;
+        }
+        for edit in self.joined.handler.take_edits() {
+            self.values.insert(edit.id, edit.value);
+            match self.edited.push(edit) {
+                Ok(()) => {
+                    self.edits_pushed += 1;
+                    self.pushed_at.insert(edit.id, self.edits_pushed);
+                }
+                Err(_) => self.joined.handler.keep_edit(edit),
+            }
         }
     }
 
@@ -390,9 +425,8 @@ impl LoadedPlugin for Vst3Plugin {
         self.take_reports();
         // `kParamIDMappingChanged`: the plugin has other parameters now. They are listed again
         // before any values are compared, so a parameter that is new is compared from here on.
-        if self.joined.handler.take_ids_changed()
-            && let Some(controller) = &self.joined.controller
-        {
+        let ids_changed = self.joined.handler.take_ids_changed();
+        if ids_changed && let Some(controller) = &self.joined.controller {
             self.values = parameter_values(controller, &self.values);
         }
         if self.joined.handler.take_values_changed() {
@@ -431,16 +465,7 @@ impl LoadedPlugin for Vst3Plugin {
         // processor, which is the half that makes the sound. `ivsteditcontroller.h` says that
         // is what `IComponentHandler` is for. What the ring has no room for goes back and is
         // sent at the next poll, so a parameter never ends on a value the composer left behind.
-        // An audio side that has gone takes nothing: the plugin is being started again, and
-        // the edits wait for the next one.
-        if !self.edited.is_abandoned() {
-            for edit in self.joined.handler.take_edits() {
-                self.values.insert(edit.id, edit.value);
-                if self.edited.push(edit).is_err() {
-                    self.joined.handler.keep_edit(edit);
-                }
-            }
-        }
+        self.push_edits();
         Requests {
             restart: self.joined.handler.take_restart_wanted(),
             reload: self.joined.handler.take_reload_wanted(),
@@ -451,6 +476,7 @@ impl LoadedPlugin for Vst3Plugin {
             // counterpart here, so this is always false.
             window_closed: false,
             window_size: self.gui.as_ref().and_then(Vst3Gui::take_wanted_size),
+            parameters_changed: ids_changed | self.joined.handler.take_titles_changed(),
         }
     }
 
@@ -501,6 +527,37 @@ impl LoadedPlugin for Vst3Plugin {
         let controller = self.joined.controller.as_ref()?;
         // SAFETY: the controller came from the plugin and is alive.
         unsafe { parameters::text(controller, id, value) }
+    }
+
+    fn parameters(&mut self) -> Vec<Parameter> {
+        match &self.joined.controller {
+            // SAFETY: the controller came from the plugin and is alive.
+            Some(controller) => unsafe { parameters::of_controller(controller) },
+            None => Vec::new(),
+        }
+    }
+
+    /// The way an edit of the plugin's own window goes, from the other end: the controller is
+    /// told at once, so the two halves agree and what the controller says is the value as the
+    /// plugin took it, and the processor gets it in the parameter changes of a block.
+    fn send(&mut self, change: ParameterChange) {
+        if let Some(controller) = &self.joined.controller {
+            // SAFETY: the controller came from the plugin and is alive.
+            unsafe { controller.setParamNormalized(change.id, change.value) };
+        }
+        // With the edits that wait, in place of one of the same parameter, so it neither
+        // overtakes an older one nor is overtaken by it.
+        self.joined.handler.put_edit(change);
+        self.push_edits();
+    }
+
+    /// The controller holds every value the moment it is sent, so there is nothing to wait for.
+    fn sent_values_played(&mut self) -> bool {
+        true
+    }
+
+    fn hand(&mut self) -> Hand {
+        self.joined.handler.take_hand()
     }
 
     fn released(&mut self) -> bool {
@@ -565,6 +622,9 @@ impl LoadedPlugin for Vst3Plugin {
         );
         self.changed = ends.changed;
         self.edited = ends.edited;
+        // The new side counts what it takes from nothing.
+        self.edits_pushed = 0;
+        self.pushed_at.clear();
         Some(Ok(Box::new(started)))
     }
 }

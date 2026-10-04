@@ -790,6 +790,8 @@ impl Harness {
             self.project.engine().poll().expect("the engine polls");
             self.plugins.poll(&self.project);
             self.plugins.send_restarts(&mut self.project);
+            let errors = self.plugins.follow_pins(&mut self.project);
+            assert!(errors.is_empty(), "{errors:?}");
         }
         Render { output }
     }

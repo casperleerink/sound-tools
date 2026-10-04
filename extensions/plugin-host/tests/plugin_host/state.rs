@@ -89,7 +89,7 @@ fn written_on_close_and_not_before(format: PluginFormat) {
         "{asset:?} was written while nothing changed"
     );
 
-    assert_eq!(harness.plugins.close(&harness.project), []);
+    assert_eq!(harness.plugins.close(&mut harness.project), []);
     let saved = std::fs::read(&asset).expect("the state of every plugin is saved on close");
     assert_eq!(saved_transpose(format, &saved), 0, "{format:?}");
 
@@ -97,7 +97,7 @@ fn written_on_close_and_not_before(format: PluginFormat) {
     let written = std::fs::metadata(&asset).unwrap().modified().unwrap();
     let mut harness = harness.reopen();
     harness.play(1024);
-    assert_eq!(harness.plugins.close(&harness.project), []);
+    assert_eq!(harness.plugins.close(&mut harness.project), []);
     assert_eq!(
         std::fs::metadata(&asset).unwrap().modified().unwrap(),
         written
@@ -293,7 +293,7 @@ fn a_controller_that_cannot_give_its_state_leaves_the_file_that_is_there_alone()
     );
 
     // And closing, which saves every plugin, leaves it alone too.
-    assert_eq!(harness.plugins.close(&harness.project).len(), 1);
+    assert_eq!(harness.plugins.close(&mut harness.project).len(), 1);
     assert_eq!(
         std::fs::read(&asset).unwrap(),
         held,
@@ -387,6 +387,6 @@ fn written_at_most_once_a_second(format: PluginFormat) {
 
     // And what a plugin changes after that is not lost: closing writes it.
     harness.render_without_polling(1024);
-    assert_eq!(harness.plugins.close(&harness.project), []);
+    assert_eq!(harness.plugins.close(&mut harness.project), []);
     assert!(saved(&asset) >= after_a_second);
 }

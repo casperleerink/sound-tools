@@ -325,13 +325,31 @@ pub const MOVE_PEDAL_KEY: u8 = 4;
 /// The same as [`MOVE_PEDAL_KEY`], moving the pedal to no parameter at all.
 pub const DROP_PEDAL_KEY: u8 = 5;
 
-/// A note on this key makes the VST 3 plugin list its `Level` parameter, which it hides until
-/// then when [`LATE_LEVEL_VARIABLE`] is set, and say so with `kParamIDMappingChanged`. VST 3
-/// only: the CLAP plugin plays the key.
+/// A note on this key makes the plugin list its `Level` parameter, which it hides until then
+/// when [`LATE_LEVEL_VARIABLE`] is set, and say so: the VST 3 plugin with
+/// `kParamIDMappingChanged`, the CLAP one with a `rescan` of its parameters on the main thread.
 pub const LIST_LEVEL_KEY: u8 = 6;
 
-/// Makes the VST 3 plugin hide its `Level` parameter until [`LIST_LEVEL_KEY`].
+/// Makes the plugin hide its `Level` parameter until [`LIST_LEVEL_KEY`].
 pub const LATE_LEVEL_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_LATE_LEVEL";
+
+/// A note on this key makes the plugin set its own `Level` to the velocity of the note, the way
+/// an LFO or a preset of a plugin's own moves one of its parameters, and it is not played. Each
+/// plugin tells its host the way its format has: the CLAP one by the value its host reads on the
+/// main thread, the VST 3 one by a parameter its block reports.
+pub const LEVEL_KEY: u8 = 7;
+
+/// A note on this key makes the VST 3 plugin's controller edit `Level` through the host on the
+/// main thread, the way its own window does under the composer's hand: one `beginEdit`, four
+/// values down to a quarter, one `endEdit`. VST 3 only: the CLAP plugin plays the key.
+pub const EDIT_LEVEL_KEY: u8 = 8;
+
+/// A `Level` of `value`, from 0 to 1, as the hundredths a test plugin keeps. Both keep no more,
+/// so a host sees a value it sent come back rounded, as a real plugin with steps of its own
+/// does.
+pub fn hundredths(value: f64) -> i32 {
+    (value * f64::from(FULL_EDIT_LEVEL)).round() as i32
+}
 
 /// Makes the VST 3 plugin ask to be loaded again and started again every time its controller
 /// is given the component's state, which a host does while it loads the plugin. A host that

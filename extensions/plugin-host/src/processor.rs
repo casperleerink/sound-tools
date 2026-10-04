@@ -40,7 +40,7 @@ pub(crate) const EVENT_CAPACITY: usize = 512;
 /// One thing to tell the plugin, at a frame offset in the block. This is the note contract with
 /// `AllOff` already expanded into the keys that are really down and the controls that moved.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum PluginEvent {
+pub(crate) enum PluginEvent {
     On { key: u8, velocity: u8 },
     Off { key: u8 },
     Control(Control),
@@ -50,7 +50,7 @@ pub enum PluginEvent {
 /// pressure. Each format has one way in for each of them, which a plugin may not offer, see
 /// [`Started::takes`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Control {
+pub(crate) enum Control {
     Pedal(Pedal),
     Bend(Bend),
     ModWheel(Amount),
@@ -60,7 +60,7 @@ pub enum Control {
 impl Control {
     /// Every control at rest, one of each in the order of [`Self::index`]. It is where a plugin
     /// stands before it hears any of them, and where `AllOff` puts it back.
-    pub const REST: [Self; 4] = [
+    pub(crate) const REST: [Self; 4] = [
         Self::Pedal(Pedal::UP),
         Self::Bend(Bend::MIDDLE),
         Self::ModWheel(Amount::NONE),
@@ -68,7 +68,7 @@ impl Control {
     ];
 
     /// Which control this is, as its place in [`Self::REST`], for a table with one entry each.
-    pub fn index(self) -> usize {
+    pub(crate) fn index(self) -> usize {
         match self {
             Self::Pedal(_) => 0,
             Self::Bend(_) => 1,
@@ -79,7 +79,7 @@ impl Control {
 
     /// Where it stands as MIDI sends it: 0 to 127, and for the bend 0 to 16383 with the middle
     /// at 8192.
-    pub fn midi_value(self) -> u16 {
+    pub(crate) fn midi_value(self) -> u16 {
         match self {
             Self::Pedal(pedal) => u16::from(pedal.value()),
             Self::Bend(bend) => (i32::from(bend.value()) + 8192) as u16,
@@ -93,7 +93,7 @@ impl Control {
 ///
 /// No call of this trait may allocate, lock or make a system call in our own code. A call into
 /// the plugin itself is wrapped in [`not_ours`].
-pub trait Started: Send {
+pub(crate) trait Started: Send {
     /// Whether this control reaches the plugin; only which control it is counts, not where it
     /// stands. A plugin that offers no way to receive one gets the notes and not that control.
     /// For the pedal its record says so.

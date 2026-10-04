@@ -8,6 +8,10 @@
 //! values, and a read-only `Meter` and a `Hidden` one a host must leave out. `Wave` is a list of
 //! names that may not be automated. Nothing moves them and nothing plays them.
 //!
+//! And `Level`, which is heard: how loud the instrument half plays, as the VST 3 test plugin's
+//! `Level`. A host sets it with a parameter event in a block, and the plugin sets it itself on
+//! `test_plugin_support::LEVEL_KEY`.
+//!
 //! Its window is a window in name only. It draws nothing, because CI has no display: it
 //! answers the calls of the GUI extension and writes them down, so a test can say which call
 //! arrived, in what order and on which thread. Like the real plugins this was written against,
@@ -31,8 +35,8 @@ use clack_extensions::note_ports::{
     PluginNotePortsImpl,
 };
 use clack_extensions::params::{
-    ParamDisplayWriter, ParamInfo, ParamInfoFlags, ParamInfoWriter, PluginAudioProcessorParams,
-    PluginMainThreadParams, PluginParams,
+    HostParams, ParamDisplayWriter, ParamInfo, ParamInfoFlags, ParamInfoWriter, ParamRescanFlags,
+    PluginAudioProcessorParams, PluginMainThreadParams, PluginParams,
 };
 use clack_extensions::render::{PluginRender, PluginRenderImpl, RenderMode};
 use clack_extensions::state::{HostState, PluginState, PluginStateImpl};
@@ -99,6 +103,9 @@ impl DefaultPluginFactory for TestTone {
             wanted_latency: AtomicU32::new(NO_LATENCY_WANTED),
             close_the_window: AtomicBool::new(false),
             answered: AtomicBool::new(!support::told_to(support::NEEDS_HOST_VARIABLE)),
+            level: AtomicI32::new(support::FULL_EDIT_LEVEL),
+            level_listed: AtomicBool::new(!support::told_to(support::LATE_LEVEL_VARIABLE)),
+            rescan_wanted: AtomicBool::new(false),
         })
     }
 
@@ -129,6 +136,14 @@ pub struct TestToneShared {
     /// Whether the host has answered the callback this plugin asked for. Until it has, a plugin
     /// that was told to wait for one is silent, as a sampler waiting for its samples is.
     answered: AtomicBool,
+    /// How loud the instrument half plays, in hundredths: the `Level` parameter. The audio
+    /// thread sets it and the host reads it on the main thread, so the two agree once a block
+    /// has played the value.
+    level: AtomicI32,
+    /// Whether `Level` is in the list of parameters, see `test_plugin_support::LATE_LEVEL_VARIABLE`.
+    level_listed: AtomicBool,
+    /// The list changed and the host is to be told, which only the main thread may do.
+    rescan_wanted: AtomicBool,
 }
 
 impl PluginShared<'_> for TestToneShared {}
@@ -174,6 +189,12 @@ impl<'a> PluginMainThread<'a, TestToneShared> for TestToneMainThread<'a> {
         {
             log("closed", 0, 0);
             gui.closed(&self.host.shared(), true);
+        }
+        if self.shared.rescan_wanted.swap(false, Ordering::AcqRel)
+            && let Some(params) = self.host.shared().get_extension::<HostParams>()
+        {
+            log("rescan", 0, 0);
+            params.rescan(&self.host, ParamRescanFlags::INFO);
         }
         if !self.shared.state_is_dirty.swap(false, Ordering::AcqRel) {
             return;
@@ -298,10 +319,11 @@ pub const CUTOFF: u32 = 0;
 pub const WAVE: u32 = 1;
 const METER: u32 = 2;
 const HIDDEN: u32 = 3;
+pub const LEVEL: u32 = 4;
 
 /// The parameters, in the order `get_info` lists them: the id, the name, the range, the default
 /// and the flags.
-const PARAMETERS: [(u32, &str, f64, f64, f64, ParamInfoFlags); 4] = [
+const PARAMETERS: [(u32, &str, f64, f64, f64, ParamInfoFlags); 5] = [
     (
         CUTOFF,
         "Cutoff",
@@ -327,17 +349,35 @@ const PARAMETERS: [(u32, &str, f64, f64, f64, ParamInfoFlags); 4] = [
         0.0,
         ParamInfoFlags::IS_AUTOMATABLE.union(ParamInfoFlags::IS_HIDDEN),
     ),
+    (
+        LEVEL,
+        "Level",
+        0.0,
+        1.0,
+        1.0,
+        ParamInfoFlags::IS_AUTOMATABLE,
+    ),
 ];
 
-/// Every parameter stays at its default: nothing here moves one.
+impl TestToneMainThread<'_> {
+    /// The parameters the plugin lists now.
+    fn listed(&self) -> impl Iterator<Item = &(u32, &str, f64, f64, f64, ParamInfoFlags)> {
+        let level = self.shared.level_listed.load(Ordering::Acquire);
+        PARAMETERS
+            .iter()
+            .filter(move |parameter| parameter.0 != LEVEL || level)
+    }
+}
+
+/// Every parameter but `Level` stays at its default: nothing here moves one.
 impl PluginMainThreadParams for TestToneMainThread<'_> {
     fn count(&self) -> u32 {
-        PARAMETERS.len() as u32
+        self.listed().count() as u32
     }
 
     fn get_info(&self, param_index: u32, info: &mut ParamInfoWriter) {
         let Some(&(id, name, minimum, maximum, default, flags)) =
-            PARAMETERS.get(param_index as usize)
+            self.listed().nth(param_index as usize)
         else {
             return;
         };
@@ -354,6 +394,10 @@ impl PluginMainThreadParams for TestToneMainThread<'_> {
     }
 
     fn get_value(&self, param_id: ClapId) -> Option<f64> {
+        if param_id.get() == LEVEL {
+            let level = self.shared.level.load(Ordering::Acquire);
+            return Some(f64::from(level) / f64::from(support::FULL_EDIT_LEVEL));
+        }
         PARAMETERS
             .iter()
             .find(|parameter| parameter.0 == param_id.get())
@@ -369,6 +413,7 @@ impl PluginMainThreadParams for TestToneMainThread<'_> {
         use std::fmt::Write as _;
         match param_id.get() {
             CUTOFF => write!(writer, "{value:.0} Hz"),
+            LEVEL => write!(writer, "{} %", support::hundredths(value)),
             WAVE => {
                 let wave = support::WAVES.get(value.round() as usize);
                 writer.write_str(wave.ok_or(std::fmt::Error)?)
@@ -408,11 +453,10 @@ impl PluginRenderImpl for TestToneMainThread<'_> {
 impl PluginStateImpl for TestToneMainThread<'_> {
     fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
         use std::io::Write as _;
-        // The CLAP plugin has no parameter a host can edit, so its level is always the full
-        // one. The two formats keep one state format all the same, so a test reads either.
+        // The two formats keep one state format, so a test reads either.
         let state = support::SavedState {
             semitones: self.shared.semitones.load(Ordering::Acquire),
-            edit_level: support::FULL_EDIT_LEVEL,
+            edit_level: self.shared.level.load(Ordering::Acquire),
             offset: self.shared.offset.load(Ordering::Acquire),
             latency: self.shared.next_latency() as i32,
         };
@@ -433,6 +477,7 @@ impl PluginStateImpl for TestToneMainThread<'_> {
             .semitones
             .store(state.semitones, Ordering::Release);
         self.shared.offset.store(state.offset, Ordering::Release);
+        self.shared.level.store(state.edit_level, Ordering::Release);
         let latency = u32::try_from(state.latency).unwrap_or_default();
         self.shared
             .latency
@@ -633,11 +678,26 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
                         .note_off(note.key().into_specific().map(|key| key as u8));
                 }
                 Some(CoreEventSpace::Midi(midi)) => self.midi(midi.data()),
+                // A value the host sends. The last one of the block is how loud the whole
+                // block plays, as in the VST 3 plugin.
+                Some(CoreEventSpace::ParamValue(event))
+                    if event.param_id().map(ClapId::get) == Some(LEVEL) =>
+                {
+                    let level = support::hundredths(event.value());
+                    self.shared.level.store(level, Ordering::Release);
+                }
                 _ => {}
             }
         }
         self.tone
             .render(&mut left[played..frames], &mut right[played..frames]);
+        let level = self.shared.level.load(Ordering::Acquire);
+        if level != support::FULL_EDIT_LEVEL {
+            let level = level as f32 / support::FULL_EDIT_LEVEL as f32;
+            for sample in left.iter_mut() {
+                *sample *= level;
+            }
+        }
         // The effect half, on top of whatever the instrument half played. It may learn an
         // offset from a loud input, which is a change of this plugin's own state.
         let [input_left, input_right] = &self.input;
@@ -671,10 +731,28 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
 }
 
 impl TestToneAudio<'_> {
-    /// A note on, or a new latency asked for with the key that asks for one. The latency can
-    /// only change while the host activates the plugin, so the plugin asks for that, and says
-    /// its state changed, which holds the latency.
+    /// A note on, or a key that asks for something: a new latency, the plugin's own `Level`, or
+    /// the list of its parameters with `Level` in it. The latency can only change while the
+    /// host activates the plugin, so the plugin asks for that, and says its state changed,
+    /// which holds the latency.
     fn note_on(&mut self, key: u8, velocity: f32) {
+        if key == support::LEVEL_KEY {
+            // A move of its own: the host reads the value on the main thread, and the state
+            // that holds it is to be saved.
+            let level = support::hundredths(f64::from(velocity));
+            self.shared.level.store(level, Ordering::Release);
+            self.shared.state_is_dirty.store(true, Ordering::Release);
+            self.host.request_callback();
+            return;
+        }
+        if key == support::LIST_LEVEL_KEY {
+            // Only the main thread may tell the host that the list changed.
+            log("level_listed", self.plugin, self.processed);
+            self.shared.level_listed.store(true, Ordering::Release);
+            self.shared.rescan_wanted.store(true, Ordering::Release);
+            self.host.request_callback();
+            return;
+        }
         let Some(latency) = support::asked_latency(key, velocity) else {
             self.tone.note_on(key, velocity);
             return;

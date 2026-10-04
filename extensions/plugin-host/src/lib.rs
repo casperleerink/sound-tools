@@ -47,10 +47,12 @@ pub mod view;
 mod vst3;
 mod window;
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, AssetError, AssetName, Assets, BehaviourContext, BehaviourError, InputEndpoint,
-    InvalidAssetName, OutputEndpoint, Registry, RegistryError, State,
+    InvalidAssetName, MAX_AUTOMATED, OutputEndpoint, Registry, RegistryError, State,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
@@ -194,7 +196,7 @@ impl From<StateAsset> for String {
 }
 
 /// The saved state of one hosted plugin.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginRecord {
     pub format: PluginFormat,
@@ -202,6 +204,25 @@ pub struct PluginRecord {
     pub plugin_id: String,
     /// Where the plugin's own state is kept. Opaque bytes: nobody edits that file by hand.
     pub state_asset: StateAsset,
+    /// The parameters the record holds, by the plugin's own id of each. For these the record
+    /// wins over the state asset: they are sent to the plugin after its state is loaded, and
+    /// what the plugin changes of them itself is written back here. Every other parameter
+    /// stays in the state asset only. Left out of the file when there are none, so a record
+    /// from before pins is written as it was.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<u32, Pin>,
+}
+
+/// One parameter a record holds, see [`PluginRecord::parameters`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Pin {
+    /// What the plugin calls it, for whoever reads the record. The id is what counts, so a
+    /// plugin that renames it still finds it.
+    pub name: String,
+    /// In the format's own units, as `--plugin-params` prints them: CLAP's plain value, VST
+    /// 3's 0 to 1.
+    pub value: f64,
 }
 
 impl PluginRecord {
@@ -217,6 +238,7 @@ impl PluginRecord {
             format,
             plugin_id: plugin_id.to_string(),
             state_asset: StateAsset::new(state_asset).ok()?,
+            parameters: BTreeMap::new(),
         })
     }
 
@@ -247,6 +269,13 @@ impl State for PluginRecord {
                 self.plugin_id
             ));
         }
+        // As many as automation lanes can move of one device, which is what pins are for.
+        if self.parameters.len() > MAX_AUTOMATED {
+            return Err(format!(
+                "parameters holds {} pins, and a plugin record holds at most {MAX_AUTOMATED}",
+                self.parameters.len()
+            ));
+        }
         Ok(())
     }
 }
@@ -254,7 +283,7 @@ impl State for PluginRecord {
 /// The doc of the plugin record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "plugins",
-    when: "You put a third-party plugin on a track, or a plugin is reported as a problem",
+    when: "You put a third-party plugin on a track, set its parameters, or a plugin is reported as a problem",
     markdown: include_str!("../agent-doc.md"),
 };
 
@@ -275,7 +304,13 @@ fn apply(
     state: &PluginRecord,
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
-    let node = context.processor(PROCESSOR, HostedPlugin::silent)?;
+    // A processor made in this run has no plugin, whatever the host holds for the record: the
+    // record came back, by an undo of its delete, before the host let go of its plugin.
+    let mut made = false;
+    let node = context.processor(PROCESSOR, || {
+        made = true;
+        HostedPlugin::silent()
+    })?;
     context.input(NOTES_INPUT, InputEndpoint::new(node, HostedPlugin::NOTES));
     // Every hosted plugin has all three ports, whatever the plugin is: one record serves an
     // instrument slot and an effect slot, and this extension knows about neither. An
@@ -283,12 +318,15 @@ fn apply(
     context.input(AUDIO_INPUT, InputEndpoint::new(node, HostedPlugin::INPUT));
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(node, HostedPlugin::AUDIO));
     let config = context.prepare_config();
-    match plugins.open(context.id(), state, context.assets(), config) {
+    match plugins.open(context.id(), state, context.assets(), config, !made) {
         Ok(opened) => {
-            // Every run hands the engine what the host opened. Nothing here asks what the
+            // A run that loaded a plugin hands it to the engine. Nothing here asks what the
             // engine already has, so an edit the project rejects leaves the engine and this
             // host as they were. A host that only lists opens nothing, and the slot is silent.
-            context.update(node, opened.started)?;
+            // A run that only changed pins hands nothing: the engine keeps its plugin.
+            if let host::ForEngine::Play(started) = opened.engine {
+                context.update(node, started)?;
+            }
             for note in opened.notes {
                 context.problem(note.to_string());
             }
@@ -320,6 +358,19 @@ mod tests {
         let decoded: PluginRecord = serde_json::from_str(record).expect("a record");
         assert_eq!(decoded.state_asset.name(), "piano");
         assert_eq!(decoded.asset().as_str(), "plugin-state/piano.bin");
+        assert_eq!(serde_json::to_string(&decoded).expect("json"), record);
+    }
+
+    /// The id of a pin is a number, which JSON holds as the text of a key.
+    #[test]
+    fn a_pin_is_read_by_the_id_of_its_parameter_and_written_back_the_same() {
+        let record = r#"{"format":"clap","plugin_id":"a.b","state_asset":"piano","parameters":{"12":{"name":"Cutoff","value":440.0}}}"#;
+        let decoded: PluginRecord = serde_json::from_str(record).expect("a record");
+        let pin = Pin {
+            name: "Cutoff".to_string(),
+            value: 440.0,
+        };
+        assert_eq!(decoded.parameters, BTreeMap::from([(12, pin)]));
         assert_eq!(serde_json::to_string(&decoded).expect("json"), record);
     }
 }

@@ -145,7 +145,7 @@ fn a_plugin_that_asks_to_be_loaded_again_comes_back_as_it_sounded() {
 
     // What the old one changed of its own state came back with the new one, and the new one
     // saves it again.
-    harness.plugins.close(&harness.project);
+    harness.plugins.close(&mut harness.project);
     let bytes = harness
         .project
         .assets()

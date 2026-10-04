@@ -6,8 +6,10 @@
 //!
 //! All of it is read on the main thread, where both formats put these calls.
 
-use crate::PluginProblem;
+use std::collections::BTreeMap;
+
 use crate::scan::ScannedPlugin;
+use crate::{Pin, PluginProblem};
 
 /// The most steps a parameter has names for. A list longer than this is a knob with many
 /// values, not a choice a composer reads through, and asking the plugin for every name would
@@ -28,6 +30,13 @@ pub struct Parameter {
     pub steps: Option<Steps>,
     /// Whether the plugin says a host may move it while it plays.
     pub automatable: bool,
+}
+
+impl Parameter {
+    /// Whether `value` is in its range.
+    pub(crate) fn takes(&self, value: f64) -> bool {
+        (self.minimum..=self.maximum).contains(&value)
+    }
 }
 
 /// A parameter that takes only some values, evenly spaced from its minimum to its maximum.
@@ -78,6 +87,31 @@ impl Steps {
         };
         Self { count, names }
     }
+}
+
+/// Why the pin `id` of a record moves nothing, when it does not: the plugin has no such
+/// parameter a host may set, or the value is outside its range. Such a pin is not sent, and the
+/// rest of the record plays.
+pub(crate) fn pin_problem(
+    plugin_id: &str,
+    parameters: &BTreeMap<u32, Parameter>,
+    id: u32,
+    pin: &Pin,
+) -> Option<PluginProblem> {
+    let Some(parameter) = parameters.get(&id) else {
+        return Some(PluginProblem::NoSuchParameter {
+            plugin_id: plugin_id.to_string(),
+            id,
+        });
+    };
+    (!parameter.takes(pin.value)).then(|| PluginProblem::OutOfRange {
+        plugin_id: plugin_id.to_string(),
+        id,
+        name: parameter.name.clone(),
+        value: pin.value,
+        minimum: parameter.minimum,
+        maximum: parameter.maximum,
+    })
 }
 
 /// Every parameter of `plugin` a host may set, read from the plugin itself. Read-only and

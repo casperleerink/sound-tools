@@ -75,6 +75,28 @@ fn cancel_restores_the_state_from_before_the_gesture() {
     assert_eq!(harness.project.redo_label(), None);
 }
 
+/// A gesture whose record another edit deletes while it is open. The delete is the one undo
+/// step, from the state before the gesture; the gesture ends with none of its own.
+#[test]
+fn an_abandoned_gesture_under_a_delete_leaves_the_delete_as_the_one_step() {
+    let mut harness = Harness::new();
+    let dc = connected_dc(&mut harness, "dc", 0.25);
+    let mut edit = harness.project.begin("Drag value");
+    harness
+        .project
+        .update(&mut edit, &dc, |state| state.value = 0.75)
+        .unwrap();
+    let mut changes = Changes::new();
+    changes.delete(dc.id());
+    harness.project.commit("Delete dc", changes).unwrap();
+    harness.project.abandon(edit);
+    assert_eq!(harness.project.state(&dc), None);
+    assert_eq!(harness.project.undo_label(), Some("Delete dc"));
+    harness.project.undo().unwrap();
+    assert_eq!(harness.project.state(&dc), Some(&Dc { value: 0.25 }));
+    assert_eq!(harness.project.undo_label(), Some("Add dc"));
+}
+
 #[test]
 fn a_file_edit_during_a_gesture_follows_last_write_wins() {
     let mut harness = Harness::new();

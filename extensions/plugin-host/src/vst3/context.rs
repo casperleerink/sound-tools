@@ -6,7 +6,7 @@
 //! `IHostApplication::createInstance`, so a host that answers `kNotImplemented` there breaks
 //! every plugin whose halves talk. These are the smallest objects that answer.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CStr, CString, c_void};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,7 +22,7 @@ use vst3::Steinberg::{
 };
 use vst3::{Class, ComPtr, ComWrapper};
 
-use super::process::ParameterChange;
+use crate::backend::{Hand, ParameterChange};
 use crate::host::HOST_NAME;
 
 /// The application the plugin runs in. A plugin gets it as the context of `initialize`.
@@ -293,7 +293,8 @@ impl IAttributeListTrait for HostAttributes {
 }
 
 /// What the plugin's controller tells the host: a parameter the composer changed in the
-/// plugin's own window, and what `restartComponent` asks for.
+/// plugin's own window, where the composer's hand is on it, and what `restartComponent` asks
+/// for.
 ///
 /// `ivsteditcontroller.h` says what this interface is for: "Allow transfer of parameter editing
 /// to component (processor) via host and support automation." So an edit is two things here. It
@@ -320,11 +321,17 @@ pub(super) struct Handler {
     midi_mapping_changed: AtomicBool,
     /// The plugin changed which parameters it has, so the host lists them again.
     ids_changed: AtomicBool,
+    /// The plugin renamed its parameters, so the host reads their names again.
+    titles_changed: AtomicBool,
     /// The newest value of every parameter the controller has edited and the processor has not
     /// been given yet. By parameter, so the value a composer left a knob on is never the one
     /// that is dropped: a knob drag is hundreds of edits of one parameter and only the last of
     /// them is the sound.
     edits: Mutex<BTreeMap<ParamID, ParamValue>>,
+    /// The parameters the composer's hand is on: a `beginEdit` without its `endEdit` yet.
+    held: Mutex<BTreeSet<ParamID>>,
+    /// An `endEdit` came since the host last asked.
+    let_go: AtomicBool,
 }
 
 impl Class for Handler {
@@ -368,6 +375,24 @@ impl Handler {
         self.ids_changed.swap(false, Ordering::AcqRel)
     }
 
+    /// Whether the plugin has renamed its parameters since the last call.
+    pub(super) fn take_titles_changed(&self) -> bool {
+        self.titles_changed.swap(false, Ordering::AcqRel)
+    }
+
+    /// Where the composer's hand is: on a knob while any `beginEdit` waits for its `endEdit`,
+    /// and let go once the last one came since the last call.
+    pub(super) fn take_hand(&self) -> Hand {
+        let held = self.held.lock().unwrap_or_else(|held| held.into_inner());
+        if !held.is_empty() {
+            return Hand::Held;
+        }
+        match self.let_go.swap(false, Ordering::AcqRel) {
+            true => Hand::LetGo,
+            false => Hand::Unknown,
+        }
+    }
+
     /// Forgets a restart or a reload the plugin asked for so far. The host calls it once it has
     /// just loaded or started the plugin: whatever the plugin asked while that went on, its
     /// latency and buses are read after it, and a plugin that asks every time it is set up
@@ -385,6 +410,19 @@ impl Handler {
             .into_iter()
             .map(|(id, value)| ParameterChange { id, value })
             .collect()
+    }
+
+    /// Whether an edit of `id` waits for the processor.
+    pub(super) fn waits(&self, id: ParamID) -> bool {
+        let held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
+        held.contains_key(&id)
+    }
+
+    /// A value the host sends to the processor, in place of any edit of the same parameter that
+    /// waits: it is newer than all of them.
+    pub(super) fn put_edit(&self, change: ParameterChange) {
+        let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
+        held.insert(change.id, change.value);
     }
 
     /// Puts an edit back because the processor had no room for it, or never played it. A
@@ -407,7 +445,11 @@ impl Handler {
 const RESTART: RestartFlags = RestartFlags_::kLatencyChanged | RestartFlags_::kIoChanged;
 
 impl IComponentHandlerTrait for Handler {
-    unsafe fn beginEdit(&self, _id: ParamID) -> tresult {
+    /// A hand on a knob of the plugin's own window. What it changes of a pin until `endEdit` is
+    /// one undo step.
+    unsafe fn beginEdit(&self, id: ParamID) -> tresult {
+        let mut held = self.held.lock().unwrap_or_else(|held| held.into_inner());
+        held.insert(id);
         kResultOk
     }
 
@@ -422,7 +464,10 @@ impl IComponentHandlerTrait for Handler {
         kResultOk
     }
 
-    unsafe fn endEdit(&self, _id: ParamID) -> tresult {
+    unsafe fn endEdit(&self, id: ParamID) -> tresult {
+        let mut held = self.held.lock().unwrap_or_else(|held| held.into_inner());
+        held.remove(&id);
+        self.let_go.store(true, Ordering::Release);
         kResultOk
     }
 
@@ -439,14 +484,16 @@ impl IComponentHandlerTrait for Handler {
     /// - `kMidiCCAssignmentChanged`, "The host has to rebuild the MIDI-CC => parameter
     ///   mapping": the parameters of the pedal and the wheels are looked up again.
     /// - `kParamIDMappingChanged`: the host lists the parameters again, so the values it
-    ///   compares for `kParamValuesChanged` are the plugin's parameters as they are now.
+    ///   compares for `kParamValuesChanged` are the plugin's parameters as they are now, and
+    ///   the pins of the record are checked against the new list.
+    /// - `kParamTitlesChanged`: the host reads the list again for the new names. Splice
+    ///   INSTRUMENT sends it while a composer opens its window, which costs one read.
     /// - Nothing for the rest. `kPrefetchableSupportChanged` asks for a deactivate so that the
     ///   host can read `getPrefetchableSupport`, and this host never processes in prefetch mode.
-    ///   `kParamTitlesChanged`, `kNoteExpressionChanged`, `kIoTitlesChanged`,
-    ///   `kRoutingInfoChanged` and `kKeyswitchChanged` are each about
-    ///   a cache a host with a parameter view, a note expression display, bus titles, a routing
-    ///   view or a key switch display would drop. This host keeps none of those. Splice
-    ///   INSTRUMENT sends `kParamTitlesChanged` while a composer opens its window.
+    ///   `kNoteExpressionChanged`, `kIoTitlesChanged`, `kRoutingInfoChanged` and
+    ///   `kKeyswitchChanged` are each about a cache a host with a note expression display, bus
+    ///   titles, a routing view or a key switch display would drop. This host keeps none of
+    ///   those.
     unsafe fn restartComponent(&self, flags: int32) -> tresult {
         let asks = |flag: RestartFlags| flags & flag != 0;
         if asks(RestartFlags_::kParamValuesChanged) {
@@ -458,6 +505,9 @@ impl IComponentHandlerTrait for Handler {
         }
         if asks(RestartFlags_::kParamIDMappingChanged) {
             self.ids_changed.store(true, Ordering::Release);
+        }
+        if asks(RestartFlags_::kParamTitlesChanged) {
+            self.titles_changed.store(true, Ordering::Release);
         }
         if flags & RESTART != 0 {
             self.restart_wanted.store(true, Ordering::Release);
@@ -560,10 +610,22 @@ mod tests {
         assert!((waiting[0].value - 0.25).abs() < f64::EPSILON);
     }
 
+    /// Two values the host sends while the processor has no room: the second is the one that
+    /// waits. One that comes back from the processor is older and does not take its place.
+    #[test]
+    fn a_value_the_host_sends_replaces_one_that_waits_and_one_coming_back_does_not() {
+        let handler = Handler::default();
+        handler.put_edit(ParameterChange { id: 7, value: 0.25 });
+        handler.put_edit(ParameterChange { id: 7, value: 0.75 });
+        handler.keep_edit(ParameterChange { id: 7, value: 0.5 });
+        let waiting = handler.take_edits();
+        assert_eq!(waiting, [ParameterChange { id: 7, value: 0.75 }]);
+    }
+
     /// What the handler noted for one call of `restartComponent`, taken the way a poll takes
     /// it: restart, reload, values changed, state to be saved, pedal mapping moved, parameters
-    /// listed again.
-    fn taken(handler: &Handler) -> [bool; 6] {
+    /// listed again, names read again.
+    fn taken(handler: &Handler) -> [bool; 7] {
         [
             handler.take_restart_wanted(),
             handler.take_reload_wanted(),
@@ -571,6 +633,7 @@ mod tests {
             handler.take_state_is_dirty(),
             handler.take_midi_mapping_changed(),
             handler.take_ids_changed(),
+            handler.take_titles_changed(),
         ]
     }
 
@@ -587,7 +650,10 @@ mod tests {
             );
             handler.restartComponent(0);
         }
-        assert_eq!(taken(&handler), [false, false, true, true, false, true]);
+        assert_eq!(
+            taken(&handler),
+            [false, false, true, true, false, true, true]
+        );
     }
 
     /// Every flag of the format, each with what ARCHITECTURE.md says this host does about it.
@@ -595,38 +661,42 @@ mod tests {
     /// `ivsteditcontroller.h`.
     #[test]
     fn every_restart_flag_is_noted_as_the_table_says() {
-        // Restart, reload, values changed, state to be saved, pedal mapping moved, listed again.
-        let nothing = [false; 6];
-        let flags: [(RestartFlags, [bool; 6]); 12] = [
+        // Restart, reload, values changed, state to be saved, pedal mapping moved, listed again,
+        // names read again.
+        let nothing = [false; 7];
+        let flags: [(RestartFlags, [bool; 7]); 12] = [
             (
                 RestartFlags_::kReloadComponent,
-                [false, true, false, false, false, false],
+                [false, true, false, false, false, false, false],
             ),
             (
                 RestartFlags_::kIoChanged,
-                [true, false, false, false, false, false],
+                [true, false, false, false, false, false, false],
             ),
             (
                 RestartFlags_::kLatencyChanged,
-                [true, false, false, false, false, false],
+                [true, false, false, false, false, false, false],
             ),
             (
                 RestartFlags_::kParamValuesChanged,
-                [false, false, true, true, false, false],
+                [false, false, true, true, false, false, false],
             ),
             (
                 RestartFlags_::kMidiCCAssignmentChanged,
-                [false, false, false, false, true, false],
+                [false, false, false, false, true, false, false],
             ),
             (RestartFlags_::kPrefetchableSupportChanged, nothing),
-            (RestartFlags_::kParamTitlesChanged, nothing),
+            (
+                RestartFlags_::kParamTitlesChanged,
+                [false, false, false, false, false, false, true],
+            ),
             (RestartFlags_::kNoteExpressionChanged, nothing),
             (RestartFlags_::kIoTitlesChanged, nothing),
             (RestartFlags_::kRoutingInfoChanged, nothing),
             (RestartFlags_::kKeyswitchChanged, nothing),
             (
                 RestartFlags_::kParamIDMappingChanged,
-                [false, false, false, false, false, true],
+                [false, false, false, false, false, true, false],
             ),
         ];
         let mut seen = 0_i32;
@@ -656,7 +726,10 @@ mod tests {
             );
         }
         handler.forget_restarts();
-        assert_eq!(taken(&handler), [false, false, true, true, false, false]);
+        assert_eq!(
+            taken(&handler),
+            [false, false, true, true, false, false, false]
+        );
     }
 
     /// One flag of a combination is enough, whichever it is.
@@ -669,7 +742,29 @@ mod tests {
             | RestartFlags_::kParamValuesChanged;
         // SAFETY: as above.
         unsafe { handler.restartComponent(flags) };
-        assert_eq!(taken(&handler), [true, true, true, true, false, false]);
+        assert_eq!(
+            taken(&handler),
+            [true, true, true, true, false, false, true]
+        );
+    }
+
+    /// A hand stays on the knob until its last `endEdit`, and the host hears that it let go
+    /// once, which is where an undo step of the plugin's own window ends.
+    #[test]
+    fn a_hand_is_held_until_its_last_end_edit_and_let_go_once() {
+        let handler = Handler::default();
+        assert_eq!(handler.take_hand(), Hand::Unknown);
+        // SAFETY: plain calls of methods that touch nothing but this handler.
+        unsafe {
+            handler.beginEdit(7);
+            handler.beginEdit(8);
+            handler.endEdit(7);
+        }
+        assert_eq!(handler.take_hand(), Hand::Held);
+        // SAFETY: as above.
+        unsafe { handler.endEdit(8) };
+        assert_eq!(handler.take_hand(), Hand::LetGo);
+        assert_eq!(handler.take_hand(), Hand::Unknown);
     }
 
     #[test]

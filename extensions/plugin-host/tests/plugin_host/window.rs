@@ -352,7 +352,7 @@ fn loading_a_vst3_plugin_makes_no_view_call_at_all() {
     harness.add_track(record(PluginFormat::Vst3, "piano"), Vec::new());
     harness.play(1024);
     // The plugin is loaded, activated and playing, and its state has been read and saved.
-    harness.plugins.close(&harness.project);
+    harness.plugins.close(&mut harness.project);
     let calls = window_calls(&log);
     assert_eq!(calls, Vec::<String>::new(), "{calls:?}");
 }
@@ -531,7 +531,7 @@ fn a_deleted_record_takes_the_window(format: PluginFormat, cx: &mut TestAppConte
     // The project closing frees every window that is still open.
     open_window(&harness, cx);
     assert!(harness.plugins.window_is_open(&slot));
-    harness.plugins.close(&harness.project);
+    harness.plugins.close(&mut harness.project);
     assert!(!harness.plugins.window_is_open(&slot));
     assert_eq!(
         window_calls(&log).last().map(String::as_str),
