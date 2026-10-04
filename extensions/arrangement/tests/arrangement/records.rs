@@ -1,8 +1,10 @@
 //! Records that do not load, and the typed helpers for interfaces.
 
-use arrangement::{Colour, TrackState, add_clip, add_clips, add_track, clips, move_clip, tracks};
+use arrangement::{
+    AnyClip, ClipMove, Colour, TrackState, add_clip, add_clips, add_track, clips, move_clips,
+    tracks,
+};
 use sound_core::Changes;
-use sound_notes::Clip;
 
 use crate::support::{Harness, Probe, Shows, TICK, clip, id, level_changes, note};
 
@@ -159,14 +161,19 @@ fn the_helpers_add_tracks_and_clips_under_free_ids_and_move_a_clip_as_one_step()
 
     // The other track has a clip of this name already, so the moved one gets a free name.
     let (from, to) = (shown[0].0.clone(), shown[1].0.clone());
-    let clip = harness
-        .project
-        .resolve::<Clip>(&id("arrangement/warm-pad/verse-a"))
-        .unwrap();
+    let clip = id("arrangement/warm-pad/verse-a");
+    let next = AnyClip::read(&harness.project, &clip).unwrap();
+    let step = ClipMove {
+        home: clip.clone(),
+        clip,
+        was: next.start()..next.end(&harness.project),
+        to: to.clone(),
+        next,
+    };
     let mut changes = Changes::new();
-    let moved = move_clip(&harness.project, &mut changes, &clip, &to).unwrap();
+    let moved = move_clips(&harness.project, &mut changes, &arrangement, vec![step]).unwrap();
     harness.project.commit("Move clip", changes).unwrap();
-    assert_eq!(moved.id(), &id("arrangement/warm-pad-2/verse-a-2"));
+    assert_eq!(moved, [id("arrangement/warm-pad-2/verse-a-2")]);
     assert!(clips(&harness.project, from.id()).is_empty());
     assert_eq!(clips(&harness.project, to.id()).len(), 2);
     assert!(

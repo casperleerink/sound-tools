@@ -32,6 +32,7 @@
 
 mod audio;
 mod automation;
+mod clip_moves;
 pub mod decibels;
 mod input;
 mod master;
@@ -57,6 +58,8 @@ pub use automation::{
     AutomationLane, AutomationValue, Carried, LaneMove, Moved, Travel, automatable, moved,
     travel_in,
 };
+pub(crate) use clip_moves::shown_end;
+pub use clip_moves::{AnyClip, ClipMove, move_clips};
 pub use input::InputChannels;
 use master::Master;
 pub use master::{LimiterState, MasterState};
@@ -702,34 +705,6 @@ pub fn add_audio_track(
     Ok(changes.create(id, state))
 }
 
-/// Why an audio file did not become a clip.
-#[derive(Debug, thiserror::Error)]
-pub enum AudioFileError {
-    #[error(transparent)]
-    Media(#[from] sound_media::MediaError),
-    #[error(transparent)]
-    Project(#[from] ProjectError),
-}
-
-/// Copies an audio file from anywhere into `assets/audio/` and adds a clip of all of it at
-/// `start` to a group of changes, on top of the other clips of the track. The clip is named
-/// after the file.
-///
-/// The copy is made now, whatever becomes of the group: an asset is not undone, and a file
-/// that nothing names is left alone. Everything else is the group, so it is one undo step.
-pub fn add_audio_file(
-    project: &Project,
-    changes: &mut Changes,
-    track: &Instance<TrackState>,
-    source: &std::path::Path,
-    start: Ticks,
-) -> Result<Instance<AudioClip>, AudioFileError> {
-    let imported = sound_media::import(project.assets(), source)?;
-    let name = imported.asset.asset_name().name().to_string();
-    let clip = AudioClip::new(imported.asset, start);
-    Ok(add_audio_clip(project, changes, track, &name, clip)?)
-}
-
 /// Adds an audio clip to a track, to a group of changes, over every clip the track has: its
 /// layer is one above theirs, so where it overlaps them it is heard. The id comes from `name`,
 /// as for a note clip.
@@ -945,21 +920,6 @@ impl FreeIds {
             }
         }
     }
-}
-
-/// Moves a clip to another track: a delete and a create in one group, like moving the file.
-/// It keeps its name when the other track has none like it.
-pub fn move_clip(
-    project: &Project,
-    changes: &mut Changes,
-    clip: &Instance<Clip>,
-    to_track: &Instance<TrackState>,
-) -> Result<Instance<Clip>, ProjectError> {
-    let missing = || ProjectError::MissingInstance(clip.id().clone());
-    let state = project.state(clip).ok_or_else(missing)?.clone();
-    let id = project.free_id(&to_track.id().child(clip.id().name())?)?;
-    changes.delete(clip.id());
-    Ok(changes.create(id, state))
 }
 
 /// Plays one note now through the instrument of a track, for [`PREVIEW_SECONDS`], also while

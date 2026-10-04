@@ -1,105 +1,17 @@
-//! Both kinds of clip as the timeline edits them, and what a drag does to an audio clip. Pure,
-//! no GPUI: the view finds the clip and the pointer, these functions say what the clip becomes.
-//!
-//! A note clip and an audio clip share selecting, moving, copying, pasting and deleting, so the
-//! timeline edits an [`AnyClip`]. What differs is kept here: an audio clip has no length of its
-//! own, because it plays at the speed of its file, so where it ends comes from its file and the
-//! tempo; and each kind goes on its own kind of track only.
+//! What a drag does to an audio clip. Pure, no GPUI: the view finds the clip and the pointer,
+//! these functions say what the clip becomes.
 //!
 //! An audio clip's edges trim the file, keeping the sound where it is in time: the left edge
 //! moves the start and `file_start_seconds` together. Its fades and gain are values of its
 //! record, dragged from their handles and turned with their knobs.
 
-use sound_core::{Changes, Clock, InstanceId, Project, Ticks};
-use sound_media::{Cached, Info};
-use sound_notes::Clip;
+use sound_core::{Clock, Ticks};
+use sound_media::Info;
 use sound_ui::components::waveform_display::{clamped_end, clamped_start, latest_start};
 
 use super::gesture::shortest;
 use super::layout::shifted;
-use crate::{AudioClip, TrackKind};
-
-/// A clip of either kind, by value.
-#[derive(Clone, Debug, PartialEq)]
-pub enum AnyClip {
-    Notes(Clip),
-    Audio(AudioClip),
-}
-
-impl AnyClip {
-    /// The clip the project has at `id`, of either kind.
-    pub fn read(project: &Project, id: &InstanceId) -> Option<Self> {
-        if let Some(clip) = project.resolve::<Clip>(id) {
-            return project.state(&clip).cloned().map(Self::Notes);
-        }
-        let clip = project.resolve::<AudioClip>(id)?;
-        project.state(&clip).cloned().map(Self::Audio)
-    }
-
-    pub fn start(&self) -> Ticks {
-        match self {
-            Self::Notes(clip) => clip.start,
-            Self::Audio(clip) => clip.start,
-        }
-    }
-
-    pub fn with_start(self, start: Ticks) -> Self {
-        match self {
-            Self::Notes(clip) => Self::Notes(Clip { start, ..clip }),
-            Self::Audio(clip) => Self::Audio(AudioClip { start, ..clip }),
-        }
-    }
-
-    /// The kind of track that plays it.
-    pub fn kind(&self) -> TrackKind {
-        match self {
-            Self::Notes(_) => TrackKind::Instrument,
-            Self::Audio(_) => TrackKind::Audio,
-        }
-    }
-
-    /// Where it ends on the timeline, see [`shown_end`] for an audio clip.
-    pub fn end(&self, project: &Project) -> Ticks {
-        match self {
-            Self::Notes(clip) => clip.end(),
-            Self::Audio(clip) => shown_end(project, clip),
-        }
-    }
-
-    /// Puts it at `id`, a new clip or over the one that is there.
-    pub fn write(self, changes: &mut Changes, id: InstanceId) {
-        match self {
-            Self::Notes(clip) => {
-                changes.create(id, clip);
-            }
-            Self::Audio(clip) => {
-                changes.create(id, clip);
-            }
-        }
-    }
-}
-
-/// Where an audio clip ends on the timeline. It plays at the speed of its file, so this depends
-/// on the file and the tempo. When the file is not there the clip still needs a place to be seen,
-/// selected and deleted: as long as its trim says, or one bar when it plays to the end of a file
-/// nobody can measure. The same while nothing knows yet what the file is: this never looks at
-/// the disk, because the thread that draws calls it, see [`sound_media::cached`].
-pub fn shown_end(project: &Project, clip: &AudioClip) -> Ticks {
-    let clock = project.clock();
-    if let Cached::Plays(file) = sound_media::cached(project.assets(), &clip.asset) {
-        return clip.end(Some(&file), clock).max(clip.start + Ticks(1));
-    }
-    match clip.file_end_seconds {
-        Some(end) => {
-            let seconds = clock.seconds_of(clip.start) + (end - clip.file_start_seconds);
-            clock.tick_at_seconds(seconds).max(clip.start + Ticks(1))
-        }
-        None => {
-            let time_signatures = project.project_file().tempo_map.time_signatures();
-            clip.start + time_signatures.bar_at(clip.start).length()
-        }
-    }
-}
+use crate::AudioClip;
 
 /// The clip with its left edge moved by `delta` ticks. The sound stays where it is in time, so
 /// the start of the file that plays moves with the edge. It stops at the start of the file, at

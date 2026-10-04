@@ -4,22 +4,22 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gpui::{Bounds, Context, CursorStyle, MouseDownEvent, Pixels, Point, Window};
-use sound_core::{Changes, InstanceId, Ticks};
+use sound_core::{Changes, InstanceId, Project, Ticks};
+use sound_media::{AudioAsset, Cached, Info};
 use sound_notes::Clip;
 use sound_ui::DragEdit;
 use sound_ui::components::audio_clip::ClipHandle;
 
-use super::edits::{known_file, range_of};
 use super::scene::{Grip, LANES_TOGGLE_RIGHT, Scene};
 use super::state::{
     ClipDrag, ClipDragKind, Edge, EdgeDrag, GainDrag, Held, LaneDragKind, Marquee, MoveDrag,
     MovedClip, OnRelease, ResizeDrag,
 };
 use super::{Timeline, TimelineEvent};
-use crate::view::clips::{AnyClip, shown_end};
+use crate::clip_moves::range_of;
 use crate::view::gesture::{Zone, new_clip};
 use crate::view::layout::{HEADER_WIDTH, LANES_MIDDLE, Part, RULER_HEIGHT, ordered};
-use crate::{AudioClip, TrackKind, TrackState, add_clip};
+use crate::{AnyClip, AudioClip, TrackKind, TrackState, add_clip, shown_end};
 
 impl Timeline {
     /// The position of a mouse event in the coordinates of [`layout`].
@@ -514,5 +514,14 @@ impl Timeline {
             Held::Clips(_, kind) => kind.cursor(),
             Held::Nothing | Held::Marquee(_) | Held::Track(_) => self.hover_cursor,
         }
+    }
+}
+
+/// What the file of an audio clip is, from memory only: a press on the thread that draws does
+/// not read the disk. `None` for a file that is missing, does not play, or is not known yet.
+fn known_file(project: &Project, asset: &AudioAsset) -> Option<Info> {
+    match sound_media::cached(project.assets(), asset) {
+        Cached::Plays(file) => Some(file),
+        Cached::DoesNotPlay(_) | Cached::Missing | Cached::Unknown => None,
     }
 }
