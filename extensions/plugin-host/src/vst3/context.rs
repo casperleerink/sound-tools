@@ -412,6 +412,13 @@ impl Handler {
             .collect()
     }
 
+    /// A value the host sends to the processor, in place of any edit of the same parameter that
+    /// waits: it is newer than all of them.
+    pub(super) fn put_edit(&self, change: ParameterChange) {
+        let mut held = self.edits.lock().unwrap_or_else(|held| held.into_inner());
+        held.insert(change.id, change.value);
+    }
+
     /// Puts an edit back because the processor had no room for it, or never played it. A
     /// newer edit of the same parameter, which the plugin may have made in between, is left as
     /// it is: it is the one the composer means.
@@ -595,6 +602,18 @@ mod tests {
         let waiting = handler.take_edits();
         assert_eq!(waiting.len(), 1);
         assert!((waiting[0].value - 0.25).abs() < f64::EPSILON);
+    }
+
+    /// Two values the host sends while the processor has no room: the second is the one that
+    /// waits. One that comes back from the processor is older and does not take its place.
+    #[test]
+    fn a_value_the_host_sends_replaces_one_that_waits_and_one_coming_back_does_not() {
+        let handler = Handler::default();
+        handler.put_edit(ParameterChange { id: 7, value: 0.25 });
+        handler.put_edit(ParameterChange { id: 7, value: 0.75 });
+        handler.keep_edit(ParameterChange { id: 7, value: 0.5 });
+        let waiting = handler.take_edits();
+        assert_eq!(waiting, [ParameterChange { id: 7, value: 0.75 }]);
     }
 
     /// What the handler noted for one call of `restartComponent`, taken the way a poll takes

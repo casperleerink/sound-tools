@@ -92,8 +92,17 @@ fn normalized(control: Control) -> ParamValue {
 /// The control side's ends of the two rings of an audio side: what the plugin changed by
 /// itself, coming back, and what the composer changed in its window, going there.
 pub(super) struct ControlEnds {
-    pub changed: rtrb::Consumer<ParameterChange>,
+    pub changed: rtrb::Consumer<Report>,
     pub edited: rtrb::Producer<ParameterChange>,
+}
+
+/// A parameter the plugin changed by itself in a block, and how many edits this audio side had
+/// taken by then. A report from before an edit the host sent of the same parameter is older
+/// than that edit, and the host leaves it out instead of giving it to the controller.
+#[derive(Copy, Clone, Debug)]
+pub(super) struct Report {
+    pub change: ParameterChange,
+    pub edits_taken: u64,
 }
 
 /// What a block says it is: a run on a device, or a render. It is the mode of the
@@ -124,10 +133,13 @@ pub(super) struct Vst3Processor {
     /// intends, see `plugin.rs`.
     targets: Arc<ControlTargets>,
     /// What the plugin changed by itself, on its way to the control thread.
-    reports: rtrb::Producer<ParameterChange>,
-    /// What the composer changed in the plugin's own window, on its way here. The host's thread
-    /// fills it at every poll; this side empties it at the start of every block.
+    reports: rtrb::Producer<Report>,
+    /// What the composer changed in the plugin's own window, and the pins the host sends, on
+    /// their way here. The host's thread fills it; this side empties it at the start of every
+    /// block.
     edits: rtrb::Consumer<ParameterChange>,
+    /// How many edits this side has taken into its blocks, for [`Report::edits_taken`].
+    edits_taken: u64,
     /// Where an edit this side never played goes back to when this side goes, so that a
     /// parameter the composer moves while the plugin is started again is not lost. Only
     /// touched as this side is dropped, which is on the control thread.
@@ -189,6 +201,7 @@ impl Vst3Processor {
             targets,
             reports,
             edits,
+            edits_taken: 0,
             handler,
             processing: false,
             mode,
@@ -242,6 +255,7 @@ impl Started for Vst3Processor {
             if self.edits.pop().is_err() {
                 break;
             }
+            self.edits_taken += 1;
         }
     }
 
@@ -304,7 +318,8 @@ impl Started for Vst3Processor {
         if result != kResultOk {
             return false;
         }
-        self.output_changes.report_into(&mut self.reports);
+        self.output_changes
+            .report_into(&mut self.reports, self.edits_taken);
         copy_out(self.output_buses.first(), frames, left, right);
         true
     }
@@ -558,7 +573,7 @@ impl HostParameterChanges {
 
     /// Hands what the plugin changed to the control thread. What does not fit is dropped: the
     /// state is saved when the plugin goes in any case.
-    fn report_into(&self, reports: &mut rtrb::Producer<ParameterChange>) {
+    fn report_into(&self, reports: &mut rtrb::Producer<Report>, edits_taken: u64) {
         for queue in &self.queues[..self.used.get()] {
             let Some(value) = queue.last() else {
                 continue;
@@ -567,7 +582,10 @@ impl HostParameterChanges {
                 id: queue.id.get(),
                 value,
             };
-            let _full = reports.push(change);
+            let _full = reports.push(Report {
+                change,
+                edits_taken,
+            });
         }
     }
 }
