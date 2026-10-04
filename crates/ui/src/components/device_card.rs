@@ -57,6 +57,13 @@ const INSIDE: f32 = CARD_PADDING - BORDER;
 /// Air on each side of the hairline before the hidden columns.
 const HIDDEN_GAP: f32 = 8.;
 
+/// How wide a card is with a display `display` wide and cells `columns` columns wide in all,
+/// for a card that sets its width because its title must not widen it, such as one named by a
+/// plugin.
+pub fn card_width(display: f32, columns: usize) -> f32 {
+    CARD_PADDING * 2. + display + DISPLAY_GAP + CELL_WIDTH * columns as f32
+}
+
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 /// Whether a device is on, read when the card draws.
 type IsOn = Rc<dyn Fn(&App) -> bool>;
@@ -142,16 +149,35 @@ impl CardFrame {
     }
 }
 
-/// A column of a card: one cell in each of the two rows. Either may be empty.
-#[derive(IntoElement, Default)]
+/// A column of a card: one cell in each of the two rows. Either may be empty. It is one cell
+/// wide, or wider for a cell that spans more, such as a select with words in it; a narrower
+/// cell in it is centred.
+#[derive(IntoElement)]
 pub struct Column {
     top: Option<AnyElement>,
     bottom: Option<AnyElement>,
+    span: usize,
+}
+
+impl Default for Column {
+    fn default() -> Self {
+        Self {
+            top: None,
+            bottom: None,
+            span: 1,
+        }
+    }
 }
 
 impl Column {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// How many columns of cells it is wide, from 1.
+    pub fn span(mut self, columns: usize) -> Self {
+        self.span = columns.max(1);
+        self
     }
 
     pub fn top(mut self, cell: impl IntoElement) -> Self {
@@ -167,10 +193,16 @@ impl Column {
 
 impl RenderOnce for Column {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let row = |cell: Option<AnyElement>| div().h(px(ROW_HEIGHT)).children(cell);
+        let wide = self.span > 1;
+        let row = |cell: Option<AnyElement>| {
+            div()
+                .h(px(ROW_HEIGHT))
+                .when(wide, |row| row.flex().justify_center())
+                .children(cell)
+        };
         div()
             .flex_none()
-            .w(px(CELL_WIDTH))
+            .w(px(CELL_WIDTH * self.span as f32))
             .flex()
             .flex_col()
             .child(row(self.top))
