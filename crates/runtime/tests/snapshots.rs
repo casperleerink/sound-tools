@@ -3,7 +3,7 @@
 //! `<target>/window-snapshots`. The window is 1470 x 920 points at scale 2, the screen of a
 //! 13 inch MacBook Air without the menu bar, which is the laptop the design is for:
 //!
-//! - `default.png`: the default project.
+//! - `default.png`: a new project, which has no tracks.
 //! - `piece.png`: three tracks with several clips, playing, one clip selected.
 //! - `transport-click-off.png`: the same with the transport in focus, the click off.
 //! - `transport-click-on.png`: the same with the click on.
@@ -186,6 +186,23 @@ impl Opened {
         fill: impl FnOnce(&mut Project) -> Result<()>,
         input: Option<runtime::window::audio_input::OpenInput>,
     ) -> Result<Self> {
+        let fill = |project: &mut Project| {
+            // `Track 1`, as the add track button makes it, with no undo step: the track most
+            // snapshots start from.
+            let arrangement = main_arrangement(project).context("the arrangement")?;
+            runtime::add_track(project, &arrangement)?;
+            project.clear_history();
+            fill(project)
+        };
+        Self::open(cx, fill, input)
+    }
+
+    /// A new project as the app makes it, with no tracks, and what `fill` adds.
+    fn open(
+        cx: &mut HeadlessAppContext,
+        fill: impl FnOnce(&mut Project) -> Result<()>,
+        input: Option<runtime::window::audio_input::OpenInput>,
+    ) -> Result<Self> {
         // The folder name is the project name in the window.
         let folder = tempfile::tempdir()?;
         let (control, engine) = Engine::new(OFFLINE);
@@ -215,7 +232,7 @@ impl Opened {
     }
 
     /// A project whose `project.json` does not enable the plugin host, as one made before
-    /// step 4a has. Its content is that of the default project.
+    /// step 4a has, with one track.
     fn without_plugin_host(cx: &mut HeadlessAppContext) -> Result<Self> {
         Self::without_extensions(cx, r#"["arrangement", "instrument", "tone"]"#, |_| Ok(()))
     }
@@ -902,7 +919,7 @@ fn piece(project: &mut Project) -> Result<()> {
 
     let track = main_arrangement(project)
         .and_then(|arrangement| arrangement::tracks(project, arrangement.id()).pop())
-        .context("the default project has a track")?
+        .context("the project has a track")?
         .0;
     let mut changes = Changes::new();
     for (index, start_bar) in [0, 4, 8].into_iter().enumerate() {
@@ -940,7 +957,7 @@ fn recorded(project: &mut Project) -> Result<()> {
     clip.take = Some(name);
     let track = main_arrangement(project)
         .and_then(|arrangement| arrangement::tracks(project, arrangement.id()).pop())
-        .context("the default project has a track")?
+        .context("the project has a track")?
         .0;
     let mut changes = Changes::new();
     changes.create(track.id().child("take")?, clip);
@@ -993,7 +1010,7 @@ fn main() -> Result<()> {
         Ok(())
     };
 
-    let opened = Opened::new(&mut cx, |_| Ok(()))?;
+    let opened = Opened::open(&mut cx, |_| Ok(()), None)?;
     save(&mut cx, &opened, "default")?;
 
     // Audio tracks and clips, the Sampler, the Drum pad and the Utility first, so a run that
@@ -2028,7 +2045,7 @@ fn main() -> Result<()> {
     opened.advance(64, &mut cx);
     cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.set_viewport(middle, cx)));
     cx.run_until_parked();
-    // Row 46 is track 45 of the scale project, after the track of the default project. Its
+    // Row 46 is track 45 of the scale project, after `Track 1`. Its
     // clip 50 is at bar 8 * 50 + 45 % 8 = 405, which is on screen.
     let top = 48.0 + RULER_HEIGHT;
     let rows = cx.update(|cx| timeline.read(cx).rows(cx));

@@ -41,7 +41,7 @@ Not on Linux:
 cargo run -p runtime -- ~/Music/my-piece
 ```
 
-The folder is the project. When it is empty or missing, the app makes the default project in it, which is 120 bpm, 4/4 and one track with a synth. There is no save. The app writes every finished edit to the folder.
+The folder is the project. When it is empty or missing, the app makes the default project in it: 120 bpm, 4/4 and no tracks yet. There is no save. The app writes every finished edit to the folder.
 
 ### Install the app
 

@@ -6,24 +6,14 @@ use sound_core::Ticks;
 use crate::support::{BAR, Harness, clip, difference};
 
 #[test]
-fn the_default_project_is_a_small_musical_template() {
+fn the_default_project_is_an_arrangement_with_no_tracks() {
     let harness = Harness::new();
     let instances: Vec<(String, &str)> = harness
         .project
         .instances()
         .map(|(id, tool)| (id.to_string(), tool))
         .collect();
-    assert_eq!(
-        instances,
-        [
-            ("arrangement".to_string(), "arrangement"),
-            ("arrangement/track-1".to_string(), "arrangement.track"),
-            (
-                "arrangement/track-1/instrument".to_string(),
-                "instrument.synth"
-            ),
-        ]
-    );
+    assert_eq!(instances, [("arrangement".to_string(), "arrangement")]);
     let project_file = harness.project.project_file();
     assert_eq!(
         project_file.extensions,
@@ -49,11 +39,7 @@ fn the_default_project_is_a_small_musical_template() {
     );
     assert_eq!(project_file.tempo_map, sound_core::TempoMap::default());
     assert_eq!(project_file.connections, []);
-    assert!(
-        harness
-            .path("state/arrangement/track-1/instrument.json")
-            .exists()
-    );
+    assert!(harness.path("state/arrangement/instance.json").exists());
     // Making the default content is nothing to undo.
     assert_eq!(harness.project.undo_label(), None);
 }
@@ -65,7 +51,7 @@ fn a_folder_without_a_project_file_becomes_the_default_project_whatever_else_is_
     std::fs::write(folder.path().join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
     std::fs::write(folder.path().join(".DS_Store"), [0_u8; 4]).unwrap();
     let harness = Harness::open(folder);
-    assert_eq!(harness.project.instances().count(), 3);
+    assert_eq!(harness.project.instances().count(), 1);
     assert!(harness.path(".git/HEAD").exists());
 
     // An existing project is left as it is, also one with no instances.
@@ -93,13 +79,12 @@ fn a_folder_without_a_project_file_becomes_the_default_project_whatever_else_is_
 fn a_clip_file_written_during_playback_sounds_in_its_bars_and_disturbs_nothing_else() {
     let expected = Harness::piece().play(5 * BAR);
 
-    // The part goes on the empty first track, in bars 3 and 4, written while bar 1 plays.
+    // The part goes on an empty track, in bars 3 and 4, written while bar 1 plays.
     let part = clip(7680, 7680, &[(0, 1920, 36), (3840, 1920, 43)]);
-    let file = "state/arrangement/track-1/agent-part.json";
+    let file = "state/arrangement/empty/agent-part.json";
     let run = |gain: f32| {
         let mut harness = Harness::piece();
-        let synth = crate::support::synth(gain);
-        harness.write_and_apply("state/arrangement/track-1/instrument.json", &synth);
+        harness.write_track("empty", 3, gain, &[]);
         let mut output = harness.play(BAR / 2);
         assert_eq!(harness.write_and_apply(file, &part), 1);
         assert_eq!(harness.project.problems(), []);

@@ -78,8 +78,8 @@ pub(crate) fn open_without_extensions<'a>(
         std::fs::write(path, contents).unwrap();
     };
     write("project.json", &file);
-    // The content of the default project, which `open_or_create` only makes for a folder with
-    // no `project.json` at all.
+    // An arrangement with one track. `open_or_create` makes the arrangement only for a folder
+    // with no `project.json` at all.
     write(
         "state/arrangement/instance.json",
         r#"{"tool": "arrangement", "state": {}}"#,
@@ -98,11 +98,30 @@ pub(crate) fn open_without_extensions<'a>(
     open_project(cx, folder, project, engine, plugins.downgrade())
 }
 
-/// Opens the window on a new default project in a temporary folder. `fill` adds to it first.
+/// Opens the window on a new project in a temporary folder, as the app makes it: an
+/// arrangement with no tracks.
+pub(crate) fn open_new(cx: &mut TestAppContext) -> Opened<'_> {
+    let folder = tempfile::tempdir().unwrap();
+    let (control, engine) = Engine::new(OFFLINE);
+    let (project, plugins) = open_or_create(folder.path(), control).unwrap();
+    open_project(cx, folder, project, engine, plugins.downgrade())
+}
+
+/// Adds `Track 1` to a new project, as the add track button makes it, with no undo step: the
+/// track most tests start from.
+pub(crate) fn add_first_track(project: &mut Project) {
+    let arrangement = runtime::main_arrangement(project).unwrap();
+    runtime::add_track(project, &arrangement).unwrap();
+    project.clear_history();
+}
+
+/// Opens the window on a new project in a temporary folder with one track, `Track 1`. `fill`
+/// adds to it first.
 pub(crate) fn open_with(cx: &mut TestAppContext, fill: impl FnOnce(&mut Project)) -> Opened<'_> {
     let folder = tempfile::tempdir().unwrap();
     let (control, engine) = Engine::new(OFFLINE);
     let (mut project, plugins) = open_or_create(folder.path(), control).unwrap();
+    add_first_track(&mut project);
     fill(&mut project);
     open_project(cx, folder, project, engine, plugins.downgrade())
 }
@@ -129,12 +148,13 @@ pub(crate) fn open_with_plugin_host(
     let plugins = host(folder.path());
     let mut project =
         runtime::open_or_create_with(folder.path(), control, plugins.clone()).unwrap();
+    add_first_track(&mut project);
     fill(&mut project);
     open_project(cx, folder, project, engine, plugins.downgrade())
 }
 
 /// Opens the window on a project whose `project.json` does not enable the plugin host, as a
-/// project made before step 4a has. Its content is what the default project has.
+/// project made before step 4a has, with one track.
 pub(crate) fn open_without_plugin_host(cx: &mut TestAppContext) -> Opened<'_> {
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
@@ -291,6 +311,7 @@ pub(crate) fn open_with_input(
     let folder = tempfile::tempdir().unwrap();
     let (control, engine) = Engine::new(OFFLINE);
     let (mut project, plugins) = open_or_create(folder.path(), control).unwrap();
+    add_first_track(&mut project);
     fill(&mut project);
     let input = SimulatedInput::default();
     let opener = Some(input.opener());

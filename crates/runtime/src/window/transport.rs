@@ -1339,7 +1339,7 @@ mod tests {
     use sound_ui::Session;
 
     use super::{KNOB, TransportPill, clock_time, fraction_at, knob_left};
-    use crate::{OFFLINE, open_or_create};
+    use crate::{OFFLINE, add_track, main_arrangement, open_or_create};
 
     #[test]
     fn the_knob_is_under_the_pointer_for_any_strip_width() {
@@ -1360,6 +1360,8 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let (control, _engine) = Engine::new(OFFLINE);
         let (mut project, _plugins) = open_or_create(folder.path(), control).unwrap();
+        let arrangement = main_arrangement(&project).unwrap();
+        add_track(&mut project, &arrangement).unwrap();
         let mut changes = Changes::new();
         let clip = Clip::new(Ticks(0), Length::new(Ticks(3840)).unwrap(), Vec::new());
         let id = InstanceId::new("arrangement/track-1/part").unwrap();

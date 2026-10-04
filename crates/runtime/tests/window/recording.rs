@@ -21,7 +21,7 @@ fn off(pitch: u8) -> Played {
     }
 }
 
-/// The default project: one track with a synth, nothing selected.
+/// A new project with `Track 1` and its synth, nothing selected.
 fn opened(cx: &mut gpui::TestAppContext) -> Opened<'_> {
     let mut opened = open_with(cx, |_| {});
     opened.settle();

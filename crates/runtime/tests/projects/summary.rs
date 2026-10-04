@@ -29,9 +29,7 @@ fn the_summary_tells_what_plays_where() {
 time signature: 4/4 from bar 1 (tick 0), 3840 ticks per bar, 960 ticks per beat
 tempo: 120 bpm from 1:1:000 (tick 0)
 tempo: 90 bpm from 5:1:000 (tick 15360)
-arrangement `arrangement`: 3 tracks. Positions are bar:beat:tick, a clip runs up to its end position
-  track `arrangement/track-1` "Track 1": colour blue, order 0, instrument instrument.synth
-    no clips
+arrangement `arrangement`: 2 tracks. Positions are bar:beat:tick, a clip runs up to its end position
   track `arrangement/piano` "piano": colour blue, order 1, instrument instrument.synth
     clip `arrangement/piano/chords`: 1:1:000 to 5:1:000, ticks 0 to 15360, 5 notes, pitch 48 to 64
   track `arrangement/pad` "pad": colour blue, order 2, instrument instrument.synth

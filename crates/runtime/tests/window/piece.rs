@@ -1,4 +1,4 @@
-//! A short piece made by hand: from the default project, with nothing but a simulated mouse
+//! A short piece made by hand: from a new project, with nothing but a simulated mouse
 //! and keys. Then the project closes and opens again, and the piece is there, byte for byte
 //! on disk and sample for sample in an offline render.
 
@@ -29,17 +29,24 @@ fn rendered(folder: &std::path::Path) -> Vec<f32> {
 
 #[gpui::test]
 fn a_short_piece_is_made_by_hand_and_is_there_after_closing_and_opening(cx: &mut TestAppContext) {
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
+    let tracks = |opened: &mut Opened<'_>| {
+        opened.project(|project| {
+            let arrangement = runtime::main_arrangement(project).unwrap();
+            arrangement::tracks(project, arrangement.id()).len()
+        })
+    };
+    assert_eq!(tracks(&mut opened), 0);
+    assert_eq!(opened.undo_label(), None);
 
-    // A second track, from the add track button under the first.
+    // Two tracks, from the add track button, which a new project shows with no track above it.
     let add = opened.control("add-track");
     opened.click(add);
     assert_eq!(opened.undo_label().as_deref(), Some("Add track"));
-    let tracks = opened.project(|project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        arrangement::tracks(project, arrangement.id()).len()
-    });
-    assert_eq!(tracks, 2);
+    assert_eq!(tracks(&mut opened), 1);
+    let add = opened.control("add-track");
+    opened.click(add);
+    assert_eq!(tracks(&mut opened), 2);
 
     // A clip of one bar on each track, by double clicks.
     let first = opened.at(100, 0);

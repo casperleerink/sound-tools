@@ -11,7 +11,7 @@ use crate::support::{self, Opened, id};
 const UTILITY: &str = "arrangement/track-1/utility";
 const UTILITY_FILE: &str = "state/arrangement/track-1/utility.json";
 
-/// The default track with a note that plays for four bars, and its panel open. The utility is
+/// `Track 1` with a note that plays for four bars, and its panel open. The utility is
 /// added the way a composer adds it: `Add effect`, then `Utility`.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
     let mut opened = support::open_with(cx, |project| {

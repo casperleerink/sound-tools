@@ -409,7 +409,7 @@ fn next_track(project: &Project, arrangement: &Instance<ArrangementState>) -> (S
 }
 
 /// Adds `Track <n>` with the default synth, as one undo step, in the next colour of the
-/// palette. This and [`open_or_create`] are the two places that know the default instrument.
+/// palette. This is the one place that knows the default instrument.
 pub fn add_track(
     project: &mut Project,
     arrangement: &Instance<ArrangementState>,
@@ -457,7 +457,7 @@ pub fn add_track_of_kind(
 /// host of its own that scans on a thread.
 ///
 /// A folder without a `project.json` becomes the default
-/// project: 120 bpm, 4/4, one arrangement with one track and its synth, no clips. Other
+/// project: 120 bpm, 4/4, one arrangement with no tracks. Other
 /// files in it, such as `.git` or `.DS_Store`, do not make it an existing project.
 ///
 /// Making the default content is not something to undo, so a new project has no history.
@@ -478,7 +478,7 @@ pub fn open_or_create_with(
     let mut project = Project::open(folder, registry(plugins)?, control)?;
     // A `state/` folder with content but no project file is someone's work, not a new project.
     if is_new && project.instances().next().is_none() && project.problems().is_empty() {
-        arrangement::create_default_project(&mut project, SynthState::default())?;
+        arrangement::create_default_project(&mut project)?;
         project.clear_history();
     }
     Ok(project)

@@ -62,7 +62,7 @@ fn write_state(harness: &Harness, format: PluginFormat, asset: &str, latency: i3
     std::fs::write(&path, plugin_state_of(format, state)).unwrap();
 }
 
-/// A project with these tracks next to the silent track of the default project.
+/// The default project with these tracks.
 fn project(format: PluginFormat, tracks: &[Track<'_>]) -> Harness {
     let (mut harness, _plugins) = Harness::with_test_plugin(tempfile::tempdir().unwrap());
     // Two tracks at full level sum over full scale, and the numbers below are that sum.
