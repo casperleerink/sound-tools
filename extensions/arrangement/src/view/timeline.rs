@@ -6,6 +6,19 @@
 //! and removed in the ruler, and the snap setting sits in the corner. Under a track its
 //! automation lanes show at the toggle in its header, where lanes are added and their points
 //! added, moved, deleted and erased ([`super::track_lanes`]).
+//!
+//! This file holds the view itself: its fields, the project events, the viewport, the selection,
+//! the render and the mouse listeners. The rest is in `timeline/`, as more `impl Timeline`:
+//! - `scene`: what one paint shows, the hit tests on it and its painting.
+//! - `build`: the scene of a paint, from the project.
+//! - `state`: the types of what the mouse drags, a rename and files dragged in.
+//! - `edits`: moves of clips and their automation, as pure functions.
+//! - `mouse`: the press, the ruler, the marquee, the end of a drag, hover and the cursor.
+//! - `drag`: the mouse moves of a drag of clips or of a track.
+//! - `keys`: the keys, and deleting and renaming a track.
+//! - `clipboard`: copy, paste, duplicate, delete and nudge.
+//! - `file_drop`: audio files dropped from the Finder.
+//! - `lanes`: the automation lanes, their add menus and their points.
 
 mod build;
 mod clipboard;
