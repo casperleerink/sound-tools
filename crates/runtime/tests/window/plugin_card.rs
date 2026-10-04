@@ -1,18 +1,23 @@
 //! The parameters on the card of a plugin: pinned from the list on the card, turned there, and
-//! taken off again. Each is one undo step that undo gives back byte for byte.
+//! taken off again. Each is one undo step that undo gives back byte for byte. An automation lane
+//! of the track moves a pin as it moves the knob of a built-in device, and is added from the
+//! same select.
 //!
 //! The plugin is the repository's CLAP test instrument: `Cutoff` takes any value from 20 to
 //! 20000, `Wave` is three named steps and `Bright` is off or on.
 
 use std::collections::BTreeMap;
 
+use arrangement::view::layout::{LANES_MIDDLE, NAME_LEFT, TRACK_HEIGHT};
+use arrangement::{AutomationLane, AutomationValue, TrackState};
 use gpui::{TestAppContext, point, px};
 use plugin_host::{Pin, PluginFormat, PluginRecord};
 
-use sound_core::Changes;
+use sound_core::{Changes, Ticks};
 
 use crate::support::{self, Opened, id, mark, one_undo_step, test_plugin_record, write_outside};
 
+const TRACK: &str = "arrangement/track-1";
 const SLOT: &str = "arrangement/track-1/instrument";
 const SLOT_FILE: &str = "state/arrangement/track-1/instrument.json";
 const LIST: &str = "plugin-parameters";
@@ -161,4 +166,87 @@ fn a_pin_taken_off_under_a_drag_ends_the_drag(cx: &mut TestAppContext) {
     assert!(!opened.gesture_open());
     opened.release(knob);
     assert_eq!(pins(&mut opened), BTreeMap::new());
+}
+
+/// The lane of `Cutoff`, as an agent writes it, or none.
+fn automate_cutoff(opened: &mut Opened<'_>, value: Option<f32>) {
+    let lanes = value.map(|value| AutomationLane {
+        device: Some("instrument".into()),
+        parameter: "parameters.0.value".into(),
+        points: vec![sound_notes::Point {
+            tick: Ticks(0),
+            value: AutomationValue(value),
+        }],
+    });
+    opened.edit(|project| {
+        let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
+        let mut state = project.state(&track).unwrap().clone();
+        state.automation = lanes.into_iter().collect();
+        let mut changes = Changes::new();
+        changes.set(&track, state);
+        project.commit("Automate", changes)
+    });
+    opened.project(|project| assert_eq!(project.problems(), []));
+}
+
+/// A lane of a pin: its knob carries the mark of an automated control and a drag changes
+/// nothing. Taking the lane out gives the knob back.
+#[gpui::test]
+fn the_knob_of_a_pin_a_lane_moves_is_marked_and_does_not_drag(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
+    automate_cutoff(&mut opened, Some(5000.0));
+    assert!(opened.find("automated-pin-0").is_some());
+    let knob = opened.control("knob-pin-0");
+    opened.drag(knob, point(knob.x, knob.y - px(50.)));
+    assert_eq!(
+        pins(&mut opened),
+        BTreeMap::from([(0, pin("Cutoff", 1000.0))])
+    );
+    assert_eq!(opened.undo_label().as_deref(), Some("Automate"));
+
+    automate_cutoff(&mut opened, None);
+    assert_eq!(opened.find("automated-pin-0"), None);
+    let knob = opened.control("knob-pin-0");
+    opened.drag(knob, point(knob.x, knob.y - px(50.)));
+    assert_eq!(
+        pins(&mut opened),
+        BTreeMap::from([(0, pin("Cutoff", 6000.0))])
+    );
+}
+
+/// The select under the lanes of the track offers a pin that takes a lane, and not one with
+/// named steps. A pick adds a lane that holds the value of the record: one undo step.
+#[gpui::test]
+fn the_select_adds_a_lane_for_a_pin(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
+    pick(&mut opened, "wav", test_clap_plugin::WAVE);
+    let header = opened.track_header(0);
+    let toggle = point(
+        px(NAME_LEFT + 8.),
+        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
+    );
+    opened.click(toggle);
+
+    let before = mark(&mut opened);
+    let select = opened.control("add-lane-track-1");
+    opened.click(select);
+    assert_eq!(opened.find("menu-instrument/parameters.1.value"), None);
+    let cutoff = opened.control("menu-instrument/parameters.0.value");
+    opened.click(cutoff);
+    let lanes = opened.project(|project| {
+        let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
+        project.state(&track).unwrap().automation.clone()
+    });
+    let lane = AutomationLane {
+        device: Some("instrument".into()),
+        parameter: "parameters.0.value".into(),
+        points: vec![sound_notes::Point {
+            tick: Ticks(0),
+            value: AutomationValue(1000.0),
+        }],
+    };
+    assert_eq!(lanes, [lane]);
+    one_undo_step(&mut opened, "Add automation", &before);
 }

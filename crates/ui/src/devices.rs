@@ -138,6 +138,7 @@ type ListOffers = Rc<dyn Fn() -> Vec<DeviceOffer>>;
 type ListNotes = Rc<dyn Fn() -> Vec<SharedString>>;
 type Generation = Rc<dyn Fn() -> u64>;
 type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>;
+type NameNumber = Rc<dyn Fn(&Project, &InstanceId, &str) -> Option<SharedString>>;
 
 /// What a rack says about the instance in a slot: what to call it, and which offer it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -163,6 +164,7 @@ pub struct Devices {
     notes: Vec<ListNotes>,
     generations: Vec<Generation>,
     describe: BTreeMap<&'static str, DescribeInstance>,
+    name_numbers: BTreeMap<&'static str, NameNumber>,
 }
 
 impl Global for Devices {}
@@ -209,6 +211,23 @@ impl Devices {
             Rc::new(move |project, id| {
                 let instance = project.resolve::<S>(id)?;
                 Some(describe(project.state(&instance)?))
+            }),
+        );
+    }
+
+    /// Registers what a person reads for a number of an instance of the tool with state `S`
+    /// that an automation lane names, where the name in the record says nothing to a person:
+    /// `parameters.12.value` of a plugin, which its record calls `Cutoff`. `None` leaves the
+    /// name to the caller.
+    pub fn name_numbers<S: State>(
+        &mut self,
+        name: impl Fn(&S, &str) -> Option<SharedString> + 'static,
+    ) {
+        self.name_numbers.insert(
+            S::TOOL,
+            Rc::new(move |project, id, field| {
+                let instance = project.resolve::<S>(id)?;
+                name(project.state(&instance)?, field)
             }),
         );
     }
@@ -284,6 +303,20 @@ impl Devices {
         let tool = project.tool_of(id)?;
         let describe = cx.try_global::<Self>()?.describe.get(tool)?.clone();
         describe(project, id)
+    }
+
+    /// What a person reads for the number `field` of `id`, when its tool names it, see
+    /// [`Self::name_numbers`].
+    pub fn number_name(
+        session: &Entity<Session>,
+        id: &InstanceId,
+        field: &str,
+        cx: &App,
+    ) -> Option<SharedString> {
+        let project = session.read(cx).project();
+        let tool = project.tool_of(id)?;
+        let name = cx.try_global::<Self>()?.name_numbers.get(tool)?.clone();
+        name(project, id, field)
     }
 }
 

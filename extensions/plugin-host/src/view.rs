@@ -14,6 +14,9 @@
 //! A stepped parameter is driven by the number of its step, never by its value, so what a
 //! control writes is always the plugin's own value of a step.
 //!
+//! The knob of a pin an automation lane moves shows what the lane plays and does not drag, as
+//! every automated knob (DESIGN.md), with the plugin's text for that value.
+//!
 //! The list of parameters and the plugin's text both call into the plugin, which a frame may
 //! not do. So the view asks when the session tells it something changed, and draws from what it
 //! was told.
@@ -43,8 +46,11 @@ use sound_ui::components::popover::Side;
 use sound_ui::components::select::Select;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::tooltip::Tooltip;
-use sound_ui::{ActiveTheme, ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
+use sound_ui::{
+    ActiveTheme, ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback,
+};
 
+use crate::parameters::{lane_of_pin, pin_of_lane};
 use crate::{Parameter, Pin, PluginRecord, Steps, WeakPlugins};
 
 /// The room at the left of the body, where the plain card has all of it.
@@ -72,6 +78,11 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
             key: PluginRecord::offer_key(record.format, &record.plugin_id).into(),
             name: installed.map_or_else(|| record.plugin_id.clone().into(), SharedString::from),
         }
+    });
+    // A lane names a pin by its path, and the record by its name.
+    devices.name_numbers::<PluginRecord>(|record, lane| {
+        let pin = record.parameters.get(&pin_of_lane(lane)?)?;
+        (!pin.name.is_empty()).then(|| pin.name.clone().into())
     });
 }
 
@@ -114,9 +125,11 @@ pub struct PluginView {
     /// Every parameter of the plugin, as the host last gave it. `None` while no plugin is
     /// loaded for the record.
     parameters: Option<Rc<BTreeMap<u32, Parameter>>>,
-    /// The plugin's own text for the value of each pin, with the value it is for. `None` when
-    /// the plugin gives no text.
+    /// The plugin's own text for the value each pin plays, with the value it is for. `None`
+    /// when the plugin gives no text.
     readouts: BTreeMap<u32, (f64, Option<SharedString>)>,
+    /// What the automation lanes of the track play into the pins.
+    lanes: Entity<Lanes<PluginRecord>>,
     /// The list that puts a parameter on the card and takes one off.
     menu: Entity<DropdownMenu>,
     /// The pin whose knob is being dragged, and what its values meant when the drag began. A
@@ -196,6 +209,8 @@ impl PluginView {
             view.pin_or_unpin(value, cx);
         })
         .detach();
+        let lanes = Lanes::follow_named(&session, plugin.id(), cx);
+        cx.observe(&lanes, |view, _, cx| view.read_out(cx)).detach();
         let mut view = Self {
             session,
             plugin,
@@ -205,6 +220,7 @@ impl PluginView {
             edit: ControlEdit::default(),
             parameters: None,
             readouts: BTreeMap::new(),
+            lanes,
             menu,
             dragged: None,
         };
@@ -241,21 +257,7 @@ impl PluginView {
             self.parameters = parameters;
         }
         self.readouts.retain(|pin, _| pins.contains_key(pin));
-        for (pin, Pin { value, .. }) in &pins {
-            let known = self.readouts.get(pin);
-            if known.is_some_and(|(read, _)| read.to_bits() == value.to_bits()) {
-                continue;
-            }
-            // A pin that moves nothing says so instead, and its value is not the plugin's to
-            // read out.
-            let parameter = self.parameters.as_ref().and_then(|list| list.get(pin));
-            if !parameter.is_some_and(|parameter| parameter.takes(*value)) {
-                continue;
-            }
-            let text = plugins.parameter_text(&id, *pin, *value);
-            self.readouts
-                .insert(*pin, (*value, text.map(SharedString::from)));
-        }
+        self.read_out(cx);
 
         let Some(parameters) = &self.parameters else {
             return;
@@ -264,6 +266,34 @@ impl PluginView {
             let entries = menu_entries(parameters, &pins);
             self.menu
                 .update(cx, |menu, cx| menu.set_entries(entries, cx));
+        }
+    }
+
+    /// Asks the plugin for its text for the value each pin plays now, the record's or a lane's,
+    /// where that is not the value of the text the card has.
+    fn read_out(&mut self, cx: &mut Context<Self>) {
+        let Some(plugins) = self.plugins.upgrade() else {
+            return;
+        };
+        let Some(record) = self.session.read(cx).project().state(&self.plugin) else {
+            return;
+        };
+        let lanes = self.lanes.read(cx);
+        for (pin, Pin { value, .. }) in &record.parameters {
+            let value = lanes.value(&lane_of_pin(*pin)).map_or(*value, f64::from);
+            let known = self.readouts.get(pin);
+            if known.is_some_and(|(read, _)| read.to_bits() == value.to_bits()) {
+                continue;
+            }
+            // A pin that moves nothing says so instead, and its value is not the plugin's to
+            // read out.
+            let parameter = self.parameters.as_ref().and_then(|list| list.get(pin));
+            if !parameter.is_some_and(|parameter| parameter.takes(value)) {
+                continue;
+            }
+            let text = plugins.parameter_text(self.plugin.id(), *pin, value);
+            self.readouts
+                .insert(*pin, (value, text.map(SharedString::from)));
         }
     }
 
@@ -394,10 +424,13 @@ impl PluginView {
         let name = SharedString::from(parameter.name.clone());
         let label = format!("Change {name}");
         let out_of_range = !parameter.takes(pin.value);
+        // Only a knob over any value takes a lane, so only a knob shows one.
+        let lane = self.lanes.read(cx).value(&lane_of_pin(id)).map(f64::from);
+        let value = lane.unwrap_or(pin.value);
         let readout = self
             .readouts
             .get(&id)
-            .filter(|(read, _)| read.to_bits() == pin.value.to_bits())
+            .filter(|(read, _)| read.to_bits() == value.to_bits())
             .and_then(|(_, text)| text.clone());
         let (minimum, maximum) = (parameter.minimum, parameter.maximum);
         // Every step the control can write, by its number, as the plugin's own value.
@@ -449,9 +482,12 @@ impl PluginView {
             control @ (Control::Stepped(_) | Control::Knob) => {
                 let readout = match out_of_range {
                     true => "Out of range".into(),
-                    false => readout.unwrap_or_else(|| short(pin.value as f32).into()),
+                    false => readout.unwrap_or_else(|| short(value as f32).into()),
                 };
-                let knob = Knob::new(element_id).label(name).readout(readout);
+                let knob = Knob::new(element_id)
+                    .label(name)
+                    .readout(readout)
+                    .automated(lane.is_some());
                 let knob = match control {
                     // The knob goes over the numbers of the steps, one at a time.
                     // A parameter may have millions of steps, so they are worked out one at a
@@ -477,7 +513,7 @@ impl PluginView {
                     }
                     _ => knob
                         .range(KnobRange::linear(minimum as f32, maximum as f32))
-                        .value(pin.value as f32)
+                        .value(value as f32)
                         .default_value(parameter.default as f32)
                         .on_change(weak_callback(cx, move |view, change: ValueChange, cx| {
                             view.dragged_to(id, &change);
