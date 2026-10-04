@@ -304,3 +304,50 @@ fn one_project_plays_a_clap_track_and_a_vst3_track_and_a_swap_is_undone_exactly(
             .unwrap();
     assert!(record.contains("vst3"), "{record}");
 }
+
+/// What `sound-tools --plugin-params` prints for the test plugin of each format: the ranges in
+/// the format's own units, the defaults, the names of the steps of a list, and a parameter that
+/// may not be automated. A read-only parameter is not there: CLAP's `Meter`, VST 3's `Latency`
+/// and `Ask`.
+#[test]
+fn the_parameters_of_a_plugin_are_listed_with_their_ranges_and_the_names_of_their_steps() {
+    let folder = tempfile::tempdir().unwrap();
+    let plugins = crate::plugin_hosts::test_plugin_host(folder.path());
+
+    let clap =
+        runtime::plugin_parameters(&plugins, PluginFormat::Clap, test_clap_plugin::PLUGIN_ID)
+            .unwrap();
+    let expected = [
+        "0  Cutoff  20 to 20000  default 1000",
+        "1  Wave    0 to 2       default 0     3 steps: 0 = Sine, 1 = Saw, 2 = Square  not automatable",
+    ];
+    assert_eq!(clap, expected.join("\n"));
+
+    let vst3 =
+        runtime::plugin_parameters(&plugins, PluginFormat::Vst3, test_vst3_plugin::PLUGIN_ID)
+            .unwrap();
+    let expected = [
+        "0   Transpose      0 to 1  default 0",
+        "1   Sustain        0 to 1  default 0",
+        "2   Level          0 to 1  default 1",
+        "3   Offset         0 to 1  default 0",
+        "6   Moved sustain  0 to 1  default 0",
+        "7   Bend           0 to 1  default 0.5000305194408838",
+        "8   Mod wheel      0 to 1  default 0",
+        "9   Pressure       0 to 1  default 0",
+        "10  Wave           0 to 1  default 0                   3 steps: 0 = Sine, 0.5 = Saw, 1 = Square",
+    ];
+    assert_eq!(vst3, expected.join("\n"));
+}
+
+/// A plugin this machine does not have is an error that says where to find the ones it has.
+#[test]
+fn the_parameters_of_a_plugin_this_machine_does_not_have_are_an_error() {
+    let folder = tempfile::tempdir().unwrap();
+    let plugins = crate::plugin_hosts::test_plugin_host(folder.path());
+    let error = runtime::plugin_parameters(&plugins, PluginFormat::Clap, "com.example.nothing")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("no CLAP plugin"), "{error}");
+    assert!(error.contains("--plugins"), "{error}");
+}
