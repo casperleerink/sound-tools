@@ -889,6 +889,9 @@ impl Opened {
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(16.), px(16.))),
             }),
+            // Only the drag regions of the title row move the window. Otherwise macOS moves it
+            // on a drag anywhere in its title bar strip, such as on the tempo in the pill.
+            is_movable: false,
             // Linux matches the window to sound-tools.desktop by it, for the icon.
             app_id: Some(crate::app::TOOL_NAME.into()),
             ..Default::default()
