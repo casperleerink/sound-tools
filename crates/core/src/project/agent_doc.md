@@ -57,13 +57,8 @@ The time signatures are in `project.json`, under `tempo_map.time_signatures`: ru
 
 ## Check your work
 
-`problems.txt` in this folder is there the whole time a runtime has the project open, and it follows a write by about 0.2 s. Read it at the end of your work. When you write and read in one command, wait a second in between: read too early, it still shows the state from before your write.
+`problems.txt` follows a write by about 0.2 s. Read it at the end of your work, for yourself: the composer does not see it. When you write and read in one command, wait a second in between.
 
 - `No problems. Every file is live.`: all your files play.
 - Else each line is `<file>: <field>: <reason>`, for example `state/lead.json: state: gain must be from 0 to 1, not 3`. A file with a problem is not live, and the last valid state keeps playing. Fix the file and its line goes away.
-- No `problems.txt`: no runtime is watching. Your edits are saved and nobody checked them, so say that in your answer. They load when the project opens.
-- The runtime removes the file when it closes. After a crash a stale one can stay: when it lists a problem in a file you have fixed since, no runtime is watching.
-
-## Your answer
-
-The composer hears the music and does not see the files. Say in a few lines what changed in the music. Leave out `problems.txt`, file names, ids and the steps you took. Name a problem only when you could not fix it, as what does not play.
+- No `problems.txt`, or one that lists a file you have fixed since: no runtime is watching, and nothing checked your edits. They load when the project opens.

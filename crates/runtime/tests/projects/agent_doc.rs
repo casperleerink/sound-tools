@@ -47,8 +47,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
             "## Layout",
             "## Time",
             "## Rules",
-            "## Check your work",
-            "## Your answer"
+            "## Check your work"
         ]
     );
 
@@ -348,12 +347,12 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 /// Compressor it is about 1130, with the doc of audio about 1150, with the Sampler about 1170,
 /// with the Drum pad about 1200, with the Saturator about 1230, with the Limiter about 1255,
 /// with the Utility about 1280, with the Modulation about 1300, with the Delay about 1320,
-/// with the Wavetable about 1340, with the doc of SFZ files about 1350, with the library
-/// about 1365, and with what to say to the composer about 1410.
+/// with the Wavetable about 1340, with the doc of SFZ files about 1350, and with the library
+/// about 1365.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1425, "the map has {words} words");
+    assert!(words < 1375, "the map has {words} words");
 }
