@@ -296,8 +296,8 @@ struct MovedClip {
     range: Range<Ticks>,
 }
 
-/// What a drag of clips does. Each kind is a type of its own, so its mouse move is handed
-/// what it moves and cannot be given another kind.
+/// What a drag of clips does. Each kind holds its own state, which its mouse move is handed.
+/// A trim and a fade hold the same.
 enum ClipDragKind {
     Move(MoveDrag),
     Resize(ResizeDrag),
@@ -374,7 +374,8 @@ enum Edge {
     Right,
 }
 
-/// A drag of clips, from mouse down to mouse up.
+/// What every drag of clips keeps, from mouse down to mouse up, whatever its
+/// [`ClipDragKind`].
 struct ClipDrag {
     /// The tick under the pointer at mouse down.
     grab: Ticks,
@@ -545,7 +546,9 @@ const TRACK_DRAG_THRESHOLD: f64 = 4.;
 /// What the mouse holds, from mouse down to mouse up. A press takes one thing, so the mouse
 /// never holds two. A timeline has one, so the size of the largest does not matter.
 #[allow(clippy::large_enum_variant)]
+#[derive(Default)]
 enum Held {
+    #[default]
     Nothing,
     Clips(ClipDrag, ClipDragKind),
     Marquee(Marquee),
@@ -1004,7 +1007,7 @@ impl Timeline {
         // A drag that is still open when the timeline goes away must not leave the gesture
         // of the session open: undo and redo wait for it.
         cx.on_release(|timeline, cx| {
-            if std::mem::replace(&mut timeline.held, Held::Nothing).begun() {
+            if std::mem::take(&mut timeline.held).begun() {
                 let session = timeline.session.clone();
                 session.update(cx, |session, cx| session.finish_gesture(cx));
             }
@@ -2041,6 +2044,11 @@ impl Timeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A press whose release this window never heard of: what it held ends here, or the
+        // new press would drop it with the gesture of the session still open.
+        if self.dragging() {
+            self.end_drag(cx);
+        }
         let double = event.click_count == 2;
         // Shift and cmd add to the selection or take out of it, as in the Finder.
         let (shift, cmd) = (event.modifiers.shift, event.modifiers.platform);
@@ -2415,7 +2423,7 @@ impl Timeline {
     /// One mouse move of what the mouse holds. It is taken out for the move and goes back in
     /// [`Self::settle`] alone, so no handler can lose it: each says how it goes on.
     fn drag_held(&mut self, x: f32, y: f32, modifiers: Modifiers, cx: &mut Context<Self>) {
-        let mut held = std::mem::replace(&mut self.held, Held::Nothing);
+        let mut held = std::mem::take(&mut self.held);
         let after = match &mut held {
             Held::Nothing => After::Keep,
             Held::Clips(drag, kind) => self.drag_to(drag, kind, (x, y), modifiers, cx),
@@ -3003,7 +3011,7 @@ impl Timeline {
     /// Mouse up, or a clip went away under the drag: the gesture becomes one undo step. A press
     /// that did not move changes the selection as the click it was, see [`OnRelease`].
     fn end_drag(&mut self, cx: &mut Context<Self>) {
-        let held = std::mem::replace(&mut self.held, Held::Nothing);
+        let held = std::mem::take(&mut self.held);
         if held.begun() {
             self.session
                 .update(cx, |session, cx| session.finish_gesture(cx));
@@ -3020,7 +3028,7 @@ impl Timeline {
     /// Escape: the clips or the track go back to where they were at mouse down. Whether there
     /// was a drag.
     fn cancel_drag(&mut self, cx: &mut Context<Self>) -> bool {
-        let held = std::mem::replace(&mut self.held, Held::Nothing);
+        let held = std::mem::take(&mut self.held);
         let begun = held.begun();
         if begun {
             self.session
