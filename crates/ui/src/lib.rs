@@ -17,7 +17,7 @@ pub mod views;
 pub mod waveforms;
 
 pub use assets::Assets;
-pub use control_edit::{ControlEdit, weak_action, weak_callback};
+pub use control_edit::{ControlEdit, DragEdit, weak_action, weak_callback};
 pub use devices::{
     DeviceLabel, DeviceOffer, Devices, Needs, OfferGroup, Slot, extension_is_enabled,
 };

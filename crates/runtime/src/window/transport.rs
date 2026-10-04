@@ -34,8 +34,8 @@ use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::meter::Meter;
 use sound_ui::{
-    ActiveTheme, LiveBody, LiveSound, LiveTake, Metering, Playhead, Recording, Session, every_poll,
-    typography, weak_action, weak_callback,
+    ActiveTheme, DragEdit, LiveBody, LiveSound, LiveTake, Metering, Playhead, Recording, Session,
+    every_poll, typography, weak_action, weak_callback,
 };
 
 use super::audio_input::{AudioInput, OpenInput, OpenedInput};
@@ -103,11 +103,9 @@ struct TempoDrag {
     /// the composer grabbed. A playhead that runs over a later tempo change does not move it
     /// either.
     at: Ticks,
-    /// Whether the gesture of the session is open. It begins with the first move that changes
-    /// something, so a press without a move is no undo step.
-    begun: bool,
-    /// The tempo change went away under the drag, and the gesture ended with it.
-    gone: bool,
+    /// It opens with the first move that changes something, so a press without a move is no
+    /// undo step.
+    edit: DragEdit,
 }
 
 pub struct TransportPill {
@@ -136,8 +134,7 @@ pub struct TransportPill {
     audio: AudioInput,
     recording: Entity<Recording>,
     tempo_drag: Option<TempoDrag>,
-    /// Whether a drag of the steadiness has the gesture of the session open.
-    steadiness_drag: bool,
+    steadiness_drag: DragEdit,
     play_focus: FocusHandle,
     stop_focus: FocusHandle,
     record_focus: FocusHandle,
@@ -274,7 +271,7 @@ impl TransportPill {
             keyboard,
             timing,
             tempo_drag: None,
-            steadiness_drag: false,
+            steadiness_drag: DragEdit::default(),
             play_focus: cx.focus_handle().tab_stop(true),
             stop_focus: cx.focus_handle().tab_stop(true),
             record_focus: cx.focus_handle().tab_stop(true),
@@ -877,24 +874,14 @@ impl TransportPill {
         match change {
             ValueChange::Drag(bpm) => self.drag_tempo(bpm, cx),
             ValueChange::DragEnd => {
-                if self
-                    .tempo_drag
-                    .take()
-                    .is_some_and(|drag| drag.begun && !drag.gone)
-                {
-                    self.session
-                        .update(cx, |session, cx| session.finish_gesture(cx));
+                if let Some(mut drag) = self.tempo_drag.take() {
+                    drag.edit.finish(&self.session, cx);
                 }
             }
             // Escape: the tempo goes back to what it was at the press.
             ValueChange::DragCancel => {
-                if self
-                    .tempo_drag
-                    .take()
-                    .is_some_and(|drag| drag.begun && !drag.gone)
-                {
-                    self.session
-                        .update(cx, |session, cx| session.cancel_gesture(cx));
+                if let Some(mut drag) = self.tempo_drag.take() {
+                    drag.edit.cancel(&self.session, cx);
                 }
             }
             ValueChange::Set(bpm) => self.set_tempo(bpm, cx),
@@ -904,18 +891,15 @@ impl TransportPill {
     /// One move of a tempo drag. The tempo map it changes is the one the project has now, so a
     /// file edit during the drag keeps what it changed.
     fn drag_tempo(&mut self, bpm: f64, cx: &mut Context<Self>) {
-        let Some(drag) = self.tempo_drag.as_mut().filter(|drag| !drag.gone) else {
+        let Some(drag) = self.tempo_drag.as_mut() else {
             return;
         };
         let at = drag.at;
         // It opens even when the tempo change turns out to be gone: the empty step is dropped,
         // and the drag must not leave a gesture open.
-        let begun = std::mem::replace(&mut drag.begun, true);
-        let found = self.session.update(cx, |session, cx| {
-            if !begun {
-                session.begin_gesture(tempo::LABEL, cx);
-            }
-            session.gesture(cx, |project, edit| {
+        let found = drag
+            .edit
+            .publish(&self.session, tempo::LABEL, cx, |project, edit| {
                 let live = &project.project_file().tempo_map;
                 let Some(tempo_map) = tempo::with_bpm(live, at, bpm) else {
                     return Ok(false);
@@ -924,16 +908,14 @@ impl TransportPill {
                 changes.set_tempo_map(tempo_map);
                 project.publish(edit, changes)?;
                 Ok(true)
-            })
-        });
+            });
         // The tempo change is gone, removed from outside. That delete was the last write, so
         // the drag finishes and does not cancel, as a clip drag does when its clip is deleted.
-        if found == Some(false) {
-            if let Some(drag) = self.tempo_drag.as_mut() {
-                drag.gone = true;
-            }
-            self.session
-                .update(cx, |session, cx| session.finish_gesture(cx));
+        // The drag is over with it: the moves that still come find no drag.
+        if found == Some(false)
+            && let Some(mut drag) = self.tempo_drag.take()
+        {
+            drag.edit.finish(&self.session, cx);
         }
     }
 
@@ -976,14 +958,15 @@ impl TransportPill {
                         return;
                     }
                     let at = pill.change_at_playhead(cx).tick;
-                    let (begun, gone) = (false, false);
-                    pill.tempo_drag = Some(TempoDrag { at, begun, gone });
+                    let edit = DragEdit::default();
+                    pill.tempo_drag = Some(TempoDrag { at, edit });
                 }),
             )
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|pill, _: &MouseUpEvent, _, _| {
-                    if pill.tempo_drag.as_ref().is_some_and(|drag| !drag.begun) {
+                    let drag = pill.tempo_drag.as_ref();
+                    if drag.is_some_and(|drag| !drag.edit.is_open()) {
                         pill.tempo_drag = None;
                     }
                 }),
@@ -1006,12 +989,9 @@ impl TransportPill {
         let session = self.session.clone();
         match change {
             ValueChange::Drag(percent) => {
-                let begun = std::mem::replace(&mut self.steadiness_drag, true);
-                session.update(cx, |session, cx| {
-                    if !begun {
-                        session.begin_gesture(fit_tempo::STEADINESS_LABEL, cx);
-                    }
-                    session.gesture(cx, |project, edit| {
+                let label = fit_tempo::STEADINESS_LABEL;
+                self.steadiness_drag
+                    .publish(&session, label, cx, |project, edit| {
                         let mut changes = Changes::new();
                         let steadiness = steadiness::steadiness_of(percent);
                         if fit_tempo::set_steadiness(project, &mut changes, steadiness).is_some() {
@@ -1019,18 +999,13 @@ impl TransportPill {
                         }
                         Ok(())
                     });
-                });
             }
             ValueChange::DragEnd => {
-                if std::mem::take(&mut self.steadiness_drag) {
-                    session.update(cx, |session, cx| session.finish_gesture(cx));
-                }
+                self.steadiness_drag.finish(&session, cx);
             }
             // Escape: the steadiness goes back to what it was at the press.
             ValueChange::DragCancel => {
-                if std::mem::take(&mut self.steadiness_drag) {
-                    session.update(cx, |session, cx| session.cancel_gesture(cx));
-                }
+                self.steadiness_drag.cancel(&session, cx);
             }
             ValueChange::Set(percent) => session.update(cx, |session, cx| {
                 session.edit(cx, |project| {

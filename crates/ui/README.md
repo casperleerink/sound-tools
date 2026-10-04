@@ -25,10 +25,10 @@ drag. Nothing needs to sync.
 
 - **One step:** `session.edit(cx, |project| project.commit(label, changes))`. An error goes to
   the notice line of the window, so a view cannot lose one.
-- **A drag is a gesture of the session:** `begin_gesture`, `gesture` per move, then
-  `finish_gesture`, or `cancel_gesture` on escape. Sound and every view follow each move. The
-  file is written once, and the whole drag is one undo step. The session holds the open edit,
-  so undo and redo wait until the drag ends.
+- **A drag is a gesture of the session**, and a view keeps it as a `DragEdit`: `publish` per
+  move, which opens the gesture with the first one, then `finish`, or `cancel` on escape. Sound
+  and every view follow each move. The file is written once, and the whole drag is one undo
+  step. The session holds the open edit, so undo and redo wait until the drag ends.
 - **A control on saved state is controlled.** Give it the value on every render and hand its
   `ValueChange` to `ControlEdit::apply`. That one call does the gesture, a key step and a reset.
 - **A knob on a number of the record is a `ParameterKnob`.** Its name, range and default come
@@ -64,8 +64,8 @@ registries (`crates/runtime/src/lib.rs`, `views`) and installs them as GPUI glob
 ## Rules that are easy to miss
 
 - No `cx.notify()` and no entity updates inside `render` or a paint callback.
-- Begin a gesture at the first mouse move that changes something, not at mouse down. A plain
-  click is then no undo step.
+- Publish into a `DragEdit` only when something changes. A plain press must not publish, so a
+  plain click is no undo step.
 - Work out each move from the value at the press and the distance moved, not from the live
   value. A drag there and back then ends where it began.
 - The target of a drag can be deleted under it by an agent. Check on every move and on

@@ -2,20 +2,74 @@
 //! a handle on a record does with its [`ValueChange`]s.
 
 use gpui::{App, Context, Entity, Window};
-use sound_core::{Changes, Instance, State};
+use sound_core::{Changes, Instance, Project, ProjectEdit, ProjectError, State};
 
 use crate::components::gesture::ValueChange;
 use crate::session::Session;
 
-/// What a view keeps for the controls it puts on saved state: whether a drag of one of them has
-/// the gesture of the session open. One per view, because a view has one drag at a time.
+/// The gesture of the session for one drag, from mouse down to mouse up. It opens with the first
+/// [`Self::publish`] and not at the press, so a press that changes nothing is no undo step and
+/// writes nothing. It is the only place a view keeps whether its drag opened the gesture, so no
+/// view opens its gesture twice or forgets to close it.
+///
+/// Finish it at mouse up, when what it drags goes away, and when the view is released. The
+/// session finishes a gesture that is left open when the next one begins, but until then undo
+/// and redo wait for it.
+#[derive(Debug, Default)]
+pub struct DragEdit {
+    open: bool,
+}
+
+impl DragEdit {
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// One move of the drag, as [`Session::gesture`]. The first one opens the gesture, as the
+    /// undo step `label`.
+    pub fn publish<R>(
+        &mut self,
+        session: &Entity<Session>,
+        label: &str,
+        cx: &mut App,
+        publish: impl FnOnce(&mut Project, &mut ProjectEdit) -> Result<R, ProjectError>,
+    ) -> Option<R> {
+        let open = std::mem::replace(&mut self.open, true);
+        session.update(cx, |session, cx| {
+            if !open {
+                session.begin_gesture(label, cx);
+            }
+            session.gesture(cx, publish)
+        })
+    }
+
+    /// Ends the drag as one undo step. Whether it had opened the gesture.
+    pub fn finish(&mut self, session: &Entity<Session>, cx: &mut App) -> bool {
+        let open = std::mem::take(&mut self.open);
+        if open {
+            session.update(cx, |session, cx| session.finish_gesture(cx));
+        }
+        open
+    }
+
+    /// Ends the drag and goes back to the state before it. Whether it had opened the gesture.
+    pub fn cancel(&mut self, session: &Entity<Session>, cx: &mut App) -> bool {
+        let open = std::mem::take(&mut self.open);
+        if open {
+            session.update(cx, |session, cx| session.cancel_gesture(cx));
+        }
+        open
+    }
+}
+
+/// What a view keeps for the controls it puts on saved state: the drag of one of them. One per
+/// view, because a view has one drag at a time.
 ///
 /// Finish it when the view is released and when the record goes under a drag (see
-/// [`Self::finish`]). The session finishes a gesture that is left open when the next one
-/// begins, but until then undo and redo wait for it.
+/// [`Self::finish`]).
 #[derive(Debug, Default)]
 pub struct ControlEdit {
-    dragging: bool,
+    drag: DragEdit,
 }
 
 impl ControlEdit {
@@ -39,23 +93,18 @@ impl ControlEdit {
                 if session.read(cx).project().state(instance).is_none() {
                     return;
                 }
-                let begun = std::mem::replace(&mut self.dragging, true);
-                session.update(cx, |session, cx| {
-                    // Also when the gesture is gone: a control that went away during its drag
-                    // sent no end, and another view or the session may have closed it since.
-                    if !begun || !session.gesture_open() {
-                        session.begin_gesture(label, cx);
-                    }
-                    session.gesture(cx, |project, edit| {
-                        project.update(edit, instance, |state| set(state, value))
-                    });
+                // The gesture is gone: a control that went away during its drag sent no end,
+                // and another view or the session may have closed it since. It opens again.
+                if !session.read(cx).gesture_open() {
+                    self.drag = DragEdit::default();
+                }
+                self.drag.publish(session, label, cx, |project, edit| {
+                    project.update(edit, instance, |state| set(state, value))
                 });
             }
             ValueChange::DragEnd => self.finish(session, cx),
             ValueChange::DragCancel => {
-                if std::mem::take(&mut self.dragging) {
-                    session.update(cx, |session, cx| session.cancel_gesture(cx));
-                }
+                self.drag.cancel(session, cx);
             }
             ValueChange::Set(value) => session.update(cx, |session, cx| {
                 let Some(mut state) = session.project().state(instance).cloned() else {
@@ -75,9 +124,7 @@ impl ControlEdit {
     /// deleted from outside during the drag: the delete was the last write, so the gesture
     /// finishes and does not cancel, which would bring the record back.
     pub fn finish(&mut self, session: &Entity<Session>, cx: &mut App) {
-        if std::mem::take(&mut self.dragging) {
-            session.update(cx, |session, cx| session.finish_gesture(cx));
-        }
+        self.drag.finish(session, cx);
     }
 }
 
