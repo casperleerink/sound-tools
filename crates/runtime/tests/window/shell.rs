@@ -31,7 +31,7 @@ impl Opened<'_> {
     }
 }
 
-/// The default project with one clip of two bars at bar 2 on its track.
+/// `Track 1` with one clip of two bars at bar 2.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
     support::open_with(cx, |project| {
         let mut changes = Changes::new();

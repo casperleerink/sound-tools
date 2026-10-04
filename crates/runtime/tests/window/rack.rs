@@ -15,7 +15,7 @@ const TRACK: &str = "arrangement/track-1";
 const TRACK_FILE: &str = "state/arrangement/track-1/instance.json";
 const PLUGIN: &str = "sound-tools-test-tone";
 
-/// The default track with a Filter and a bypassed Reverb named `space`, written as an agent
+/// `Track 1` with a Filter and a bypassed Reverb named `space`, written as an agent
 /// does, then the repository's test plugin added from the rack, and the panel open. So the rack
 /// is: Synth, Filter, Reverb (off), the plugin.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {

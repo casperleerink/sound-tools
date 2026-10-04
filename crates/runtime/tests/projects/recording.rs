@@ -51,6 +51,10 @@ struct Recorder {
 impl Recorder {
     fn new() -> Self {
         let mut harness = Harness::new();
+        // The track the add track button makes. Its step is not one the tests undo.
+        let arrangement = runtime::main_arrangement(&harness.project).unwrap();
+        runtime::add_track(&mut harness.project, &arrangement).unwrap();
+        harness.project.clear_history();
         let mut keyboard = Keyboard::attach(harness.project.engine()).unwrap();
         let track = InstanceId::new(TRACK).unwrap();
         let track = harness.project.resolve(&track).unwrap();

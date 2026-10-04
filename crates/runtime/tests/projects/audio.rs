@@ -63,7 +63,7 @@ fn piece_with_audio() -> Harness {
     harness
 }
 
-/// The default project, whose one track is silent, and the audio track of [`piece_with_audio`].
+/// The default project with the audio track of [`piece_with_audio`] and nothing else.
 fn audio_only() -> Harness {
     let mut harness = Harness::new();
     add_audio(&mut harness);

@@ -976,23 +976,12 @@ pub fn preview_note(
     project.send::<Sequencer>(track, SEQUENCER, preview)
 }
 
-/// The default project: one arrangement with one track and its instrument, no clips. The
-/// tempo map of a new project is already 120 bpm in 4/4.
-pub fn create_default_project<I: State>(
-    project: &mut Project,
-    instrument: I,
-) -> Result<(), ProjectError> {
+/// The default project: one arrangement with no tracks. The tempo map of a new project is
+/// already 120 bpm in 4/4.
+pub fn create_default_project(project: &mut Project) -> Result<(), ProjectError> {
     let mut changes = Changes::new();
     let arrangement = InstanceId::new(DEFAULT_ARRANGEMENT)?;
-    changes.create(arrangement.clone(), ArrangementState::default());
-    add_track(
-        project,
-        &mut changes,
-        &arrangement,
-        "Track 1",
-        Colour::Blue,
-        instrument,
-    )?;
+    changes.create(arrangement, ArrangementState::default());
     project.commit("Create default project", changes)
 }
 

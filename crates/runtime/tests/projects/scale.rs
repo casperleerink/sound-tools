@@ -65,7 +65,7 @@ fn hundred_tracks_of_hundred_clips_open_play_and_take_an_edit() {
     let (mut project, plugins) = runtime::open_or_create(&root, control).unwrap();
     println!("open: {:?}", started.elapsed());
     assert_eq!(project.problems(), []);
-    assert_eq!(project.instances().count() as u64, 3 + TRACKS * (CLIPS + 2));
+    assert_eq!(project.instances().count() as u64, 1 + TRACKS * (CLIPS + 2));
 
     // Play ten seconds, apply one outside clip edit, play on.
     project.engine().play();

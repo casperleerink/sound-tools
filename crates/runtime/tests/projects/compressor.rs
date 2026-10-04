@@ -30,7 +30,7 @@ fn record(state: &str) -> String {
     format!(r#"{{"tool": "compressor", "state": {state}}}"#)
 }
 
-/// The sound of the piano and nothing else: the default track of the project is silent.
+/// Frames `from` up to `to` of a stereo render: the piano, the one track.
 fn frames(samples: &[f32], from: usize, to: usize) -> &[f32] {
     &samples[2 * from..2 * to]
 }
