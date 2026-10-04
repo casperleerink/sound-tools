@@ -383,6 +383,12 @@ pub(crate) fn drags(
         Some(step) => ((value / step).round() * step).clamp(range.min, range.max),
         None => value,
     };
+    // The place on the travel as a value. A stepped one is snapped from the exact value: three
+    // digits first would skip steps on a range of more than a thousand of them.
+    let value_of = move |position: f32| match whole_step {
+        Some(_) => stepped(range.exact(position)),
+        None => range.value(position),
+    };
     // Grows in the direction that raises the value.
     let along = move |pointer: gpui::Point<Pixels>| match sideways {
         true => f32::from(pointer.x),
@@ -395,7 +401,7 @@ pub(crate) fn drags(
             let value_at = move |pointer: gpui::Point<Pixels>, fine| match travel
                 .position(along(pointer), fine)
             {
-                Some(position) => stepped(range.value(position)),
+                Some(position) => value_of(position),
                 None => value,
             };
             gesture::press(

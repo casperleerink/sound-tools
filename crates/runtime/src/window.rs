@@ -946,9 +946,9 @@ pub fn tick(session: &Entity<Session>, plugins: &Plugins, scanned: &mut u64, cx:
     // The window work that needs the application: the windows of plugins that have gone, and
     // a window whose plugin asked for another size.
     plugins.settle_windows(cx);
-    // A plugin's window that opened or closed, which includes one the plugin itself closed.
-    // The card that offers it is drawn again.
-    if plugins.take_window_change() {
+    // A plugin's window that opened or closed, which includes one the plugin itself closed, or
+    // a plugin whose parameters or their text changed. The card that shows it is drawn again.
+    if plugins.take_card_change() {
         session.update(cx, |_, cx| cx.notify());
     }
 }

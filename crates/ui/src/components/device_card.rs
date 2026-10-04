@@ -142,16 +142,35 @@ impl CardFrame {
     }
 }
 
-/// A column of a card: one cell in each of the two rows. Either may be empty.
-#[derive(IntoElement, Default)]
+/// A column of a card: one cell in each of the two rows. Either may be empty. It is one cell
+/// wide, or wider for a cell that spans more, such as a select with words in it; a narrower
+/// cell in it is centred.
+#[derive(IntoElement)]
 pub struct Column {
     top: Option<AnyElement>,
     bottom: Option<AnyElement>,
+    span: usize,
+}
+
+impl Default for Column {
+    fn default() -> Self {
+        Self {
+            top: None,
+            bottom: None,
+            span: 1,
+        }
+    }
 }
 
 impl Column {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// How many columns of cells it is wide, from 1.
+    pub fn span(mut self, columns: usize) -> Self {
+        self.span = columns.max(1);
+        self
     }
 
     pub fn top(mut self, cell: impl IntoElement) -> Self {
@@ -167,10 +186,16 @@ impl Column {
 
 impl RenderOnce for Column {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let row = |cell: Option<AnyElement>| div().h(px(ROW_HEIGHT)).children(cell);
+        let wide = self.span > 1;
+        let row = |cell: Option<AnyElement>| {
+            div()
+                .h(px(ROW_HEIGHT))
+                .when(wide, |row| row.flex().justify_center())
+                .children(cell)
+        };
         div()
             .flex_none()
-            .w(px(CELL_WIDTH))
+            .w(px(CELL_WIDTH * self.span as f32))
             .flex()
             .flex_col()
             .child(row(self.top))
@@ -434,6 +459,10 @@ impl RenderOnce for DeviceCard {
             ))
             .debug_selector(move || format!("{card}-header"))
             .flex_none()
+            // The body makes the card as wide as it is, and the title gives way: a plugin may
+            // have a name longer than its card.
+            .w_0()
+            .min_w_full()
             .h(px(HEADER_HEIGHT))
             .flex()
             .items_center()

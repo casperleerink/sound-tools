@@ -288,12 +288,10 @@ fn parameters_of(instance: &mut PluginInstance<SoundToolsHost>) -> Vec<Parameter
         };
         if stepped {
             let (first, count) = whole_steps(minimum, maximum);
-            parameter.steps = Some(Steps::new(
-                count,
-                is_list,
-                |index| first + f64::from(index),
-                |value| text_of(&params, &plugin, id, value),
-            ));
+            let last = first + f64::from(count.saturating_sub(1));
+            parameter.steps = Some(Steps::new(count, first, last, is_list, |value| {
+                text_of(&params, &plugin, id, value)
+            }));
         }
         parameters.push(parameter);
     }

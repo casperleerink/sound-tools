@@ -4,9 +4,10 @@
 //! all in `tooling/test-plugin-support`, which the VST 3 test plugin shares, so a test reads
 //! either render the same way. What is here is the format.
 //!
-//! Two parameters a host can list, `Cutoff` and `Wave`, with the plugin's own text for their
-//! values, and a read-only `Meter` and a `Hidden` one a host must leave out. `Wave` is a list of
-//! names that may not be automated. Nothing moves them and nothing plays them.
+//! Three parameters a host can list, `Cutoff`, `Wave` and `Bright`, with the plugin's own text
+//! for their values, and a read-only `Meter` and a `Hidden` one a host must leave out. `Wave` is
+//! a list of names that may not be automated, and `Bright` is off or on, so a card shows a knob,
+//! a dropdown and a toggle. Nothing moves them and nothing plays them.
 //!
 //! And `Level`, which is heard: how loud the instrument half plays, as the VST 3 test plugin's
 //! `Level`. A host sets it with a parameter event in a block, and the plugin sets it itself on
@@ -320,10 +321,11 @@ pub const WAVE: u32 = 1;
 const METER: u32 = 2;
 const HIDDEN: u32 = 3;
 pub const LEVEL: u32 = 4;
+pub const BRIGHT: u32 = 5;
 
 /// The parameters, in the order `get_info` lists them: the id, the name, the range, the default
 /// and the flags.
-const PARAMETERS: [(u32, &str, f64, f64, f64, ParamInfoFlags); 5] = [
+const PARAMETERS: [(u32, &str, f64, f64, f64, ParamInfoFlags); 6] = [
     (
         CUTOFF,
         "Cutoff",
@@ -356,6 +358,14 @@ const PARAMETERS: [(u32, &str, f64, f64, f64, ParamInfoFlags); 5] = [
         1.0,
         1.0,
         ParamInfoFlags::IS_AUTOMATABLE,
+    ),
+    (
+        BRIGHT,
+        "Bright",
+        0.0,
+        1.0,
+        0.0,
+        ParamInfoFlags::IS_STEPPED.union(ParamInfoFlags::IS_AUTOMATABLE),
     ),
 ];
 
@@ -414,6 +424,8 @@ impl PluginMainThreadParams for TestToneMainThread<'_> {
         match param_id.get() {
             CUTOFF => write!(writer, "{value:.0} Hz"),
             LEVEL => write!(writer, "{} %", support::hundredths(value)),
+            BRIGHT if value >= 0.5 => writer.write_str("On"),
+            BRIGHT => writer.write_str("Off"),
             WAVE => {
                 let wave = support::WAVES.get(value.round() as usize);
                 writer.write_str(wave.ok_or(std::fmt::Error)?)

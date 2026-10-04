@@ -10,22 +10,31 @@
 //! gives the value on every render and keeps no menu of its own.
 //!
 //! [`Trigger::Chevron`] is the menu half of a [`crate::components::split_button::SplitButton`].
+//!
+//! [`DropdownMenu::searchable`] puts a field above the rows, for a list too long to read
+//! through, such as the parameters of a plugin. What is typed keeps the rows whose label or
+//! value holds it, so a plugin parameter is found by its id too, and the first of them is highlighted, so enter picks it. Up and down move from there and
+//! escape closes. It shows at most a hundred rows: drawing thousands of them on every frame
+//! the menu is open would cost more than typing a few letters.
 
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, Div, ElementId, EventEmitter, FocusHandle, FontWeight, Hsla, IntoElement,
-    KeyDownEvent, MouseDownEvent, Render, RenderOnce, SharedString, Stateful, StyleRefinement,
-    Styled, Window, div, prelude::*, px,
+    App, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
+    IntoElement, KeyDownEvent, MouseDownEvent, Render, RenderOnce, SharedString, Stateful,
+    StyleRefinement, Styled, Window, div, prelude::*, px,
 };
 
 use crate::components::icon::Icon;
 use crate::components::kbd::Kbd;
 use crate::components::popover::{Align, Side, TRIGGER_HEIGHT, anchor, surface, trigger};
+use crate::components::text_input::{InputSize, TextInput};
 use crate::components::tooltip::Tooltip;
 use crate::theme::ActiveTheme;
 
 const ROW_HEIGHT: f32 = 32.;
+/// The most rows a search shows. See the module doc.
+const MAX_FOUND: usize = 100;
 /// The rounded square an item icon sits on.
 const ICON_TILE: f32 = 24.;
 
@@ -176,6 +185,50 @@ pub(crate) fn highlight_step(
         next = (next as isize + delta).rem_euclid(count as isize) as usize;
     }
     Some(next)
+}
+
+/// The entries whose rows hold `query` in their label or value, whatever the case, at most
+/// [`MAX_FOUND`] of them, and the notes. A quiet line says when nothing does, or how many more
+/// there are. Separators go: the groups they kept apart may be gone.
+fn found(entries: &[MenuEntry], query: &str) -> Vec<MenuEntry> {
+    let query = query.trim().to_lowercase();
+    let mut shown = 0;
+    let mut more = 0;
+    let mut found = Vec::new();
+    let mut notes = Vec::new();
+    for entry in entries {
+        match entry {
+            MenuEntry::Group(group) => {
+                let mut items = Vec::new();
+                for item in &group.items {
+                    let holds = |text: &SharedString| text.to_lowercase().contains(&query);
+                    if !holds(&item.label) && !holds(&item.value) {
+                        continue;
+                    }
+                    if shown == MAX_FOUND {
+                        more += 1;
+                        continue;
+                    }
+                    shown += 1;
+                    items.push(item.clone());
+                }
+                if !items.is_empty() {
+                    let label = group.label.clone();
+                    found.push(MenuEntry::Group(MenuGroup { label, items }));
+                }
+            }
+            MenuEntry::Separator => {}
+            MenuEntry::Note(note) => notes.push(MenuEntry::Note(note.clone())),
+        }
+    }
+    if shown == 0 && !query.is_empty() {
+        found.push(MenuEntry::Note("Nothing matches.".into()));
+    } else if more > 0 {
+        let note = format!("{more} more. Type a name or an id to find them.");
+        found.push(MenuEntry::Note(note.into()));
+    }
+    found.extend(notes);
+    found
 }
 
 type SelectFn = Rc<dyn Fn(SharedString, &mut Window, &mut App)>;
@@ -516,6 +569,17 @@ pub struct DropdownMenu {
     trigger_height: Option<f32>,
     /// What a test looks the trigger up by, see `VisualTestContext::debug_bounds`.
     debug_name: Option<SharedString>,
+    /// The field above the rows of a menu that is searched, see [`Self::searchable`].
+    search: Option<Search>,
+}
+
+struct Search {
+    input: Entity<TextInput>,
+    /// What the rows were last kept by. The field notifies at every blink of its caret too,
+    /// and the rows and the highlight change only when the text does.
+    query: String,
+    /// The rows it keeps, worked out when the text or the rows change and not every frame.
+    found: Vec<MenuEntry>,
 }
 
 impl DropdownMenu {
@@ -540,7 +604,69 @@ impl DropdownMenu {
             trigger_width: None,
             trigger_height: None,
             debug_name: None,
+            search: None,
         }
+    }
+
+    /// Puts a field above the rows that keeps only the rows whose label or value holds what is
+    /// typed.
+    /// See the module doc.
+    pub fn searchable(mut self, placeholder: &str, cx: &mut Context<Self>) -> Self {
+        let menu = cx.weak_entity();
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new(cx)
+                .placeholder(placeholder.to_string())
+                .size(InputSize::Sm);
+            // Enter and escape are the field's own keys, so they come from it.
+            let on_enter = menu.clone();
+            input.set_on_submit(move |_, window, cx| {
+                // A menu that went with its view has nothing left to pick.
+                on_enter
+                    .update(cx, |menu, cx| menu.pick_highlighted(window, cx))
+                    .ok();
+            });
+            input.set_on_cancel(move |_, window, cx| {
+                menu.update(cx, |menu, cx| menu.close(window, cx)).ok();
+            });
+            input
+        });
+        cx.observe(&input, |menu, input, cx| {
+            let text = input.read(cx).text().to_string();
+            menu.search_changed(text, cx);
+        })
+        .detach();
+        self.search = Some(Search {
+            input,
+            query: String::new(),
+            found: found(&self.entries, ""),
+        });
+        self
+    }
+
+    /// The rows the open menu shows: every one, or what a search keeps.
+    fn shown(&self) -> &[MenuEntry] {
+        match &self.search {
+            Some(search) => &search.found,
+            None => &self.entries,
+        }
+    }
+
+    /// The text of the search changed: the first row it keeps is highlighted, so enter picks
+    /// it. With nothing typed nothing is highlighted, as in a menu with no search.
+    fn search_changed(&mut self, text: String, cx: &mut Context<Self>) {
+        let Some(search) = &mut self.search else {
+            return;
+        };
+        if search.query == text {
+            return;
+        }
+        search.found = found(&self.entries, &text);
+        self.highlighted = match text.trim().is_empty() {
+            true => usize::MAX,
+            false => highlight_step(&search.found, usize::MAX, 1).unwrap_or(usize::MAX),
+        };
+        search.query = text;
+        cx.notify();
     }
 
     /// Names the trigger for tests, so a simulated mouse can find it.
@@ -617,6 +743,9 @@ impl DropdownMenu {
             self.highlighted = usize::MAX;
         }
         self.entries = entries;
+        if let Some(search) = &mut self.search {
+            search.found = found(&self.entries, &search.query);
+        }
         cx.notify();
     }
 
@@ -652,7 +781,15 @@ impl DropdownMenu {
 
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
-        window.focus(&self.focus_handle, cx);
+        match &self.search {
+            // A search starts empty each time, with the keys in its field.
+            Some(search) => {
+                let input = search.input.clone();
+                input.update(cx, |input, cx| input.set_text("", cx));
+                window.focus(&input.focus_handle(cx), cx);
+            }
+            None => window.focus(&self.focus_handle, cx),
+        }
         cx.notify();
     }
 
@@ -678,9 +815,21 @@ impl DropdownMenu {
 
     /// Move the highlight, skipping disabled rows.
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        if let Some(next) = highlight_step(&self.entries, self.highlighted, delta) {
+        if let Some(next) = highlight_step(self.shown(), self.highlighted, delta) {
             self.highlighted = next;
             cx.notify();
+        }
+    }
+
+    /// Picks the highlighted row, when there is one that can be picked.
+    fn pick_highlighted(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A row can turn disabled under the highlight, as Undo does with nothing to undo.
+        let value = flat(self.shown())
+            .get(self.highlighted)
+            .filter(|item| !item.is_disabled())
+            .map(|item| item.value.clone());
+        if let Some(value) = value {
+            self.pick(value, window, cx);
         }
     }
 
@@ -689,16 +838,7 @@ impl DropdownMenu {
             "escape" => self.close(window, cx),
             "down" => self.step(1, cx),
             "up" => self.step(-1, cx),
-            "enter" => {
-                // A row can turn disabled under the highlight, as Undo does with nothing to undo.
-                let value = flat(&self.entries)
-                    .get(self.highlighted)
-                    .filter(|item| !item.is_disabled())
-                    .map(|item| item.value.clone());
-                if let Some(value) = value {
-                    self.pick(value, window, cx);
-                }
-            }
+            "enter" => self.pick_highlighted(window, cx),
             _ => return,
         }
         // An open menu keeps the key it used. Else escape would also close whatever holds the
@@ -787,6 +927,13 @@ impl Render for DropdownMenu {
                     })),
             )
             .when(self.open, |d| {
+                let search = self.search.as_ref().map(|search| {
+                    div()
+                        .px(px(8.))
+                        .pt(px(8.))
+                        .pb(px(4.))
+                        .child(search.input.clone())
+                });
                 d.child(anchor(
                     side,
                     align,
@@ -799,8 +946,9 @@ impl Render for DropdownMenu {
                         .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                             this.on_key(ev, window, cx)
                         }))
+                        .children(search)
                         .child(
-                            MenuList::new(self.entries.clone())
+                            MenuList::new(self.shown().to_vec())
                                 .selected(self.selected.clone())
                                 .highlighted(self.highlighted)
                                 .max_height(self.max_height)
@@ -812,5 +960,56 @@ impl Render for DropdownMenu {
                         ),
                 ))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(entries: &[MenuEntry]) -> Vec<String> {
+        flat(entries)
+            .iter()
+            .map(|item| item.label().to_string())
+            .collect()
+    }
+
+    fn notes(entries: &[MenuEntry]) -> Vec<String> {
+        let notes = entries.iter().filter_map(|entry| match entry {
+            MenuEntry::Note(note) => Some(note.to_string()),
+            _ => None,
+        });
+        notes.collect()
+    }
+
+    /// A search keeps the rows whose label or value holds the text, whatever the case, and
+    /// never more than the most it shows, also with nothing typed.
+    #[test]
+    fn a_search_keeps_at_most_a_hundred_rows_and_says_how_many_more_there_are() {
+        let items = (0..250).map(|index| MenuItem::new(index.to_string(), format!("Knob {index}")));
+        let entries = vec![MenuEntry::Group(MenuGroup::new().items(items))];
+
+        let everything = found(&entries, "");
+        assert_eq!(labels(&everything).len(), MAX_FOUND);
+        assert_eq!(
+            notes(&everything),
+            ["150 more. Type a name or an id to find them."]
+        );
+
+        let some = found(&entries, "KNOB 24");
+        let tens: Vec<String> = (240..250).map(|index| format!("Knob {index}")).collect();
+        assert_eq!(labels(&some), [vec!["Knob 24".to_string()], tens].concat());
+        assert!(notes(&some).is_empty());
+
+        assert_eq!(notes(&found(&entries, "drive")), ["Nothing matches."]);
+
+        // Rows past the most that share one label are still found, by their value.
+        let same = (0..250).map(|index| MenuItem::new(index.to_string(), "Gain"));
+        let same = vec![MenuEntry::Group(MenuGroup::new().items(same))];
+        let last = flat(&found(&same, "249"))
+            .iter()
+            .map(|item| item.value.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(last, ["249"]);
     }
 }

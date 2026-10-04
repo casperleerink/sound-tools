@@ -37,6 +37,13 @@ impl Parameter {
     pub(crate) fn takes(&self, value: f64) -> bool {
         (self.minimum..=self.maximum).contains(&value)
     }
+
+    /// The value of the step `index` of a stepped parameter, inside its range. A CLAP plugin
+    /// cuts a value to its whole step, so its first step may lie just below the minimum it
+    /// gives, and the minimum is what reaches it.
+    pub(crate) fn step_value(&self, steps: &Steps, index: u32) -> f64 {
+        steps.value(index).max(self.minimum).min(self.maximum)
+    }
 }
 
 /// A parameter that takes only some values, evenly spaced from its minimum to its maximum.
@@ -44,6 +51,10 @@ impl Parameter {
 pub struct Steps {
     /// How many values it takes, the minimum and the maximum among them.
     pub count: u32,
+    /// The values of the first and the last step. The ones between are worked out from them
+    /// as the plugin does, so a step written to a record is the plugin's own value of it.
+    first: f64,
+    last: f64,
     /// The plugin's name of each value, in order, when it says the steps are a list of names
     /// (CLAP `IS_ENUM`, VST 3 `kIsList`) and has no more than [`MAX_NAMED_STEPS`]. A value the
     /// plugin gives no text for has no name here.
@@ -65,27 +76,57 @@ pub struct ParameterValue {
 }
 
 impl Steps {
-    /// The steps of a parameter with `count` values, `value(index)` the value of each, named by
+    /// The steps of a parameter with `count` values evenly from `first` to `last`, named by
     /// `text` when the plugin says they are a list.
     pub(crate) fn new(
         count: u32,
+        first: f64,
+        last: f64,
         is_list: bool,
-        value: impl Fn(u32) -> f64,
         mut text: impl FnMut(f64) -> Option<String>,
     ) -> Self {
-        let names = match is_list && count <= MAX_NAMED_STEPS {
-            true => (0..count)
+        let mut steps = Self {
+            count,
+            first,
+            last,
+            names: Vec::new(),
+        };
+        if is_list && count <= MAX_NAMED_STEPS {
+            steps.names = (0..count)
                 .filter_map(|index| {
-                    let value = value(index);
+                    let value = steps.value(index);
                     Some(StepName {
                         value,
                         name: text(value)?,
                     })
                 })
-                .collect(),
-            false => Vec::new(),
-        };
-        Self { count, names }
+                .collect();
+        }
+        steps
+    }
+
+    /// The value of the step `index`. Multiplied before it is divided, so a whole step of
+    /// CLAP and `index / steps` of VST 3 come out exact.
+    pub fn value(&self, index: u32) -> f64 {
+        match self.count {
+            0 | 1 => self.first,
+            count => {
+                self.first + (self.last - self.first) * f64::from(index) / f64::from(count - 1)
+            }
+        }
+    }
+
+    /// The step nearest `value`.
+    pub fn index(&self, value: f64) -> u32 {
+        let gaps = f64::from(self.count.saturating_sub(1));
+        let index = ((value - self.first) * gaps / (self.last - self.first)).round();
+        // Not a number is the first step, as `as` makes it.
+        index.clamp(0.0, gaps) as u32
+    }
+
+    /// Whether every step has a name, which is what a list a composer picks from needs.
+    pub fn all_named(&self) -> bool {
+        self.names.len() == self.count as usize
     }
 }
 
@@ -133,15 +174,34 @@ mod tests {
 
     #[test]
     fn a_list_longer_than_the_most_names_has_none_and_a_short_one_has_one_per_text() {
-        let long = Steps::new(MAX_NAMED_STEPS + 1, true, f64::from, |value| {
-            Some(value.to_string())
-        });
+        let long = Steps::new(
+            MAX_NAMED_STEPS + 1,
+            0.0,
+            f64::from(MAX_NAMED_STEPS),
+            true,
+            |value| Some(value.to_string()),
+        );
         assert!(long.names.is_empty());
         // A step the plugin gives no text for is left out, not named with a guess.
-        let short = Steps::new(3, true, f64::from, |value| {
+        let short = Steps::new(3, 0.0, 2.0, true, |value| {
             (value != 1.0).then(|| format!("step {value}"))
         });
         let names: Vec<_> = short.names.iter().map(|step| step.name.as_str()).collect();
         assert_eq!(names, ["step 0", "step 2"]);
+        assert!(!short.all_named());
+    }
+
+    /// The steps of VST 3 are fractions, which a value in single precision is not quite.
+    #[test]
+    fn a_step_is_found_from_a_value_near_it_and_its_value_is_exact() {
+        let thirds = Steps::new(4, 0.0, 1.0, false, |_| None);
+        let near = f64::from(1.0_f32 / 3.0);
+        assert_eq!(thirds.index(near), 1);
+        assert_eq!(thirds.value(1), 1.0 / 3.0);
+        assert_eq!(thirds.index(2.0), 3);
+        assert_eq!(thirds.index(-1.0), 0);
+        // Multiplying by a forty-ninth would make the last 0.9999999999999999.
+        let fine = Steps::new(50, 0.0, 1.0, false, |_| None);
+        assert_eq!(fine.value(49), 1.0);
     }
 }
