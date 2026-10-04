@@ -1,6 +1,6 @@
 # The library
 
-Free sampled instruments for the Sampler: piano, keys, strings, brass, woodwinds, guitar, bass, drums, percussion and synths. For a real instrument, use one of these before a synth. A record names one by its id with `library`, instead of `sample` or `sfz`:
+Free sampled instruments for the Sampler: piano, keys, strings, brass, woodwinds, guitar, bass, drums, percussion and synths. They are free and sound basic: when the composer has a plugin that fits (`agent-docs/plugins.md`), use it instead. For a real instrument with no plugin, use one of these before a synth. A record names one by its id with `library`, instead of `sample` or `sfz`:
 
 ```json state/arrangement/violins/instance.json
 {
