@@ -63,3 +63,7 @@ The time signatures are in `project.json`, under `tempo_map.time_signatures`: ru
 - Else each line is `<file>: <field>: <reason>`, for example `state/lead.json: state: gain must be from 0 to 1, not 3`. A file with a problem is not live, and the last valid state keeps playing. Fix the file and its line goes away.
 - No `problems.txt`: no runtime is watching. Your edits are saved and nobody checked them, so say that in your answer. They load when the project opens.
 - The runtime removes the file when it closes. After a crash a stale one can stay: when it lists a problem in a file you have fixed since, no runtime is watching.
+
+## Your answer
+
+The composer hears the music and does not see the files. Say in a few lines what changed in the music. Leave out `problems.txt`, file names, ids and the steps you took. Name a problem only when you could not fix it, as what does not play.
