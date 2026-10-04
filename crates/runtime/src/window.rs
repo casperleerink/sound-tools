@@ -757,6 +757,20 @@ impl Opened {
         let stream = Rc::new(stream);
         let timing = stream.timing().clone();
         let session = cx.new(|cx| Session::new(project, cx));
+        // A turn of a pinned knob in a plugin's window that is still open when the project
+        // closes is written as one undo step, as the headless loop does with `Plugins::close`.
+        // The release of the session is the last moment the project is at hand.
+        cx.observe_release(&session, {
+            let plugins = weak_plugins.clone();
+            move |session, _| {
+                if let Some(plugins) = plugins.upgrade() {
+                    for error in session.closing(|project| plugins.end_turns(project)) {
+                        eprintln!("error: {error}");
+                    }
+                }
+            }
+        })
+        .detach();
 
         // A lost device must reach the composer. The stream reports it on its own thread.
         cx.spawn({

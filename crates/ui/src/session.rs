@@ -304,6 +304,12 @@ impl Session {
         result
     }
 
+    /// Runs work on the project as the session goes, from an observer of its release: the last
+    /// moment the project is at hand, with no view left to tell.
+    pub fn closing<R>(&mut self, work: impl FnOnce(&mut Project) -> R) -> R {
+        work(&mut self.project)
+    }
+
     /// The last error, for a quiet status surface. The notice of a failed edit stays until
     /// an edit succeeds. Any other stays until it is dismissed.
     pub fn notice(&self) -> Option<&SharedString> {
