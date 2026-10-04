@@ -1,6 +1,6 @@
 //! The app updates itself from the latest GitHub release, as an Electron app does.
 //!
-//! When the window opens, at most once a day, it asks GitHub for the latest release. A newer
+//! When the window opens, and every day while it stays open, it asks GitHub for the latest release. A newer
 //! one is downloaded in the background with the agent's downloader (`/usr/bin/curl`, a lock,
 //! resume), checked against the release's `SHA256SUMS` and unpacked in the support folder.
 //! The window then shows a notice with **Restart**. The swap itself happens at the next start
@@ -12,13 +12,12 @@
 //! as for an app macOS runs from a read-only copy, the notice offers **Download**, which opens
 //! the release page. On Linux the tarball's `install.sh` writes into `~/.local`.
 //!
-//! A failed check or download is quiet: one line on stderr, and the next launch tries again.
+//! A failed check or download is quiet: one line on stderr, and the next check tries again.
 //! A dev build and the command line forms never check.
 //!
 //! In the support folder:
 //!
 //! ```text
-//! updates/last-check                          when a check last succeeded, in Unix seconds
 //! updates/sound-tools/<version>/sound-tools   the archive of the release, checked
 //! updates/sound-tools/<version>/unpacked/     what is in it, once whole
 //! ```
@@ -28,7 +27,8 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime};
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{App, AppContext as _, Global};
@@ -44,10 +44,10 @@ const LATEST_RELEASE: &str =
 /// The asset of every release with the sha256 of the others, as `sha256sum` writes it.
 const SUMS: &str = "SHA256SUMS";
 
+/// How often an app that stays open looks again.
 const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 
 const UPDATES_FOLDER: &str = "updates";
-const LAST_CHECK_FILE: &str = "last-check";
 const UNPACKED: &str = "unpacked";
 
 /// Where the installed program is on Linux, which `tooling/linux/install.sh` writes.
@@ -123,29 +123,6 @@ fn checksum_of(sums: &str, name: &str) -> Option<String> {
         let file = file.trim_start().trim_start_matches('*');
         (file == name).then(|| sha256.to_ascii_lowercase())
     })
-}
-
-/// Whether the last check is a day old or more, or there was none. A clock set back counts
-/// as due, so a wrong date cannot stop the checks.
-fn due(last_check: &Path, now: SystemTime) -> bool {
-    let Some(last) = fs::read_to_string(last_check)
-        .ok()
-        .and_then(|text| text.trim().parse::<u64>().ok())
-    else {
-        return true;
-    };
-    let last = SystemTime::UNIX_EPOCH + Duration::from_secs(last);
-    now.duration_since(last)
-        .map_or(true, |since| since >= CHECK_EVERY)
-}
-
-fn remember_check(last_check: &Path, now: SystemTime) -> Result<()> {
-    let seconds = now.duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
-    if let Some(folder) = last_check.parent() {
-        fs::create_dir_all(folder)?;
-    }
-    fs::write(last_check, format!("{seconds}\n"))
-        .with_context(|| format!("could not write {}", last_check.display()))
 }
 
 #[derive(Deserialize)]
@@ -231,26 +208,12 @@ impl Updater {
         })
     }
 
-    fn last_check(&self) -> PathBuf {
-        self.folder.join(LAST_CHECK_FILE)
-    }
-
     fn version_folder(&self, version: Version) -> PathBuf {
         self.folder.join(TOOL_NAME).join(version.to_string())
     }
 
-    /// Looks for a newer release when a day has passed since the last check, and downloads
-    /// it. A check that fails is not remembered, so the next launch tries again.
-    async fn check(&self, now: SystemTime) -> Result<Option<Ready>> {
-        if !due(&self.last_check(), now) {
-            return Ok(None);
-        }
-        let ready = self.check_now().await?;
-        remember_check(&self.last_check(), now)?;
-        Ok(ready)
-    }
-
-    async fn check_now(&self) -> Result<Option<Ready>> {
+    /// Looks for a newer release, and downloads it.
+    async fn check(&self) -> Result<Option<Ready>> {
         let release: Release = serde_json::from_slice(&fetch(&self.latest).await?)
             .context("the latest release is not what GitHub sends")?;
         if release.draft || release.prerelease {
@@ -502,20 +465,30 @@ pub fn start_pending_update() -> bool {
     }
 }
 
-/// Checks for an update in the background and sets [`Ready`] when there is one. Quiet when
-/// it fails: the next launch tries again.
+/// Checks for an update in the background, now and every day while the app is open, and
+/// sets [`Ready`] when there is one. Quiet when a check fails: the next one tries again.
 pub fn check_in_background(support: &Path, cx: &mut App) {
     let Some(updater) = Updater::of_this_app(support) else {
         return;
     };
+    let updater = Arc::new(updater);
     cx.spawn(async move |cx| {
-        let checked = cx
-            .background_spawn(async move { updater.check(SystemTime::now()).await })
-            .await;
-        match checked {
-            Ok(Some(ready)) => cx.update(|cx| cx.set_global(ready)),
-            Ok(None) => {}
-            Err(error) => eprintln!("update: {error:#}"),
+        loop {
+            let checked = cx
+                .background_spawn({
+                    let updater = updater.clone();
+                    async move { updater.check().await }
+                })
+                .await;
+            match checked {
+                Ok(Some(ready)) => {
+                    cx.update(|cx| cx.set_global(ready));
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("update: {error:#}"),
+            }
+            cx.background_executor().timer(CHECK_EVERY).await;
         }
     })
     .detach();

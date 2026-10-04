@@ -116,7 +116,7 @@ jobs:
 
           Or try to open it once, then click **Open Anyway** in System Settings, Privacy & Security.
 
-          **Updates**: the app checks for a new release once a day, downloads it in the background and offers **Restart** to install it. On macOS the new build is signed ad hoc too, so macOS may ask for microphone access again after an update.
+          **Updates**: the app checks for a new release when it opens and every day while it stays open, downloads it in the background and offers **Restart** to install it. On macOS the new build is signed ad hoc too, so macOS may ask for microphone access again after an update.
 
           **Linux** (x86_64 or aarch64): extract the tarball for your machine and run its `install.sh`. It puts the app in `~/.local`, with a menu entry and the `sound-tools` command.
 
