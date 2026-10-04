@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand};
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    AssetName, BehaviourContext, BehaviourError, Changes, Engine, EngineConfig, EventOutput,
-    InstanceId, OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, Project, Registry,
-    State,
+    AssetName, Automation, BehaviourContext, BehaviourError, Changes, Engine, EngineConfig,
+    EventOutput, InstanceId, OutputEndpoint, PlayedLanes, Ports, PrepareConfig, ProcessContext,
+    Processor, Project, Registry, State, Ticks,
 };
 use sound_notes::{Amount, Bend, NOTES_INPUT, NoteEvent, Pedal, Pitch, Velocity};
 
@@ -244,10 +244,88 @@ fn apply_level(state: &Level, context: &mut BehaviourContext<'_>) -> Result<(), 
     Ok(())
 }
 
-/// A tiny stand-in for a track: it owns the `instrument` child and plays into it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A tiny stand-in for a track: it owns the `instrument` child and plays into it, with a lane
+/// that holds one value for each number of its instrument named in `lanes`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Rack {}
+pub(crate) struct Rack {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lanes: Vec<(String, f32)>,
+}
+
+/// Plays steady lanes, as the lane player of a track does: every lane every block, at offset
+/// 0, also while the project does not play.
+pub(crate) struct LanePlayer {
+    lanes: Vec<Automation>,
+}
+
+impl LanePlayer {
+    const OUTPUT: EventOutput<Automation> = EventOutput::new(0);
+}
+
+impl Processor for LanePlayer {
+    type Update = Vec<Automation>;
+
+    fn ports(&self) -> Ports {
+        Ports::new().event_output(Self::OUTPUT)
+    }
+
+    fn prepare(&mut self, _config: &PrepareConfig) {}
+
+    fn update(&mut self, update: &mut Vec<Automation>) {
+        std::mem::swap(&mut self.lanes, update);
+    }
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        for lane in &self.lanes {
+            context.event_outputs.push(Self::OUTPUT, 0, *lane);
+        }
+    }
+}
+
+/// Lanes that hold one value each, as the views see them.
+struct SteadyLanes(Vec<(std::sync::Arc<str>, f32)>);
+
+impl PlayedLanes for SteadyLanes {
+    fn values_at(&self, _tick: Ticks, values: &mut Vec<(std::sync::Arc<str>, f32)>) {
+        values.extend(self.0.iter().cloned());
+    }
+}
+
+/// The lanes of the rack, to the numbers its instrument names, by their names, shown to the
+/// views as a track shows its own. A name the instrument does not take a lane for is reported,
+/// and the rest play.
+fn play_lanes(state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    if state.lanes.is_empty() {
+        return Ok(());
+    }
+    let Some((input, numbers)) = context.child_automation("instrument") else {
+        context.problem("the instrument takes no automation".to_string());
+        return Ok(());
+    };
+    let (mut lanes, mut shown, mut missing) = (Vec::new(), Vec::new(), Vec::new());
+    for (name, value) in &state.lanes {
+        let place = numbers.iter().position(|number| *number.field == **name);
+        match place.and_then(|place| Some((place, u16::try_from(place).ok()?))) {
+            Some((place, parameter)) => {
+                lanes.push(Automation {
+                    parameter,
+                    value: *value,
+                });
+                shown.push((numbers[place].field.clone(), *value));
+            }
+            None => missing.push(name.clone()),
+        }
+    }
+    context.show_lanes(Some("instrument"), std::sync::Arc::new(SteadyLanes(shown)));
+    for name in missing {
+        context.problem(format!("no lane for {name}"));
+    }
+    let player = context.processor("lanes", || LanePlayer { lanes: Vec::new() })?;
+    context.update(player, lanes)?;
+    context.connect(OutputEndpoint::new(player, LanePlayer::OUTPUT).to(input))?;
+    Ok(())
+}
 
 impl State for Rack {
     const TOOL: &'static str = "test.rack";
@@ -259,7 +337,8 @@ impl State for Rack {
 ///
 /// The chain is the one the arrangement builds, in miniature: one fixed effect slot named
 /// `effect`. A slot with no record is left out, as a track leaves one out.
-fn apply_rack(_state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+fn apply_rack(state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    play_lanes(state, context)?;
     if let Some(played) = context.child_output("keys", PLAYED_OUTPUT)
         && let Some(notes) = context.child_input("instrument", NOTES_INPUT)
     {
@@ -691,7 +770,7 @@ impl Harness {
     /// A rack `track` with the plugin of `record` as its `instrument`, playing `played`.
     pub(crate) fn add_track(&mut self, record: PluginRecord, played: Vec<Played>) {
         let mut changes = Changes::new();
-        changes.create(id("track"), Rack {});
+        changes.create(id("track"), Rack::default());
         changes.create(id("track/keys"), Keys { played });
         changes.create(id("track/instrument"), record);
         self.project
@@ -703,7 +782,7 @@ impl Harness {
     /// effect. The dry signal is then a number a test can read in any frame.
     pub(crate) fn add_level_track(&mut self, value: f32, record: PluginRecord) {
         let mut changes = Changes::new();
-        changes.create(id("track"), Rack {});
+        changes.create(id("track"), Rack::default());
         changes.create(id("track/instrument"), Level { value });
         changes.create(id(&format!("track/{EFFECT}")), record);
         self.project

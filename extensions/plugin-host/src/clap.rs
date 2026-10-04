@@ -66,7 +66,7 @@ impl HostHandlers for SoundToolsHost {
 
 /// How many values one block can carry into the plugin, apart from the notes: the pins of a
 /// record, which are at most this many. A value that finds the ring full waits on the main
-/// thread for the next poll.
+/// thread for the next poll. The lanes of the pins have as much room again.
 const VALUE_CAPACITY: usize = MAX_AUTOMATED;
 
 /// Callbacks a plugin may make from any thread. They only note what was asked for; the work
@@ -741,6 +741,8 @@ struct ClapStarted {
     /// How many more note and control events the buffer takes in this block, so a block never
     /// grows it. The values of parameters have room of their own on top.
     room: usize,
+    /// How many more values of automation lanes the buffer takes in this block.
+    lane_room: usize,
     /// What the plugin said its latency was when it was activated.
     latency: u32,
     /// The values the host sets, from the main thread.
@@ -779,8 +781,9 @@ impl ClapStarted {
             output_ports: AudioPorts::with_capacity(output_channel_count.max(1), 1),
             input_channels: buffers(input_channel_count),
             output_channels: buffers(output_channel_count),
-            input_events: EventBuffer::with_capacity(EVENT_CAPACITY + VALUE_CAPACITY),
+            input_events: EventBuffer::with_capacity(EVENT_CAPACITY + 2 * VALUE_CAPACITY),
             room: EVENT_CAPACITY,
+            lane_room: VALUE_CAPACITY,
             latency,
             values,
             taken: 0,
@@ -809,6 +812,7 @@ impl Started for ClapStarted {
     fn begin_block(&mut self) {
         self.input_events.clear();
         self.room = EVENT_CAPACITY;
+        self.lane_room = VALUE_CAPACITY;
         // The values the host set since the last block, at its first frame, because they were
         // true before it began. Ahead of the notes, so the events stay in time order. Never more
         // than the room kept for them: the ring holds no more, and what the host could not put
@@ -824,6 +828,19 @@ impl Started for ClapStarted {
                 self.input_events.push(&event);
             }
         }
+    }
+
+    fn automate(&mut self, id: u32, value: f64) -> bool {
+        if self.lane_room == 0 {
+            return false;
+        }
+        self.lane_room -= 1;
+        // An id CLAP calls invalid names no parameter, and a record cannot hold it.
+        if let Some(id) = ClapId::from_raw(id) {
+            let event = ParamValueEvent::new(0, id, Pckn::match_all(), value);
+            self.input_events.push(&event);
+        }
+        true
     }
 
     fn push(&mut self, offset: u32, event: PluginEvent) -> bool {
