@@ -517,6 +517,7 @@ impl Timeline {
     }
 }
 
+/// What the file of an audio clip is, from memory only: a press on the thread that draws does
 /// not read the disk. `None` for a file that is missing, does not play, or is not known yet.
 fn known_file(project: &Project, asset: &AudioAsset) -> Option<Info> {
     match sound_media::cached(project.assets(), asset) {

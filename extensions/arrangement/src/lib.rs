@@ -58,7 +58,8 @@ pub use automation::{
     AutomationLane, AutomationValue, Carried, LaneMove, Moved, Travel, automatable, moved,
     travel_in,
 };
-pub use clip_moves::{AnyClip, ClipMove, move_clips, shown_end};
+pub(crate) use clip_moves::shown_end;
+pub use clip_moves::{AnyClip, ClipMove, move_clips};
 pub use input::InputChannels;
 use master::Master;
 pub use master::{LimiterState, MasterState};

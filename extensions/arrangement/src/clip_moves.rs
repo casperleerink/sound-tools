@@ -57,7 +57,8 @@ impl AnyClip {
         }
     }
 
-    /// Where it ends on the timeline, see [`shown_end`] for an audio clip.
+    /// Where it ends on the timeline. For an audio clip that comes from its file and the tempo,
+    /// and from memory only: it never reads the disk.
     pub fn end(&self, project: &Project) -> Ticks {
         match self {
             Self::Notes(clip) => clip.end(),
@@ -83,7 +84,7 @@ impl AnyClip {
 /// selected and deleted: as long as its trim says, or one bar when it plays to the end of a file
 /// nobody can measure. The same while nothing knows yet what the file is: this never looks at
 /// the disk, because the thread that draws calls it, see [`sound_media::cached`].
-pub fn shown_end(project: &Project, clip: &AudioClip) -> Ticks {
+pub(crate) fn shown_end(project: &Project, clip: &AudioClip) -> Ticks {
     let clock = project.clock();
     if let Cached::Plays(file) = sound_media::cached(project.assets(), &clip.asset) {
         return clip.end(Some(&file), clock).max(clip.start + Ticks(1));
@@ -110,8 +111,15 @@ pub struct ClipMove {
     pub next: AnyClip,
 }
 
-/// Moves clips of `arrangement` with the automation under them, in one group of changes: what
-/// a nudge writes. See [`move_records`] for the ids the clips get, which this gives back.
+/// Moves clips of `arrangement` with the automation under them, in one group of changes. A clip
+/// that stays on its track gets its new record. One that goes to another track is a delete and
+/// a create, like moving a file: back on the track of its `home` it takes that id again,
+/// elsewhere its name without a number at its end, or the next free one. So `clip` moved down
+/// onto a track that has a `clip` is `clip-2` there, and `clip` again when it comes back up.
+/// Gives the ids of the clips after the move, in the order of `moves`.
+///
+/// A moved audio clip goes on top of the clips of its track, as a new one does, so where it
+/// overlaps them it is heard. Moved together, they keep their order among themselves.
 pub fn move_clips(
     project: &Project,
     changes: &mut Changes,
@@ -181,16 +189,8 @@ pub(crate) fn range_of(project: &Project, clip: &AnyClip) -> Range<Ticks> {
     clip.start()..clip.end(project)
 }
 
-/// The clips of a move alone, to a group of changes: a drag writes the lanes itself, from the
-/// tracks as they were when it began. A clip that stays on its track gets its new record. One
-/// that goes to another track is a delete and a create, like moving a file: back on the track of
-/// its `home` it takes that id again, elsewhere its name without a number at its end, or the
-/// next free one. So `clip` moved down onto a track that has a `clip` is `clip-2` there, and
-/// `clip` again when it comes back up. Gives the ids of the clips after the move, in the order
-/// of `moves`.
-///
-/// A moved audio clip goes on top of the clips of its track, as a new one does, so where it
-/// overlaps them it is heard. Moved together, they keep their order among themselves.
+/// The clips of [`move_clips`] alone, without the automation: only for a drag, which writes
+/// the lanes itself, from the tracks as they were when it began.
 pub(crate) fn move_records(
     project: &Project,
     changes: &mut Changes,
