@@ -1418,6 +1418,7 @@ impl Plugins {
         // The undo step is named after the first pin of a turn.
         let label = values.first().map(|(pin_id, _)| {
             let name = record.parameters.get(pin_id).map(|pin| pin.name.as_str());
+            let name = name.filter(|name| !name.is_empty());
             format!("Change {}", name.unwrap_or(plugin_id))
         });
         PinsMoved {
