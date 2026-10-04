@@ -64,8 +64,8 @@ registries (`crates/runtime/src/lib.rs`, `views`) and installs them as GPUI glob
 ## Rules that are easy to miss
 
 - No `cx.notify()` and no entity updates inside `render` or a paint callback.
-- Publish into a `DragEdit` only when a mouse move changes something, never at mouse down. A
-  plain click is then no undo step.
+- Publish into a `DragEdit` only when something changes. A plain press must not publish, so a
+  plain click is no undo step.
 - Work out each move from the value at the press and the distance moved, not from the live
   value. A drag there and back then ends where it began.
 - The target of a drag can be deleted under it by an agent. Check on every move and on

@@ -9,8 +9,8 @@ use crate::session::Session;
 
 /// The gesture of the session for one drag, from mouse down to mouse up. It opens with the first
 /// [`Self::publish`] and not at the press, so a press that changes nothing is no undo step and
-/// writes nothing. It is the only place that knows whether the gesture is open, so no drag can
-/// open it twice, or end one it did not open.
+/// writes nothing. It is the only place a view keeps whether its drag opened the gesture, so no
+/// view opens its gesture twice or forgets to close it.
 ///
 /// Finish it at mouse up, when what it drags goes away, and when the view is released. The
 /// session finishes a gesture that is left open when the next one begins, but until then undo
