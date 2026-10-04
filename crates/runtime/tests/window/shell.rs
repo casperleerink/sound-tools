@@ -185,8 +185,8 @@ fn the_add_track_button_under_the_last_track_adds_an_instrument_track(cx: &mut T
     assert_eq!(track_kinds(&mut opened), [TrackKind::Instrument; 2]);
     assert_eq!(opened.undo_label().as_deref(), Some("Add track"));
     assert!(opened.project(|project| project.problems().is_empty()));
-    // It moved down with the new track.
-    let second = opened.bounds("add-track").unwrap();
+    // It moved down with the new track, in the frame that shows the track.
+    let second = opened.cx.debug_bounds("add-track").unwrap();
     assert_eq!(second.top() - first.top(), px(TRACK_HEIGHT));
 
     // The keys reach it: tab from the timeline past the snap setting, and enter.
