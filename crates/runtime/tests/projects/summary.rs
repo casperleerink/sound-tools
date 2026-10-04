@@ -26,8 +26,10 @@ fn the_summary_tells_what_plays_where() {
 
     // A second, read-only open next to the live one sees the same: this is `--inspect`.
     let (inspected, _engine, _plugins) = open_read_only(harness.project.root());
-    let expected = r#"extensions: arrangement, compressor, delay, drum-pad, eq, filter, fit-tempo, instrument, limiter, modulation, plugin-host, reverb, sampler, saturator, tone, utility, wavetable
-time signature: 4/4 from bar 1 (tick 0), 3840 ticks per bar, 960 ticks per beat
+    let expected = format!(
+        "extensions: {}\n{}",
+        harness.project.project_file().extensions.join(", "),
+        r#"time signature: 4/4 from bar 1 (tick 0), 3840 ticks per bar, 960 ticks per beat
 tempo: 120 bpm from 1:1:000 (tick 0)
 tempo: 90 bpm from 5:1:000 (tick 15360)
 arrangement `arrangement`: 2 tracks. Positions are bar:beat:tick, a clip runs up to its end position
@@ -39,7 +41,8 @@ arrangement `arrangement`: 2 tracks. Positions are bar:beat:tick, a clip runs up
 instance `drone` [tone] {"frequency_hz":110.0,"gain":0.1}
 connections: 0
 problems: 1
-  state/arrangement/pad/broken.json: ?: EOF while parsing an object at line 1 column 1"#;
+  state/arrangement/pad/broken.json: ?: EOF while parsing an object at line 1 column 1"#
+    );
     assert_eq!(runtime::summary(&inspected), expected);
     assert_eq!(runtime::summary(&harness.project), expected);
 }
