@@ -2,7 +2,7 @@
 //! the clips, painted on one canvas. Clips of notes and of audio are added, selected, moved,
 //! resized, copied, pasted and deleted here with the mouse and the keys, an audio clip is
 //! trimmed, faded and turned up or down from its handles, audio files are dropped in from the
-//! Finder, a track is renamed in its header, tempo changes are added and removed in the ruler,
+//! Finder, a track is renamed in its header and deleted with backspace, tempo changes are added and removed in the ruler,
 //! and the snap setting sits in the corner. Under a track its automation lanes show at the
 //! toggle in its header, where lanes are added and their points added, moved, deleted and
 //! erased ([`super::track_lanes`]).
@@ -18,8 +18,8 @@ use gpui::{
     EventEmitter, ExternalPaths, FileDropEvent, FocusHandle, Focusable, FontWeight, Hitbox,
     HitboxBehavior, Hsla, KeyDownEvent, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point,
-    ScrollWheelEvent, SharedString, Subscription, TextAlign, TextRun, Window, canvas, div, fill,
-    point, prelude::*, px, quad, size,
+    PromptLevel, ScrollWheelEvent, SharedString, Subscription, TextAlign, TextRun, Window, canvas,
+    div, fill, point, prelude::*, px, quad, size,
 };
 use sound_core::{
     Assets, Changes, Instance, InstanceId, Project, ProjectError, ProjectEvent, State, Ticks,
@@ -3276,8 +3276,8 @@ impl Timeline {
     }
 
     /// The keys of the selected track, which it gets while no clip is selected: up and down
-    /// select the track above or below, enter edits its name, and `a` shows its automation
-    /// lanes or folds them away, as the toggle in its header does.
+    /// select the track above or below, enter edits its name, backspace and delete delete it,
+    /// and `a` shows its automation lanes or folds them away, as the toggle in its header does.
     fn on_track_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.refresh_order(cx);
         let selected = self.selected_track.as_ref();
@@ -3290,6 +3290,13 @@ impl Timeline {
             };
             let shown = self.shows_lanes(&track);
             self.show_lanes(&track, !shown, cx);
+            return true;
+        }
+        if matches!(key, "backspace" | "delete") {
+            let Some(track) = self.order.get(current).cloned() else {
+                return false;
+            };
+            self.delete_track(track, window, cx);
             return true;
         }
         let next = match key {
@@ -3307,6 +3314,39 @@ impl Timeline {
             self.select_track(Some(track.id().clone()), cx);
         }
         true
+    }
+
+    /// Deletes a track with its clips, devices and automation as one undo step, once the composer
+    /// says yes. The keys go to the track when no clip is selected, so without the question one
+    /// backspace too many after deleting a clip would take the whole track.
+    fn delete_track(
+        &mut self,
+        track: Instance<TrackState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.session.read(cx).project();
+        let Some(name) = project.state(&track).map(|state| state.name.clone()) else {
+            return;
+        };
+        let message = format!("Delete the track \"{name}\"?");
+        let detail = "Its clips, devices and automation go with it. Undo brings it back.";
+        let buttons = ["Delete", "Cancel"];
+        let answer = window.prompt(PromptLevel::Warning, &message, Some(detail), &buttons, cx);
+        let session = self.session.clone();
+        cx.spawn(async move |_, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
+            session.update(cx, |session, cx| {
+                session.edit(cx, |project| {
+                    let mut changes = Changes::new();
+                    changes.delete(track.id());
+                    project.commit("Delete track", changes)
+                })
+            });
+        })
+        .detach();
     }
 
     /// Opens the name field of a track in its header, with the name selected.
