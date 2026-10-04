@@ -119,9 +119,30 @@ pub struct PluginView {
     readouts: BTreeMap<u32, (f64, Option<SharedString>)>,
     /// The list that puts a parameter on the card and takes one off.
     menu: Entity<DropdownMenu>,
-    /// The pin whose knob is being dragged. A drag whose knob goes away, because the pin was
-    /// taken off or became another control, sends no end, so the card ends it.
-    dragged: Option<u32>,
+    /// The pin whose knob is being dragged, and what its values meant when the drag began. A
+    /// drag whose knob goes away, because the pin was taken off or became another control,
+    /// sends no end, so the card ends it. So it does when the plugin gives the knob other
+    /// values, whose numbers the open drag would read wrongly.
+    dragged: Option<(u32, Mapping)>,
+}
+
+/// How the travel of the knob of a pin maps to values of the plugin.
+#[derive(PartialEq)]
+struct Mapping {
+    minimum: f64,
+    maximum: f64,
+    steps: Option<Steps>,
+}
+
+impl Mapping {
+    /// `None` for a parameter that is not a knob.
+    fn of(parameter: &Parameter) -> Option<Self> {
+        Control::of(parameter).is_knob().then(|| Self {
+            minimum: parameter.minimum,
+            maximum: parameter.maximum,
+            steps: parameter.steps.clone(),
+        })
+    }
 }
 
 impl PluginView {
@@ -138,13 +159,14 @@ impl PluginView {
         // saw either notifies.
         cx.observe(&session, |view, _, cx| {
             view.ask_the_plugin(false, cx);
+            view.end_a_drag_whose_knob_changed(cx);
             cx.notify();
         })
         .detach();
         cx.subscribe(&session, |view, _, event: &ProjectEvent, cx| match event {
             ProjectEvent::Changed(id) if id == view.plugin.id() => {
                 view.ask_the_plugin(true, cx);
-                view.end_a_drag_that_lost_its_knob(cx);
+                view.end_a_drag_whose_knob_changed(cx);
                 cx.notify();
             }
             // Deleted under a drag, from outside. The delete was the last write, so the
@@ -245,18 +267,25 @@ impl PluginView {
         }
     }
 
-    /// Ends the drag of a knob that is no longer on the card. See [`Self::dragged`].
-    fn end_a_drag_that_lost_its_knob(&mut self, cx: &mut Context<Self>) {
-        let Some(dragged) = self.dragged else {
+    /// Ends the drag of a knob that is no longer on the card or maps to other values now. See
+    /// [`Self::dragged`].
+    fn end_a_drag_whose_knob_changed(&mut self, cx: &mut Context<Self>) {
+        let Some((dragged, began)) = &self.dragged else {
             return;
         };
         let record = self.session.read(cx).project().state(&self.plugin);
-        let pinned = record.is_some_and(|record| record.parameters.contains_key(&dragged));
-        let parameter = self.parameters.as_ref().and_then(|list| list.get(&dragged));
-        if !pinned || !parameter.is_some_and(|parameter| Control::of(parameter).is_knob()) {
+        let pinned = record.is_some_and(|record| record.parameters.contains_key(dragged));
+        let now = self.mapping(*dragged);
+        if !pinned || now.as_ref() != Some(began) {
             self.dragged = None;
             self.edit.finish(&self.session, cx);
         }
+    }
+
+    /// How the knob of the pin `id` maps to values now, when it is a knob.
+    fn mapping(&self, id: u32) -> Option<Mapping> {
+        let parameter = self.parameters.as_ref()?.get(&id)?;
+        Mapping::of(parameter)
     }
 
     /// A row of the list was picked: a pinned parameter comes off the card, another goes on it
@@ -309,10 +338,13 @@ impl PluginView {
 
     /// Notes which knob a drag is on, see [`Self::dragged`].
     fn dragged_to(&mut self, id: u32, change: &ValueChange) {
-        self.dragged = match change {
-            ValueChange::Drag(_) => Some(id),
-            ValueChange::DragEnd | ValueChange::DragCancel | ValueChange::Set(_) => None,
-        };
+        match change {
+            ValueChange::Drag(_) if self.dragged.as_ref().is_some_and(|(on, _)| *on == id) => {}
+            ValueChange::Drag(_) => self.dragged = self.mapping(id).map(|mapping| (id, mapping)),
+            ValueChange::DragEnd | ValueChange::DragCancel | ValueChange::Set(_) => {
+                self.dragged = None;
+            }
+        }
     }
 
     /// A change of the control of the pin `id`, as one gesture or one step.

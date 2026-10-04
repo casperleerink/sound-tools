@@ -12,8 +12,8 @@
 //! [`Trigger::Chevron`] is the menu half of a [`crate::components::split_button::SplitButton`].
 //!
 //! [`DropdownMenu::searchable`] puts a field above the rows, for a list too long to read
-//! through, such as the parameters of a plugin. What is typed keeps the rows whose label holds
-//! it, and the first of them is highlighted, so enter picks it. Up and down move from there and
+//! through, such as the parameters of a plugin. What is typed keeps the rows whose label or
+//! value holds it, so a plugin parameter is found by its id too, and the first of them is highlighted, so enter picks it. Up and down move from there and
 //! escape closes. It shows at most a hundred rows: drawing thousands of them on every frame
 //! the menu is open would cost more than typing a few letters.
 
@@ -187,7 +187,7 @@ pub(crate) fn highlight_step(
     Some(next)
 }
 
-/// The entries whose rows hold `query` in their label, whatever the case, at most
+/// The entries whose rows hold `query` in their label or value, whatever the case, at most
 /// [`MAX_FOUND`] of them, and the notes. A quiet line says when nothing does, or how many more
 /// there are. Separators go: the groups they kept apart may be gone.
 fn found(entries: &[MenuEntry], query: &str) -> Vec<MenuEntry> {
@@ -201,7 +201,8 @@ fn found(entries: &[MenuEntry], query: &str) -> Vec<MenuEntry> {
             MenuEntry::Group(group) => {
                 let mut items = Vec::new();
                 for item in &group.items {
-                    if !item.label.to_lowercase().contains(&query) {
+                    let holds = |text: &SharedString| text.to_lowercase().contains(&query);
+                    if !holds(&item.label) && !holds(&item.value) {
                         continue;
                     }
                     if shown == MAX_FOUND {
@@ -223,7 +224,7 @@ fn found(entries: &[MenuEntry], query: &str) -> Vec<MenuEntry> {
     if shown == 0 && !query.is_empty() {
         found.push(MenuEntry::Note("Nothing matches.".into()));
     } else if more > 0 {
-        let note = format!("{more} more. Type to find them.");
+        let note = format!("{more} more. Type a name or an id to find them.");
         found.push(MenuEntry::Note(note.into()));
     }
     found.extend(notes);
@@ -607,7 +608,8 @@ impl DropdownMenu {
         }
     }
 
-    /// Puts a field above the rows that keeps only the rows whose label holds what is typed.
+    /// Puts a field above the rows that keeps only the rows whose label or value holds what is
+    /// typed.
     /// See the module doc.
     pub fn searchable(mut self, placeholder: &str, cx: &mut Context<Self>) -> Self {
         let menu = cx.weak_entity();
@@ -980,8 +982,8 @@ mod tests {
         notes.collect()
     }
 
-    /// A search keeps the rows whose label holds the text, whatever the case, and never more
-    /// than the most it shows, also with nothing typed.
+    /// A search keeps the rows whose label or value holds the text, whatever the case, and
+    /// never more than the most it shows, also with nothing typed.
     #[test]
     fn a_search_keeps_at_most_a_hundred_rows_and_says_how_many_more_there_are() {
         let items = (0..250).map(|index| MenuItem::new(index.to_string(), format!("Knob {index}")));
@@ -989,7 +991,10 @@ mod tests {
 
         let everything = found(&entries, "");
         assert_eq!(labels(&everything).len(), MAX_FOUND);
-        assert_eq!(notes(&everything), ["150 more. Type to find them."]);
+        assert_eq!(
+            notes(&everything),
+            ["150 more. Type a name or an id to find them."]
+        );
 
         let some = found(&entries, "KNOB 24");
         let tens: Vec<String> = (240..250).map(|index| format!("Knob {index}")).collect();
@@ -997,5 +1002,14 @@ mod tests {
         assert!(notes(&some).is_empty());
 
         assert_eq!(notes(&found(&entries, "drive")), ["Nothing matches."]);
+
+        // Rows past the most that share one label are still found, by their value.
+        let same = (0..250).map(|index| MenuItem::new(index.to_string(), "Gain"));
+        let same = vec![MenuEntry::Group(MenuGroup::new().items(same))];
+        let last = flat(&found(&same, "249"))
+            .iter()
+            .map(|item| item.value.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(last, ["249"]);
     }
 }
