@@ -12,7 +12,7 @@ state/arrangement/<track>/<effect>.json      an effect, named in the track recor
 state/arrangement/<track>/<clip>.json        a clip, under any other name
 ```
 
-A clip only loads inside a track folder, and a track only inside the arrangement folder. Anywhere else the file is listed in `problems.txt` with where it belongs.
+A clip only loads inside a track folder, and a track only inside the arrangement folder.
 
 To see what plays where, list a track folder and read `start` and `length` of its clips. Open only the clips that overlap the bars you work on.
 
@@ -34,46 +34,21 @@ To see what plays where, list a track folder and read `start` and `length` of it
 }
 ```
 
-In 4/4 this clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one F on the first beat of bar 6. In another time signature, work out the ticks of the bars from `project.json`, as `AGENTS.md` says.
+In 4/4 this clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 and one F on the first beat of bar 6.
 
 - `start`: where the clip starts in the project, in ticks. `length`: how long it is, 1 tick or more.
-- `notes[].start` counts from the start of the clip, not of the project: 0 is the first tick of the clip. Every note starts inside the clip, so below the clip `length`. Else the file does not load.
-- `notes[].length`: how long the note is held, 1 tick or more. A note that is longer than the rest of the clip stops where the clip ends.
+- `notes[].start` counts from the start of the clip, not of the project: 0 is the first tick of the clip. It must be below the clip `length`, else the file does not load.
+- `notes[].length`: how long the note is held, 1 tick or more. A note stops where the clip ends.
 - `pitch`: MIDI note number, 0 to 127, one step per semitone. C4 (middle C) is 60, A4 is 69, C3 is 48, C2 is 36.
 - `velocity`: how hard the note is played, 1 to 127. It sets the loudness: 64 is a quarter as loud as 127.
 - A chord is several notes with the same `start`. Write one note per line, sorted by `start`.
 - Two notes of the same pitch that overlap on one track sound as one: the pitch is held until the last of them ends.
 - Clips on one track may overlap in time. The notes of both play.
-
-## A recorded clip: the sustain pedal
-
-A clip the composer recorded from a keyboard has a `pedal` list as well. Leave it out of a clip you write by hand, and keep it when you change one that has it.
-
-```json state/arrangement/piano/take-1.json
-{
-  "tool": "arrangement.clip",
-  "state": {
-    "start": 0,
-    "length": 15360,
-    "notes": [
-      {"start": 0, "length": 900, "pitch": 60, "velocity": 88},
-      {"start": 940, "length": 880, "pitch": 64, "velocity": 76}
-    ],
-    "pedal": [{"start": 0, "value": 127}, {"start": 1880, "value": 0}],
-    "take": "take-1"
-  }
-}
-```
-
-- `pedal[].start`: where the pedal moved, in ticks from the start of the clip, like a note start. It must be inside the clip.
-- `pedal[].value`: how far the pedal was pressed, 0 to 127, as it was played. It counts as down from 64, and a piano that knows half pedal can use the rest.
-- While the pedal is down a note goes on sounding after its own end, until the pedal comes up. So the notes above sound together until tick 1880.
-- The pedal is not shown in the note editor yet. Edit it here.
-- `take`: the raw take this clip was recorded from, the file `assets/takes/take-1.json`. Keep the field as it is when you change the clip, move its file or copy it: it is the only way back to what the composer played. Read `agent-docs/takes.md` before you touch anything under `assets/takes/`.
+- A clip the composer recorded also has `pedal`, the sustain pedal, and `take`, the raw take it came from. Keep both as they are when you change, move or copy the clip, and leave `pedal` out of a clip you write. Read `agent-docs/takes.md` before you touch anything under `assets/takes/`.
 
 ## Bend, mod wheel and pressure: the lanes of a clip
 
-A clip may move the bend wheel, the modulation wheel and the key pressure of its instrument, each with a lane of points. A recorded clip has a lane for every wheel that moved while recording.
+A clip may move the bend wheel, the modulation wheel and the key pressure of its instrument, each with a lane of points.
 
 ```json state/arrangement/lead/slide.json
 {
@@ -96,11 +71,11 @@ A clip may move the bend wheel, the modulation wheel and the key pressure of its
 This note slides up over an eighth, stays up, and comes back down in the third beat, while a vibrato grows over the second half of the bar.
 
 - `bend`, `mod_wheel`, `pressure`: each a list of points. Leave out a lane you do not use.
-- `tick`: where the point is, in ticks from the start of the clip, like a note start. Every point is inside the clip, below its `length`, and the points of a lane are in tick order with at most one per tick. Else the file does not load.
-- `value` of a bend: -8192 to 8191, 0 in the middle. The built-in synth and Sampler bend two semitones either way at the ends, so a semitone up is 4096. `value` of a mod wheel or pressure: 0 to 127. The synth and the Sampler add a vibrato with the mod wheel. No built-in instrument uses the pressure.
-- Between two points the value moves in a straight line. Before the first point it holds the first value, and after the last point it holds the last value until the clip ends. So a sudden move is two points a tick apart.
-- Where no clip has points, a lane is at rest: bend 0, mod wheel 0, pressure 0. It goes back there when its clip ends.
-- Clips on one track that overlap and both have points in one lane: the clip that starts later is heard in that lane.
+- `tick`: from the start of the clip, like a note start, below its `length`. The points of a lane are in tick order, at most one per tick, else the file does not load.
+- `value` of a bend: -8192 to 8191, 0 in the middle. The built-in synth and Sampler bend two semitones either way, so a semitone up is 4096. Of a mod wheel or pressure: 0 to 127. The synth and the Sampler add a vibrato with the mod wheel; no built-in instrument uses the pressure.
+- Between two points the value moves in a straight line. Before the first point it holds the first value, after the last the last. So a sudden move is two points a tick apart.
+- Outside its clips a lane is at 0, and it goes back there when its clip ends.
+- When clips on one track overlap and both have points in one lane, the clip that starts later is heard in that lane.
 
 ## A track: `arrangement.track`
 
@@ -121,17 +96,19 @@ This note slides up over an eighth, stays up, and comes back down in the third b
 
 - `name`: what the composer sees. Not empty. The folder name is the id and stays as it is when the name changes.
 - `colour`: `blue`, `sapphire`, `sky`, `teal`, `green`, `yellow`, `peach`, `red`, `maroon`, `mauve`, `pink`, `lavender`, `rosewater` or `flamingo`. `blue` when left out.
-- `order`: tracks show from the lowest to the highest. Tracks with the same order show by id. 0 when left out.
-- `gain_db`: how much louder or quieter the track plays, in decibels: a number up to 6, or `"-inf"` for silence. 0 when left out, which is the sound as the instrument makes it. -6 halves the samples, 6 doubles them. Change the sound itself in `instrument.json`; change the balance between tracks here.
-- `pan`: where the track sits between the two channels, -1 to 1. -1 is hard left, 0 the middle, 1 hard right. 0 when left out. A track keeps its loudness wherever it is panned.
-- `mute`: `true` silences the track and changes nothing else. `false` when left out.
-- `solo`: while any track has `"solo": true`, only the soloed tracks play, and every other one sounds exactly as if it were muted. A track that is muted stays silent when it is soloed. Left out when off.
-- `effects`: the effects of the track, by file name without `.json`, in the order the sound goes through them. An effect that is bypassed is written `{"name": "space", "bypass": true}`: the sound goes past it untouched, and its record stays. Left out when the track has none, and a track that leaves it out is written back without it.
-- The track plays through the file `instrument.json` in its folder. Its record is in the doc of the instrument, `agent-docs/instrument.md`. A track without it is silent.
+- `order`: tracks show from the lowest to the highest, and those with the same order by id. 0 when left out.
+- `gain_db`: the volume of the track in decibels: a number up to 6, or `"-inf"` for silence. 0 when left out. -6 halves the samples, 6 doubles them. Balance the tracks here; change the sound itself in `instrument.json`.
+- `pan`: -1 to 1. -1 is hard left, 0 the middle, 1 hard right. 0 when left out. A track keeps its loudness wherever it is panned.
+- `mute`: `true` silences the track. `false` when left out.
+- `solo`: while any track has `"solo": true`, only the soloed tracks play. A muted track stays silent when it is soloed. Left out when off.
+- `effects`: the effects of the track, see below. Left out when the track has none.
+- The track plays through `instrument.json` in its folder, whose record is in `agent-docs/instrument.md`. A track without it is silent.
+
+A new track is a folder under `state/arrangement/` with `instance.json` first, then `instrument.json`, then its clips. Give it an `order` above the highest one in use and a `colour` no other track has.
 
 ## The effects of a track
 
-The sound of a track goes through its instrument, then through each effect in `effects` in that order, then through `gain_db`, `pan`, `mute` and `solo`, into the master. Two lines make one effect: the record in the track folder, and its name in the list.
+The sound of a track goes through its instrument, then through each effect in `effects` in that order, then through `gain_db`, `pan`, `mute` and `solo`, into the master. One effect is two things: its record in the track folder, and its file name in `effects`. To add one, write the record first, then put its name in the list where you want it; to remove one, take the name out and delete the file. Either half alone is reported in `problems.txt`.
 
 ```json state/arrangement/piano/warmth.json
 {
@@ -140,37 +117,9 @@ The sound of a track goes through its instrument, then through each effect in `e
 }
 ```
 
-An effect is any tool with an `audio` input and an `audio` output. Today that is the built-in `filter`, `compressor`, `limiter`, `eq`, `delay`, `reverb`, `saturator`, `utility` and `modulation`, whose records are in `agent-docs/filter.md`, `agent-docs/compressor.md`, `agent-docs/limiter.md`, `agent-docs/eq.md`, `agent-docs/delay.md`, `agent-docs/reverb.md`, `agent-docs/saturator.md`, `agent-docs/utility.md` and `agent-docs/modulation.md`, and the `plugin` tool, which is the same record as an instrument; `agent-docs/plugins.md` says where the ids come from. The file name is yours: lowercase letters, digits, `-` and `_`, and not `instrument`.
+An effect is any tool with an `audio` input and an `audio` output. Today that is the built-in `filter`, `compressor`, `limiter`, `eq`, `delay`, `reverb`, `saturator`, `utility` and `modulation`, each with its record in `agent-docs/<tool>.md`, and the `plugin` tool, which is the same record as an instrument; `agent-docs/plugins.md` says where the ids come from. The file name is yours: lowercase letters, digits, `-` and `_`, and not `instrument`.
 
-How to:
-
-- **Add an effect**: write its record into the track folder, then put its file name at the end of `effects` in `instance.json`. Write the record first: a name in the list with no record behind it is reported until the file is there.
-- **Reorder**: write `effects` in the order you want. Nothing else moves, and the sound changes at once. `["warmth", "space"]` is the instrument, then warmth, then space.
-- **Remove**: take the name out of `effects` and delete the file. Taking it out of the list alone leaves a record that is reported; deleting the file alone leaves a name that is reported.
-- **Turn one off for a while**: write its slot as `{"name": "warmth", "bypass": true}`, and as `"warmth"` again to turn it on. The record and the plugin's own settings stay. The sound of a bypassed effect goes past it untouched, without its latency.
-
-The same piano with its warmth bypassed, and silenced with the bottom of its volume:
-
-```json state/arrangement/piano/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {
-    "name": "Piano",
-    "colour": "blue",
-    "order": 0,
-    "gain_db": "-inf",
-    "pan": 0.0,
-    "mute": false,
-    "effects": [{"name": "warmth", "bypass": true}]
-  }
-}
-```
-
-What `problems.txt` says about this, and what to do:
-
-- `` `effects` names "space", and this track has no space.json ``: write that record, or take the name out of the list. The track plays through the rest of the chain meanwhile.
-- `` the child "space" takes audio in and makes audio out ``, and the list does not name it: the record is there and nothing goes through it. Add its name to `effects` where you want it, or delete the file.
-- `effects[1] is "warmth", which the list already has`, or a name with a capital letter, or `instrument`: the record itself does not load, so the whole track keeps what it had. Correct the list.
+To turn an effect off for a while, write its slot as `{"name": "warmth", "bypass": true}`, and as `"warmth"` again to turn it on. The sound goes past it untouched, without its latency, and its record stays.
 
 ## Automation: lanes of a track
 
@@ -219,20 +168,13 @@ In 4/4 the filter of this track opens over bars 9 to 16, and the track fades in 
 
 - `device`: the file name of a device in the track folder, without `.json`, such as an effect in `effects`. Leave it out for the volume and the pan of the track itself.
 - `parameter`: the field in the record of the device, as its doc names it, such as `cutoff_hz` of a filter. A number inside an object or a list is named by its path: `filter_1.cutoff_hz` of a wavetable, `bands[0].gain_db` of an EQ, `pads.42.pan` of a Drum pad. For the track itself, `gain_db` or `pan`.
-- `points[].tick`: where the point is in the project, in ticks, not from the start of a clip. The points are in tick order with at most one per tick, and a lane has at least one.
-- `points[].value`: in the units and the range of the field, as its doc gives them. A volume may go down to `"-inf"`, silence.
-- Between two points the value moves in a straight line on the travel of its knob: a cutoff moves evenly in octaves, a volume as its fader moves. Before the first point the lane holds the first value, and after the last point it holds the last. So a sudden move is two points a tick apart.
-- While a lane moves a number, the value in the record of the device does not play. Take the lane out and the record plays again.
-- A lane belongs to the track, not to a clip. When you move a clip by editing its `start`, or move its file to another track, move the points under it yourself if they belong to it.
+- `points[].tick`: in project ticks, not from the start of a clip. In tick order, at most one per tick, and at least one per lane.
+- `points[].value`: in the units and the range of the field, as its doc gives them. A volume may go down to `"-inf"`.
+- Between two points the value moves in a straight line on the travel of its knob: a cutoff moves evenly in octaves, a volume as its fader moves. Before the first point and after the last it holds, as in a clip lane.
+- While a lane moves a number, the value in the record does not play. Take the lane out and it plays again.
+- A lane belongs to the track, not to a clip. When you move a clip, by its `start` or to another track, move the points under it yourself if they belong to it.
 - One number has one lane. Leave `automation` out when the track has none.
-- Every built-in instrument and effect takes automation, and so do the volume and pan of every track. A plugin takes none yet: a lane of it is reported and moves nothing.
-
-What `problems.txt` says about a lane, and what to do:
-
-- `` automation[0].parameter is "cutoff", and dark takes no automation of a number of that name ``: the message lists the fields it takes. Use one of them. A whole number, such as a count of voices, takes none.
-- `` automation[0].device is "echo", and echo.json takes no automation ``: that device, such as a plugin, cannot be automated yet. Change its record instead.
-- `` automation[0].points[1].value must be from 20 to 20000 ``: put the value inside the range of the field. The same holds for `gain_db` and `pan` of the track.
-- A lane with no points, points out of tick order, two lanes for one number, or a `device` that cannot be a file name: the track record itself does not load and keeps what it had. Correct the lane.
+- Every built-in instrument and effect takes automation, and so do the volume and pan of every track. A whole number, such as a count of voices, takes none, and a plugin takes none yet.
 
 ## The arrangement and its master: `arrangement`
 
@@ -248,24 +190,7 @@ What `problems.txt` says about a lane, and what to do:
 }
 ```
 
-The arrangement is the master: every track plays into it, and it plays to the main output. `{"state": {}}` is the same as the example: every field has that default when left out.
+The arrangement is the master: every track plays into it, and it plays to the main output. `{"state": {}}` is the same as the example.
 
 - `master.gain_db`: the volume of the master, a number up to 6, or `"-inf"` for silence. It comes before the limiter, so it cannot push the output over the ceiling.
-- `master.limiter`: on by default, so the output never goes over its ceiling. Under the ceiling it leaves every sample as it was.
-- `bypass`: `true` lets the sound through untouched, and it may then clip.
-- `gain_db`: how much louder the sound goes into the limiter, 0 to 24.
-- `ceiling_db`: the highest the output reaches, in dBFS, -24 to 0. 0 is full scale.
-- `release_ms`: how fast the gain comes back after a peak, 10 to 1000.
-- `lookahead_ms`: 0 to 10. Above 0 the limiter lowers the gain before a peak arrives, which keeps the shape of the wave, and delays everything by that much, including a keyboard played live. 0 adds no delay.
-
-## How to
-
-- Add a part: write one new clip file into the folder of the track. Give the clip the bar range of the part, and count the note starts from the clip start.
-- Change a part: write its clip file again, whole. Notes that sound are not left hanging.
-- Add a track: make a new folder under `state/arrangement/` with `instance.json` first, then `instrument.json`, then its clips. Give it an `order` above the highest one in use and a `colour` no other track has.
-- Move a clip in time: change its `start`. Move it to another track: move the file into the folder of that track.
-- Delete a clip: remove its file. Delete a track: remove its folder.
-- Change the sound of a track: edit its `instrument.json`. Put an effect after it, or take one off, with `effects` in `instance.json` and the record next to it.
-- Balance the tracks: set `gain_db` in `instance.json` of each. Put a track to one side with `pan`, silence one with `"mute": true`, and hear one alone with `"solo": true`. All of them apply while the project plays.
-- Make the whole piece louder or quieter: `master.gain_db` in `state/arrangement/instance.json`. The limiter keeps it under its ceiling.
-- Make a number change over time, such as a filter sweep or a fade: a lane in `automation` of the track record.
+- `master.limiter`: on by default, so the output never goes over its ceiling. It has the fields of `agent-docs/limiter.md`, and `bypass`: `true` lets the sound through untouched, and it may then clip. Its defaults differ: `ceiling_db` 0, and `lookahead_ms` 0, which may be any number from 0 to 10. A lookahead above 0 also delays a keyboard played live.
