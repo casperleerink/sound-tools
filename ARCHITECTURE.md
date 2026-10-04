@@ -211,6 +211,7 @@ The synth (`extensions/instrument`), Wavetable, Sampler, Drum pad, Filter, Compr
 - Plugin state is saved when the plugin marks it dirty and when it goes or the project closes. It is not project state: never an undo step, and bytes already there are not written again, so a session that changed nothing leaves no diff.
 - A slot with no plugin passes its input through. So a missing effect lets the sound through and a missing instrument is silent, with no special case in the arrangement.
 - `--inspect` loads no plugin, only checks it exists and its state reads. Printing a project must not run third-party code that can crash.
+- A parameter value is a number in the format's own units, CLAP's plain value or VST 3's 0 to 1, and is never converted, so what is read from a plugin can be sent back unchanged. `--plugin-params` loads the one plugin it lists, in a process that ends after it.
 - VST 3 goes through our own safe layer in `extensions/plugin-host/src/vst3/`; nothing outside it touches a VST 3 interface. Bundles are loaded once and never unloaded, because unloading runs static destructors while views and threads may still exist.
 - The host owns every plugin window (both formats embed a view; the floating option is not supported by real plugins). Windows float above the main window only. The plugin's view is freed from an `on_window_closed` observer, the one path that runs however the window goes; getting that order wrong is a use-after-free in native code.
 - Window positions and open state are machine data, stored next to the scan cache by project path.

@@ -102,6 +102,25 @@ The first word of a line is the format, which is what `format` in the record tak
 What a plugin says it is is what the composer's pickers offer it for, and nothing more: a
 record may name any plugin in either place.
 
+## The parameters of a plugin
+
+To see what a plugin's parameters are, give its format and its id:
+
+```sh
+sound-tools --plugin-params clap com.example.synth
+```
+
+It loads that one plugin and prints one line per parameter: its id, its name, its range, its
+default, and, for a parameter that takes only some values, how many and the plugin's name for
+each. A read-only parameter, such as a meter, is not listed. The numbers are the format's own:
+a `clap` plugin's own values, such as `20 to 20000` for a frequency in hertz, and always `0 to
+1` for `vst3`.
+
+    0  Cutoff  20 to 20000  default 1000
+    1  Wave    0 to 2       default 0     3 steps: 0 = Sine, 1 = Saw, 2 = Square  not automatable
+
+A record does not set parameters: the plugin keeps its own settings in its state file.
+
 ## When it does not play
 
 `problems.txt` names the record and says what is wrong. The usual lines:
