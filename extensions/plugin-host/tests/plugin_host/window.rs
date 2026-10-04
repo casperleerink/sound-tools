@@ -149,7 +149,7 @@ fn a_window_is_made_once(format: PluginFormat, cx: &mut TestAppContext) {
     let made_before = times(&log, MADE_A_WINDOW);
     open_window(&harness, cx);
     assert!(harness.plugins.window_is_open(&slot));
-    assert!(harness.plugins.take_window_change());
+    assert!(harness.plugins.take_card_change());
     assert_eq!(windows(cx), 1);
     // There is no call that gives the plugin a parent: a window of the test platform has no
     // view of its own, so the host has nothing to give it.
@@ -417,11 +417,11 @@ fn a_window_the_plugin_closes_itself_is_freed_at_the_next_poll(cx: &mut TestAppC
     open_window(&harness, cx);
     // The plugin asked for a call on the main thread; until the host makes it nothing changed.
     assert!(harness.plugins.window_is_open(&slot));
-    harness.plugins.take_window_change();
+    harness.plugins.take_card_change();
 
     harness.plugins.poll(&harness.project);
     assert!(!harness.plugins.window_is_open(&slot));
-    assert!(harness.plugins.take_window_change());
+    assert!(harness.plugins.take_card_change());
     let calls = window_calls(&log);
     assert_eq!(
         &calls[calls.len() - 2..],
@@ -454,7 +454,7 @@ fn another_state_brings_the_window_back(format: PluginFormat, cx: &mut TestAppCo
     let slot = id(SLOT);
     open_window(&harness, cx);
     let before = window_origin(cx);
-    harness.plugins.take_window_change();
+    harness.plugins.take_card_change();
 
     // Another state file is another plugin load as far as the host is concerned: the window
     // of the one that goes goes with it.
@@ -462,7 +462,7 @@ fn another_state_brings_the_window_back(format: PluginFormat, cx: &mut TestAppCo
     changes.create(slot.clone(), record(format, "organ"));
     harness.project.commit("Choose organ", changes).unwrap();
     assert!(!harness.plugins.window_is_open(&slot));
-    assert!(harness.plugins.take_window_change());
+    assert!(harness.plugins.take_card_change());
     let calls = window_calls(&log);
     assert!(
         calls.contains(&LET_GO_OF_ITS_WINDOW.to_string()),
@@ -502,7 +502,7 @@ fn a_deleted_record_takes_the_window(format: PluginFormat, cx: &mut TestAppConte
     let mut harness = open(format, &log);
     let slot = id(SLOT);
     open_window(&harness, cx);
-    harness.plugins.take_window_change();
+    harness.plugins.take_card_change();
 
     // Deleted, from the window or from a file: the host lets go of it at the next poll.
     let mut changes = Changes::new();

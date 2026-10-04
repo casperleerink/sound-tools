@@ -401,8 +401,9 @@ fn record_of<'a>(project: &'a Project, id: &InstanceId) -> Option<&'a PluginReco
 struct Table {
     loaded: BTreeMap<InstanceId, Hosted>,
     retired: Vec<Hosted>,
-    /// A plugin's window opened or closed since whoever draws the rack last asked.
-    window_changed: bool,
+    /// Something a card of a plugin shows changed since whoever draws the rack last asked: a
+    /// window opened or closed, or a plugin's parameters or their text.
+    card_changed: bool,
     /// Windows whose plugin has gone. Their views are already freed; taking a window down
     /// needs the application, which the moments that find them do not have.
     finished_windows: Vec<WindowHandle<PluginFrame>>,
@@ -1081,7 +1082,7 @@ impl Plugins {
                 *has_window = false;
             }
             let resizable = window.resizable();
-            table.window_changed = true;
+            table.card_changed = true;
             prepared.map(|prepared| (prepared, plugin_id, title, resizable, placement))?
         };
         // Two: the window itself, with nothing borrowed.
@@ -1237,7 +1238,7 @@ impl Plugins {
         let mut table = self.0.table.borrow_mut();
         let hosted = table.loaded.get_mut(id)?;
         let finished = hosted.window.give_up(hosted.plugin.gui());
-        table.window_changed = true;
+        table.card_changed = true;
         finished
     }
 
@@ -1252,7 +1253,7 @@ impl Plugins {
         if let Some(hosted) = table.loaded.get_mut(id)
             && hosted.window.give_up(hosted.plugin.gui()).is_some()
         {
-            table.window_changed = true;
+            table.card_changed = true;
             table.keep_open(id, false);
         }
     }
@@ -1341,10 +1342,11 @@ impl Plugins {
         }
     }
 
-    /// Whether any plugin's window opened or closed since the last call. Whoever polls asks,
-    /// so the card that says "Open window" or "Close window" is drawn again.
-    pub fn take_window_change(&self) -> bool {
-        std::mem::take(&mut self.0.table.borrow_mut().window_changed)
+    /// Whether any plugin's window opened or closed, or a plugin said its parameters or their
+    /// text changed, since the last call. Whoever polls asks, so the cards are drawn again: one
+    /// says "Open window" or "Close window", and reads its parameters and their text again.
+    pub fn take_card_change(&self) -> bool {
+        std::mem::take(&mut self.0.table.borrow_mut().card_changed)
     }
 
     /// Saves the state of every plugin, whether it said so or not, and lets them all go.
@@ -1372,7 +1374,7 @@ impl Plugins {
         let Table {
             loaded,
             retired,
-            window_changed,
+            card_changed,
             finished_windows,
             ..
         } = &mut *table;
@@ -1382,7 +1384,7 @@ impl Plugins {
             // remembers the ones that were open.
             if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
                 finished_windows.push(handle);
-                *window_changed = true;
+                *card_changed = true;
             }
             if let Some(assets) = assets
                 && let Err(problem) = save(hosted, assets)
@@ -1587,7 +1589,7 @@ impl Plugins {
         let Table {
             loaded,
             retired,
-            window_changed,
+            card_changed,
             finished_windows,
             ..
         } = &mut *table;
@@ -1611,7 +1613,7 @@ impl Plugins {
                 // the record back does not bring the window.
                 if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
                     finished_windows.push(handle);
-                    *window_changed = true;
+                    *card_changed = true;
                 }
                 closed_for_good.push(id.clone());
                 // Saved on the way out, so undo of a delete brings the plugin back as it
@@ -1639,7 +1641,7 @@ impl Plugins {
                 && let Some(handle) = hosted.window.give_up(hosted.plugin.gui())
             {
                 finished_windows.push(handle);
-                *window_changed = true;
+                *card_changed = true;
                 if let Some(id) = id {
                     closed_for_good.push(id.clone());
                 }
@@ -1660,19 +1662,21 @@ impl Plugins {
                 hosted.needs_load = true;
                 self.retry(id);
             }
-            // The plugin has other parameters, or other names for them. The pins of the record
-            // are checked again, by a run of its behaviour that keeps the plugin: that is where
-            // what a pin cannot move is reported. A list nobody read yet is read when a pin
-            // needs it.
+            // The plugin has other parameters, or other names or text for them. The pins of the
+            // record are checked again, by a run of its behaviour that keeps the plugin: that is
+            // where what a pin cannot move is reported. A list nobody read yet is read when a pin
+            // or a card needs it. The list is a new one even when it is equal, because the
+            // plugin's text, which it does not hold, may have changed: a card tells by that.
             if requests.parameters_changed
                 && let Some(id) = id
-                && hosted.parameters.is_some()
+                && let Some(before) = hosted.parameters.take()
             {
-                let parameters = Some(Rc::new(listed(hosted.plugin.as_mut())));
-                if parameters != hosted.parameters {
-                    hosted.parameters = parameters;
+                let parameters = Rc::new(listed(hosted.plugin.as_mut()));
+                if parameters != before {
                     self.retry(id);
                 }
+                hosted.parameters = Some(parameters);
+                *card_changed = true;
             }
             // The plugin now maps its sustain pedal to nothing, so the pedal stops reaching
             // it. The same line a plugin gets that never mapped one.
@@ -1873,7 +1877,7 @@ fn retire(mut hosted: Hosted, table: &mut Table, assets: Option<&Assets>) {
     // A record that now names another plugin takes the window of the old one with it.
     if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
         table.finished_windows.push(handle);
-        table.window_changed = true;
+        table.card_changed = true;
     }
     if let Some(assets) = assets
         && let Err(problem) = save(&mut hosted, assets)
