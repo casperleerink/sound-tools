@@ -296,61 +296,66 @@ struct MovedClip {
     range: Range<Ticks>,
 }
 
-/// What a drag of clips does.
+/// What a drag of clips does. Each kind holds its own state, which its mouse move is handed.
+/// A trim and a fade hold the same.
 enum ClipDragKind {
-    /// Every selected clip, by the same distance in time and in rows. A move writes only the
-    /// start and the track, so it keeps what else changed.
-    Move {
-        clips: Vec<MovedClip>,
-        /// The row of the clip under the pointer at mouse down, and its place in `clips`.
-        grab_row: usize,
-        grabbed: usize,
-        /// The last distance in rows at which every clip was on a track of its kind. The move
-        /// keeps it while the pointer is over a track another clip cannot go on.
-        rows: i64,
-        /// The tracks as they were when the gesture opened. The automation under the clips
-        /// moves from here at every mouse move, as the starts do, so the line a clip passes
-        /// over comes back when it moves on.
-        tracks: BTreeMap<InstanceId, TrackState>,
-        /// The tracks whose lanes a mouse move of this drag wrote, which go back to how they
-        /// were once no clip takes lanes from them or lands on them.
-        lanes_written: BTreeSet<InstanceId>,
-        /// Where the clips that take automation along put it, as the last mouse move wrote it.
-        ghosts: Vec<LaneGhost>,
-    },
-    /// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:
-    /// every move starts from `origin` again, so going in and out loses nothing. One clip.
-    Resize {
-        clip: Instance<Clip>,
-        edge: Edge,
-        origin: Clip,
-        written: Clip,
-        /// The delta of the last move, to skip a move inside the same snap step cheaply.
-        delta: i64,
-    },
+    Move(MoveDrag),
+    Resize(ResizeDrag),
     /// An edge of an audio clip: the part of its file that plays. Every move starts from
     /// `origin`, and writes only what the edge moves onto the live clip.
-    Trim {
-        clip: Instance<AudioClip>,
-        edge: Edge,
-        origin: AudioClip,
-        file: Info,
-    },
+    Trim(EdgeDrag),
     /// A fade handle of an audio clip, sideways from where it was.
-    Fade {
-        clip: Instance<AudioClip>,
-        edge: Edge,
-        origin: AudioClip,
-        file: Info,
-    },
-    /// The gain handle of an audio clip, up and down from where it was. Shift pressed or let
-    /// go goes on from where the gain is then, at the other speed.
-    Gain {
-        clip: Instance<AudioClip>,
-        from_db: f32,
-        from_y: f32,
-        fine: bool,
-    },
+    Fade(EdgeDrag),
+    Gain(GainDrag),
+}
+
+/// Every selected clip, by the same distance in time and in rows. A move writes only the
+/// start and the track, so it keeps what else changed.
+struct MoveDrag {
+    clips: Vec<MovedClip>,
+    /// The row of the clip under the pointer at mouse down, and its place in `clips`.
+    grab_row: usize,
+    grabbed: usize,
+    /// The last distance in rows at which every clip was on a track of its kind. The move
+    /// keeps it while the pointer is over a track another clip cannot go on.
+    rows: i64,
+    /// The tracks as they were when the gesture opened. The automation under the clips
+    /// moves from here at every mouse move, as the starts do, so the line a clip passes
+    /// over comes back when it moves on.
+    tracks: BTreeMap<InstanceId, TrackState>,
+    /// The tracks whose lanes a mouse move of this drag wrote, which go back to how they
+    /// were once no clip takes lanes from them or lands on them.
+    lanes_written: BTreeSet<InstanceId>,
+    /// Where the clips that take automation along put it, as the last mouse move wrote it.
+    ghosts: Vec<LaneGhost>,
+}
+
+/// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:
+/// every move starts from `origin` again, so going in and out loses nothing. One clip.
+struct ResizeDrag {
+    clip: Instance<Clip>,
+    edge: Edge,
+    origin: Clip,
+    written: Clip,
+    /// The delta of the last move, to skip a move inside the same snap step cheaply.
+    delta: i64,
+}
+
+/// An end of an audio clip, as a trim or a fade drags it from how the clip was.
+struct EdgeDrag {
+    clip: Instance<AudioClip>,
+    edge: Edge,
+    origin: AudioClip,
+    file: Info,
+}
+
+/// The gain handle of an audio clip, up and down from where it was. Shift pressed or let
+/// go goes on from where the gain is then, at the other speed.
+struct GainDrag {
+    clip: Instance<AudioClip>,
+    from_db: f32,
+    from_y: f32,
+    fine: bool,
 }
 
 /// Where a dragged clip puts the automation it takes along: its track, its place now, and the
@@ -369,9 +374,8 @@ enum Edge {
     Right,
 }
 
-/// A drag of clips, from mouse down to mouse up.
+/// What every drag of clips keeps, from mouse down to mouse up, whatever its kind.
 struct ClipDrag {
-    kind: ClipDragKind,
     /// The tick under the pointer at mouse down.
     grab: Ticks,
     /// Whether the gesture of the session is open. It opens with the first move that changes
@@ -390,32 +394,17 @@ enum OnRelease {
     Toggle(InstanceId),
 }
 
-impl ClipDrag {
-    fn label(&self) -> &'static str {
-        match &self.kind {
-            ClipDragKind::Move { clips, .. } => plural(clips.len(), "Move clip", "Move clips"),
-            ClipDragKind::Resize { .. } => "Resize clip",
-            ClipDragKind::Trim { .. } => "Trim clip",
-            ClipDragKind::Fade {
-                edge: Edge::Left, ..
-            } => FADE_IN_LABEL,
-            ClipDragKind::Fade {
-                edge: Edge::Right, ..
-            } => FADE_OUT_LABEL,
-            ClipDragKind::Gain { .. } => GAIN_LABEL,
-        }
-    }
-
+impl ClipDragKind {
     /// The clip under the pointer.
     fn grabbed(&self) -> Option<&InstanceId> {
-        match &self.kind {
-            ClipDragKind::Move { clips, grabbed, .. } => {
+        match self {
+            ClipDragKind::Move(MoveDrag { clips, grabbed, .. }) => {
                 clips.get(*grabbed).map(|moved| &moved.clip)
             }
-            ClipDragKind::Resize { clip, .. } => Some(clip.id()),
-            ClipDragKind::Trim { clip, .. }
-            | ClipDragKind::Fade { clip, .. }
-            | ClipDragKind::Gain { clip, .. } => Some(clip.id()),
+            ClipDragKind::Resize(ResizeDrag { clip, .. }) => Some(clip.id()),
+            ClipDragKind::Trim(EdgeDrag { clip, .. })
+            | ClipDragKind::Fade(EdgeDrag { clip, .. })
+            | ClipDragKind::Gain(GainDrag { clip, .. }) => Some(clip.id()),
         }
     }
 
@@ -427,12 +416,12 @@ impl ClipDrag {
 
     /// The cursor while it goes on.
     fn cursor(&self) -> Option<CursorStyle> {
-        match &self.kind {
-            ClipDragKind::Move { .. } => None,
-            ClipDragKind::Resize { .. } | ClipDragKind::Trim { .. } | ClipDragKind::Fade { .. } => {
+        match self {
+            ClipDragKind::Move(_) => None,
+            ClipDragKind::Resize(_) | ClipDragKind::Trim(_) | ClipDragKind::Fade(_) => {
                 Some(CursorStyle::ResizeLeftRight)
             }
-            ClipDragKind::Gain { .. } => Some(CursorStyle::ResizeUpDown),
+            ClipDragKind::Gain(_) => Some(CursorStyle::ResizeUpDown),
         }
     }
 }
@@ -552,6 +541,46 @@ struct TrackDrag {
 const MOVE_TRACK_LABEL: &str = "Move track";
 /// How far a press on a header moves before it drags the track, in points.
 const TRACK_DRAG_THRESHOLD: f64 = 4.;
+
+/// What the mouse holds, from mouse down to mouse up. A press takes one thing, so the mouse
+/// never holds two. A timeline has one, so the size of the largest does not matter.
+#[allow(clippy::large_enum_variant)]
+#[derive(Default)]
+enum Held {
+    #[default]
+    Nothing,
+    Clips(ClipDrag, ClipDragKind),
+    Marquee(Marquee),
+    Track(TrackDrag),
+    Lane(LaneDrag),
+}
+
+impl Held {
+    /// Whether it opened the gesture of the session, which then ends with it.
+    fn begun(&self) -> bool {
+        match self {
+            Held::Nothing | Held::Marquee(_) => false,
+            Held::Clips(drag, _) => drag.begun,
+            Held::Track(drag) => drag.begun,
+            Held::Lane(drag) => drag.begun,
+        }
+    }
+
+    /// What the drag of clips does, while that is what the mouse holds.
+    fn clip_drag(&self) -> Option<&ClipDragKind> {
+        match self {
+            Held::Clips(_, kind) => Some(kind),
+            _ => None,
+        }
+    }
+}
+
+/// What a mouse move says of what the mouse holds: it goes on, or it ends as on mouse up.
+#[must_use]
+enum After {
+    Keep,
+    End,
+}
 
 /// The name of a track while it is being edited in its header.
 struct Rename {
@@ -843,10 +872,7 @@ pub struct Timeline {
     lost_selection: Vec<(InstanceId, bool)>,
     created_in_group: Vec<InstanceId>,
     reselects_later: bool,
-    drag: Option<ClipDrag>,
-    marquee: Option<Marquee>,
-    track_drag: Option<TrackDrag>,
-    lane_drag: Option<LaneDrag>,
+    held: Held,
     /// The selected point of an automation lane, which delete removes, and the one under the
     /// pointer.
     selected_point: Option<PointKey>,
@@ -939,26 +965,17 @@ impl Timeline {
                         timeline.lost_selection.push((id.clone(), first));
                         timeline.reselect_later(cx);
                     }
-                    // Deleted under the drag, from outside. A drag to another track is not
-                    // this: it names its new clips before this event arrives.
-                    if timeline
-                        .drag
-                        .as_ref()
-                        .is_some_and(|drag| drag.ends_without(id))
-                    {
-                        timeline.end_drag(cx);
-                    }
-                    // The dragged track deleted from outside: that was the last write. So
-                    // is the track of a lane being drawn.
-                    if timeline
-                        .track_drag
-                        .as_ref()
-                        .is_some_and(|drag| drag.track == *id)
-                        || timeline
-                            .lane_drag
-                            .as_ref()
-                            .is_some_and(|drag| drag.track.id() == id)
-                    {
+                    let ends = match &timeline.held {
+                        // Deleted under the drag, from outside. A drag to another track is
+                        // not this: it names its new clips before this event arrives.
+                        Held::Clips(_, kind) => kind.ends_without(id),
+                        // The dragged track deleted from outside: that was the last write.
+                        // So is the track of a lane being drawn.
+                        Held::Track(drag) => drag.track == *id,
+                        Held::Lane(drag) => drag.track.id() == id,
+                        Held::Nothing | Held::Marquee(_) => false,
+                    };
+                    if ends {
                         timeline.end_drag(cx);
                     }
                     timeline.expanded.remove(id);
@@ -989,10 +1006,7 @@ impl Timeline {
         // A drag that is still open when the timeline goes away must not leave the gesture
         // of the session open: undo and redo wait for it.
         cx.on_release(|timeline, cx| {
-            let clip_drag = timeline.drag.take().is_some_and(|drag| drag.begun);
-            let track_drag = timeline.track_drag.take().is_some_and(|drag| drag.begun);
-            let lane_drag = timeline.lane_drag.take().is_some_and(|drag| drag.begun);
-            if clip_drag || track_drag || lane_drag {
+            if std::mem::take(&mut timeline.held).begun() {
                 let session = timeline.session.clone();
                 session.update(cx, |session, cx| session.finish_gesture(cx));
             }
@@ -1035,10 +1049,7 @@ impl Timeline {
             lost_selection: Vec::new(),
             created_in_group: Vec::new(),
             reselects_later: false,
-            drag: None,
-            marquee: None,
-            track_drag: None,
-            lane_drag: None,
+            held: Held::Nothing,
             selected_point: None,
             hovered_point: None,
             expanded: BTreeSet::new(),
@@ -1583,7 +1594,11 @@ impl Timeline {
             // still shows its end.
             .filter(|mark| (-TEMPO_LABEL_ROOM..width).contains(&mark.x))
             .collect();
-        let marquee = self.marquee.as_ref().map(|marquee| {
+        let marquee = match &self.held {
+            Held::Marquee(marquee) => Some(marquee),
+            _ => None,
+        };
+        let marquee = marquee.map(|marquee| {
             let (left, right) = ordered(marquee.from.0, marquee.to.0);
             let (top, bottom) = ordered(marquee.from.1, marquee.to.1);
             let x = viewport.x_of(left);
@@ -1634,10 +1649,10 @@ impl Timeline {
                 muted: state.mute,
                 renaming: renaming == Some(track.id()),
                 armed: state.kind == TrackKind::Audio && recording.is_armed(track.id()),
-                lifted: self
-                    .track_drag
-                    .as_ref()
-                    .is_some_and(|drag| drag.moving && drag.track == *track.id()),
+                lifted: matches!(
+                    &self.held,
+                    Held::Track(drag) if drag.moving && drag.track == *track.id()
+                ),
                 expanded,
                 automated: !state.automation.is_empty(),
                 lanes_label: lanes_label(state.automation.len()),
@@ -1693,7 +1708,7 @@ impl Timeline {
         // The hint goes in the top left corner of the clip under the pointer, while the drag
         // takes automation, as the value of a fade shows in its clip: what it covers there is
         // what the pointer holds.
-        let grabbed = self.drag.as_ref().and_then(ClipDrag::grabbed);
+        let grabbed = self.held.clip_drag().and_then(ClipDragKind::grabbed);
         let grabbed = grabbed.filter(|_| !lane_ghosts.is_empty());
         let under = grabbed.and_then(|id| scene.clips.iter().find(|shape| shape.id == *id));
         scene.hint = under.map(|shape| (shape.rect.x + 4., shape.rect.y + 4.));
@@ -1703,8 +1718,8 @@ impl Timeline {
     /// Where the clips of a drag put the automation they take along, as its last mouse move
     /// wrote it. Empty while no drag of clips takes any.
     fn lane_ghosts(&self) -> &[LaneGhost] {
-        match self.drag.as_ref().map(|drag| &drag.kind) {
-            Some(ClipDragKind::Move { ghosts, .. }) => ghosts,
+        match self.held.clip_drag() {
+            Some(ClipDragKind::Move(MoveDrag { ghosts, .. })) => ghosts,
             _ => &[],
         }
     }
@@ -1717,8 +1732,8 @@ impl Timeline {
 
     /// The tracks as they were when a drag of clips opened its gesture, while it goes on.
     fn tracks_before_drag(&self) -> Option<&BTreeMap<InstanceId, TrackState>> {
-        match self.drag.as_ref().map(|drag| &drag.kind) {
-            Some(ClipDragKind::Move { tracks, .. }) if !tracks.is_empty() => Some(tracks),
+        match self.held.clip_drag() {
+            Some(ClipDragKind::Move(MoveDrag { tracks, .. })) if !tracks.is_empty() => Some(tracks),
             _ => None,
         }
     }
@@ -1781,8 +1796,8 @@ impl Timeline {
                 .partition_point(|point| point.tick < visible.end);
             let shown = lane.points.get(from..to).unwrap_or_default().iter();
             let dragging = matches!(
-                self.lane_drag.as_ref().map(|drag| &drag.kind),
-                Some(LaneDragKind::Point { moving: true, .. })
+                &self.held,
+                Held::Lane(drag) if matches!(drag.kind, LaneDragKind::Point { moving: true, .. })
             );
             let points = range.map(|range| {
                 let points = shown.map(|point| {
@@ -1927,10 +1942,11 @@ impl Timeline {
         let end_seconds = clock.seconds_of(viewport.tick_at(end));
         let fade_out = end - x_at(end_seconds - f64::from(clip.fade_out_ms) / 1000.);
 
-        let dragged = self.drag.as_ref().filter(|drag| drag.grabbed() == Some(id));
+        let dragged = self.held.clip_drag();
+        let dragged = dragged.filter(|kind| kind.grabbed() == Some(id));
         let (mut hidden, mut label) = (None, None);
-        match dragged.map(|drag| &drag.kind) {
-            Some(ClipDragKind::Trim { edge, file, .. }) => {
+        match dragged {
+            Some(ClipDragKind::Trim(EdgeDrag { edge, file, .. })) => {
                 // The whole file from where it starts on the timeline to where it ends.
                 let file_start = x_at(start - clip.file_start_seconds);
                 let file_end = x_at(start - clip.file_start_seconds + file.seconds());
@@ -1939,22 +1955,22 @@ impl Timeline {
                     Edge::Right => edges(end, file_end),
                 });
             }
-            Some(ClipDragKind::Fade {
+            Some(ClipDragKind::Fade(EdgeDrag {
                 edge: Edge::Left, ..
-            }) => {
+            })) => {
                 let text = format!("Fade in {}", time_label(clip.fade_in_ms));
                 label = Some((text.into(), ClipHandle::FadeIn));
             }
-            Some(ClipDragKind::Fade {
+            Some(ClipDragKind::Fade(EdgeDrag {
                 edge: Edge::Right, ..
-            }) => {
+            })) => {
                 let text = format!("Fade out {}", time_label(clip.fade_out_ms));
                 label = Some((text.into(), ClipHandle::FadeOut));
             }
-            Some(ClipDragKind::Gain { .. }) => {
+            Some(ClipDragKind::Gain(_)) => {
                 label = Some((gain_label(clip.gain_db).into(), ClipHandle::Gain));
             }
-            Some(ClipDragKind::Move { .. } | ClipDragKind::Resize { .. }) | None => {}
+            Some(ClipDragKind::Move(_) | ClipDragKind::Resize(_)) | None => {}
         }
         let missing = match file {
             Cached::Missing => Some(format!("{} is missing", clip.asset)),
@@ -2027,6 +2043,10 @@ impl Timeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A press whose release never came: end what it held, or its gesture stays open.
+        if self.dragging() {
+            self.end_drag(cx);
+        }
         let double = event.click_count == 2;
         // Shift and cmd add to the selection or take out of it, as in the Finder.
         let (shift, cmd) = (event.modifiers.shift, event.modifiers.platform);
@@ -2106,18 +2126,18 @@ impl Timeline {
         let Some(kind) = kind else {
             return;
         };
-        let several = matches!(&kind, ClipDragKind::Move { clips, .. } if clips.len() > 1);
+        let several = matches!(&kind, ClipDragKind::Move(moved) if moved.clips.len() > 1);
         let on_release = match (cmd, several) {
             (true, _) => Some(OnRelease::Toggle(id)),
             (false, true) => Some(OnRelease::SelectAlone(id)),
             (false, false) => None,
         };
-        self.drag = Some(ClipDrag {
-            kind,
+        let drag = ClipDrag {
             grab,
             begun: false,
             on_release,
-        });
+        };
+        self.held = Held::Clips(drag, kind);
     }
 
     /// Opens what a clip is edited in: the note editor of a note clip, the track panel of the
@@ -2151,24 +2171,24 @@ impl Timeline {
         let project = self.session.read(cx).project();
         if let Some(clip) = project.resolve::<Clip>(id) {
             let state = project.state(&clip)?.clone();
-            return Some(ClipDragKind::Resize {
+            return Some(ClipDragKind::Resize(ResizeDrag {
                 clip,
                 edge,
                 origin: state.clone(),
                 written: state,
                 delta: 0,
-            });
+            }));
         }
         let clip = project.resolve::<AudioClip>(id)?;
         let origin = project.state(&clip)?.clone();
         // A clip whose file is missing has nothing to trim.
         let file = known_file(project, &origin.asset)?;
-        Some(ClipDragKind::Trim {
+        Some(ClipDragKind::Trim(EdgeDrag {
             clip,
             edge,
             origin,
             file,
-        })
+        }))
     }
 
     /// A press on a handle of an audio clip: a fade or the gain, from where it is.
@@ -2187,24 +2207,24 @@ impl Timeline {
         let origin = project.state(&clip)?.clone();
         let file = known_file(project, &origin.asset)?;
         Some(match handle {
-            ClipHandle::FadeIn => ClipDragKind::Fade {
+            ClipHandle::FadeIn => ClipDragKind::Fade(EdgeDrag {
                 clip,
                 edge: Edge::Left,
                 origin,
                 file,
-            },
-            ClipHandle::FadeOut => ClipDragKind::Fade {
+            }),
+            ClipHandle::FadeOut => ClipDragKind::Fade(EdgeDrag {
                 clip,
                 edge: Edge::Right,
                 origin,
                 file,
-            },
-            ClipHandle::Gain => ClipDragKind::Gain {
+            }),
+            ClipHandle::Gain => ClipDragKind::Gain(GainDrag {
                 clip,
                 from_db: origin.gain_db,
                 from_y: y,
                 fine: false,
-            },
+            }),
         })
     }
 
@@ -2257,7 +2277,7 @@ impl Timeline {
         }
         let grabbed = clips.iter().position(|moved| moved.clip == *pressed)?;
         let grab_row = clips.get(grabbed)?.row;
-        Some(ClipDragKind::Move {
+        Some(ClipDragKind::Move(MoveDrag {
             clips,
             grab_row,
             grabbed,
@@ -2265,7 +2285,7 @@ impl Timeline {
             tracks: BTreeMap::new(),
             lanes_written: BTreeSet::new(),
             ghosts: Vec::new(),
-        })
+        }))
     }
 
     /// A press in the ruler: on a tempo mark it selects the tempo change and moves the playhead
@@ -2366,7 +2386,7 @@ impl Timeline {
         self.select_tempo(None, cx);
         let viewport = self.painted.get();
         let corner = (viewport.tick_at(x), f64::from(y) + viewport.scroll_y);
-        self.marquee = Some(Marquee {
+        self.held = Held::Marquee(Marquee {
             from: corner,
             to: corner,
             before: self.clips.iter().cloned().collect(),
@@ -2375,13 +2395,10 @@ impl Timeline {
     }
 
     /// One mouse move of the rectangle: the clips it touches and what was selected before.
-    fn marquee_to(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
+    fn marquee_to(&mut self, marquee: &mut Marquee, x: f32, y: f32, cx: &mut Context<Self>) {
         self.refresh_order(cx);
         let viewport = self.painted.get();
         let layout = self.rows(cx);
-        let Some(marquee) = &mut self.marquee else {
-            return;
-        };
         marquee.to = (viewport.tick_at(x), viewport.content_y(y));
         let (left, right) = ordered(marquee.from.0, marquee.to.0);
         let rows = layout.between(marquee.from.1, marquee.to.1);
@@ -2401,29 +2418,57 @@ impl Timeline {
         cx.notify();
     }
 
+    /// One mouse move of what the mouse holds. It is taken out for the move and goes back in
+    /// [`Self::settle`] alone, so no handler can lose it: each says how it goes on.
+    fn drag_held(&mut self, x: f32, y: f32, modifiers: Modifiers, cx: &mut Context<Self>) {
+        let mut held = std::mem::take(&mut self.held);
+        let after = match &mut held {
+            Held::Nothing => After::Keep,
+            Held::Clips(drag, kind) => self.drag_to(drag, kind, (x, y), modifiers, cx),
+            Held::Marquee(marquee) => {
+                self.marquee_to(marquee, x, y, cx);
+                After::Keep
+            }
+            Held::Track(drag) => self.drag_track(drag, y, cx),
+            Held::Lane(drag) => self.drag_lane(drag, x, y, modifiers, cx),
+        };
+        self.settle(held, after, cx);
+    }
+
+    /// The mouse holds `held` again, or it ends when the handler said so.
+    fn settle(&mut self, held: Held, after: After, cx: &mut Context<Self>) {
+        self.held = held;
+        match after {
+            After::Keep => {}
+            After::End => self.end_drag(cx),
+        }
+    }
+
     /// One mouse move of a drag: the clips become what the pointer says, through the gesture
-    /// of the session, so sound and every other view follow. `free` is cmd held: no snap.
-    /// `fine` is shift held: the gain moves ten times finer. `alone` is alt held: a moved clip
-    /// leaves the automation where it is.
+    /// of the session, so sound and every other view follow. Cmd held is no snap. Shift held
+    /// moves the gain ten times finer. Alt held leaves the automation where it is when a clip
+    /// moves.
     fn drag_to(
         &mut self,
-        x: f32,
-        y: f32,
-        (free, fine, alone): (bool, bool, bool),
+        drag: &mut ClipDrag,
+        kind: &mut ClipDragKind,
+        (x, y): (f32, f32),
+        modifiers: Modifiers,
         cx: &mut Context<Self>,
-    ) {
+    ) -> After {
         self.refresh_order(cx);
-        let grid = match free {
+        let grid = match modifiers.platform {
             true => self.grid(cx).free(),
             false => self.grid(cx),
         };
-        match self.drag.as_ref().map(|drag| &drag.kind) {
-            Some(ClipDragKind::Move { .. }) => self.drag_move(x, y, grid, alone, cx),
-            Some(ClipDragKind::Resize { .. }) => self.drag_resize(x, grid, cx),
-            Some(ClipDragKind::Trim { .. }) => self.drag_trim(x, grid, cx),
-            Some(ClipDragKind::Fade { .. }) => self.drag_fade(x, cx),
-            Some(ClipDragKind::Gain { .. }) => self.drag_gain(y, fine, cx),
-            None => {}
+        match kind {
+            ClipDragKind::Move(moving) => {
+                self.drag_move(drag, moving, (x, y), grid, modifiers.alt, cx)
+            }
+            ClipDragKind::Resize(resize) => self.drag_resize(drag, resize, x, grid, cx),
+            ClipDragKind::Trim(trim) => self.drag_trim(drag, trim, x, grid, cx),
+            ClipDragKind::Fade(fade) => self.drag_fade(drag, fade, x, cx),
+            ClipDragKind::Gain(gain) => self.drag_gain(drag, gain, y, modifiers.shift, cx),
         }
     }
 
@@ -2433,30 +2478,26 @@ impl Timeline {
     fn modifiers_changed(&mut self, modifiers: Modifiers, window: &Window, cx: &mut Context<Self>) {
         let bounds = self.painted_bounds.get();
         let (x, y) = Self::timeline_position(bounds, window.mouse_position());
-        let moving = self.drag.as_ref().map(|drag| &drag.kind);
-        if matches!(moving, Some(ClipDragKind::Move { .. })) {
-            let keys = (modifiers.platform, modifiers.shift, modifiers.alt);
-            self.drag_to(x, y, keys, cx);
-        }
-        let point = self.lane_drag.as_ref().map(|drag| &drag.kind);
-        if matches!(point, Some(LaneDragKind::Point { moving: true, .. })) {
-            self.drag_lane(x, y, modifiers, cx);
+        let again = match &self.held {
+            Held::Clips(_, kind) => matches!(kind, ClipDragKind::Move(_)),
+            Held::Lane(drag) => matches!(drag.kind, LaneDragKind::Point { moving: true, .. }),
+            Held::Nothing | Held::Marquee(_) | Held::Track(_) => false,
+        };
+        if again {
+            self.drag_held(x, y, modifiers, cx);
         }
     }
 
     /// Whether the mouse has something: clips, a rectangle or a track. Keys then wait, as they
     /// would fight the next mouse move.
     fn dragging(&self) -> bool {
-        self.drag.is_some()
-            || self.marquee.is_some()
-            || self.track_drag.is_some()
-            || self.lane_drag.is_some()
+        !matches!(self.held, Held::Nothing)
     }
 
     /// A press on a track header, which may become a drag of the track.
     fn start_track_drag(&mut self, track: &InstanceId, y: f32, rows: Rows) {
         // The tracks are read at the first move, see `drag_track`.
-        self.track_drag = Some(TrackDrag {
+        self.held = Held::Track(TrackDrag {
             track: track.clone(),
             rows,
             origin: Vec::new(),
@@ -2470,15 +2511,11 @@ impl Timeline {
 
     /// One mouse move of a track drag: the track goes to the row under the pointer, above the
     /// first the first and below the last the last. The master is not a track and stays last.
-    fn drag_track(&mut self, y: f32, cx: &mut Context<Self>) {
-        let Some(mut drag) = self.track_drag.take() else {
-            return;
-        };
+    fn drag_track(&mut self, drag: &mut TrackDrag, y: f32, cx: &mut Context<Self>) -> After {
         let viewport = self.painted.get();
         let moved = (f64::from(y) + viewport.scroll_y - drag.press).abs();
         if !drag.moving && moved < TRACK_DRAG_THRESHOLD {
-            self.track_drag = Some(drag);
-            return;
+            return After::Keep;
         }
         if !drag.moving {
             drag.moving = true;
@@ -2500,8 +2537,7 @@ impl Timeline {
             .iter()
             .position(|(row, _)| *row.id() == drag.track)
         else {
-            self.track_drag = Some(drag);
-            return self.end_drag(cx);
+            return After::End;
         };
         if !drag.begun {
             (drag.from, drag.at) = (from, from);
@@ -2514,8 +2550,7 @@ impl Timeline {
             .unwrap_or(drag.from)
             .min(drag.origin.len().saturating_sub(1));
         if to == drag.at {
-            self.track_drag = Some(drag);
-            return;
+            return After::Keep;
         }
         let begun = std::mem::replace(&mut drag.begun, true);
         self.session.update(cx, |session, cx| {
@@ -2529,7 +2564,7 @@ impl Timeline {
             })
         });
         drag.at = to;
-        self.track_drag = Some(drag);
+        After::Keep
     }
 
     /// Alt-up and alt-down: the selected track one place up or down, one undo step. Whether a
@@ -2574,12 +2609,16 @@ impl Timeline {
     /// audio clip on audio tracks only: over a track one of them cannot go on, they stay on
     /// the rows where they last could. Each clip takes the automation under it along, and
     /// with `alone` it leaves it where it is.
-    fn drag_move(&mut self, x: f32, y: f32, grid: Grid, alone: bool, cx: &mut Context<Self>) {
-        let Some(mut drag) = self.drag.take() else {
-            return;
-        };
-        let label = drag.label();
-        let ClipDragKind::Move {
+    fn drag_move(
+        &mut self,
+        drag: &mut ClipDrag,
+        moving: &mut MoveDrag,
+        (x, y): (f32, f32),
+        grid: Grid,
+        alone: bool,
+        cx: &mut Context<Self>,
+    ) -> After {
+        let MoveDrag {
             clips,
             grab_row,
             grabbed,
@@ -2587,17 +2626,13 @@ impl Timeline {
             tracks,
             lanes_written,
             ghosts,
-        } = &mut drag.kind
-        else {
-            self.drag = Some(drag);
-            return;
-        };
+        } = moving;
+        let label = plural(clips.len(), "Move clip", "Move clips");
         let project = self.session.read(cx).project();
         // A clip deleted from outside is left out of the move. When it is the one under the
         // pointer, the drag ends: the delete was the last write.
         let Some(grabbed_id) = clips.get(*grabbed).map(|moved| moved.clip.clone()) else {
-            self.drag = Some(drag);
-            return self.end_drag(cx);
+            return After::End;
         };
         let lives: Vec<Option<AnyClip>> = clips
             .iter()
@@ -2606,8 +2641,7 @@ impl Timeline {
         let mut lives = lives.into_iter();
         clips.retain(|_| lives.next().flatten().is_some());
         let Some(index) = clips.iter().position(|moved| moved.clip == grabbed_id) else {
-            self.drag = Some(drag);
-            return self.end_drag(cx);
+            return After::End;
         };
         *grabbed = index;
         let lives: Vec<AnyClip> = clips
@@ -2652,8 +2686,7 @@ impl Timeline {
         for (moved, live) in clips.iter().zip(lives) {
             let row = moved.row.saturating_add_signed(row_delta as isize);
             let (Some(to), Some(from)) = (self.order.get(row).cloned(), moved.home.parent()) else {
-                self.drag = Some(drag);
-                return;
+                return After::Keep;
             };
             let next = live.with_start(shifted(moved.range.start, delta));
             steps.push(LaneMove {
@@ -2695,8 +2728,7 @@ impl Timeline {
                         == Some(step.next.start())
             });
         if unchanged {
-            self.drag = Some(drag);
-            return;
+            return After::Keep;
         }
         let begun = std::mem::replace(&mut drag.begun, true);
         let moved = self.session.update(cx, |session, cx| {
@@ -2729,27 +2761,25 @@ impl Timeline {
             .collect();
         let selected: Vec<_> = clips.iter().map(|moved| moved.clip.clone()).collect();
         let primary = selected.get(*grabbed).cloned();
-        self.drag = Some(drag);
         self.set_clips(selected, primary, cx);
+        After::Keep
     }
 
     /// Publishes one mouse move of a drag of one audio clip into the gesture of the session,
     /// which opens with the first move that changes something.
     fn publish_audio(
         &mut self,
-        mut drag: ClipDrag,
+        drag: &mut ClipDrag,
+        label: &str,
         clip: Instance<AudioClip>,
         next: AudioClip,
         cx: &mut Context<Self>,
-    ) {
+    ) -> After {
         let project = self.session.read(cx).project();
         if project.state(&clip) == Some(&next) {
-            self.drag = Some(drag);
-            return;
+            return After::Keep;
         }
-        let label = drag.label();
         let begun = std::mem::replace(&mut drag.begun, true);
-        self.drag = Some(drag);
         self.session.update(cx, |session, cx| {
             if !begun {
                 session.begin_gesture(label, cx);
@@ -2761,28 +2791,28 @@ impl Timeline {
             })
         });
         cx.notify();
+        After::Keep
     }
 
     /// A move of an edge of an audio clip: the part of its file that plays. The left edge keeps
     /// the sound where it is in time.
-    fn drag_trim(&mut self, x: f32, grid: Grid, cx: &mut Context<Self>) {
-        let Some(mut drag) = self.drag.take() else {
-            return;
-        };
-        let ClipDragKind::Trim {
+    fn drag_trim(
+        &mut self,
+        drag: &mut ClipDrag,
+        trim: &mut EdgeDrag,
+        x: f32,
+        grid: Grid,
+        cx: &mut Context<Self>,
+    ) -> After {
+        let EdgeDrag {
             clip,
             edge,
             origin,
             file,
-        } = &mut drag.kind
-        else {
-            self.drag = Some(drag);
-            return;
-        };
+        } = trim;
         let project = self.session.read(cx).project();
         let Some(live) = project.state(clip).cloned() else {
-            self.drag = Some(drag);
-            return self.end_drag(cx);
+            return After::End;
         };
         // An undo between mouse down and the first change may have changed the clip.
         if !drag.begun {
@@ -2815,29 +2845,27 @@ impl Timeline {
         // The fades of the live clip, inside what it plays now.
         let next = fitted(next, file);
         let clip = clip.clone();
-        self.publish_audio(drag, clip, next, cx);
+        self.publish_audio(drag, "Trim clip", clip, next, cx)
     }
 
     /// A move of a fade handle: the fade grows by the time the pointer went, in the time of the
     /// clip. No snap: a fade is a time and not a place on the grid.
-    fn drag_fade(&mut self, x: f32, cx: &mut Context<Self>) {
-        let Some(mut drag) = self.drag.take() else {
-            return;
-        };
-        let ClipDragKind::Fade {
+    fn drag_fade(
+        &mut self,
+        drag: &mut ClipDrag,
+        fade: &mut EdgeDrag,
+        x: f32,
+        cx: &mut Context<Self>,
+    ) -> After {
+        let EdgeDrag {
             clip,
             edge,
             origin,
             file,
-        } = &mut drag.kind
-        else {
-            self.drag = Some(drag);
-            return;
-        };
+        } = fade;
         let project = self.session.read(cx).project();
         let Some(live) = project.state(clip).cloned() else {
-            self.drag = Some(drag);
-            return self.end_drag(cx);
+            return After::End;
         };
         // An undo between mouse down and the first change may have changed the fades.
         if !drag.begun {
@@ -2856,30 +2884,33 @@ impl Timeline {
                 ..live
             },
         };
+        let label = match edge {
+            Edge::Left => FADE_IN_LABEL,
+            Edge::Right => FADE_OUT_LABEL,
+        };
         let clip = clip.clone();
-        self.publish_audio(drag, clip, next, cx);
+        self.publish_audio(drag, label, clip, next, cx)
     }
 
     /// A move of the gain handle: up is louder, 200 pt for the whole range as on a knob, and
     /// ten times finer with shift.
-    fn drag_gain(&mut self, y: f32, fine: bool, cx: &mut Context<Self>) {
-        let Some(mut drag) = self.drag.take() else {
-            return;
-        };
-        let ClipDragKind::Gain {
+    fn drag_gain(
+        &mut self,
+        drag: &mut ClipDrag,
+        gain: &mut GainDrag,
+        y: f32,
+        fine: bool,
+        cx: &mut Context<Self>,
+    ) -> After {
+        let GainDrag {
             clip,
             from_db,
             from_y,
             fine: was_fine,
-        } = &mut drag.kind
-        else {
-            self.drag = Some(drag);
-            return;
-        };
+        } = gain;
         let project = self.session.read(cx).project();
         let Some(live) = project.state(clip).cloned() else {
-            self.drag = Some(drag);
-            return self.end_drag(cx);
+            return After::End;
         };
         if fine != *was_fine {
             (*from_db, *from_y, *was_fine) = (live.gain_db, y, fine);
@@ -2898,31 +2929,30 @@ impl Timeline {
         };
         let next = AudioClip { gain_db, ..live };
         let clip = clip.clone();
-        self.publish_audio(drag, clip, next, cx);
+        self.publish_audio(drag, GAIN_LABEL, clip, next, cx)
     }
 
     /// A move of an edge of one clip. It goes on from the live clip when that is not what the
     /// drag wrote last.
-    fn drag_resize(&mut self, x: f32, grid: Grid, cx: &mut Context<Self>) {
-        let Some(mut drag) = self.drag.take() else {
-            return;
-        };
-        let label = drag.label();
-        let ClipDragKind::Resize {
+    fn drag_resize(
+        &mut self,
+        drag: &mut ClipDrag,
+        resize: &mut ResizeDrag,
+        x: f32,
+        grid: Grid,
+        cx: &mut Context<Self>,
+    ) -> After {
+        let label = "Resize clip";
+        let ResizeDrag {
             clip,
             edge,
             origin,
             written,
             delta,
-        } = &mut drag.kind
-        else {
-            self.drag = Some(drag);
-            return;
-        };
+        } = resize;
         let project = self.session.read(cx).project();
         let Some(live) = project.state(clip).cloned() else {
-            self.drag = Some(drag);
-            return self.end_drag(cx);
+            return After::End;
         };
         let pointer = self.painted.get().tick_at(x);
         // Something else wrote the clip. The drag goes on from that clip, and the grab moves
@@ -2943,8 +2973,7 @@ impl Timeline {
         };
         let next_delta = grid.delta(anchor, drag.grab, pointer);
         if !rebased && next_delta == *delta {
-            self.drag = Some(drag);
-            return;
+            return After::Keep;
         }
         *delta = next_delta;
         let next = match edge {
@@ -2952,8 +2981,7 @@ impl Timeline {
             Edge::Right => resized_right(origin, next_delta, grid.unit_at(anchor)),
         };
         if next == *written {
-            self.drag = Some(drag);
-            return;
+            return After::Keep;
         }
         let begun = std::mem::replace(&mut drag.begun, true);
         let (instance, wrote) = (clip.clone(), next.clone());
@@ -2971,33 +2999,25 @@ impl Timeline {
         if published.is_some() {
             *written = wrote;
         }
-        self.drag = Some(drag);
         // A cmd press left the selection alone until now: what is resized is selected.
         if !begun {
             self.select_clip(Some(instance_id), cx);
         }
+        After::Keep
     }
 
     /// Mouse up, or a clip went away under the drag: the gesture becomes one undo step. A press
     /// that did not move changes the selection as the click it was, see [`OnRelease`].
     fn end_drag(&mut self, cx: &mut Context<Self>) {
-        self.marquee = None;
-        let track_drag = self.track_drag.take().is_some_and(|drag| drag.begun);
-        let lane_drag = self.lane_drag.take().is_some_and(|drag| drag.begun);
-        if track_drag || lane_drag {
+        let held = std::mem::take(&mut self.held);
+        if held.begun() {
             self.session
                 .update(cx, |session, cx| session.finish_gesture(cx));
-        }
-        if let Some(drag) = self.drag.take() {
-            if drag.begun {
-                self.session
-                    .update(cx, |session, cx| session.finish_gesture(cx));
-            } else {
-                match drag.on_release {
-                    Some(OnRelease::SelectAlone(pressed)) => self.select_clip(Some(pressed), cx),
-                    Some(OnRelease::Toggle(pressed)) => self.toggle_clip(pressed, cx),
-                    None => {}
-                }
+        } else if let Held::Clips(drag, _) = held {
+            match drag.on_release {
+                Some(OnRelease::SelectAlone(pressed)) => self.select_clip(Some(pressed), cx),
+                Some(OnRelease::Toggle(pressed)) => self.toggle_clip(pressed, cx),
+                None => {}
             }
         }
         cx.notify();
@@ -3006,36 +3026,27 @@ impl Timeline {
     /// Escape: the clips or the track go back to where they were at mouse down. Whether there
     /// was a drag.
     fn cancel_drag(&mut self, cx: &mut Context<Self>) -> bool {
-        if let Some(marquee) = self.marquee.take() {
-            let (clips, primary) = marquee.at_press;
-            self.set_clips(clips, primary, cx);
-            cx.notify();
-            return true;
-        }
-        let track_drag = self.track_drag.take().map(|drag| drag.begun);
-        let lane_drag = self.lane_drag.take().map(|drag| drag.begun);
-        // The point goes back, or away when the press added it: it is not selected any more.
-        if lane_drag.is_some() {
-            self.selected_point = None;
-        }
-        if let Some(begun) = track_drag.or(lane_drag) {
-            if begun {
-                self.session
-                    .update(cx, |session, cx| session.cancel_gesture(cx));
-            }
-            cx.notify();
-            return true;
-        }
-        let Some(drag) = self.drag.take() else {
-            return false;
-        };
-        if drag.begun {
+        let held = std::mem::take(&mut self.held);
+        let begun = held.begun();
+        if begun {
             self.session
                 .update(cx, |session, cx| session.cancel_gesture(cx));
-            if let ClipDragKind::Move { clips, grabbed, .. } = drag.kind {
-                let homes: Vec<_> = clips.into_iter().map(|moved| moved.home).collect();
-                let primary = homes.get(grabbed).cloned();
-                self.set_clips(homes, primary, cx);
+        }
+        match held {
+            Held::Nothing => return false,
+            Held::Marquee(marquee) => {
+                let (clips, primary) = marquee.at_press;
+                self.set_clips(clips, primary, cx);
+            }
+            Held::Track(_) => {}
+            // The point goes back, or away when the press added it: it is not selected any more.
+            Held::Lane(_) => self.selected_point = None,
+            Held::Clips(_, kind) => {
+                if begun && let ClipDragKind::Move(MoveDrag { clips, grabbed, .. }) = kind {
+                    let homes: Vec<_> = clips.into_iter().map(|moved| moved.home).collect();
+                    let primary = homes.get(grabbed).cloned();
+                    self.set_clips(homes, primary, cx);
+                }
             }
         }
         cx.notify();
@@ -3083,18 +3094,14 @@ impl Timeline {
     }
 
     fn cursor(&self) -> Option<CursorStyle> {
-        if self.track_drag.as_ref().is_some_and(|drag| drag.moving) {
-            return Some(CursorStyle::ClosedHand);
-        }
-        if let Some(drag) = &self.lane_drag {
-            return Some(match drag.kind {
+        match &self.held {
+            Held::Track(drag) if drag.moving => Some(CursorStyle::ClosedHand),
+            Held::Lane(drag) => Some(match drag.kind {
                 LaneDragKind::Erase { .. } => CursorStyle::Crosshair,
                 LaneDragKind::Point { .. } => CursorStyle::PointingHand,
-            });
-        }
-        match &self.drag {
-            Some(drag) => drag.cursor(),
-            None => self.hover_cursor,
+            }),
+            Held::Clips(_, kind) => kind.cursor(),
+            Held::Nothing | Held::Marquee(_) | Held::Track(_) => self.hover_cursor,
         }
     }
 
@@ -4023,7 +4030,7 @@ impl Timeline {
                     moving: false,
                 };
                 self.select_point(None, cx);
-                self.lane_drag = Some(drag(origin, kind, ERASE_LABEL));
+                self.held = Held::Lane(drag(origin, kind, ERASE_LABEL));
                 return;
             }
             (false, None) => return,
@@ -4040,7 +4047,7 @@ impl Timeline {
         {
             let key = PointKey::of(track.id(), &origin, pressed.tick);
             self.select_point(Some(key), cx);
-            self.lane_drag = Some(drag(origin, point_drag(point), MOVE_POINT_LABEL));
+            self.held = Held::Lane(drag(origin, point_drag(point), MOVE_POINT_LABEL));
             return;
         }
         let tick = viewport.tick_at(x);
@@ -4051,17 +4058,22 @@ impl Timeline {
         let value = AutomationValue(range.value(LANE_BOX.share_at(in_lane)));
         let (added, point) = track_lanes::with_point(&origin, tick, value);
         self.select_point(Some(PointKey::of(track.id(), &added, tick)), cx);
-        let lane_drag = drag(added.clone(), point_drag(point), ADD_POINT_LABEL);
-        self.write_lane(lane_drag, Some(added), cx);
+        let mut lane_drag = drag(added.clone(), point_drag(point), ADD_POINT_LABEL);
+        let after = self.write_lane(&mut lane_drag, Some(added), cx);
+        self.settle(Held::Lane(lane_drag), after, cx);
     }
 
     /// One mouse move of a drag in a lane, into the gesture of the session, which opens with
     /// the first change. A point moves on the grid unless cmd is held, and with shift only up
     /// and down or only sideways, the way the pointer went furthest.
-    fn drag_lane(&mut self, x: f32, y: f32, modifiers: Modifiers, cx: &mut Context<Self>) {
-        let Some(mut drag) = self.lane_drag.take() else {
-            return;
-        };
+    fn drag_lane(
+        &mut self,
+        drag: &mut LaneDrag,
+        x: f32,
+        y: f32,
+        modifiers: Modifiers,
+        cx: &mut Context<Self>,
+    ) -> After {
         let viewport = self.painted.get();
         let grid = match modifiers.platform {
             true => self.grid(cx).free(),
@@ -4077,14 +4089,13 @@ impl Timeline {
             if lanes.find(|lane| lane.same_number(&drag.origin)) != Some(&drag.origin) {
                 self.selected_point = None;
                 cx.notify();
-                return;
+                return After::End;
             }
         }
         let next = match &mut drag.kind {
             LaneDragKind::Erase { from, moving } => {
                 if !*moving && (x - viewport.x_of(*from)).abs() < DRAG_THRESHOLD {
-                    self.lane_drag = Some(drag);
-                    return;
+                    return After::Keep;
                 }
                 *moving = true;
                 let ticks = erase_range(&grid, *from, viewport.tick_at(x));
@@ -4098,8 +4109,7 @@ impl Timeline {
             } => {
                 let (mut dx, mut dy) = (x - viewport.x_of(press.0), in_lane - press.1);
                 if !*moving && dx.abs() < DRAG_THRESHOLD && dy.abs() < DRAG_THRESHOLD {
-                    self.lane_drag = Some(drag);
-                    return;
+                    return After::Keep;
                 }
                 *moving = true;
                 if modifiers.shift {
@@ -4109,8 +4119,7 @@ impl Timeline {
                     }
                 }
                 let Some(&from) = drag.origin.points.get(*point) else {
-                    self.lane_drag = Some(drag);
-                    return;
+                    return After::Keep;
                 };
                 let delta = match dx {
                     0. => 0,
@@ -4133,7 +4142,7 @@ impl Timeline {
                 Some(moved)
             }
         };
-        self.write_lane(drag, next, cx);
+        self.write_lane(drag, next, cx)
     }
 
     /// Puts `next`, the lane of a drag, in its place among the lanes of its track now, from
@@ -4141,14 +4150,13 @@ impl Timeline {
     /// The first change opens the gesture.
     fn write_lane(
         &mut self,
-        mut drag: LaneDrag,
+        drag: &mut LaneDrag,
         next: Option<AutomationLane>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> After {
         let project = self.session.read(cx).project();
         let Some(state) = project.state(&drag.track) else {
-            self.lane_drag = Some(drag);
-            return self.end_drag(cx);
+            return After::End;
         };
         let mut automation = state.automation.clone();
         let found = automation
@@ -4161,8 +4169,7 @@ impl Timeline {
             (None, None) => {}
         }
         if automation == state.automation {
-            self.lane_drag = Some(drag);
-            return;
+            return After::Keep;
         }
         let next = TrackState {
             automation,
@@ -4170,7 +4177,6 @@ impl Timeline {
         };
         let begun = std::mem::replace(&mut drag.begun, true);
         let (track, label) = (drag.track.clone(), drag.label);
-        self.lane_drag = Some(drag);
         self.session.update(cx, |session, cx| {
             if !begun {
                 session.begin_gesture(label, cx);
@@ -4181,6 +4187,7 @@ impl Timeline {
                 project.publish(edit, changes)
             })
         });
+        After::Keep
     }
 
     /// Selects a point of an automation lane and no clip or tempo change, so delete removes it.
@@ -4490,16 +4497,8 @@ fn listen(
                 } else if !event.dragging() {
                     // The button came up somewhere that did not tell this window.
                     timeline.end_drag(cx);
-                } else if timeline.marquee.is_some() {
-                    timeline.marquee_to(x, y, cx);
-                } else if timeline.track_drag.is_some() {
-                    timeline.drag_track(y, cx);
-                } else if timeline.lane_drag.is_some() {
-                    timeline.drag_lane(x, y, event.modifiers, cx);
                 } else {
-                    let modifiers = event.modifiers;
-                    let keys = (modifiers.platform, modifiers.shift, modifiers.alt);
-                    timeline.drag_to(x, y, keys, cx);
+                    timeline.drag_held(x, y, event.modifiers, cx);
                 }
             });
         }
