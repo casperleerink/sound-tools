@@ -2,6 +2,7 @@
 //! on the selected track. The track keeps its id, so its clips, its panel, its selection and
 //! its arm state go with it. Each move is one undo step that undo gives back byte for byte,
 //! escape during a drag puts the track back, and undo waits while the drag goes on.
+//! Backspace on the selected track deletes it after a question.
 
 use arrangement::TrackState;
 use gpui::{Pixels, Point, TestAppContext, point, px};
@@ -242,4 +243,30 @@ fn tracks_of_the_same_order_move_in_the_order_they_show(cx: &mut TestAppContext)
     });
     assert_eq!(orders, [0, 1, 2]);
     one_undo_step(&mut opened, "Move track", &before);
+}
+
+/// Backspace on a selected track asks first: cancel keeps it, delete takes it with its clip as
+/// one undo step.
+#[gpui::test]
+fn backspace_on_a_selected_track_deletes_it_after_asking(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let before = mark(&mut opened);
+    let header = opened.track_header(0);
+    opened.click(header);
+    assert_eq!(opened.selected_track(), Some(id(FIRST)));
+
+    opened.keys("backspace");
+    assert!(opened.cx.has_pending_prompt());
+    opened.cx.simulate_prompt_answer("Cancel");
+    opened.settle();
+    assert_eq!(order(&mut opened), names(&[FIRST, SECOND, AUDIO]));
+    assert_eq!(opened.undo_label(), None);
+
+    opened.keys("backspace");
+    opened.cx.simulate_prompt_answer("Delete");
+    opened.settle();
+    assert_eq!(order(&mut opened), names(&[SECOND, AUDIO]));
+    assert_eq!(opened.clip(PART), None);
+    assert_eq!(opened.selected_track(), None);
+    one_undo_step(&mut opened, "Delete track", &before);
 }
