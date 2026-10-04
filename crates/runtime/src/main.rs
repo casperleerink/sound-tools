@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use plugin_host::PluginFormat;
-use runtime::{OFFLINE, open_or_create, open_read_only, problems, summary};
+use runtime::{OFFLINE, open_or_create_with, open_read_only_with, problems, summary};
 use sound_core::{Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks};
 
 fn print_summary(project: &Project) {
@@ -149,7 +149,8 @@ fn run(folder: &Path) -> Result<()> {
     );
     let (control, engine) = Engine::new(config);
     // Headless may block on the scan: it has no window to keep answering.
-    let (mut project, plugins) = open_or_create(folder, control)?;
+    let plugins = runtime::plugins(false)?;
+    let mut project = open_or_create_with(folder, control, plugins.clone())?;
     for notice in plugins.take_notices() {
         println!("plugin scan: {notice}");
     }
@@ -247,7 +248,8 @@ enum Span {
 /// Renders `span`, or with none the project from the start to the end of the last clip, and
 /// the tail. With `progress` it prints each whole percent of the span it reaches.
 fn render(folder: &Path, wav: &Path, span: Option<Span>, progress: bool) -> Result<()> {
-    let (mut project, mut engine, plugins) = open_read_only(folder)?;
+    let plugins = runtime::plugins(true)?;
+    let (mut project, mut engine) = open_read_only_with(folder, plugins.clone())?;
     print_problems(&project);
     // Before the file is made, so a render that cannot happen leaves no empty file behind.
     let span = match span {

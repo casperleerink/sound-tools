@@ -452,23 +452,16 @@ pub fn add_track_of_kind(
     }
 }
 
-/// Opens the project with its lock, scanning for plugins on this thread the first time a
-/// record needs one. `--headless` may block; the window uses [`open_or_create_with`] with a
-/// host of its own that scans on a thread.
+/// Opens the project with its lock. The plugin host is given: the application passes
+/// [`plugins`], which scans this machine, and a test passes one that looks in a folder of its
+/// own. A host that was not told to scan on a thread scans on this one, the first time a
+/// record needs a plugin.
 ///
 /// A folder without a `project.json` becomes the default
 /// project: 120 bpm, 4/4, one arrangement with no tracks. Other
 /// files in it, such as `.git` or `.DS_Store`, do not make it an existing project.
 ///
 /// Making the default content is not something to undo, so a new project has no history.
-pub fn open_or_create(folder: &Path, control: EngineControl) -> Result<(Project, Plugins)> {
-    let plugins = plugins(false)?;
-    let project = open_or_create_with(folder, control, plugins.clone())?;
-    Ok((project, plugins))
-}
-
-/// [`open_or_create`] with a plugin host given, for tests that look for plugins in a folder of
-/// their own instead of on this machine.
 pub fn open_or_create_with(
     folder: &Path,
     control: EngineControl,
@@ -484,14 +477,6 @@ pub fn open_or_create_with(
     Ok(project)
 }
 
-/// Opens the project without its lock, so it works next to a running runtime. The engine
-/// renders it offline.
-pub fn open_read_only(folder: &Path) -> Result<(Project, Engine, Plugins)> {
-    let plugins = plugins(true)?;
-    let (project, engine) = open_read_only_with(folder, plugins.clone())?;
-    Ok((project, engine, plugins))
-}
-
 /// Opens the project the way `--inspect` does: without its lock, and with a host that looks a
 /// plugin up and loads none ([`Plugins::listing`]). Inspecting prints a project and makes no
 /// sound, so no third-party code runs in this process and no plugin can end it.
@@ -501,7 +486,8 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
     Ok(project)
 }
 
-/// [`open_read_only`] with a plugin host given, for tests. See [`open_or_create_with`].
+/// Opens the project without its lock, so it works next to a running runtime. The engine
+/// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
     let (control, engine) = Engine::new(OFFLINE);
     let project = Project::open_read_only(folder, registry(plugins)?, control)?;

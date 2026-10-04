@@ -1,5 +1,6 @@
 //! What `--inspect` prints for a small known project.
 
+use crate::plugin_hosts::open_read_only;
 use crate::support::{
     Harness, TRACK, clip, test_plugin, test_plugin_host_that_only_lists, test_plugin_of,
 };
@@ -24,7 +25,7 @@ fn the_summary_tells_what_plays_where() {
     harness.write_and_apply("project.json", &project_file);
 
     // A second, read-only open next to the live one sees the same: this is `--inspect`.
-    let (inspected, _engine, _plugins) = runtime::open_read_only(harness.project.root()).unwrap();
+    let (inspected, _engine, _plugins) = open_read_only(harness.project.root());
     let expected = r#"extensions: arrangement, compressor, delay, drum-pad, eq, filter, fit-tempo, instrument, limiter, modulation, plugin-host, reverb, sampler, saturator, tone, utility, wavetable
 time signature: 4/4 from bar 1 (tick 0), 3840 ticks per bar, 960 ticks per beat
 tempo: 120 bpm from 1:1:000 (tick 0)

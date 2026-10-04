@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use plugin_host::{PluginFormat, Plugins, ScanCache, ScanCommand};
+use plugin_host::{PluginFormat, Plugins, ScanCache};
 use runtime::OFFLINE;
 use sound_core::{Engine, Project};
+
+use crate::plugin_hosts::{open_or_create, scanner, test_plugin_folders};
 
 /// Frames per bar at 120 bpm in 4/4 and 48 kHz.
 pub(crate) const BAR: usize = 96_000;
@@ -53,7 +55,7 @@ impl Harness {
 
     pub(crate) fn open(folder: tempfile::TempDir) -> Self {
         let (control, engine) = Engine::new(OFFLINE);
-        let (project, plugins) = runtime::open_or_create(folder.path(), control).unwrap();
+        let (project, plugins) = open_or_create(folder.path(), control);
         Self {
             project,
             engine,
@@ -202,36 +204,21 @@ impl Harness {
     }
 }
 
-/// A plugin host that scans one folder, with the test plugin of every format in it. The
-/// scanner is the real `runtime` executable with its scan argument, so the child process of a
-/// scan is the one the application uses. No plugin of this machine is ever listed, and the
-/// cache of this machine is never read or written.
+/// A plugin host that scans one folder, with the test plugin of every format in it. No plugin
+/// of this machine is ever listed, and the cache of this machine is never read or written.
 pub(crate) fn test_plugin_host(root: &Path, writes_state: bool) -> Plugins {
-    let folder = root.join("plugins");
-    test_clap_plugin::install_into(&folder);
-    test_vst3_plugin::install_into(&folder);
-    let scanner = ScanCommand::new(
-        env!("CARGO_BIN_EXE_runtime"),
-        [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
-    );
+    let folders = test_plugin_folders(root);
     if writes_state {
-        Plugins::new(vec![folder], scanner, ScanCache::none())
+        Plugins::new(folders, scanner(), ScanCache::none())
     } else {
-        Plugins::read_only(vec![folder], scanner, ScanCache::none())
+        Plugins::read_only(folders, scanner(), ScanCache::none())
     }
 }
 
 /// The same folder of test plugins, with the host `--inspect` opens: it says which plugins are
 /// there and loads none of them.
 pub(crate) fn test_plugin_host_that_only_lists(root: &Path) -> Plugins {
-    let folder = root.join("plugins");
-    test_clap_plugin::install_into(&folder);
-    test_vst3_plugin::install_into(&folder);
-    let scanner = ScanCommand::new(
-        env!("CARGO_BIN_EXE_runtime"),
-        [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
-    );
-    Plugins::listing(vec![folder], scanner, ScanCache::none())
+    Plugins::listing(test_plugin_folders(root), scanner(), ScanCache::none())
 }
 
 /// The record of a CLAP plugin instrument that names the repository's test plugin.

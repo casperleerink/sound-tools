@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use runtime::OFFLINE;
 
+use crate::plugin_hosts::open_or_create;
 use crate::support::{TRACK, clip, synth, write};
 
 const TRACKS: u64 = 100;
@@ -50,7 +51,7 @@ fn hundred_tracks_of_hundred_clips_open_play_and_take_an_edit() {
     };
     // The default project first, so the folder has its project.json and its arrangement.
     let (control, _engine) = sound_core::Engine::new(OFFLINE);
-    drop(runtime::open_or_create(&root, control).unwrap());
+    drop(open_or_create(&root, control));
     let started = Instant::now();
     generate(&root);
     println!(
@@ -62,7 +63,7 @@ fn hundred_tracks_of_hundred_clips_open_play_and_take_an_edit() {
 
     let started = Instant::now();
     let (control, mut engine) = sound_core::Engine::new(OFFLINE);
-    let (mut project, plugins) = runtime::open_or_create(&root, control).unwrap();
+    let (mut project, plugins) = open_or_create(&root, control);
     println!("open: {:?}", started.elapsed());
     assert_eq!(project.problems(), []);
     assert_eq!(project.instances().count() as u64, 1 + TRACKS * (CLIPS + 2));
@@ -147,7 +148,7 @@ fn sixteen_audio_tracks_of_ten_minutes_open_play_and_stay_within_the_size_of_the
         None => temporary.path().to_path_buf(),
     };
     let (control, _engine) = sound_core::Engine::new(OFFLINE);
-    drop(runtime::open_or_create(&root, control).unwrap());
+    drop(open_or_create(&root, control));
     let started = Instant::now();
     let mut file_bytes = 0;
     for track in 0..TRACKS {
@@ -195,7 +196,7 @@ fn sixteen_audio_tracks_of_ten_minutes_open_play_and_stay_within_the_size_of_the
     let before = resident_bytes();
     let started = Instant::now();
     let (control, mut engine) = sound_core::Engine::new(OFFLINE);
-    let (mut project, plugins) = runtime::open_or_create(&root, control).unwrap();
+    let (mut project, plugins) = open_or_create(&root, control);
     let opened = started.elapsed();
     let after = resident_bytes();
     assert_eq!(project.problems(), []);
