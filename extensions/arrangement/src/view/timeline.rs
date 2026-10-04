@@ -296,61 +296,66 @@ struct MovedClip {
     range: Range<Ticks>,
 }
 
-/// What a drag of clips does.
+/// What a drag of clips does. Each kind is a type of its own, so its mouse move is handed
+/// what it moves and cannot be given another kind.
 enum ClipDragKind {
-    /// Every selected clip, by the same distance in time and in rows. A move writes only the
-    /// start and the track, so it keeps what else changed.
-    Move {
-        clips: Vec<MovedClip>,
-        /// The row of the clip under the pointer at mouse down, and its place in `clips`.
-        grab_row: usize,
-        grabbed: usize,
-        /// The last distance in rows at which every clip was on a track of its kind. The move
-        /// keeps it while the pointer is over a track another clip cannot go on.
-        rows: i64,
-        /// The tracks as they were when the gesture opened. The automation under the clips
-        /// moves from here at every mouse move, as the starts do, so the line a clip passes
-        /// over comes back when it moves on.
-        tracks: BTreeMap<InstanceId, TrackState>,
-        /// The tracks whose lanes a mouse move of this drag wrote, which go back to how they
-        /// were once no clip takes lanes from them or lands on them.
-        lanes_written: BTreeSet<InstanceId>,
-        /// Where the clips that take automation along put it, as the last mouse move wrote it.
-        ghosts: Vec<LaneGhost>,
-    },
-    /// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:
-    /// every move starts from `origin` again, so going in and out loses nothing. One clip.
-    Resize {
-        clip: Instance<Clip>,
-        edge: Edge,
-        origin: Clip,
-        written: Clip,
-        /// The delta of the last move, to skip a move inside the same snap step cheaply.
-        delta: i64,
-    },
+    Move(MoveDrag),
+    Resize(ResizeDrag),
     /// An edge of an audio clip: the part of its file that plays. Every move starts from
     /// `origin`, and writes only what the edge moves onto the live clip.
-    Trim {
-        clip: Instance<AudioClip>,
-        edge: Edge,
-        origin: AudioClip,
-        file: Info,
-    },
+    Trim(EdgeDrag),
     /// A fade handle of an audio clip, sideways from where it was.
-    Fade {
-        clip: Instance<AudioClip>,
-        edge: Edge,
-        origin: AudioClip,
-        file: Info,
-    },
-    /// The gain handle of an audio clip, up and down from where it was. Shift pressed or let
-    /// go goes on from where the gain is then, at the other speed.
-    Gain {
-        clip: Instance<AudioClip>,
-        from_db: f32,
-        from_y: f32,
-        fine: bool,
-    },
+    Fade(EdgeDrag),
+    Gain(GainDrag),
+}
+
+/// Every selected clip, by the same distance in time and in rows. A move writes only the
+/// start and the track, so it keeps what else changed.
+struct MoveDrag {
+    clips: Vec<MovedClip>,
+    /// The row of the clip under the pointer at mouse down, and its place in `clips`.
+    grab_row: usize,
+    grabbed: usize,
+    /// The last distance in rows at which every clip was on a track of its kind. The move
+    /// keeps it while the pointer is over a track another clip cannot go on.
+    rows: i64,
+    /// The tracks as they were when the gesture opened. The automation under the clips
+    /// moves from here at every mouse move, as the starts do, so the line a clip passes
+    /// over comes back when it moves on.
+    tracks: BTreeMap<InstanceId, TrackState>,
+    /// The tracks whose lanes a mouse move of this drag wrote, which go back to how they
+    /// were once no clip takes lanes from them or lands on them.
+    lanes_written: BTreeSet<InstanceId>,
+    /// Where the clips that take automation along put it, as the last mouse move wrote it.
+    ghosts: Vec<LaneGhost>,
+}
+
+/// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:
+/// every move starts from `origin` again, so going in and out loses nothing. One clip.
+struct ResizeDrag {
+    clip: Instance<Clip>,
+    edge: Edge,
+    origin: Clip,
+    written: Clip,
+    /// The delta of the last move, to skip a move inside the same snap step cheaply.
+    delta: i64,
+}
+
+/// An end of an audio clip, as a trim or a fade drags it from how the clip was.
+struct EdgeDrag {
+    clip: Instance<AudioClip>,
+    edge: Edge,
+    origin: AudioClip,
+    file: Info,
+}
+
+/// The gain handle of an audio clip, up and down from where it was. Shift pressed or let
+/// go goes on from where the gain is then, at the other speed.
+struct GainDrag {
+    clip: Instance<AudioClip>,
+    from_db: f32,
+    from_y: f32,
+    fine: bool,
 }
 
 /// Where a dragged clip puts the automation it takes along: its track, its place now, and the
@@ -371,7 +376,6 @@ enum Edge {
 
 /// A drag of clips, from mouse down to mouse up.
 struct ClipDrag {
-    kind: ClipDragKind,
     /// The tick under the pointer at mouse down.
     grab: Ticks,
     /// Whether the gesture of the session is open. It opens with the first move that changes
@@ -390,32 +394,17 @@ enum OnRelease {
     Toggle(InstanceId),
 }
 
-impl ClipDrag {
-    fn label(&self) -> &'static str {
-        match &self.kind {
-            ClipDragKind::Move { clips, .. } => plural(clips.len(), "Move clip", "Move clips"),
-            ClipDragKind::Resize { .. } => "Resize clip",
-            ClipDragKind::Trim { .. } => "Trim clip",
-            ClipDragKind::Fade {
-                edge: Edge::Left, ..
-            } => FADE_IN_LABEL,
-            ClipDragKind::Fade {
-                edge: Edge::Right, ..
-            } => FADE_OUT_LABEL,
-            ClipDragKind::Gain { .. } => GAIN_LABEL,
-        }
-    }
-
+impl ClipDragKind {
     /// The clip under the pointer.
     fn grabbed(&self) -> Option<&InstanceId> {
-        match &self.kind {
-            ClipDragKind::Move { clips, grabbed, .. } => {
+        match self {
+            ClipDragKind::Move(MoveDrag { clips, grabbed, .. }) => {
                 clips.get(*grabbed).map(|moved| &moved.clip)
             }
-            ClipDragKind::Resize { clip, .. } => Some(clip.id()),
-            ClipDragKind::Trim { clip, .. }
-            | ClipDragKind::Fade { clip, .. }
-            | ClipDragKind::Gain { clip, .. } => Some(clip.id()),
+            ClipDragKind::Resize(ResizeDrag { clip, .. }) => Some(clip.id()),
+            ClipDragKind::Trim(EdgeDrag { clip, .. })
+            | ClipDragKind::Fade(EdgeDrag { clip, .. })
+            | ClipDragKind::Gain(GainDrag { clip, .. }) => Some(clip.id()),
         }
     }
 
@@ -427,12 +416,12 @@ impl ClipDrag {
 
     /// The cursor while it goes on.
     fn cursor(&self) -> Option<CursorStyle> {
-        match &self.kind {
-            ClipDragKind::Move { .. } => None,
-            ClipDragKind::Resize { .. } | ClipDragKind::Trim { .. } | ClipDragKind::Fade { .. } => {
+        match self {
+            ClipDragKind::Move(_) => None,
+            ClipDragKind::Resize(_) | ClipDragKind::Trim(_) | ClipDragKind::Fade(_) => {
                 Some(CursorStyle::ResizeLeftRight)
             }
-            ClipDragKind::Gain { .. } => Some(CursorStyle::ResizeUpDown),
+            ClipDragKind::Gain(_) => Some(CursorStyle::ResizeUpDown),
         }
     }
 }
@@ -558,7 +547,7 @@ const TRACK_DRAG_THRESHOLD: f64 = 4.;
 #[allow(clippy::large_enum_variant)]
 enum Held {
     Nothing,
-    Clips(ClipDrag),
+    Clips(ClipDrag, ClipDragKind),
     Marquee(Marquee),
     Track(TrackDrag),
     Lane(LaneDrag),
@@ -569,16 +558,16 @@ impl Held {
     fn begun(&self) -> bool {
         match self {
             Held::Nothing | Held::Marquee(_) => false,
-            Held::Clips(drag) => drag.begun,
+            Held::Clips(drag, _) => drag.begun,
             Held::Track(drag) => drag.begun,
             Held::Lane(drag) => drag.begun,
         }
     }
 
-    /// The drag of clips, while that is what the mouse holds.
-    fn clip_drag(&self) -> Option<&ClipDrag> {
+    /// What the drag of clips does, while that is what the mouse holds.
+    fn clip_drag(&self) -> Option<&ClipDragKind> {
         match self {
-            Held::Clips(drag) => Some(drag),
+            Held::Clips(_, kind) => Some(kind),
             _ => None,
         }
     }
@@ -977,7 +966,7 @@ impl Timeline {
                     let ends = match &timeline.held {
                         // Deleted under the drag, from outside. A drag to another track is
                         // not this: it names its new clips before this event arrives.
-                        Held::Clips(drag) => drag.ends_without(id),
+                        Held::Clips(_, kind) => kind.ends_without(id),
                         // The dragged track deleted from outside: that was the last write.
                         // So is the track of a lane being drawn.
                         Held::Track(drag) => drag.track == *id,
@@ -1717,7 +1706,7 @@ impl Timeline {
         // The hint goes in the top left corner of the clip under the pointer, while the drag
         // takes automation, as the value of a fade shows in its clip: what it covers there is
         // what the pointer holds.
-        let grabbed = self.held.clip_drag().and_then(ClipDrag::grabbed);
+        let grabbed = self.held.clip_drag().and_then(ClipDragKind::grabbed);
         let grabbed = grabbed.filter(|_| !lane_ghosts.is_empty());
         let under = grabbed.and_then(|id| scene.clips.iter().find(|shape| shape.id == *id));
         scene.hint = under.map(|shape| (shape.rect.x + 4., shape.rect.y + 4.));
@@ -1727,8 +1716,8 @@ impl Timeline {
     /// Where the clips of a drag put the automation they take along, as its last mouse move
     /// wrote it. Empty while no drag of clips takes any.
     fn lane_ghosts(&self) -> &[LaneGhost] {
-        match self.held.clip_drag().map(|drag| &drag.kind) {
-            Some(ClipDragKind::Move { ghosts, .. }) => ghosts,
+        match self.held.clip_drag() {
+            Some(ClipDragKind::Move(MoveDrag { ghosts, .. })) => ghosts,
             _ => &[],
         }
     }
@@ -1741,8 +1730,8 @@ impl Timeline {
 
     /// The tracks as they were when a drag of clips opened its gesture, while it goes on.
     fn tracks_before_drag(&self) -> Option<&BTreeMap<InstanceId, TrackState>> {
-        match self.held.clip_drag().map(|drag| &drag.kind) {
-            Some(ClipDragKind::Move { tracks, .. }) if !tracks.is_empty() => Some(tracks),
+        match self.held.clip_drag() {
+            Some(ClipDragKind::Move(MoveDrag { tracks, .. })) if !tracks.is_empty() => Some(tracks),
             _ => None,
         }
     }
@@ -1952,10 +1941,10 @@ impl Timeline {
         let fade_out = end - x_at(end_seconds - f64::from(clip.fade_out_ms) / 1000.);
 
         let dragged = self.held.clip_drag();
-        let dragged = dragged.filter(|drag| drag.grabbed() == Some(id));
+        let dragged = dragged.filter(|kind| kind.grabbed() == Some(id));
         let (mut hidden, mut label) = (None, None);
-        match dragged.map(|drag| &drag.kind) {
-            Some(ClipDragKind::Trim { edge, file, .. }) => {
+        match dragged {
+            Some(ClipDragKind::Trim(EdgeDrag { edge, file, .. })) => {
                 // The whole file from where it starts on the timeline to where it ends.
                 let file_start = x_at(start - clip.file_start_seconds);
                 let file_end = x_at(start - clip.file_start_seconds + file.seconds());
@@ -1964,22 +1953,22 @@ impl Timeline {
                     Edge::Right => edges(end, file_end),
                 });
             }
-            Some(ClipDragKind::Fade {
+            Some(ClipDragKind::Fade(EdgeDrag {
                 edge: Edge::Left, ..
-            }) => {
+            })) => {
                 let text = format!("Fade in {}", time_label(clip.fade_in_ms));
                 label = Some((text.into(), ClipHandle::FadeIn));
             }
-            Some(ClipDragKind::Fade {
+            Some(ClipDragKind::Fade(EdgeDrag {
                 edge: Edge::Right, ..
-            }) => {
+            })) => {
                 let text = format!("Fade out {}", time_label(clip.fade_out_ms));
                 label = Some((text.into(), ClipHandle::FadeOut));
             }
-            Some(ClipDragKind::Gain { .. }) => {
+            Some(ClipDragKind::Gain(_)) => {
                 label = Some((gain_label(clip.gain_db).into(), ClipHandle::Gain));
             }
-            Some(ClipDragKind::Move { .. } | ClipDragKind::Resize { .. }) | None => {}
+            Some(ClipDragKind::Move(_) | ClipDragKind::Resize(_)) | None => {}
         }
         let missing = match file {
             Cached::Missing => Some(format!("{} is missing", clip.asset)),
@@ -2131,18 +2120,18 @@ impl Timeline {
         let Some(kind) = kind else {
             return;
         };
-        let several = matches!(&kind, ClipDragKind::Move { clips, .. } if clips.len() > 1);
+        let several = matches!(&kind, ClipDragKind::Move(moved) if moved.clips.len() > 1);
         let on_release = match (cmd, several) {
             (true, _) => Some(OnRelease::Toggle(id)),
             (false, true) => Some(OnRelease::SelectAlone(id)),
             (false, false) => None,
         };
-        self.held = Held::Clips(ClipDrag {
-            kind,
+        let drag = ClipDrag {
             grab,
             begun: false,
             on_release,
-        });
+        };
+        self.held = Held::Clips(drag, kind);
     }
 
     /// Opens what a clip is edited in: the note editor of a note clip, the track panel of the
@@ -2176,24 +2165,24 @@ impl Timeline {
         let project = self.session.read(cx).project();
         if let Some(clip) = project.resolve::<Clip>(id) {
             let state = project.state(&clip)?.clone();
-            return Some(ClipDragKind::Resize {
+            return Some(ClipDragKind::Resize(ResizeDrag {
                 clip,
                 edge,
                 origin: state.clone(),
                 written: state,
                 delta: 0,
-            });
+            }));
         }
         let clip = project.resolve::<AudioClip>(id)?;
         let origin = project.state(&clip)?.clone();
         // A clip whose file is missing has nothing to trim.
         let file = known_file(project, &origin.asset)?;
-        Some(ClipDragKind::Trim {
+        Some(ClipDragKind::Trim(EdgeDrag {
             clip,
             edge,
             origin,
             file,
-        })
+        }))
     }
 
     /// A press on a handle of an audio clip: a fade or the gain, from where it is.
@@ -2212,24 +2201,24 @@ impl Timeline {
         let origin = project.state(&clip)?.clone();
         let file = known_file(project, &origin.asset)?;
         Some(match handle {
-            ClipHandle::FadeIn => ClipDragKind::Fade {
+            ClipHandle::FadeIn => ClipDragKind::Fade(EdgeDrag {
                 clip,
                 edge: Edge::Left,
                 origin,
                 file,
-            },
-            ClipHandle::FadeOut => ClipDragKind::Fade {
+            }),
+            ClipHandle::FadeOut => ClipDragKind::Fade(EdgeDrag {
                 clip,
                 edge: Edge::Right,
                 origin,
                 file,
-            },
-            ClipHandle::Gain => ClipDragKind::Gain {
+            }),
+            ClipHandle::Gain => ClipDragKind::Gain(GainDrag {
                 clip,
                 from_db: origin.gain_db,
                 from_y: y,
                 fine: false,
-            },
+            }),
         })
     }
 
@@ -2282,7 +2271,7 @@ impl Timeline {
         }
         let grabbed = clips.iter().position(|moved| moved.clip == *pressed)?;
         let grab_row = clips.get(grabbed)?.row;
-        Some(ClipDragKind::Move {
+        Some(ClipDragKind::Move(MoveDrag {
             clips,
             grab_row,
             grabbed,
@@ -2290,7 +2279,7 @@ impl Timeline {
             tracks: BTreeMap::new(),
             lanes_written: BTreeSet::new(),
             ghosts: Vec::new(),
-        })
+        }))
     }
 
     /// A press in the ruler: on a tempo mark it selects the tempo change and moves the playhead
@@ -2429,7 +2418,7 @@ impl Timeline {
         let mut held = std::mem::replace(&mut self.held, Held::Nothing);
         let after = match &mut held {
             Held::Nothing => After::Keep,
-            Held::Clips(drag) => self.drag_to(drag, x, y, modifiers, cx),
+            Held::Clips(drag, kind) => self.drag_to(drag, kind, (x, y), modifiers, cx),
             Held::Marquee(marquee) => {
                 self.marquee_to(marquee, x, y, cx);
                 After::Keep
@@ -2456,8 +2445,8 @@ impl Timeline {
     fn drag_to(
         &mut self,
         drag: &mut ClipDrag,
-        x: f32,
-        y: f32,
+        kind: &mut ClipDragKind,
+        (x, y): (f32, f32),
         modifiers: Modifiers,
         cx: &mut Context<Self>,
     ) -> After {
@@ -2466,12 +2455,14 @@ impl Timeline {
             true => self.grid(cx).free(),
             false => self.grid(cx),
         };
-        match drag.kind {
-            ClipDragKind::Move { .. } => self.drag_move(drag, x, y, grid, modifiers.alt, cx),
-            ClipDragKind::Resize { .. } => self.drag_resize(drag, x, grid, cx),
-            ClipDragKind::Trim { .. } => self.drag_trim(drag, x, grid, cx),
-            ClipDragKind::Fade { .. } => self.drag_fade(drag, x, cx),
-            ClipDragKind::Gain { .. } => self.drag_gain(drag, y, modifiers.shift, cx),
+        match kind {
+            ClipDragKind::Move(moving) => {
+                self.drag_move(drag, moving, (x, y), grid, modifiers.alt, cx)
+            }
+            ClipDragKind::Resize(resize) => self.drag_resize(drag, resize, x, grid, cx),
+            ClipDragKind::Trim(trim) => self.drag_trim(drag, trim, x, grid, cx),
+            ClipDragKind::Fade(fade) => self.drag_fade(drag, fade, x, cx),
+            ClipDragKind::Gain(gain) => self.drag_gain(drag, gain, y, modifiers.shift, cx),
         }
     }
 
@@ -2482,7 +2473,7 @@ impl Timeline {
         let bounds = self.painted_bounds.get();
         let (x, y) = Self::timeline_position(bounds, window.mouse_position());
         let again = match &self.held {
-            Held::Clips(drag) => matches!(drag.kind, ClipDragKind::Move { .. }),
+            Held::Clips(_, kind) => matches!(kind, ClipDragKind::Move(_)),
             Held::Lane(drag) => matches!(drag.kind, LaneDragKind::Point { moving: true, .. }),
             Held::Nothing | Held::Marquee(_) | Held::Track(_) => false,
         };
@@ -2615,14 +2606,13 @@ impl Timeline {
     fn drag_move(
         &mut self,
         drag: &mut ClipDrag,
-        x: f32,
-        y: f32,
+        moving: &mut MoveDrag,
+        (x, y): (f32, f32),
         grid: Grid,
         alone: bool,
         cx: &mut Context<Self>,
     ) -> After {
-        let label = drag.label();
-        let ClipDragKind::Move {
+        let MoveDrag {
             clips,
             grab_row,
             grabbed,
@@ -2630,10 +2620,8 @@ impl Timeline {
             tracks,
             lanes_written,
             ghosts,
-        } = &mut drag.kind
-        else {
-            return After::Keep;
-        };
+        } = moving;
+        let label = plural(clips.len(), "Move clip", "Move clips");
         let project = self.session.read(cx).project();
         // A clip deleted from outside is left out of the move. When it is the one under the
         // pointer, the drag ends: the delete was the last write.
@@ -2776,6 +2764,7 @@ impl Timeline {
     fn publish_audio(
         &mut self,
         drag: &mut ClipDrag,
+        label: &str,
         clip: Instance<AudioClip>,
         next: AudioClip,
         cx: &mut Context<Self>,
@@ -2784,7 +2773,6 @@ impl Timeline {
         if project.state(&clip) == Some(&next) {
             return After::Keep;
         }
-        let label = drag.label();
         let begun = std::mem::replace(&mut drag.begun, true);
         self.session.update(cx, |session, cx| {
             if !begun {
@@ -2805,19 +2793,17 @@ impl Timeline {
     fn drag_trim(
         &mut self,
         drag: &mut ClipDrag,
+        trim: &mut EdgeDrag,
         x: f32,
         grid: Grid,
         cx: &mut Context<Self>,
     ) -> After {
-        let ClipDragKind::Trim {
+        let EdgeDrag {
             clip,
             edge,
             origin,
             file,
-        } = &mut drag.kind
-        else {
-            return After::Keep;
-        };
+        } = trim;
         let project = self.session.read(cx).project();
         let Some(live) = project.state(clip).cloned() else {
             return After::End;
@@ -2853,21 +2839,24 @@ impl Timeline {
         // The fades of the live clip, inside what it plays now.
         let next = fitted(next, file);
         let clip = clip.clone();
-        self.publish_audio(drag, clip, next, cx)
+        self.publish_audio(drag, "Trim clip", clip, next, cx)
     }
 
     /// A move of a fade handle: the fade grows by the time the pointer went, in the time of the
     /// clip. No snap: a fade is a time and not a place on the grid.
-    fn drag_fade(&mut self, drag: &mut ClipDrag, x: f32, cx: &mut Context<Self>) -> After {
-        let ClipDragKind::Fade {
+    fn drag_fade(
+        &mut self,
+        drag: &mut ClipDrag,
+        fade: &mut EdgeDrag,
+        x: f32,
+        cx: &mut Context<Self>,
+    ) -> After {
+        let EdgeDrag {
             clip,
             edge,
             origin,
             file,
-        } = &mut drag.kind
-        else {
-            return After::Keep;
-        };
+        } = fade;
         let project = self.session.read(cx).project();
         let Some(live) = project.state(clip).cloned() else {
             return After::End;
@@ -2889,8 +2878,12 @@ impl Timeline {
                 ..live
             },
         };
+        let label = match edge {
+            Edge::Left => FADE_IN_LABEL,
+            Edge::Right => FADE_OUT_LABEL,
+        };
         let clip = clip.clone();
-        self.publish_audio(drag, clip, next, cx)
+        self.publish_audio(drag, label, clip, next, cx)
     }
 
     /// A move of the gain handle: up is louder, 200 pt for the whole range as on a knob, and
@@ -2898,19 +2891,17 @@ impl Timeline {
     fn drag_gain(
         &mut self,
         drag: &mut ClipDrag,
+        gain: &mut GainDrag,
         y: f32,
         fine: bool,
         cx: &mut Context<Self>,
     ) -> After {
-        let ClipDragKind::Gain {
+        let GainDrag {
             clip,
             from_db,
             from_y,
             fine: was_fine,
-        } = &mut drag.kind
-        else {
-            return After::Keep;
-        };
+        } = gain;
         let project = self.session.read(cx).project();
         let Some(live) = project.state(clip).cloned() else {
             return After::End;
@@ -2932,7 +2923,7 @@ impl Timeline {
         };
         let next = AudioClip { gain_db, ..live };
         let clip = clip.clone();
-        self.publish_audio(drag, clip, next, cx)
+        self.publish_audio(drag, GAIN_LABEL, clip, next, cx)
     }
 
     /// A move of an edge of one clip. It goes on from the live clip when that is not what the
@@ -2940,21 +2931,19 @@ impl Timeline {
     fn drag_resize(
         &mut self,
         drag: &mut ClipDrag,
+        resize: &mut ResizeDrag,
         x: f32,
         grid: Grid,
         cx: &mut Context<Self>,
     ) -> After {
-        let label = drag.label();
-        let ClipDragKind::Resize {
+        let label = "Resize clip";
+        let ResizeDrag {
             clip,
             edge,
             origin,
             written,
             delta,
-        } = &mut drag.kind
-        else {
-            return After::Keep;
-        };
+        } = resize;
         let project = self.session.read(cx).project();
         let Some(live) = project.state(clip).cloned() else {
             return After::End;
@@ -3018,7 +3007,7 @@ impl Timeline {
         if held.begun() {
             self.session
                 .update(cx, |session, cx| session.finish_gesture(cx));
-        } else if let Held::Clips(drag) = held {
+        } else if let Held::Clips(drag, _) = held {
             match drag.on_release {
                 Some(OnRelease::SelectAlone(pressed)) => self.select_clip(Some(pressed), cx),
                 Some(OnRelease::Toggle(pressed)) => self.toggle_clip(pressed, cx),
@@ -3046,8 +3035,8 @@ impl Timeline {
             Held::Track(_) => {}
             // The point goes back, or away when the press added it: it is not selected any more.
             Held::Lane(_) => self.selected_point = None,
-            Held::Clips(drag) => {
-                if begun && let ClipDragKind::Move { clips, grabbed, .. } = drag.kind {
+            Held::Clips(_, kind) => {
+                if begun && let ClipDragKind::Move(MoveDrag { clips, grabbed, .. }) = kind {
                     let homes: Vec<_> = clips.into_iter().map(|moved| moved.home).collect();
                     let primary = homes.get(grabbed).cloned();
                     self.set_clips(homes, primary, cx);
@@ -3105,7 +3094,7 @@ impl Timeline {
                 LaneDragKind::Erase { .. } => CursorStyle::Crosshair,
                 LaneDragKind::Point { .. } => CursorStyle::PointingHand,
             }),
-            Held::Clips(drag) => drag.cursor(),
+            Held::Clips(_, kind) => kind.cursor(),
             Held::Nothing | Held::Marquee(_) | Held::Track(_) => self.hover_cursor,
         }
     }
