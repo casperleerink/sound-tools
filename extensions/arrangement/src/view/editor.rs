@@ -25,7 +25,7 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::{ActiveTheme, KeyboardFocus, Session};
+use sound_ui::{ActiveTheme, DragEdit, KeyboardFocus, Session};
 
 use super::clipboard::{Copied, CopiedNotes, SharedClipboard};
 use super::gesture::Zone;
@@ -117,9 +117,8 @@ struct NoteDrag {
     /// The notes it changes. Empty for a draw in the lane, which finds its bars per move, and
     /// for a gesture in an expression lane.
     notes: Vec<Tracked>,
-    /// Whether the gesture of the session is open. It opens with the first change, so a plain
-    /// click on a note is no undo step.
-    begun: bool,
+    /// It opens with the first change, so a plain click on a note is no undo step.
+    edit: DragEdit,
     on_release: Option<OnRelease>,
     /// What was selected when the drag began, which escape puts back.
     at_press: Selection<Note>,
@@ -224,9 +223,8 @@ impl NoteEditor {
         // the session open: undo and redo wait for it. The view that closes the editor ends
         // the drag first. This is the net under every other way to go.
         cx.on_release(|editor, cx| {
-            if editor.drag.take().is_some_and(|drag| drag.begun) {
-                let session = editor.session.clone();
-                session.update(cx, |session, cx| session.finish_gesture(cx));
+            if let Some(mut drag) = editor.drag.take() {
+                drag.edit.finish(&editor.session, cx);
             }
         })
         .detach();
@@ -603,7 +601,7 @@ impl NoteEditor {
                     written: note,
                 })
                 .collect(),
-            begun: false,
+            edit: DragEdit::default(),
             on_release,
             at_press: self.selection.clone(),
         });
@@ -632,7 +630,7 @@ impl NoteEditor {
             self.drag = Some(NoteDrag {
                 kind: NoteDragKind::DrawVelocity { last: (x, y) },
                 notes: Vec::new(),
-                begun: false,
+                edit: DragEdit::default(),
                 on_release: None,
                 at_press: self.selection.clone(),
             });
@@ -675,7 +673,7 @@ impl NoteEditor {
         self.drag = Some(NoteDrag {
             kind,
             notes: Vec::new(),
-            begun: false,
+            edit: DragEdit::default(),
             on_release: None,
             at_press: self.selection.clone(),
         });
@@ -702,7 +700,7 @@ impl NoteEditor {
         };
         // An undo between mouse down and the first change may have changed the lane: the
         // stroke works from the clip as it is now, so it does not write the old lane back.
-        if !drag.begun {
+        if !drag.edit.is_open() {
             *origin = clip.clone();
         }
         if !stroke.moved(&viewport, grid, (x, y)) {
@@ -715,16 +713,11 @@ impl NoteEditor {
         if next == *clip {
             return;
         }
-        let begun = std::mem::replace(&mut drag.begun, true);
         let instance = self.clip.clone();
-        self.session.update(cx, |session, cx| {
-            if !begun {
-                session.begin_gesture(label, cx);
-            }
-            session.gesture(cx, |project, edit_of| {
+        drag.edit
+            .publish(&self.session, label, cx, |project, edit_of| {
                 project.update(edit_of, &instance, |clip| lane.edit(clip, origin, &edit))
-            })
-        });
+            });
     }
 
     /// A double click on empty space inside the clip adds a note of one unit of the grid, which
@@ -744,15 +737,13 @@ impl NoteEditor {
         // so cmd pressed during the draw frees the end and never moves the start.
         let start = clip.start + note.start;
         let instance = self.clip.clone();
-        let drawn = self.session.update(cx, |session, cx| {
-            session.begin_gesture("Draw note", cx);
-            session.gesture(cx, |project, edit| {
-                project.update(edit, &instance, |clip| clip.notes.push(note))
-            })
+        // The note is the first change, so this drag opens at the press.
+        let mut edit = DragEdit::default();
+        let drawn = edit.publish(&self.session, "Draw note", cx, |project, edit| {
+            project.update(edit, &instance, |clip| clip.notes.push(note))
         });
         if drawn.is_none() {
-            self.session
-                .update(cx, |session, cx| session.cancel_gesture(cx));
+            edit.cancel(&self.session, cx);
             return;
         }
         // Escape gives back what was selected before the first click of the double click.
@@ -764,7 +755,7 @@ impl NoteEditor {
                 origin: note,
                 written: note,
             }],
-            begun: true,
+            edit,
             on_release: None,
             at_press,
         });
@@ -941,15 +932,12 @@ impl NoteEditor {
         let Some(drag) = &mut self.drag else {
             return;
         };
-        let begun = std::mem::replace(&mut drag.begun, true);
         let label = drag.kind.label(drag.notes.len().max(changes.len()));
         let instance = self.clip.clone();
         let written: Vec<(usize, Note)> = changes.iter().map(|(i, _, n)| (*i, *n)).collect();
-        let published = self.session.update(cx, |session, cx| {
-            if !begun {
-                session.begin_gesture(label, cx);
-            }
-            session.gesture(cx, |project, edit| {
+        let published = drag
+            .edit
+            .publish(&self.session, label, cx, |project, edit| {
                 project.update(edit, &instance, |clip| {
                     for (index, next) in written {
                         if let Some(note) = clip.notes.get_mut(index) {
@@ -957,8 +945,7 @@ impl NoteEditor {
                         }
                     }
                 })
-            })
-        });
+            });
         if published.is_some() {
             let pairs: Vec<(Note, Note)> = changes.iter().map(|(_, a, b)| (*a, *b)).collect();
             self.follow_selection(&pairs, cx);
@@ -970,8 +957,8 @@ impl NoteEditor {
     /// for notes by start. A press that did not move changes the selection as the click it was.
     pub(super) fn end_drag(&mut self, cx: &mut Context<Self>) {
         self.marquee = None;
-        if let Some(drag) = self.drag.take() {
-            if drag.begun {
+        if let Some(mut drag) = self.drag.take() {
+            if drag.edit.is_open() {
                 let instance = self.clip.clone();
                 self.session.update(cx, |session, cx| {
                     session.gesture(cx, |project, edit| match project.state(&instance) {
@@ -979,8 +966,8 @@ impl NoteEditor {
                         // The clip went away under the drag. There is nothing to put in order.
                         None => Ok(()),
                     });
-                    session.finish_gesture(cx);
                 });
+                drag.edit.finish(&self.session, cx);
             } else {
                 match drag.on_release {
                     Some(OnRelease::SelectAlone(note)) => self.select_alone(Some(note), cx),
@@ -1001,13 +988,10 @@ impl NoteEditor {
             cx.notify();
             return true;
         }
-        let Some(drag) = self.drag.take() else {
+        let Some(mut drag) = self.drag.take() else {
             return false;
         };
-        if drag.begun {
-            self.session
-                .update(cx, |session, cx| session.cancel_gesture(cx));
-        }
+        drag.edit.cancel(&self.session, cx);
         self.selection = drag.at_press;
         cx.notify();
         true
