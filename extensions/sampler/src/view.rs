@@ -45,8 +45,7 @@ use sound_ui::components::waveform_display::{
 };
 use sound_ui::import;
 use sound_ui::{
-    ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, Waveforms, every_poll,
-    weak_callback,
+    ControlEdit, Devices, Lanes, OfferGroup, Session, Views, Waveforms, every_poll, weak_callback,
 };
 
 use crate::instrument;
@@ -80,7 +79,6 @@ const INSTRUMENT_SELECT_WIDTH: f32 = 2. * CELL_WIDTH - 8.;
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(SamplerView::new);
     devices.built_in::<SamplerState>(
-        Slot::Instrument,
         NAME,
         OfferGroup::BuiltIn,
         "device-sampler",

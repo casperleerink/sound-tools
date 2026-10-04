@@ -22,7 +22,7 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, ParameterKnob, decibels_readout, milliseconds_readout};
 use sound_ui::components::limiter_display::LimiterHistory;
 use sound_ui::{
-    ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, every_poll, weak_callback,
+    ControlEdit, Devices, Lanes, OfferGroup, Session, Views, every_poll, weak_callback,
 };
 
 use crate::{CEILING, GAIN, Limiter, LimiterState, Lookahead, Meters, RELEASE};
@@ -34,7 +34,6 @@ pub const NAME: &str = "Limiter";
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(LimiterView::new);
     devices.built_in::<LimiterState>(
-        Slot::Effect,
         NAME,
         OfferGroup::Dynamics,
         "device-limiter",

@@ -213,13 +213,13 @@ impl Devices {
         );
     }
 
-    /// Registers a built-in device with state `S`: what a rack calls it, and its offer for
-    /// `slot`, which is the device at its defaults. A project that does not enable `extension`
-    /// shows the offer and does not take it, and `reason` says why. A picker lists the offers
-    /// of a group in the order they were registered.
+    /// Registers a built-in device with state `S`: what a rack calls it, and its offer, which
+    /// is the device at its defaults. [`OfferGroup::BuiltIn`] is the group of the instruments;
+    /// every other group is one of effects. A project that does not enable `extension` shows
+    /// the offer and does not take it, and `reason` says why. A picker lists the offers of a
+    /// group in the order they were registered.
     pub fn built_in<S: State + Default>(
         &mut self,
-        slot: Slot,
         name: &'static str,
         group: OfferGroup,
         icon: &'static str,
@@ -236,9 +236,9 @@ impl Devices {
         })
         .icon(icon)
         .needs(extension, reason);
-        let offers = match slot {
-            Slot::Instrument => &mut self.instruments,
-            Slot::Effect => &mut self.effects,
+        let offers = match group {
+            OfferGroup::BuiltIn => &mut self.instruments,
+            _ => &mut self.effects,
         };
         offers.push(Rc::new(move || vec![offer.clone()]));
     }

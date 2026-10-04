@@ -20,7 +20,7 @@ use sound_ui::components::knob::{
     Knob, KnobRange, ParameterKnob, decibels_readout, percent_readout, short,
 };
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, weak_callback};
+use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
 
 use crate::{Curve, DRIVE, MIX, OUTPUT, Saturator, SaturatorState, TONE, auto_gain, transfer};
 
@@ -46,7 +46,6 @@ const REFERENCE_DB: f32 = -12.;
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(SaturatorView::new);
     devices.built_in::<SaturatorState>(
-        Slot::Effect,
         NAME,
         OfferGroup::Tone,
         "device-saturator",

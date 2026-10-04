@@ -23,7 +23,7 @@ use sound_ui::components::knob::{
     Knob, ParameterKnob, decibels_readout, hertz_readout, percent_readout, short,
 };
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, weak_callback};
+use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
 
 use crate::{
     CUTOFF, DRIVE, Filter, FilterState, FilterType, LFO_DEPTH, LFO_RATE, MIX, RESONANCE, Slope,
@@ -41,7 +41,6 @@ const DISPLAY_WIDTH: f32 = 200.;
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(FilterView::new);
     devices.built_in::<FilterState>(
-        Slot::Effect,
         NAME,
         OfferGroup::Tone,
         "device-filter",

@@ -108,6 +108,8 @@ fn turn(opened: &mut Opened<'_>, slot: &InstanceId, knob: Point<Pixels>) {
 fn add_effect_puts_every_built_in_effect_with_its_card_on_the_track(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     for offer in built_in_effects(&mut opened) {
+        // Shown when a pass fails, so the failure names its device.
+        eprintln!("{}", offer.name);
         let before = mark(&mut opened);
         let slot = add(&mut opened, &offer);
         // The record of the tool of the offer, and its card after the empty instrument slot.
@@ -119,7 +121,7 @@ fn add_effect_puts_every_built_in_effect_with_its_card_on_the_track(cx: &mut Tes
             (panel.device_names(cx), has_card)
         });
         assert_eq!(names.last(), Some(&offer.name));
-        assert!(has_card, "{} has no card", offer.name);
+        assert!(has_card);
 
         one_undo_step(&mut opened, &format!("Add {}", offer.name), &before);
         // Off again, for the next one.
@@ -131,6 +133,8 @@ fn add_effect_puts_every_built_in_effect_with_its_card_on_the_track(cx: &mut Tes
 fn a_knob_drag_is_one_undo_step_written_once(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     for offer in built_in_effects(&mut opened) {
+        // Shown when a pass fails, so the failure names its device.
+        eprintln!("{}", offer.name);
         let slot = add(&mut opened, &offer);
         let knob = knob_of(&mut opened, &slot);
         let before = mark(&mut opened);
@@ -139,11 +143,11 @@ fn a_knob_drag_is_one_undo_step_written_once(cx: &mut TestAppContext) {
         let end = begin_turn(&mut opened, &slot, knob);
         // Heard during the drag, not written until it ends.
         let moving = state(&mut opened, &slot);
-        assert_ne!(moving, record, "{}", offer.name);
+        assert_ne!(moving, record);
         assert_eq!(files(opened.folder.path()), before.files);
         opened.drag_to(end);
         opened.release(end);
-        assert_ne!(state(&mut opened, &slot), moving, "{}", offer.name);
+        assert_ne!(state(&mut opened, &slot), moving);
         assert_ne!(files(opened.folder.path()), before.files);
 
         let label = opened.undo_label().unwrap();
@@ -160,6 +164,8 @@ fn a_knob_drag_is_one_undo_step_written_once(cx: &mut TestAppContext) {
 fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     for offer in built_in_effects(&mut opened) {
+        // Shown when a pass fails, so the failure names its device.
+        eprintln!("{}", offer.name);
         let slot = add(&mut opened, &offer);
         let knob = knob_of(&mut opened, &slot);
         // A record that is not the one the card shows: what a drag made, taken back.
@@ -175,7 +181,7 @@ fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
         // The knob is where the file put it: the same drag goes on from there. From the value
         // of before it would end where the file is, and change nothing.
         turn(&mut opened, &slot, knob);
-        assert_ne!(state(&mut opened, &slot), turned, "{}", offer.name);
+        assert_ne!(state(&mut opened, &slot), turned);
 
         // The drag, the file change and the effect off again, for the next one.
         for _ in 0..3 {

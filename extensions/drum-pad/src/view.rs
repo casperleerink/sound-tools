@@ -39,7 +39,7 @@ use sound_ui::components::toggle::Toggle;
 use sound_ui::import;
 use sound_ui::lanes::object_of;
 use sound_ui::{
-    ActiveTheme, ControlEdit, Devices, KeyboardFocus, Lanes, OfferGroup, Session, Slot, Views,
+    ActiveTheme, ControlEdit, Devices, KeyboardFocus, Lanes, OfferGroup, Session, Views,
     every_poll, weak_callback,
 };
 
@@ -77,7 +77,6 @@ const CHOOSE_VALUE: &str = "choose";
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(DrumPadView::new);
     devices.built_in::<DrumPadState>(
-        Slot::Instrument,
         NAME,
         OfferGroup::BuiltIn,
         "device-drum-pad",

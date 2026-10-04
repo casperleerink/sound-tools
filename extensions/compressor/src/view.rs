@@ -25,8 +25,7 @@ use sound_ui::components::knob::{
 };
 use sound_ui::components::meter::GainReduction;
 use sound_ui::{
-    ActiveTheme, ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, every_poll,
-    weak_callback,
+    ActiveTheme, ControlEdit, Devices, Lanes, OfferGroup, Session, Views, every_poll, weak_callback,
 };
 
 use crate::{
@@ -60,7 +59,6 @@ const BAR_INSET: f32 = 6.;
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(CompressorView::new);
     devices.built_in::<CompressorState>(
-        Slot::Effect,
         NAME,
         OfferGroup::Dynamics,
         "device-compressor",

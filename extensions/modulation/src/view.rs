@@ -20,7 +20,7 @@ use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, ParameterKnob, hertz_readout, percent_readout, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, weak_callback};
+use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
 
 use crate::{DEPTH, FEEDBACK, MIX, Mode, Modulation, ModulationState, RATE, SPREAD, sweep};
 
@@ -38,7 +38,6 @@ const CURVE_POINTS: usize = 96;
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(ModulationView::new);
     devices.built_in::<ModulationState>(
-        Slot::Effect,
         NAME,
         OfferGroup::Space,
         "device-modulation",

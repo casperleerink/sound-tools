@@ -25,7 +25,7 @@ use sound_ui::components::knob::{
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{
-    ActiveTheme, ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, weak_callback,
+    ActiveTheme, ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback,
 };
 
 use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, Utility, UtilityState, WIDTH, matrix};
@@ -41,7 +41,6 @@ const DISPLAY_WIDTH: f32 = 200.;
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(UtilityView::new);
     devices.built_in::<UtilityState>(
-        Slot::Effect,
         NAME,
         OfferGroup::Mix,
         "device-utility",

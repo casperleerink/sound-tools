@@ -294,6 +294,17 @@ impl SvfSection {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_slope_is_saved_as_its_db_per_octave_and_nothing_else_loads() {
+        for slope in [FilterSlope::Twelve, FilterSlope::TwentyFour] {
+            assert_eq!(FilterSlope::try_from(u8::from(slope)), Ok(slope));
+        }
+        assert_eq!(
+            FilterSlope::try_from(18),
+            Err("slope must be 12 or 24, not 18".to_string())
+        );
+    }
+
     /// Full resonance: the Q of the first section is `SVF_MAX_Q` and its level takes half of
     /// that rise in dB back, so the peak of one section is `sqrt(q0 SVF_MAX_Q)`, +11.5 dB.
     #[test]

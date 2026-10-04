@@ -21,7 +21,7 @@ use sound_ui::components::knob::{
     Knob, ParameterKnob, hertz_readout, milliseconds_readout, percent_readout, seconds_readout,
 };
 use sound_ui::components::toggle::Toggle;
-use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Slot, Views, weak_callback};
+use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
 
 use crate::{
     DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PRE_DELAY, Reverb, ReverbState, SIZE, WIDTH,
@@ -39,7 +39,6 @@ const DISPLAY_WIDTH: f32 = 200.;
 pub fn register(views: &mut Views, devices: &mut Devices) {
     views.register_card(ReverbView::new);
     devices.built_in::<ReverbState>(
-        Slot::Effect,
         NAME,
         OfferGroup::Space,
         "device-reverb",
