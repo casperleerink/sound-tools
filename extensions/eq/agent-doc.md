@@ -2,22 +2,7 @@
 
 `eq` is an effect: it raises or lowers parts of the sound of a track. It has four bands. Each band has a shape, a frequency, a gain and a Q, and can be on or off. After the bands comes one output gain.
 
-Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the vocal plays through an EQ named `clear`:
-
-```json state/arrangement/vocal/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {
-    "name": "Vocal",
-    "colour": "blue",
-    "order": 1,
-    "gain_db": 0.0,
-    "pan": 0.0,
-    "mute": false,
-    "effects": ["clear"]
-  }
-}
-```
+Here the vocal plays through an EQ named `clear`:
 
 ```json state/arrangement/vocal/clear.json
 {

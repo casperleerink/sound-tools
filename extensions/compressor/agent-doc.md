@@ -2,22 +2,7 @@
 
 `compressor` is an effect: it turns a track down when it gets louder than the threshold, so loud and quiet parts sit closer together. A gentle setting makes a part even and steady; a fast attack tames the peaks of drums; a slow attack lets the start of each note through, which makes it punchier; makeup gain brings the level back up after it.
 
-Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the drums play through a compressor named `glue`:
-
-```json state/arrangement/drums/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {
-    "name": "Drums",
-    "colour": "sky",
-    "order": 2,
-    "gain_db": 0.0,
-    "pan": 0.0,
-    "mute": false,
-    "effects": ["glue"]
-  }
-}
-```
+Here the drums play through a compressor named `glue`:
 
 ```json state/arrangement/drums/glue.json
 {

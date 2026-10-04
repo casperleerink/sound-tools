@@ -2,22 +2,7 @@
 
 `utility` is an effect for the plain jobs of a mix: gain, pan, stereo width, the bass in mono, which channels play, a channel turned upside down, and mute. At its defaults it changes nothing, to the bit, so it is safe anywhere in a chain. Use it to turn a sound down before an effect that is driven too hard, to narrow a pad or make it wider, to keep the bass of a wide sound in the middle, or to fix a recording whose left and right cancel.
 
-Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the pad plays through a utility named `narrow`:
-
-```json state/arrangement/pad/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {
-    "name": "Pad",
-    "colour": "lavender",
-    "order": 1,
-    "gain_db": 0.0,
-    "pan": 0.0,
-    "mute": false,
-    "effects": ["narrow"]
-  }
-}
-```
+Here the pad plays through a utility named `narrow`:
 
 ```json state/arrangement/pad/narrow.json
 {

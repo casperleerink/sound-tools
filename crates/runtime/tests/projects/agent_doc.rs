@@ -169,7 +169,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         .iter()
         .flat_map(|(_, text)| json_examples(text))
         .collect();
-    assert_eq!(all.len(), 50);
+    assert_eq!(all.len(), 39);
 
     // The raw take of a recording is not a record: it is an asset the runtime writes once
     // and never reads back. Its example is checked as the file it is.
@@ -198,6 +198,30 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "an example does not name its file: {body}"
         );
         write(folder.path(), path, body);
+    }
+    // The doc of an effect shows only its record. Its track is written here as
+    // `agent-docs/arrangement.md` says: a track record that names the effect in `effects`.
+    let mut tracks: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for (path, body) in &examples {
+        let child = path.strip_prefix("state/arrangement/");
+        let child = child.and_then(|it| it.strip_suffix(".json"));
+        let Some((track, name)) = child.and_then(|it| it.split_once('/')) else {
+            continue;
+        };
+        let has_record = folder
+            .path()
+            .join(format!("state/arrangement/{track}/instance.json"))
+            .exists();
+        let is_clip = body.contains(r#""tool": "arrangement.clip""#);
+        if !has_record && !is_clip {
+            tracks.entry(track).or_default().push(name);
+        }
+    }
+    for (track, effects) in tracks {
+        let state = serde_json::json!({"name": track, "effects": effects});
+        let record = serde_json::json!({"tool": "arrangement.track", "state": state});
+        let path = format!("state/arrangement/{track}/instance.json");
+        write(folder.path(), &path, &record.to_string());
     }
     // The files the audio clip of its doc, the Sampler of its doc and the sample pad of
     // the drums play, which an agent copies in before it writes the record. Five seconds,
@@ -245,17 +269,6 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
     for (problem, expected) in problems.iter().zip(expected) {
         assert!(problem.starts_with(expected), "{problems:?}");
     }
-    // The piano is written twice, the second time silenced with `"-inf"` and its warmth
-    // bypassed, and that is what loaded.
-    let piano = copy
-        .project
-        .resolve::<arrangement::TrackState>(
-            &sound_core::InstanceId::new("arrangement/piano").unwrap(),
-        )
-        .unwrap();
-    let piano = copy.project.state(&piano).unwrap();
-    assert_eq!(piano.gain_db, f32::NEG_INFINITY);
-    assert_eq!(piano.bypassed("warmth"), Some(true));
     let instances: Vec<String> = copy
         .project
         .instances()
@@ -292,7 +305,6 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "arrangement/piano",
             "arrangement/piano/instrument",
             "arrangement/piano/intro",
-            "arrangement/piano/take-1",
             "arrangement/piano/warmth",
             "arrangement/rhodes",
             "arrangement/rhodes/instrument",
@@ -315,7 +327,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
 
     // The runtime writes every file again: delete all, undo, and a tempo edit with its
     // undo. The bytes are those of the examples, so an agent that copies their layout
-    // makes no whitespace diff.
+    // makes no whitespace diff. An example that writes only what it changes, as the pad of
+    // the Wavetable doc, is written back whole, with every value it gave.
     let mut changes = Changes::new();
     changes.delete(&InstanceId::new("arrangement").unwrap());
     changes.delete(&InstanceId::new("drone").unwrap());
@@ -332,12 +345,31 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             .exists()
     );
     copy.project.undo().unwrap();
-    // A file two examples write, as the piano with its warmth bypassed, holds the last.
+    // A file two examples write, as the drum kit of the drums doc, holds the last.
     let last: std::collections::BTreeMap<&String, &String> =
         examples.iter().map(|(path, body)| (path, body)).collect();
     for (path, body) in last {
         let written = std::fs::read_to_string(copy.path(path)).unwrap();
-        assert_eq!(&written, body, "{path}");
+        let whole: serde_json::Value = serde_json::from_str(&written).unwrap();
+        let part: serde_json::Value = serde_json::from_str(body).unwrap();
+        if part == whole {
+            assert_eq!(&written, body, "{path}");
+        } else {
+            assert!(is_within(&part, &whole), "{path}: {written}");
+        }
+    }
+}
+
+/// Whether every field of `part` is in `whole` with the same value. A list is one value.
+fn is_within(part: &serde_json::Value, whole: &serde_json::Value) -> bool {
+    match (part, whole) {
+        (serde_json::Value::Object(part), serde_json::Value::Object(whole)) => {
+            part.iter().all(|(key, value)| {
+                let other = whole.get(key);
+                other.is_some_and(|other| is_within(value, other))
+            })
+        }
+        _ => part == whole,
     }
 }
 

@@ -2,22 +2,7 @@
 
 `filter` is an effect: it takes the sound of a track and lets part of it through. Low pass makes a sound darker, high pass thinner, band pass leaves a band in the middle, notch takes one out. Resonance adds a peak at the cutoff, drive warms the sound up before the filter, and an LFO can move the cutoff up and down.
 
-Like every effect it is two lines: the record in the track folder, and its file name in `effects` of the track record. `agent-docs/arrangement.md` has the rules for the list. Here the bass plays through a filter named `dark`:
-
-```json state/arrangement/bass/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {
-    "name": "Bass",
-    "colour": "peach",
-    "order": 1,
-    "gain_db": 0.0,
-    "pan": 0.0,
-    "mute": false,
-    "effects": ["dark"]
-  }
-}
-```
+Here the bass plays through a filter named `dark`:
 
 ```json state/arrangement/bass/dark.json
 {
