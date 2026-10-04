@@ -27,6 +27,13 @@ pub(crate) trait LoadedPlugin {
     /// The plugin's own window, when it offers one.
     fn gui(&mut self) -> Option<&mut dyn PluginGui>;
 
+    /// The value the parameter `id` has now. `None` when the plugin cannot say, which a CLAP
+    /// plugin does for an id it does not have.
+    fn value(&mut self, id: u32) -> Option<f64>;
+
+    /// The plugin's own text for `value` of the parameter `id`, such as `1.2 kHz`.
+    fn text(&mut self, id: u32, value: f64) -> Option<String>;
+
     /// Lets the plugin go, when the engine has given its audio side back. `false` says it has
     /// not, and the caller keeps the plugin and asks again at the next poll. Dropping a plugin
     /// whose audio side is still in the engine would leave the two ends in different hands.

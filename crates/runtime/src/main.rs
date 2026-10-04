@@ -11,6 +11,7 @@
 //! runtime <project-folder> --render <wav> --from <ticks> --to <ticks>
 //!                                                          render a range and its tail
 //! runtime --plugins                                        list the plugins of this machine
+//! runtime --plugin-params <format> <plugin_id>             list the parameters of one plugin
 //! runtime --help                                           print this usage
 //! ```
 //!
@@ -361,6 +362,19 @@ fn list_plugins() -> Result<()> {
     Ok(())
 }
 
+/// Prints every parameter of one plugin. See [`runtime::plugin_parameters`].
+fn list_plugin_parameters(format: &str, plugin_id: &str) -> Result<()> {
+    let Some(format) = PluginFormat::of_str(format) else {
+        bail!("{format:?} is not a plugin format: clap or vst3");
+    };
+    let plugins = runtime::plugins(true)?;
+    println!(
+        "{}",
+        runtime::plugin_parameters(&plugins, format, plugin_id)?
+    );
+    Ok(())
+}
+
 /// Prints one line of JSON per plugin in the bundle. See [`plugin_host::scan_one_bundle`].
 fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     let Some(format) = plugin_host::PluginFormat::of_str(format) else {
@@ -375,7 +389,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [--seconds <n> | --from <ticks> --to <ticks>] [--progress]]]\n       sound-tools --plugins | --version | --help";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [--seconds <n> | --from <ticks> --to <ticks>] [--progress]]]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help";
 
 fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -394,6 +408,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         ["--plugins"] => list_plugins(),
+        ["--plugin-params", format, plugin_id] => list_plugin_parameters(format, plugin_id),
         ["--version"] => {
             println!("sound-tools {}", env!("CARGO_PKG_VERSION"));
             Ok(())

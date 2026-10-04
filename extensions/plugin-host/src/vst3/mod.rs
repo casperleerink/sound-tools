@@ -24,6 +24,7 @@
 
 mod context;
 mod module;
+mod parameters;
 mod plugin;
 mod process;
 mod stream;
@@ -33,7 +34,7 @@ use std::path::{Path, PathBuf};
 
 use vst3::Steinberg::TUID;
 
-pub(crate) use plugin::load;
+pub(crate) use plugin::{load, read_parameters};
 
 use crate::scan::ScannedPlugin;
 use crate::{PluginFormat, PluginProblem};

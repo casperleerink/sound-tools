@@ -10,13 +10,13 @@ pub mod window;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use arrangement::{ArrangementState, Colour, TrackKind};
 use gpui::{App, AppContext as _};
 use instrument::SynthState;
 use plugin_host::{
-    PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK, WeakPlugins,
-    default_search_paths,
+    Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, VST_TRADEMARK,
+    WeakPlugins, default_search_paths,
 };
 use sound_agent::{AgentSettings, Sidebar};
 use sound_core::{
@@ -424,6 +424,104 @@ pub fn summary(project: &Project) -> String {
     }
     lines.push(problems(project));
     lines.join("\n")
+}
+
+/// What `--plugin-params` prints: every parameter of one plugin of this machine that a host may
+/// set, one line each, with its id, name, range and default, and its steps and their names
+/// when it has them. The numbers are the format's own: CLAP's plain values, VST 3's from 0 to 1.
+///
+/// It loads the plugin in this process, which is why it is a command of its own.
+pub fn plugin_parameters(
+    plugins: &Plugins,
+    format: PluginFormat,
+    plugin_id: &str,
+) -> Result<String> {
+    plugins.wait_for_scan();
+    let Some(found) = plugins.installed(format, plugin_id) else {
+        bail!(
+            "this machine has no {} plugin with the id {plugin_id:?}. `sound-tools --plugins` lists the ones it has",
+            format.name()
+        );
+    };
+    let parameters = plugin_host::read_parameters(&found)?;
+    if parameters.is_empty() {
+        return Ok(format!("{} has no parameters a host may set", found.name));
+    }
+    let rows: Vec<[String; 5]> = parameters
+        .iter()
+        .map(|parameter| {
+            [
+                parameter.id.to_string(),
+                parameter.name.clone(),
+                format!(
+                    "{} to {}",
+                    readable(parameter.minimum),
+                    readable(parameter.maximum)
+                ),
+                format!("default {}", readable(parameter.default)),
+                parameter_details(parameter),
+            ]
+        })
+        .collect();
+    // Every column but the last as wide as its widest cell, so the lines read as a table.
+    let mut widths = [0; 4];
+    for row in &rows {
+        for (width, cell) in widths.iter_mut().zip(row) {
+            *width = (*width).max(cell.chars().count());
+        }
+    }
+    let [id_width, name_width, range_width, default_width] = widths;
+    let lines: Vec<String> = rows
+        .iter()
+        .map(|[id, name, range, default, details]| {
+            let line = format!(
+                "{id:<id_width$}  {name:<name_width$}  {range:<range_width$}  {default:<default_width$}  {details}"
+            );
+            line.trim_end().to_string()
+        })
+        .collect();
+    Ok(lines.join("\n"))
+}
+
+/// The steps of a parameter with their names, and whether it cannot be automated, which is the
+/// rare case.
+fn parameter_details(parameter: &Parameter) -> String {
+    let mut details = Vec::new();
+    if let Some(steps) = &parameter.steps {
+        let names: Vec<String> = steps
+            .names
+            .iter()
+            .map(|step| format!("{} = {}", readable(step.value), step.name))
+            .collect();
+        details.push(match names.is_empty() {
+            true => format!("{} steps", steps.count),
+            false => format!("{} steps: {}", steps.count, names.join(", ")),
+        });
+    }
+    if !parameter.automatable {
+        details.push("not automatable".to_string());
+    }
+    details.join("  ")
+}
+
+/// A number of a plugin as `--plugin-params` prints it: six significant digits and no trailing
+/// zeros, so `8192 / 16383` reads `0.500031`. A whole part longer than that keeps every digit.
+/// The value itself keeps its full precision; this is only for reading.
+fn readable(number: f64) -> String {
+    // Zero has no magnitude, and is never `-0`.
+    if number == 0.0 {
+        return "0".to_string();
+    }
+    if !number.is_finite() {
+        return number.to_string();
+    }
+    let magnitude = number.abs().log10().floor() as i32;
+    let decimals = (5 - magnitude).max(0) as usize;
+    let text = format!("{number:.decimals$}");
+    match text.contains('.') {
+        true => text.trim_end_matches('0').trim_end_matches('.').to_string(),
+        false => text,
+    }
 }
 
 pub fn problems(project: &Project) -> String {

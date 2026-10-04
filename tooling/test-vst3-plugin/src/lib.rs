@@ -16,6 +16,9 @@
 //!   and `Pressure` are mapped the same way, to the bend wheel, controller 1 and the channel
 //!   pressure.
 //!
+//! - `Wave`, a list of three named steps with the plugin's own text for each, for a host to
+//!   list. Nothing plays it. `Hidden` is one a host may set and must not list.
+//!
 //! And more, for what a test needs to make it do: see the constants below. A few keys are not
 //! played but ask the host for something through `restartComponent`, one flag each
 //! (`test_plugin_support::PRESET_KEY` and the two after it), the way `LATENCY_KEY` asks for a
@@ -95,6 +98,12 @@ const MOVED_SUSTAIN: ParamID = 6;
 const BEND: ParamID = 7;
 const MOD_WHEEL: ParamID = 8;
 const PRESSURE: ParamID = 9;
+
+/// A list of named steps, one per name in `test_plugin_support::WAVES`.
+pub const WAVE: ParamID = 10;
+
+/// A parameter a host may set and must not show, which a list of parameters leaves out.
+const HIDDEN: ParamID = 11;
 
 /// Where the plugin hears the sustain pedal: on [`SUSTAIN`], on [`MOVED_SUSTAIN`], or nowhere.
 const PEDAL_ON_SUSTAIN: u8 = 0;
@@ -324,7 +333,7 @@ impl TestTone {
 
 /// Every parameter, in the order `getParameterInfo` lists them, and whether it is only ever set
 /// by the plugin, which a host must never send.
-const PARAMETERS: [(ParamID, &str, &str, ParamValue, bool); 10] = [
+const PARAMETERS: [(ParamID, &str, &str, ParamValue, bool); 12] = [
     (TRANSPOSE, "Transpose", "st", 0.0, false),
     (SUSTAIN, "Sustain", "", 0.0, false),
     (LEVEL, "Level", "", 1.0, false),
@@ -335,6 +344,8 @@ const PARAMETERS: [(ParamID, &str, &str, ParamValue, bool); 10] = [
     (BEND, "Bend", "", 8192.0 / 16383.0, false),
     (MOD_WHEEL, "Mod wheel", "", 0.0, false),
     (PRESSURE, "Pressure", "", 0.0, false),
+    (WAVE, "Wave", "", 0.0, false),
+    (HIDDEN, "Hidden", "", 0.0, false),
 ];
 
 impl IPluginBaseTrait for TestTone {
@@ -968,17 +979,34 @@ impl IEditControllerTrait for TestTone {
                 true => ParameterFlags_::kIsReadOnly as int32,
                 false => ParameterFlags_::kCanAutomate as int32,
             };
+            if id == WAVE {
+                info.stepCount = support::WAVES.len() as int32 - 1;
+                info.flags |= ParameterFlags_::kIsList as int32;
+            }
+            if id == HIDDEN {
+                info.flags |= ParameterFlags_::kIsHidden as int32;
+            }
         }
         kResultOk
     }
 
+    /// Only `Wave` has a text of its own: the name of its step.
     unsafe fn getParamStringByValue(
         &self,
-        _id: ParamID,
-        _value: ParamValue,
-        _string: *mut String128,
+        id: ParamID,
+        value: ParamValue,
+        string: *mut String128,
     ) -> tresult {
-        kNotImplemented
+        let steps = (support::WAVES.len() - 1) as f64;
+        let wave = support::WAVES.get((value * steps).round() as usize);
+        match (id, wave) {
+            (WAVE, Some(wave)) if !string.is_null() => {
+                // SAFETY: the caller gave a place to write one string.
+                write_utf16(wave, unsafe { &mut *string });
+                kResultOk
+            }
+            _ => kInvalidArgument,
+        }
     }
 
     unsafe fn getParamValueByString(

@@ -30,11 +30,13 @@ use vst3::{ComPtr, ComWrapper};
 
 use super::context::{Handler, HostContext, as_handler, as_unknown};
 use super::module::Module;
+use super::parameters;
 use super::process::{ControlTargets, ParameterChange, Vst3Processor, process_mode};
 use super::stream::{MemoryStream, as_stream};
 use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
 use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
+use crate::parameters::Parameter;
 use crate::processor::{Control, Started};
 use crate::scan::ScannedPlugin;
 use crate::{PluginProblem, processor::not_ours};
@@ -46,12 +48,29 @@ use sound_notes::Pedal;
 /// controller's, and a preset file holds both, so this file holds both as well.
 const MAGIC: [u8; 4] = *b"SVT3";
 
-/// Loads the plugin `found` names, with `saved` as its own state, and starts it.
-pub(crate) fn load(
-    found: &ScannedPlugin,
-    saved: Option<&[u8]>,
-    config: PrepareConfig,
-) -> Result<Opening, PluginProblem> {
+/// Every parameter a host may set of the plugin `found` names, read once it is initialized and
+/// before anything is prepared for audio, which a list of parameters never plays.
+pub(crate) fn read_parameters(found: &ScannedPlugin) -> Result<Vec<Parameter>, PluginProblem> {
+    let initialized = initialize(found)?;
+    Ok(match &initialized.joined.controller {
+        // SAFETY: the controller came from the plugin and is alive until `initialized` goes.
+        Some(controller) => unsafe { parameters::of_controller(controller) },
+        // A plugin with no edit controller has no parameters a host can see.
+        None => Vec::new(),
+    })
+}
+
+/// A plugin that is made and initialized, with its controller joined to it, and what it needs
+/// to stay alive. The plugin is let go of first when this is dropped, before its context and
+/// its bundle, which is the order of the fields.
+struct Initialized {
+    joined: Joined,
+    context: ComWrapper<HostContext>,
+    module: Rc<Module>,
+}
+
+/// Makes the plugin `found` names and initializes it and its controller, which runs its code.
+fn initialize(found: &ScannedPlugin) -> Result<Initialized, PluginProblem> {
     let plugin_id = found.id.clone();
     let fail = |message: String| PluginProblem::DidNotLoad {
         plugin_id: plugin_id.clone(),
@@ -67,7 +86,7 @@ pub(crate) fn load(
     // SAFETY: every call below goes to the plugin the factory made, in the order VST 3 gives,
     // and every pointer either comes from the plugin or outlives the call. A failure after
     // `initialize` is undone by `Joined`, so no plugin is left half-set-up.
-    let plugin = unsafe {
+    unsafe {
         let component: ComPtr<IComponent> = create(module.factory(), &class, &IComponent_iid)
             .ok_or_else(|| {
                 fail("the bundle has no plugin with this class id, or it is not a component".into())
@@ -120,8 +139,32 @@ pub(crate) fn load(
             to.connect(from.as_ptr());
             Some((from, to))
         });
-        let controller = joined.controller.clone();
+        Ok(Initialized {
+            joined,
+            context,
+            module,
+        })
+    }
+}
 
+/// Loads the plugin `found` names, with `saved` as its own state, and starts it.
+pub(crate) fn load(
+    found: &ScannedPlugin,
+    saved: Option<&[u8]>,
+    config: PrepareConfig,
+) -> Result<Opening, PluginProblem> {
+    let plugin_id = found.id.clone();
+    let fail = |message: String| PluginProblem::DidNotLoad {
+        plugin_id: plugin_id.clone(),
+        message,
+    };
+    // A failure below drops what is initialized, which undoes it.
+    let initialized = initialize(found)?;
+    let component = initialized.joined.component.clone();
+    let controller = initialized.joined.controller.clone();
+
+    // SAFETY: as in `initialize`.
+    let plugin = unsafe {
         if let Some(bytes) = saved {
             read_state(&plugin_id, bytes, &component, controller.as_ref())?;
         }
@@ -173,7 +216,7 @@ pub(crate) fn load(
             &buses.inputs,
             &buses.outputs,
             targets.clone(),
-            joined.handler.clone(),
+            initialized.joined.handler.clone(),
             mode,
             latency,
         );
@@ -189,15 +232,15 @@ pub(crate) fn load(
         // A plugin may ask for a restart or a reload while its state is read or while it is
         // activated. It has just been set up and everything is read after that, so asking
         // again would only start it again, for ever if it asks every time.
-        joined.handler.forget_restarts();
+        initialized.joined.handler.forget_restarts();
         Opening {
             started: Box::new(started),
             plugin: Box::new(Vst3Plugin {
                 plugin_id: plugin_id.clone(),
-                _module: module,
+                _module: initialized.module,
                 gui,
-                joined,
-                _context: context,
+                joined: initialized.joined,
+                _context: initialized.context,
                 changed: ends.changed,
                 edited: ends.edited,
                 live,
@@ -444,6 +487,20 @@ impl LoadedPlugin for Vst3Plugin {
         // `None` for a plugin with no edit controller: nothing can make a view then.
         let gui = self.gui.as_mut()?;
         Some(gui)
+    }
+
+    /// VST 3 has no answer for an id the plugin does not have: its controller gives a number
+    /// for any id.
+    fn value(&mut self, id: u32) -> Option<f64> {
+        let controller = self.joined.controller.as_ref()?;
+        // SAFETY: the controller came from the plugin and is alive.
+        Some(unsafe { controller.getParamNormalized(id) })
+    }
+
+    fn text(&mut self, id: u32, value: f64) -> Option<String> {
+        let controller = self.joined.controller.as_ref()?;
+        // SAFETY: the controller came from the plugin and is alive.
+        unsafe { parameters::text(controller, id, value) }
     }
 
     fn released(&mut self) -> bool {
