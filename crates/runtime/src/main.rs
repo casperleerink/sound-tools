@@ -11,6 +11,7 @@
 //! runtime <project-folder> --render <wav> --from <ticks> --to <ticks>
 //!                                                          render a range and its tail
 //! runtime --plugins                                        list the plugins of this machine
+//! runtime --help                                           print this usage
 //! ```
 //!
 //! A render with `--progress` at the end also prints `progress: <percent>` lines, for the
@@ -384,6 +385,8 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [--seconds <n> | --from <ticks> --to <ticks>] [--progress]]]\n       sound-tools --plugins | --version | --help";
+
 fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
@@ -405,6 +408,12 @@ fn main() -> Result<()> {
             println!("sound-tools {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        ["--help" | "-h"] => {
+            println!("{USAGE}");
+            Ok(())
+        }
+        // An unknown flag is not a project folder. Opening it would show a window named after it.
+        [flag] if flag.starts_with('-') => bail!(USAGE),
         [folder] if runtime::update::start_pending_update() => Ok(()),
         [folder] => runtime::window::run(Path::new(folder)),
         [folder, "--headless"] => run(Path::new(folder)),
@@ -431,8 +440,6 @@ fn main() -> Result<()> {
             let span = Span::Range(Ticks(from), Ticks(to));
             render(Path::new(folder), Path::new(wav), Some(span), progress)
         }
-        _ => bail!(
-            "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [--seconds <n> | --from <ticks> --to <ticks>] [--progress]]]\n       sound-tools --plugins | --version"
-        ),
+        _ => bail!(USAGE),
     }
 }
