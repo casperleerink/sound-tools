@@ -13,6 +13,7 @@
 //! - `track_order`: moving tracks up and down by their headers and with alt and the arrows.
 //! - `track_panel`: the track panel and the view of the synth in it.
 //! - `instruments`: picking the instrument of a track, and the plugin's own window.
+//! - `plugin_card`: the parameters on the card of a plugin: pinned, turned and taken off.
 //! - `drum_pad`: the card of the Drum pad: its pads, its keys and samples dropped on it.
 //! - `effects`: adding and removing effects in the rack.
 //! - `built_in_effects`: what every built-in effect does in the rack: added, a knob dragged,
@@ -52,6 +53,7 @@ mod limiter;
 mod modulation;
 mod notes;
 mod piece;
+mod plugin_card;
 #[path = "../shared/plugin_hosts.rs"]
 mod plugin_hosts;
 mod rack;

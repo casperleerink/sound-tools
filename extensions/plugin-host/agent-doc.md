@@ -148,6 +148,8 @@ plays, with no reload. Every parameter that is not pinned stays in the state fil
 - At most 64 pins. Leave `parameters` out for none.
 - When the composer turns a pinned knob in the plugin's own window, or the plugin moves it
   itself, the app writes the new value into the record, one undo step per turn.
+- The composer can also pin, turn and unpin parameters on the plugin's card, so `parameters`
+  may change under you. Read the record before you write it.
 
 ## When it does not play
 

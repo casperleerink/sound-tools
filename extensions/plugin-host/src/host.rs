@@ -181,9 +181,10 @@ struct Hosted {
     /// What the load reported that stays true while the plugin plays, which a run of the
     /// behaviour that keeps the plugin reports again.
     notes: Vec<PluginProblem>,
-    /// Every parameter a host may set, by id, read from the plugin the first time a pin needs
-    /// them and again when the plugin says they changed. A plugin with no pins is never asked.
-    parameters: Option<BTreeMap<u32, Parameter>>,
+    /// Every parameter a host may set, by id, read from the plugin the first time a pin or the
+    /// card needs them and again when the plugin says they changed. Shared, so a card can keep
+    /// the list of a plugin with thousands of parameters without a copy per frame.
+    parameters: Option<Rc<BTreeMap<u32, Parameter>>>,
     /// Where each pin of the record that moves something stands between the record and the
     /// plugin.
     pins: BTreeMap<u32, PinState>,
@@ -294,11 +295,11 @@ impl Hosted {
     }
 
     /// Every parameter a host may set, read from the plugin the first time it is asked.
-    fn parameters(&mut self) -> &BTreeMap<u32, Parameter> {
+    fn parameters(&mut self) -> &Rc<BTreeMap<u32, Parameter>> {
         let Self {
             parameters, plugin, ..
         } = self;
-        parameters.get_or_insert_with(|| listed(plugin.as_mut()))
+        parameters.get_or_insert_with(|| Rc::new(listed(plugin.as_mut())))
     }
 
     /// What a run of the behaviour reports: the notes of the load, and every pin of `record`
@@ -820,6 +821,25 @@ impl Plugins {
             value,
             text: plugin.text(parameter, value),
         })
+    }
+
+    /// Every parameter a host may set of this record's plugin, by id. `None` when no plugin is
+    /// loaded for the record. The same list until the plugin says its parameters changed, so a
+    /// card can tell a new list by its pointer.
+    ///
+    /// The first call asks the plugin, so it belongs to the main thread and not to drawing a
+    /// frame. It gives up rather than wait for a table that a plugin's own call has borrowed.
+    pub fn parameters(&self, id: &InstanceId) -> Option<Rc<BTreeMap<u32, Parameter>>> {
+        let mut table = self.0.table.try_borrow_mut().ok()?;
+        Some(table.loaded.get_mut(id)?.parameters().clone())
+    }
+
+    /// The plugin's own text for `value` of the parameter `parameter`, such as `1.2 kHz`, which
+    /// a card shows under the control of a pin. `None` when no plugin is loaded for the record or
+    /// the plugin gives no text. It calls into the plugin, as [`Self::parameter_value`].
+    pub fn parameter_text(&self, id: &InstanceId, parameter: u32, value: f64) -> Option<String> {
+        let mut table = self.0.table.try_borrow_mut().ok()?;
+        table.loaded.get_mut(id)?.plugin.text(parameter, value)
     }
 
     /// Loads the plugin the record names and gives it to the caller for the engine.
@@ -1648,7 +1668,7 @@ impl Plugins {
                 && let Some(id) = id
                 && hosted.parameters.is_some()
             {
-                let parameters = Some(listed(hosted.plugin.as_mut()));
+                let parameters = Some(Rc::new(listed(hosted.plugin.as_mut())));
                 if parameters != hosted.parameters {
                     hosted.parameters = parameters;
                     self.retry(id);
