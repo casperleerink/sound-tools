@@ -304,7 +304,13 @@ fn apply(
     state: &PluginRecord,
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
-    let node = context.processor(PROCESSOR, HostedPlugin::silent)?;
+    // A processor made in this run has no plugin, whatever the host holds for the record: the
+    // record came back, by an undo of its delete, before the host let go of its plugin.
+    let mut made = false;
+    let node = context.processor(PROCESSOR, || {
+        made = true;
+        HostedPlugin::silent()
+    })?;
     context.input(NOTES_INPUT, InputEndpoint::new(node, HostedPlugin::NOTES));
     // Every hosted plugin has all three ports, whatever the plugin is: one record serves an
     // instrument slot and an effect slot, and this extension knows about neither. An
@@ -312,12 +318,15 @@ fn apply(
     context.input(AUDIO_INPUT, InputEndpoint::new(node, HostedPlugin::INPUT));
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(node, HostedPlugin::AUDIO));
     let config = context.prepare_config();
-    match plugins.open(context.id(), state, context.assets(), config) {
+    match plugins.open(context.id(), state, context.assets(), config, !made) {
         Ok(opened) => {
-            // Every run hands the engine what the host opened. Nothing here asks what the
+            // A run that loaded a plugin hands it to the engine. Nothing here asks what the
             // engine already has, so an edit the project rejects leaves the engine and this
             // host as they were. A host that only lists opens nothing, and the slot is silent.
-            context.update(node, opened.started)?;
+            // A run that only changed pins hands nothing: the engine keeps its plugin.
+            if let host::ForEngine::Play(started) = opened.engine {
+                context.update(node, started)?;
+            }
             for note in opened.notes {
                 context.problem(note.to_string());
             }

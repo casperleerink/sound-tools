@@ -31,11 +31,11 @@ use vst3::{ComPtr, ComWrapper};
 use super::context::{Handler, HostContext, as_handler, as_unknown};
 use super::module::Module;
 use super::parameters;
-use super::process::{ControlTargets, ParameterChange, Vst3Processor, process_mode};
+use super::process::{ControlTargets, Vst3Processor, process_mode};
 use super::stream::{MemoryStream, as_stream};
 use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
-use crate::backend::{LoadedPlugin, Opening, PluginGui, Requests};
+use crate::backend::{Hand, LoadedPlugin, Opening, ParameterChange, PluginGui, Requests};
 use crate::parameters::Parameter;
 use crate::processor::{Control, Started};
 use crate::scan::ScannedPlugin;
@@ -390,9 +390,8 @@ impl LoadedPlugin for Vst3Plugin {
         self.take_reports();
         // `kParamIDMappingChanged`: the plugin has other parameters now. They are listed again
         // before any values are compared, so a parameter that is new is compared from here on.
-        if self.joined.handler.take_ids_changed()
-            && let Some(controller) = &self.joined.controller
-        {
+        let ids_changed = self.joined.handler.take_ids_changed();
+        if ids_changed && let Some(controller) = &self.joined.controller {
             self.values = parameter_values(controller, &self.values);
         }
         if self.joined.handler.take_values_changed() {
@@ -451,6 +450,7 @@ impl LoadedPlugin for Vst3Plugin {
             // counterpart here, so this is always false.
             window_closed: false,
             window_size: self.gui.as_ref().and_then(Vst3Gui::take_wanted_size),
+            parameters_changed: ids_changed | self.joined.handler.take_titles_changed(),
         }
     }
 
@@ -501,6 +501,39 @@ impl LoadedPlugin for Vst3Plugin {
         let controller = self.joined.controller.as_ref()?;
         // SAFETY: the controller came from the plugin and is alive.
         unsafe { parameters::text(controller, id, value) }
+    }
+
+    fn parameters(&mut self) -> Vec<Parameter> {
+        match &self.joined.controller {
+            // SAFETY: the controller came from the plugin and is alive.
+            Some(controller) => unsafe { parameters::of_controller(controller) },
+            None => Vec::new(),
+        }
+    }
+
+    /// The way an edit of the plugin's own window goes, from the other end: the controller is
+    /// told at once, so the two halves agree and what the controller says is the value as the
+    /// plugin took it, and the processor gets it in the parameter changes of a block.
+    fn send(&mut self, change: ParameterChange) {
+        self.values.insert(change.id, change.value);
+        if let Some(controller) = &self.joined.controller {
+            // SAFETY: the controller came from the plugin and is alive.
+            unsafe { controller.setParamNormalized(change.id, change.value) };
+        }
+        // An audio side that has gone takes nothing, and what does not fit waits with the
+        // edits of the window for the next poll.
+        if self.edited.is_abandoned() || self.edited.push(change).is_err() {
+            self.joined.handler.keep_edit(change);
+        }
+    }
+
+    /// The controller holds every value the moment it is sent, so there is nothing to wait for.
+    fn sent_values_played(&mut self) -> bool {
+        true
+    }
+
+    fn hand(&mut self) -> Hand {
+        self.joined.handler.take_hand()
     }
 
     fn released(&mut self) -> bool {

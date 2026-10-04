@@ -71,7 +71,7 @@ const SUSTAIN: ParamID = 1;
 /// and nowhere else. It is what the plugin's controller edits through the host, so a host that
 /// does not carry an edit from the controller to the processor plays this plugin at full level
 /// whatever the composer does in its window. Saved in the component's state.
-const LEVEL: ParamID = 2;
+pub const LEVEL: ParamID = 2;
 
 /// What the effect half adds to every sample. The processor reports it when it learns one, the
 /// way it reports the transpose, because VST 3 has no `mark_dirty`: a reported parameter is how

@@ -12,6 +12,7 @@ use gpui::Keystroke;
 use sound_core::PrepareConfig;
 
 use crate::PluginProblem;
+use crate::parameters::Parameter;
 use crate::processor::Started;
 use crate::window::WindowSize;
 
@@ -33,6 +34,21 @@ pub(crate) trait LoadedPlugin {
 
     /// The plugin's own text for `value` of the parameter `id`, such as `1.2 kHz`.
     fn text(&mut self, id: u32, value: f64) -> Option<String>;
+
+    /// Every parameter a host may set, as the plugin lists them now.
+    fn parameters(&mut self) -> Vec<Parameter>;
+
+    /// Sends a value to a parameter. It reaches the processor at the start of a block, and
+    /// whatever does not fit on the way waits here for the next poll, so the last value sent
+    /// always arrives.
+    fn send(&mut self, change: ParameterChange);
+
+    /// Whether every value sent has been played by the processor, so that what [`Self::value`]
+    /// says now is the plugin's own and not a value still on its way.
+    fn sent_values_played(&mut self) -> bool;
+
+    /// Where the composer's hand is in the plugin's own window, since the last call.
+    fn hand(&mut self) -> Hand;
 
     /// Lets the plugin go, when the engine has given its audio side back. `false` says it has
     /// not, and the caller keeps the plugin and asks again at the next poll. Dropping a plugin
@@ -73,6 +89,30 @@ pub(crate) struct Requests {
     pub window_closed: bool,
     /// A size the plugin asked its window to be.
     pub window_size: Option<WindowSize>,
+    /// The plugin changed which parameters it has, or what they are called, so the host reads
+    /// the list again: CLAP's `rescan`, VST 3's `kParamIDMappingChanged` and
+    /// `kParamTitlesChanged`.
+    pub parameters_changed: bool,
+}
+
+/// One value of one parameter, on its way into a plugin's processor or out of it, in the
+/// format's own units.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct ParameterChange {
+    pub id: u32,
+    pub value: f64,
+}
+
+/// Where the composer's hand is in a plugin's own window, as far as the format says.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Hand {
+    /// On a knob: VST 3's `beginEdit` without its `endEdit` yet.
+    Held,
+    /// It let go since the host last asked: VST 3's `endEdit`.
+    LetGo,
+    /// The plugin says nothing about it, which a CLAP plugin never does to this host, and a
+    /// plugin that moves a parameter by itself does not either.
+    Unknown,
 }
 
 /// What a plugin's own window needs from the plugin. One window of the application holds one

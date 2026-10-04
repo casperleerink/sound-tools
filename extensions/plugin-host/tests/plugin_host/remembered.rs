@@ -96,9 +96,9 @@ fn every_file(folder: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 
 /// The project closed and opened again, as quitting and starting do: every window taken down
 /// by the host, the project closed, and a new host on the same folder and the same machine.
-fn close_and_open_again(harness: Harness, machine: &Path, cx: &mut TestAppContext) -> Harness {
+fn close_and_open_again(mut harness: Harness, machine: &Path, cx: &mut TestAppContext) -> Harness {
     cx.update(|cx| harness.plugins.close_all_windows(cx));
-    let problems = harness.plugins.close(&harness.project);
+    let problems = harness.plugins.close(&mut harness.project);
     assert!(problems.is_empty(), "{problems:?}");
     let Harness {
         project,
@@ -266,7 +266,7 @@ fn a_read_only_project_keeps_no_window(cx: &mut TestAppContext) {
     cx.update(|cx| harness.plugins.open_window(&id(SLOT), cx))
         .unwrap();
     cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
-    harness.plugins.close(&harness.project);
+    harness.plugins.close(&mut harness.project);
     assert!(!machine.join(STORE).exists());
 }
 

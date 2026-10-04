@@ -587,8 +587,12 @@ pub fn tick(
     // A plugin that is started again is handed to the engine. After the poll, which is what
     // notes that it asked.
     problems.extend(plugins.send_restarts(project));
-    // Records that were waiting for a plugin the scan had not reached, and plugins that asked
-    // to be loaded again. After the poll too.
+    // The pins of the plugin records, both ways: what a record changed goes to its plugin, and
+    // what a plugin changed itself goes to its record. After the poll, which is where a plugin
+    // that changed which parameters it has says so.
+    errors.extend(plugins.follow_pins(project));
+    // Records that were waiting for a plugin the scan had not reached, plugins that asked to be
+    // loaded again, and plugins whose parameters changed. After the poll too.
     errors.extend(rebind(project, &plugins.take_retries()));
     (problems, errors)
 }

@@ -71,7 +71,7 @@ fn the_state_saved_after_an_edit_holds_what_the_edit_left() {
     let mut harness = Harness::new();
     harness.add_track(record(PluginFormat::Vst3, "piano"), one_note());
     let edited = level_of(&mut harness);
-    harness.plugins.close(&harness.project);
+    harness.plugins.close(&mut harness.project);
 
     let bytes = harness
         .project

@@ -22,15 +22,21 @@ use vst3::Steinberg::{int32, kInvalidArgument, kResultFalse, kResultOk, tresult}
 use vst3::{Class, ComPtr, ComWrapper};
 
 use super::context::Handler;
+use crate::backend::ParameterChange;
 use crate::processor::{
     Control, EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours,
 };
 
-/// How many parameters one block may carry, in each direction. Going in, they are the pedal,
-/// the wheels, the key pressure and the composer's edits in the plugin's own window; an edit
-/// that does not fit waits for the next block. Coming out, a plugin that reports more than
-/// this while it plays loses the rest until the next block.
-const PARAMETER_CAPACITY: usize = 64;
+/// How many parameters one block may carry, in each direction. Going in, they are the pins of
+/// the record, the pedal, the wheels, the key pressure and the composer's edits in the plugin's
+/// own window, and all of them fit at once; an edit that does not fit waits for the next block.
+/// Coming out, a plugin that reports more than this while it plays loses the rest until the
+/// next block.
+const PARAMETER_CAPACITY: usize = sound_core::MAX_AUTOMATED + Control::REST.len() + WINDOW_EDITS;
+
+/// How many parameters of the plugin's own window one block carries next to everything else.
+/// A hand moves one knob at a time, so this is for a plugin that moves many with one.
+const WINDOW_EDITS: usize = 64;
 
 /// How many points one parameter may have in one block.
 const POINT_CAPACITY: usize = 32;
@@ -44,14 +50,6 @@ pub(super) const REPORT_CAPACITY: usize = 512;
 /// host's thread, by parameter, and goes at the next poll, so no parameter ever ends on a value
 /// the composer did not leave it on. See [`crate::vst3::context::Handler`].
 pub(super) const EDIT_CAPACITY: usize = 512;
-
-/// One parameter a plugin changed by itself while it played. The control thread gives it to
-/// the plugin's controller, which is how the two halves stay in step, and saves the state.
-#[derive(Copy, Clone, Debug)]
-pub(super) struct ParameterChange {
-    pub id: ParamID,
-    pub value: ParamValue,
-}
 
 /// The parameters the pedal, the wheels and the key pressure go to, one per [`Control`], shared
 /// by the two sides of a plugin. The control side looks them up again when the plugin moves

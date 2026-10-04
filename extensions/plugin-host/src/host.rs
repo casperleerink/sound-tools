@@ -11,9 +11,17 @@
 //! of a plugin's own changes, and anything a plugin changed without saying so.
 //!
 //! The table never decides what the engine gets. [`Plugins::open`] loads a plugin and hands it
-//! over every time it runs, and [`Plugins::poll`] lets go of every entry whose record no longer
-//! says what the entry holds. So an edit that the project rejects, which never reaches the
-//! engine, leaves nothing behind here either.
+//! over every time its record names another plugin or state file, and [`Plugins::poll`] lets
+//! go of every entry whose record no longer says what the entry holds. So an edit that the
+//! project rejects, which never reaches the engine, leaves nothing behind here either. A record
+//! whose pins are all that changed keeps its plugin: [`Plugins::follow_pins`] sends the pins as
+//! the record has them at each poll, so a rejected edit is never sent.
+//!
+//! Pins go both ways in that one place. A pin the record changed is sent to the plugin. A pin
+//! the plugin changed itself is written to the record, as one undo step per turn of a knob. The
+//! host remembers what it last sent and read of each pin, so a value on its way to the plugin
+//! is not taken for a change of the plugin's, and a value the plugin rounds as it takes it is
+//! not written back.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,12 +31,14 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use gpui::{Keystroke, WindowHandle, WindowId};
-use sound_core::{AssetName, Assets, InstanceId, PrepareConfig, Project};
+use sound_core::{
+    AssetName, Assets, InstanceId, PrepareConfig, Project, ProjectEdit as Edit, ProjectError,
+};
 
 use crate::processor::{HostedPlugin, HostedUpdate};
 
-use crate::backend::{KeyDirection, LoadedPlugin};
-use crate::parameters::ParameterValue;
+use crate::backend::{Hand, KeyDirection, LoadedPlugin, ParameterChange};
+use crate::parameters::{Parameter, ParameterValue, pin_problem};
 use crate::placements::{PlacementStore, Placements};
 use crate::scan::{Scan, ScanCache, ScanCommand, ScannedPlugin, scan_folders};
 use crate::window::{
@@ -59,7 +69,7 @@ pub(crate) const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// no slots. What a missing plugin costs is the owner's rule, which for a track is that an
 /// instrument goes silent and an effect lets the sound through. An outside agent read the
 /// older wording, which spoke of the track, and called it a disagreement with the docs.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum PluginProblem {
     #[error(
         "this machine has no {format} plugin with the id {plugin_id:?}. The record is left as it is and nothing plays through it: a missing instrument is silent, a missing effect lets the sound through unchanged. Install the plugin, or correct `plugin_id`"
@@ -89,18 +99,51 @@ pub enum PluginProblem {
     WindowDidNotOpen { plugin_id: String, message: String },
     #[error("where the plugin windows are is not kept on this Mac: {message}")]
     WindowPlaces { message: String },
+    #[error(
+        "the plugin {plugin_id:?} has no parameter with the id {id} that a host may set, so `parameters.{id}` moves nothing. The rest of the record plays. `sound-tools --plugin-params` lists the ones it has"
+    )]
+    NoSuchParameter { plugin_id: String, id: u32 },
+    #[error("what a plugin changed of the parameters its record holds was not written: {message}")]
+    PinsNotWritten { message: String },
+    #[error(
+        "`parameters.{id}.value` is {value}, outside the range of {name:?} of the plugin {plugin_id:?}, {minimum} to {maximum}, so it moves nothing. The rest of the record plays"
+    )]
+    OutOfRange {
+        plugin_id: String,
+        id: u32,
+        name: String,
+        value: f64,
+        minimum: f64,
+        maximum: f64,
+    },
 }
 
-/// What [`Plugins::open`] gives back. The behaviour hands the engine whatever is here every
-/// time it runs, so nothing the engine has depends on what this table remembers.
-pub struct Opened {
-    /// The audio side of the plugin, or `None` from a host that loads none ([`Plugins::listing`]),
-    /// which is a slot that plays nothing and reports nothing.
-    pub started: Option<Box<dyn crate::processor::Started>>,
+/// What [`Plugins::open`] gives back.
+pub(crate) struct Opened {
+    pub engine: ForEngine,
     /// What to report about this record every time the behaviour runs, such as a plugin the
-    /// sustain pedal cannot reach. These are not failures: the plugin plays.
+    /// sustain pedal cannot reach, or a pin it has no parameter for. These are not failures:
+    /// the plugin plays.
     pub notes: Vec<PluginProblem>,
 }
+
+/// What the behaviour hands the engine.
+pub(crate) enum ForEngine {
+    /// Nothing: the engine plays on with the plugin it has, which is the one this table holds
+    /// for the record. Only the pins of the record changed, and the poll sends those.
+    Same,
+    /// The audio side of a plugin that was just loaded, or `None` from a host that loads none
+    /// ([`Plugins::listing`]), which is a slot that plays nothing and reports nothing.
+    Play(HostedUpdate),
+}
+
+/// How long the values a CLAP plugin changes by itself must be quiet before what it changed of
+/// the pins is one undo step. CLAP tells a host where a hand is only in the gesture events that
+/// come out of a block, which this host does not read, so a run of changes with no pause longer
+/// than this is taken as one turn of a knob: long enough for the pauses of a slow hand, short
+/// enough that two turns a composer means as two are two. VST 3 says where a hand lets go, and
+/// waits for this only for a parameter the plugin moves by itself.
+const QUIET: Duration = Duration::from_millis(500);
 
 /// One plugin this project holds, with the record it came from.
 ///
@@ -130,6 +173,69 @@ struct Hosted {
     config: PrepareConfig,
     /// Where a restart the plugin asked for stands, see [`Plugins::restarts`].
     restart: Restart,
+    /// The plugin asked to be loaded again, so the next run of its behaviour does not keep it.
+    reload: bool,
+    /// What the load reported that stays true while the plugin plays, which a run of the
+    /// behaviour that keeps the plugin reports again.
+    notes: Vec<PluginProblem>,
+    /// Every parameter a host may set, as the plugin listed them when it loaded or last said
+    /// they changed. The pins of the record are checked against these.
+    parameters: Vec<Parameter>,
+    /// Where each pin of the record that moves something stands between the record and the
+    /// plugin.
+    pins: BTreeMap<u32, PinState>,
+}
+
+/// A pin, as the host last sent it or read it.
+#[derive(Copy, Clone, Debug)]
+struct PinState {
+    /// The value of the record the plugin was sent, or the plugin's own value the record was
+    /// given. A record that holds another one was changed by someone else, and that is sent.
+    record: f64,
+    /// What the plugin said it was the last time it was asked. `None` from a send until the
+    /// plugin has played it: the first value read then is the plugin taking it, perhaps
+    /// rounded, and not a change of its own.
+    plugin: Option<f64>,
+}
+
+impl PinState {
+    fn sent(value: f64) -> Self {
+        Self {
+            record: value,
+            plugin: None,
+        }
+    }
+
+    /// What the plugin says now. `Some` when it moved the parameter itself, to a value the
+    /// record does not hold yet: that goes into the record.
+    fn read(&mut self, now: f64) -> Option<f64> {
+        let before = self.plugin.replace(now);
+        let moved = before.is_some_and(|before| !same(before, now)) && !same(now, self.record);
+        if moved {
+            self.record = now;
+        }
+        moved.then_some(now)
+    }
+}
+
+/// Two values bit for bit, so a value that is not a number counts as one value and not as a
+/// change at every poll.
+fn same(one: f64, other: f64) -> bool {
+    one.to_bits() == other.to_bits()
+}
+
+/// What one plugin changed of its pins itself since the last poll, and where the hand is.
+struct PinsMoved {
+    /// The name of the undo step and the new values, when it changed any.
+    values: Option<(String, Vec<(u32, f64)>)>,
+    hand: Hand,
+}
+
+/// What the plugin of one record changed of its pins, as one undo step that is still open.
+struct PinGesture {
+    edit: Edit,
+    /// When the plugin last changed one, for [`QUIET`].
+    changed: Instant,
 }
 
 /// A plugin that asked to be started again, which is how both formats let a latency change.
@@ -141,9 +247,31 @@ enum Restart {
     /// The engine was told to give the audio side back. The first poll that finds it back
     /// starts the plugin again and hands it over.
     Waiting,
+    /// It did not start again, and plays nothing until its record changes, which loads it.
+    Failed,
 }
 
 impl Hosted {
+    /// Whether a run of the behaviour with `record` may keep this plugin as it plays: the
+    /// same plugin, state file and set-up, and nothing asked for a load since.
+    fn keeps(&self, record: &PluginRecord, config: PrepareConfig) -> bool {
+        self.format == record.format
+            && self.plugin_id == record.plugin_id
+            && self.asset == record.asset()
+            && self.config == config
+            && self.restart == Restart::Idle
+            && !self.reload
+    }
+
+    /// What a run of the behaviour reports: the notes of the load, and every pin of `record`
+    /// that moves nothing.
+    fn notes(&self, record: &PluginRecord) -> Vec<PluginProblem> {
+        let pins = record.parameters.iter();
+        let problems =
+            pins.filter_map(|(id, pin)| pin_problem(&self.plugin_id, &self.parameters, *id, pin));
+        self.notes.iter().cloned().chain(problems).collect()
+    }
+
     /// Whether the record of `id` in the project still says what this entry holds.
     fn matches(&self, project: &Project, id: &InstanceId) -> bool {
         let Some(instance) = project.resolve::<PluginRecord>(id) else {
@@ -253,6 +381,9 @@ struct Inner {
     /// Where this machine keeps the plugin windows of every project, next to the scan cache.
     placement_store: PlacementStore,
     table: RefCell<Table>,
+    /// What each plugin is changing of its pins, by record, see [`Plugins::follow_pins`]. Kept
+    /// out of the table, which a behaviour that a write of a record runs borrows.
+    gestures: RefCell<BTreeMap<InstanceId, PinGesture>>,
 }
 
 /// The last chance to free what a plugin holds for its window and to save its state. On macOS
@@ -377,6 +508,7 @@ impl Plugins {
             root: RefCell::new(None),
             placement_store,
             table: RefCell::new(Table::default()),
+            gestures: RefCell::new(BTreeMap::new()),
         }))
     }
 
@@ -582,26 +714,38 @@ impl Plugins {
 
     /// Loads the plugin the record names and gives it to the caller for the engine.
     ///
-    /// It loads every time. A behaviour runs when its own record changed, on opening the
-    /// project and on a retry, and every change a plugin record can have needs another plugin
-    /// or another state file, so there is nothing to keep. In return nothing here has to guess
-    /// what the engine holds: the caller hands over a plugin on every run, and an edit the
-    /// project rejects simply never reaches the engine.
+    /// It loads every time the record names another plugin, another state file, or the plugin
+    /// asked to be loaded again, and on every run whose processor is new, which is a record
+    /// that came back. Then nothing here has to guess what the engine holds: the caller hands
+    /// over a plugin, and an edit the project rejects simply never reaches the engine. A run
+    /// whose record changed only its pins keeps the plugin as it plays, when `processor_kept`
+    /// says the engine still has it: reloading a sampler for a turn of a knob would stop its
+    /// sound for seconds.
     ///
     /// Whatever this instance held goes first, saved and waiting to be let go of, so a failure
     /// below leaves no entry behind and the record and the engine agree: silence.
-    pub fn open(
+    pub(crate) fn open(
         &self,
         id: &InstanceId,
         record: &PluginRecord,
         assets: &Assets,
         config: PrepareConfig,
+        processor_kept: bool,
     ) -> Result<Opened, PluginProblem> {
         // Kept for the drop of this host, which is the last moment a plugin can be saved.
         *self.0.assets.borrow_mut() = Some(assets.clone());
         self.0.waiting.borrow_mut().remove(id);
         {
             let mut table = self.0.table.borrow_mut();
+            if let Some(hosted) = table.loaded.get(id)
+                && processor_kept
+                && hosted.keeps(record, config)
+            {
+                return Ok(Opened {
+                    engine: ForEngine::Same,
+                    notes: hosted.notes(record),
+                });
+            }
             if let Some(hosted) = table.loaded.remove(id) {
                 // The same plugin loading again, which is a reload or another state file, gets
                 // its window back where it was. Another plugin in the record does not get the
@@ -675,7 +819,7 @@ impl Plugins {
         // plugin itself would have said.
         if !self.0.loads {
             return Ok(Opened {
-                started: None,
+                engine: ForEngine::Play(None),
                 notes: Vec::new(),
             });
         }
@@ -689,25 +833,47 @@ impl Plugins {
             notes,
         } = opening;
         let has_window = plugin.gui().is_some_and(|gui| gui.is_offered());
-        self.0.table.borrow_mut().loaded.insert(
-            id.clone(),
-            Hosted {
-                format: record.format,
-                plugin_id: record.plugin_id.clone(),
-                asset: asset.clone(),
-                plugin,
-                last_saved: None,
-                pending_save: false,
-                has_window,
-                window: PluginWindow::default(),
-                config,
-                restart: Restart::Idle,
-            },
-        );
+        // The record wins over the state just loaded: every pin goes to the plugin now, ahead
+        // of its first block, so a render plays them from its first frame.
+        let parameters = plugin.parameters();
+        let mut pins = BTreeMap::new();
+        for (pin_id, pin) in &record.parameters {
+            if pin_problem(&record.plugin_id, &parameters, *pin_id, pin).is_none() {
+                let value = pin.value;
+                plugin.send(ParameterChange { id: *pin_id, value });
+                pins.insert(*pin_id, PinState::sent(value));
+            }
+        }
+        let hosted = Hosted {
+            format: record.format,
+            plugin_id: record.plugin_id.clone(),
+            asset: asset.clone(),
+            plugin,
+            last_saved: None,
+            pending_save: false,
+            has_window,
+            window: PluginWindow::default(),
+            config,
+            restart: Restart::Idle,
+            reload: false,
+            notes,
+            parameters,
+            pins,
+        };
+        let notes = hosted.notes(record);
+        self.0.table.borrow_mut().loaded.insert(id.clone(), hosted);
         Ok(Opened {
-            started: Some(started),
+            engine: ForEngine::Play(Some(started)),
             notes,
         })
+    }
+
+    /// Asks whoever polls to run the behaviour of `id` again, once.
+    fn retry(&self, id: &InstanceId) {
+        let mut retries = self.0.retries.borrow_mut();
+        if !retries.contains(id) {
+            retries.push(id.clone());
+        }
     }
 
     /// Records whose behaviour is worth running again: their plugin was not there when it ran
@@ -1063,9 +1229,18 @@ impl Plugins {
     ///
     /// Call it when the project closes. A plugin that changes its state without telling the
     /// host is saved here all the same. Nothing is written when the bytes are the ones already
-    /// in the project, so a session that changed nothing leaves no diff.
-    pub fn close(&self, project: &Project) -> Vec<PluginProblem> {
+    /// in the project, so a session that changed nothing leaves no diff. A turn of a knob that
+    /// is still open ends here, so its record is written too.
+    pub fn close(&self, project: &mut Project) -> Vec<PluginProblem> {
         let mut problems = Vec::new();
+        for gesture in std::mem::take(&mut *self.0.gestures.borrow_mut()).into_values() {
+            if let Err(error) = project.finish(gesture.edit) {
+                problems.push(PluginProblem::PinsNotWritten {
+                    message: error.to_string(),
+                });
+            }
+        }
+        let project = &*project;
         let mut table = self.0.table.borrow_mut();
         if self.0.writes_state
             && let Some(root) = self.0.root.borrow().as_deref()
@@ -1126,6 +1301,131 @@ impl Plugins {
         problems
     }
 
+    /// The pins of every plugin, both ways: what a record changed goes to its plugin, and what
+    /// a plugin changed itself goes to its record, one undo step for each turn of a knob. Call
+    /// it after [`Self::poll`], as often. It needs the project mutably for the second way only,
+    /// which is an edit like one of the window; a host of a project open read-only does
+    /// nothing of that.
+    pub fn follow_pins(&self, project: &mut Project) -> Vec<ProjectError> {
+        self.follow_pins_at(project, Instant::now())
+    }
+
+    /// [`Self::follow_pins`] with the time given, so a test can move it past [`QUIET`].
+    pub fn follow_pins_at(&self, project: &mut Project, now: Instant) -> Vec<ProjectError> {
+        // One: with the table borrowed, every pin a record changed goes to its plugin, and
+        // what each plugin changed itself is read. No record is written here: a write runs the
+        // behaviour of the record, which asks this table.
+        let mut moved = Vec::new();
+        {
+            let mut table = self.0.table.borrow_mut();
+            for (id, hosted) in &mut table.loaded {
+                // An entry whose record is gone or names another plugin is the poll's to let go.
+                let Some(record) = project
+                    .resolve::<PluginRecord>(id)
+                    .and_then(|instance| project.state(&instance))
+                    .filter(|_| hosted.matches(project, id))
+                else {
+                    continue;
+                };
+                moved.push((id.clone(), self.follow(hosted, record)));
+            }
+        }
+        // Two: what the plugins changed goes into their records, and a turn of a knob that is
+        // over ends its undo step. Gestures are taken out while records are written, because a
+        // write runs a behaviour, and put back after.
+        let mut gestures = std::mem::take(&mut *self.0.gestures.borrow_mut());
+        let mut errors = Vec::new();
+        for (id, change) in &moved {
+            if let Some((label, values)) = &change.values
+                && let Some(instance) = project.resolve::<PluginRecord>(id)
+            {
+                let gesture = gestures.entry(id.clone()).or_insert_with(|| PinGesture {
+                    edit: project.begin(label),
+                    changed: now,
+                });
+                gesture.changed = now;
+                let written = project.update(&mut gesture.edit, &instance, |record| {
+                    for (pin_id, value) in values {
+                        if let Some(pin) = record.parameters.get_mut(pin_id) {
+                            pin.value = *value;
+                        }
+                    }
+                });
+                errors.extend(written.err());
+            }
+        }
+        // A gesture ends when the plugin says the hand let go, or after [`QUIET`] when it
+        // cannot say, and with its plugin: a record that went or names another plugin.
+        let hands: BTreeMap<&InstanceId, Hand> =
+            moved.iter().map(|(id, change)| (id, change.hand)).collect();
+        let (ended, open): (BTreeMap<_, _>, BTreeMap<_, _>) =
+            gestures
+                .into_iter()
+                .partition(|(id, gesture)| match hands.get(id) {
+                    None => true,
+                    Some(Hand::Held) => false,
+                    Some(Hand::LetGo) => true,
+                    Some(Hand::Unknown) => now.saturating_duration_since(gesture.changed) >= QUIET,
+                });
+        *self.0.gestures.borrow_mut() = open;
+        for gesture in ended.into_values() {
+            errors.extend(project.finish(gesture.edit).err());
+        }
+        errors
+    }
+
+    /// Both ways of the pins of one plugin, with the table borrowed. Gives what the plugin
+    /// changed itself, and where the hand is.
+    fn follow(&self, hosted: &mut Hosted, record: &PluginRecord) -> PinsMoved {
+        let Hosted {
+            plugin,
+            pins,
+            parameters,
+            plugin_id,
+            ..
+        } = hosted;
+        // The record to the plugin: a pin that is new, or whose value is not the one the host
+        // last sent or wrote, was changed by someone else. A pin that moves nothing is not
+        // sent and not followed; the behaviour reports it.
+        pins.retain(|pin_id, _| record.parameters.contains_key(pin_id));
+        for (pin_id, pin) in &record.parameters {
+            if pin_problem(plugin_id, parameters, *pin_id, pin).is_some() {
+                pins.remove(pin_id);
+                continue;
+            }
+            if !pins
+                .get(pin_id)
+                .is_some_and(|state| same(state.record, pin.value))
+            {
+                let value = pin.value;
+                plugin.send(ParameterChange { id: *pin_id, value });
+                pins.insert(*pin_id, PinState::sent(value));
+            }
+        }
+        let hand = plugin.hand();
+        // The plugin to the record, once every value sent is in what the plugin says. A
+        // project open read-only writes nothing, so its host reads nothing either.
+        let mut values = Vec::new();
+        if self.0.writes_state && plugin.sent_values_played() {
+            for (pin_id, state) in pins.iter_mut() {
+                if let Some(now) = plugin.value(*pin_id)
+                    && let Some(moved) = state.read(now)
+                {
+                    values.push((*pin_id, moved));
+                }
+            }
+        }
+        // The undo step is named after the first pin of a turn.
+        let label = values.first().map(|(pin_id, _)| {
+            let name = record.parameters.get(pin_id).map(|pin| pin.name.as_str());
+            format!("Change {}", name.unwrap_or(plugin_id))
+        });
+        PinsMoved {
+            values: label.map(|label| (label, values)),
+            hand,
+        }
+    }
+
     /// A plugin that asked to be started again goes in two steps, one poll or more apart.
     /// First the engine is told to give its audio side back, which stops it on the audio
     /// thread. Once the engine has, the plugin is deactivated, activated again and handed back
@@ -1142,7 +1442,7 @@ impl Plugins {
         let mut updates = Vec::new();
         for (id, hosted) in &mut table.loaded {
             match hosted.restart {
-                Restart::Idle => {}
+                Restart::Idle | Restart::Failed => {}
                 Restart::Asked => {
                     hosted.restart = Restart::Waiting;
                     updates.push((id.clone(), hosted.plugin_id.clone(), None));
@@ -1150,14 +1450,13 @@ impl Plugins {
                 Restart::Waiting => match hosted.plugin.restart(hosted.config) {
                     // The engine has not given it back yet.
                     None => {}
-                    Some(started) => {
+                    Some(Ok(started)) => {
                         hosted.restart = Restart::Idle;
-                        match started {
-                            Ok(started) => {
-                                updates.push((id.clone(), hosted.plugin_id.clone(), Some(started)))
-                            }
-                            Err(problem) => problems.push(problem),
-                        }
+                        updates.push((id.clone(), hosted.plugin_id.clone(), Some(started)));
+                    }
+                    Some(Err(problem)) => {
+                        hosted.restart = Restart::Failed;
+                        problems.push(problem);
                     }
                 },
             }
@@ -1243,7 +1542,7 @@ impl Plugins {
             // A plugin that asks to be deactivated and activated again, which is how its
             // latency changes. A retired plugin is marked as well, but only loaded ones are
             // started again, see `Self::restarts`.
-            if requests.restart && hosted.restart == Restart::Idle {
+            if requests.restart && matches!(hosted.restart, Restart::Idle | Restart::Failed) {
                 hosted.restart = Restart::Asked;
             }
             // A plugin that asks to be unloaded and loaded again gets exactly what a record
@@ -1253,9 +1552,19 @@ impl Plugins {
             if requests.reload
                 && let Some(id) = id
             {
-                let mut retries = self.0.retries.borrow_mut();
-                if !retries.contains(id) {
-                    retries.push(id.clone());
+                hosted.reload = true;
+                self.retry(id);
+            }
+            // The plugin has other parameters, or other names for them. The pins of the record
+            // are checked again, by a run of its behaviour that keeps the plugin: that is where
+            // what a pin cannot move is reported.
+            if requests.parameters_changed
+                && let Some(id) = id
+            {
+                let parameters = hosted.plugin.parameters();
+                if parameters != hosted.parameters {
+                    hosted.parameters = parameters;
+                    self.retry(id);
                 }
             }
             // The plugin now maps its sustain pedal to nothing, so the pedal stops reaching

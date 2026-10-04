@@ -188,7 +188,7 @@ fn run(folder: &Path) -> Result<()> {
         std::thread::sleep(Duration::from_millis(5));
     };
 
-    for problem in plugins.close(&project) {
+    for problem in plugins.close(&mut project) {
         println!("error: {problem}");
     }
     print_status(&mut project, &status);
