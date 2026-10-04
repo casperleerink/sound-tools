@@ -231,7 +231,6 @@ dependencies = [
  "sound-notes",
  "sound-ui",
  "tempfile",
- "thiserror 2.0.20",
 ]
 
 [[package]]

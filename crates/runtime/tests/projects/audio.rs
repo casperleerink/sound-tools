@@ -293,9 +293,12 @@ fn an_audio_track_and_a_file_from_outside_are_one_undo_step() {
     // The track does not exist yet, so the clip goes in the same group by the id it will have.
     harness.project.commit("Add audio track", changes).unwrap();
     let mut changes = Changes::new();
+    // What a drop of a file does: the copy is made at once, and the clip is the group.
+    let imported = sound_media::import(harness.project.assets(), &source).unwrap();
+    let name = imported.asset.asset_name().name().to_string();
+    let clip = AudioClip::new(imported.asset, Ticks(0));
     let clip =
-        arrangement::add_audio_file(&harness.project, &mut changes, &track, &source, Ticks(0))
-            .unwrap();
+        arrangement::add_audio_clip(&harness.project, &mut changes, &track, &name, clip).unwrap();
     harness.project.commit("Add audio file", changes).unwrap();
     assert_eq!(
         clip.id(),
