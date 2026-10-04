@@ -123,7 +123,7 @@ use instrument::SynthState;
 use limiter::LimiterState;
 use limiter::view::LimiterView;
 use midi::Played;
-use plugin_host::{PluginFormat, PluginRecord};
+use plugin_host::{PluginFormat, PluginRecord, WeakPlugins};
 use reverb::ReverbState;
 use reverb::view::ReverbView;
 use runtime::window::Shell;
@@ -174,6 +174,7 @@ const WINDOW_HEIGHT: f32 = 920.;
 struct Opened {
     _folder: TempDir,
     engine: Engine,
+    plugins: WeakPlugins,
     session: Entity<Session>,
     window: WindowHandle<Shell>,
 }
@@ -233,6 +234,7 @@ impl Opened {
         Ok(Self {
             _folder: folder,
             engine,
+            plugins,
             session,
             window,
         })
@@ -296,6 +298,7 @@ impl Opened {
         Ok(Self {
             _folder: folder,
             engine,
+            plugins,
             session,
             window,
         })
@@ -305,9 +308,11 @@ impl Opened {
     /// timer do in the real window. Returns how long the poll and the frame it caused took:
     /// with test support GPUI draws a window as soon as an update leaves it dirty.
     fn advance(&mut self, frames: usize, cx: &mut HeadlessAppContext) -> Duration {
-        // What the poll of the window does for the sounds of the Drum pads.
+        // What the poll of the window does for the background work of the extensions.
         drum_pad::wait_for_sounds();
-        cx.update(|cx| runtime::window::take_drum_sounds(&self.session, cx));
+        if let Some(plugins) = self.plugins.upgrade() {
+            cx.update(|cx| runtime::window::tick(&self.session, &plugins, cx));
+        }
         let mut buffer = vec![0.0_f32; frames * OFFLINE.channels];
         self.engine.process_block(&mut buffer);
         let started = Instant::now();

@@ -26,7 +26,7 @@ use gpui::{
     WindowBounds, WindowOptions, actions, div, point, prelude::*, px, size,
 };
 use midi::{Latency, Lost};
-use plugin_host::WeakPlugins;
+use plugin_host::{Plugins, WeakPlugins};
 use sound_core::{
     Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, Project, ProjectEvent,
     StreamTiming,
@@ -774,30 +774,8 @@ impl Opened {
             }
         })
         .detach();
-        // The sounds of the Drum pads, made on a thread of their own: each Drum pad whose
-        // sounds are ready runs its behaviour again, which puts them in its kit. The same for
-        // a Sampler whose instrument was downloaded or loaded. It is not an edit. One look per session
-        // poll.
-        cx.spawn({
-            let session = session.downgrade();
-            async move |cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(sound_ui::POLL_INTERVAL)
-                        .await;
-                    let Some(session) = session.upgrade() else {
-                        break;
-                    };
-                    cx.update(|cx| {
-                        take_drum_sounds(&session, cx);
-                        take_sampler_instruments(&session, cx);
-                    });
-                }
-            }
-        })
-        .detach();
-        // The plugins of the project: the main-thread callbacks they ask for, and the
-        // state they say changed, written into the project. One poll per session poll.
+        // The background work of the extensions: the sounds of the Drum pads, the instruments
+        // of the Samplers and the plugins of the project. One tick per session poll.
         cx.spawn({
             // Nothing strong is held: the plugins must go when the project goes, because
             // that is what saves the state of every one of them.
@@ -813,33 +791,13 @@ impl Opened {
                     else {
                         break;
                     };
-                    let mut problems =
-                        session.read_with(cx, |session, _| plugins.poll(session.project()));
-                    // A plugin that is started again is handed to the engine through the
-                    // one editing path, and only while one waits for it.
-                    if plugins.restarts_pending() {
-                        let sent = session.update(cx, |session, cx| {
-                            session.edit(cx, |project| Ok(plugins.send_restarts(project)))
-                        });
-                        problems.extend(sent.into_iter().flatten());
-                    }
-                    for problem in problems {
-                        session.update(cx, |session, cx| session.report(problem, cx));
-                    }
+                    cx.update(|cx| tick(&session, &plugins, cx));
                     // A bundle the scan could not read. It arrives while the scan runs, on
                     // its own thread, so it is taken here and not once before the window.
                     for notice in plugins.take_notices() {
                         let notice = format!("plugin scan: {notice}");
                         println!("{notice}");
                         session.update(cx, |session, cx| session.report(notice, cx));
-                    }
-                    // Records that were waiting for a plugin the scan had not reached,
-                    // and plugins that asked to be loaded again. Running their behaviour
-                    // again is what makes them play and takes their problem away. It is
-                    // not an edit and is never undone.
-                    let retries = plugins.take_retries();
-                    if !retries.is_empty() {
-                        session.update(cx, |session, cx| session.rebind(&retries, cx));
                     }
                     // The picker shows what is known and says so quietly while a scan
                     // runs, so a frame is drawn again while one does, and once more on
@@ -966,24 +924,17 @@ impl Opened {
     }
 }
 
-/// Runs the behaviour of every Sampler whose library instrument finished downloading, or whose
-/// instrument finished loading, so it plays it, or says why not. One look per session poll.
-pub fn take_sampler_instruments(session: &Entity<Session>, cx: &mut App) {
-    let ready = sampler::take_ready(session.read(cx).project().assets());
-    if !ready.is_empty() {
-        session.update(cx, |session, cx| session.rebind(&ready, cx));
-    }
-}
-
-/// Runs the behaviour of every Drum pad whose sounds were made since the last look, which puts
-/// them in its kit. The window does it once per session poll; a test calls it when it settles.
-pub fn take_drum_sounds(session: &Entity<Session>, cx: &mut App) {
-    let ready = drum_pad::take_ready(session.read(cx).project().assets());
-    if ready.is_empty() {
-        return;
-    }
-    let instances: Vec<InstanceId> = ready.iter().map(|(instance, _)| instance.clone()).collect();
-    session.update(cx, |session, cx| session.rebind(&instances, cx));
-    // The sounds are let go of here, now that the kits hold them.
-    drop(ready);
+/// One [`crate::tick`] on the project of the session, with what it could not do as the notice.
+/// It is not an edit. The window does it once per session poll; a test calls it when it
+/// settles.
+pub fn tick(session: &Entity<Session>, plugins: &Plugins, cx: &mut App) {
+    session.update(cx, |session, cx| {
+        let (problems, errors) = session.background(cx, |project| crate::tick(project, plugins));
+        for problem in problems {
+            session.report(problem, cx);
+        }
+        for error in errors {
+            session.report(error, cx);
+        }
+    });
 }
