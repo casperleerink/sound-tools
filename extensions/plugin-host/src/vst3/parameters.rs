@@ -39,8 +39,9 @@ pub(super) unsafe fn of_controller(controller: &ComPtr<IEditController>) -> Vec<
                 let step_count = info.stepCount as u32;
                 Steps::new(
                     step_count.saturating_add(1),
+                    0.0,
+                    1.0,
                     has(&info, ParameterFlags_::kIsList as int32),
-                    |index| f64::from(index) / f64::from(step_count),
                     |value| text(controller, info.id, value),
                 )
             });
