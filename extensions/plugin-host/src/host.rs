@@ -239,6 +239,19 @@ struct PinGesture {
     edit: Edit,
     /// When the plugin last changed one, for [`QUIET`].
     changed: Instant,
+    /// The record as the turn last wrote it. A record that is not this any more was written
+    /// by someone else since: deleted, given another plugin, an undo, or another pin. That
+    /// write is the last, and its step already starts from before the turn, so the turn ends
+    /// with no step of its own: finishing it would be a second step for the same change, and
+    /// cancelling it would undo the newer write.
+    written: Option<PluginRecord>,
+}
+
+impl PinGesture {
+    /// Whether someone else wrote the record since the turn last did.
+    fn overtaken(&self, project: &Project, id: &InstanceId) -> bool {
+        record_of(project, id) != self.written.as_ref()
+    }
 }
 
 impl PinGesture {
@@ -1425,7 +1438,13 @@ impl Plugins {
         // Two: what the plugins changed goes into their records, and a turn of a knob that is
         // over ends its undo step. Gestures are taken out while records are written, because a
         // write runs a behaviour, and put back after.
-        let mut gestures = std::mem::take(&mut *self.0.gestures.borrow_mut());
+        let gestures = std::mem::take(&mut *self.0.gestures.borrow_mut());
+        let (overtaken, mut gestures): (BTreeMap<_, _>, BTreeMap<_, _>) = gestures
+            .into_iter()
+            .partition(|(id, gesture)| gesture.overtaken(project, id));
+        for gesture in overtaken.into_values() {
+            project.abandon(gesture.edit);
+        }
         let mut errors = Vec::new();
         for (id, moved) in &moved {
             let Some(first) = moved.changes.first() else {
@@ -1437,6 +1456,7 @@ impl Plugins {
             let gesture = gestures.entry(id.clone()).or_insert_with(|| PinGesture {
                 edit: project.begin(&turn_label(project.state(&instance), first.id)),
                 changed: now,
+                written: None,
             });
             gesture.changed = now;
             let written = project.update(&mut gesture.edit, &instance, |record| {
@@ -1446,8 +1466,11 @@ impl Plugins {
                     }
                 }
             });
+            gesture.written = record_of(project, id).cloned();
             errors.extend(written.err());
         }
+        // A turn ends when the plugin says the hand let go, or else by time. One whose plugin
+        // went with its record unchanged, as a load that failed, ends as it stands.
         let hands: BTreeMap<&InstanceId, Hand> =
             moved.iter().map(|(id, moved)| (id, moved.hand)).collect();
         let mut open = BTreeMap::new();
@@ -1456,12 +1479,7 @@ impl Plugins {
                 Some(hand) if !gesture.is_over(*hand, now) => {
                     open.insert(id, gesture);
                 }
-                Some(_) => errors.extend(project.finish(gesture.edit).err()),
-                // Its record went, or names another plugin: that edit is the last write and
-                // its step already starts from before the turn, so the turn makes no step of
-                // its own. Finishing would be a second step for one delete, and cancelling
-                // would bring the record back.
-                None => project.abandon(gesture.edit),
+                _ => errors.extend(project.finish(gesture.edit).err()),
             }
         }
         *self.0.gestures.borrow_mut() = open;
@@ -1473,10 +1491,14 @@ impl Plugins {
     /// and the window as its session goes.
     pub fn end_turns(&self, project: &mut Project) -> Vec<ProjectError> {
         let gestures = std::mem::take(&mut *self.0.gestures.borrow_mut());
-        let finished = gestures
-            .into_values()
-            .map(|gesture| project.finish(gesture.edit));
-        finished.filter_map(Result::err).collect()
+        let mut errors = Vec::new();
+        for (id, gesture) in gestures {
+            match gesture.overtaken(project, &id) {
+                true => project.abandon(gesture.edit),
+                false => errors.extend(project.finish(gesture.edit).err()),
+            }
+        }
+        errors
     }
 
     /// A plugin that asked to be started again goes in two steps, one poll or more apart.

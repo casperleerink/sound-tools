@@ -496,6 +496,65 @@ fn a_turn_whose_record_is_deleted_ends_and_the_delete_is_the_one_step() {
     }
 }
 
+/// Another pin of the record is written while the plugin turns `Level`. That write is the one
+/// step that covers what happened before it, the turn so far included, and the turn makes no
+/// second one when it rests. A later move of the plugin is a step of its own.
+#[test]
+fn a_write_of_the_record_during_a_turn_is_one_step_and_the_moves_after_it_another() {
+    for format in FORMATS {
+        tell_the_plugin(None, None);
+        let wave = match format {
+            PluginFormat::Clap => test_clap_plugin::WAVE,
+            PluginFormat::Vst3 => test_vst3_plugin::WAVE,
+        };
+        let mut record = pinned(format, 1.0);
+        record.parameters.insert(wave, pin("Wave", 0.0));
+        let played = vec![
+            on(0, 60, 100),
+            on(1024, LEVEL_KEY, 64),
+            on(12288, LEVEL_KEY, 32),
+        ];
+        let mut harness = Harness::new();
+        harness.add_track(record, played);
+        harness.project.engine().play();
+        let start = Instant::now();
+        steps(&mut harness, 0..4, start);
+        // Mid-turn: the plugin moved `Level` to a half and has not rested.
+        let mut written = record_of(&harness);
+        written.parameters.get_mut(&wave).expect("the pin").value = 1.0;
+        let mut changes = Changes::new();
+        changes.set(&instrument(&harness), written);
+        harness.project.commit("Set wave", changes).unwrap();
+        steps(&mut harness, 4..40, start);
+        assert_eq!(written_value(&harness, level(format)), 0.25, "{format:?}");
+
+        let undo = |harness: &mut Harness| {
+            let label = harness.project.undo().unwrap();
+            let record = record_of(harness);
+            let values = (
+                record.parameters[&level(format)].value,
+                record.parameters[&wave].value,
+            );
+            (label, values)
+        };
+        assert_eq!(
+            undo(&mut harness),
+            (Some("Change Level".to_string()), (0.5, 1.0)),
+            "{format:?}"
+        );
+        assert_eq!(
+            undo(&mut harness),
+            (Some("Set wave".to_string()), (1.0, 0.0)),
+            "{format:?}"
+        );
+        assert_eq!(
+            harness.project.undo_label(),
+            Some("Add track"),
+            "{format:?}"
+        );
+    }
+}
+
 /// More values than the ring of a CLAP plugin holds, sent before it plays a block. The newest
 /// waits on the main thread and arrives a block later: the plugin ends on the last value.
 #[test]
