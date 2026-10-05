@@ -15,6 +15,10 @@ try {
     New-Item -ItemType Directory -Force -Path $folder | Out-Null
     # Windows cannot overwrite a running program but can rename it, so a running Sound Tools
     # does not stop the update. The app removes the old one at its next start.
+    # The copy goes next to it first, so a copy that stops halfway leaves the old program whole.
+    # The swap is then two renames.
+    $new = "$program.new"
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'sound-tools.exe') -Destination $new -Force
     if (Test-Path -LiteralPath $old) {
         Remove-Item -LiteralPath $old -Force
     }
@@ -22,7 +26,7 @@ try {
         Move-Item -LiteralPath $program -Destination $old
     }
     try {
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'sound-tools.exe') -Destination $program
+        Move-Item -LiteralPath $new -Destination $program
     } catch {
         if (Test-Path -LiteralPath $old) {
             Move-Item -LiteralPath $old -Destination $program
