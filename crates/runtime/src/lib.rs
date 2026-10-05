@@ -53,7 +53,7 @@ sound-tools . --inspect
 sound-tools . --render <wav>
 ```
 
-`sound-tools` is the command line tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu, or skip this step: `problems.txt` tells you whether your files loaded.",
+`sound-tools` is the command line tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu (on Windows the installer puts it there), or skip this step: `problems.txt` tells you whether your files loaded.",
 };
 
 /// The plugin host of one session: it scans this machine, keeps the plugins a project loads

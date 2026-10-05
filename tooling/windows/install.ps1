@@ -1,6 +1,7 @@
 # Installs Sound Tools for this user, in %LOCALAPPDATA%\Programs\Sound Tools, with a Start menu
 # entry. Run it from the folder of the zip: right-click it, Run with PowerShell. Run it again to
-# update. To remove Sound Tools, delete the two paths it prints.
+# update. It also adds the folder to your PATH, for the sound-tools command. To remove Sound
+# Tools, delete the two paths it prints and take the folder off your PATH.
 #
 # Plain ASCII only: Windows PowerShell reads a file without a byte order mark as ANSI.
 $ErrorActionPreference = 'Stop'
@@ -33,6 +34,14 @@ try {
     $link.TargetPath = $program
     $link.WorkingDirectory = $folder
     $link.Save()
+
+    # The sound-tools command for terminals and agents, as install.sh puts it in ~/.local/bin.
+    # A new terminal sees it; one open already does not.
+    $path = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $entries = @($path -split ';' | Where-Object { $_ })
+    if ($entries -notcontains $folder) {
+        [Environment]::SetEnvironmentVariable('Path', (($entries + $folder) -join ';'), 'User')
+    }
 
     Write-Output 'Installed Sound Tools:'
     Write-Output "  $folder"
