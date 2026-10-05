@@ -13,7 +13,8 @@ use sound_core::Changes;
 use crate::pins::{
     is_near, level, one_note, pin, pinned, pinned_value, plugin_value, written_value,
 };
-use crate::support::{FORMATS, Harness, Rack, id, peak, tell_the_plugin};
+use crate::support::{FORMATS, Harness, Played, Rack, id, peak, tell_the_plugin};
+use test_plugin_support::EDIT_LEVEL_KEY;
 
 /// The name a lane gives the `Level` of the test plugin of `format`.
 fn level_lane(format: PluginFormat) -> String {
@@ -119,6 +120,42 @@ fn a_lane_that_comes_and_goes_between_two_polls_is_not_written() {
             "{format:?}"
         );
     }
+}
+
+/// The composer turns `Level` in the VST 3 plugin's own window right after its lane went, before
+/// the host has put the window back on the record value. The turn is kept and written, not
+/// covered by the record value.
+#[test]
+fn a_turn_in_the_window_just_after_a_lane_goes_is_kept() {
+    tell_the_plugin(None, None);
+    let format = PluginFormat::Vst3;
+    let played = vec![
+        Played::On {
+            frame: 0,
+            pitch: 60,
+            velocity: 100,
+        },
+        Played::On {
+            frame: 5200,
+            pitch: EDIT_LEVEL_KEY,
+            velocity: 100,
+        },
+    ];
+    let mut harness = Harness::new();
+    harness.add_track(pinned(format, 1.0), played);
+    harness.play(1024);
+    set_lanes(&mut harness, "Automate", vec![(level_lane(format), 0.5)]);
+    harness.render(4096);
+    assert_eq!(plugin_value(&harness, level(format)), 0.5);
+
+    set_lanes(&mut harness, "Remove the lane", Vec::new());
+    harness.render_without_polling(512);
+    let start = Instant::now();
+    for second in 0..5 {
+        poll(&mut harness, start + Duration::from_secs(second));
+    }
+    assert_eq!(plugin_value(&harness, level(format)), 0.25);
+    assert_eq!(pinned_value(&harness, level(format)), 0.25);
 }
 
 /// Blocks with a lane playing, and the block in which it goes, allocate nothing on the audio

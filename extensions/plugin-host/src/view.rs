@@ -20,7 +20,8 @@
 //! The list of parameters and the plugin's text both call into the plugin, which a frame may
 //! not do. So the view asks when the session tells it something changed, and draws from what it
 //! was told. A lane that sweeps changes its value every frame, so the text of a value a lane
-//! plays is asked for at most 15 times a second, and the knob shows the last text it got.
+//! plays is asked for at most 15 times a second per pin, and the knob shows the last text it
+//! got.
 //!
 //! A plugin this machine does not have shows what is wrong and the id the record names, so a
 //! composer can see which plugin to install and an agent can be asked to correct the record.
@@ -134,9 +135,9 @@ pub struct PluginView {
     readouts: BTreeMap<u32, (f64, Option<SharedString>)>,
     /// What the automation lanes of the track play into the pins.
     lanes: Entity<Lanes<PluginRecord>>,
-    /// When the card last asked for the text of what the pins play, and the ask that waits
-    /// for [`LANE_READ_OUT`] to pass.
-    read_out_at: Option<Instant>,
+    /// When the card last asked for the text of the value a lane plays, by pin, and the ask
+    /// that waits for [`LANE_READ_OUT`] to pass.
+    lane_asked: BTreeMap<u32, Instant>,
     read_out_later: Option<Task<()>>,
     /// The list that puts a parameter on the card and takes one off.
     menu: Entity<DropdownMenu>,
@@ -218,8 +219,7 @@ impl PluginView {
         })
         .detach();
         let lanes = Lanes::follow_named(&session, plugin.id(), cx);
-        cx.observe(&lanes, |view, _, cx| view.lanes_moved(cx))
-            .detach();
+        cx.observe(&lanes, |view, _, cx| view.read_out(cx)).detach();
         let mut view = Self {
             session,
             plugin,
@@ -230,7 +230,7 @@ impl PluginView {
             parameters: None,
             readouts: BTreeMap::new(),
             lanes,
-            read_out_at: None,
+            lane_asked: BTreeMap::new(),
             read_out_later: None,
             menu,
             dragged: None,
@@ -280,36 +280,11 @@ impl PluginView {
         }
     }
 
-    /// A lane plays another value: its text is asked for now, or once [`LANE_READ_OUT`] has
-    /// passed since the last ask.
-    fn lanes_moved(&mut self, cx: &mut Context<Self>) {
-        if self.read_out_later.is_some() {
-            return;
-        }
-        let since = self.read_out_at.map_or(LANE_READ_OUT, |at| at.elapsed());
-        let Some(wait) = LANE_READ_OUT
-            .checked_sub(since)
-            .filter(|wait| !wait.is_zero())
-        else {
-            self.read_out(cx);
-            return;
-        };
-        self.read_out_later = Some(cx.spawn(async move |view, cx| {
-            cx.background_executor().timer(wait).await;
-            // A card that is gone has nothing to read out.
-            view.update(cx, |view, cx| {
-                view.read_out_later = None;
-                view.read_out(cx);
-                cx.notify();
-            })
-            .ok();
-        }));
-    }
-
     /// Asks the plugin for its text for the value each pin plays now, the record's or a lane's,
-    /// where that is not the value of the text the card has.
+    /// where that is not the value of the text the card has. The text of a lane value is asked
+    /// for at most once in [`LANE_READ_OUT`] per pin, whatever asks; one that has to wait is
+    /// asked for when that has passed.
     fn read_out(&mut self, cx: &mut Context<Self>) {
-        self.read_out_at = Some(Instant::now());
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
@@ -317,8 +292,13 @@ impl PluginView {
             return;
         };
         let lanes = self.lanes.read(cx);
+        let now = Instant::now();
+        let mut wait: Option<Duration> = None;
+        self.lane_asked
+            .retain(|pin, _| record.parameters.contains_key(pin));
         for (pin, Pin { value, .. }) in &record.parameters {
-            let value = lanes.value(&lane_of_pin(*pin)).map_or(*value, f64::from);
+            let lane = lanes.value(&lane_of_pin(*pin));
+            let value = lane.map_or(*value, f64::from);
             let known = self.readouts.get(pin);
             if known.is_some_and(|(read, _)| read.to_bits() == value.to_bits()) {
                 continue;
@@ -329,9 +309,33 @@ impl PluginView {
             if !parameter.is_some_and(|parameter| parameter.takes(value)) {
                 continue;
             }
+            if lane.is_some() {
+                let since = self.lane_asked.get(pin).map(|at| now.duration_since(*at));
+                if let Some(left) = since.and_then(|since| LANE_READ_OUT.checked_sub(since))
+                    && !left.is_zero()
+                {
+                    wait = Some(wait.map_or(left, |wait| wait.min(left)));
+                    continue;
+                }
+                self.lane_asked.insert(*pin, now);
+            }
             let text = plugins.parameter_text(self.plugin.id(), *pin, value);
             self.readouts
                 .insert(*pin, (value, text.map(SharedString::from)));
+        }
+        if let Some(wait) = wait
+            && self.read_out_later.is_none()
+        {
+            self.read_out_later = Some(cx.spawn(async move |view, cx| {
+                cx.background_executor().timer(wait).await;
+                // A card that is gone has nothing to read out.
+                view.update(cx, |view, cx| {
+                    view.read_out_later = None;
+                    view.read_out(cx);
+                    cx.notify();
+                })
+                .ok();
+            }));
         }
     }
 

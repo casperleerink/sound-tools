@@ -23,8 +23,9 @@
 //! is not taken for a change of the plugin's, and a value the plugin rounds as it takes it is
 //! not written back. A pin an automation lane moves is not read at all: the lane plays into the
 //! plugin on the audio thread, and what it plays is never the composer's edit. Which pins a lane
-//! holds the audio side says itself, after the plugin played them ([`LanedPins`]), so a lane
-//! that came and went between two polls is never taken for the plugin's own change.
+//! holds the audio side says itself ([`LanedPins`]), before the plugin hears the lane and until
+//! it has played the record value again, so a lane value is never taken for the plugin's own
+//! change.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -202,8 +203,15 @@ struct Hosted {
     /// with them. A plugin started again gets these, so the index of a lane means the same
     /// pin to both until the next run, whatever the plugin says of its parameters meanwhile.
     lanes: AutomatedPins,
-    /// The value of each pin the plugin's own window was last shown from a lane.
-    shown: BTreeMap<u32, f64>,
+    /// What the plugin's own window was last shown of each pin a lane holds.
+    shown: BTreeMap<u32, Shown>,
+}
+
+/// A lane value the plugin's own window was shown, and the value it showed then.
+#[derive(Copy, Clone, Debug)]
+struct Shown {
+    sent: f64,
+    seen: f64,
 }
 
 /// A pin, as the host last sent it or read it.
@@ -344,34 +352,50 @@ impl Hosted {
         pins
     }
 
-    /// The pins a lane holds now, as the audio side last played them. Where the format needs
-    /// the host for it, the plugin's own window is shown the value each plays, and the record
-    /// value again once its lane lets go. Every pin, when the audio side wrote all the while
-    /// it was read.
-    fn follow_lanes(&mut self) -> BTreeSet<u32> {
-        let Some(held) = self.laned.read() else {
-            return self.pins.keys().copied().collect();
-        };
-        let now: BTreeMap<u32, f64> = held.into_iter().collect();
-        for (id, value) in &now {
-            if !self.shown.get(id).is_some_and(|shown| same(*shown, *value)) {
-                self.plugin.show(ParameterChange {
-                    id: *id,
-                    value: *value,
-                });
-            }
+    /// The pins a lane holds, each with the value it plays, as the audio side wrote them last.
+    /// `None` when blocks kept writing while it was read.
+    fn held(&self) -> Option<BTreeMap<u32, f64>> {
+        let held = self.laned.read()?;
+        Some(held.into_iter().collect())
+    }
+
+    /// Where the format needs the host for it, shows the plugin's own window the value each
+    /// pin in `held` plays, and the record value again once its lane lets go. A window that
+    /// shows something else by then was turned by the composer since: it is left as it is, and
+    /// the next read of the pin takes that as an edit.
+    fn follow_lanes(&mut self, held: &BTreeMap<u32, f64>) {
+        let mut shown = BTreeMap::new();
+        for (id, value) in held {
+            let was = self.shown.get(id).copied();
+            let seen = match was {
+                Some(was) if same(was.sent, *value) => was.seen,
+                _ => {
+                    self.plugin.show(ParameterChange {
+                        id: *id,
+                        value: *value,
+                    });
+                    // As the window took it, perhaps rounded: what a release compares with.
+                    self.plugin.value(*id).unwrap_or(*value)
+                }
+            };
+            let sent = *value;
+            shown.insert(*id, Shown { sent, seen });
         }
-        for id in self.shown.keys().filter(|id| !now.contains_key(id)) {
-            if let Some(state) = self.pins.get(id) {
-                self.plugin.show(ParameterChange {
+        let released = self.shown.iter().filter(|(id, _)| !held.contains_key(id));
+        for (id, was) in released {
+            let Some(state) = self.pins.get_mut(id) else {
+                continue;
+            };
+            let now = self.plugin.value(*id);
+            match now.is_some_and(|now| same(now, was.seen)) {
+                true => self.plugin.show(ParameterChange {
                     id: *id,
                     value: state.record,
-                });
+                }),
+                false => state.plugin = Some(was.seen),
             }
         }
-        let held = now.keys().copied().collect();
-        self.shown = now;
-        held
+        self.shown = shown;
     }
 
     /// What a run of the behaviour reports: the notes of the load, and every pin of `record`
@@ -425,27 +449,46 @@ impl Hosted {
     }
 
     /// The plugin to the record: what the plugin changed of its pins itself since the last
-    /// read, once every value sent is in what it says. A pin in `laned` plays what a lane says
-    /// and is not read; its first read once the lane is gone is the plugin taking its record
-    /// value again, and not a change of its own.
-    fn read_pins(&mut self, laned: &BTreeSet<u32>) -> Vec<ParameterChange> {
-        let mut changes = Vec::new();
+    /// read, once every value sent is in what it says.
+    ///
+    /// A pin a lane holds is not read, and its first read once the lane is gone is the plugin
+    /// taking its record value again, not a change of its own. The audio side writes a pin held
+    /// before the plugin hears its lane, and free only after the plugin played its record value
+    /// again, so a pin held in the table as read before or after the plugin's values is left
+    /// out: a lane value the plugin has is always in one of them.
+    fn read_pins(&mut self) -> Vec<ParameterChange> {
+        let before = self.held();
+        let mut values = Vec::new();
+        if self.plugin.sent_values_played() {
+            for id in self.pins.keys() {
+                if let Some(now) = self.plugin.value(*id) {
+                    values.push((*id, now));
+                }
+            }
+        }
+        let after = self.held();
+        let laned: BTreeSet<u32> = match (&before, &after) {
+            (Some(before), Some(after)) => before.keys().chain(after.keys()).copied().collect(),
+            // Blocks kept writing all the while: every pin is taken as held.
+            _ => self.pins.keys().copied().collect(),
+        };
         for (id, state) in &mut self.pins {
             if laned.contains(id) {
                 state.plugin = None;
             }
         }
-        if !self.plugin.sent_values_played() {
-            return changes;
+        if let Some(after) = &after {
+            self.follow_lanes(after);
         }
-        for (id, state) in &mut self.pins {
-            if laned.contains(id) {
+        let mut changes = Vec::new();
+        for (id, now) in values {
+            if laned.contains(&id) {
                 continue;
             }
-            if let Some(now) = self.plugin.value(*id)
+            if let Some(state) = self.pins.get_mut(&id)
                 && let Some(value) = state.read(now)
             {
-                changes.push(ParameterChange { id: *id, value });
+                changes.push(ParameterChange { id, value });
             }
         }
         changes
@@ -1555,10 +1598,7 @@ impl Plugins {
                 };
                 hosted.send_pins(record);
                 let changes = match self.0.writes_state {
-                    true => {
-                        let laned = hosted.follow_lanes();
-                        hosted.read_pins(&laned)
-                    }
+                    true => hosted.read_pins(),
                     // A project open read-only writes nothing, so its host reads nothing.
                     false => Vec::new(),
                 };

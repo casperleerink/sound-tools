@@ -286,10 +286,11 @@ impl PinValues {
     }
 }
 
-/// The pins whose value in the plugin is a lane's, with that value, as the audio side last
-/// played them, for the main thread: it reads no such pin into the record, and shows the lane
-/// value in the plugin's own window where the format needs the host to. A block writes it after
-/// the plugin has run, so a pin that is not in it plays its record value again.
+/// The pins whose value in the plugin may be a lane's, with that value, for the main thread: it
+/// reads no such pin into the record, and shows the lane value in the plugin's own window where
+/// the format needs the host to. A block writes a pin in before the plugin hears its lane, and
+/// takes it out only after the plugin played its record value again, so a plugin value that is
+/// a lane's is never read while the pin is out of it.
 ///
 /// A sequence lock of atomics: the audio side never waits, and the main thread reads again
 /// when a block wrote while it read.
@@ -477,16 +478,25 @@ impl Processor for HostedPlugin {
             pass_through(input, left, right, frames);
             return;
         };
-        let plugin = &mut **started;
-        plugin.begin_block();
-        let lanes_before = self.held.count;
-        automate(plugin, lanes, &self.pins, &mut self.held);
-        // More events in one block than the plugin's buffer holds. Counted, never allocated.
-        let dropped = translate(plugin, events, &mut self.keys_down, &mut self.controls);
+        let (keys_down, controls) = (&mut self.keys_down, &mut self.controls);
+        let mut dropped = 0;
+        let played = with_lanes(
+            &mut **started,
+            lanes,
+            &self.pins,
+            &mut self.held,
+            laned,
+            |plugin| {
+                // More events in one block than the plugin's buffer holds. Counted, never
+                // allocated.
+                dropped = translate(plugin, events, keys_down, controls);
+                plugin.run(frames, input, &mut left[..frames], &mut right[..frames])
+            },
+        );
         for _ in 0..dropped {
             context.event_outputs.count_dropped();
         }
-        if !plugin.run(frames, input, &mut left[..frames], &mut right[..frames]) {
+        if !played {
             // The block a plugin fails on is the first one it does not play, so the slot
             // passes it through here and not from the next block. A backend writes nothing
             // into the output when it fails, so whatever it left there is the silence the
@@ -494,12 +504,40 @@ impl Processor for HostedPlugin {
             self.failed = true;
             pass_through(input, left, right, frames);
         }
-        // Once the plugin has played them, so a pin that is not held any more plays its
-        // record. A plugin with no lanes writes nothing.
-        if lanes_before + self.held.count > 0 {
-            laned.write(&self.held);
-        }
     }
+}
+
+/// One block of a plugin with its lanes: the lanes go in, then `play` puts in the notes and
+/// runs the plugin. What [`LanedPins`] says brackets it: every pin a lane holds before or in
+/// this block is written held before the plugin hears anything, and only the pins a lane still
+/// holds once it has run. A plugin with no lanes writes nothing.
+fn with_lanes(
+    plugin: &mut dyn Started,
+    lanes: &[Timed<Automation>],
+    pins: &AutomatedPins,
+    held: &mut PinValues,
+    laned: &LanedPins,
+    play: impl FnOnce(&mut dyn Started) -> bool,
+) -> bool {
+    plugin.begin_block();
+    let before = *held;
+    automate(plugin, lanes, pins, held);
+    let any = before.count + held.count > 0;
+    if any {
+        // The pins a lane lets go in this block still hold the lane's value until it runs.
+        let mut both = *held;
+        for (id, value) in before.as_slice() {
+            if !both.contains(*id) {
+                both.insert(*id, *value);
+            }
+        }
+        laned.write(&both);
+    }
+    let played = play(plugin);
+    if any {
+        laned.write(held);
+    }
+    played
 }
 
 /// Plays the lanes of one block into the plugin: the value of every lane, held to the range of
@@ -813,6 +851,35 @@ mod tests {
             lanes(&mut plugin, &now, &mut held, &[(0, 0.75)]),
             [(7, 0.5)]
         );
+    }
+
+    /// While the plugin runs a block that starts a lane, and the one in which the lane goes,
+    /// the table says the pin is held; after the second, it is free.
+    #[test]
+    fn a_pin_is_written_held_before_the_plugin_hears_its_lane_and_free_after_its_record() {
+        let (mut plugin, mut held) = (plugin(), PinValues::NONE);
+        let laned = LanedPins::new();
+        let mut block = |values: &[(u16, f32)]| {
+            let lanes: Vec<_> = values
+                .iter()
+                .map(|&(parameter, value)| Timed {
+                    offset: 0,
+                    event: Automation { parameter, value },
+                })
+                .collect();
+            let mut seen = None;
+            with_lanes(&mut plugin, &lanes, &pins(), &mut held, &laned, |_| {
+                seen = laned.read();
+                true
+            });
+            (seen, laned.read())
+        };
+        let (during, after) = block(&[(0, 0.25)]);
+        assert_eq!(during, Some(vec![(7, 0.25)]));
+        assert_eq!(after, Some(vec![(7, 0.25)]));
+        let (during, after) = block(&[]);
+        assert_eq!(during, Some(vec![(7, 0.25)]));
+        assert_eq!(after, Some(vec![]));
     }
 
     /// A record value with no room in its block is not forgotten: the pin would stay on the
