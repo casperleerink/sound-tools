@@ -111,7 +111,8 @@ too_many_arguments = "allow"
 
 [profile.dev]
 debug = 0
-incremental = true
+# Off: the incremental cache was more than half of a build folder, and every worktree has its own.
+incremental = false
 codegen-units = 16
 
 # Build scripts and proc macros use the same settings, so shared crates compile once.

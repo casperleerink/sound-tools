@@ -4,8 +4,7 @@
 #   tooling/bundle-linux.sh [output-folder]
 #
 # Writes sound-tools-<version>-linux-<arch>.tar.gz to dist/ by default. It holds the program,
-# a desktop file, the icon and install.sh, which puts them in ~/.local. The build folder of
-# .cargo/config.toml is a macOS one, so set CARGO_TARGET_DIR first.
+# a desktop file, the icon and install.sh, which puts them in ~/.local.
 set -euo pipefail
 
 output="${1:-dist}"

@@ -11,9 +11,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # `.cargo/config.toml` builds into /private/tmp. rust-cache only saves a target folder inside
-  # the workspace, so CI builds there.
-  CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
 # Three jobs run side by side. Each builds what it needs and keeps its own cache. Only main saves
 # the caches, so pull requests do not push main's out of the 10 GB limit. A change that only

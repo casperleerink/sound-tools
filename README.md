@@ -9,7 +9,7 @@ What it has: instrument and audio tracks, clips with notes or audio, a synth, a 
 - macOS 11 or later, the main platform. Linux builds from source too, see "Linux" below. Windows is not tried yet.
 - To build it: Rust through `rustup`. `rust-toolchain.toml` pins the version and `rustup` installs it on the first build.
 - The first build takes about a minute, plus the download of the dependencies. Later builds take seconds.
-- `.cargo/config.toml` puts the build output in `/private/tmp/sound-tools-timing/target`, shared by every checkout. `/private/tmp` is emptied on a restart of the Mac, so the first build after that is slow again.
+- Every checkout builds into its own `target/`, so a new worktree starts with a full build. One shared folder let worktrees on different commits overwrite each other's files, and tests ran the wrong code. `tooling/clean-builds.sh` deletes the builds of worktrees nobody used for two days.
 
 ### Linux
 
@@ -21,7 +21,7 @@ sudo apt-get install build-essential pkg-config libasound2-dev libfontconfig-dev
   mesa-vulkan-drivers
 ```
 
-`/private/tmp` is a macOS folder, so set another build folder first, for example `export CARGO_TARGET_DIR=target`. Then build and run as on macOS. The window needs Vulkan: a graphics driver, or `mesa-vulkan-drivers` for a software one.
+Then build and run as on macOS. The window needs Vulkan: a graphics driver, or `mesa-vulkan-drivers` for a software one.
 
 CI builds and tests on Ubuntu. Playback, MIDI, recording and plugins go through ALSA and should work, but nobody has tried them on a real Linux desktop yet. Plugins are looked for in `~/.clap` and `/usr/lib/clap`, and in `~/.vst3`, `/usr/lib/vst3` and `/usr/local/lib/vst3`. The plugin cache is in `~/.cache/sound-tools/`.
 
@@ -123,7 +123,7 @@ With the command line tool installed, `sound-tools` takes the place of `cargo ru
 - `--plugins` prints the installed CLAP and VST 3 plugins with their ids and kind (instrument, effect or both). It scans every plugin again, so it also retries one that failed before.
 - `--version` prints the version.
 
-A release build is `cargo build --release -p runtime`. The binary is `/private/tmp/sound-tools-timing/target/release/runtime`.
+A release build is `cargo build --release -p runtime`. The binary is `target/release/runtime`.
 
 ## Checks
 

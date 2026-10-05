@@ -19,7 +19,7 @@
 //!
 //! ```sh
 //! cargo build -p midi --example free_take
-//! /private/tmp/sound-tools-timing/target/debug/examples/free_take 60 "Free Take" 12
+//! target/debug/examples/free_take 60 "Free Take" 12
 //! ```
 
 use std::time::{Duration, Instant};
