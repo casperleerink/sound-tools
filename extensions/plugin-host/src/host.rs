@@ -340,7 +340,7 @@ impl Hosted {
                     let parameter = parameters.get(id).filter(|it| it.takes(pin.value))?;
                     Some(AutomatedPin {
                         id: *id,
-                        takes_lane: parameter.takes_lane(),
+                        takes_lane: parameter.takes_lane_at(pin),
                         minimum: parameter.minimum,
                         maximum: parameter.maximum,
                         record: pin.value,

@@ -154,11 +154,13 @@ impl Numbers<PluginRecord> for PluginNumbers {
     }
 }
 
-/// Whether a lane can be added for `parameter` of the plugin of `record`: it takes one, and it
-/// is pinned or the record has room to pin it.
+/// Whether a lane can be added for `parameter` of the plugin of `record`: pinned, its pin takes
+/// one as the host plays it; else it takes one and the record has room to pin it.
 fn can_take_lane(record: &PluginRecord, parameter: &Parameter) -> bool {
-    let pinned = record.parameters.contains_key(&parameter.id);
-    parameter.takes_lane() && (pinned || record.parameters.len() < MAX_AUTOMATED)
+    match record.parameters.get(&parameter.id) {
+        Some(pin) => parameter.takes_lane_at(pin),
+        None => parameter.takes_lane() && record.parameters.len() < MAX_AUTOMATED,
+    }
 }
 
 /// A pin of `parameter` at what the plugin of `id` plays now, or at its default when it cannot

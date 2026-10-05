@@ -45,6 +45,12 @@ impl Parameter {
         self.automatable && self.steps.is_none()
     }
 
+    /// Whether a lane may move it while a record pins it at `pin`: it takes a lane and the pin
+    /// is in its range, else the pin moves nothing and neither would its lane.
+    pub fn takes_lane_at(&self, pin: &Pin) -> bool {
+        self.takes_lane() && self.takes(pin.value)
+    }
+
     /// The value of the step `index` of a stepped parameter, inside its range. A CLAP plugin
     /// cuts a value to its whole step, so its first step may lie just below the minimum it
     /// gives, and the minimum is what reaches it.
@@ -212,6 +218,26 @@ pub fn read_parameters(plugin: &ScannedPlugin) -> Result<Vec<Parameter>, PluginP
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A plugin that narrows a range leaves a pin outside it, which takes no lane.
+    #[test]
+    fn a_pin_outside_the_range_takes_no_lane() {
+        let parameter = Parameter {
+            id: 0,
+            name: "Cutoff".to_string(),
+            minimum: 20.0,
+            maximum: 20_000.0,
+            default: 1000.0,
+            steps: None,
+            automatable: true,
+        };
+        let pin = |value| Pin {
+            name: "Cutoff".to_string(),
+            value,
+        };
+        assert!(parameter.takes_lane_at(&pin(1000.0)));
+        assert!(!parameter.takes_lane_at(&pin(30_000.0)));
+    }
 
     #[test]
     fn a_list_longer_than_the_most_names_has_none_and_a_short_one_has_one_per_text() {
