@@ -236,7 +236,11 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
     }
 
     fn set_scale(&self, _scale: f64) -> Result<(), PluginError> {
-        Err(PluginError::Message("Cocoa sizes are already logical"))
+        // Cocoa sizes are already logical, and on Windows a plugin may read the scale from
+        // the window it is in, which is what this host leaves it to.
+        Err(PluginError::Message(
+            "this plugin takes no scale from its host",
+        ))
     }
 
     fn get_size(&self) -> Option<GuiSize> {
@@ -851,7 +855,7 @@ pub fn built_library() -> std::path::PathBuf {
 }
 
 /// Copies the built library into `folder` as a bundle a CLAP scan finds, and gives back the
-/// bundle. On macOS a plain file with a `.clap` name is a valid bundle.
+/// bundle. A plain file with a `.clap` name is a valid bundle on every platform.
 pub fn install_into(folder: &std::path::Path) -> std::path::PathBuf {
     support::install_bundle(folder, &built_library(), "test-tone", "clap")
 }
