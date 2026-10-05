@@ -161,11 +161,19 @@ mod tests {
             .spawn()
             .unwrap();
         let tree = ProcessTree::of(&parent).unwrap();
-        let mut line = String::new();
-        // One line only: ping keeps the pipe open.
-        let stdout = parent.stdout.take().unwrap();
-        smol::block_on(BufReader::new(stdout).read_line(&mut line)).unwrap();
-        let ping = line.trim().to_string();
+        // ping writes to the same pipe, and keeps it open: read up to the line with its id.
+        let mut stdout = BufReader::new(parent.stdout.take().unwrap());
+        let ping = smol::block_on(async {
+            loop {
+                let mut line = String::new();
+                let read = stdout.read_line(&mut line).await.unwrap();
+                assert!(read > 0, "PowerShell gave no process id");
+                let line = line.trim();
+                if line.parse::<u32>().is_ok() {
+                    return line.to_string();
+                }
+            }
+        });
         assert!(smol::block_on(parent.status()).unwrap().success());
         assert!(running(&ping), "ping {ping:?} did not start");
 

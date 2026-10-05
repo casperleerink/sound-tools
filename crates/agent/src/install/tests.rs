@@ -172,7 +172,12 @@ fn cancelling_kills_curl_and_keeps_what_came() {
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
     let mut request = Vec::new();
-    connection.read_to_end(&mut request).unwrap();
+    // Windows resets the connection of a killed program, where Unix closes it. What came
+    // before stays in `request` either way.
+    match connection.read_to_end(&mut request) {
+        Err(error) if error.kind() != std::io::ErrorKind::ConnectionReset => panic!("{error}"),
+        _ => {}
+    }
     assert!(request.starts_with(b"GET /tool"));
     assert_eq!(
         fs::read(download.partial(&agents)).unwrap(),
