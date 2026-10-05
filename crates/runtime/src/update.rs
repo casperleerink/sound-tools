@@ -34,7 +34,10 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{App, AppContext as _, Global};
 use serde::Deserialize;
-use sound_agent::{Download, curl};
+use sound_agent::Download;
+use sound_core::process::curl;
+#[cfg(windows)]
+use sound_core::process::{background_command, windows_program};
 
 use crate::app::{self, TOOL_NAME};
 
@@ -185,7 +188,7 @@ impl Updater {
         if cfg!(debug_assertions) {
             return None;
         }
-        let program = std::env::current_exe().ok()?.canonicalize().ok()?;
+        let program = dunce::canonicalize(std::env::current_exe().ok()?).ok()?;
         if *program.file_name()? != *app::program_file_name() {
             return None;
         }
@@ -455,7 +458,7 @@ fn unpack_archive() -> Command {
 /// GNU tar of Git for Windows takes the `C:` of a path for the name of another computer.
 #[cfg(windows)]
 fn unpack_archive() -> Command {
-    let mut command = in_background(in_windows_folder(r"System32\tar.exe"));
+    let mut command = background_command(windows_program(r"System32\tar.exe"));
     command.arg("-xf");
     command
 }
@@ -471,8 +474,8 @@ fn run_install_script(folder: &Path) -> Result<()> {
 /// The policy of a new Windows refuses to run scripts, so this one call bypasses it.
 #[cfg(windows)]
 fn run_install_script(folder: &Path) -> Result<()> {
-    let powershell = in_windows_folder(r"System32\WindowsPowerShell\v1.0\powershell.exe");
-    run(in_background(powershell)
+    let powershell = windows_program(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+    run(background_command(powershell)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -483,26 +486,6 @@ fn run_install_script(folder: &Path) -> Result<()> {
         .arg(folder.join("install.ps1"))
         .current_dir(folder)
         .stdout(Stdio::null()))
-}
-
-/// A path in the Windows folder, so that a program of the same name on the `PATH` is never
-/// the one that runs.
-#[cfg(windows)]
-fn in_windows_folder(path: &str) -> PathBuf {
-    let windows = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
-    PathBuf::from(windows).join(path)
-}
-
-/// A console program with no console window. Started from the app, which has no console, it
-/// would otherwise open an empty black window.
-#[cfg(windows)]
-fn in_background(program: PathBuf) -> Command {
-    let mut command = Command::new(program);
-    std::os::windows::process::CommandExt::creation_flags(
-        &mut command,
-        windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
-    );
-    command
 }
 
 fn run(command: &mut Command) -> Result<()> {

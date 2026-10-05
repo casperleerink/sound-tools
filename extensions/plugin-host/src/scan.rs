@@ -15,7 +15,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -198,7 +198,7 @@ impl ScanCommand {
 
     /// Scans one bundle in a child process.
     fn scan(&self, bundle: &Bundle) -> Result<Vec<ScannedPlugin>, ScanError> {
-        let mut command = Command::new(&self.program);
+        let mut command = sound_core::process::background_command(&self.program);
         command
             .args(&self.arguments)
             .arg(bundle.format.as_str())
@@ -206,14 +206,6 @@ impl ScanCommand {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
         for (name, value) in &self.environment {
             command.env(name, value);
-        }
-        // A window application has no console, so Windows would give the child one of its own
-        // and show it for as long as the bundle takes.
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt as _;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
         }
         // Blocking here is the point: this runs on the thread that scans, never on the one that
         // draws. `output` would wait for ever, and a deadline needs a handle to kill.
@@ -502,23 +494,26 @@ const CACHE_VARIABLE: &str = "SOUND_TOOLS_PLUGIN_CACHE";
 
 impl ScanCache {
     /// The cache of this machine: `~/Library/Caches/sound-tools/plugins.json` on macOS,
-    /// `%LOCALAPPDATA%\sound-tools\plugins.json` on Windows, and
-    /// `~/.cache/sound-tools/plugins.json` on Linux, or under `XDG_CACHE_HOME` when it is set.
+    /// `%LOCALAPPDATA%\Sound Tools\Cache\plugins.json` on Windows, next to the app's other
+    /// folders there, and `~/.cache/sound-tools/plugins.json` on Linux, or under
+    /// `XDG_CACHE_HOME` when it is set.
     pub fn of_this_machine() -> Self {
         if let Some(named) = std::env::var_os(CACHE_VARIABLE) {
             return Self::at(PathBuf::from(named));
         }
         let home = || std::env::var_os("HOME").map(PathBuf::from);
-        let caches = if cfg!(target_os = "macos") {
-            home().map(|home| home.join("Library/Caches"))
+        let folder = if cfg!(target_os = "macos") {
+            home().map(|home| home.join("Library/Caches/sound-tools"))
         } else if cfg!(target_os = "windows") {
-            std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+            std::env::var_os("LOCALAPPDATA")
+                .map(|local| PathBuf::from(local).join("Sound Tools").join("Cache"))
         } else {
             std::env::var_os("XDG_CACHE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| home().map(|home| home.join(".cache")))
+                .map(|caches| caches.join("sound-tools"))
         };
-        Self::kept_at(caches.map(|caches| caches.join("sound-tools").join("plugins.json")))
+        Self::kept_at(folder.map(|folder| folder.join("plugins.json")))
     }
 
     pub fn at(path: impl Into<PathBuf>) -> Self {

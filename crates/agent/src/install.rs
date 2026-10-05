@@ -177,7 +177,7 @@ async fn fetch(
 ) -> Result<(), InstallError> {
     loop {
         let had = length(partial);
-        let mut child = smol::process::Command::from(crate::curl())
+        let mut child = smol::process::Command::from(sound_core::process::curl())
             .args(["--silent", "--show-error", "--location"])
             // Fails on an HTTP error, and still writes what the server said, so a region block
             // can be shown in its own words.

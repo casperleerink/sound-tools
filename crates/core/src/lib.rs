@@ -20,6 +20,7 @@ mod limiter;
 mod oversampling;
 mod parameter;
 mod peaks;
+pub mod process;
 mod processor;
 mod project;
 mod saturation;

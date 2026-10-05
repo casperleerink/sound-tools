@@ -108,7 +108,7 @@ fn command(program: &Path, environment: &HashMap<OsString, OsString>) -> std::pr
         // Set when the app was started from Electron; the CLI would run as plain Node.
         !nested && key != "ELECTRON_RUN_AS_NODE"
     });
-    let mut command = crate::process::command(program);
+    let mut command = sound_core::process::background_command(program);
     command
         .env_clear()
         .envs(environment)

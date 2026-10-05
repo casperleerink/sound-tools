@@ -128,7 +128,7 @@ fn pack(archive: &Path) -> Command {
 /// `-a` picks the zip format from the name.
 #[cfg(windows)]
 fn pack(archive: &Path) -> Command {
-    let mut command = Command::new(in_windows_folder(r"System32\tar.exe"));
+    let mut command = Command::new(windows_program(r"System32\tar.exe"));
     command.arg("-a").arg("-cf").arg(archive);
     command
 }

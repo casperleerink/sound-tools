@@ -1,41 +1,7 @@
-//! The programs the crate starts: curl and the agent's CLI.
+//! The process tree of the agent's CLI.
 
-use std::ffi::OsStr;
 use std::io;
-use std::path::PathBuf;
 use std::process::Command;
-
-/// A command for `program` that opens no console window. A console program the app starts
-/// would otherwise show an empty black window next to the app on Windows. Its own console
-/// programs share the hidden console, so they open none either.
-pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
-    #[cfg_attr(not(windows), allow(unused_mut))]
-    let mut command = Command::new(program);
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(
-        &mut command,
-        windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
-    );
-    command
-}
-
-/// curl, which downloads the agent's program and the app's updates. It comes with macOS, with
-/// every Linux desktop, and with Windows since 10 version 1803. Its TLS is the system's.
-pub fn curl() -> Command {
-    command(curl_path())
-}
-
-#[cfg(not(windows))]
-fn curl_path() -> PathBuf {
-    PathBuf::from("/usr/bin/curl")
-}
-
-/// Windows' own, never one on the `PATH`, as on the other systems.
-#[cfg(windows)]
-fn curl_path() -> PathBuf {
-    let windows = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
-    PathBuf::from(windows).join(r"System32\curl.exe")
-}
 
 /// A started program and every program it starts in turn, such as a `cargo build` the agent
 /// runs, so that they all end together.
@@ -52,7 +18,7 @@ impl ProcessTree {
     pub(crate) fn prepare(#[cfg_attr(windows, allow(unused_variables))] command: &mut Command) {
         // Its own process group: a ctrl-c in the terminal that started the app does not stop
         // the program halfway through a write, and the group can be ended as one. On Windows
-        // the hidden console of [`command`] already keeps a ctrl-c away, and the job is made
+        // the hidden console of `background_command` already keeps a ctrl-c away, and the job is made
         // once the program runs.
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(command, 0);
@@ -182,7 +148,7 @@ mod tests {
     /// parent id would miss it.
     #[test]
     fn ending_the_tree_ends_a_program_whose_parent_is_gone() {
-        let mut start = command("powershell");
+        let mut start = sound_core::process::background_command("powershell");
         start.args([
             "-NoProfile",
             "-Command",
