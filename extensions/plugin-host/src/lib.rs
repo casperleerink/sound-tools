@@ -39,6 +39,8 @@
 mod backend;
 mod clap;
 mod host;
+#[cfg(target_os = "windows")]
+mod library;
 mod parameters;
 mod placements;
 mod processor;

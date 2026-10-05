@@ -230,8 +230,9 @@ impl PluginWindow {
     /// GPUI running. See [`crate::Plugins::open_window`] for why the two halves are apart.
     ///
     /// The order for an embedded window: create, ask how big, put the view in a window, show.
-    /// The scale is left alone: both formats say so for Cocoa, where sizes are already logical,
-    /// and on Windows a plugin reads it from the window it is put in.
+    /// The scale is left alone here: both formats say so for Cocoa, where sizes are already
+    /// logical, and on Windows it is not known until the window is on its display, see
+    /// [`Self::attach`].
     pub(crate) fn prepare(&mut self, gui: &mut dyn PluginGui) -> Result<Prepared, PluginProblem> {
         if let Some(handle) = self.open {
             return Ok(Prepared::AlreadyOpen(handle));
@@ -252,11 +253,16 @@ impl PluginWindow {
 
     /// The second half: the plugin fills the window that was made for it. On a failure the
     /// window comes back, for the caller to take down once nothing is borrowed.
+    ///
+    /// On Windows the plugin is told the scale of the window first, as both formats ask of a
+    /// host there, and the window takes the size the plugin has at that scale at the next poll.
+    /// Its sizes stay physical pixels whether it took the scale or reads it from the system
+    /// itself, so turning them into GPUI's is the same either way.
     pub(crate) fn attach(
         &mut self,
         gui: &mut dyn PluginGui,
         handle: WindowHandle<PluginFrame>,
-        view: Option<NonNull<c_void>>,
+        parent: Option<ParentView>,
         closed: Subscription,
     ) -> Result<(), (PluginProblem, WindowHandle<PluginFrame>)> {
         self.open = Some(handle);
@@ -264,12 +270,23 @@ impl PluginWindow {
         // A window with no view of its own is the one GPUI makes without a platform behind it,
         // which is what a test has. The plugin is then shown with nothing to draw in, so the
         // rest of its life can be checked without a display. See `tests/plugin_host/window.rs`.
-        let attached = match view {
-            // SAFETY: the view belongs to the window that was just opened. Every way that
-            // window can go frees the plugin's resources for it first: `give_up`, and the
-            // `closed` subscription, which runs while the window still holds the view, see
-            // `open_window`. The application ends before a window it still has.
-            Some(view) => unsafe { gui.set_parent(view) },
+        let attached = match parent {
+            Some(parent) => {
+                if let Some(scale) = parent.physical_scale {
+                    gui.set_scale(f64::from(scale));
+                    if let Some(scaled) = gui.size()
+                        && self.size != Some(scaled)
+                    {
+                        self.size = Some(scaled);
+                        self.wanted_size = Some(scaled);
+                    }
+                }
+                // SAFETY: the view belongs to the window that was just opened. Every way that
+                // window can go frees the plugin's resources for it first: `give_up`, and the
+                // `closed` subscription, which runs while the window still holds the view, see
+                // `open_window`. The application ends before a window it still has.
+                unsafe { gui.set_parent(parent.view) }
+            }
             None => Ok(()),
         };
         match attached.and_then(|()| gui.show()) {
@@ -354,6 +371,14 @@ pub(crate) fn resize(handle: WindowHandle<PluginFrame>, wanted: WindowSize, cx: 
         .ok();
 }
 
+/// The view of a window that a plugin's view goes in.
+pub(crate) struct ParentView {
+    view: NonNull<c_void>,
+    /// How many physical pixels make one of GPUI's, for a plugin that counts physical pixels:
+    /// see [`physical_scale`].
+    physical_scale: Option<f32>,
+}
+
 /// Opens one window for a plugin and gives back its handle, the view the plugin fills and the
 /// subscription that frees that view when the window goes.
 ///
@@ -381,11 +406,7 @@ pub(crate) fn open_window(
     owner: &WindowOwner,
     request: WindowRequest<'_>,
     cx: &mut App,
-) -> anyhow::Result<(
-    WindowHandle<PluginFrame>,
-    Option<NonNull<c_void>>,
-    Subscription,
-)> {
+) -> anyhow::Result<(WindowHandle<PluginFrame>, Option<ParentView>, Subscription)> {
     let content = size(
         px(request.size.width as f32),
         px(request.size.height as f32),
@@ -414,17 +435,21 @@ pub(crate) fn open_window(
     let mut view = None;
     let frame_owner = owner.clone();
     let handle = cx.open_window(options, |window, cx| {
-        view = native_view(window);
+        let physical_scale = physical_scale(window);
+        view = native_view(window).map(|view| ParentView {
+            view,
+            physical_scale,
+        });
         // The window opened with the plugin's pixels as GPUI's. Only now that it is on its
         // display can it tell physical pixels from GPUI's.
-        if physical_scale(window).is_some() {
+        if physical_scale.is_some() {
             window.resize(points(request.size, window));
         }
         cx.new(|cx| PluginFrame::new(frame_owner, window, cx))
     })?;
     #[cfg(target_os = "windows")]
-    if let (Some(window), Some(main_window)) = (view, main_window) {
-        win32::float_above(window, main_window);
+    if let (Some(parent), Some(main_window)) = (&view, main_window) {
+        win32::float_above(parent.view, main_window);
     }
     let (instance, plugins, id) = (
         owner.instance.clone(),

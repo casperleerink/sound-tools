@@ -13,8 +13,8 @@
 //! - `isPlatformTypeSupported(kPlatformTypeNSView)` is how a host asks whether the plugin can
 //!   put its view in a Cocoa view of ours, and `kPlatformTypeHWND` in a Win32 window of ours.
 //!   On macOS the coordinates of a `ViewRect` are logical; on Windows they are physical pixels,
-//!   which `window.rs` turns into GPUI's. Nothing here sets a scale: a plugin on Windows reads
-//!   it from the window it is in.
+//!   which `window.rs` turns into GPUI's. On Windows the view is told the scale through
+//!   `IPlugViewContentScaleSupport` when it has it; one without it reads the scale itself.
 //! - `setFrame` before `attached`: "Note that in this call the plug-in could call a
 //!   IPlugFrame::resizeView ()". So the frame is in place before the view has a parent.
 //! - `attached(parent, <that type>)` puts the plugin's view in ours. `removed()` takes
@@ -41,8 +41,9 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 
 use vst3::Steinberg::Vst::{IEditController, IEditControllerTrait, ViewType};
 use vst3::Steinberg::{
-    FIDString, IPlugFrame, IPlugFrameTrait, IPlugView, IPlugViewTrait, ViewRect, kInvalidArgument,
-    kResultFalse, kResultOk, tresult,
+    FIDString, IPlugFrame, IPlugFrameTrait, IPlugView, IPlugViewContentScaleSupport,
+    IPlugViewContentScaleSupportTrait, IPlugViewTrait, ViewRect, kInvalidArgument, kResultFalse,
+    kResultOk, tresult,
 };
 use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
@@ -167,6 +168,21 @@ impl PluginGui for Vst3Gui {
             return None;
         }
         window_size(&rect)
+    }
+
+    /// Through `IPlugViewContentScaleSupport`, which a view need not have: one without it reads
+    /// the scale from the system itself.
+    fn set_scale(&mut self, scale: f64) {
+        let Some(support) = self
+            .view
+            .as_ref()
+            .and_then(|view| view.cast::<IPlugViewContentScaleSupport>())
+        else {
+            return;
+        };
+        // SAFETY: the view came from the plugin and is alive, and this is the same object. A
+        // view that answers no reads the scale itself, which the format allows.
+        unsafe { not_ours(|| support.setContentScaleFactor(scale as f32)) };
     }
 
     unsafe fn set_parent(&mut self, parent: NonNull<c_void>) -> Result<(), PluginProblem> {
@@ -613,6 +629,32 @@ mod tests {
                 "gui_destroy",
             ]
         );
+    }
+
+    /// On Windows a view is told the scale of its window through a second interface, and its
+    /// size afterwards is what the window takes. A view that grows with the scale shows that
+    /// the call reached it.
+    #[test]
+    fn a_view_is_told_the_scale_and_its_size_follows() {
+        let folder = tempfile::tempdir().expect("a folder");
+        let log = folder.path().join("calls.txt");
+        let mut opening = loaded(folder.path(), &log);
+        let gui = opening.plugin.gui().expect("the plugin has a window");
+        gui.create().expect("the view is made");
+        gui.set_scale(1.5);
+        assert!(
+            calls(&log).contains(&"gui_set_scale[1.5]".to_string()),
+            "{:?}",
+            calls(&log)
+        );
+        assert_eq!(
+            gui.size(),
+            Some(WindowSize {
+                width: 480,
+                height: 360
+            })
+        );
+        gui.destroy();
     }
 
     /// A plugin that refuses its parent. The host says so, and `removed` is the other half of

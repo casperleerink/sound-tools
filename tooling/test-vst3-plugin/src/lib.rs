@@ -46,11 +46,12 @@ use vst3::Steinberg::Vst::{
 };
 use vst3::Steinberg::{
     FIDString, FUnknown, IBStream, IBStream_::IStreamSeekMode_, IBStreamTrait, IPlugFrame,
-    IPlugFrameTrait, IPlugView, IPlugViewTrait, IPluginBase, IPluginBaseTrait, IPluginFactory,
-    IPluginFactory2, IPluginFactory2Trait, IPluginFactoryTrait, PClassInfo,
-    PClassInfo_::ClassCardinality_, PClassInfo2, PFactoryInfo, TBool, TUID, ViewRect, int32,
-    kInternalError, kInvalidArgument, kNotImplemented, kPlatformTypeHWND, kPlatformTypeNSView,
-    kResultFalse, kResultOk, kResultTrue, tresult, uint32,
+    IPlugFrameTrait, IPlugView, IPlugViewContentScaleSupport, IPlugViewContentScaleSupportTrait,
+    IPlugViewTrait, IPluginBase, IPluginBaseTrait, IPluginFactory, IPluginFactory2,
+    IPluginFactory2Trait, IPluginFactoryTrait, PClassInfo, PClassInfo_::ClassCardinality_,
+    PClassInfo2, PFactoryInfo, TBool, TUID, ViewRect, int32, kInternalError, kInvalidArgument,
+    kNotImplemented, kPlatformTypeHWND, kPlatformTypeNSView, kResultFalse, kResultOk, kResultTrue,
+    tresult, uint32,
 };
 use vst3::{Class, ComPtr, ComRef, ComWrapper, Interface, uid};
 
@@ -1187,7 +1188,21 @@ impl Default for TestView {
 }
 
 impl Class for TestView {
-    type Interfaces = (IPlugView,);
+    type Interfaces = (IPlugView, IPlugViewContentScaleSupport);
+}
+
+/// How a host on Windows tells a view the scale of its window. The view grows with it from its
+/// first size, as a real one draws its controls bigger, and says it took it.
+impl IPlugViewContentScaleSupportTrait for TestView {
+    unsafe fn setContentScaleFactor(&self, factor: f32) -> tresult {
+        support::log(&format!("gui_set_scale[{factor}]"), 0, 0);
+        let scaled = |side: u32| (side as f32 * factor).round() as int32;
+        self.size.set((
+            scaled(support::WINDOW_WIDTH),
+            scaled(support::WINDOW_HEIGHT),
+        ));
+        kResultOk
+    }
 }
 
 impl TestView {

@@ -186,13 +186,32 @@ impl HostLatencyImpl for MainThreadCallbacks<'_> {
     fn changed(&self) {}
 }
 
+/// The CLAP entry of `bundle`, loaded.
+///
+/// clack loads the library with a plain `LoadLibraryExW`, which on Windows looks for the DLLs a
+/// plugin imports beside this program and not beside the plugin. So the library is loaded
+/// first with its own folder in the search, see `library.rs`; clack's load then finds it
+/// loaded already, and this first load lets go once clack holds it.
+///
+/// # Safety
+///
+/// This runs the plugin's own code.
+unsafe fn load_entry(bundle: &std::path::Path) -> Result<clack_host::entry::PluginEntry, String> {
+    #[cfg(target_os = "windows")]
+    // SAFETY: the caller agreed to run the plugin's code.
+    let _first_load = unsafe { crate::library::Library::load(bundle) }
+        .map_err(|error| format!("the library did not load: {error}"))?;
+    // SAFETY: as above.
+    unsafe { clack_host::entry::PluginEntry::load(bundle) }.map_err(|error| error.to_string())
+}
+
 /// The child side of a scan: loads one bundle and says what is in it. Everything that can go
 /// wrong here is the plugin's, which is why the caller is a process of its own.
 pub(crate) fn scan_bundle(bundle: &std::path::Path) -> Result<Vec<ScannedPlugin>, String> {
     // SAFETY: loading a plugin runs its code, which no host can check in advance. This is why
     // the scan runs in a child process. See `scan.rs`.
-    let entry = unsafe { clack_host::entry::PluginEntry::load(bundle) }
-        .map_err(|error| format!("{}: {error}", bundle.display()))?;
+    let entry =
+        unsafe { load_entry(bundle) }.map_err(|error| format!("{}: {error}", bundle.display()))?;
     let factory = entry
         .get_plugin_factory()
         .ok_or_else(|| format!("{}: the bundle has no plugin factory", bundle.display()))?;
@@ -228,8 +247,7 @@ fn instantiate(found: &ScannedPlugin) -> Result<PluginInstance<SoundToolsHost>, 
     // SAFETY: loading a plugin runs its code, which no host can check in advance. The scan ran
     // this same bundle in a child process first, so a bundle that crashes on load is already
     // known and never reaches here.
-    let entry = unsafe { clack_host::entry::PluginEntry::load(&found.path) }
-        .map_err(|error| fail(error.to_string()))?;
+    let entry = unsafe { load_entry(&found.path) }.map_err(fail)?;
     let host_info = HostInfo::new(HOST_NAME, HOST_VENDOR, HOST_URL, HOST_VERSION)
         .map_err(|error| fail(error.to_string()))?;
     let identifier =
@@ -718,6 +736,18 @@ impl PluginGui for ClapPlugin {
             width: size.width,
             height: size.height,
         })
+    }
+
+    fn set_scale(&mut self, scale: f64) {
+        let Some(gui) = self.gui_extension() else {
+            return;
+        };
+        match gui.set_scale(&self.instance.plugin_handle(), scale) {
+            Ok(()) => {}
+            // A plugin that reads the scale from the system itself refuses, as CLAP allows.
+            // Its sizes are physical pixels either way.
+            Err(_ignored) => {}
+        }
     }
 
     unsafe fn set_parent(&mut self, view: NonNull<c_void>) -> Result<(), PluginProblem> {

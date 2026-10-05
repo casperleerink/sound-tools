@@ -147,6 +147,12 @@ pub(crate) trait PluginGui {
     /// How big the plugin wants its window, if it says.
     fn size(&mut self) -> Option<WindowSize>;
 
+    /// Tells the plugin how many physical pixels make one logical pixel of its window. Only on
+    /// Windows, where both formats count physical pixels; never on macOS, where CLAP forbids it
+    /// and sizes are logical. A plugin that reads the scale from the system itself may ignore
+    /// it, which both formats allow. CLAP's `set_scale`, VST 3's `setContentScaleFactor`.
+    fn set_scale(&mut self, scale: f64);
+
     /// Puts the plugin's view inside `view`.
     ///
     /// # Safety

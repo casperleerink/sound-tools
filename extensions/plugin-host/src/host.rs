@@ -1275,7 +1275,7 @@ impl Plugins {
             focus,
         };
         let opened = crate::window::open_window(&owner, request, cx);
-        let (handle, view, closed) = match opened {
+        let (handle, parent, closed) = match opened {
             Ok(opened) => opened,
             Err(error) => {
                 // The plugin already holds what it needs for a window. Give it back.
@@ -1298,7 +1298,7 @@ impl Plugins {
         };
         let Hosted { window, plugin, .. } = hosted;
         let attached = match plugin.gui() {
-            Some(gui) => window.attach(gui, handle, view, closed),
+            Some(gui) => window.attach(gui, handle, parent, closed),
             None => Err((PluginProblem::NoWindow { plugin_id }, handle)),
         };
         match attached {

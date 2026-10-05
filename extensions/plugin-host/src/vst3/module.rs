@@ -11,7 +11,7 @@
 //!
 //! On Windows a bundle is the same kind of folder with a DLL named like the bundle, such as
 //! `Contents/x86_64-win/piano.vst3`, or, from before bundles, that DLL alone as `piano.vst3`.
-//! The host loads it with `LoadLibraryW` and calls `InitDll`, which takes nothing and which a
+//! The host loads it with `LoadLibraryExW` and calls `InitDll`, which takes nothing and which a
 //! plugin need not have; the last symbol is `ExitDll`.
 //!
 //! The `platform` modules at the end hold the three ways, and are all of this backend that
@@ -69,12 +69,12 @@ impl Module {
     }
 
     fn load_once(bundle: &Path) -> Result<Self, String> {
-        let fail = |message: &str| format!("{}: {message}", bundle.display());
+        let fail = |message: &dyn std::fmt::Display| format!("{}: {message}", bundle.display());
         // SAFETY: `platform::open` gives the function the binary exports under the name the
         // format gives it, once the plugin's own entry function has said yes.
         let factory = unsafe {
-            let get_factory = platform::open(bundle).map_err(fail)?;
-            ComPtr::from_raw(get_factory()).ok_or_else(|| fail("the plugin has no factory"))?
+            let get_factory = platform::open(bundle).map_err(|message| fail(&message))?;
+            ComPtr::from_raw(get_factory()).ok_or_else(|| fail(&"the plugin has no factory"))?
         };
         Ok(Self { factory })
     }
@@ -323,14 +323,14 @@ mod platform {
 }
 
 /// Windows: the DLL of this machine's architecture in the bundle, or the bundle itself when it
-/// is the older single file, through `LoadLibraryW`, and `InitDll` when the DLL has one.
+/// is the older single file, loaded with its own folder in the DLL search (see `library.rs`),
+/// and `InitDll` when the DLL has one.
 #[cfg(target_os = "windows")]
 mod platform {
-    use std::ffi::{c_char, c_void};
-    use std::os::windows::ffi::OsStrExt as _;
     use std::path::Path;
 
     use super::GetPluginFactory;
+    use crate::library::Library;
 
     /// `InitDll` takes nothing. Steinberg's own module loader calls it only when it is there.
     type InitDll = unsafe extern "C" fn() -> bool;
@@ -341,7 +341,7 @@ mod platform {
     /// # Safety
     ///
     /// This runs the plugin's static initializers and `InitDll`.
-    pub(super) unsafe fn open(bundle: &Path) -> Result<GetPluginFactory, &'static str> {
+    pub(super) unsafe fn open(bundle: &Path) -> Result<GetPluginFactory, String> {
         let binary = match bundle.is_dir() {
             true => {
                 let file = bundle.file_name().ok_or("this is not a bundle")?;
@@ -350,41 +350,27 @@ mod platform {
             false => bundle.to_path_buf(),
         };
         if !binary.is_file() {
-            return Err("the bundle has no binary this machine can load");
+            return Err("the bundle has no binary this machine can load".to_string());
         }
-        let mut wide: Vec<u16> = binary.as_os_str().encode_wide().collect();
-        if wide.contains(&0) {
-            return Err("the bundle path is not a path");
-        }
-        wide.push(0);
-        // SAFETY: `wide` ends in its only zero and outlives the call, and each symbol is checked
-        // for null before it is turned into a function.
+        // SAFETY: the caller agreed to run the plugin's code. Each symbol is checked for null
+        // before it is turned into a function.
         unsafe {
-            let module = LoadLibraryW(wide.as_ptr());
-            if module.is_null() {
-                return Err("the bundle has no binary this machine can load");
-            }
+            let library = Library::load(&binary)
+                .map_err(|error| format!("the binary did not load: {error}"))?;
             let get_factory: Option<GetPluginFactory> =
-                std::mem::transmute(GetProcAddress(module, c"GetPluginFactory".as_ptr()));
-            let init: Option<InitDll> =
-                std::mem::transmute(GetProcAddress(module, c"InitDll".as_ptr()));
+                std::mem::transmute(library.symbol(c"GetPluginFactory"));
+            let init: Option<InitDll> = std::mem::transmute(library.symbol(c"InitDll"));
+            // The DLL stays, whatever comes next: nothing unloads a plugin.
+            library.keep();
             let Some(get_factory) = get_factory else {
-                return Err("the binary is not a VST 3 plugin");
+                return Err("the binary is not a VST 3 plugin".to_string());
             };
-            // The module stays: the plugin holds it from here on. Nothing frees it, because
-            // nothing unloads a plugin.
             if let Some(init) = init
                 && !init()
             {
-                return Err("the plugin refused to start");
+                return Err("the plugin refused to start".to_string());
             }
             Ok(get_factory)
         }
-    }
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn LoadLibraryW(file: *const u16) -> *mut c_void;
-        fn GetProcAddress(module: *mut c_void, name: *const c_char) -> *mut c_void;
     }
 }

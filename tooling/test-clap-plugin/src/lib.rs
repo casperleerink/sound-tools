@@ -235,12 +235,16 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
         log("gui_destroy", 0, 0);
     }
 
-    fn set_scale(&self, _scale: f64) -> Result<(), PluginError> {
-        // Cocoa sizes are already logical, and on Windows a plugin may read the scale from
-        // the window it is in, which is what this host leaves it to.
-        Err(PluginError::Message(
-            "this plugin takes no scale from its host",
-        ))
+    /// The scale of the window, which a host gives on Windows and never on macOS. The window
+    /// grows with it from its first size, as a real one draws its controls bigger.
+    fn set_scale(&self, scale: f64) -> Result<(), PluginError> {
+        log(&format!("gui_set_scale[{scale}]"), 0, 0);
+        let scaled = |side: u32| (f64::from(side) * scale).round() as u32;
+        self.size.set((
+            scaled(support::WINDOW_WIDTH),
+            scaled(support::WINDOW_HEIGHT),
+        ));
+        Ok(())
     }
 
     fn get_size(&self) -> Option<GuiSize> {
