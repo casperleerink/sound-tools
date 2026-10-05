@@ -91,6 +91,13 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
         let pin = record.parameters.get(&pin_of_lane(lane)?)?;
         (!pin.name.is_empty()).then(|| pin.name.clone().into())
     });
+    // A lane shows the value of a point as the card shows the value of its pin.
+    let for_text = for_list.clone();
+    devices.read_numbers::<PluginRecord>(move |id, _, lane, value| {
+        let plugins = for_text.upgrade()?;
+        let text = plugins.parameter_text(id, pin_of_lane(lane)?, f64::from(value))?;
+        Some(text.into())
+    });
     // A lane can be added for any parameter that takes one, as for a knob of a built-in
     // device: one that is not pinned yet is pinned at what it plays now, in the same step.
     devices.latent_numbers::<PluginRecord>(

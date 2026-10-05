@@ -175,6 +175,31 @@ impl Timeline {
         }
     }
 
+    /// Asks the device of the point `key` for its own text for the value of the point, or
+    /// `value` when given, such as a plugin's `-6 dB`, for the readout by the point. Here and not
+    /// while drawing, because it may call into a plugin. A device that gives none, and the track
+    /// itself, read out by the unit of the field.
+    pub(super) fn read_point(&mut self, key: &PointKey, value: Option<f32>, cx: &App) {
+        let project = self.session.read(cx).project();
+        let value = value.or_else(|| {
+            let state = project.resolve::<TrackState>(&key.track)?;
+            let state = project.state(&state)?;
+            let mut lanes = state.automation.iter();
+            let lane = lanes.find(|lane| key.is_in(&key.track, lane))?;
+            let point = lane.points.iter().find(|point| point.tick == key.tick)?;
+            Some(point.value.0)
+        });
+        let id = key
+            .device
+            .as_deref()
+            .and_then(|device| key.track.child(device).ok());
+        let text = id.zip(value).and_then(|(id, value)| {
+            let text = Devices::number_text(project, &id, &key.parameter, value, cx)?;
+            Some((key.clone(), value, text))
+        });
+        self.point_text = text;
+    }
+
     /// What a device of a track is called, as its card says: `Filter` for `filter`.
     pub(super) fn device_name(&self, track: &InstanceId, device: &str, cx: &App) -> SharedString {
         let Ok(id) = track.child(device) else {
@@ -441,7 +466,9 @@ impl Timeline {
                 };
                 let moved = track_lanes::moved_point(&drag.origin, *point, tick, value);
                 let tick = moved.points.get(*point).map_or(tick, |point| point.tick);
-                self.selected_point = Some(PointKey::of(drag.track.id(), &moved, tick));
+                let key = PointKey::of(drag.track.id(), &moved, tick);
+                self.read_point(&key, Some(value.0), cx);
+                self.selected_point = Some(key);
                 Some(moved)
             }
         };

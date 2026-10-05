@@ -43,7 +43,7 @@ use gpui::{
     App, Bounds, Context, CursorStyle, DispatchPhase, Entity, EventEmitter, ExternalPaths,
     FileDropEvent, FocusHandle, Focusable, Hitbox, HitboxBehavior, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels,
-    ScrollWheelEvent, Subscription, Window, canvas, div, prelude::*, px,
+    ScrollWheelEvent, SharedString, Subscription, Window, canvas, div, prelude::*, px,
 };
 use sound_core::{Instance, InstanceId, Project, ProjectEvent, State, Ticks, TimeSignatures};
 use sound_notes::Clip;
@@ -151,6 +151,9 @@ pub struct Timeline {
     /// pointer.
     selected_point: Option<PointKey>,
     hovered_point: Option<PointKey>,
+    /// The device's own text for the value of the point that shows its value, with the value,
+    /// see [`Self::read_point`].
+    point_text: Option<(PointKey, f32, SharedString)>,
     /// The tracks that show their automation lanes. Interface state: not saved, no undo step.
     expanded: BTreeSet<InstanceId>,
     /// The select that adds a lane, of each track that shows its lanes.
@@ -337,6 +340,7 @@ impl Timeline {
             held: Held::Nothing,
             selected_point: None,
             hovered_point: None,
+            point_text: None,
             expanded: BTreeSet::new(),
             lane_menus: BTreeMap::new(),
             clipboard,

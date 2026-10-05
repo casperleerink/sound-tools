@@ -9,12 +9,18 @@
 //! - `track-panel-plugin-automated.png`: a lane of the track sweeps `Cutoff`, shown under the
 //!   track with the name of the pin, and the knob of `Cutoff` shows what it plays halfway up,
 //!   with the mark of an automated control. `Level` next to it is the composer's.
+//! - `track-panel-plugin-lane-point.png`: the top of that sweep pressed and dragged, the
+//!   button still down: the value by its dot is the plugin's own text, as on the knob.
+//! - `track-panel-plugin-add-lane.png`: the select under the lane open, with its search, and
+//!   every parameter of the plugin that takes a lane, pinned or not.
 
 use std::collections::BTreeMap;
 
 use anyhow::{Context as _, Result};
-use arrangement::{AutomationLane, AutomationValue, TrackState};
-use gpui::HeadlessAppContext;
+use arrangement::view::layout::{ADD_LANE_HEIGHT, HEADER_WIDTH, RULER_HEIGHT};
+use arrangement::view::track_lanes::LANE_BOX;
+use arrangement::{AutomationLane, AutomationValue, TrackState, travel_in};
+use gpui::{HeadlessAppContext, point, px};
 use plugin_host::view::PluginView;
 use plugin_host::{Pin, PluginFormat, PluginRecord};
 use sound_core::{Changes, InstanceId, Project, Ticks};
@@ -127,5 +133,38 @@ pub(crate) fn snapshots(
     opened.click_track_header(0., cx)?;
     opened.listen(0.2, cx)?;
     save(cx, &opened, "track-panel-plugin-automated")?;
+
+    // The top of the sweep, at bar 5, in the first lane of the first track.
+    let dot = cx.update(|cx| -> Result<gpui::Point<gpui::Pixels>> {
+        let project = opened.session.read(cx).project();
+        let instance = project.resolve::<TrackState>(&track).context("no track")?;
+        let state = project.state(&instance).context("a track")?;
+        let number = state.automation[0].number(&track, state, &travel_in(project));
+        let range = number.context("a cutoff")?.range;
+        let timeline = timeline.read(cx);
+        let (viewport, rows) = (timeline.viewport(), timeline.rows(cx));
+        let top = viewport.y_at(rows.lane_top(0, 0));
+        let y = LANE_BOX.y_of(range.position(8_000.));
+        Ok(point(
+            px(HEADER_WIDTH + viewport.x_of(Ticks(4 * BAR))),
+            px(48. + RULER_HEIGHT + top + y),
+        ))
+    })?;
+    let moved = point(dot.x - px(40.), dot.y - px(6.));
+    opened.press_and_move(dot, moved, cx)?;
+    save(cx, &opened, "track-panel-plugin-lane-point")?;
+    opened.key("escape", cx)?;
+    opened.release(moved, cx)?;
+
+    // The select in the row under the lane, at the left of its words.
+    let menu = cx.update(|cx| {
+        let timeline = timeline.read(cx);
+        let (viewport, rows) = (timeline.viewport(), timeline.rows(cx));
+        let top = viewport.y_at(rows.lane_top(0, 1));
+        point(px(56.), px(48. + RULER_HEIGHT + top + ADD_LANE_HEIGHT / 2.))
+    });
+    opened.drag(menu, point(px(0.), px(0.)), 0, cx)?;
+    save(cx, &opened, "track-panel-plugin-add-lane")?;
+    opened.key("escape", cx)?;
     Ok(())
 }

@@ -139,6 +139,7 @@ type ListNotes = Rc<dyn Fn() -> Vec<SharedString>>;
 type Generation = Rc<dyn Fn() -> u64>;
 type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>;
 type NameNumber = Rc<dyn Fn(&Project, &InstanceId, &str) -> Option<SharedString>>;
+type ReadNumber = Rc<dyn Fn(&Project, &InstanceId, &str, f32) -> Option<SharedString>>;
 type ListLatent = Rc<dyn Fn(&Project, &InstanceId) -> Vec<LatentNumber>>;
 type TakeLatent = Rc<dyn Fn(&Project, &InstanceId, &str, &mut Changes) -> Option<f32>>;
 
@@ -177,6 +178,7 @@ pub struct Devices {
     generations: Vec<Generation>,
     describe: BTreeMap<&'static str, DescribeInstance>,
     name_numbers: BTreeMap<&'static str, NameNumber>,
+    read_numbers: BTreeMap<&'static str, ReadNumber>,
     latent: BTreeMap<&'static str, (ListLatent, TakeLatent)>,
 }
 
@@ -241,6 +243,23 @@ impl Devices {
             Rc::new(move |project, id, field| {
                 let instance = project.resolve::<S>(id)?;
                 name(project.state(&instance)?, field)
+            }),
+        );
+    }
+
+    /// Registers the text a person reads for a value of a number of an instance of the tool
+    /// with state `S` that an automation lane names, where its field says nothing of its unit:
+    /// a plugin's own text for a value of a parameter, `-6 dB`. It may call into a plugin, so
+    /// it is asked when a value changes, never while drawing. `None` leaves it to the caller.
+    pub fn read_numbers<S: State>(
+        &mut self,
+        read: impl Fn(&InstanceId, &S, &str, f32) -> Option<SharedString> + 'static,
+    ) {
+        self.read_numbers.insert(
+            S::TOOL,
+            Rc::new(move |project, id, field, value| {
+                let instance = project.resolve::<S>(id)?;
+                read(id, project.state(&instance)?, field, value)
             }),
         );
     }
@@ -353,6 +372,22 @@ impl Devices {
         let tool = project.tool_of(id)?;
         let name = cx.try_global::<Self>()?.name_numbers.get(tool)?.clone();
         name(project, id, field)
+    }
+
+    /// What a person reads for `value` of the number `field` of `id`, when its tool says, see
+    /// [`Self::read_numbers`].
+    pub fn number_text(
+        project: &Project,
+        id: &InstanceId,
+        field: &str,
+        value: f32,
+        cx: &App,
+    ) -> Option<SharedString> {
+        let read = cx
+            .try_global::<Self>()?
+            .read_numbers
+            .get(project.tool_of(id)?)?;
+        read(project, id, field, value)
     }
 
     /// The numbers of `id` a lane can be added for that its record does not let a lane move

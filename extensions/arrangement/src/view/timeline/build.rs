@@ -266,8 +266,16 @@ impl Timeline {
                     let hovered = is(&self.hovered_point, point.tick);
                     let selected = is(&self.selected_point, point.tick);
                     let readout = (hovered || selected && dragging).then(|| {
-                        let device = lane.device.as_deref();
-                        track_lanes::readout(device, &lane.parameter, point.value.0).into()
+                        let key = PointKey::of(track, lane, point.tick);
+                        match &self.point_text {
+                            Some((at, value, text)) if *at == key && *value == point.value.0 => {
+                                text.clone()
+                            }
+                            _ => {
+                                let device = lane.device.as_deref();
+                                track_lanes::readout(device, &lane.parameter, point.value.0).into()
+                            }
+                        }
                     });
                     LanePoint {
                         x,
