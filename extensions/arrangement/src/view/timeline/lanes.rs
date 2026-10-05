@@ -111,7 +111,8 @@ impl Timeline {
     /// Fills the select that adds a lane to `track` with what it can add now, when that is not
     /// what it holds: every number of the track and of its devices that has no lane yet, also
     /// one a device takes only once its record says so, such as a plugin's parameter that is
-    /// not pinned. One group per device, in the order of the chain.
+    /// not pinned. One group per device, in the order of the chain, and inside one the numbers
+    /// in the device's own order, taken yet or not.
     pub(super) fn fill_lane_menu(&mut self, track: &InstanceId, cx: &mut Context<Self>) {
         let project = self.session.read(cx).project();
         let Some(state) = project
@@ -135,21 +136,38 @@ impl Timeline {
         });
         groups.push((None, own.collect()));
         for device in devices(state) {
-            let of_device = free
+            let free: Vec<&str> = free
                 .iter()
-                .filter(|lane| lane.device.as_deref() == Some(device));
-            let mut items: Vec<MenuItem> = of_device
-                .map(|lane| {
-                    let name = self.number_name(track, device, &lane.parameter, cx);
-                    item(Some(device), &lane.parameter, name)
-                })
+                .filter(|lane| lane.device.as_deref() == Some(device))
+                .map(|lane| lane.parameter.as_str())
                 .collect();
-            if let Ok(id) = track.child(device) {
-                let latent = Devices::latent_of(project, &id, cx).into_iter();
-                items.extend(
-                    latent.map(|number| item(Some(device), &number.field, number.name.into())),
-                );
-            }
+            let id = track.child(device).ok();
+            let listed = id
+                .as_ref()
+                .and_then(|id| Devices::lane_numbers(project, id, cx));
+            let items = match (listed, &id) {
+                // A number the device takes now is offered while it is free; one it takes only
+                // once its record says so, while no lane names it.
+                (Some(numbers), Some(id)) => {
+                    let numbers = numbers.into_iter().filter(|number| {
+                        let field = number.field.as_ref();
+                        let has_lane = state.automation.iter().any(|lane| {
+                            lane.device.as_deref() == Some(device) && lane.parameter == field
+                        });
+                        let mut taken = project.automatable(id);
+                        free.contains(&field) || (!has_lane && !taken.any(|it| it == field))
+                    });
+                    let numbers = numbers.map(|it| item(Some(device), &it.field, it.name.into()));
+                    numbers.collect()
+                }
+                _ => {
+                    let free = free.iter().map(|field| {
+                        let name = self.number_name(track, device, field, cx);
+                        item(Some(device), field, name)
+                    });
+                    free.collect()
+                }
+            };
             groups.push((Some(device), items));
         }
         groups.retain(|(_, items)| !items.is_empty());
@@ -195,7 +213,7 @@ impl Timeline {
             .and_then(|device| key.track.child(device).ok());
         let text = id.zip(value).and_then(|(id, value)| {
             let text = Devices::number_text(project, &id, &key.parameter, value, cx)?;
-            Some((key.clone(), value, text))
+            Some((key.clone(), value, text.into()))
         });
         self.point_text = text;
     }
@@ -225,9 +243,10 @@ impl Timeline {
         field: &str,
         cx: &App,
     ) -> String {
+        let project = self.session.read(cx).project();
         let id = track.child(device).ok();
-        let named = id.and_then(|id| Devices::number_name(&self.session, &id, field, cx));
-        named.map_or_else(|| track_lanes::number_name(field), String::from)
+        let named = id.and_then(|id| Devices::number_name(project, &id, field, cx));
+        named.unwrap_or_else(|| track_lanes::number_name(field))
     }
 
     /// The select of the lanes of a track picked a number: a lane for it, which holds the
@@ -254,7 +273,7 @@ impl Timeline {
             let number = lane.number(track, &state, &travel_in(project));
             let latent = || {
                 let id = track.child(device?).ok()?;
-                Devices::take_latent(project, &id, field, &mut changes, cx)
+                Devices::take_number(project, &id, field, &mut changes, cx)
             };
             let Some(record) = number.and_then(|number| number.record).or_else(latent) else {
                 return;

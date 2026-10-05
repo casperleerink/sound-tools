@@ -138,19 +138,90 @@ type ListOffers = Rc<dyn Fn() -> Vec<DeviceOffer>>;
 type ListNotes = Rc<dyn Fn() -> Vec<SharedString>>;
 type Generation = Rc<dyn Fn() -> u64>;
 type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>;
-type NameNumber = Rc<dyn Fn(&Project, &InstanceId, &str) -> Option<SharedString>>;
-type ReadNumber = Rc<dyn Fn(&Project, &InstanceId, &str, f32) -> Option<SharedString>>;
-type ListLatent = Rc<dyn Fn(&Project, &InstanceId) -> Vec<LatentNumber>>;
-type TakeLatent = Rc<dyn Fn(&Project, &InstanceId, &str, &mut Changes) -> Option<f32>>;
 
-/// A number of a device that no lane can move until its record says so, and that a lane can be
-/// added for all the same: a parameter of a plugin that is not pinned. Adding the lane changes
-/// the record too, in the same undo step, see [`Devices::latent_numbers`].
+/// What the lanes of a track need to know of the numbers of a device whose numbers are known
+/// only as it runs, such as a plugin, where the name of a number in the record says nothing to
+/// a person: `parameters.12.value`. Registered per tool with [`Devices::numbers`]. A built-in
+/// device registers none: a lane names its numbers by their field, the unit at the end of the
+/// field reads a value out, and its behaviour names every number a lane can take.
+///
+/// Each may call into a plugin, so they are asked when something changes, never while drawing.
+pub trait Numbers<S> {
+    /// What a person reads for the number `field`: `Cutoff`.
+    fn name(&self, project: &Project, id: &InstanceId, state: &S, field: &str) -> Option<String>;
+
+    /// What a person reads for `value` of the number `field`: the plugin's own `-6 dB`.
+    fn text(
+        &self,
+        project: &Project,
+        id: &InstanceId,
+        state: &S,
+        field: &str,
+        value: f32,
+    ) -> Option<String>;
+
+    /// Every number a lane can be added for, in the device's own order, also one the device
+    /// takes only once its record says so, such as a parameter of a plugin that is not pinned.
+    fn lane_numbers(&self, project: &Project, id: &InstanceId, state: &S) -> Vec<LaneNumber>;
+
+    /// The record that lets a lane move `field`, which it does not yet, with the value the lane
+    /// starts at: what the device plays now. `None` when the record already does, or cannot.
+    fn take(&self, project: &Project, id: &InstanceId, state: &S, field: &str) -> Option<(S, f32)>;
+}
+
+/// A number a lane can be added for, see [`Numbers::lane_numbers`].
 #[derive(Clone, Debug, PartialEq)]
-pub struct LatentNumber {
-    /// What a lane names it by, as it will once the record says so: `parameters.12.value`.
+pub struct LaneNumber {
+    /// What a lane names it by: `parameters.12.value`.
     pub field: SharedString,
     pub name: SharedString,
+}
+
+/// [`Numbers`] of one tool, with the state looked up.
+trait ToolNumbers {
+    fn name(&self, project: &Project, id: &InstanceId, field: &str) -> Option<String>;
+    fn text(&self, project: &Project, id: &InstanceId, field: &str, value: f32) -> Option<String>;
+    fn lane_numbers(&self, project: &Project, id: &InstanceId) -> Vec<LaneNumber>;
+    fn take(
+        &self,
+        project: &Project,
+        id: &InstanceId,
+        field: &str,
+        changes: &mut Changes,
+    ) -> Option<f32>;
+}
+
+struct Typed<S, N>(N, std::marker::PhantomData<S>);
+
+impl<S: State, N: Numbers<S>> ToolNumbers for Typed<S, N> {
+    fn name(&self, project: &Project, id: &InstanceId, field: &str) -> Option<String> {
+        let state = project.state(&project.resolve::<S>(id)?)?;
+        self.0.name(project, id, state, field)
+    }
+
+    fn text(&self, project: &Project, id: &InstanceId, field: &str, value: f32) -> Option<String> {
+        let state = project.state(&project.resolve::<S>(id)?)?;
+        self.0.text(project, id, state, field, value)
+    }
+
+    fn lane_numbers(&self, project: &Project, id: &InstanceId) -> Vec<LaneNumber> {
+        let state = project.resolve::<S>(id).and_then(|it| project.state(&it));
+        let numbers = state.map(|state| self.0.lane_numbers(project, id, state));
+        numbers.unwrap_or_default()
+    }
+
+    fn take(
+        &self,
+        project: &Project,
+        id: &InstanceId,
+        field: &str,
+        changes: &mut Changes,
+    ) -> Option<f32> {
+        let instance = project.resolve::<S>(id)?;
+        let (record, value) = self.0.take(project, id, project.state(&instance)?, field)?;
+        changes.set(&instance, record);
+        Some(value)
+    }
 }
 
 /// What a rack says about the instance in a slot: what to call it, and which offer it is.
@@ -177,9 +248,7 @@ pub struct Devices {
     notes: Vec<ListNotes>,
     generations: Vec<Generation>,
     describe: BTreeMap<&'static str, DescribeInstance>,
-    name_numbers: BTreeMap<&'static str, NameNumber>,
-    read_numbers: BTreeMap<&'static str, ReadNumber>,
-    latent: BTreeMap<&'static str, (ListLatent, TakeLatent)>,
+    numbers: BTreeMap<&'static str, Rc<dyn ToolNumbers>>,
 }
 
 impl Global for Devices {}
@@ -230,61 +299,11 @@ impl Devices {
         );
     }
 
-    /// Registers what a person reads for a number of an instance of the tool with state `S`
-    /// that an automation lane names, where the name in the record says nothing to a person:
-    /// `parameters.12.value` of a plugin, which its record calls `Cutoff`. `None` leaves the
-    /// name to the caller.
-    pub fn name_numbers<S: State>(
-        &mut self,
-        name: impl Fn(&S, &str) -> Option<SharedString> + 'static,
-    ) {
-        self.name_numbers.insert(
-            S::TOOL,
-            Rc::new(move |project, id, field| {
-                let instance = project.resolve::<S>(id)?;
-                name(project.state(&instance)?, field)
-            }),
-        );
-    }
-
-    /// Registers the text a person reads for a value of a number of an instance of the tool
-    /// with state `S` that an automation lane names, where its field says nothing of its unit:
-    /// a plugin's own text for a value of a parameter, `-6 dB`. It may call into a plugin, so
-    /// it is asked when a value changes, never while drawing. `None` leaves it to the caller.
-    pub fn read_numbers<S: State>(
-        &mut self,
-        read: impl Fn(&InstanceId, &S, &str, f32) -> Option<SharedString> + 'static,
-    ) {
-        self.read_numbers.insert(
-            S::TOOL,
-            Rc::new(move |project, id, field, value| {
-                let instance = project.resolve::<S>(id)?;
-                read(id, project.state(&instance)?, field, value)
-            }),
-        );
-    }
-
-    /// Registers the numbers of an instance of the tool with state `S` that no lane can move
-    /// until its record says so, such as a plugin's parameters that are not pinned: `list` gives
-    /// them, and `take` gives the record that lets a lane move `field`, with the value the lane
-    /// starts at, which is what the device plays now. So a lane is added for any of them as for
-    /// a number the device already takes, as one undo step.
-    pub fn latent_numbers<S: State>(
-        &mut self,
-        list: impl Fn(&InstanceId, &S) -> Vec<LatentNumber> + 'static,
-        take: impl Fn(&InstanceId, &S, &str) -> Option<(S, f32)> + 'static,
-    ) {
-        let list: ListLatent = Rc::new(move |project, id| {
-            let state = project.resolve::<S>(id).and_then(|it| project.state(&it));
-            state.map(|state| list(id, state)).unwrap_or_default()
-        });
-        let take: TakeLatent = Rc::new(move |project, id, field, changes| {
-            let instance = project.resolve::<S>(id)?;
-            let (record, value) = take(id, project.state(&instance)?, field)?;
-            changes.set(&instance, record);
-            Some(value)
-        });
-        self.latent.insert(S::TOOL, (list, take));
+    /// Registers what the lanes of a track need to know of the numbers of an instance of the
+    /// tool with state `S`, see [`Numbers`].
+    pub fn numbers<S: State>(&mut self, numbers: impl Numbers<S> + 'static) {
+        let typed = Typed(numbers, std::marker::PhantomData);
+        self.numbers.insert(S::TOOL, Rc::new(typed));
     }
 
     /// Registers a built-in device with state `S`: what a rack calls it, and its offer, which
@@ -360,58 +379,51 @@ impl Devices {
         describe(project, id)
     }
 
+    /// The [`Numbers`] of the tool of `id`, when it registered them.
+    fn numbers_of(project: &Project, id: &InstanceId, cx: &App) -> Option<Rc<dyn ToolNumbers>> {
+        let devices = cx.try_global::<Self>()?;
+        devices.numbers.get(project.tool_of(id)?).cloned()
+    }
+
     /// What a person reads for the number `field` of `id`, when its tool names it, see
-    /// [`Self::name_numbers`].
+    /// [`Numbers::name`].
     pub fn number_name(
-        session: &Entity<Session>,
+        project: &Project,
         id: &InstanceId,
         field: &str,
         cx: &App,
-    ) -> Option<SharedString> {
-        let project = session.read(cx).project();
-        let tool = project.tool_of(id)?;
-        let name = cx.try_global::<Self>()?.name_numbers.get(tool)?.clone();
-        name(project, id, field)
+    ) -> Option<String> {
+        Self::numbers_of(project, id, cx)?.name(project, id, field)
     }
 
     /// What a person reads for `value` of the number `field` of `id`, when its tool says, see
-    /// [`Self::read_numbers`].
+    /// [`Numbers::text`].
     pub fn number_text(
         project: &Project,
         id: &InstanceId,
         field: &str,
         value: f32,
         cx: &App,
-    ) -> Option<SharedString> {
-        let read = cx
-            .try_global::<Self>()?
-            .read_numbers
-            .get(project.tool_of(id)?)?;
-        read(project, id, field, value)
+    ) -> Option<String> {
+        Self::numbers_of(project, id, cx)?.text(project, id, field, value)
     }
 
-    /// The numbers of `id` a lane can be added for that its record does not let a lane move
-    /// yet, see [`Self::latent_numbers`]. They may call into a plugin, so not while drawing.
-    pub fn latent_of(project: &Project, id: &InstanceId, cx: &App) -> Vec<LatentNumber> {
-        let latent = cx.try_global::<Self>().and_then(|devices| {
-            let tool = project.tool_of(id)?;
-            devices.latent.get(tool).map(|(list, _)| list.clone())
-        });
-        latent.map(|list| list(project, id)).unwrap_or_default()
+    /// Every number of `id` a lane can be added for, when its tool says, see
+    /// [`Numbers::lane_numbers`]. `None` when it does not, and its behaviour names them.
+    pub fn lane_numbers(project: &Project, id: &InstanceId, cx: &App) -> Option<Vec<LaneNumber>> {
+        Some(Self::numbers_of(project, id, cx)?.lane_numbers(project, id))
     }
 
     /// Puts the record of `id` that lets a lane move `field` into `changes`, and gives the
-    /// value the lane starts at. `None` when `field` is not one of [`Self::latent_of`].
-    pub fn take_latent(
+    /// value the lane starts at, see [`Numbers::take`].
+    pub fn take_number(
         project: &Project,
         id: &InstanceId,
         field: &str,
         changes: &mut Changes,
         cx: &App,
     ) -> Option<f32> {
-        let devices = cx.try_global::<Self>()?;
-        let (_, take) = devices.latent.get(project.tool_of(id)?)?;
-        take(project, id, field, changes)
+        Self::numbers_of(project, id, cx)?.take(project, id, field, changes)
     }
 }
 

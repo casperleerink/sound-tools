@@ -213,16 +213,17 @@ impl Timeline {
         cx.observe_self(|timeline, cx| timeline.refresh_order(cx))
             .detach();
         let project_events = cx.subscribe(&session, |timeline, _, event, cx| {
-            // What the select that adds a lane offers goes with the lanes of its track and its
-            // devices. Not while a drag moves: a drag changes no number that could take a lane.
-            let refill = match event {
-                ProjectEvent::Changed(id) => Some(id.clone()),
-                ProjectEvent::Created(id) | ProjectEvent::Deleted(id) => id.parent(),
-                ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged => None,
+            // What the select that adds a lane offers goes with the lanes of its track and with
+            // its devices: their records, and a plugin that loads, which runs its record again.
+            let touched = match event {
+                ProjectEvent::Changed(id)
+                | ProjectEvent::Created(id)
+                | ProjectEvent::Deleted(id) => [Some(id.clone()), id.parent()],
+                ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged => [None, None],
             };
-            if let Some(track) = refill.filter(|track| timeline.lane_menus.contains_key(track))
-                && matches!(timeline.held, Held::Nothing)
-            {
+            let tracks = touched.into_iter().flatten();
+            let tracks = tracks.filter(|track| timeline.lane_menus.contains_key(track));
+            for track in tracks.collect::<Vec<_>>() {
                 timeline.fill_lane_menu(&track, cx);
             }
             let shown = |id: &InstanceId| timeline.shows(id, cx);
@@ -587,6 +588,21 @@ impl Timeline {
     }
 
     /// The first selected clip: the one the note editor shows.
+    /// What shows by the point of a lane the pointer is on, or that a drag moves.
+    pub fn point_readout(&self, cx: &App) -> Option<SharedString> {
+        let dragging = matches!(&self.held, Held::Lane(_));
+        let key = self.hovered_point.as_ref();
+        let key = key.or(self.selected_point.as_ref().filter(|_| dragging))?;
+        let project = self.session.read(cx).project();
+        let state = project.state(&project.resolve::<TrackState>(&key.track)?)?;
+        let lane = state
+            .automation
+            .iter()
+            .find(|lane| key.is_in(&key.track, lane))?;
+        let point = lane.points.iter().find(|point| point.tick == key.tick)?;
+        Some(self.readout_of(&key.track, lane, key.tick, point.value.0))
+    }
+
     pub fn selected_clip(&self) -> Option<&InstanceId> {
         self.clips.primary()
     }

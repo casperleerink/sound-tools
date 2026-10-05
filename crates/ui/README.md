@@ -52,10 +52,9 @@ registries (`crates/runtime/src/lib.rs`, `views`) and installs them as GPUI glob
 - `Views`: `register` gives a tool its main view, and `register_card` gives it a card for a
   slot in a rack. A host calls `Views::card_of` or `Views::view_of` to show the view of an
   instance whose tool it does not know.
-- `Devices`: what a rack says about a slot (`describe`), what a person reads for a number a
-  lane names when its path says nothing (`name_numbers`, a plugin's pins) and its text for a
-  value (`read_numbers`), the numbers a lane can be added for once the record changes
-  (`latent_numbers`, a plugin's other parameters), and what a composer can pick for it
+- `Devices`: what a rack says about a slot (`describe`), what the lanes need of a device whose
+  numbers are known only as it runs, such as a plugin (`numbers`: their names, the text of a
+  value, and which ones a lane can be added for), and what a composer can pick for it
   (`instruments`, `effects`). A picker reads the offers when it is made, not per frame,
   because a source may have to look at the machine. It fills itself again when
   `Devices::offers_generation` changes. Every offer names its `OfferGroup`, and the picker
