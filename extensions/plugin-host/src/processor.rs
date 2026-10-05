@@ -293,9 +293,12 @@ impl PinValues {
 /// a lane's is never read while the pin is out of it.
 ///
 /// A sequence lock of atomics: the audio side never waits, and the main thread reads again
-/// when a block wrote while it read.
+/// when a block wrote while it read. The generation goes up whenever the pins it holds change,
+/// not their values, so the main thread can tell that a lane came or went while it read the
+/// plugin, even when it came and went between two reads of this.
 pub(crate) struct LanedPins {
     sequence: AtomicU64,
+    generation: AtomicU64,
     count: AtomicUsize,
     ids: [AtomicU32; MAX_AUTOMATED],
     values: [AtomicU64; MAX_AUTOMATED],
@@ -305,14 +308,22 @@ impl LanedPins {
     pub(crate) fn new() -> Self {
         Self {
             sequence: AtomicU64::new(0),
+            generation: AtomicU64::new(0),
             count: AtomicUsize::new(0),
             ids: std::array::from_fn(|_| AtomicU32::new(0)),
             values: std::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
 
-    /// The audio side, after a block.
+    /// The audio side, the only one that writes, so it reads what it wrote last as it is.
     fn write(&self, held: &PinValues) {
+        let count = self.count.load(Ordering::Relaxed).min(MAX_AUTOMATED);
+        let ids = &self.ids[..count];
+        let same_pins = count == held.count
+            && held
+                .as_slice()
+                .iter()
+                .all(|(pin, _)| ids.iter().any(|id| id.load(Ordering::Relaxed) == *pin));
         let sequence = self.sequence.load(Ordering::Relaxed);
         // Odd while it writes, so a read in between knows.
         self.sequence
@@ -324,13 +335,16 @@ impl LanedPins {
             value.store(played.to_bits(), Ordering::Relaxed);
         }
         self.count.store(held.count, Ordering::Relaxed);
+        if !same_pins {
+            self.generation.fetch_add(1, Ordering::Relaxed);
+        }
         self.sequence
             .store(sequence.wrapping_add(2), Ordering::Release);
     }
 
-    /// The main thread: each pin a lane holds, with the value it plays. `None` when blocks
-    /// kept writing while it read, and then the caller takes every pin as held.
-    pub(crate) fn read(&self) -> Option<Vec<(u32, f64)>> {
+    /// The main thread: the generation, and each pin a lane holds with the value it plays.
+    /// `None` when blocks kept writing while it read.
+    pub(crate) fn read(&self) -> Option<(u64, Vec<(u32, f64)>)> {
         for _ in 0..8 {
             let before = self.sequence.load(Ordering::Acquire);
             if before % 2 == 1 {
@@ -344,9 +358,10 @@ impl LanedPins {
                 (id.load(Ordering::Relaxed), value)
             });
             let held: Vec<(u32, f64)> = held.collect();
+            let generation = self.generation.load(Ordering::Relaxed);
             fence(Ordering::Acquire);
             if self.sequence.load(Ordering::Relaxed) == before {
-                return Some(held);
+                return Some((generation, held));
             }
         }
         None
@@ -869,10 +884,10 @@ mod tests {
                 .collect();
             let mut seen = None;
             with_lanes(&mut plugin, &lanes, &pins(), &mut held, &laned, |_| {
-                seen = laned.read();
+                seen = laned.read().map(|(_, pins)| pins);
                 true
             });
-            (seen, laned.read())
+            (seen, laned.read().map(|(_, pins)| pins))
         };
         let (during, after) = block(&[(0, 0.25)]);
         assert_eq!(during, Some(vec![(7, 0.25)]));
@@ -880,6 +895,34 @@ mod tests {
         let (during, after) = block(&[]);
         assert_eq!(during, Some(vec![(7, 0.25)]));
         assert_eq!(after, Some(vec![]));
+    }
+
+    /// The generation moves when a lane comes or goes, and not while it only moves: a poll that
+    /// sees it move while it reads the plugin knows a lane value may be in what it read.
+    #[test]
+    fn the_generation_moves_when_the_held_pins_change_and_not_with_their_values() {
+        let (mut plugin, mut held) = (plugin(), PinValues::NONE);
+        let laned = LanedPins::new();
+        let mut block = |values: &[(u16, f32)]| {
+            let lanes: Vec<_> = values
+                .iter()
+                .map(|&(parameter, value)| Timed {
+                    offset: 0,
+                    event: Automation { parameter, value },
+                })
+                .collect();
+            with_lanes(&mut plugin, &lanes, &pins(), &mut held, &laned, |_| true);
+            laned.read().map(|(generation, _)| generation)
+        };
+        let start = block(&[]);
+        let came = block(&[(0, 0.25)]);
+        assert_ne!(came, start);
+        assert_eq!(block(&[(0, 0.5)]), came);
+        let second = block(&[(0, 0.5), (1, 400.0)]);
+        assert_ne!(second, came);
+        let went = block(&[]);
+        assert_ne!(went, second);
+        assert_eq!(block(&[]), went);
     }
 
     /// A record value with no room in its block is not forgotten: the pin would stay on the

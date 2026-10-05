@@ -158,6 +158,28 @@ fn a_turn_in_the_window_just_after_a_lane_goes_is_kept() {
     assert_eq!(pinned_value(&harness, level(format)), 0.25);
 }
 
+/// A CLAP plugin that rounds the record value it goes back to, as the test plugin keeps
+/// hundredths: what it plays then is it taking the record, not an edit of its own.
+#[test]
+fn a_record_value_the_plugin_rounds_after_a_lane_is_not_written() {
+    tell_the_plugin(None, None);
+    let format = PluginFormat::Clap;
+    let mut harness = Harness::new();
+    harness.add_track(pinned(format, 0.123), one_note());
+    harness.play(1024);
+    set_lanes(&mut harness, "Automate", vec![(level_lane(format), 0.25)]);
+    harness.render(2048);
+    set_lanes(&mut harness, "Remove the lane", Vec::new());
+    harness.render(2048);
+    let start = Instant::now();
+    for second in 0..5 {
+        poll(&mut harness, start + Duration::from_secs(second));
+    }
+    assert_eq!(plugin_value(&harness, level(format)), 0.12);
+    assert_eq!(pinned_value(&harness, level(format)), 0.123);
+    assert_eq!(harness.project.undo_label(), Some("Remove the lane"));
+}
+
 /// Blocks with a lane playing, and the block in which it goes, allocate nothing on the audio
 /// thread, inside the plugin's own call included.
 #[test]

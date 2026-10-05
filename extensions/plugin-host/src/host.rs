@@ -207,11 +207,12 @@ struct Hosted {
     shown: BTreeMap<u32, Shown>,
 }
 
-/// A lane value the plugin's own window was shown, and the value it showed then.
+/// A lane value the plugin's own window was shown, and the value it showed then. `None` where
+/// the host shows the window nothing, as for CLAP.
 #[derive(Copy, Clone, Debug)]
 struct Shown {
     sent: f64,
-    seen: f64,
+    seen: Option<f64>,
 }
 
 /// A pin, as the host last sent it or read it.
@@ -352,11 +353,11 @@ impl Hosted {
         pins
     }
 
-    /// The pins a lane holds, each with the value it plays, as the audio side wrote them last.
-    /// `None` when blocks kept writing while it was read.
-    fn held(&self) -> Option<BTreeMap<u32, f64>> {
-        let held = self.laned.read()?;
-        Some(held.into_iter().collect())
+    /// The generation of the pins a lane holds, and each with the value it plays, as the
+    /// audio side wrote them last. `None` when blocks kept writing while it was read.
+    fn held(&self) -> Option<(u64, BTreeMap<u32, f64>)> {
+        let (generation, held) = self.laned.read()?;
+        Some((generation, held.into_iter().collect()))
     }
 
     /// Where the format needs the host for it, shows the plugin's own window the value each
@@ -370,12 +371,13 @@ impl Hosted {
             let seen = match was {
                 Some(was) if same(was.sent, *value) => was.seen,
                 _ => {
-                    self.plugin.show(ParameterChange {
+                    let change = ParameterChange {
                         id: *id,
                         value: *value,
-                    });
+                    };
                     // As the window took it, perhaps rounded: what a release compares with.
-                    self.plugin.value(*id).unwrap_or(*value)
+                    let shows = self.plugin.show(change);
+                    shows.then(|| self.plugin.value(*id).unwrap_or(*value))
                 }
             };
             let sent = *value;
@@ -383,16 +385,20 @@ impl Hosted {
         }
         let released = self.shown.iter().filter(|(id, _)| !held.contains_key(id));
         for (id, was) in released {
-            let Some(state) = self.pins.get_mut(id) else {
+            // A window that follows the processor by itself needs nothing. Its first read is
+            // the plugin taking the record value again, as for every pin a lane held.
+            let (Some(state), Some(seen)) = (self.pins.get_mut(id), was.seen) else {
                 continue;
             };
             let now = self.plugin.value(*id);
-            match now.is_some_and(|now| same(now, was.seen)) {
-                true => self.plugin.show(ParameterChange {
+            if now.is_some_and(|now| same(now, seen)) {
+                let record = ParameterChange {
                     id: *id,
                     value: state.record,
-                }),
-                false => state.plugin = Some(was.seen),
+                };
+                self.plugin.show(record);
+            } else {
+                state.plugin = Some(seen);
             }
         }
         self.shown = shown;
@@ -455,7 +461,8 @@ impl Hosted {
     /// taking its record value again, not a change of its own. The audio side writes a pin held
     /// before the plugin hears its lane, and free only after the plugin played its record value
     /// again, so a pin held in the table as read before or after the plugin's values is left
-    /// out: a lane value the plugin has is always in one of them.
+    /// out. A lane that came or went in between moves the generation of the table, and then
+    /// nothing is written this round: the next poll reads again.
     fn read_pins(&mut self) -> Vec<ParameterChange> {
         let before = self.held();
         let mut values = Vec::new();
@@ -468,16 +475,24 @@ impl Hosted {
         }
         let after = self.held();
         let laned: BTreeSet<u32> = match (&before, &after) {
-            (Some(before), Some(after)) => before.keys().chain(after.keys()).copied().collect(),
-            // Blocks kept writing all the while: every pin is taken as held.
-            _ => self.pins.keys().copied().collect(),
+            (Some((first, before)), Some((last, after))) if first == last => {
+                before.keys().chain(after.keys()).copied().collect()
+            }
+            // A lane came or went while the plugin was read, or blocks kept writing all the
+            // while: what was read may be a lane's.
+            _ => {
+                if let Some((_, after)) = &after {
+                    self.follow_lanes(after);
+                }
+                return Vec::new();
+            }
         };
         for (id, state) in &mut self.pins {
             if laned.contains(id) {
                 state.plugin = None;
             }
         }
-        if let Some(after) = &after {
+        if let Some((_, after)) = &after {
             self.follow_lanes(after);
         }
         let mut changes = Vec::new();

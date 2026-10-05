@@ -553,12 +553,14 @@ impl LoadedPlugin for Vst3Plugin {
 
     /// The controller is told, and so is what the host knows the processor plays, so a change
     /// of the controller's values does not send it to the processor as an edit.
-    fn show(&mut self, change: ParameterChange) {
-        if let Some(controller) = &self.joined.controller {
-            // SAFETY: the controller came from the plugin and is alive.
-            unsafe { controller.setParamNormalized(change.id, change.value) };
-        }
+    fn show(&mut self, change: ParameterChange) -> bool {
+        let Some(controller) = &self.joined.controller else {
+            return false;
+        };
+        // SAFETY: the controller came from the plugin and is alive.
+        unsafe { controller.setParamNormalized(change.id, change.value) };
         self.values.insert(change.id, change.value);
+        true
     }
 
     /// The controller holds every value the moment it is sent, so there is nothing to wait for.
