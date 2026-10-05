@@ -195,7 +195,8 @@ fn a_key_typed_in_a_plugins_window_reaches_a_vst3_view(cx: &mut TestAppContext) 
         let folder = tempfile::tempdir().unwrap();
         let log = folder.path().join("calls.txt");
         let (harness, handle) = open(format, &log, cx);
-        cx.simulate_keystrokes(handle, "a shift-b enter cmd-c");
+        // `secondary` is command on macOS and control on Windows, which VST 3 both calls command.
+        cx.simulate_keystrokes(handle, "a shift-b enter secondary-c");
         let up = PlatformInput::KeyUp(KeyUpEvent {
             keystroke: Keystroke::parse("a").unwrap(),
         });

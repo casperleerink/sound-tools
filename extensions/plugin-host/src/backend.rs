@@ -151,7 +151,8 @@ pub(crate) trait PluginGui {
     ///
     /// # Safety
     ///
-    /// `view` must be an `NSView` that stays alive until [`Self::destroy`] has run.
+    /// `view` must be a view of this platform, an `NSView` or an `HWND`, that stays alive
+    /// until [`Self::destroy`] has run.
     unsafe fn set_parent(&mut self, view: NonNull<c_void>) -> Result<(), PluginProblem>;
 
     /// Shows the plugin's view. VST 3 has no such call: a view is on screen as soon as it is

@@ -103,7 +103,7 @@ pub enum PluginProblem {
     NoWindow { plugin_id: String },
     #[error("the window of the plugin {plugin_id:?} did not open: {message}")]
     WindowDidNotOpen { plugin_id: String, message: String },
-    #[error("where the plugin windows are is not kept on this Mac: {message}")]
+    #[error("where the plugin windows are is not kept on this computer: {message}")]
     WindowPlaces { message: String },
     #[error(
         "the plugin {plugin_id:?} has no parameter with the id {id} that a host may set, so `parameters.{id}` moves nothing. The rest of the record plays. `sound-tools --plugin-params` lists the ones it has"

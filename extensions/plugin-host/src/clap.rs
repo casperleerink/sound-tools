@@ -722,9 +722,12 @@ impl PluginGui for ClapPlugin {
 
     unsafe fn set_parent(&mut self, view: NonNull<c_void>) -> Result<(), PluginProblem> {
         let gui = self.gui_extension().ok_or_else(|| self.no_window())?;
+        let configuration = configuration().ok_or_else(|| self.no_window())?;
+        // The view of this platform's windowing API: an `NSView` for Cocoa, an `HWND` for
+        // Win32. CLAP holds either as the same pointer.
+        let parent =
+            clack_extensions::gui::Window::from_generic_ptr(configuration.api_type, view.as_ptr());
         // SAFETY: the caller keeps the view alive until `destroy` has run.
-        let parent = unsafe { clack_extensions::gui::Window::from_cocoa_nsview(view.as_ptr()) };
-        // SAFETY: as above.
         unsafe { gui.set_parent(&self.instance.plugin_handle(), parent) }
             .map_err(|error| self.failed(error))
     }
