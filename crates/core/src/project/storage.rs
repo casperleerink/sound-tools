@@ -182,6 +182,50 @@ pub(crate) enum Locked {
     No,
 }
 
+/// Takes the project lock without waiting. std locks the whole file, and Windows refuses every
+/// read of a locked range, so there `git add` or a copy of an open project would fail on this
+/// file. Windows locks one byte far past its end instead, which no read reaches.
+#[cfg(not(windows))]
+fn try_lock(file: &fs::File) -> Result<(), fs::TryLockError> {
+    file.try_lock()
+}
+
+#[cfg(windows)]
+fn try_lock(file: &fs::File) -> Result<(), fs::TryLockError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::ERROR_LOCK_VIOLATION;
+    use windows_sys::Win32::Storage::FileSystem::{
+        LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
+    };
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+
+    let mut overlapped = OVERLAPPED::default();
+    overlapped.Anonymous.Anonymous.Offset = u32::MAX - 1;
+    overlapped.Anonymous.Anonymous.OffsetHigh = u32::MAX;
+    // SAFETY: the handle is open for as long as `file` is borrowed, and `overlapped` lives
+    // through the call, which returns at once with LOCKFILE_FAIL_IMMEDIATELY. The lock ends
+    // when the handle closes.
+    let locked = unsafe {
+        LockFileEx(
+            file.as_raw_handle(),
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            1,
+            0,
+            &mut overlapped,
+        )
+    };
+    if locked != 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == i32::try_from(ERROR_LOCK_VIOLATION).ok() {
+        Err(fs::TryLockError::WouldBlock)
+    } else {
+        Err(fs::TryLockError::Error(error))
+    }
+}
+
 impl Storage {
     /// Creates the folder when it is missing, and takes the project lock.
     pub(super) fn open_exclusive(folder: &Path) -> io::Result<Locked> {
@@ -192,7 +236,7 @@ impl Storage {
             .truncate(false)
             .write(true)
             .open(root.join(LOCK_FILE))?;
-        match lock.try_lock() {
+        match try_lock(&lock) {
             Ok(()) => Ok(Locked::Yes(Self::new(root, Some(lock)))),
             Err(fs::TryLockError::WouldBlock) => Ok(Locked::No),
             Err(fs::TryLockError::Error(error)) => Err(error),
