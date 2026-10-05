@@ -59,11 +59,12 @@ pub(crate) fn scan_bundle(bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
 /// The plugin's class id as a record holds it: the sixteen bytes as thirty-two uppercase hex
 /// digits.
 ///
-/// This is what Steinberg's own `FUID::toString` gives on macOS and Linux, and what a
-/// `.vstpreset` file holds, so the id in a record is the one a plugin's maker publishes. A
+/// This is what Steinberg's own `FUID::toString` gives, and what a `.vstpreset` file holds, so
+/// the id in a record is the one a plugin's maker publishes, and the same on every platform. A
 /// class id never changes, which is what makes it the name of a plugin for good.
 pub(crate) fn class_id_text(id: &TUID) -> String {
-    id.iter()
+    in_text_order(*id)
+        .iter()
         .map(|byte| format!("{:02X}", byte.to_ne_bytes()[0]))
         .collect()
 }
@@ -74,13 +75,27 @@ pub(crate) fn class_id_of(text: &str) -> Option<TUID> {
     if text.len() != 32 {
         return None;
     }
-    // `TUID` holds C chars, which are signed on macOS and unsigned on Linux on arm64.
+    // `TUID` holds C chars, which are signed on macOS and Windows and unsigned on Linux on
+    // arm64.
     let mut id: TUID = [0; 16];
     for (byte, digits) in id.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
         let digits = std::str::from_utf8(digits).ok()?;
         *byte = u8::from_str_radix(digits, 16).ok()? as std::ffi::c_char;
     }
-    Some(id)
+    Some(in_text_order(id))
+}
+
+/// A class id with its bytes in the order its text has them, or back: the swaps undo
+/// themselves. On Windows a class id is laid out as a COM `GUID`, whose first three fields are
+/// little-endian numbers, and `FUID::toString` writes those fields as numbers. Elsewhere the
+/// bytes are already in the order of the text.
+fn in_text_order(mut id: TUID) -> TUID {
+    if cfg!(target_os = "windows") {
+        id[..4].reverse();
+        id[4..6].reverse();
+        id[6..8].reverse();
+    }
+    id
 }
 
 /// The biggest state this host reads or writes, and the most a plugin may put in one stream.
@@ -106,11 +121,8 @@ mod tests {
 
     #[test]
     fn a_class_id_survives_the_way_to_a_record_and_back() {
-        let id: TUID = [
-            0x6E_u8, 0x33, 0x22, 0x52, 0x54, 0x22, 0x4A, 0x00, 0xAA, 0x69, 0x30, 0x1A, 0xF3, 0x18,
-            0x79, 0x7D,
-        ]
-        .map(|byte| byte as std::ffi::c_char);
+        // Made the way a plugin declares its id, which lays it out as a `GUID` on Windows.
+        let id: TUID = vst3::uid(0x6E332252, 0x54224A00, 0xAA69301A, 0xF318797D);
         let text = class_id_text(&id);
         assert_eq!(text, "6E33225254224A00AA69301AF318797D");
         assert_eq!(class_id_of(&text), Some(id));
