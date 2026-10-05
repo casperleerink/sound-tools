@@ -296,3 +296,23 @@ fn the_select_adds_a_lane_for_a_parameter_that_is_not_pinned_and_pins_it(cx: &mu
     assert!(opened.find("automated-pin-4").is_some());
     one_undo_step(&mut opened, "Add automation", &before);
 }
+
+/// A pin an automation lane moves does not come off the card from the list, as a knob of a
+/// built-in device does not: its lane would move nothing. Without the lane it comes off.
+#[gpui::test]
+fn a_pin_a_lane_moves_does_not_come_off(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
+    automate_cutoff(&mut opened, Some(5000.0));
+    pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
+    assert_eq!(
+        pins(&mut opened),
+        BTreeMap::from([(0, pin("Cutoff", 1000.0))])
+    );
+    assert_eq!(opened.undo_label().as_deref(), Some("Automate"));
+
+    opened.keys("escape");
+    automate_cutoff(&mut opened, None);
+    pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
+    assert_eq!(pins(&mut opened), BTreeMap::new());
+}

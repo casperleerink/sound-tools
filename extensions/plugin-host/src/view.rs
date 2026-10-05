@@ -27,7 +27,7 @@
 //! composer can see which plugin to install and an agent can be asked to correct the record.
 //! The record itself is untouched, as everywhere else.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -195,6 +195,8 @@ pub struct PluginView {
     read_out_later: Option<Task<()>>,
     /// The list that puts a parameter on the card and takes one off.
     menu: Entity<DropdownMenu>,
+    /// The pins an automation lane moves, as the list last showed them: those do not come off.
+    laned: BTreeSet<u32>,
     /// The pin whose knob is being dragged, and what its values meant when the drag began. A
     /// drag whose knob goes away, because the pin was taken off or became another control,
     /// sends no end, so the card ends it. So it does when the plugin gives the knob other
@@ -273,7 +275,11 @@ impl PluginView {
         })
         .detach();
         let lanes = Lanes::follow_named(&session, plugin.id(), cx);
-        cx.observe(&lanes, |view, _, cx| view.read_out(cx)).detach();
+        cx.observe(&lanes, |view, _, cx| {
+            view.read_out(cx);
+            view.fill_menu(false, cx);
+        })
+        .detach();
         let mut view = Self {
             session,
             plugin,
@@ -287,6 +293,7 @@ impl PluginView {
             lane_asked: BTreeMap::new(),
             read_out_later: None,
             menu,
+            laned: BTreeSet::new(),
             dragged: None,
         };
         view.ask_the_plugin(true, cx);
@@ -324,14 +331,31 @@ impl PluginView {
         self.readouts.retain(|pin, _| pins.contains_key(pin));
         self.read_out(cx);
 
-        let Some(parameters) = &self.parameters else {
+        self.fill_menu(record_changed || !same_list, cx);
+    }
+
+    /// Fills the list of parameters again, when `changed` says what it shows did or the pins a
+    /// lane moves are others now.
+    fn fill_menu(&mut self, changed: bool, cx: &mut Context<Self>) {
+        let (Some(parameters), Some(record)) = (
+            &self.parameters,
+            self.session.read(cx).project().state(&self.plugin),
+        ) else {
             return;
         };
-        if record_changed || !same_list {
-            let entries = menu_entries(parameters, &pins);
-            self.menu
-                .update(cx, |menu, cx| menu.set_entries(entries, cx));
+        let lanes = self.lanes.read(cx);
+        let pins = record.parameters.keys();
+        let laned: BTreeSet<u32> = pins
+            .filter(|pin| lanes.is_automated(&lane_of_pin(**pin)))
+            .copied()
+            .collect();
+        if !changed && laned == self.laned {
+            return;
         }
+        let entries = menu_entries(parameters, &record.parameters, &laned);
+        self.laned = laned;
+        self.menu
+            .update(cx, |menu, cx| menu.set_entries(entries, cx));
     }
 
     /// Asks the plugin for its text for the value each pin plays now, the record's or a lane's,
@@ -424,6 +448,9 @@ impl PluginView {
             return;
         };
         if let Some(pin) = record.parameters.get(&parameter_id) {
+            if self.laned.contains(&parameter_id) {
+                return;
+            }
             let label = format!("Remove {}", pin.name);
             let remove = move |record: &mut PluginRecord, ()| {
                 record.parameters.remove(&parameter_id);
@@ -622,18 +649,26 @@ impl PluginView {
 
 /// The rows of the list of parameters: every parameter of the plugin, with a check on the
 /// pinned ones, and after them the pins the plugin has no parameter for, so those can come off
-/// too. At the most pins, the others cannot be picked and a line says why.
+/// too. At the most pins, the others cannot be picked and a line says why. A pin in `laned` an
+/// automation lane moves, and it stays: as a knob of a built-in device, its lane would move
+/// nothing without it.
 fn menu_entries(
     parameters: &BTreeMap<u32, Parameter>,
     pins: &BTreeMap<u32, Pin>,
+    laned: &BTreeSet<u32>,
 ) -> Vec<MenuEntry> {
     let full = pins.len() >= MAX_AUTOMATED;
     let listed = parameters.values().map(|parameter| {
         let pinned = pins.contains_key(&parameter.id);
-        MenuItem::new(parameter.id.to_string(), parameter.name.clone())
+        let has_lane = laned.contains(&parameter.id);
+        let item = MenuItem::new(parameter.id.to_string(), parameter.name.clone())
             .checked(pinned)
             .selectable(false)
-            .disabled(full && !pinned)
+            .disabled(full && !pinned || has_lane);
+        match has_lane {
+            true => item.description("Automated. Delete its lane to take it off"),
+            false => item,
+        }
     });
     let unknown = pins
         .iter()
