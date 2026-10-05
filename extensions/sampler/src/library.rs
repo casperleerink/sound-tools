@@ -15,7 +15,7 @@
 //! [`download`], which the Sampler card calls when the composer picks an instrument or clicks
 //! Download.
 //!
-//! Downloads run on threads of their own with `/usr/bin/curl`, as the app's own update, so
+//! Downloads run on threads of their own with the system's curl, as the app's own update, so
 //! there is no HTTP code here. A finished one names the Samplers that waited for it
 //! ([`take_finished`]), and the runtime runs their behaviour again.
 
@@ -377,12 +377,23 @@ fn url_path(path: &str) -> String {
     encoded
 }
 
+/// The curl of the system. On Windows it is in the Windows folder since Windows 10, and runs
+/// with no console window: started from the app, which has no console, it would otherwise
+/// open an empty black one. The same rule as the agent crate's `curl`, which an extension
+/// cannot depend on.
 fn curl() -> Command {
-    let mut command = Command::new(if cfg!(target_os = "macos") {
-        "/usr/bin/curl"
-    } else {
-        "curl"
-    });
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("/usr/bin/curl");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = Command::new("curl");
+    #[cfg(windows)]
+    let mut command = {
+        let windows = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let mut command = Command::new(std::path::Path::new(&windows).join(r"System32\curl.exe"));
+        // CREATE_NO_WINDOW.
+        std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
+        command
+    };
     command.args([
         "--fail",
         "--silent",
