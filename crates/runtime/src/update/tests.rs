@@ -1,7 +1,6 @@
 //! The check, download and install against a release served from local files, with the real
-//! curl and no network.
-
-use std::os::unix::fs::PermissionsExt;
+//! curl and no network. The release with an install script is the one of the system the tests
+//! run on: the Linux tarball, or on Windows the zip.
 
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -19,8 +18,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// `file:///C:/...` on Windows, whose curl reads `file://C:\...` as a computer named `C`.
 fn file_url(path: &Path) -> String {
-    format!("file://{}", path.display())
+    let path = path.display().to_string().replace('\\', "/");
+    format!("file:///{}", path.trim_start_matches('/'))
 }
 
 /// The JSON GitHub sends for the latest release, in `served/latest.json`, with assets of
@@ -75,27 +76,61 @@ fn check(updater: &Updater) -> Result<Option<Ready>> {
     smol::block_on(updater.check())
 }
 
-/// The Linux tarball of 0.2.0 in `root/served`, whose `install.sh` writes `installed`.
-fn linux_release(root: &Path, installed: &Path) -> PathBuf {
+#[cfg(unix)]
+const SCRIPT_OS: &str = "linux";
+#[cfg(windows)]
+const SCRIPT_OS: &str = "windows";
+
+/// The release of 0.2.0 with an install script in `root/served`. The script writes
+/// `installed`.
+fn script_release(root: &Path, installed: &Path) -> PathBuf {
     let source = root.join("source");
-    let folder = source.join("sound-tools-0.2.0-linux-x86_64");
+    let name = format!("sound-tools-0.2.0-{SCRIPT_OS}-x86_64");
+    let folder = source.join(&name);
     fs::create_dir_all(&folder).unwrap();
-    fs::write(folder.join("sound-tools"), "0.2.0").unwrap();
-    let script = format!("#!/bin/sh\ncp sound-tools '{}'\n", installed.display());
-    fs::write(folder.join("install.sh"), script).unwrap();
+    fs::write(folder.join(app::program_file_name()), "0.2.0").unwrap();
+    write_install_script(&folder, installed);
     let served = root.join("served");
     fs::create_dir_all(&served).unwrap();
-    let archive = served.join("sound-tools-0.2.0-linux-x86_64.tar.gz");
-    let status = Command::new("tar")
-        .arg("-czf")
-        .arg(&archive)
+    let archive = served.join(asset_name(version("0.2.0"), SCRIPT_OS, "x86_64").unwrap());
+    let status = pack(&archive)
         .arg("-C")
         .arg(&source)
-        .arg("sound-tools-0.2.0-linux-x86_64")
+        .arg(&name)
         .status()
         .unwrap();
     assert!(status.success());
     archive
+}
+
+#[cfg(unix)]
+fn write_install_script(folder: &Path, installed: &Path) {
+    let script = format!("#!/bin/sh\ncp sound-tools '{}'\n", installed.display());
+    fs::write(folder.join("install.sh"), script).unwrap();
+}
+
+#[cfg(windows)]
+fn write_install_script(folder: &Path, installed: &Path) {
+    let script = format!(
+        "Copy-Item -LiteralPath sound-tools.exe -Destination '{}'\n",
+        installed.display()
+    );
+    fs::write(folder.join("install.ps1"), script).unwrap();
+}
+
+#[cfg(unix)]
+fn pack(archive: &Path) -> Command {
+    let mut command = Command::new("tar");
+    command.arg("-czf").arg(archive);
+    command
+}
+
+/// `-a` picks the zip format from the name.
+#[cfg(windows)]
+fn pack(archive: &Path) -> Command {
+    let mut command = Command::new(in_windows_folder(r"System32\tar.exe"));
+    command.arg("-a").arg("-cf").arg(archive);
+    command
 }
 
 #[test]
@@ -125,9 +160,13 @@ fn each_platform_gets_its_own_file() {
         asset_name(version, "linux", "aarch64").as_deref(),
         Some("sound-tools-0.2.0-linux-aarch64.tar.gz")
     );
-    // No Intel Mac build, and no Windows one.
+    assert_eq!(
+        asset_name(version, "windows", "x86_64").as_deref(),
+        Some("sound-tools-0.2.0-windows-x86_64.zip")
+    );
+    // No Intel Mac build, and no Windows on Arm one.
     assert_eq!(asset_name(version, "macos", "x86_64"), None);
-    assert_eq!(asset_name(version, "windows", "x86_64"), None);
+    assert_eq!(asset_name(version, "windows", "aarch64"), None);
 }
 
 #[test]
@@ -153,12 +192,12 @@ fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     let installed = root.join("installed");
-    let archive = linux_release(root, &installed);
+    let archive = script_release(root, &installed);
     publish(&root.join("served"), "v0.2.0", &archive);
     let program = root.join("home/.local/lib/sound-tools/sound-tools");
     let updater = updater(
         root,
-        "linux",
+        SCRIPT_OS,
         "x86_64",
         Place::Script {
             program: program.clone(),
@@ -174,11 +213,8 @@ fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
     );
     let (pending, unpacked) = updater.pending().unwrap();
     assert_eq!(pending, version("0.2.0"));
-    assert!(
-        unpacked
-            .join("sound-tools-0.2.0-linux-x86_64/install.sh")
-            .is_file()
-    );
+    let name = format!("sound-tools-0.2.0-{SCRIPT_OS}-x86_64");
+    assert!(unpacked.join(name).join(app::program_file_name()).is_file());
 
     // The next start installs it, and is told what to start.
     assert_eq!(updater.install_pending().unwrap(), Some(program));
@@ -192,7 +228,7 @@ fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
 fn a_damaged_download_is_never_ready() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
-    let archive = linux_release(root, &root.join("installed"));
+    let archive = script_release(root, &root.join("installed"));
     publish(&root.join("served"), "v0.2.0", &archive);
     // One byte changes after the checksums were written.
     let mut bytes = fs::read(&archive).unwrap();
@@ -200,7 +236,7 @@ fn a_damaged_download_is_never_ready() {
     fs::write(&archive, bytes).unwrap();
     let updater = updater(
         root,
-        "linux",
+        SCRIPT_OS,
         "x86_64",
         Place::Script {
             program: root.join("program"),
@@ -233,8 +269,12 @@ fn an_older_release_or_a_prerelease_is_not_offered() {
     assert_eq!(check(&updater).unwrap(), None);
 }
 
+/// Unix only: a read-only folder on Windows still takes new files.
+#[cfg(unix)]
 #[test]
 fn an_app_whose_folder_cannot_be_written_offers_the_release_page() {
+    use std::os::unix::fs::PermissionsExt;
+
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     let served = root.join("served");
