@@ -1,6 +1,6 @@
 name: Release
 
-# A tag v<version> builds the app for macOS and Linux and makes a GitHub release of it.
+# A tag v<version> builds the app for macOS, Linux and Windows and makes a GitHub release of it.
 # Started by hand, it builds the same files and keeps them as artifacts of the run, with no
 # release: the dry run. `/release` makes the tag, see .agents/skills/release/SKILL.md.
 on:
@@ -79,9 +79,32 @@ jobs:
           path: dist/sound-tools-${{ needs.version.outputs.version }}-linux-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
+  # x86_64 only. There is no build for Windows on Arm.
+  windows:
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      # `.cargo/config.toml` builds into /private/tmp, a folder of macOS.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: tooling/bundle-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/sound-tools-${{ needs.version.outputs.version }}-windows-x86_64.zip
+          if-no-files-found: error
+
   release:
     if: github.ref_type == 'tag'
-    needs: [version, macos, linux]
+    needs: [version, macos, linux, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -121,6 +144,8 @@ jobs:
           ```
 
           It needs glibc 2.39 or later: Ubuntu 24.04, Debian 13, Fedora 40 or newer. It also needs ALSA, Vulkan (a graphics driver, or Mesa for a software one), xkbcommon, fontconfig and Wayland or X11, which a desktop mostly has. On Ubuntu or Debian: `sudo apt-get install libasound2t64 libvulkan1 mesa-vulkan-drivers libxkbcommon-x11-0 libwayland-client0 libx11-xcb1 libfontconfig1`.
+
+          **Windows** (x86_64, Windows 10 or later): unzip `sound-tools-*-windows-x86_64.zip`, open the folder, right-click `install.ps1` and pick **Run with PowerShell**. It puts the app in `%LOCALAPPDATA%\Programs\Sound Tools` and adds it to the Start menu. The app is not signed, so Windows SmartScreen may block the first start: click **More info**, then **Run anyway**.
           NOTES
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "Sound Tools $VERSION" --notes-file notes.md --generate-notes
