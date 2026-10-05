@@ -112,11 +112,12 @@ sound-tools --plugin-params clap com.example.synth
 ```
 
 It loads that one plugin and prints one line per parameter: its id, its name, its range, its
-default, and, for a parameter that takes only some values, how many and the plugin's name for
-each. A read-only parameter, such as a meter, and one the plugin hides are not listed. The
+default, and, for a parameter that takes only some values, how many, with the plugin's name for
+each when the plugin gives names. A read-only parameter, such as a meter, and one the plugin hides are not listed. The
 numbers are the format's own: a `clap` plugin's own values, such as `20 to 20000` for a
 frequency in hertz, and always `0 to 1` for `vst3`. They are printed to six digits; the plugin
-keeps more.
+keeps more. A plugin can list thousands of parameters, so search the output, for example with
+`grep -i cutoff`. The plugin may print messages of its own in between.
 
     0  Cutoff  20 to 20000  default 1000
     1  Wave    0 to 2       default 0     3 steps: 0 = Sine, 1 = Saw, 2 = Square  not automatable
@@ -186,7 +187,8 @@ it again over bar 2:
   for `vst3`. Between two points the value moves in a straight line.
 - While the lane plays, the pin's `value` in the record does not, and the app never writes what
   the lane plays into it. Take the lane out and the pin's value plays again.
-- `--inspect` loads no plugin, so it cannot judge a lane on a pin and reports none.
+- `--inspect` loads no plugin. It reports a lane on a parameter that is not pinned, but not one
+  on a pin the plugin cannot automate; a render or the open app does.
 
 ## When it does not play
 
