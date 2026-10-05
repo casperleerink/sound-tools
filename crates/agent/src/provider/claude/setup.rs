@@ -24,16 +24,19 @@ struct Build {
     arch: &'static str,
     /// Anthropic's name for the same.
     platform: &'static str,
+    /// The program's file name.
+    file: &'static str,
     sha256: &'static str,
     size: u64,
 }
 
 /// From `https://downloads.claude.ai/claude-code-releases/<VERSION>/manifest.json`.
-const BUILDS: [Build; 4] = [
+const BUILDS: [Build; 5] = [
     Build {
         os: "macos",
         arch: "aarch64",
         platform: "darwin-arm64",
+        file: "claude",
         sha256: "75e3016e9d2570767b08e43a7467d4817a4f149232c169ca295f2c95fef21433",
         size: 225_167_728,
     },
@@ -41,6 +44,7 @@ const BUILDS: [Build; 4] = [
         os: "macos",
         arch: "x86_64",
         platform: "darwin-x64",
+        file: "claude",
         sha256: "53e6a936e89519d695230f9cc97943991286b72766674fba11bee845f0a7c047",
         size: 233_607_424,
     },
@@ -48,6 +52,7 @@ const BUILDS: [Build; 4] = [
         os: "linux",
         arch: "x86_64",
         platform: "linux-x64",
+        file: "claude",
         sha256: "fe503f65c6289d59c23e5b21ae44f03583f997dd33a2cbfc75ab4f96fb8fc73f",
         size: 241_667_256,
     },
@@ -55,8 +60,17 @@ const BUILDS: [Build; 4] = [
         os: "linux",
         arch: "aarch64",
         platform: "linux-arm64",
+        file: "claude",
         sha256: "0292fa22ac2fd43e16be9d0e511ddd8347280d6e0ebaca744ef5b27e05d8d0f8",
         size: 241_033_208,
+    },
+    Build {
+        os: "windows",
+        arch: "x86_64",
+        platform: "win32-x64",
+        file: "claude.exe",
+        sha256: "0b6ecec8edef1ce3069682f696c894d1553239faa6b84e56e167a3ced88fa333",
+        size: 245_092_000,
     },
 ];
 
@@ -66,12 +80,12 @@ pub(crate) fn download() -> Option<Download> {
     let build = BUILDS
         .iter()
         .find(|build| build.os == std::env::consts::OS && build.arch == std::env::consts::ARCH)?;
-    let platform = build.platform;
+    let &Build { platform, file, .. } = build;
     Some(Download {
-        name: "claude",
+        name: file,
         version: VERSION.to_string(),
         url: format!(
-            "https://downloads.claude.ai/claude-code-releases/{VERSION}/{platform}/claude"
+            "https://downloads.claude.ai/claude-code-releases/{VERSION}/{platform}/{file}"
         ),
         sha256: build.sha256.to_string(),
         size: build.size,
@@ -178,11 +192,17 @@ mod tests {
 
     #[test]
     fn every_supported_platform_has_a_build() {
-        for platform in ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"] {
+        for platform in [
+            "darwin-arm64",
+            "darwin-x64",
+            "linux-x64",
+            "linux-arm64",
+            "win32-x64",
+        ] {
             assert!(BUILDS.iter().any(|build| build.platform == platform));
         }
         let download = download().unwrap();
-        assert!(download.url.ends_with("/claude"));
+        assert!(download.url.ends_with(&format!("/{}", download.name)));
         assert!(download.url.contains(VERSION));
     }
 

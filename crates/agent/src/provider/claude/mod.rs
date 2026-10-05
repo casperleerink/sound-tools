@@ -36,7 +36,12 @@ use crate::process::ProcessTree;
 
 /// The tools a composer needs. No web, no subagents, no questions: the agent asks in plain
 /// text.
+#[cfg(not(windows))]
 const TOOLS: &str = "Bash,Read,Edit,Write,Glob,Grep";
+/// On Windows, Bash needs Git for Windows. Without it PowerShell is the only shell, and with
+/// it the CLI offers both.
+#[cfg(windows)]
+const TOOLS: &str = "Bash,PowerShell,Read,Edit,Write,Glob,Grep";
 
 fn permission_mode(mode: ApprovalMode) -> PermissionMode {
     match mode {

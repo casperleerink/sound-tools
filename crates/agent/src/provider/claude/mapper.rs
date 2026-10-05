@@ -479,7 +479,7 @@ impl Action {
         let text = |key: &str| input.get(key).and_then(Value::as_str);
         let path = || text("file_path").map(|path| relative(path, folder));
         let action = match tool {
-            "Bash" => text("command").map(|command| Action::Run(shorten(command))),
+            "Bash" | "PowerShell" => text("command").map(|command| Action::Run(shorten(command))),
             "Read" => path().map(Action::Read),
             "Edit" => path().map(Action::Edit),
             "Write" => path().map(Action::Write),

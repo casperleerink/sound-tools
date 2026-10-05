@@ -275,7 +275,9 @@ fn starts_claude_with_the_trimmed_flags() {
             .collect::<Vec<_>>()
             .join(" ")
     };
-    insta::assert_snapshot!(flags(ApprovalMode::default(), None));
+    // Windows adds its own shell to the tools. The rest is the same everywhere.
+    let first = flags(ApprovalMode::default(), None).replace(",PowerShell", "");
+    insta::assert_snapshot!(first);
     let resume = flags(ApprovalMode::default(), Some("id".to_string()));
     assert!(resume.contains("--resume id"));
     for (mode, flag) in [
