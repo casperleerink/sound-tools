@@ -581,6 +581,8 @@ fn a_loaded_file_is_shared_and_a_missing_one_says_where_it_should_be() {
 
 /// Takes every permission off a file or folder, or gives them back, so a test can tell
 /// whether it is read again: a file that cannot be read must not be what an answer came from.
+/// Unix only: Windows reads a read-only file, so the tests that use this run on Unix.
+#[cfg(unix)]
 fn lock(path: &Path, locked: bool) {
     use std::os::unix::fs::PermissionsExt as _;
     let mode = match (locked, path.is_dir()) {
@@ -591,6 +593,7 @@ fn lock(path: &Path, locked: bool) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn a_file_that_does_not_play_is_read_once_until_it_changes() {
     let project = tempfile::tempdir().unwrap();
@@ -615,6 +618,7 @@ fn a_file_that_does_not_play_is_read_once_until_it_changes() {
     assert_eq!(sound_media::load(&assets, &asset).unwrap().frames(), 5);
 }
 
+#[cfg(unix)]
 #[test]
 fn what_a_file_is_stays_known_when_nothing_holds_it() {
     let project = tempfile::tempdir().unwrap();
@@ -634,6 +638,7 @@ fn what_a_file_is_stays_known_when_nothing_holds_it() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn an_imported_file_is_read_once() {
     let project = tempfile::tempdir().unwrap();
@@ -702,6 +707,7 @@ fn the_header_says_how_long_a_file_is() {
     ));
 }
 
+#[cfg(unix)]
 #[test]
 fn a_failed_import_leaves_nothing_in_the_project() {
     let project = tempfile::tempdir().unwrap();

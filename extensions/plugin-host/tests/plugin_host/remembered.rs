@@ -63,7 +63,7 @@ fn project_with_a_plugin(format: PluginFormat, machine: &Path) -> Harness {
 /// Writes what this machine remembers of the window of the plugin of the track of `harness`,
 /// as a drag and a quit would have left it.
 fn remember(harness: &Harness, machine: &Path, windows: serde_json::Value) {
-    let project = std::fs::canonicalize(harness.folder.path()).unwrap();
+    let project = dunce::canonicalize(harness.folder.path()).unwrap();
     let whole = serde_json::json!({ project.to_string_lossy(): windows });
     std::fs::write(machine.join(STORE), whole.to_string()).unwrap();
 }
@@ -72,7 +72,7 @@ fn remember(harness: &Harness, machine: &Path, windows: serde_json::Value) {
 fn remembered(harness: &Harness, machine: &Path) -> serde_json::Value {
     let text = std::fs::read_to_string(machine.join(STORE)).expect("the file");
     let whole: serde_json::Value = serde_json::from_str(&text).expect("JSON");
-    let project = std::fs::canonicalize(harness.folder.path()).unwrap();
+    let project = dunce::canonicalize(harness.folder.path()).unwrap();
     whole[project.to_string_lossy().as_ref()][SLOT].clone()
 }
 

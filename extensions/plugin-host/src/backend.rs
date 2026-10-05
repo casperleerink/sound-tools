@@ -147,11 +147,18 @@ pub(crate) trait PluginGui {
     /// How big the plugin wants its window, if it says.
     fn size(&mut self) -> Option<WindowSize>;
 
+    /// Tells the plugin how many physical pixels make one logical pixel of its window. Only on
+    /// Windows, where both formats count physical pixels; never on macOS, where CLAP forbids it
+    /// and sizes are logical. A plugin that reads the scale from the system itself may ignore
+    /// it, which both formats allow. CLAP's `set_scale`, VST 3's `setContentScaleFactor`.
+    fn set_scale(&mut self, scale: f64);
+
     /// Puts the plugin's view inside `view`.
     ///
     /// # Safety
     ///
-    /// `view` must be an `NSView` that stays alive until [`Self::destroy`] has run.
+    /// `view` must be a view of this platform, an `NSView` or an `HWND`, that stays alive
+    /// until [`Self::destroy`] has run.
     unsafe fn set_parent(&mut self, view: NonNull<c_void>) -> Result<(), PluginProblem>;
 
     /// Shows the plugin's view. VST 3 has no such call: a view is on screen as soon as it is

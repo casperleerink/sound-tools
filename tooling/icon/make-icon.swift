@@ -1,6 +1,8 @@
 // Draws the app icon, tooling/icon/sound-tools.png, 1024 x 1024, and a copy at 512 x 512.
 // Run it after a change, from the repository root: swift tooling/icon/make-icon.swift
 // The macOS bundle script turns the large PNG into AppIcon.icns. The Linux one ships the small one.
+// Windows builds sound-tools.ico into the program (crates/runtime/build.rs). Make it again with
+// python3 -c "from PIL import Image; Image.open('tooling/icon/sound-tools.png').save('tooling/icon/sound-tools.ico', sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])"
 //
 // The rounded square of a macOS icon in the window colours of DESIGN.md, with a waveform of
 // seven bars in the text colour. The middle bar is lavender, the colour of the agent.

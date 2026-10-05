@@ -8,26 +8,35 @@ use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::io;
-use std::os::unix::ffi::OsStringExt;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::process::Stdio;
-use std::time::Duration;
+#[cfg(unix)]
+use std::{os::unix::ffi::OsStringExt, process::Stdio, time::Duration};
 
+#[cfg(unix)]
 use smol::future;
 
 /// Separates what the shell's rc files print from the environment.
+#[cfg(unix)]
 const MARKER: &str = "__SOUND_TOOLS_ENVIRONMENT__";
 
 /// How long the shell may take. An rc file can start an agent such as `ssh-agent` that keeps
 /// the output open, and then the shell never seems to end.
+#[cfg(unix)]
 const TIMEOUT: Duration = Duration::from_secs(10);
+
+/// This process's environment. A Windows app gets the user's whole `PATH` however it was
+/// started, and there is no login shell to ask.
+#[cfg(windows)]
+pub async fn login_shell_environment() -> io::Result<HashMap<OsString, OsString>> {
+    Ok(env::vars_os().collect())
+}
 
 /// The environment of `$SHELL -ilc`, over this process's own. Takes a moment, so run it once,
 /// in the background, and keep the result.
 ///
 /// When the shell fails, takes over 10 s or gives no `PATH`, use this process's environment
 /// (`std::env::vars_os()`) and show the error: a broken shell config must not stop the agent.
+#[cfg(unix)]
 pub async fn login_shell_environment() -> io::Result<HashMap<OsString, OsString>> {
     let shell = env::var_os("SHELL").unwrap_or_else(|| "/bin/zsh".into());
     let output = smol::process::Command::new(shell)
@@ -66,19 +75,37 @@ pub async fn login_shell_environment() -> io::Result<HashMap<OsString, OsString>
     Ok(environment)
 }
 
-/// Where `name` is on the `PATH` of `environment`, as a shell would find it.
+/// Where `name` is on the `PATH` of `environment`, as a shell would find it. On Windows that
+/// is `<name>.exe`.
 pub fn program_on_path(name: &str, environment: &HashMap<OsString, OsString>) -> Option<PathBuf> {
-    let path = environment.get(&OsString::from("PATH"))?;
+    // Windows names are not case-sensitive, and there it is usually `Path`.
+    let (_, path) = environment
+        .iter()
+        .find(|(key, _)| *key == "PATH" || (cfg!(windows) && key.eq_ignore_ascii_case("PATH")))?;
+    let file = format!("{name}{}", env::consts::EXE_SUFFIX);
     env::split_paths(path)
-        .map(|folder| folder.join(name))
+        .map(|folder| folder.join(&file))
         .find(|program| {
-            program.metadata().is_ok_and(|metadata| {
-                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-            })
+            program
+                .metadata()
+                .is_ok_and(|metadata| metadata.is_file() && executable(&metadata))
         })
 }
 
+#[cfg(unix)]
+fn executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+/// Windows has no executable bit: the `.exe` in the name says it.
+#[cfg(windows)]
+fn executable(_metadata: &std::fs::Metadata) -> bool {
+    true
+}
+
 /// The entries after the last marker.
+#[cfg(unix)]
 fn parse(output: &[u8]) -> HashMap<OsString, OsString> {
     let entries: Vec<&[u8]> = output.split(|byte| *byte == 0).collect();
     let start = entries
@@ -103,6 +130,7 @@ fn parse(output: &[u8]) -> HashMap<OsString, OsString> {
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 

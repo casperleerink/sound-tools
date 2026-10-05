@@ -5,8 +5,9 @@
 //! terminal is where the composer starts a coding agent on the project, and the tool is what
 //! that agent runs to read the whole piece.
 
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 
 use gpui::{
     App, Context, Entity, IntoElement, PromptLevel, Render, SharedString, Window, prelude::*,
@@ -20,7 +21,9 @@ use sound_ui::components::dropdown_menu::{
 };
 use sound_ui::{Session, extension_is_enabled};
 
-use crate::app::{self, Installed};
+use crate::app;
+#[cfg(unix)]
+use crate::app::Installed;
 use crate::main_arrangement;
 
 const FIT_TEMPO: &str = "fit-tempo";
@@ -156,6 +159,7 @@ impl ProjectMenu {
         cx: &mut Context<Self>,
     ) {
         match picked.0.as_ref() {
+            #[cfg(unix)]
             INSTALL_TOOL => return install_command_line_tool(self.session.clone(), window, cx),
             EXPORT => return export_audio(self.session.clone(), false, window, cx),
             EXPORT_SELECTION => return export_audio(self.session.clone(), true, window, cx),
@@ -370,38 +374,63 @@ async fn render_in_child(
     )
 }
 
-/// The command that opens a terminal in `folder`. macOS only: the system Terminal, which is
-/// there on every Mac. No picker and no setting until someone asks for one.
+/// The commands that open a terminal in `folder`, tried in turn while a program is missing.
+/// macOS: the system Terminal, which is there on every Mac. No picker and no setting until
+/// someone asks for one.
 ///
 /// A function of its own so a test can read the program and the arguments without a Terminal
 /// opening, which CI has no way to close.
 #[cfg(target_os = "macos")]
-fn terminal_command(folder: &Path) -> Command {
+fn terminal_commands(folder: &Path) -> Vec<Command> {
     let mut command = Command::new("/usr/bin/open");
     command.arg("-a").arg("Terminal").arg(folder);
-    command
+    vec![command]
 }
 
 /// Linux: the terminal `$TERMINAL` names, else `x-terminal-emulator`, which Debian and Ubuntu
 /// point at the one the system has, started in `folder`. The shell starts it without waiting,
 /// as `open` does, and fails only when there is no such program.
-#[cfg(not(target_os = "macos"))]
-fn terminal_command(folder: &Path) -> Command {
+#[cfg(all(unix, not(target_os = "macos")))]
+fn terminal_commands(folder: &Path) -> Vec<Command> {
     let mut command = Command::new("sh");
     command
         .arg("-c")
         .arg(r#"t="${TERMINAL:-x-terminal-emulator}"; command -v "$t" >/dev/null && { "$t" >/dev/null 2>&1 & }"#)
         .current_dir(folder);
-    command
+    vec![command]
 }
 
-/// Runs it off the UI thread and puts a failure in the notice of the session. `open` returns
-/// as soon as the Terminal has the folder, so waiting for it here costs nothing and leaves no
-/// child process behind.
+/// Windows: Windows Terminal, which Windows 11 has and Windows 10 gets from the Store, else a
+/// Command Prompt. `start` gives the Command Prompt a window of its own, and returns.
+#[cfg(windows)]
+fn terminal_commands(folder: &Path) -> Vec<Command> {
+    let mut windows_terminal = Command::new("wt.exe");
+    windows_terminal.arg("-d").arg(folder);
+    let mut command_prompt = Command::new("cmd.exe");
+    command_prompt.args(["/c", "start"]).current_dir(folder);
+    vec![windows_terminal, command_prompt]
+}
+
+/// Waits for the first of `commands` whose program is there. One that is there and fails is
+/// the answer: the next one would hide why.
+fn run_first(commands: Vec<Command>) -> io::Result<ExitStatus> {
+    let mut missing = io::Error::from(io::ErrorKind::NotFound);
+    for mut command in commands {
+        match command.status() {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => missing = error,
+            ran => return ran,
+        }
+    }
+    Err(missing)
+}
+
+/// Runs it off the UI thread and puts a failure in the notice of the session. Each command
+/// returns as soon as the terminal has the folder, so waiting for it here costs nothing and
+/// leaves no child process behind.
 fn open_terminal(folder: PathBuf, cx: &mut Context<Session>) {
     cx.spawn(async move |session, cx| {
         let opened = cx
-            .background_spawn(async move { terminal_command(&folder).status() })
+            .background_spawn(async move { run_first(terminal_commands(&folder)) })
             .await;
         let failure = match opened {
             Ok(status) if status.success() => return,
@@ -466,6 +495,7 @@ fn report(session: &gpui::WeakEntity<Session>, message: String, cx: &mut gpui::A
 
 /// Links `sound-tools` to this program, off the UI thread, and says where in a dialog: when
 /// it went to `~/.local/bin`, a terminal may not find it yet.
+#[cfg(unix)]
 fn install_command_line_tool(
     session: Entity<Session>,
     window: &mut Window,
@@ -497,6 +527,7 @@ fn install_command_line_tool(
     .detach();
 }
 
+#[cfg(unix)]
 fn installed_message(installed: &Installed) -> (String, String) {
     let link = installed.link.display();
     let message = format!("Installed {}", app::TOOL_NAME);
@@ -571,7 +602,8 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
 }
 
 /// The last group: another project, the project folder in the Finder, a terminal in it for a
-/// coding agent, and the command that agent runs.
+/// coding agent, and the command that agent runs. Windows has no command line tool, see
+/// `app::Installed`.
 fn folder_items() -> Vec<MenuItem> {
     [
         (OPEN_PROJECT, "Open project…"),
@@ -579,8 +611,10 @@ fn folder_items() -> Vec<MenuItem> {
         (TERMINAL, "Open terminal in project folder"),
         (INSTALL_TOOL, "Install command line tool"),
     ]
+    .into_iter()
+    .filter(|(value, _)| cfg!(unix) || *value != INSTALL_TOOL)
     .map(|(value, label)| MenuItem::new(value, label).selectable(false))
-    .to_vec()
+    .collect()
 }
 
 #[cfg(test)]
@@ -591,7 +625,10 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn the_terminal_command_opens_the_system_terminal_at_the_project_folder() {
-        let command = terminal_command(Path::new("/Users/someone/Music/my piece"));
+        let [command] = <[Command; 1]>::try_from(terminal_commands(Path::new(
+            "/Users/someone/Music/my piece",
+        )))
+        .unwrap();
         assert_eq!(command.get_program(), "/usr/bin/open");
         let arguments: Vec<&std::ffi::OsStr> = command.get_args().collect();
         assert_eq!(
@@ -604,21 +641,79 @@ mod tests {
 
     /// `true` stands for a terminal: it starts, in the folder, and the command succeeds. A
     /// name that is no program fails, which is what the notice reports.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn the_terminal_command_starts_the_terminal_of_the_system_in_the_project_folder() {
         let folder = tempfile::tempdir().expect("a folder");
-        let mut command = terminal_command(folder.path());
-        assert_eq!(command.get_current_dir(), Some(folder.path()));
-        let started = command.env("TERMINAL", "true").status().expect("sh runs");
-        assert!(started.success());
-        let missing = terminal_command(folder.path())
-            .env("TERMINAL", "no-such-terminal-program")
-            .status()
-            .expect("sh runs");
-        assert!(!missing.success());
+        let terminal = |name: &str| {
+            let [mut command] =
+                <[Command; 1]>::try_from(terminal_commands(folder.path())).expect("one command");
+            assert_eq!(command.get_current_dir(), Some(folder.path()));
+            command.env("TERMINAL", name).status().expect("sh runs")
+        };
+        assert!(terminal("true").success());
+        assert!(!terminal("no-such-terminal-program").success());
     }
 
+    /// CI has no terminal to open either, so the check is on the commands.
+    #[cfg(windows)]
+    #[test]
+    fn the_terminal_command_opens_windows_terminal_or_else_a_command_prompt_at_the_project_folder()
+    {
+        use std::ffi::OsStr;
+        let folder = Path::new(r"C:\Users\someone\Music\my piece");
+        let commands = terminal_commands(folder);
+        let shown: Vec<(&OsStr, Vec<&OsStr>, Option<&Path>)> = commands
+            .iter()
+            .map(|command| {
+                let arguments = command.get_args().collect();
+                (command.get_program(), arguments, command.get_current_dir())
+            })
+            .collect();
+        // The folder is one argument, not part of a command line, so a space needs no quoting.
+        let windows_terminal = (
+            OsStr::new("wt.exe"),
+            vec![OsStr::new("-d"), folder.as_os_str()],
+            None,
+        );
+        let command_prompt = (
+            OsStr::new("cmd.exe"),
+            vec![OsStr::new("/c"), OsStr::new("start")],
+            Some(folder),
+        );
+        assert_eq!(shown, [windows_terminal, command_prompt]);
+    }
+
+    /// This test program stands for a terminal: `--list` runs and succeeds, an unknown flag
+    /// fails.
+    #[test]
+    fn a_missing_terminal_falls_back_to_the_next_and_a_failing_one_does_not() {
+        let this = std::env::current_exe().expect("this test program");
+        let command = |program: &Path, argument: &str| {
+            let mut command = Command::new(program);
+            command
+                .arg(argument)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            command
+        };
+        let missing = Path::new("no-such-terminal-program");
+
+        let ran = run_first(vec![command(missing, "--list"), command(&this, "--list")]);
+        assert!(ran.expect("the second runs").success());
+        let ran = run_first(vec![
+            command(&this, "--no-such-flag"),
+            command(&this, "--list"),
+        ]);
+        assert!(!ran.expect("the first runs").success());
+        let ran = run_first(vec![command(missing, "--list")]);
+        assert_eq!(
+            ran.expect_err("nothing runs").kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    #[cfg(unix)]
     #[test]
     fn the_install_message_says_how_to_reach_a_folder_off_the_path() {
         let (message, detail) = installed_message(&Installed {
@@ -642,15 +737,16 @@ mod tests {
             .iter()
             .map(|item| (item.value.clone(), item.label()))
             .collect();
-        assert_eq!(
-            items,
-            [
-                (OPEN_PROJECT.into(), "Open project…".into()),
-                (REVEAL.into(), "Reveal project folder".into()),
-                (TERMINAL.into(), "Open terminal in project folder".into()),
-                (INSTALL_TOOL.into(), "Install command line tool".into()),
-            ]
-        );
+        let mut expected: Vec<(SharedString, SharedString)> = vec![
+            (OPEN_PROJECT.into(), "Open project…".into()),
+            (REVEAL.into(), "Reveal project folder".into()),
+            (TERMINAL.into(), "Open terminal in project folder".into()),
+        ];
+        // Windows has no command line tool to install.
+        if cfg!(unix) {
+            expected.push((INSTALL_TOOL.into(), "Install command line tool".into()));
+        }
+        assert_eq!(items, expected);
     }
 }
 

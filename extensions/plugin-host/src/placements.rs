@@ -2,10 +2,11 @@
 //!
 //! A window's position belongs to this machine and its displays, not to the piece, so it is
 //! kept where the scan cache is and not in the project folder: a project in git must not change
-//! because a window moved, or because it was opened on another Mac. That is the rule the scan
-//! cache follows, see ARCHITECTURE.md. One file holds every project, by the path of its folder:
-//! `~/Library/Caches/sound-tools/plugin-windows.json`, next to `plugins.json`. On Linux the
-//! folder is `~/.cache/sound-tools/`, but plugin windows do not open there yet.
+//! because a window moved, or because it was opened on another computer. That is the rule the
+//! scan cache follows, see ARCHITECTURE.md. One file holds every project, by the path of its
+//! folder: `plugin-windows.json` next to `plugins.json`, in `~/Library/Caches/sound-tools/` on
+//! macOS and `%LOCALAPPDATA%\Sound Tools\Cache\` on Windows. On Linux the folder is
+//! `~/.cache/sound-tools/`, but plugin windows do not open there yet.
 //!
 //! ```json
 //! {
@@ -96,7 +97,7 @@ impl PlacementStore {
 
 /// A project is known by the path of its folder, the same however it was opened.
 fn key(project: &Path) -> String {
-    let path = std::fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    let path = dunce::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
     path.to_string_lossy().into_owned()
 }
 

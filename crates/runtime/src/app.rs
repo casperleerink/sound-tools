@@ -5,8 +5,7 @@
 //! Only the window uses these. `--inspect`, `--render`, `--headless` and the tests never
 //! write the last project, so a test cannot change what the app opens next.
 
-use std::ffi::{OsStr, OsString};
-use std::os::unix::ffi::OsStrExt;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -14,6 +13,11 @@ use anyhow::{Context as _, Result, bail};
 
 /// The name of the command line tool, and of the program inside `Sound Tools.app`.
 pub const TOOL_NAME: &str = "sound-tools";
+
+/// The file of the program: `sound-tools`, and `sound-tools.exe` on Windows.
+pub fn program_file_name() -> String {
+    format!("{TOOL_NAME}{}", std::env::consts::EXE_SUFFIX)
+}
 
 /// One line: the folder of the last project the window had open.
 const LAST_PROJECT_FILE: &str = "last-project";
@@ -32,15 +36,29 @@ const THREADS_FOLDER: &str = "agent/threads";
 /// agent cannot give itself more access by editing a file there.
 const AGENT_SETTINGS_FILE: &str = "agent/settings.json";
 
+#[cfg(unix)]
 fn home() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is not set, so the app has nowhere to keep the last project")
 }
 
+/// `%LOCALAPPDATA%`, the folder of this user on this machine. Not the roaming `%APPDATA%`:
+/// the support folder holds big downloads (agents, updates, sample libraries) that must not
+/// travel with the account.
+#[cfg(windows)]
+pub fn local_app_data() -> Result<PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .filter(|folder| folder.is_absolute())
+        .context("LOCALAPPDATA is not set, so the app has nowhere to keep the last project")
+}
+
 /// Where the app keeps what it remembers between two launches:
-/// `~/Library/Application Support/Sound Tools` on macOS, and on Linux `sound-tools` in
-/// `XDG_CONFIG_HOME`, which is `~/.config` when it is not set.
+/// `~/Library/Application Support/Sound Tools` on macOS, `%LOCALAPPDATA%\Sound Tools` on
+/// Windows, and on Linux `sound-tools` in `XDG_CONFIG_HOME`, which is `~/.config` when it is
+/// not set.
+#[cfg(unix)]
 pub fn support_folder() -> Result<PathBuf> {
     let home = home()?;
     if cfg!(target_os = "macos") {
@@ -53,6 +71,11 @@ pub fn support_folder() -> Result<PathBuf> {
     Ok(config.join("sound-tools"))
 }
 
+#[cfg(windows)]
+pub fn support_folder() -> Result<PathBuf> {
+    Ok(local_app_data()?.join("Sound Tools"))
+}
+
 /// The project the window had open last, when its folder is still there.
 pub fn last_project() -> Option<PathBuf> {
     last_project_in(&support_folder().ok()?)
@@ -61,8 +84,35 @@ pub fn last_project() -> Option<PathBuf> {
 fn last_project_in(support: &Path) -> Option<PathBuf> {
     let bytes = std::fs::read(support.join(LAST_PROJECT_FILE)).ok()?;
     let bytes = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
-    let folder = PathBuf::from(OsStr::from_bytes(bytes));
+    let folder = path_of_bytes(bytes)?;
     folder.is_dir().then_some(folder)
+}
+
+/// The bytes of a path, so that any folder name comes back as it was.
+#[cfg(unix)]
+fn bytes_of_path(path: &Path) -> Result<Vec<u8>> {
+    use std::os::unix::ffi::OsStrExt as _;
+    Ok(path.as_os_str().as_bytes().to_vec())
+}
+
+#[cfg(unix)]
+fn path_of_bytes(bytes: &[u8]) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt as _;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+}
+
+/// UTF-8 on Windows, whose names are UTF-16: every name a person can type fits.
+#[cfg(windows)]
+fn bytes_of_path(path: &Path) -> Result<Vec<u8>> {
+    let text = path
+        .to_str()
+        .with_context(|| format!("{} is not a name the app can keep", path.display()))?;
+    Ok(text.as_bytes().to_vec())
+}
+
+#[cfg(windows)]
+fn path_of_bytes(bytes: &[u8]) -> Option<PathBuf> {
+    std::str::from_utf8(bytes).ok().map(PathBuf::from)
 }
 
 /// Remembers `folder` as the project to open when the app starts with no folder, which is
@@ -72,16 +122,14 @@ pub fn remember_project(folder: &Path) -> Result<()> {
 }
 
 fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
-    let folder = folder
-        .canonicalize()
+    let folder = dunce::canonicalize(folder)
         .with_context(|| format!("{} is not there", folder.display()))?;
     let file = support.join(LAST_PROJECT_FILE);
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("could not make {}", parent.display()))?;
     }
-    // The bytes of the path, so that any folder name comes back as it was.
-    let line = [folder.as_os_str().as_bytes(), b"\n"].concat();
+    let line = [bytes_of_path(&folder)?.as_slice(), b"\n"].concat();
     std::fs::write(&file, line).with_context(|| format!("could not write {}", file.display()))
 }
 
@@ -163,7 +211,9 @@ pub fn start(program: &Path, arguments: impl IntoIterator<Item = OsString>) -> R
     Ok(())
 }
 
-/// Where the command line tool went, for the message the window shows.
+/// Where the command line tool went, for the message the window shows. Not on Windows: a link
+/// there needs developer mode or an administrator, and no folder of the `PATH` takes it.
+#[cfg(unix)]
 pub struct Installed {
     pub link: PathBuf,
     /// Whether a terminal finds the link without a change to its `PATH`.
@@ -173,6 +223,7 @@ pub struct Installed {
 /// The first of these that works gets the link. On macOS `/usr/local/bin` is on the `PATH` of
 /// every Mac but needs an administrator on many; `~/.local/bin` never does. On Linux the link
 /// goes to `~/.local/bin` only, which the common distributions put on the `PATH`.
+#[cfg(unix)]
 fn link_candidates(home: &Path) -> Vec<PathBuf> {
     let local = home.join(".local/bin").join(TOOL_NAME);
     if cfg!(target_os = "macos") {
@@ -184,6 +235,7 @@ fn link_candidates(home: &Path) -> Vec<PathBuf> {
 
 /// Links `sound-tools` to this program, so an agent runs `sound-tools . --inspect` in a
 /// project folder. A link, not a copy: it follows the app when the app is updated in place.
+#[cfg(unix)]
 pub fn install_command_line_tool() -> Result<Installed> {
     let program = std::env::current_exe().context("could not find this program")?;
     let program = program.canonicalize().unwrap_or(program);
@@ -206,6 +258,7 @@ pub fn install_command_line_tool() -> Result<Installed> {
 
 /// Makes the first link of `candidates` that can be made, and says which. A link already
 /// there is replaced; a file that is not a link is somebody else's and is left alone.
+#[cfg(unix)]
 fn install_link(program: &Path, candidates: &[PathBuf]) -> Result<PathBuf> {
     let mut failures = Vec::new();
     for link in candidates {
@@ -220,6 +273,7 @@ fn install_link(program: &Path, candidates: &[PathBuf]) -> Result<PathBuf> {
     )
 }
 
+#[cfg(unix)]
 fn make_link(program: &Path, link: &Path) -> Result<()> {
     if let Some(folder) = link.parent() {
         std::fs::create_dir_all(folder)?;
@@ -249,7 +303,7 @@ mod tests {
         remember_project_in(support.path(), &piece).unwrap();
         assert_eq!(
             last_project_in(support.path()),
-            Some(piece.canonicalize().unwrap())
+            Some(dunce::canonicalize(&piece).unwrap())
         );
         assert!(support.path().join("last-project").is_file());
 
@@ -287,6 +341,7 @@ mod tests {
         check_project_folder(folder.path()).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_tool_goes_to_the_first_folder_that_takes_it() {
         let program = Path::new("/Applications/Sound Tools.app/Contents/MacOS/sound-tools");
@@ -331,7 +386,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn on_linux_the_tool_goes_to_the_local_bin_of_the_home_folder() {
         assert_eq!(

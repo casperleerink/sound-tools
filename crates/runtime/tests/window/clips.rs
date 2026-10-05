@@ -1,6 +1,8 @@
 //! Clips in the arrangement, edited with a simulated mouse and keys. Every test checks the
 //! project, the undo history and the files.
 
+use std::path::Path;
+
 use gpui::{TestAppContext, point, px};
 use sound_core::Changes;
 
@@ -139,10 +141,11 @@ fn a_drag_to_another_track_and_back_keeps_the_id_of_the_clip(cx: &mut TestAppCon
     assert_eq!(opened.selected_clip(), Some(id(PART)));
     let names: Vec<_> = support::files(opened.folder.path())
         .into_iter()
-        .map(|(path, _)| path.to_string_lossy().into_owned())
-        .filter(|path| path.contains("part"))
+        .map(|(path, _)| path)
+        .filter(|path| path.to_string_lossy().contains("part"))
         .collect();
-    assert_eq!(names, ["state/arrangement/track-1/part.json"]);
+    // Paths, not text: Windows writes `\` between the folders.
+    assert_eq!(names, [Path::new("state/arrangement/track-1/part.json")]);
 }
 
 #[gpui::test]

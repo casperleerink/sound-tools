@@ -15,7 +15,7 @@
 //! [`download`], which the Sampler card calls when the composer picks an instrument or clicks
 //! Download.
 //!
-//! Downloads run on threads of their own with `/usr/bin/curl`, as the app's own update, so
+//! Downloads run on threads of their own with the system's curl, as the app's own update, so
 //! there is no HTTP code here. A finished one names the Samplers that waited for it
 //! ([`take_finished`]), and the runtime runs their behaviour again.
 
@@ -378,11 +378,7 @@ fn url_path(path: &str) -> String {
 }
 
 fn curl() -> Command {
-    let mut command = Command::new(if cfg!(target_os = "macos") {
-        "/usr/bin/curl"
-    } else {
-        "curl"
-    });
+    let mut command = sound_core::process::curl();
     command.args([
         "--fail",
         "--silent",

@@ -1,7 +1,7 @@
 //! The app updates itself from the latest GitHub release, as an Electron app does.
 //!
 //! When the window opens, and every day while it stays open, it asks GitHub for the latest release. A newer
-//! one is downloaded in the background with the agent's downloader (`/usr/bin/curl`, a lock,
+//! one is downloaded in the background with the agent's downloader (the system's curl, a lock,
 //! resume), checked against the release's `SHA256SUMS` and unpacked in the support folder.
 //! The window then shows a notice with **Restart**. The swap itself happens at the next start
 //! of the windowed app, before any window: Restart is a quit and a start again, and a quit
@@ -10,7 +10,8 @@
 //!
 //! On macOS the `.app` the program runs from is replaced. When its folder cannot be written,
 //! as for an app macOS runs from a read-only copy, the notice offers **Download**, which opens
-//! the release page. On Linux the tarball's `install.sh` writes into `~/.local`.
+//! the release page. On Linux the tarball's `install.sh` writes into `~/.local`, and on Windows
+//! the zip's `install.ps1` into `%LOCALAPPDATA%\Programs\Sound Tools`.
 //!
 //! A failed check or download is quiet: one line on stderr, and the next check tries again.
 //! A dev build and the command line forms never check.
@@ -33,7 +34,10 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{App, AppContext as _, Global};
 use serde::Deserialize;
-use sound_agent::{CURL, Download};
+use sound_agent::Download;
+use sound_core::process::curl;
+#[cfg(windows)]
+use sound_core::process::{background_command, windows_program};
 
 use crate::app::{self, TOOL_NAME};
 
@@ -51,6 +55,7 @@ const UPDATES_FOLDER: &str = "updates";
 const UNPACKED: &str = "unpacked";
 
 /// Where the installed program is on Linux, which `tooling/linux/install.sh` writes.
+#[cfg(unix)]
 const LINUX_PROGRAM: &str = ".local/lib/sound-tools/sound-tools";
 
 /// `major.minor.patch`. A version with more, such as `1.0.0-beta`, is a prerelease and never
@@ -111,6 +116,7 @@ fn asset_name(version: Version, os: &str, arch: &str) -> Option<String> {
         ("linux", "x86_64" | "aarch64") => {
             Some(format!("sound-tools-{version}-linux-{arch}.tar.gz"))
         }
+        ("windows", "x86_64") => Some(format!("sound-tools-{version}-windows-x86_64.zip")),
         _ => None,
     }
 }
@@ -157,7 +163,8 @@ impl Release {
 enum Place {
     /// macOS: the `.app` the program runs from, replaced as a whole.
     Bundle(PathBuf),
-    /// Linux: the tarball's `install.sh`, which writes `program` and the rest into `~/.local`.
+    /// Linux and Windows: the archive's install script, which writes `program` and the rest:
+    /// `install.sh` into `~/.local`, `install.ps1` into `%LOCALAPPDATA%\Programs`.
     Script { program: PathBuf },
 }
 
@@ -181,8 +188,8 @@ impl Updater {
         if cfg!(debug_assertions) {
             return None;
         }
-        let program = std::env::current_exe().ok()?.canonicalize().ok()?;
-        if program.file_name()? != TOOL_NAME {
+        let program = dunce::canonicalize(std::env::current_exe().ok()?).ok()?;
+        if *program.file_name()? != *app::program_file_name() {
             return None;
         }
         let place = if cfg!(target_os = "macos") {
@@ -193,9 +200,8 @@ impl Updater {
             }
             Place::Bundle(bundle.to_path_buf())
         } else {
-            let home = PathBuf::from(std::env::var_os("HOME")?);
             Place::Script {
-                program: home.join(LINUX_PROGRAM),
+                program: installed_program()?,
             }
         };
         Some(Self {
@@ -253,7 +259,7 @@ impl Updater {
         let unpacked = self.version_folder(version).join(UNPACKED);
         let tool = match self.place {
             Place::Bundle(_) => Unpack::Ditto,
-            Place::Script { .. } => Unpack::Tar,
+            Place::Script { .. } => Unpack::Archive,
         };
         smol::unblock(move || unpack(tool, &archive, &unpacked)).await?;
         Ok(Some(Ready {
@@ -296,11 +302,43 @@ impl Updater {
             .with_context(|| format!("Sound Tools {version} did not install"))
             .map(Some)
     }
+
+    /// Removes the program an update moved aside. `install.ps1` renames the running
+    /// `sound-tools.exe` to `sound-tools.exe.old`, because Windows cannot overwrite a running
+    /// program but can rename it. Linux and macOS leave none.
+    fn remove_old_program(&self) {
+        let Place::Script { program } = &self.place else {
+            return;
+        };
+        let old = with_suffix(program, ".old");
+        match fs::remove_file(&old) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            // The program that started this one may still be ending. The next start tries again.
+            Err(error) => eprintln!("error: could not remove {}: {error}", old.display()),
+        }
+    }
+}
+
+/// The program the install script of the release writes.
+#[cfg(unix)]
+fn installed_program() -> Option<PathBuf> {
+    Some(PathBuf::from(std::env::var_os("HOME")?).join(LINUX_PROGRAM))
+}
+
+/// What `tooling/windows/install.ps1` writes.
+#[cfg(windows)]
+fn installed_program() -> Option<PathBuf> {
+    let folder = app::local_app_data()
+        .ok()?
+        .join("Programs")
+        .join("Sound Tools");
+    Some(folder.join(app::program_file_name()))
 }
 
 /// curl's body of `url`, which may be a `file://` one.
 async fn fetch(url: &str) -> Result<Vec<u8>> {
-    let output = smol::process::Command::new(CURL)
+    let output = smol::process::Command::from(curl())
         .args(["--silent", "--show-error", "--location", "--fail"])
         .args(["--max-time", "60"])
         .args(["--header", "Accept: application/vnd.github+json"])
@@ -331,7 +369,8 @@ fn can_replace(bundle: &Path) -> bool {
 enum Unpack {
     /// The zip of the macOS app, which `ditto` made.
     Ditto,
-    Tar,
+    /// The tarball of Linux, or the zip of Windows.
+    Archive,
 }
 
 /// Unpacks `archive` into `unpacked`, which appears only once whole. Another window that
@@ -351,9 +390,9 @@ fn unpack(tool: Unpack, archive: &Path, unpacked: &Path) -> Result<()> {
             command.args(["-x", "-k"]).arg(archive).arg(&partial);
             command
         }
-        Unpack::Tar => {
-            let mut command = Command::new("tar");
-            command.arg("-xzf").arg(archive).arg("-C").arg(&partial);
+        Unpack::Archive => {
+            let mut command = unpack_archive();
+            command.arg(archive).arg("-C").arg(&partial);
             command
         }
     };
@@ -408,9 +447,43 @@ fn replace_bundle(bundle: &Path, new: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn unpack_archive() -> Command {
+    let mut command = Command::new("tar");
+    command.arg("-xzf");
+    command
+}
+
+/// The tar of Windows 10 and later, which unpacks a zip too. Never a tar on the `PATH`: the
+/// GNU tar of Git for Windows takes the `C:` of a path for the name of another computer.
+#[cfg(windows)]
+fn unpack_archive() -> Command {
+    let mut command = background_command(windows_program(r"System32\tar.exe"));
+    command.arg("-xf");
+    command
+}
+
+#[cfg(unix)]
 fn run_install_script(folder: &Path) -> Result<()> {
     run(Command::new("sh")
         .arg(folder.join("install.sh"))
+        .current_dir(folder)
+        .stdout(Stdio::null()))
+}
+
+/// The policy of a new Windows refuses to run scripts, so this one call bypasses it.
+#[cfg(windows)]
+fn run_install_script(folder: &Path) -> Result<()> {
+    let powershell = windows_program(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+    run(background_command(powershell)
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(folder.join("install.ps1"))
         .current_dir(folder)
         .stdout(Stdio::null()))
 }
@@ -448,6 +521,7 @@ pub fn start_pending_update() -> bool {
     else {
         return false;
     };
+    updater.remove_old_program();
     let program = match updater.install_pending() {
         Ok(Some(program)) => program,
         Ok(None) => return false,

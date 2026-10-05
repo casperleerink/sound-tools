@@ -1,15 +1,14 @@
 //! The download of a provider's pinned program into the machine's support folder. The app's
 //! own updates come the same way.
 //!
-//! `/usr/bin/curl` fetches it unmodified, so the app needs no HTTP or TLS code of its own, and
-//! the file is checked against the pinned sha256 before it is used. It is written under a
-//! temporary name and renamed only once it checks out, so a half file never runs. A broken
-//! download resumes where it stopped. A lock in the version's folder keeps two windows from
-//! downloading into the same file.
+//! The system's curl ([`crate::curl`]) fetches it unmodified, so the app needs no HTTP or TLS
+//! code of its own, and the file is checked against the pinned sha256 before it is used. It is
+//! written under a temporary name and renamed only once it checks out, so a half file never
+//! runs. A broken download resumes where it stopped. A lock in the version's folder keeps two
+//! windows from downloading into the same file.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -17,9 +16,6 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 use smol::future;
 use smol::io::AsyncReadExt;
-
-/// On macOS and on every Linux desktop. Its TLS is the system's.
-pub const CURL: &str = "/usr/bin/curl";
 
 /// How often the progress looks at the bytes on disk.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
@@ -44,7 +40,8 @@ const MESSAGE_LENGTH: usize = 300;
 /// A pinned program a provider downloads, with the values its driver fills in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Download {
-    /// The program's file name, and the folder its versions are kept in, such as `claude`.
+    /// The program's file name, such as `claude`, or `claude.exe` on Windows. Its versions
+    /// are kept in a folder named without the extension.
     pub name: &'static str,
     pub version: String,
     pub url: String,
@@ -55,13 +52,21 @@ pub struct Download {
 }
 
 impl Download {
-    /// Where the program is once it checked out: `<agents>/<name>/<version>/<name>`.
+    /// Where the program is once it checked out: `<agents>/<stem>/<version>/<name>`.
     pub fn program(&self, agents: &Path) -> PathBuf {
         self.folder(agents).join(self.name)
     }
 
+    /// The folder of every version, the same on every system.
+    fn versions(&self, agents: &Path) -> PathBuf {
+        let stem = Path::new(self.name)
+            .file_stem()
+            .unwrap_or(self.name.as_ref());
+        agents.join(stem)
+    }
+
     fn folder(&self, agents: &Path) -> PathBuf {
-        agents.join(self.name).join(&self.version)
+        self.versions(agents).join(&self.version)
     }
 
     /// Where the bytes go until they check out.
@@ -75,7 +80,7 @@ pub enum InstallError {
     /// curl did not get it, such as with no connection. What came stays on disk, so the next
     /// try resumes.
     Network,
-    /// There is no `/usr/bin/curl` on this computer.
+    /// The system's curl is not on this computer.
     NoCurl,
     /// The server answered with an error, such as for a region it does not serve.
     /// `message` is what it said, or curl's line when it said nothing readable.
@@ -115,7 +120,13 @@ pub async fn install(
 ) -> Result<PathBuf, InstallError> {
     let folder = download.folder(agents);
     fs::create_dir_all(&folder).map_err(InstallError::Saving)?;
-    let lock = File::create(folder.join(LOCK)).map_err(InstallError::Saving)?;
+    // Never truncated: on Windows another window's lock on the file would refuse that.
+    let lock = File::options()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(folder.join(LOCK))
+        .map_err(InstallError::Saving)?;
     // Held until this function returns, or its future is dropped.
     let _lock = smol::unblock(move || lock.lock().map(|()| lock))
         .await
@@ -143,8 +154,13 @@ pub async fn install(
         fs::remove_file(&partial).map_err(InstallError::Saving)?;
         return Err(InstallError::Damaged);
     }
-    fs::set_permissions(&partial, fs::Permissions::from_mode(0o755))
-        .map_err(InstallError::Saving)?;
+    // Windows has no executable bit: the `.exe` in the name says it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&partial, fs::Permissions::from_mode(0o755))
+            .map_err(InstallError::Saving)?;
+    }
     fs::rename(&partial, &program).map_err(InstallError::Saving)?;
     // The new one works without them, so a folder that stays is only space.
     if let Err(error) = remove_other_versions(download, agents) {
@@ -161,7 +177,7 @@ async fn fetch(
 ) -> Result<(), InstallError> {
     loop {
         let had = length(partial);
-        let mut child = smol::process::Command::new(CURL)
+        let mut child = smol::process::Command::from(sound_core::process::curl())
             .args(["--silent", "--show-error", "--location"])
             // Fails on an HTTP error, and still writes what the server said, so a region block
             // can be shown in its own words.
@@ -235,6 +251,8 @@ fn take_answer(partial: &Path, had: u64) -> io::Result<Vec<u8>> {
     let mut answer = Vec::new();
     file.read_to_end(&mut answer)?;
     file.set_len(had)?;
+    // Closed first: Windows keeps the name of an open file.
+    drop(file);
     if had == 0 {
         fs::remove_file(partial)?;
     }
@@ -291,7 +309,7 @@ fn sha256(path: &Path) -> io::Result<String> {
 }
 
 fn remove_other_versions(download: &Download, agents: &Path) -> io::Result<()> {
-    for entry in fs::read_dir(agents.join(download.name))? {
+    for entry in fs::read_dir(download.versions(agents))? {
         let entry = entry?;
         if entry.file_name() == download.version.as_str() {
             continue;

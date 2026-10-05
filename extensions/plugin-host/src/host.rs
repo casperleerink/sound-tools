@@ -103,7 +103,7 @@ pub enum PluginProblem {
     NoWindow { plugin_id: String },
     #[error("the window of the plugin {plugin_id:?} did not open: {message}")]
     WindowDidNotOpen { plugin_id: String, message: String },
-    #[error("where the plugin windows are is not kept on this Mac: {message}")]
+    #[error("where the plugin windows are is not kept on this computer: {message}")]
     WindowPlaces { message: String },
     #[error(
         "the plugin {plugin_id:?} has no parameter with the id {id} that a host may set, so `parameters.{id}` moves nothing. The rest of the record plays. `sound-tools --plugin-params` lists the ones it has"
@@ -1275,7 +1275,7 @@ impl Plugins {
             focus,
         };
         let opened = crate::window::open_window(&owner, request, cx);
-        let (handle, view, closed) = match opened {
+        let (handle, parent, closed) = match opened {
             Ok(opened) => opened,
             Err(error) => {
                 // The plugin already holds what it needs for a window. Give it back.
@@ -1298,7 +1298,7 @@ impl Plugins {
         };
         let Hosted { window, plugin, .. } = hosted;
         let attached = match plugin.gui() {
-            Some(gui) => window.attach(gui, handle, view, closed),
+            Some(gui) => window.attach(gui, handle, parent, closed),
             None => Err((PluginProblem::NoWindow { plugin_id }, handle)),
         };
         match attached {

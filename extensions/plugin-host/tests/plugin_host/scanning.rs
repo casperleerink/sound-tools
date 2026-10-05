@@ -106,7 +106,8 @@ fn a_plugin_that_prints_while_it_is_scanned_is_still_found() {
 /// the pipe the scan reads, so the pipe does not end when the child does: a scan that waited
 /// for the end of that pipe would wait for the helper, past every deadline, and the project
 /// would never open. The deadline covers the readers, so the bundle is read and the scan goes
-/// on.
+/// on. Unix only: the test plugin's helper is a shell script.
+#[cfg(unix)]
 #[test]
 fn a_plugin_that_leaves_a_helper_holding_the_pipe_does_not_hold_up_the_scan() {
     for format in FORMATS {
@@ -114,6 +115,7 @@ fn a_plugin_that_leaves_a_helper_holding_the_pipe_does_not_hold_up_the_scan() {
     }
 }
 
+#[cfg(unix)]
 fn a_helper_that_outlives_the_child(format: PluginFormat) {
     let folder = tempfile::tempdir().unwrap();
     // The helper holds the pipe until this test lets it go, and says when it has gone.
@@ -155,6 +157,7 @@ fn a_helper_that_outlives_the_child(format: PluginFormat) {
     }
 }
 
+#[cfg(unix)]
 fn with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(suffix);

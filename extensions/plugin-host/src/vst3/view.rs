@@ -11,11 +11,13 @@
 //!   No view is ever made outside the composer's open: asking a plugin whether it has a window
 //!   means building its whole interface, which is up to a second, see ARCHITECTURE.md.
 //! - `isPlatformTypeSupported(kPlatformTypeNSView)` is how a host asks whether the plugin can
-//!   put its view in a Cocoa view of ours. On macOS the coordinates of a `ViewRect` are
-//!   logical, so no scaling is needed, which is why nothing here sets one.
+//!   put its view in a Cocoa view of ours, and `kPlatformTypeHWND` in a Win32 window of ours.
+//!   On macOS the coordinates of a `ViewRect` are logical; on Windows they are physical pixels,
+//!   which `window.rs` turns into GPUI's. On Windows the view is told the scale through
+//!   `IPlugViewContentScaleSupport` when it has it; one without it reads the scale itself.
 //! - `setFrame` before `attached`: "Note that in this call the plug-in could call a
 //!   IPlugFrame::resizeView ()". So the frame is in place before the view has a parent.
-//! - `attached(parent, kPlatformTypeNSView)` puts the plugin's view in ours. `removed()` takes
+//! - `attached(parent, <that type>)` puts the plugin's view in ours. `removed()` takes
 //!   it out again, and only a view that was attached may be removed.
 //! - A plugin that wants another size calls `IPlugFrame::resizeView`, and then, in the words of
 //!   the header, "Afterwards, in the same callstack, the host has to call IPlugView::onSize ()
@@ -39,8 +41,9 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 
 use vst3::Steinberg::Vst::{IEditController, IEditControllerTrait, ViewType};
 use vst3::Steinberg::{
-    IPlugFrame, IPlugFrameTrait, IPlugView, IPlugViewTrait, ViewRect, kInvalidArgument,
-    kPlatformTypeNSView, kResultFalse, kResultOk, tresult,
+    FIDString, IPlugFrame, IPlugFrameTrait, IPlugView, IPlugViewContentScaleSupport,
+    IPlugViewContentScaleSupportTrait, IPlugViewTrait, ViewRect, kInvalidArgument, kResultFalse,
+    kResultOk, tresult,
 };
 use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
@@ -129,7 +132,7 @@ impl PluginGui for Vst3Gui {
             return Ok(());
         }
         let view = self.make_view().ok_or_else(|| self.no_window())?;
-        if !supports_nsview(&view) {
+        if !supports_our_view(&view) {
             return Err(self.no_window());
         }
         // The frame goes in before the view has a parent, because a plugin may ask to be
@@ -167,13 +170,28 @@ impl PluginGui for Vst3Gui {
         window_size(&rect)
     }
 
+    /// Through `IPlugViewContentScaleSupport`, which a view need not have: one without it reads
+    /// the scale from the system itself.
+    fn set_scale(&mut self, scale: f64) {
+        let Some(support) = self
+            .view
+            .as_ref()
+            .and_then(|view| view.cast::<IPlugViewContentScaleSupport>())
+        else {
+            return;
+        };
+        // SAFETY: the view came from the plugin and is alive, and this is the same object. A
+        // view that answers no reads the scale itself, which the format allows.
+        unsafe { not_ours(|| support.setContentScaleFactor(scale as f32)) };
+    }
+
     unsafe fn set_parent(&mut self, parent: NonNull<c_void>) -> Result<(), PluginProblem> {
         let Some(view) = self.view.as_ref() else {
             return Err(self.no_window());
         };
-        // SAFETY: the view is alive, and the caller says `parent` is an `NSView` that lives
-        // until `destroy` has run, which is what `removed` needs.
-        let result = unsafe { not_ours(|| view.attached(parent.as_ptr(), kPlatformTypeNSView)) };
+        // SAFETY: the view is alive, and the caller says `parent` is a view of this platform
+        // that lives until `destroy` has run, which is what `removed` needs.
+        let result = unsafe { not_ours(|| view.attached(parent.as_ptr(), platform_type())) };
         if result != kResultOk {
             return Err(self.refused("attached", result));
         }
@@ -435,12 +453,19 @@ fn vst3_key(keystroke: &Keystroke) -> Vst3Key {
         _ => 0,
     };
     let held = &keystroke.modifiers;
+    let other = if cfg!(target_os = "macos") {
+        held.control
+    } else {
+        held.platform
+    };
     let modifiers = [
         (held.shift, kShiftKey),
         (held.alt, kAlternateKey),
-        // `keycodes.h`: `kCommandKey` is the Mac's command key, `kControlKey` its control key.
-        (held.platform, kCommandKey),
-        (held.control, kControlKey),
+        // `keycodes.h`: `kCommandKey` is the command key on macOS and the control key on
+        // Windows, which GPUI calls the secondary modifier. `kControlKey` is the other one: the
+        // control key on macOS and the Windows key on Windows.
+        (held.secondary(), kCommandKey),
+        (other, kControlKey),
     ]
     .into_iter()
     .filter(|(down, _)| *down)
@@ -452,10 +477,21 @@ fn vst3_key(keystroke: &Keystroke) -> Vst3Key {
     }
 }
 
-/// Whether a view can live in a Cocoa view of ours, which is the only kind this host makes.
-fn supports_nsview(view: &ComPtr<IPlugView>) -> bool {
+/// The kind of view this host puts a plugin's view in on this platform: an `NSView`, or on
+/// Windows an `HWND`. Linux has no plugin windows yet; it is asked for an `NSView`, which no
+/// plugin there makes, and the card does not offer a window.
+fn platform_type() -> FIDString {
+    if cfg!(target_os = "windows") {
+        vst3::Steinberg::kPlatformTypeHWND
+    } else {
+        vst3::Steinberg::kPlatformTypeNSView
+    }
+}
+
+/// Whether a view can live in a view of ours, of the one kind this host makes.
+fn supports_our_view(view: &ComPtr<IPlugView>) -> bool {
     // SAFETY: the view came from the plugin and is alive, and the type is a static C string.
-    let result = unsafe { not_ours(|| view.isPlatformTypeSupported(kPlatformTypeNSView)) };
+    let result = unsafe { not_ours(|| view.isPlatformTypeSupported(platform_type())) };
     result == kResultOk
 }
 
@@ -595,6 +631,32 @@ mod tests {
         );
     }
 
+    /// On Windows a view is told the scale of its window through a second interface, and its
+    /// size afterwards is what the window takes. A view that grows with the scale shows that
+    /// the call reached it.
+    #[test]
+    fn a_view_is_told_the_scale_and_its_size_follows() {
+        let folder = tempfile::tempdir().expect("a folder");
+        let log = folder.path().join("calls.txt");
+        let mut opening = loaded(folder.path(), &log);
+        let gui = opening.plugin.gui().expect("the plugin has a window");
+        gui.create().expect("the view is made");
+        gui.set_scale(1.5);
+        assert!(
+            calls(&log).contains(&"gui_set_scale[1.5]".to_string()),
+            "{:?}",
+            calls(&log)
+        );
+        assert_eq!(
+            gui.size(),
+            Some(WindowSize {
+                width: 480,
+                height: 360
+            })
+        );
+        gui.destroy();
+    }
+
     /// A plugin that refuses its parent. The host says so, and `removed` is the other half of
     /// an `attached` that worked, so it is not called for one that did not.
     #[test]
@@ -669,9 +731,15 @@ mod tests {
         let mut shifted = Keystroke::parse("shift-a").expect("a keystroke");
         shifted.key_char = Some("A".to_string());
         assert_eq!(vst3_key(&shifted), plain('A', 0, kShiftKey));
-        assert_eq!(key("cmd-c"), plain('c', 0, kCommandKey));
+        // Command on macOS and control on Windows, and then the other one of the two.
+        assert_eq!(key("secondary-c"), plain('c', 0, kCommandKey));
+        let other = if cfg!(target_os = "macos") {
+            "ctrl"
+        } else {
+            "win"
+        };
         assert_eq!(
-            key("ctrl-alt-x"),
+            key(&format!("{other}-alt-x")),
             plain('x', 0, kControlKey | kAlternateKey)
         );
         assert_eq!(key("space"), plain(' ', KEY_SPACE, 0));

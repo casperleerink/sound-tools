@@ -8,8 +8,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+dunce.workspace = true
 gpui.workspace = true
-libc.workspace = true
 pulldown-cmark.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -18,6 +18,17 @@ smol.workspace = true
 sound-core.workspace = true
 sound-ui.workspace = true
 uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 ctrlc.workspace = true

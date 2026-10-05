@@ -24,6 +24,11 @@
 //! Headless, it reads one command per line from stdin: `play`, `pause`, `stop`,
 //! `seek <ticks>`, `undo`, `redo`, `status`, `quit`. The end of stdin also quits. This is
 //! provisional. It is not the protocol of the outer application.
+//!
+//! On Windows it is a window program, so the app opens no console window next to its own.
+//! Started from a terminal, it prints there anyway: see `print_to_the_terminal`.
+
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 use std::io::BufRead;
 use std::path::Path;
@@ -391,7 +396,28 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
 
 const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [--seconds <n> | --from <ticks> --to <ticks>] [--progress]]]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help";
 
+/// Gives a window program the terminal that started it, so `--version` and the other forms
+/// print there. Only when it was handed no output: what a parent pipes, such as an agent's
+/// shell or the window's own export, stays in the pipe.
+#[cfg(windows)]
+fn print_to_the_terminal() {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE,
+    };
+    // SAFETY: both take plain values and touch no memory of this program.
+    unsafe {
+        let output = GetStdHandle(STD_OUTPUT_HANDLE);
+        if output.is_null() || output == INVALID_HANDLE_VALUE {
+            // Fails when no terminal started this, as for a double click: nobody reads it then.
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    print_to_the_terminal();
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     let (arguments, progress) = match arguments.as_slice() {

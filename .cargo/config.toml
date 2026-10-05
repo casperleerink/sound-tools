@@ -1,3 +1,8 @@
 # Readable closure names in backtraces. Never vary rustflags between builds: any change rebuilds everything.
 [target.'cfg(all())']
 rustflags = ["-C", "symbol-mangling-version=v0"]
+
+# The C runtime inside the Windows program, so it starts on a computer without the Visual C++
+# Redistributable. Zed does the same.
+[target.'cfg(windows)']
+rustflags = ["-C", "target-feature=+crt-static"]

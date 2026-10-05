@@ -235,8 +235,16 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
         log("gui_destroy", 0, 0);
     }
 
-    fn set_scale(&self, _scale: f64) -> Result<(), PluginError> {
-        Err(PluginError::Message("Cocoa sizes are already logical"))
+    /// The scale of the window, which a host gives on Windows and never on macOS. The window
+    /// grows with it from its first size, as a real one draws its controls bigger.
+    fn set_scale(&self, scale: f64) -> Result<(), PluginError> {
+        log(&format!("gui_set_scale[{scale}]"), 0, 0);
+        let scaled = |side: u32| (f64::from(side) * scale).round() as u32;
+        self.size.set((
+            scaled(support::WINDOW_WIDTH),
+            scaled(support::WINDOW_HEIGHT),
+        ));
+        Ok(())
     }
 
     fn get_size(&self) -> Option<GuiSize> {
@@ -851,7 +859,7 @@ pub fn built_library() -> std::path::PathBuf {
 }
 
 /// Copies the built library into `folder` as a bundle a CLAP scan finds, and gives back the
-/// bundle. On macOS a plain file with a `.clap` name is a valid bundle.
+/// bundle. A plain file with a `.clap` name is a valid bundle on every platform.
 pub fn install_into(folder: &std::path::Path) -> std::path::PathBuf {
     support::install_bundle(folder, &built_library(), "test-tone", "clap")
 }

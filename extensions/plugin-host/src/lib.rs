@@ -39,6 +39,8 @@
 mod backend;
 mod clap;
 mod host;
+#[cfg(target_os = "windows")]
+mod library;
 mod parameters;
 mod placements;
 mod processor;
@@ -122,9 +124,10 @@ impl PluginFormat {
     }
 
     /// The format of a bundle, from its file extension. This is how one list of search folders
-    /// covers every format.
+    /// covers every format. The case does not count, as it does not for the file systems of
+    /// Windows and macOS: `Piano.VST3` is a bundle there.
     pub fn of_extension(extension: &std::ffi::OsStr) -> Option<Self> {
-        Self::of_str(extension.to_str()?)
+        Self::of_str(&extension.to_str()?.to_ascii_lowercase())
     }
 }
 

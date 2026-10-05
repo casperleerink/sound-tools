@@ -544,7 +544,7 @@ impl PluginView {
 
     /// Opens the plugin's own window, or closes the one that is open. Not an edit: nothing of
     /// the project changes and there is no undo step. The host remembers it for the next time
-    /// the project opens, on this Mac.
+    /// the project opens, on this computer.
     fn toggle_window(&mut self, cx: &mut Context<Self>) {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
@@ -787,7 +787,7 @@ impl Render for PluginView {
             // The record stays as it is, the track is silent, and `problems.txt` says the
             // same thing to an agent.
             let text = format!(
-                "This Mac has no {} plugin with this id. Install it, or pick another.",
+                "This computer has no {} plugin with this id. Install it, or pick another.",
                 record.format.name()
             );
             return plain.child(left(line(text), None)).into_any_element();
@@ -802,14 +802,15 @@ impl Render for PluginView {
                 .child(left(line(text.to_string()), Some(detail)))
                 .into_any_element();
         };
-        // A plugin's view is put in an `NSView` of ours, which Linux does not have. The host
-        // itself does not know: its tests open windows without a view on every platform.
-        let (has_window, no_window) = if cfg!(target_os = "macos") {
+        // A plugin's view is put in an `NSView` or an `HWND` of ours, and Linux has neither.
+        // The host itself does not know: its tests open windows without a view on every
+        // platform.
+        let (has_window, no_window) = if cfg!(any(target_os = "macos", target_os = "windows")) {
             (has_window, "This plugin has no window of its own.")
         } else {
             (
                 false,
-                "Plugin windows open on macOS only for now. The plugin plays.",
+                "Plugin windows do not open on Linux yet. The plugin plays.",
             )
         };
         let is_open = plugins.window_is_open(id);

@@ -26,6 +26,7 @@ clack-extensions = { workspace = true, features = [
   "state",
 ] }
 clack-host.workspace = true
+dunce.workspace = true
 gpui.workspace = true
 raw-window-handle.workspace = true
 rtrb.workspace = true

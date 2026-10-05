@@ -46,16 +46,19 @@ use vst3::Steinberg::Vst::{
 };
 use vst3::Steinberg::{
     FIDString, FUnknown, IBStream, IBStream_::IStreamSeekMode_, IBStreamTrait, IPlugFrame,
-    IPlugFrameTrait, IPlugView, IPlugViewTrait, IPluginBase, IPluginBaseTrait, IPluginFactory,
-    IPluginFactory2, IPluginFactory2Trait, IPluginFactoryTrait, PClassInfo,
-    PClassInfo_::ClassCardinality_, PClassInfo2, PFactoryInfo, TBool, TUID, ViewRect, int32,
-    kInternalError, kInvalidArgument, kNotImplemented, kPlatformTypeNSView, kResultFalse,
-    kResultOk, kResultTrue, tresult, uint32,
+    IPlugFrameTrait, IPlugView, IPlugViewContentScaleSupport, IPlugViewContentScaleSupportTrait,
+    IPlugViewTrait, IPluginBase, IPluginBaseTrait, IPluginFactory, IPluginFactory2,
+    IPluginFactory2Trait, IPluginFactoryTrait, PClassInfo, PClassInfo_::ClassCardinality_,
+    PClassInfo2, PFactoryInfo, TBool, TUID, ViewRect, int32, kInternalError, kInvalidArgument,
+    kNotImplemented, kPlatformTypeHWND, kPlatformTypeNSView, kResultFalse, kResultOk, kResultTrue,
+    tresult, uint32,
 };
 use vst3::{Class, ComPtr, ComRef, ComWrapper, Interface, uid};
 
-/// The class id a project record names. Thirty-two hex digits of these sixteen bytes:
-/// `534F554E44544F4F4C53544553545430`, which is `SOUNDTOOLSTESTT0` in ASCII.
+/// The class id a project record names, as thirty-two hex digits the way Steinberg's
+/// `FUID::toString` writes them: `534F554E44544F4F4C53544553545430`, which is
+/// `SOUNDTOOLSTESTT0` in ASCII. On Windows `uid` lays the bytes out as a COM `GUID`, as the
+/// SDK's own macro does there.
 pub const CLASS_ID: TUID = uid(0x534F554E, 0x44544F4F, 0x4C535445, 0x53545430);
 
 /// The same id as a record holds it. A test writes this into a `plugin_id`.
@@ -1185,7 +1188,21 @@ impl Default for TestView {
 }
 
 impl Class for TestView {
-    type Interfaces = (IPlugView,);
+    type Interfaces = (IPlugView, IPlugViewContentScaleSupport);
+}
+
+/// How a host on Windows tells a view the scale of its window. The view grows with it from its
+/// first size, as a real one draws its controls bigger, and says it took it.
+impl IPlugViewContentScaleSupportTrait for TestView {
+    unsafe fn setContentScaleFactor(&self, factor: f32) -> tresult {
+        support::log(&format!("gui_set_scale[{factor}]"), 0, 0);
+        let scaled = |side: u32| (side as f32 * factor).round() as int32;
+        self.size.set((
+            scaled(support::WINDOW_WIDTH),
+            scaled(support::WINDOW_HEIGHT),
+        ));
+        kResultOk
+    }
 }
 
 impl TestView {
@@ -1229,9 +1246,15 @@ impl IPlugViewTrait for TestView {
         }
         // SAFETY: the host gives a C string that lives for this call.
         let wanted = unsafe { CStr::from_ptr(r#type) };
+        // The kind of view a host has on this platform: an `HWND` on Windows, an `NSView`
+        // elsewhere, which is what a host there asks for.
+        let ours = match cfg!(target_os = "windows") {
+            true => kPlatformTypeHWND,
+            false => kPlatformTypeNSView,
+        };
         // SAFETY: the constant is a static C string.
-        let cocoa = unsafe { CStr::from_ptr(kPlatformTypeNSView) };
-        match wanted == cocoa {
+        let ours = unsafe { CStr::from_ptr(ours) };
+        match wanted == ours {
             true => kResultTrue,
             false => kResultFalse,
         }
@@ -1564,6 +1587,17 @@ pub extern "C" fn ModuleEntry(_library: *mut c_void) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ModuleExit() -> bool {
+    true
+}
+
+/// The same two on Windows, where `InitDll` gets nothing.
+#[unsafe(no_mangle)]
+pub extern "C" fn InitDll() -> bool {
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ExitDll() -> bool {
     true
 }
 

@@ -353,6 +353,8 @@ impl Audio {
         let frame_size = (self.encoding.size() * usize::from(self.channels)) as u64;
         let start = (self.data as u64).saturating_add(from.saturating_mul(frame_size));
         let start = usize::try_from(start).unwrap_or(usize::MAX).min(map.len());
+        // Windows has no such hint; the reads below bring the pages in on their own.
+        #[cfg(unix)]
         match map.advise_range(memmap2::Advice::WillNeed, start, map.len() - start) {
             Ok(()) => {}
             // Only a hint: the reads below are what brings the pages in.

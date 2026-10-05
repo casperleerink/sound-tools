@@ -7,8 +7,15 @@
 //!
 //! On Linux a bundle is a plain folder with one `.so` per architecture, such as
 //! `Contents/x86_64-linux/piano.so`. The host loads it with `dlopen` and calls `ModuleEntry`
-//! with the handle; the last symbol is `ModuleExit`. The `platform` module at the end holds
-//! the two ways, and is all of this backend that differs between them.
+//! with the handle; the last symbol is `ModuleExit`.
+//!
+//! On Windows a bundle is the same kind of folder with a DLL named like the bundle, such as
+//! `Contents/x86_64-win/piano.vst3`, or, from before bundles, that DLL alone as `piano.vst3`.
+//! The host loads it with `LoadLibraryExW` and calls `InitDll`, which takes nothing and which a
+//! plugin need not have; the last symbol is `ExitDll`.
+//!
+//! The `platform` modules at the end hold the three ways, and are all of this backend that
+//! differs between them.
 //!
 //! A bundle is loaded once per process and never unloaded. Unloading runs the plugin's static
 //! destructors and unregisters its Objective-C classes while views, timers and audio threads of
@@ -18,7 +25,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::ffi::{c_char, c_void};
+use std::ffi::c_char;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -28,9 +35,8 @@ use vst3::Steinberg::{
     PClassInfo2, TUID,
 };
 
-/// What a VST 3 bundle exports. `bundleEntry` takes the `CFBundleRef` of the bundle it is in,
-/// and `ModuleEntry`, its Linux name, the `dlopen` handle.
-type BundleEntry = unsafe extern "C" fn(*mut c_void) -> bool;
+/// What every VST 3 binary exports, whatever the platform. Each platform's entry function is in
+/// its `platform` module.
 type GetPluginFactory = unsafe extern "C" fn() -> *mut IPluginFactory;
 
 /// The class category of a plugin that makes sound. Everything else in a bundle, such as a
@@ -63,18 +69,12 @@ impl Module {
     }
 
     fn load_once(bundle: &Path) -> Result<Self, String> {
-        let fail = |message: &str| format!("{}: {message}", bundle.display());
-        // SAFETY: `platform::open` gives the two functions the binary exports under the names
-        // the format gives them, with the handle `ModuleEntry` or `bundleEntry` takes.
+        let fail = |message: &dyn std::fmt::Display| format!("{}: {message}", bundle.display());
+        // SAFETY: `platform::open` gives the function the binary exports under the name the
+        // format gives it, once the plugin's own entry function has said yes.
         let factory = unsafe {
-            let opened = platform::open(bundle).map_err(fail)?;
-            if !(opened.entry)(opened.handle) {
-                return Err(fail("the plugin refused to start"));
-            }
-            // The handle stays: the plugin holds it from here on. Nothing releases it, because
-            // nothing unloads a plugin.
-            ComPtr::from_raw((opened.get_factory)())
-                .ok_or_else(|| fail("the plugin has no factory"))?
+            let get_factory = platform::open(bundle).map_err(|message| fail(&message))?;
+            ComPtr::from_raw(get_factory()).ok_or_else(|| fail(&"the plugin has no factory"))?
         };
         Ok(Self { factory })
     }
@@ -163,29 +163,24 @@ fn text(field: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).trim().to_string()
 }
 
-/// The binary of a bundle, loaded, with the two functions a host calls first.
-struct Opened {
-    /// What `entry` takes: the `CFBundleRef` on macOS, the `dlopen` handle on Linux.
-    handle: *mut c_void,
-    entry: BundleEntry,
-    get_factory: GetPluginFactory,
-}
-
 /// macOS: the bundle through `CFBundle`, and `bundleEntry`.
 #[cfg(target_os = "macos")]
 mod platform {
     use std::ffi::{CStr, CString, c_char, c_void};
     use std::path::Path;
 
-    use super::{BundleEntry, GetPluginFactory, Opened};
+    use super::GetPluginFactory;
 
-    /// Loads the binary of `bundle`. It stays loaded when it turns out not to be a plugin: see
-    /// the module documentation on unloading.
+    /// `bundleEntry` takes the `CFBundleRef` of the bundle it is in.
+    type BundleEntry = unsafe extern "C" fn(*mut c_void) -> bool;
+
+    /// Loads the binary of `bundle` and starts it. It stays loaded when it turns out not to be
+    /// a plugin: see the module documentation on unloading.
     ///
     /// # Safety
     ///
-    /// This runs the plugin's static initializers.
-    pub(super) unsafe fn open(bundle: &Path) -> Result<Opened, &'static str> {
+    /// This runs the plugin's static initializers and `bundleEntry`.
+    pub(super) unsafe fn open(bundle: &Path) -> Result<GetPluginFactory, &'static str> {
         let path = CString::new(bundle.as_os_str().as_encoded_bytes())
             .map_err(|_| "the bundle path is not a path")?;
         // SAFETY: every pointer below is checked for null before it is used, and each one is
@@ -216,11 +211,12 @@ mod platform {
             let (Some(entry), Some(get_factory)) = (entry, get_factory) else {
                 return Err("the binary is not a VST 3 plugin");
             };
-            Ok(Opened {
-                handle,
-                entry,
-                get_factory,
-            })
+            // The bundle stays: the plugin holds it from here on. Nothing releases it, because
+            // nothing unloads a plugin.
+            if !entry(handle) {
+                return Err("the plugin refused to start");
+            }
+            Ok(get_factory)
         }
     }
 
@@ -268,20 +264,23 @@ mod platform {
 
 /// Linux: the `.so` of this machine's architecture in the bundle, through `dlopen`, and
 /// `ModuleEntry` with the handle `dlopen` gave.
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 mod platform {
     use std::ffi::{CString, c_char, c_int, c_void};
     use std::path::Path;
 
-    use super::{BundleEntry, GetPluginFactory, Opened};
+    use super::GetPluginFactory;
 
-    /// Loads the binary of `bundle`. It stays loaded when it turns out not to be a plugin: see
-    /// the module documentation on unloading.
+    /// `ModuleEntry` takes the `dlopen` handle of the library it is in.
+    type ModuleEntry = unsafe extern "C" fn(*mut c_void) -> bool;
+
+    /// Loads the binary of `bundle` and starts it. It stays loaded when it turns out not to be
+    /// a plugin: see the module documentation on unloading.
     ///
     /// # Safety
     ///
-    /// This runs the plugin's static initializers.
-    pub(super) unsafe fn open(bundle: &Path) -> Result<Opened, &'static str> {
+    /// This runs the plugin's static initializers and `ModuleEntry`.
+    pub(super) unsafe fn open(bundle: &Path) -> Result<GetPluginFactory, &'static str> {
         let mut file = bundle.file_stem().ok_or("this is not a bundle")?.to_owned();
         file.push(".so");
         let binary = crate::scan::binary_folder(bundle).join(file);
@@ -297,18 +296,19 @@ mod platform {
             if handle.is_null() {
                 return Err("the bundle has no binary this machine can load");
             }
-            let entry: Option<BundleEntry> =
+            let entry: Option<ModuleEntry> =
                 std::mem::transmute(dlsym(handle, c"ModuleEntry".as_ptr()));
             let get_factory: Option<GetPluginFactory> =
                 std::mem::transmute(dlsym(handle, c"GetPluginFactory".as_ptr()));
             let (Some(entry), Some(get_factory)) = (entry, get_factory) else {
                 return Err("the binary is not a VST 3 plugin");
             };
-            Ok(Opened {
-                handle,
-                entry,
-                get_factory,
-            })
+            // The handle stays: the plugin holds it from here on. Nothing closes it, because
+            // nothing unloads a plugin.
+            if !entry(handle) {
+                return Err("the plugin refused to start");
+            }
+            Ok(get_factory)
         }
     }
 
@@ -319,5 +319,58 @@ mod platform {
     unsafe extern "C" {
         fn dlopen(file: *const c_char, mode: c_int) -> *mut c_void;
         fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
+    }
+}
+
+/// Windows: the DLL of this machine's architecture in the bundle, or the bundle itself when it
+/// is the older single file, loaded with its own folder in the DLL search (see `library.rs`),
+/// and `InitDll` when the DLL has one.
+#[cfg(target_os = "windows")]
+mod platform {
+    use std::path::Path;
+
+    use super::GetPluginFactory;
+    use crate::library::Library;
+
+    /// `InitDll` takes nothing. Steinberg's own module loader calls it only when it is there.
+    type InitDll = unsafe extern "C" fn() -> bool;
+
+    /// Loads the binary of `bundle` and starts it. It stays loaded when it turns out not to be
+    /// a plugin: see the module documentation on unloading.
+    ///
+    /// # Safety
+    ///
+    /// This runs the plugin's static initializers and `InitDll`.
+    pub(super) unsafe fn open(bundle: &Path) -> Result<GetPluginFactory, String> {
+        let binary = match bundle.is_dir() {
+            true => {
+                let file = bundle.file_name().ok_or("this is not a bundle")?;
+                crate::scan::binary_folder(bundle).join(file)
+            }
+            false => bundle.to_path_buf(),
+        };
+        if !binary.is_file() {
+            return Err("the bundle has no binary this machine can load".to_string());
+        }
+        // SAFETY: the caller agreed to run the plugin's code. Each symbol is checked for null
+        // before it is turned into a function.
+        unsafe {
+            let library = Library::load(&binary)
+                .map_err(|error| format!("the binary did not load: {error}"))?;
+            let get_factory: Option<GetPluginFactory> =
+                std::mem::transmute(library.symbol(c"GetPluginFactory"));
+            let init: Option<InitDll> = std::mem::transmute(library.symbol(c"InitDll"));
+            // The DLL stays, whatever comes next: nothing unloads a plugin.
+            library.keep();
+            let Some(get_factory) = get_factory else {
+                return Err("the binary is not a VST 3 plugin".to_string());
+            };
+            if let Some(init) = init
+                && !init()
+            {
+                return Err("the plugin refused to start".to_string());
+            }
+            Ok(get_factory)
+        }
     }
 }

@@ -51,6 +51,11 @@ clack-plugin = "0.2"
 cpal = "0.18"
 # The chat example of the agent crate: ctrl-c stops the turn instead of the program.
 ctrlc = "3.5"
+# The icon of the Windows program, in crates/runtime/build.rs. The version gpui uses. MIT.
+embed-resource = "3.0.11"
+# `canonicalize` without the `\\?\` prefix Windows adds, which cmd, Explorer and people do not
+# read. The same as std elsewhere.
+dunce = "1.0.5"
 hound = "3.5"
 memmap2 = "0.9.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
@@ -87,6 +92,9 @@ thiserror = "2"
 triple_buffer = "9"
 # Claude session ids, which the app picks.
 uuid = { version = "1", features = ["v4", "v5"] }
+# Windows: the job object that ends the agent with every program it started, and hidden
+# console windows. Each crate picks its features.
+windows-sys = "0.61"
 # VST 3 hosting: raw COM bindings generated from the SDK headers. We write the safe layer.
 # The bindings ship with the crate, so no copy of the SDK is needed to build.
 vst3 = "0.3"

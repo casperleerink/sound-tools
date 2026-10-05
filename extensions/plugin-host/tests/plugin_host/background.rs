@@ -298,7 +298,9 @@ fn a_record_whose_plugin_is_installed_while_the_app_runs_plays() {
 }
 
 /// A cache that cannot be written costs the next start a scan and nothing else, and the
-/// composer is told, as every other error of work in the background is.
+/// composer is told, as every other error of work in the background is. Unix only: a folder
+/// on Windows has no mode that keeps files from being made in it.
+#[cfg(unix)]
 #[test]
 fn a_cache_that_cannot_be_written_is_told() {
     use std::os::unix::fs::PermissionsExt as _;

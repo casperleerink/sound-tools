@@ -11,3 +11,5 @@ ede_diagnostic = "ede_diagnostic"
 [default.extend-words]
 # A peak in the spectrum of a voice, which makes a vowel.
 formant = "formant"
+# The output format flag of Windows' `tasklist /FO CSV`.
+FO = "FO"
