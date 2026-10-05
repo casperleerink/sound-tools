@@ -519,7 +519,8 @@ mod tests {
             sample_rate: 48_000,
             offline: false,
         };
-        super::super::load(&found, None, config).expect("the test plugin loads")
+        super::super::load(&found, None, config, &Default::default())
+            .expect("the test plugin loads")
     }
 
     /// Makes the plugin misbehave in one way. Same rules as `loaded`.

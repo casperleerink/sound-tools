@@ -193,6 +193,9 @@ struct Audio {
     /// The second channel a mono output has nowhere to go, so a block has somewhere to render
     /// it. Made once, so `process` never allocates.
     scratch: Vec<f32>,
+    /// The level as it glides, when the plugin smooths it, see `test_plugin_support::SMOOTH_VARIABLE`.
+    /// Set up as the plugin is activated.
+    glide: Option<support::Glide>,
 }
 
 // SAFETY: the component is reached from the main thread and the audio thread, never at once:
@@ -217,6 +220,7 @@ impl TestTone {
                 goes_silent: support::told_to(support::SILENT_VARIABLE),
                 controller_state: support::told_to(support::CONTROLLER_STATE_VARIABLE),
                 scratch: vec![0.0; SCRATCH],
+                glide: None,
             }),
             handler: RefCell::new(None),
             semitones: AtomicI32::new(0),
@@ -457,6 +461,8 @@ impl IComponentTrait for TestTone {
         }
         if let Ok(mut audio) = self.audio.try_borrow_mut() {
             audio.tone.set_latency(self.latency.load(Ordering::Acquire));
+            audio.glide = support::told_to(support::SMOOTH_VARIABLE)
+                .then(|| support::Glide::new(self.edit_level.load(Ordering::Acquire)));
         }
         kResultOk
     }
@@ -845,9 +851,11 @@ impl IAudioProcessorTrait for TestTone {
             }
             // And how loud the last parameter edit of the composer's left it. A host that
             // never carried the edit to this half plays the whole block at the full level.
-            let edited =
-                self.edit_level.load(Ordering::Acquire) as f32 / support::FULL_EDIT_LEVEL as f32;
-            if edited != 1.0 {
+            let edit_level = self.edit_level.load(Ordering::Acquire);
+            let edited = edit_level as f32 / support::FULL_EDIT_LEVEL as f32;
+            if let Some(glide) = &mut audio.glide {
+                glide.play(edit_level, left);
+            } else if edited != 1.0 {
                 for sample in left.iter_mut() {
                     *sample *= edited;
                 }
@@ -1076,6 +1084,11 @@ impl IEditControllerTrait for TestTone {
         }
         if id == LEVEL {
             self.show_level(value);
+            // One value for both halves, as a plugin that is one object usually has.
+            if support::told_to(support::SMOOTH_VARIABLE) {
+                self.edit_level
+                    .store(support::hundredths(value), Ordering::Release);
+            }
         }
         // A latency a note asked for, on the main thread at last, which is where a plugin may
         // ask its host to start it again.

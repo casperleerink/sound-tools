@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::backend::ParameterChange;
 use crate::scan::ScannedPlugin;
 use crate::{Pin, PluginProblem};
 
@@ -128,6 +129,28 @@ impl Steps {
     pub fn all_named(&self) -> bool {
         self.names.len() == self.count as usize
     }
+}
+
+/// Parameters by their id, as the host keeps them.
+pub(crate) fn by_id(parameters: Vec<Parameter>) -> BTreeMap<u32, Parameter> {
+    let parameters = parameters.into_iter();
+    parameters
+        .map(|parameter| (parameter.id, parameter))
+        .collect()
+}
+
+/// The pins of a record that a plugin with `parameters` takes: one it has a parameter for, with
+/// a value in its range. Only these are sent; the others move nothing and are reported.
+pub(crate) fn playable<'a>(
+    parameters: &'a BTreeMap<u32, Parameter>,
+    pins: &'a BTreeMap<u32, Pin>,
+) -> impl Iterator<Item = ParameterChange> + 'a {
+    let pins = pins.iter();
+    pins.filter(|(id, pin)| parameters.get(id).is_some_and(|it| it.takes(pin.value)))
+        .map(|(id, pin)| ParameterChange {
+            id: *id,
+            value: pin.value,
+        })
 }
 
 /// The name an automation lane gives the pin `id`: its path in the record, as a lane names a

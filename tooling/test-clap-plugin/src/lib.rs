@@ -438,11 +438,30 @@ impl PluginMainThreadParams for TestToneMainThread<'_> {
         None
     }
 
-    fn flush(&self, _input: &InputEvents, _output: &mut OutputEvents) {}
+    /// A value the host gives while the plugin is inactive. It is the level the plugin is
+    /// activated at.
+    fn flush(&self, input: &InputEvents, _output: &mut OutputEvents) {
+        log("flush", 0, 0);
+        take_levels(self.shared, input);
+    }
 }
 
 impl PluginAudioProcessorParams for TestToneAudio<'_> {
-    fn flush(&mut self, _input: &InputEvents, _output: &mut OutputEvents) {}
+    fn flush(&mut self, input: &InputEvents, _output: &mut OutputEvents) {
+        take_levels(self.shared, input);
+    }
+}
+
+/// Takes the last value of `Level` among `events`.
+fn take_levels(shared: &TestToneShared, events: &InputEvents) {
+    for event in events {
+        if let Some(CoreEventSpace::ParamValue(event)) = event.as_core_event()
+            && event.param_id().map(ClapId::get) == Some(LEVEL)
+        {
+            let level = support::hundredths(event.value());
+            shared.level.store(level, Ordering::Release);
+        }
+    }
 }
 
 /// What kind of run this is. A plugin that streams from disk uses it to wait for its samples
@@ -497,6 +516,11 @@ impl PluginStateImpl for TestToneMainThread<'_> {
         self.shared
             .wanted_latency
             .store(NO_LATENCY_WANTED, Ordering::Release);
+        // As Six Sines does: what it read is to be flushed, which a host does before it
+        // activates a plugin that is not active yet.
+        if let Some(params) = self.host.shared().get_extension::<HostParams>() {
+            params.request_flush(&self.host.shared());
+        }
         Ok(())
     }
 }
@@ -572,6 +596,8 @@ pub struct TestToneAudio<'a> {
     events_out: u32,
     /// The block from which this plugin gives up and writes nothing, when it was told to.
     fails_from: Option<u64>,
+    /// The level as it glides, when the plugin smooths it, see `test_plugin_support::SMOOTH_VARIABLE`.
+    glide: Option<support::Glide>,
 }
 
 impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for TestToneAudio<'a> {
@@ -608,6 +634,8 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
             processed: 0,
             events_out: support::events_out(),
             fails_from: support::fails_from(),
+            glide: support::told_to(support::SMOOTH_VARIABLE)
+                .then(|| support::Glide::new(shared.level.load(Ordering::Acquire))),
         })
     }
 
@@ -704,7 +732,9 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
         self.tone
             .render(&mut left[played..frames], &mut right[played..frames]);
         let level = self.shared.level.load(Ordering::Acquire);
-        if level != support::FULL_EDIT_LEVEL {
+        if let Some(glide) = &mut self.glide {
+            glide.play(level, left);
+        } else if level != support::FULL_EDIT_LEVEL {
             let level = level as f32 / support::FULL_EDIT_LEVEL as f32;
             for sample in left.iter_mut() {
                 *sample *= level;

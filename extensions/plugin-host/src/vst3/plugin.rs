@@ -36,10 +36,10 @@ use super::stream::{MemoryStream, as_stream};
 use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
 use crate::backend::{Hand, LoadedPlugin, Opening, ParameterChange, PluginGui, Requests};
-use crate::parameters::Parameter;
+use crate::parameters::{Parameter, by_id, playable};
 use crate::processor::{Control, Started};
 use crate::scan::ScannedPlugin;
-use crate::{PluginProblem, processor::not_ours};
+use crate::{Pin, PluginProblem, processor::not_ours};
 
 use sound_core::PrepareConfig;
 use sound_notes::Pedal;
@@ -147,11 +147,12 @@ fn initialize(found: &ScannedPlugin) -> Result<Initialized, PluginProblem> {
     }
 }
 
-/// Loads the plugin `found` names, with `saved` as its own state, and starts it.
+/// Loads the plugin `found` names, with `saved` as its own state and then `pins`, and starts it.
 pub(crate) fn load(
     found: &ScannedPlugin,
     saved: Option<&[u8]>,
     config: PrepareConfig,
+    pins: &BTreeMap<u32, Pin>,
 ) -> Result<Opening, PluginProblem> {
     let plugin_id = found.id.clone();
     let fail = |message: String| PluginProblem::DidNotLoad {
@@ -168,6 +169,21 @@ pub(crate) fn load(
         if let Some(bytes) = saved {
             read_state(&plugin_id, bytes, &component, controller.as_ref())?;
         }
+        // The pins of the record before the plugin is activated. VST 3 has no call that gives
+        // the processor a value outside a block, so the controller is told: a plugin whose two
+        // halves share their values, as most that are one object do, sets up its smoothing from
+        // them as it is activated. The processor of one that keeps its own hears them in its
+        // first block, at its first frame, as the host sends them below.
+        let parameters = controller
+            .as_ref()
+            .filter(|_| !pins.is_empty())
+            .map(|controller| (controller, by_id(parameters::of_controller(controller))));
+        if let Some((controller, parameters)) = &parameters {
+            for change in playable(parameters, pins) {
+                controller.setParamNormalized(change.id, change.value);
+            }
+        }
+        let parameters = parameters.map(|(_, parameters)| parameters);
 
         let processor = component
             .cast::<IAudioProcessor>()
@@ -253,6 +269,7 @@ pub(crate) fn load(
                 mode,
             }),
             notes,
+            parameters,
         }
     };
     Ok(plugin)

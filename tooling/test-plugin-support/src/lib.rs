@@ -708,6 +708,38 @@ impl Tone {
 /// `Level` parameter of the VST 3 plugin starts at, and what the CLAP one always plays at.
 pub const FULL_EDIT_LEVEL: i32 = 100;
 
+/// Makes the plugin smooth its `Level` as a real plugin smooths its parameters: a value a
+/// block sends is glided to over [`GLIDE_FRAMES`], from the level the plugin was activated at.
+/// So a value a host gives only in the first block is heard late, and one it gave before the
+/// activation is heard from the first frame. The VST 3 plugin then also shares `Level` between
+/// its controller and its processor, as a plugin that is one object usually does.
+pub const SMOOTH_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SMOOTH";
+
+/// How many frames a smoothing plugin takes to go the whole way from silent to full: 5 ms at
+/// 48 kHz, which is what Six Sines and many others take.
+pub const GLIDE_FRAMES: f32 = 240.0;
+
+/// The level of a plugin that smooths it, frame by frame, see [`SMOOTH_VARIABLE`].
+pub struct Glide(f32);
+
+impl Glide {
+    /// Starts at `hundredths`, the level the plugin is activated at.
+    pub fn new(hundredths: i32) -> Self {
+        Self(hundredths as f32 / FULL_EDIT_LEVEL as f32)
+    }
+
+    /// Plays `samples` at the level, which moves to `hundredths` by at most one
+    /// [`GLIDE_FRAMES`]th a frame.
+    pub fn play(&mut self, hundredths: i32, samples: &mut [f32]) {
+        let target = hundredths as f32 / FULL_EDIT_LEVEL as f32;
+        let step = 1.0 / GLIDE_FRAMES;
+        for sample in samples {
+            self.0 += (target - self.0).clamp(-step, step);
+            *sample *= self.0;
+        }
+    }
+}
+
 /// Everything a test plugin keeps between sessions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SavedState {

@@ -44,7 +44,7 @@ use crate::processor::{
 };
 
 use crate::backend::{Hand, KeyDirection, LoadedPlugin, ParameterChange};
-use crate::parameters::{Parameter, ParameterValue, pin_problem};
+use crate::parameters::{Parameter, ParameterValue, by_id, pin_problem, playable};
 use crate::placements::{PlacementStore, Placements};
 use crate::scan::{Scan, ScanCache, ScanCommand, ScannedPlugin, scan_folders};
 use crate::window::{
@@ -422,8 +422,8 @@ impl Hosted {
     /// last sent or wrote, was changed by someone else and is sent. A pin that moves nothing is
     /// not sent and not followed; the behaviour reports it.
     fn send_pins(&mut self, record: &PluginRecord) {
-        self.pins.retain(|id, _| record.parameters.contains_key(id));
         if record.parameters.is_empty() {
+            self.pins.clear();
             return;
         }
         self.parameters();
@@ -436,20 +436,15 @@ impl Hosted {
         else {
             return;
         };
-        for (id, pin) in &record.parameters {
-            if !parameters.get(id).is_some_and(|it| it.takes(pin.value)) {
-                pins.remove(id);
-                continue;
-            }
+        let playable: Vec<ParameterChange> = playable(parameters, &record.parameters).collect();
+        pins.retain(|id, _| playable.iter().any(|change| change.id == *id));
+        for change in playable {
             if !pins
-                .get(id)
-                .is_some_and(|state| same(state.record, pin.value))
+                .get(&change.id)
+                .is_some_and(|state| same(state.record, change.value))
             {
-                plugin.send(ParameterChange {
-                    id: *id,
-                    value: pin.value,
-                });
-                pins.insert(*id, PinState::sent(pin.value));
+                plugin.send(change);
+                pins.insert(change.id, PinState::sent(change.value));
             }
         }
     }
@@ -517,10 +512,7 @@ impl Hosted {
 
 /// The parameters a plugin lists, by id.
 fn listed(plugin: &mut dyn LoadedPlugin) -> BTreeMap<u32, Parameter> {
-    let parameters = plugin.parameters().into_iter();
-    parameters
-        .map(|parameter| (parameter.id, parameter))
-        .collect()
+    by_id(plugin.parameters())
 }
 
 /// The name of the undo step of a turn of a knob: the pin it began with, or else the plugin.
@@ -1112,14 +1104,16 @@ impl Plugins {
                 lanes: listed_lanes(record),
             });
         }
+        let pins = &record.parameters;
         let opening = match record.format {
-            PluginFormat::Clap => crate::clap::load(&found, saved.as_deref(), config),
-            PluginFormat::Vst3 => crate::vst3::load(&found, saved.as_deref(), config),
+            PluginFormat::Clap => crate::clap::load(&found, saved.as_deref(), config, pins),
+            PluginFormat::Vst3 => crate::vst3::load(&found, saved.as_deref(), config, pins),
         }?;
         let crate::backend::Opening {
             mut plugin,
             started,
             notes,
+            parameters,
         } = opening;
         let has_window = plugin.gui().is_some_and(|gui| gui.is_offered());
         let mut hosted = Hosted {
@@ -1135,14 +1129,15 @@ impl Plugins {
             restart: Restart::Idle,
             needs_load: false,
             notes,
-            parameters: None,
+            parameters: parameters.map(Rc::new),
             pins: BTreeMap::new(),
             laned: Arc::new(LanedPins::new()),
             lanes: AutomatedPins::NONE,
             shown: BTreeMap::new(),
         };
-        // The record wins over the state just loaded: every pin goes to the plugin now, ahead
-        // of its first block, so a render plays them from its first frame.
+        // The record wins over the state just loaded. The backend gave the plugin every pin
+        // before it was activated, where the format lets it. They go again in the first block,
+        // for a plugin that took nothing then, which changes nothing for one that did.
         hosted.send_pins(record);
         let notes = hosted.notes(record);
         let lanes = hosted.automated(record);

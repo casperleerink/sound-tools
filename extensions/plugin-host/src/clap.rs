@@ -39,13 +39,13 @@ use sound_core::{MAX_AUTOMATED, MAX_BLOCK, PrepareConfig};
 
 use crate::backend::{Hand, LoadedPlugin, Opening, ParameterChange, PluginGui, Requests};
 use crate::host::{HOST_NAME, HOST_URL, HOST_VENDOR, HOST_VERSION};
-use crate::parameters::{Parameter, Steps};
+use crate::parameters::{Parameter, Steps, by_id, playable};
 use crate::processor::{
     Control, EVENT_CAPACITY, PluginEvent, Started, copy_in, copy_out, not_ours,
 };
 use crate::scan::ScannedPlugin;
 use crate::window::WindowSize;
-use crate::{PluginFormat, PluginProblem};
+use crate::{Pin, PluginFormat, PluginProblem};
 
 /// The handlers a CLAP plugin calls. One set per plugin instance.
 pub(crate) struct SoundToolsHost;
@@ -74,6 +74,8 @@ const VALUE_CAPACITY: usize = MAX_AUTOMATED;
 #[derive(Default)]
 pub(crate) struct SharedCallbacks {
     callback_requested: AtomicBool,
+    /// The plugin asked for a flush, see [`HostParamsImplShared::request_flush`].
+    flush_requested: AtomicBool,
     restart_requested: AtomicBool,
     /// The plugin closed its own window, or lost it. The next poll frees what is left.
     window_closed: AtomicBool,
@@ -135,9 +137,13 @@ impl HostGuiImpl for SharedCallbacks {
 }
 
 impl HostParamsImplShared for SharedCallbacks {
-    /// The host calls `process` for every block while the plugin's track exists, which is a
-    /// flush, so there is nothing to start.
-    fn request_flush(&self) {}
+    /// While the plugin is active the host calls `process` for every block, which is a flush.
+    /// One asked for while it loads, which a plugin does as it reads its state, is done before
+    /// it is activated: Six Sines puts a state it reads in a queue that a flush empties, and
+    /// emptied by the first block instead it ends the notes of that block.
+    fn request_flush(&self) {
+        self.flush_requested.store(true, Ordering::Release);
+    }
 }
 
 pub(crate) struct MainThreadCallbacks<'a> {
@@ -311,11 +317,12 @@ fn params_extension(instance: &PluginInstance<SoundToolsHost>) -> Option<PluginP
     instance.plugin_shared_handle().get_extension()
 }
 
-/// Loads the plugin `found` names, with `saved` as its own state, and starts it.
+/// Loads the plugin `found` names, with `saved` as its own state and then `pins`, and starts it.
 pub(crate) fn load(
     found: &ScannedPlugin,
     saved: Option<&[u8]>,
     config: PrepareConfig,
+    pins: &BTreeMap<u32, Pin>,
 ) -> Result<Opening, PluginProblem> {
     let plugin_id = &found.id;
     let fail = |message: String| PluginProblem::DidNotLoad {
@@ -353,6 +360,20 @@ pub(crate) fn load(
         }
     }
 
+    // The pins of the record before the plugin is activated, on the main thread, which is
+    // where CLAP puts a flush while a plugin is inactive. A plugin that smooths its parameters
+    // sets up its smoothing as it is activated, from the values it has then, so its first
+    // block plays the pins and does not glide to them from its state.
+    let parameters = (!pins.is_empty()).then(|| by_id(parameters_of(&mut instance)));
+    let asked = instance
+        .access_shared_handler(|shared| shared.flush_requested.swap(false, Ordering::AcqRel));
+    if parameters.is_some() || asked {
+        let pins = parameters
+            .iter()
+            .flat_map(|parameters| playable(parameters, pins));
+        flush(&mut instance, pins);
+    }
+
     let (started, values, ports) = activate(&mut instance, config).map_err(fail)?;
     // The pedal is only missing from a plugin that has somewhere to take notes. A plugin with
     // no note port at all, which is what an ordinary effect is, has no pedal to miss, and this
@@ -374,7 +395,36 @@ pub(crate) fn load(
             waiting: BTreeMap::new(),
         }),
         notes,
+        parameters,
     })
+}
+
+/// Gives an inactive plugin `changes` at once, with `params.flush`, the call CLAP has for a
+/// value outside a block.
+fn flush(
+    instance: &mut PluginInstance<SoundToolsHost>,
+    changes: impl Iterator<Item = ParameterChange>,
+) {
+    let Some(params) = params_extension(instance) else {
+        return;
+    };
+    let mut events = EventBuffer::new();
+    for change in changes {
+        // An id CLAP calls invalid names no parameter, and a record cannot hold it.
+        if let Some(id) = ClapId::from_raw(change.id) {
+            events.push(&ParamValueEvent::new(
+                0,
+                id,
+                Pckn::match_all(),
+                change.value,
+            ));
+        }
+    }
+    let Some(mut plugin) = instance.inactive_plugin_handle() else {
+        return;
+    };
+    // What a plugin says back is not read, as in a block.
+    params.flush(&mut plugin, &events.as_input(), &mut OutputEvents::void());
 }
 
 /// Activates a plugin that is not active, and gives its audio side with what its ports say,
