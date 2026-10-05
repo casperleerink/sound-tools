@@ -151,10 +151,12 @@ impl IBStreamTrait for MemoryStream {
     unsafe fn seek(&self, pos: int64, mode: int32, result: *mut int64) -> tresult {
         let mut inner = self.inner.borrow_mut();
         let length = inner.bytes.len() as int64;
-        let from = match mode as u32 {
-            IStreamSeekMode_::kIBSeekSet => 0,
-            IStreamSeekMode_::kIBSeekCur => inner.position as int64,
-            IStreamSeekMode_::kIBSeekEnd => length,
+        // The modes are a C enum, which the bindings make unsigned on macOS and Linux and
+        // signed on Windows, so they are compared as the `int32` the call takes.
+        let from = match mode {
+            mode if mode == IStreamSeekMode_::kIBSeekSet as int32 => 0,
+            mode if mode == IStreamSeekMode_::kIBSeekCur as int32 => inner.position as int64,
+            mode if mode == IStreamSeekMode_::kIBSeekEnd as int32 => length,
             _ => return kInvalidArgument,
         };
         // Past the end is allowed and a later write fills the gap, which is what the SDK's own
