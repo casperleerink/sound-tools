@@ -207,6 +207,14 @@ impl ScanCommand {
         for (name, value) in &self.environment {
             command.env(name, value);
         }
+        // A window application has no console, so Windows would give the child one of its own
+        // and show it for as long as the bundle takes.
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt as _;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
         // Blocking here is the point: this runs on the thread that scans, never on the one that
         // draws. `output` would wait for ever, and a deadline needs a handle to kill.
         #[allow(clippy::disallowed_methods)]
@@ -346,41 +354,53 @@ const MAX_DEPTH: usize = 4;
 /// are the ones the specifications give: `entry.h` for CLAP, and Steinberg's for VST 3. Each
 /// format also takes more folders from an environment variable.
 pub fn default_search_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    if cfg!(target_os = "macos") {
-        paths.extend(search_paths(
-            "Library/Audio/Plug-Ins/CLAP",
-            &["/Library/Audio/Plug-Ins/CLAP"],
-            "CLAP_PATH",
-        ));
-        paths.extend(search_paths(
-            "Library/Audio/Plug-Ins/VST3",
-            &[
-                "/Library/Audio/Plug-Ins/VST3",
-                "/Network/Library/Audio/Plug-Ins/VST3",
+    let home = |inside: &str| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(inside));
+    let under = |variable: &str, inside: &str| {
+        std::env::var_os(variable).map(|folder| PathBuf::from(folder).join(inside))
+    };
+    let fixed = |path: &str| Some(PathBuf::from(path));
+    let (clap, vst3) = if cfg!(target_os = "macos") {
+        (
+            vec![
+                home("Library/Audio/Plug-Ins/CLAP"),
+                fixed("/Library/Audio/Plug-Ins/CLAP"),
             ],
-            "VST3_PATH",
-        ));
+            vec![
+                home("Library/Audio/Plug-Ins/VST3"),
+                fixed("/Library/Audio/Plug-Ins/VST3"),
+                fixed("/Network/Library/Audio/Plug-Ins/VST3"),
+            ],
+        )
+    } else if cfg!(target_os = "windows") {
+        (
+            vec![
+                under("COMMONPROGRAMFILES", "CLAP"),
+                under("LOCALAPPDATA", r"Programs\Common\CLAP"),
+            ],
+            vec![
+                under("COMMONPROGRAMFILES", "VST3"),
+                under("LOCALAPPDATA", r"Programs\Common\VST3"),
+            ],
+        )
     } else {
-        paths.extend(search_paths(".clap", &["/usr/lib/clap"], "CLAP_PATH"));
-        paths.extend(search_paths(
-            ".vst3",
-            &["/usr/lib/vst3", "/usr/local/lib/vst3"],
-            "VST3_PATH",
-        ));
-    }
-    paths
-}
-
-/// The folder `in_home` under the home folder, the `system` folders, and the folders the
-/// environment `variable` names.
-fn search_paths(in_home: &str, system: &[&str], variable: &str) -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(|home| PathBuf::from(home).join(in_home));
-    let mut paths: Vec<PathBuf> = home.into_iter().collect();
-    paths.extend(system.iter().map(PathBuf::from));
-    if let Some(extra) = std::env::var_os(variable) {
-        paths.extend(std::env::split_paths(&extra));
-    }
+        (
+            vec![home(".clap"), fixed("/usr/lib/clap")],
+            vec![
+                home(".vst3"),
+                fixed("/usr/lib/vst3"),
+                fixed("/usr/local/lib/vst3"),
+            ],
+        )
+    };
+    let named = |variable: &str| {
+        std::env::var_os(variable)
+            .map(|extra| std::env::split_paths(&extra).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    let mut paths: Vec<PathBuf> = clap.into_iter().flatten().collect();
+    paths.extend(named("CLAP_PATH"));
+    paths.extend(vst3.into_iter().flatten());
+    paths.extend(named("VST3_PATH"));
     paths
 }
 
@@ -407,8 +427,8 @@ fn collect(folder: &Path, depth: usize, found: &mut Vec<Bundle>) {
         let path = entry.path();
         let format = path.extension().and_then(PluginFormat::of_extension);
         if let Some(format) = format {
-            // A bundle is a folder on macOS for VST 3 and either for CLAP. Either way it is one
-            // entry and nothing inside it is another plugin.
+            // A VST 3 bundle is a folder, or on Windows also the older single file, and a CLAP
+            // one either. Either way it is one entry and nothing inside it is another plugin.
             found.push(Bundle { path, format });
         } else if path.is_dir() {
             collect(&path, depth + 1, found);
@@ -421,6 +441,22 @@ fn collect(folder: &Path, depth: usize, found: &mut Vec<Bundle>) {
 /// Everything that can go wrong here is the plugin's. The caller is a process of its own, so a
 /// crash inside the plugin's own code costs this process and nothing else.
 pub fn scan_one_bundle(format: PluginFormat, bundle: &Path) -> Result<String, String> {
+    // A plugin that crashes here would otherwise put up the system's crash dialog, and the
+    // child would wait for the composer to close it until the deadline killed it as hung.
+    #[cfg(target_os = "windows")]
+    {
+        const SEM_FAILCRITICALERRORS: u32 = 0x0001;
+        const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
+        const SEM_NOOPENFILEERRORBOX: u32 = 0x8000;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn SetErrorMode(mode: u32) -> u32;
+        }
+        // SAFETY: it takes flags and only changes how this process reports its own errors.
+        unsafe {
+            SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX)
+        };
+    }
     let plugins = match format {
         PluginFormat::Clap => crate::clap::scan_bundle(bundle)?,
         PluginFormat::Vst3 => crate::vst3::scan_bundle(bundle)?,
@@ -465,7 +501,8 @@ pub struct ScanCache {
 const CACHE_VARIABLE: &str = "SOUND_TOOLS_PLUGIN_CACHE";
 
 impl ScanCache {
-    /// The cache of this machine: `~/Library/Caches/sound-tools/plugins.json` on macOS, and
+    /// The cache of this machine: `~/Library/Caches/sound-tools/plugins.json` on macOS,
+    /// `%LOCALAPPDATA%\sound-tools\plugins.json` on Windows, and
     /// `~/.cache/sound-tools/plugins.json` on Linux, or under `XDG_CACHE_HOME` when it is set.
     pub fn of_this_machine() -> Self {
         if let Some(named) = std::env::var_os(CACHE_VARIABLE) {
@@ -474,12 +511,14 @@ impl ScanCache {
         let home = || std::env::var_os("HOME").map(PathBuf::from);
         let caches = if cfg!(target_os = "macos") {
             home().map(|home| home.join("Library/Caches"))
+        } else if cfg!(target_os = "windows") {
+            std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
         } else {
             std::env::var_os("XDG_CACHE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| home().map(|home| home.join(".cache")))
         };
-        Self::kept_at(caches.map(|caches| caches.join("sound-tools/plugins.json")))
+        Self::kept_at(caches.map(|caches| caches.join("sound-tools").join("plugins.json")))
     }
 
     pub fn at(path: impl Into<PathBuf>) -> Self {
@@ -627,8 +666,7 @@ pub(crate) fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let count = WRITES.fetch_add(1, Ordering::Relaxed);
     name.push(format!(".{}-{count}.tmp", std::process::id()));
     let temporary = path.with_file_name(name);
-    let written =
-        std::fs::write(&temporary, bytes).and_then(|()| std::fs::rename(&temporary, path));
+    let written = std::fs::write(&temporary, bytes).and_then(|()| rename_over(&temporary, path));
     let Err(error) = written else {
         return Ok(());
     };
@@ -642,6 +680,34 @@ pub(crate) fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), String> {
         _ => Err(error.to_string()),
     }
 }
+
+/// Renames `from` over `to`.
+///
+/// Windows refuses to replace a file while another process has it open without letting it be
+/// deleted, which another writer's rename and a virus scanner looking at a new file both do for
+/// a moment. So there a refusal is tried again a few times before it counts. Elsewhere a rename
+/// is never refused for that.
+fn rename_over(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut tries = 1;
+    loop {
+        match std::fs::rename(from, to) {
+            Err(error)
+                if cfg!(target_os = "windows")
+                    && error.kind() == std::io::ErrorKind::PermissionDenied
+                    && tries < RENAME_TRIES =>
+            {
+                tries += 1;
+                std::thread::sleep(RENAME_PAUSE);
+            }
+            renamed => return renamed,
+        }
+    }
+}
+
+/// How often a refused rename is tried, and how long apart: 50 ms in all, much longer than a
+/// rename takes.
+const RENAME_TRIES: u32 = 10;
+const RENAME_PAUSE: Duration = Duration::from_millis(5);
 
 /// One bundle as the cache remembers it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -661,12 +727,13 @@ struct CachedBundle {
 /// same stamp as last time is not looked at again.
 ///
 /// Which of the files in the binary folder is the executable is up to the bundle's
-/// `Info.plist`, so the stamp does not pick one: it is the latest status change (`ctime`) of
-/// the binary folder, of every file directly in it, and of the `Info.plist`. The system sets a
-/// file's status change time on every write, rename, copy or replace, and nothing can set it
-/// back, so a binary that was changed or replaced moves it, even one of the same size whose
-/// modified time an installer kept. The folder's own moves when a file is added or taken away.
-/// A plugin that is a single file, as a CLAP one may be, is stamped by that file.
+/// `Info.plist`, so the stamp does not pick one: it is the latest status change of the binary
+/// folder, of every file directly in it, and of the `Info.plist`. The system sets a file's
+/// status change time on every write, rename, copy or replace, and nothing can set it back, so
+/// a binary that was changed or replaced moves it, even one of the same size whose modified
+/// time an installer kept. The modified time, the size and the creation time, which every
+/// system has, miss exactly that file. The folder's own moves when a file is added or taken
+/// away. A plugin that is a single file, as a CLAP one may be, is stamped by that file.
 ///
 /// And the architecture of the host: a universal binary is another plugin to an arm64 host
 /// than to one under Rosetta, and one that is x86_64 only fails on the first and not the second.
@@ -674,33 +741,24 @@ struct CachedBundle {
 #[serde(deny_unknown_fields)]
 struct Stamp {
     architecture: String,
-    /// Nanoseconds since the epoch.
+    /// Nanoseconds since the epoch of the system's file times.
     changed: i128,
 }
 
 /// The stamp of `bundle` on this host. `None` says the bundle is gone.
 fn stamp(bundle: &Path) -> Option<Stamp> {
-    use std::os::unix::fs::MetadataExt as _;
-    // A link that leads nowhere is stamped by the link itself, so it is remembered as the
-    // bundle that failed and is not looked at again by every scan.
-    let changed = |path: &Path| {
-        let metadata = std::fs::metadata(path)
-            .or_else(|_| std::fs::symlink_metadata(path))
-            .ok()?;
-        Some(i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()))
-    };
     let binaries = binary_folder(bundle);
     let mut latest = match std::fs::read_dir(&binaries) {
         Ok(entries) => {
             let mut files: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
             files.push(binaries);
-            files.push(bundle.join("Contents/Info.plist"));
-            files.iter().filter_map(|file| changed(file)).max()
+            files.push(bundle.join("Contents").join("Info.plist"));
+            files.iter().filter_map(|file| status_changed(file)).max()
         }
         Err(_) => None,
     };
     if latest.is_none() {
-        latest = Some(changed(bundle)?);
+        latest = Some(status_changed(bundle)?);
     }
     Some(Stamp {
         architecture: std::env::consts::ARCH.to_string(),
@@ -708,13 +766,100 @@ fn stamp(bundle: &Path) -> Option<Stamp> {
     })
 }
 
+/// When the status of `path` last changed: `ctime`. A link that leads nowhere is stamped by the
+/// link itself, so it is remembered as the bundle that failed and is not looked at again by
+/// every scan.
+#[cfg(unix)]
+fn status_changed(path: &Path) -> Option<i128> {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = std::fs::metadata(path)
+        .or_else(|_| std::fs::symlink_metadata(path))
+        .ok()?;
+    Some(i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec()))
+}
+
+/// When the status of `path` last changed: the `ChangeTime` NTFS keeps, which is what `ctime` is
+/// elsewhere. The standard library does not read it yet. A link that leads nowhere is stamped
+/// by the link itself, as on the other systems.
+#[cfg(target_os = "windows")]
+fn status_changed(path: &Path) -> Option<i128> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+    // Reading the attributes is all the query needs, which also works on a folder (backup
+    // semantics) and on a binary another process has loaded.
+    let open = |flags: u32| {
+        std::fs::OpenOptions::new()
+            .access_mode(windows::FILE_READ_ATTRIBUTES)
+            .custom_flags(windows::FILE_FLAG_BACKUP_SEMANTICS | flags)
+            .open(path)
+    };
+    let file = open(0)
+        .or_else(|_| open(windows::FILE_FLAG_OPEN_REPARSE_POINT))
+        .ok()?;
+    let mut info = windows::FileBasicInfo::default();
+    // SAFETY: the handle is open for as long as `file` lives, and `info` is a `FILE_BASIC_INFO`
+    // of the size the call is told.
+    let read = unsafe {
+        windows::GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            windows::FILE_BASIC_INFO_CLASS,
+            (&raw mut info).cast(),
+            std::mem::size_of::<windows::FileBasicInfo>() as u32,
+        )
+    };
+    // The time counts tenths of a microsecond.
+    (read != 0).then(|| i128::from(info.change_time) * 100)
+}
+
+/// The few Windows calls the stamp needs, declared here instead of taking a dependency.
+#[cfg(target_os = "windows")]
+mod windows {
+    use std::ffi::c_void;
+
+    pub(super) const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+    pub(super) const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    pub(super) const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    /// `FileBasicInfo` of `FILE_INFO_BY_HANDLE_CLASS`.
+    pub(super) const FILE_BASIC_INFO_CLASS: i32 = 0;
+
+    /// `FILE_BASIC_INFO`.
+    #[repr(C)]
+    #[derive(Default)]
+    pub(super) struct FileBasicInfo {
+        _creation_time: i64,
+        _last_access_time: i64,
+        _last_write_time: i64,
+        pub(super) change_time: i64,
+        _file_attributes: u32,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        pub(super) fn GetFileInformationByHandleEx(
+            file: *mut c_void,
+            class: i32,
+            information: *mut c_void,
+            size: u32,
+        ) -> i32;
+    }
+}
+
 /// The folder of a bundle that holds its binaries: `Contents/MacOS` on macOS, and the folder
-/// of this machine's architecture on Linux, such as `Contents/x86_64-linux`.
+/// of this machine's architecture elsewhere, such as `Contents/x86_64-linux` or
+/// `Contents/x86_64-win`. VST 3 calls 64-bit Arm `arm64` on Windows.
 pub(crate) fn binary_folder(bundle: &Path) -> PathBuf {
+    let contents = bundle.join("Contents");
+    let architecture = std::env::consts::ARCH;
     if cfg!(target_os = "macos") {
-        bundle.join("Contents/MacOS")
+        contents.join("MacOS")
+    } else if cfg!(target_os = "windows") {
+        let architecture = match architecture {
+            "aarch64" => "arm64",
+            other => other,
+        };
+        contents.join(format!("{architecture}-win"))
     } else {
-        bundle.join(format!("Contents/{}-linux", std::env::consts::ARCH))
+        contents.join(format!("{architecture}-linux"))
     }
 }
 
@@ -807,8 +952,9 @@ mod tests {
 
     use super::*;
 
-    /// A bundle as macOS lays one out: the binary the `Info.plist` names, a helper next to it,
-    /// and resources. Nothing in it is a plugin; these tests are about the files.
+    /// A bundle as macOS lays one out, with the binary folder of this platform: the binary the
+    /// `Info.plist` names, a helper next to it, and resources. Nothing in it is a plugin; these
+    /// tests are about the files.
     fn bundle_in(folder: &Path) -> PathBuf {
         let bundle = folder.join("piano.vst3");
         let binaries = binary_folder(&bundle);
@@ -836,6 +982,9 @@ mod tests {
 
         let binary = binary_folder(&bundle).join("piano");
         let modified = std::fs::metadata(&binary).unwrap().modified().unwrap();
+        // Windows moves its file times in steps of up to 16 ms, so the new build has to come
+        // in a later step than the first one to be told apart at all.
+        std::thread::sleep(Duration::from_millis(20));
         std::fs::write(&binary, "the next build!").unwrap();
         let file = std::fs::File::options().write(true).open(&binary).unwrap();
         file.set_modified(modified).unwrap();
@@ -974,6 +1123,8 @@ mod tests {
 
     /// A plugin folder may hold a link to a bundle that was taken away. It is remembered like
     /// any bundle that failed, so a look again does not start a child for it every time.
+    /// Unix only: making a link on Windows needs administrator rights or developer mode.
+    #[cfg(unix)]
     #[test]
     fn a_link_that_leads_nowhere_is_stamped_and_remembered() {
         let folder = tempfile::tempdir().unwrap();
