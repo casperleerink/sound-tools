@@ -41,6 +41,16 @@ tone.workspace = true
 utility.workspace = true
 wavetable.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+] }
+
+[build-dependencies]
+embed-resource.workspace = true
+
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support"] }

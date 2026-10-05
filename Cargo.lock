@@ -5453,6 +5453,7 @@ dependencies = [
  "compressor",
  "delay",
  "drum-pad",
+ "embed-resource",
  "eq",
  "filter",
  "fit-tempo",
@@ -5485,6 +5486,7 @@ dependencies = [
  "tone",
  "utility",
  "wavetable",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
