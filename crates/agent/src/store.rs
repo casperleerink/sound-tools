@@ -15,9 +15,7 @@
 //! A project is open in one window at a time, so nothing else writes these files meanwhile.
 
 use std::fs;
-use std::io::{self, Write as _};
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::FileExt;
+use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -183,7 +181,11 @@ impl ThreadStore {
             .len();
         if let Some(last) = length.checked_sub(1) {
             let mut byte = [0];
-            file.read_exact_at(&mut byte, last)
+            // Appending writes at the end whatever the position, so the seek moves only the
+            // read.
+            (&file)
+                .seek(SeekFrom::Start(last))
+                .and_then(|_| (&file).read_exact(&mut byte))
                 .map_err(|error| failed(error.to_string()))?;
             if byte != *b"\n" {
                 text.insert(0, '\n');
@@ -241,7 +243,7 @@ pub(crate) fn write_whole(path: &Path, text: &str) -> io::Result<()> {
 /// however it was opened. Any path gives a name of the same short length.
 fn key(project: &Path) -> String {
     let path = fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
-    Uuid::new_v5(&Uuid::NAMESPACE_URL, path.as_os_str().as_bytes()).to_string()
+    Uuid::new_v5(&Uuid::NAMESPACE_URL, path.as_os_str().as_encoded_bytes()).to_string()
 }
 
 /// The conversation a log gives. A turn still open is one the app quit during: it ends as

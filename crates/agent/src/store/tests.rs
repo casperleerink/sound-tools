@@ -303,12 +303,16 @@ fn two_projects_never_share_a_thread() {
     assert_eq!(first(&day_store).as_deref(), Some("Day"));
     assert_eq!(first(&other_store).as_deref(), Some("Other"));
 
-    // The same folder through a link or `..` is the same project.
-    let link = machine.path().join("link");
-    std::os::unix::fs::symlink(&night, &link).unwrap();
+    // The same folder through a link or `..` is the same project. A link on Windows needs
+    // admin rights or developer mode.
     let threads = machine.path().join("agent/threads");
-    let through_link = ThreadStore::new(&threads, &link);
-    assert_eq!(first(&through_link).as_deref(), Some("Night"));
+    #[cfg(unix)]
+    {
+        let link = machine.path().join("link");
+        std::os::unix::fs::symlink(&night, &link).unwrap();
+        let through_link = ThreadStore::new(&threads, &link);
+        assert_eq!(first(&through_link).as_deref(), Some("Night"));
+    }
     let roundabout = ThreadStore::new(&threads, &night.join("..").join("night"));
     assert_eq!(first(&roundabout).as_deref(), Some("Night"));
 }
