@@ -87,9 +87,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      # `.cargo/config.toml` builds into /private/tmp, a folder of macOS.
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain

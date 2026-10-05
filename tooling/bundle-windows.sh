@@ -7,8 +7,7 @@
 # Writes sound-tools-<version>-windows-x86_64.zip to dist/ by default. It holds a folder with
 # the program, LICENSE and install.ps1, which puts the program in
 # %LOCALAPPDATA%\Programs\Sound Tools. The program is the whole app: the plugin scan runs it
-# again, and the icon is inside it. The build folder of .cargo/config.toml is a macOS one, so
-# set CARGO_TARGET_DIR first.
+# again, and the icon is inside it.
 set -euo pipefail
 
 output="${1:-dist}"

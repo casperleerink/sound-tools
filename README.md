@@ -37,7 +37,7 @@ Not on Linux:
 
 ### Windows
 
-Windows 10 or later, x86_64. CI builds and tests it on Windows, but nobody has tried it on a real Windows computer yet. To build it you need Rust through `rustup` and the Visual Studio Build Tools with the "Desktop development with C++" workload. Set another build folder first, for example `set CARGO_TARGET_DIR=target`, because `/private/tmp` is a macOS folder.
+Windows 10 or later, x86_64. CI builds and tests it on Windows, but nobody has tried it on a real Windows computer yet. To build it you need Rust through `rustup` and the Visual Studio Build Tools with the "Desktop development with C++" workload.
 
 - The app keeps the last project, agents, updates and the sample library in `%LOCALAPPDATA%\Sound Tools`, and the plugin cache in its `Cache` folder.
 - Plugins are looked for in `%COMMONPROGRAMFILES%\CLAP` and `%LOCALAPPDATA%\Programs\Common\CLAP`, and the same two folders with `VST3`. Plugin windows open, but typing into a plugin's own text fields likely does not work yet: gpui keeps the keys.
