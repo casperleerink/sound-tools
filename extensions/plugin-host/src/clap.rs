@@ -617,11 +617,15 @@ impl LoadedPlugin for ClapPlugin {
     fn restart(
         &mut self,
         config: PrepareConfig,
+        pins: &[ParameterChange],
     ) -> Option<Result<Box<dyn Started>, PluginProblem>> {
         // Deactivating needs the audio side back: clack refuses while it is still held.
         if self.instance.is_active() && self.instance.try_deactivate().is_err() {
             return None;
         }
+        // A pin that changed while the plugin waited went to the ring of the audio side that
+        // was going, so the plugin has not heard it.
+        flush(&mut self.instance, pins.iter().copied());
         let activated =
             activate(&mut self.instance, config).map_err(|message| PluginProblem::DidNotRestart {
                 plugin_id: self.plugin_id.clone(),

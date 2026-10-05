@@ -71,11 +71,17 @@ pub(crate) trait LoadedPlugin {
     /// plugin change its latency, and how VST 3 lets one change its buses: CLAP's
     /// `request_restart`, VST 3's `kLatencyChanged` and `kIoChanged`.
     ///
+    /// `pins` are given to the plugin while it is inactive, as when it loads, so a pin that
+    /// changed while it waited is not glided to.
+    ///
     /// Only once the engine has given the audio side back, as [`Self::released`]: `None` says
     /// it has not, and the caller asks again at the next poll. An error leaves the plugin
     /// inactive, and it plays nothing until its record changes.
-    fn restart(&mut self, config: PrepareConfig)
-    -> Option<Result<Box<dyn Started>, PluginProblem>>;
+    fn restart(
+        &mut self,
+        config: PrepareConfig,
+        pins: &[ParameterChange],
+    ) -> Option<Result<Box<dyn Started>, PluginProblem>>;
 }
 
 /// What a plugin asked for since the last poll. All of it may be asked for from another

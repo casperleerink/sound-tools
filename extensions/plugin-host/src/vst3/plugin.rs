@@ -611,6 +611,7 @@ impl LoadedPlugin for Vst3Plugin {
     fn restart(
         &mut self,
         _config: PrepareConfig,
+        pins: &[ParameterChange],
     ) -> Option<Result<Box<dyn Started>, PluginProblem>> {
         Arc::get_mut(&mut self.live)?;
         // Whatever the old audio side reported last reaches the controller before its ring
@@ -626,6 +627,11 @@ impl LoadedPlugin for Vst3Plugin {
         let (buses, result) = unsafe {
             not_ours(|| component.setActive(0));
             let buses = prepare_buses(component, &self.processor);
+            if let Some(controller) = &self.joined.controller {
+                for change in pins {
+                    controller.setParamNormalized(change.id, change.value);
+                }
+            }
             (buses, not_ours(|| component.setActive(1)))
         };
         if result != kResultOk {

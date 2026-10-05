@@ -514,6 +514,14 @@ fn listed(plugin: &mut dyn LoadedPlugin) -> BTreeMap<u32, Parameter> {
     by_id(plugin.parameters())
 }
 
+/// The pins of the record of `id` that the plugin of `hosted` takes, as its record has them now.
+fn pins_of(hosted: &Hosted, project: &Project, id: &InstanceId) -> Vec<ParameterChange> {
+    let (Some(record), Some(parameters)) = (record_of(project, id), &hosted.parameters) else {
+        return Vec::new();
+    };
+    playable(parameters, &record.parameters).collect()
+}
+
 /// The name of the undo step of a turn of a knob: the pin it began with, or else the plugin.
 fn turn_label(record: Option<&PluginRecord>, pin: u32) -> String {
     let name = record.map(|record| match record.parameters.get(&pin) {
@@ -1704,7 +1712,10 @@ impl Plugins {
                     let none = HostedUpdate::Plugin(None, AutomatedPins::NONE);
                     updates.push((id.clone(), hosted.plugin_id.clone(), none));
                 }
-                Restart::Waiting => match hosted.plugin.restart(hosted.config) {
+                Restart::Waiting => match hosted
+                    .plugin
+                    .restart(hosted.config, &pins_of(hosted, project, id))
+                {
                     // The engine has not given it back yet.
                     None => {}
                     Some(Ok(started)) => {
