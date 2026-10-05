@@ -39,6 +39,12 @@ impl Parameter {
         (self.minimum..=self.maximum).contains(&value)
     }
 
+    /// Whether an automation lane may move it: the plugin says a host may automate it, and it
+    /// takes any value in its range, as a whole number of a built-in device takes no lane.
+    pub fn takes_lane(&self) -> bool {
+        self.automatable && self.steps.is_none()
+    }
+
     /// The value of the step `index` of a stepped parameter, inside its range. A CLAP plugin
     /// cuts a value to its whole step, so its first step may lie just below the minimum it
     /// gives, and the minimum is what reaches it.

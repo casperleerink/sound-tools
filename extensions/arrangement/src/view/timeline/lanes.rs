@@ -14,7 +14,7 @@ use sound_ui::{Devices, DragEdit};
 use super::Timeline;
 use super::scene::{PointKey, Scene};
 use super::state::{After, Held, LaneDrag, LaneDragKind};
-use crate::automation::free_lanes;
+use crate::automation::{devices, free_lanes};
 use crate::view::lanes::{DRAG_THRESHOLD, erase_range};
 use crate::view::layout::{
     ADD_LANE_HEIGHT, HEADER_INSET, HEADER_WIDTH, Part, RULER_HEIGHT, shifted,
@@ -76,6 +76,7 @@ impl Timeline {
         }
         let menu = cx.new(|cx| {
             DropdownMenu::new(ADD_LANE, Vec::new(), cx)
+                .searchable("Search", cx)
                 .debug_name(format!("add-lane-{}", track.name()))
                 .trigger(Trigger::Select)
                 .trigger_width(HEADER_WIDTH - 2. * HEADER_INSET)
@@ -108,29 +109,50 @@ impl Timeline {
     }
 
     /// Fills the select that adds a lane to `track` with what it can add now, when that is not
-    /// what it holds.
-    fn fill_lane_menu(&mut self, track: &InstanceId, cx: &mut Context<Self>) {
+    /// what it holds: every number of the track and of its devices that has no lane yet, also
+    /// one a device takes only once its record says so, such as a plugin's parameter that is
+    /// not pinned. One group per device, in the order of the chain.
+    pub(super) fn fill_lane_menu(&mut self, track: &InstanceId, cx: &mut Context<Self>) {
         let project = self.session.read(cx).project();
-        let Some((instance, state)) = project
+        let Some(state) = project
             .resolve::<TrackState>(track)
-            .and_then(|instance| Some((instance.clone(), project.state(&instance)?)))
+            .and_then(|instance| project.state(&instance))
         else {
             return;
         };
-        // The numbers of one device come one after another, in one group.
-        let mut groups: Vec<(Option<String>, Vec<MenuItem>)> = Vec::new();
-        for lane in free_lanes(project, instance.id(), state) {
-            let label = match &lane.device {
-                None => track_lanes::lane_name(&lane.parameter),
-                Some(device) => self.number_name(instance.id(), device, &lane.parameter, cx),
-            };
-            let value = track_lanes::menu_value(lane.device.as_deref(), &lane.parameter);
-            let item = MenuItem::new(value, label).selectable(false);
-            match groups.last_mut() {
-                Some((last, items)) if *last == lane.device => items.push(item),
-                _ => groups.push((lane.device, vec![item])),
+        let free = free_lanes(project, track, state);
+        let item = |device: Option<&str>, field: &str, label: String| {
+            MenuItem::new(track_lanes::menu_value(device, field), label).selectable(false)
+        };
+        let mut groups: Vec<(Option<&str>, Vec<MenuItem>)> = Vec::new();
+        let own = free.iter().filter(|lane| lane.device.is_none());
+        let own = own.map(|lane| {
+            item(
+                None,
+                &lane.parameter,
+                track_lanes::lane_name(&lane.parameter),
+            )
+        });
+        groups.push((None, own.collect()));
+        for device in devices(state) {
+            let of_device = free
+                .iter()
+                .filter(|lane| lane.device.as_deref() == Some(device));
+            let mut items: Vec<MenuItem> = of_device
+                .map(|lane| {
+                    let name = self.number_name(track, device, &lane.parameter, cx);
+                    item(Some(device), &lane.parameter, name)
+                })
+                .collect();
+            if let Ok(id) = track.child(device) {
+                let latent = Devices::latent_of(project, &id, cx).into_iter();
+                items.extend(
+                    latent.map(|number| item(Some(device), &number.field, number.name.into())),
+                );
             }
+            groups.push((Some(device), items));
         }
+        groups.retain(|(_, items)| !items.is_empty());
         let offered: Vec<SharedString> = groups
             .iter()
             .flat_map(|(_, items)| items.iter().map(|item| item.value.clone()))
@@ -138,7 +160,7 @@ impl Timeline {
         let entries = groups.into_iter().map(|(device, items)| {
             let label = match device {
                 None => SharedString::from("Track"),
-                Some(device) => self.device_name(instance.id(), &device, cx),
+                Some(device) => self.device_name(track, device, cx),
             };
             MenuEntry::Group(MenuGroup::new().label(label).items(items))
         });
@@ -184,38 +206,43 @@ impl Timeline {
     }
 
     /// The select of the lanes of a track picked a number: a lane for it, which holds the
-    /// value of its record, so nothing sounds different yet. One undo step.
+    /// value it plays now, so nothing sounds different yet. A number its device takes only once
+    /// its record says so has its record changed with it. One undo step.
     fn add_lane(&mut self, track: &InstanceId, value: &str, cx: &mut Context<Self>) {
         let Some((device, field)) = track_lanes::from_menu_value(value) else {
             return;
         };
-        let mut lane = AutomationLane {
-            device: device.map(str::to_string),
-            parameter: field.to_string(),
-            points: Vec::new(),
-        };
-        let track = track.clone();
+        let mut changes = Changes::new();
+        {
+            let project = self.session.read(cx).project();
+            let Some(instance) = project.resolve::<TrackState>(track) else {
+                return;
+            };
+            let Some(mut state) = project.state(&instance).cloned() else {
+                return;
+            };
+            let mut lane = AutomationLane {
+                device: device.map(str::to_string),
+                parameter: field.to_string(),
+                points: Vec::new(),
+            };
+            let number = lane.number(track, &state, &travel_in(project));
+            let latent = || {
+                let id = track.child(device?).ok()?;
+                Devices::take_latent(project, &id, field, &mut changes, cx)
+            };
+            let Some(record) = number.and_then(|number| number.record).or_else(latent) else {
+                return;
+            };
+            lane.points.push(sound_notes::Point {
+                tick: Ticks(0),
+                value: AutomationValue(record),
+            });
+            state.automation.push(lane);
+            changes.set(&instance, state);
+        }
         self.session.update(cx, |session, cx| {
-            session.edit(cx, |project| {
-                let Some(instance) = project.resolve::<TrackState>(&track) else {
-                    return Ok(());
-                };
-                let Some(mut state) = project.state(&instance).cloned() else {
-                    return Ok(());
-                };
-                let number = lane.number(&track, &state, &travel_in(project));
-                let Some(record) = number.and_then(|number| number.record) else {
-                    return Ok(());
-                };
-                lane.points.push(sound_notes::Point {
-                    tick: Ticks(0),
-                    value: AutomationValue(record),
-                });
-                state.automation.push(lane);
-                let mut changes = Changes::new();
-                changes.set(&instance, state);
-                project.commit("Add automation", changes)
-            })
+            session.edit(cx, |project| project.commit("Add automation", changes));
         });
     }
 
@@ -226,7 +253,6 @@ impl Timeline {
         let rows = self.rows(cx);
         let (width, height) = self.painted_size.get();
         let viewport = self.clamped(self.viewport, width, height, cx);
-        let project = self.session.read(cx).project();
         let mut open = false;
         let mut selects = Vec::new();
         for (row, track) in self.order.iter().enumerate() {
@@ -239,10 +265,7 @@ impl Timeline {
             let top = viewport.y_at(rows.lane_top(row, lanes))
                 + (ADD_LANE_HEIGHT - ADD_LANE_BUTTON_HEIGHT) / 2.;
             let shows = top >= 0. && top + ADD_LANE_BUTTON_HEIGHT <= height;
-            let state = project.state(track);
-            let free =
-                state.is_some_and(|state| !free_lanes(project, track.id(), state).is_empty());
-            if !shows || !free {
+            if !shows || lane_menu.offered.is_empty() {
                 continue;
             }
             open |= lane_menu.menu.read(cx).is_open();

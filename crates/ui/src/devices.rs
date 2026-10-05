@@ -139,6 +139,18 @@ type ListNotes = Rc<dyn Fn() -> Vec<SharedString>>;
 type Generation = Rc<dyn Fn() -> u64>;
 type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>;
 type NameNumber = Rc<dyn Fn(&Project, &InstanceId, &str) -> Option<SharedString>>;
+type ListLatent = Rc<dyn Fn(&Project, &InstanceId) -> Vec<LatentNumber>>;
+type TakeLatent = Rc<dyn Fn(&Project, &InstanceId, &str, &mut Changes) -> Option<f32>>;
+
+/// A number of a device that no lane can move until its record says so, and that a lane can be
+/// added for all the same: a parameter of a plugin that is not pinned. Adding the lane changes
+/// the record too, in the same undo step, see [`Devices::latent_numbers`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct LatentNumber {
+    /// What a lane names it by, as it will once the record says so: `parameters.12.value`.
+    pub field: SharedString,
+    pub name: SharedString,
+}
 
 /// What a rack says about the instance in a slot: what to call it, and which offer it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,6 +177,7 @@ pub struct Devices {
     generations: Vec<Generation>,
     describe: BTreeMap<&'static str, DescribeInstance>,
     name_numbers: BTreeMap<&'static str, NameNumber>,
+    latent: BTreeMap<&'static str, (ListLatent, TakeLatent)>,
 }
 
 impl Global for Devices {}
@@ -230,6 +243,29 @@ impl Devices {
                 name(project.state(&instance)?, field)
             }),
         );
+    }
+
+    /// Registers the numbers of an instance of the tool with state `S` that no lane can move
+    /// until its record says so, such as a plugin's parameters that are not pinned: `list` gives
+    /// them, and `take` gives the record that lets a lane move `field`, with the value the lane
+    /// starts at, which is what the device plays now. So a lane is added for any of them as for
+    /// a number the device already takes, as one undo step.
+    pub fn latent_numbers<S: State>(
+        &mut self,
+        list: impl Fn(&InstanceId, &S) -> Vec<LatentNumber> + 'static,
+        take: impl Fn(&InstanceId, &S, &str) -> Option<(S, f32)> + 'static,
+    ) {
+        let list: ListLatent = Rc::new(move |project, id| {
+            let state = project.resolve::<S>(id).and_then(|it| project.state(&it));
+            state.map(|state| list(id, state)).unwrap_or_default()
+        });
+        let take: TakeLatent = Rc::new(move |project, id, field, changes| {
+            let instance = project.resolve::<S>(id)?;
+            let (record, value) = take(id, project.state(&instance)?, field)?;
+            changes.set(&instance, record);
+            Some(value)
+        });
+        self.latent.insert(S::TOOL, (list, take));
     }
 
     /// Registers a built-in device with state `S`: what a rack calls it, and its offer, which
@@ -317,6 +353,30 @@ impl Devices {
         let tool = project.tool_of(id)?;
         let name = cx.try_global::<Self>()?.name_numbers.get(tool)?.clone();
         name(project, id, field)
+    }
+
+    /// The numbers of `id` a lane can be added for that its record does not let a lane move
+    /// yet, see [`Self::latent_numbers`]. They may call into a plugin, so not while drawing.
+    pub fn latent_of(project: &Project, id: &InstanceId, cx: &App) -> Vec<LatentNumber> {
+        let latent = cx.try_global::<Self>().and_then(|devices| {
+            let tool = project.tool_of(id)?;
+            devices.latent.get(tool).map(|(list, _)| list.clone())
+        });
+        latent.map(|list| list(project, id)).unwrap_or_default()
+    }
+
+    /// Puts the record of `id` that lets a lane move `field` into `changes`, and gives the
+    /// value the lane starts at. `None` when `field` is not one of [`Self::latent_of`].
+    pub fn take_latent(
+        project: &Project,
+        id: &InstanceId,
+        field: &str,
+        changes: &mut Changes,
+        cx: &App,
+    ) -> Option<f32> {
+        let devices = cx.try_global::<Self>()?;
+        let (_, take) = devices.latent.get(project.tool_of(id)?)?;
+        take(project, id, field, changes)
     }
 }
 

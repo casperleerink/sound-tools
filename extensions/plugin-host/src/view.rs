@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 use gpui::{
     AnyElement, Context, Div, Entity, FocusHandle, SharedString, Task, Window, div, prelude::*, px,
 };
-use sound_core::{Instance, MAX_AUTOMATED, ProjectEvent};
+use sound_core::{Instance, InstanceId, MAX_AUTOMATED, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CELL_WIDTH, Cell, ROW_HEIGHT};
 use sound_ui::components::device_card::{
@@ -50,11 +50,12 @@ use sound_ui::components::select::Select;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback,
+    ActiveTheme, ControlEdit, DeviceLabel, Devices, Lanes, LatentNumber, Session, Views,
+    weak_callback,
 };
 
 use crate::parameters::{lane_of_pin, pin_of_lane};
-use crate::{Parameter, Pin, PluginRecord, Steps, WeakPlugins};
+use crate::{Parameter, Pin, PluginRecord, Plugins, Steps, WeakPlugins};
 
 /// The room at the left of the body, where the plain card has all of it.
 const LEFT_WIDTH: f32 = PLAIN_CARD_WIDTH - 2. * CARD_PADDING;
@@ -70,6 +71,7 @@ const LANE_READ_OUT: Duration = Duration::from_millis(66);
 /// because that is what saves the state of every plugin.
 pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) {
     let for_view = plugins.clone();
+    let (for_list, for_take) = (plugins.clone(), plugins.clone());
     views.register_card(move |session, plugin, frame, window, cx| {
         PluginView::new(for_view.clone(), session, plugin, frame, window, cx)
     });
@@ -89,6 +91,58 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
         let pin = record.parameters.get(&pin_of_lane(lane)?)?;
         (!pin.name.is_empty()).then(|| pin.name.clone().into())
     });
+    // A lane can be added for any parameter that takes one, as for a knob of a built-in
+    // device: one that is not pinned yet is pinned at what it plays now, in the same step.
+    devices.latent_numbers::<PluginRecord>(
+        move |id, record| {
+            let parameters = for_list
+                .upgrade()
+                .and_then(|plugins| plugins.parameters(id));
+            let (Some(parameters), true) = (parameters, record.parameters.len() < MAX_AUTOMATED)
+            else {
+                return Vec::new();
+            };
+            let latent = parameters.values().filter(|parameter| {
+                parameter.takes_lane() && !record.parameters.contains_key(&parameter.id)
+            });
+            latent
+                .map(|parameter| LatentNumber {
+                    field: lane_of_pin(parameter.id).into(),
+                    name: parameter.name.clone().into(),
+                })
+                .collect()
+        },
+        move |id, record, field| {
+            let plugins = for_take.upgrade()?;
+            let parameter_id = pin_of_lane(field)?;
+            let full = record.parameters.len() >= MAX_AUTOMATED;
+            if full || record.parameters.contains_key(&parameter_id) {
+                return None;
+            }
+            let parameters = plugins.parameters(id)?;
+            let parameter = parameters.get(&parameter_id).filter(|it| it.takes_lane())?;
+            let pin = pin_now(&plugins, id, parameter);
+            let value = pin.value as f32;
+            let mut record = record.clone();
+            record.parameters.insert(parameter_id, pin);
+            Some((record, value))
+        },
+    );
+}
+
+/// A pin of `parameter` at what the plugin of `id` plays now, or at its default when it cannot
+/// say: on a step for a stepped one, inside its range for the rest.
+fn pin_now(plugins: &Plugins, id: &InstanceId, parameter: &Parameter) -> Pin {
+    let now = plugins.parameter_value(id, parameter.id);
+    let now = now.map_or(parameter.default, |now| now.value);
+    let value = match &parameter.steps {
+        Some(steps) => parameter.step_value(steps, steps.index(now)),
+        None => inside(now, parameter.minimum, parameter.maximum),
+    };
+    Pin {
+        name: parameter.name.clone(),
+        value,
+    }
 }
 
 /// The control a parameter gets on the card.
@@ -386,19 +440,10 @@ impl PluginView {
         let Some(parameter) = parameters.and_then(|list| list.get(&parameter_id)) else {
             return;
         };
-        let now = self.plugins.upgrade().and_then(|plugins| {
-            let now = plugins.parameter_value(self.plugin.id(), parameter_id)?;
-            Some(now.value)
-        });
-        let now = now.unwrap_or(parameter.default);
-        let value = match &parameter.steps {
-            Some(steps) => parameter.step_value(steps, steps.index(now)),
-            None => inside(now, parameter.minimum, parameter.maximum),
+        let Some(plugins) = self.plugins.upgrade() else {
+            return;
         };
-        let pin = Pin {
-            name: parameter.name.clone(),
-            value,
-        };
+        let pin = pin_now(&plugins, self.plugin.id(), parameter);
         let label = format!("Add {}", parameter.name);
         let add = move |record: &mut PluginRecord, pin| {
             record.parameters.insert(parameter_id, pin);

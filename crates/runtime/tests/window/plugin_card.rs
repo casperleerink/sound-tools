@@ -250,3 +250,49 @@ fn the_select_adds_a_lane_for_a_pin(cx: &mut TestAppContext) {
     assert_eq!(lanes, [lane]);
     one_undo_step(&mut opened, "Add automation", &before);
 }
+
+/// The select also offers every parameter of the plugin that takes a lane and is not pinned,
+/// as it offers every knob of a built-in device. A pick pins it at the value it plays and adds
+/// the lane, as one undo step that undo takes back whole.
+#[gpui::test]
+fn the_select_adds_a_lane_for_a_parameter_that_is_not_pinned_and_pins_it(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let header = opened.track_header(0);
+    let toggle = point(
+        px(NAME_LEFT + 8.),
+        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
+    );
+    opened.click(toggle);
+
+    let before = mark(&mut opened);
+    let select = opened.control("add-lane-track-1");
+    opened.click(select);
+    assert!(opened.find("menu-instrument/parameters.0.value").is_some());
+    // Named steps and off or on take no lane.
+    assert_eq!(opened.find("menu-instrument/parameters.1.value"), None);
+    assert_eq!(opened.find("menu-instrument/parameters.5.value"), None);
+    // A long list is searched.
+    opened.cx.simulate_input("lev");
+    opened.cx.run_until_parked();
+    assert_eq!(opened.find("menu-instrument/parameters.0.value"), None);
+    let level = opened.control("menu-instrument/parameters.4.value");
+    opened.click(level);
+
+    assert_eq!(pins(&mut opened), BTreeMap::from([(4, pin("Level", 1.0))]));
+    let lanes = opened.project(|project| {
+        assert_eq!(project.problems(), []);
+        let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
+        project.state(&track).unwrap().automation.clone()
+    });
+    let lane = AutomationLane {
+        device: Some("instrument".into()),
+        parameter: "parameters.4.value".into(),
+        points: vec![sound_notes::Point {
+            tick: Ticks(0),
+            value: AutomationValue(1.0),
+        }],
+    };
+    assert_eq!(lanes, [lane]);
+    assert!(opened.find("automated-pin-4").is_some());
+    one_undo_step(&mut opened, "Add automation", &before);
+}

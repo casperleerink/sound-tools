@@ -137,9 +137,7 @@ pub fn automatable(
     };
     let own = Mixer::AUTOMATION.parameters().iter();
     let own = own.map(|parameter| lane(None, parameter.field));
-    let effects = state.effects.iter().map(|slot| slot.name.as_str());
-    let devices = std::iter::once(crate::INSTRUMENT).chain(effects);
-    let devices = devices.filter_map(|name| Some((name, track.child(name).ok()?)));
+    let devices = devices(state).filter_map(|name| Some((name, track.child(name).ok()?)));
     let of_devices = devices.flat_map(|(name, device)| {
         let fields = project.automatable(&device);
         fields
@@ -147,6 +145,13 @@ pub fn automatable(
             .collect::<Vec<_>>()
     });
     own.chain(of_devices).collect()
+}
+
+/// The names of the devices of a track whose record is `state`, in the order of its chain: its
+/// instrument, then its effects.
+pub(crate) fn devices(state: &TrackState) -> impl Iterator<Item = &str> {
+    let effects = state.effects.iter().map(|slot| slot.name.as_str());
+    std::iter::once(crate::INSTRUMENT).chain(effects)
 }
 
 /// The numbers of `track`, whose record is `state`, that a lane can be added for, each as a

@@ -329,8 +329,7 @@ impl Hosted {
 
     /// The pins of `record` whose value the plugin takes, in the order of their ids, and kept
     /// as the pins the next start of the plugin gets. An automation lane may move those whose
-    /// parameter the plugin says a host may automate and takes any value in its range, as a
-    /// whole number of a built-in device takes no lane.
+    /// parameter [`Parameter::takes_lane`].
     fn automated(&mut self, record: &PluginRecord) -> Vec<AutomatedPin> {
         let mut pins = Vec::new();
         if !record.parameters.is_empty() {
@@ -341,7 +340,7 @@ impl Hosted {
                     let parameter = parameters.get(id).filter(|it| it.takes(pin.value))?;
                     Some(AutomatedPin {
                         id: *id,
-                        takes_lane: parameter.automatable && parameter.steps.is_none(),
+                        takes_lane: parameter.takes_lane(),
                         minimum: parameter.minimum,
                         maximum: parameter.maximum,
                         record: pin.value,

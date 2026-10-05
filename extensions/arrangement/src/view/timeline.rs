@@ -210,6 +210,18 @@ impl Timeline {
         cx.observe_self(|timeline, cx| timeline.refresh_order(cx))
             .detach();
         let project_events = cx.subscribe(&session, |timeline, _, event, cx| {
+            // What the select that adds a lane offers goes with the lanes of its track and its
+            // devices. Not while a drag moves: a drag changes no number that could take a lane.
+            let refill = match event {
+                ProjectEvent::Changed(id) => Some(id.clone()),
+                ProjectEvent::Created(id) | ProjectEvent::Deleted(id) => id.parent(),
+                ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged => None,
+            };
+            if let Some(track) = refill.filter(|track| timeline.lane_menus.contains_key(track))
+                && matches!(timeline.held, Held::Nothing)
+            {
+                timeline.fill_lane_menu(&track, cx);
+            }
             let shown = |id: &InstanceId| timeline.shows(id, cx);
             let changed = match event {
                 ProjectEvent::Changed(id) => shown(id),
